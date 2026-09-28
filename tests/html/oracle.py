@@ -85,7 +85,9 @@ def main():
     for index, (label, _, _, text, want) in enumerate(cases):
         line = lines[index] if index < len(lines) else None
         try:
-            got = merged(json.loads(line.decode("utf-8", "surrogatepass")))
+            got = json.loads(line.decode("utf-8", "surrogatepass"))
+            if isinstance(got, list):
+                got = merged(got)
         except (AttributeError, ValueError):
             got = line
         if got != want:
