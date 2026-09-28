@@ -84,6 +84,10 @@ const source_ceiling: u64 = 16777216_u64;
 
 const component_ceiling: u64 = 4294967295_u64;
 
+const top_level: u64 = 18446744073709551615_u64;
+
+const blocked_start: u64 = 18446744073709551614_u64;
+
 const suite_count: u64 = 6_u64;
 
 const first_one_suite: u64 = 4_u64;
@@ -284,13 +288,17 @@ fn put_suite(buffer: &Box<Slots<u8>>, list: &ComponentList, suite: u64) -> resul
     put_text(buffer: buffer, text: message);
     return unit;
   }
+  let components = &list^.components.inner[0_u64..count];
+  let table = parent_table(components: components);
+  let placed = table.inner.len;
+  let parents = &table.inner[0_u64..placed];
   let last = cvt.wrap::<u64, u32>(count);
   let whole = ComponentRange(start: 0_u32, end: last);
   let listed = suite < first_one_suite;
   if listed {
     match parse_list(values: list, range: whole, suite: suite) {
       Ok(value: items) => {
-        let outcome = put_items(buffer: buffer, list: list, items: &items);
+        let outcome = put_items(buffer: buffer, list: list, parents: parents, items: &items);
         settle(buffer: buffer, mark: mark, outcome: outcome);
       }
       Err(error: refusal) => {
@@ -303,7 +311,7 @@ fn put_suite(buffer: &Box<Slots<u8>>, list: &ComponentList, suite: u64) -> resul
   match parse_one(values: list, range: whole, suite: suite) {
     Ok(value: item) => {
       let only = 0_u64;
-      let outcome = put_item(buffer: buffer, list: list, item: item, index: only);
+      let outcome = put_item(buffer: buffer, list: list, parents: parents, item: item, index: only);
       settle(buffer: buffer, mark: mark, outcome: outcome);
     }
     Err(error: failure) => {
@@ -409,8 +417,8 @@ fn put_one_error(buffer: &Box<Slots<u8>>, failure: OneError) -> result: unit wri
   return unit;
 }
 
-fn put_items(buffer: &Box<Slots<u8>>, list: &ComponentList, items: &RuleItems) -> result: Result<unit, RuleFault> reads(list), reads(items), writes(buffer) {
-  doc "Appends every item of items as one JSON array, in order; stops at the first item that names an invalid range or span.";
+fn put_items(buffer: &Box<Slots<u8>>, list: &ComponentList, parents: &[u64], items: &RuleItems) -> result: Result<unit, RuleFault> reads(list), reads(parents), reads(items), writes(buffer) {
+  doc "Appends every item of items as one JSON array, in order, judging ranges against parents, parent_table's table of list; stops at the first item that names an invalid range or span.";
   let count = items^.items.inner.len;
   let entries = &items^.items.inner[0_u64..count];
   put_byte(buffer: buffer, value: left_square_bracket);
@@ -421,22 +429,22 @@ fn put_items(buffer: &Box<Slots<u8>>, list: &ComponentList, items: &RuleItems) -
       put_text(buffer: buffer, text: separator);
     }
     let item = entries^[index];
-    let written = propagate put_item(buffer: buffer, list: list, item: item, index: index);
+    let written = propagate put_item(buffer: buffer, list: list, parents: parents, item: item, index: index);
   }
   put_byte(buffer: buffer, value: right_square_bracket);
   return Ok<unit, RuleFault>(value: unit);
 }
 
-fn put_item(buffer: &Box<Slots<u8>>, list: &ComponentList, item: RuleItem, index: u64) -> result: Result<unit, RuleFault> reads(list), writes(buffer) {
-  doc "Appends one item in css-parsing-tests' representation: [\"qualified rule\", PRELUDE, BLOCK], [\"at-rule\", NAME, PRELUDE, BLOCK or null], [\"declaration\", NAME, VALUE, IMPORTANT] or [\"error\", \"invalid\"], each range as the array of the components it names. Index is the item's position, which a fault names.";
+fn put_item(buffer: &Box<Slots<u8>>, list: &ComponentList, parents: &[u64], item: RuleItem, index: u64) -> result: Result<unit, RuleFault> reads(list), reads(parents), writes(buffer) {
+  doc "Appends one item in css-parsing-tests' representation: [\"qualified rule\", PRELUDE, BLOCK], [\"at-rule\", NAME, PRELUDE, BLOCK or null], [\"declaration\", NAME, VALUE, IMPORTANT] or [\"error\", \"invalid\"], each range as the array of the components it names, judged against parents, parent_table's table of list. Index is the item's position, which a fault names.";
   let separator = &item_separator[0_u64..item_separator.len];
   match item {
     QualifiedRule(prelude: rule_prelude, block: rule_block) => {
       let head = &head_qualified_rule[0_u64..head_qualified_rule.len];
       put_text(buffer: buffer, text: head);
-      let preluded = propagate put_range(buffer: buffer, list: list, range: rule_prelude, index: index);
+      let preluded = propagate put_range(buffer: buffer, list: list, parents: parents, range: rule_prelude, index: index);
       put_text(buffer: buffer, text: separator);
-      let blocked = propagate put_range(buffer: buffer, list: list, range: rule_block, index: index);
+      let blocked = propagate put_range(buffer: buffer, list: list, parents: parents, range: rule_block, index: index);
       put_byte(buffer: buffer, value: right_square_bracket);
     }
     AtRule(name: rule_name, prelude: rule_prelude, block: rule_block) => {
@@ -444,11 +452,11 @@ fn put_item(buffer: &Box<Slots<u8>>, list: &ComponentList, item: RuleItem, index
       put_text(buffer: buffer, text: head);
       let named = propagate put_name(buffer: buffer, list: list, name: rule_name, index: index);
       put_text(buffer: buffer, text: separator);
-      let preluded = propagate put_range(buffer: buffer, list: list, range: rule_prelude, index: index);
+      let preluded = propagate put_range(buffer: buffer, list: list, parents: parents, range: rule_prelude, index: index);
       put_text(buffer: buffer, text: separator);
       match rule_block {
         Some(value: contents) => {
-          let blocked = propagate put_range(buffer: buffer, list: list, range: contents, index: index);
+          let blocked = propagate put_range(buffer: buffer, list: list, parents: parents, range: contents, index: index);
         }
         None() => {
           let absent = &null_text[0_u64..null_text.len];
@@ -462,7 +470,7 @@ fn put_item(buffer: &Box<Slots<u8>>, list: &ComponentList, item: RuleItem, index
       put_text(buffer: buffer, text: head);
       let named = propagate put_name(buffer: buffer, list: list, name: rule_name, index: index);
       put_text(buffer: buffer, text: separator);
-      let valued = propagate put_range(buffer: buffer, list: list, range: rule_value, index: index);
+      let valued = propagate put_range(buffer: buffer, list: list, parents: parents, range: rule_value, index: index);
       put_text(buffer: buffer, text: separator);
       if rule_important {
         let flag = &true_text[0_u64..true_text.len];
@@ -491,13 +499,13 @@ fn put_name(buffer: &Box<Slots<u8>>, list: &ComponentList, name: Span, index: u6
   return Err<unit, RuleFault>(error: fault);
 }
 
-fn put_range(buffer: &Box<Slots<u8>>, list: &ComponentList, range: ComponentRange, index: u64) -> result: Result<unit, RuleFault> reads(list), writes(buffer) {
-  doc "Appends the components that range names as one JSON array. A range that is not a run of siblings of list is the fault InvalidRange of the item at index, and a fault of a component inside it is the fault Printing.";
+fn put_range(buffer: &Box<Slots<u8>>, list: &ComponentList, parents: &[u64], range: ComponentRange, index: u64) -> result: Result<unit, RuleFault> reads(list), reads(parents), writes(buffer) {
+  doc "Appends the components that range names as one JSON array. A range that is not a run of siblings of list, as range_is_siblings judges it against parents, parent_table's table of list, is the fault InvalidRange of the item at index, and a fault of a component inside it is the fault Printing.";
   let count = list^.components.inner.len;
   let components = &list^.components.inner[0_u64..count];
   let first = cvt::<u32, u64>(range.start);
   let last = cvt::<u32, u64>(range.end);
-  let siblings = range_is_siblings(components: components, start: first, end: last);
+  let siblings = range_is_siblings(components: components, parents: parents, start: first, end: last);
   if siblings {
   } else {
     let fault = RuleFault::InvalidRange(item: index, start: range.start, end: range.end);
@@ -514,8 +522,110 @@ fn put_range(buffer: &Box<Slots<u8>>, list: &ComponentList, range: ComponentRang
   }
 }
 
-fn range_is_siblings(components: &[Component], start: u64, end: u64) -> result: Bool reads(components) {
-  doc "Returns whether start to end names a run of siblings with their contents: start at most end, end at most the component count, and, for a nonempty run, start the index of a component whose parent Function or block, or the top level, also holds every component the walk from start reaches by stepping over contents, the walk landing exactly on end. A Function or block whose end index does not lie after it and within its parent makes every run that reaches it invalid.";
+fn parent_table(components: &[Component]) -> table: Box<Slots<u64>> reads(components) contract {
+  requires components^.len <= 4294967295_u64;
+} {
+  doc "Returns, in one pass over components in order, the index of each component's innermost enclosing Function or block, or top_level for a component at the top level. A Function or block whose end index does not lie after it and within its parent is invalid, and it and every later component inside that parent get blocked_start, since every nonempty run that starts there reaches it; components inside a Function or block that a run steps over are never reached, so an invalid one among them blocks only its own parent's remainder.";
+  let count = components^.len;
+  let table = box_slots_new::<u64>(capacity: count);
+  let container = top_level;
+  let limit = count;
+  let at = 0_u64;
+  loop @walk {
+    loop @close {
+      let closing = at == limit;
+      let nested = container != top_level;
+      let finished = band(closing, nested);
+      if finished {
+      } else {
+        break @close;
+      }
+      set container = parent_of(table: &table, index: container);
+      set limit = enclosing_limit(components: components, parent: container);
+    }
+    let more = at < count;
+    if more {
+    } else {
+      break @walk;
+    }
+    let component = components^[at];
+    let next = at +wrap 1_u64;
+    match nested_end(component: component) {
+      Some(value: written_end) => {
+        let closing = cvt::<u32, u64>(written_end);
+        let after = closing >= next;
+        let enclosed = closing <= limit;
+        let valid = band(after, enclosed);
+        if valid {
+          place_parent(table: &table, parent: container);
+          set container = at;
+          set limit = closing;
+          set at = next;
+        } else {
+          loop @block {
+            let inside = at < limit;
+            if inside {
+            } else {
+              break @block;
+            }
+            place_parent(table: &table, parent: blocked_start);
+            set at = at +wrap 1_u64;
+          }
+        }
+      }
+      None() => {
+        place_parent(table: &table, parent: container);
+        set at = next;
+      }
+    }
+  }
+  return move table;
+}
+
+fn place_parent(table: &Box<Slots<u64>>, parent: u64) -> result: unit writes(table) {
+  doc "Appends parent to table when it has room; parent_table sizes table to hold one entry per component, so it always has.";
+  let room = table^.inner.len < table^.inner.cap;
+  if room {
+    place_back(window: &table^.inner, value: parent);
+  }
+  return unit;
+}
+
+fn parent_of(table: &Box<Slots<u64>>, index: u64) -> result: u64 reads(table) {
+  doc "Returns the entry of table at index, which parent_table has already placed for every Function or block it enters, or top_level past the entries placed.";
+  let placed = index < table^.inner.len;
+  if placed {
+    return table^.inner[index];
+  }
+  return top_level;
+}
+
+fn enclosing_limit(components: &[Component], parent: u64) -> result: u64 reads(components) {
+  doc "Returns the index after the last component that parent holds: the component count for top_level, the end index of the Function or block at parent, and 0 for blocked_start or any other index, which holds nothing.";
+  let count = components^.len;
+  let top = parent == top_level;
+  if top {
+    return count;
+  }
+  let present = parent < count;
+  if present {
+  } else {
+    return 0_u64;
+  }
+  let component = components^[parent];
+  match nested_end(component: component) {
+    Some(value: written_end) => {
+      let closing = cvt::<u32, u64>(written_end);
+      return closing;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn range_is_siblings(components: &[Component], parents: &[u64], start: u64, end: u64) -> result: Bool reads(components), reads(parents) {
+  doc "Returns whether start to end names a run of siblings with their contents: start at most end, end at most the component count, and, for a nonempty run, end at most the end of start's parent in parents, the table parent_table computes, with every component the walk from start reaches by stepping over contents inside that parent, the walk landing exactly on end. A Function or block whose end index does not lie after it and within its parent makes every run that reaches it invalid: parent_table blocks every start after it inside its parent, and the walk refuses it when a run steps onto it. The walk is linear in the length of the run.";
   let count = components^.len;
   let ordered = start <= end;
   let inside = end <= count;
@@ -528,49 +638,19 @@ fn range_is_siblings(components: &[Component], start: u64, end: u64) -> result: 
   if empty {
     return True();
   }
-  let at = 0_u64;
-  let limit = count;
-  loop @descend {
-    let reached = at == start;
-    if reached {
-      break @descend;
-    }
-    let before = at < start;
-    let present = at < count;
-    let walkable = band(before, present);
-    if walkable {
-    } else {
-      return False();
-    }
-    let component = components^[at];
-    let next = at +wrap 1_u64;
-    match nested_end(component: component) {
-      Some(value: written_end) => {
-        let closing = cvt::<u32, u64>(written_end);
-        let after = closing >= next;
-        let enclosed = closing <= limit;
-        let valid = band(after, enclosed);
-        if valid {
-        } else {
-          return False();
-        }
-        let contains = start < closing;
-        if contains {
-          set limit = closing;
-        } else {
-          set next = closing;
-        }
-      }
-      None() => {
-      }
-    }
-    set at = next;
+  let listed = start < parents^.len;
+  if listed {
+  } else {
+    return False();
   }
+  let parent = parents^[start];
+  let limit = enclosing_limit(components: components, parent: parent);
   let within = end <= limit;
   if within {
   } else {
     return False();
   }
+  let at = start;
   loop @siblings {
     let finished = at == end;
     if finished {
