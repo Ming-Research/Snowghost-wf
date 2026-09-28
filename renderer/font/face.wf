@@ -65,12 +65,50 @@ fn load_face(data: &[u8]) -> result: Result<Face, FontError> reads(data) contrac
   let (cmap_start, cmap_end) = span_bounds(span: cmap_span, length: length);
   let cmap = &data^[cmap_start..cmap_end];
   let characters = propagate compile_character_map(cmap: cmap, glyph_count: glyph_count);
-  let definitions = no_glyph_definitions(glyph_count: glyph_count);
+  let definitions = propagate optional_definitions(data: data, glyph_count: glyph_count);
   let substitutions = empty_layout();
   let positions = empty_layout();
   let metrics = FaceMetrics(units_per_em: units_per_em, glyph_count: glyph_total, hhea_ascender: horizontal.ascender, hhea_descender: horizontal.descender, hhea_line_gap: horizontal.line_gap, typo_ascender: windows.typo_ascender, typo_descender: windows.typo_descender, typo_line_gap: windows.typo_line_gap, use_typo_metrics: windows.use_typo_metrics, win_ascent: windows.win_ascent, win_descent: windows.win_descent);
   let face = Face(metrics: metrics, advances: move advances, characters: move characters, definitions: move definitions, substitutions: move substitutions, positions: move positions);
   return Ok<Face, FontError>(value: move face);
+}
+
+fn optional_definitions(data: &[u8], glyph_count: u64) -> result: Result<GlyphDefinitions, FontError> reads(data) contract {
+  requires glyph_count <= 65535_u64;
+  requires data^.len <= 268435456_u64;
+} {
+  doc "Compiles GDEF when the font has it and it passes its checks, and otherwise returns the definitions of a face without GDEF. TooLarge from compiling it refuses the font.";
+  let span = propagate find_table(data: data, name: &gdef_name);
+  if span.present {
+    let (start, end) = span_bounds(span: span, length: data^.len);
+    let gdef = &data^[start..end];
+    match compile_definitions(gdef: gdef, glyph_count: glyph_count) {
+      Ok(value: compiled) => {
+        return Ok<GlyphDefinitions, FontError>(value: move compiled);
+      }
+      Err(error: problem) => {
+        let dropped = propagate droppable(problem: problem);
+      }
+    }
+  }
+  let absent = no_glyph_definitions(glyph_count: glyph_count);
+  return Ok<GlyphDefinitions, FontError>(value: move absent);
+}
+
+fn droppable(problem: FontError) -> result: Result<unit, FontError> pure {
+  doc "Tells what a failure to compile GDEF, GSUB or GPOS does: Ok for Invalid (and Unsupported, which those checks never return), so the table is dropped, and TooLarge passed on, so the font is refused.";
+  match problem {
+    Invalid() => {
+      return Ok<unit, FontError>(value: unit);
+    }
+    Unsupported() => {
+      return Ok<unit, FontError>(value: unit);
+    }
+    TooLarge() => {
+      let refusal = FontError::TooLarge();
+      return Err<unit, FontError>(error: refusal);
+    }
+  }
 }
 
 fn required_table(data: &[u8], name: &Array<u8, 4>) -> result: Result<TableSpan, FontError> reads(data), reads(name) {
