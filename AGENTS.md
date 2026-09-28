@@ -1,10 +1,11 @@
 # Snowghost — agent instructions
 
 Snowghost is a cross-platform renderer for user interfaces built with web
-technology. It implements a chosen subset of the web platform in Whitefoot,
-with a rendering pipeline meant to be parallel and incremental from end to
-end. Whitefoot, the language and its compiler, is pinned as the `whitefoot/`
-submodule.
+technology. Its renderer implements a chosen subset of the web platform in
+Whitefoot, with a pipeline meant to be parallel and incremental from end to
+end, and a shell written in Rust hosts it on each operating system (the
+`processes` decision in `design/`). Whitefoot, the language and its compiler,
+is pinned as the `whitefoot/` submodule.
 
 ## Project goal
 
@@ -99,11 +100,12 @@ them.
 
 - The owner and the primary agent own the architecture: the design tree, the
   module graph and the Whitefoot module interfaces (`.wfm`), with their
-  contracts and effect rows.
-- Implementer agents write module bodies (`.wf`) against those interfaces, in
-  parallel. An implementer that finds an interface insufficient reports the
-  gap to the primary agent with a minimal example instead of editing the
-  interface.
+  contracts and effect rows, and the format the renderer and the shell
+  exchange.
+- Implementer agents write module bodies (`.wf`) against those interfaces,
+  and the shell's Rust components against that format, in parallel. An
+  implementer that finds an interface or the format insufficient reports the
+  gap to the primary agent with a minimal example instead of editing it.
 - A separate reviewer agent that did not implement a change reviews it under
   the completion-review skill.
 - The primary agent dispatches and supervises implementer and reviewer agents
