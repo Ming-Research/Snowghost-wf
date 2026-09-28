@@ -38,17 +38,57 @@ fn current_entry(state: &State) -> found: Option<StackEntry> reads(state) {
   return None<StackEntry>();
 }
 
+fn is_html_p(elem: StackEntry) -> result: Bool pure {
+  doc "Tells whether elem is an HTML p element, the elements open_p_count counts.";
+  let html = ns_is_html(namespace: elem.namespace);
+  let p = a_is(atom: elem.local_name, id: atom_p);
+  return band(html, p);
+}
+
+fn count_p_added(state: &State, elem: StackEntry) -> result: unit writes(state) {
+  doc "Counts elem in open_p_count when it is an HTML p element, after it has been put on the stack of open elements. push_open, pop_open, set_open_at, remove_open_at and insert_open_at are the only functions that change the stack, and each calls this or count_p_removed for every entry it puts on or takes off, so open_p_count is the number of HTML p elements on the stack.";
+  let p = is_html_p(elem: elem);
+  if p {
+    set state^.open_p_count = state^.open_p_count +sat 1_u64;
+  }
+  return unit;
+}
+
+fn count_p_removed(state: &State, elem: StackEntry) -> result: unit writes(state) {
+  doc "Uncounts elem from open_p_count when it is an HTML p element, after it has been taken off the stack of open elements (count_p_added).";
+  let p = is_html_p(elem: elem);
+  if p {
+    let count = state^.open_p_count;
+    if count > 0_u64 {
+      set state^.open_p_count = count - 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn has_p_in_button_scope(state: &State, kw: &Keywords) -> result: Bool reads(state), reads(kw) {
+  doc "13.2.4.2: tells whether the stack of open elements has an HTML p element in button scope. With no HTML p element on the stack (open_p_count is 0) the answer is no without a scan, which keeps the block-level start tags that close a p linear in the stack's depth rather than scanning the whole stack each time.";
+  if state^.open_p_count == 0_u64 {
+    return False();
+  }
+  let button_kind = ScopeKind::Button();
+  let out = has_html_tag_in_scope(state: state, kw: kw, target_name: atom_p, kind: button_kind);
+  return out;
+}
+
 fn push_open(state: &State, elem: StackEntry) -> result: Result<unit, TreeError> writes(state) {
-  doc "Pushes elem onto the stack of open elements, growing its backing within stack_ceiling.";
+  doc "Pushes elem onto the stack of open elements, growing its backing within stack_ceiling, and counts it in open_p_count.";
   let pushed = propagate push_generic::<StackEntry>(cell: &state^.open_elements, value: elem, ceiling: stack_ceiling);
+  count_p_added(state: state, elem: elem);
   return Ok<unit, TreeError>(value: unit);
 }
 
 fn pop_open(state: &State) -> result: unit writes(state) contract {
   requires state^.open_elements.inner.len > 0_u64;
 } {
-  doc "Pops the current node off the stack of open elements.";
+  doc "Pops the current node off the stack of open elements and uncounts it from open_p_count.";
   let dropped = take_back(window: &state^.open_elements.inner);
+  count_p_removed(state: state, elem: dropped);
   return unit;
 }
 
@@ -110,23 +150,27 @@ fn stack_index_of_node(state: &State, target: NodeId) -> found: Option<u64> read
 fn set_open_at(state: &State, index: u64, elem: StackEntry) -> result: unit writes(state) contract {
   requires index < state^.open_elements.inner.len;
 } {
-  doc "Replaces the stack elem at index with elem, keeping every other elem in place.";
+  doc "Replaces the stack elem at index with elem, keeping every other elem in place, and moves open_p_count from the old elem to the new.";
+  let old = state^.open_elements.inner[index];
   set state^.open_elements.inner[index] = elem;
+  count_p_removed(state: state, elem: old);
+  count_p_added(state: state, elem: elem);
   return unit;
 }
 
 fn remove_open_at(state: &State, index: u64) -> result: StackEntry writes(state) contract {
   requires index < state^.open_elements.inner.len;
 } {
-  doc "Removes and returns the stack elem at index, shifting every later elem down by one.";
+  doc "Removes and returns the stack elem at index, shifting every later elem down by one, and uncounts it from open_p_count.";
   let removed = remove_at(window: &state^.open_elements.inner, index: index);
+  count_p_removed(state: state, elem: removed);
   return removed;
 }
 
 fn insert_open_at(state: &State, index: u64, elem: StackEntry) -> result: Result<unit, TreeError> writes(state) contract {
   requires index <= state^.open_elements.inner.len;
 } {
-  doc "Inserts elem at index, shifting elem and every later one up by one (immediately below the element that was at index).";
+  doc "Inserts elem at index, shifting elem and every later one up by one (immediately below the element that was at index), and counts it in open_p_count.";
   let length = state^.open_elements.inner.len;
   let capacity = state^.open_elements.inner.cap;
   let full = length >= capacity;
@@ -163,6 +207,7 @@ fn insert_open_at(state: &State, index: u64, elem: StackEntry) -> result: Result
   let ok = band(index_ok, cap_ok);
   if ok {
     insert_at(window: &state^.open_elements.inner, index: index, value: elem);
+    count_p_added(state: state, elem: elem);
     return Ok<unit, TreeError>(value: unit);
   }
   let too_large2 = TreeError::TooLarge();
