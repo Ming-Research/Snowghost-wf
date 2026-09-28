@@ -12,32 +12,6 @@ pipeline that is parallel and incremental from end to end: a change to one
 element reruns only the stages and the parts of the page it affects, and the
 independent parts of every stage run on all cores.
 
-## Status
-
-Design. Nothing renders yet; the architecture is being worked out, and its
-decisions are recorded in the design tree under `design/`.
-
-## Layout
-
-- `design/`: the decisions Snowghost is built on, each with its reason and
-  its refused alternatives, and the procedure that maintains them.
-- `docs/`: the agent procedures, the completion review checklist and the list
-  of known defects and follow-up work.
-- `whitefoot/`: the Whitefoot language and compiler, pinned as a git
-  submodule at the revision Snowghost builds with.
-
-## Build and check
-
-You need git, Rust stable (at least the `rust-version` in
-`whitefoot/compiler/Cargo.toml`) and Python 3.
-
-    git clone --recurse-submodules https://github.com/mbbill/Snowghost
-    cd Snowghost
-    make check
-
-`make check` builds the pinned Whitefoot compiler and runs every Snowghost
-check.
-
 ## License
 
 MIT; see [LICENSE](LICENSE).
