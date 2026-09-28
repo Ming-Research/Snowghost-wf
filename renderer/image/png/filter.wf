@@ -1,0 +1,116 @@
+fn paeth_predictor(a: u8, b: u8, c: u8) -> result: u8 pure {
+  doc "The PNG Paeth predictor: picks whichever of a, b, c lies closest to a + b - c.";
+  let aa = cvt::<u8, i32>(a);
+  let bb = cvt::<u8, i32>(b);
+  let cc = cvt::<u8, i32>(c);
+  let ab = aa +wrap bb;
+  let p = ab -wrap cc;
+  let pa_raw = p -wrap aa;
+  let pb_raw = p -wrap bb;
+  let pc_raw = p -wrap cc;
+  let pa = iabs.wrap(pa_raw);
+  let pb = iabs.wrap(pb_raw);
+  let pc = iabs.wrap(pc_raw);
+  let a_le_b = pa <= pb;
+  let a_le_c = pa <= pc;
+  let a_best = band(a_le_b, a_le_c);
+  if a_best {
+    return a;
+  }
+  let b_le_c = pb <= pc;
+  if b_le_c {
+    return b;
+  }
+  return c;
+}
+
+fn unfilter_row(filter_type: u8, bpp: u64, payload: &[u8], prev: &[u8], cur: &[u8]) -> result: Result<unit, PngError> reads(payload), reads(prev), writes(cur) {
+  doc "Reconstructs one scanline in place into cur from its filtered payload bytes, using the already-reconstructed previous row prev, per the PNG filtering rules.";
+  let width_bytes = payload^.len;
+  let cur_room = cur^.len;
+  let size_ok = cur_room == width_bytes;
+  if size_ok {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let is_none = filter_type == 0_u8;
+  let is_sub = filter_type == 1_u8;
+  let is_up = filter_type == 2_u8;
+  let is_average = filter_type == 3_u8;
+  let is_paeth = filter_type == 4_u8;
+  let is_known_a = bor(is_none, is_sub);
+  let is_known_b = bor(is_up, is_average);
+  let is_known_c = bor(is_known_a, is_known_b);
+  let is_known = bor(is_known_c, is_paeth);
+  if is_known {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let x = 0_u64;
+  loop @unfilter {
+    let payload_room = payload^.len;
+    let inside = x < payload_room;
+    if inside {
+    } else {
+      break @unfilter;
+    }
+    let filt = payload^[x];
+    let has_left = x >= bpp;
+    let left_index = 0_u64;
+    if has_left {
+      set left_index = x -wrap bpp;
+    }
+    let a = 0_u8;
+    if has_left {
+      let cur_room_a = cur^.len;
+      let left_ok = left_index < cur_room_a;
+      if left_ok {
+        set a = cur^[left_index];
+      }
+    }
+    let prev_room = prev^.len;
+    let b = 0_u8;
+    let up_ok = x < prev_room;
+    if up_ok {
+      set b = prev^[x];
+    }
+    let c = 0_u8;
+    if has_left {
+      let prev_room_c = prev^.len;
+      let up_left_ok = left_index < prev_room_c;
+      if up_left_ok {
+        set c = prev^[left_index];
+      }
+    }
+    let recon = filt;
+    if is_none {
+      set recon = filt;
+    } else if is_sub {
+      set recon = filt +wrap a;
+    } else if is_up {
+      set recon = filt +wrap b;
+    } else if is_average {
+      let aw = cvt::<u8, u32>(a);
+      let bw = cvt::<u8, u32>(b);
+      let sum = aw +wrap bw;
+      let avg32 = sum / 2_u32;
+      let avg = cvt.wrap::<u32, u8>(avg32);
+      set recon = filt +wrap avg;
+    } else {
+      let predicted = paeth_predictor(a: a, b: b, c: c);
+      set recon = filt +wrap predicted;
+    }
+    let cur_room_w = cur^.len;
+    let write_ok = x < cur_room_w;
+    if write_ok {
+      set cur^[x] = recon;
+    } else {
+      let error = PngError::Malformed();
+      return Err<unit, PngError>(error: error);
+    }
+    set x = x +wrap 1_u64;
+  }
+  return Ok<unit, PngError>(value: unit);
+}

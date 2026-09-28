@@ -1,0 +1,120 @@
+fn channel_count(color_type: u8) -> result: u64 pure {
+  doc "Returns the sample channel count for a validated PNG color type: 1 for grayscale or palette, 2 for grayscale+alpha, 3 for truecolor, 4 for truecolor+alpha.";
+  let is_gray = color_type == 0_u8;
+  if is_gray {
+    return 1_u64;
+  }
+  let is_rgb = color_type == 2_u8;
+  if is_rgb {
+    return 3_u64;
+  }
+  let is_palette = color_type == 3_u8;
+  if is_palette {
+    return 1_u64;
+  }
+  let is_gray_alpha = color_type == 4_u8;
+  if is_gray_alpha {
+    return 2_u64;
+  }
+  return 4_u64;
+}
+
+fn bits_per_pixel(color_type: u8, bit_depth: u8) -> result: u64 pure {
+  doc "Returns channels(color_type) * bit_depth.";
+  let channels = channel_count(color_type: color_type);
+  let depth = cvt::<u8, u64>(bit_depth);
+  return channels *wrap depth;
+}
+
+fn row_payload_bytes(bpp_bits: u64, width: u64) -> result: u64 pure {
+  doc "Returns ceil(bpp_bits * width / 8), the packed byte count of one scanline without its filter-type byte.";
+  let bits = bpp_bits *wrap width;
+  let padded = bits +wrap 7_u64;
+  return padded / 8_u64;
+}
+
+fn bytes_per_complete_pixel(bpp_bits: u64) -> result: u64 pure {
+  doc "Returns the PNG filtering bpp: ceil(bpp_bits / 8), never below 1.";
+  let padded = bpp_bits +wrap 7_u64;
+  return padded / 8_u64;
+}
+
+fn adam7_geometry(pass: u64) -> (start_x: u64, start_y: u64, step_x: u64, step_y: u64) pure {
+  doc "Returns the starting column, starting row, column step and row step of Adam7 pass (0-based, 0..6).";
+  let is0 = pass == 0_u64;
+  if is0 {
+    return 0_u64, 0_u64, 8_u64, 8_u64;
+  }
+  let is1 = pass == 1_u64;
+  if is1 {
+    return 4_u64, 0_u64, 8_u64, 8_u64;
+  }
+  let is2 = pass == 2_u64;
+  if is2 {
+    return 0_u64, 4_u64, 4_u64, 8_u64;
+  }
+  let is3 = pass == 3_u64;
+  if is3 {
+    return 2_u64, 0_u64, 4_u64, 4_u64;
+  }
+  let is4 = pass == 4_u64;
+  if is4 {
+    return 0_u64, 2_u64, 2_u64, 4_u64;
+  }
+  let is5 = pass == 5_u64;
+  if is5 {
+    return 1_u64, 0_u64, 2_u64, 2_u64;
+  }
+  return 0_u64, 1_u64, 1_u64, 2_u64;
+}
+
+fn pass_dimension(size: u64, start: u64, step: u64) -> result: u64 pure {
+  doc "Returns the count of positions start, start+step, start+2*step, ... below size; 0 when start is already at or past size.";
+  let has_any = start < size;
+  if has_any {
+  } else {
+    return 0_u64;
+  }
+  let step_ok = step > 0_u64;
+  if step_ok {
+  } else {
+    return 0_u64;
+  }
+  let span = size -wrap start;
+  let numerator = span +wrap step;
+  let numerator_minus_one = numerator -wrap 1_u64;
+  return numerator_minus_one / step;
+}
+
+fn raw_size_noninterlaced(bpp_bits: u64, width: u64, height: u64) -> result: u64 pure {
+  doc "Returns the total filtered byte count of a non-interlaced image: height rows of one filter-type byte plus the packed payload.";
+  let payload = row_payload_bytes(bpp_bits: bpp_bits, width: width);
+  let row_len = payload +wrap 1_u64;
+  return row_len *wrap height;
+}
+
+fn raw_size_interlaced(bpp_bits: u64, width: u64, height: u64) -> result: u64 pure {
+  doc "Returns the total filtered byte count of an Adam7-interlaced image: the sum, over its seven passes, of that pass's rows times its row length; a pass with no pixels contributes nothing.";
+  let total = 0_u64;
+  let pass = 0_u64;
+  loop @passes {
+    let done = pass == 7_u64;
+    if done {
+      break @passes;
+    }
+    let (start_x, start_y, step_x, step_y) = adam7_geometry(pass: pass);
+    let pass_width = pass_dimension(size: width, start: start_x, step: step_x);
+    let pass_height = pass_dimension(size: height, start: start_y, step: step_y);
+    let has_width = pass_width > 0_u64;
+    let has_height = pass_height > 0_u64;
+    let has_pixels = band(has_width, has_height);
+    if has_pixels {
+      let payload = row_payload_bytes(bpp_bits: bpp_bits, width: pass_width);
+      let row_len = payload +wrap 1_u64;
+      let pass_total = row_len *wrap pass_height;
+      set total = total +wrap pass_total;
+    }
+    set pass = pass +wrap 1_u64;
+  }
+  return total;
+}

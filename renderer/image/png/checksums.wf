@@ -1,0 +1,94 @@
+fn crc32_table() -> table: Array<u32, 256> pure {
+  doc "Builds the standard CRC-32 (polynomial 0xEDB88320) lookup table PNG chunk checksums use.";
+  let table = array_filled::<u32, 256>(value: 0_u32);
+  for (index in 0_u64..256_u64) {
+    let value = cvt.wrap::<u64, u32>(index);
+    for (bit in 0_u64..8_u64) {
+      let low_bit = iand(value, 1_u32);
+      let shifted = ishr.wrap(value, 1_u32);
+      let low_bit_set = low_bit == 1_u32;
+      if low_bit_set {
+        set value = ixor(shifted, 3988292384_u32);
+      } else {
+        set value = shifted;
+      }
+    }
+    set table[index] = value;
+  }
+  return table;
+}
+
+fn crc32_update(table: &Array<u32, 256>, crc: u32, byte: u8) -> result: u32 reads(table) {
+  doc "Folds one byte into a running CRC-32 using the precomputed table.";
+  let byte_word = cvt::<u8, u32>(byte);
+  let mixed = ixor(crc, byte_word);
+  let low = iand(mixed, 255_u32);
+  let index = cvt::<u32, u64>(low);
+  let inside = index < 256_u64;
+  let table_value = 0_u32;
+  if inside {
+    set table_value = table^[index];
+  }
+  let shifted = ishr.wrap(crc, 8_u32);
+  return ixor(shifted, table_value);
+}
+
+fn crc32_range(table: &Array<u32, 256>, data: &[u8], start: u64, end: u64) -> result: u32 reads(table), reads(data) {
+  doc "Computes the CRC-32 of data from start to end, seeded with the initial value 0xFFFFFFFF and complemented at the end, as PNG chunk checksums require.";
+  let length = data^.len;
+  let crc = 4294967295_u32;
+  let at = start;
+  loop @crc_bytes {
+    let done = at == end;
+    if done {
+      break @crc_bytes;
+    }
+    let inside = at < length;
+    if inside {
+    } else {
+      break @crc_bytes;
+    }
+    let byte = data^[at];
+    set crc = crc32_update(table: table, crc: crc, byte: byte);
+    set at = at +wrap 1_u64;
+  }
+  return ixor(crc, 4294967295_u32);
+}
+
+fn adler32(data: &[u8], start: u64, end: u64) -> result: u32 reads(data) {
+  doc "Computes the RFC 1950 Adler-32 checksum of data from start to end, reducing modulo 65521 every 5552 bytes to keep the running sums small.";
+  let length = data^.len;
+  let sum_a = 1_u64;
+  let sum_b = 0_u64;
+  let at = start;
+  let block_count = 0_u64;
+  loop @adler_bytes {
+    let done = at == end;
+    if done {
+      break @adler_bytes;
+    }
+    let inside = at < length;
+    if inside {
+    } else {
+      break @adler_bytes;
+    }
+    let byte = data^[at];
+    let widened = cvt::<u8, u64>(byte);
+    set sum_a = sum_a +wrap widened;
+    set sum_b = sum_b +wrap sum_a;
+    set at = at +wrap 1_u64;
+    set block_count = block_count +wrap 1_u64;
+    let reduce = block_count == 5552_u64;
+    if reduce {
+      set sum_a = sum_a % 65521_u64;
+      set sum_b = sum_b % 65521_u64;
+      set block_count = 0_u64;
+    }
+  }
+  set sum_a = sum_a % 65521_u64;
+  set sum_b = sum_b % 65521_u64;
+  let a32 = cvt.wrap::<u64, u32>(sum_a);
+  let b32 = cvt.wrap::<u64, u32>(sum_b);
+  let shifted = ishl.wrap(b32, 16_u32);
+  return ior(shifted, a32);
+}
