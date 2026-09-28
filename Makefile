@@ -35,9 +35,13 @@ BUILD := $(ROOT)/build
 ORACLE := $(BUILD)/oracle
 
 # Checks every renderer module against its interface; a module whose
-# functions are declared but not yet written passes as pending.
+# functions are declared but not yet written passes as pending. Each module
+# is checked alone because --check-modules also composes every entry, and an
+# entry cannot compose while a module it calls is pending.
+RENDERER_MODULES = $(shell sed -n 's/^\(pkg[a-z_:]*\):.*/\1/p' $(ROOT)/renderer/modules.wfg)
 renderer: compiler
-	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --check-modules
+	@cd $(ROOT)/renderer && for module in $(RENDERER_MODULES); do \
+		$(WHITEFOOTC) --graph modules.wfg --check-module $$module || exit 1; done
 
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
