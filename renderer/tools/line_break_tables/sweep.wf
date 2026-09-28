@@ -1,0 +1,107 @@
+const class_capacity: u64 = 20000_u64;
+
+const toggle_capacity: u64 = 2048_u64;
+
+const no_class_yet: u8 = 255_u8;
+
+struct SweepResult {
+  class_starts: Box<Slots<u32>>;
+  class_values: Box<Slots<u8>>;
+  wide_starts: Box<Slots<u32>>;
+  pict_cn_starts: Box<Slots<u32>>;
+}
+
+fn ranges_cover(ranges: &BoolRanges, cursor: u64, cp: u32) -> (hit: Bool, next_cursor: u64) reads(ranges) {
+  doc "Advances cursor over ranges (ascending, non-overlapping) to the first range whose end is at or after cp, and reports whether that range covers cp.";
+  let ends_len = ranges^.ends.inner.len;
+  let starts_len = ranges^.starts.inner.len;
+  let ends = &ranges^.ends.inner[0_u64..ends_len];
+  let starts = &ranges^.starts.inner[0_u64..starts_len];
+  let advanced = advance_cursor(ends: ends, cursor: cursor, cp: cp);
+  let hit = cursor_covers(starts: starts, cursor: advanced, cp: cp);
+  return hit, advanced;
+}
+
+fn sweep_tables(lb: &LbRanges, cn: &BoolRanges, mn: &BoolRanges, mc: &BoolRanges, pi: &BoolRanges, pf: &BoolRanges, wide: &BoolRanges, pict: &BoolRanges) -> result: SweepResult reads(lb), reads(cn), reads(mn), reads(mc), reads(pi), reads(pf), reads(wide), reads(pict) {
+  doc "Sweeps every code point 0 through 0x10FFFF in order, resolving its runtime line-break class (raw_lb_class then resolve_lb), its East_Asian_Width wideness, and whether it is Cn intersected with Extended_Pictographic, then run-length-compresses each of the three into the tables the runtime module and LB30b's helper read by binary search or toggle-count.";
+  let class_starts = box_slots_new::<u32>(capacity: class_capacity);
+  let class_values = box_slots_new::<u8>(capacity: class_capacity);
+  let wide_starts = box_slots_new::<u32>(capacity: toggle_capacity);
+  let pict_cn_starts = box_slots_new::<u32>(capacity: toggle_capacity);
+  let lb_cursor = 0_u64;
+  let cn_cursor = 0_u64;
+  let mn_cursor = 0_u64;
+  let mc_cursor = 0_u64;
+  let pi_cursor = 0_u64;
+  let pf_cursor = 0_u64;
+  let wide_cursor = 0_u64;
+  let pict_cursor = 0_u64;
+  let previous_class = no_class_yet;
+  let previous_wide = False();
+  let previous_pict_cn = False();
+  for (cp64 in 0_u64..sweep_ceiling) {
+    let cp32 = cvt::<u64, u32>(cp64);
+    let lb_ends_len = lb^.ends.inner.len;
+    let lb_starts_len = lb^.starts.inner.len;
+    let lb_ends = &lb^.ends.inner[0_u64..lb_ends_len];
+    let lb_starts = &lb^.starts.inner[0_u64..lb_starts_len];
+    set lb_cursor = advance_cursor(ends: lb_ends, cursor: lb_cursor, cp: cp32);
+    let lb_hit = cursor_covers(starts: lb_starts, cursor: lb_cursor, cp: cp32);
+    let lb_values_len = lb^.values.inner.len;
+    let lb_cursor_in_values = lb_cursor < lb_values_len;
+    let lb_value_hit = band(lb_hit, lb_cursor_in_values);
+    let raw_class = if lb_value_hit {
+      let value = lb^.values.inner[lb_cursor];
+      give value;
+    } else {
+      give 46_u8;
+    }
+    let (hit_cn, next_cn) = ranges_cover(ranges: cn, cursor: cn_cursor, cp: cp32);
+    set cn_cursor = next_cn;
+    let (hit_mn, next_mn) = ranges_cover(ranges: mn, cursor: mn_cursor, cp: cp32);
+    set mn_cursor = next_mn;
+    let (hit_mc, next_mc) = ranges_cover(ranges: mc, cursor: mc_cursor, cp: cp32);
+    set mc_cursor = next_mc;
+    let (hit_pi, next_pi) = ranges_cover(ranges: pi, cursor: pi_cursor, cp: cp32);
+    set pi_cursor = next_pi;
+    let (hit_pf, next_pf) = ranges_cover(ranges: pf, cursor: pf_cursor, cp: cp32);
+    set pf_cursor = next_pf;
+    let is_mark = bor(hit_mn, hit_mc);
+    let resolved = resolve_lb(raw: raw_class, is_pi: hit_pi, is_pf: hit_pf, is_mark: is_mark);
+    let (hit_wide, next_wide) = ranges_cover(ranges: wide, cursor: wide_cursor, cp: cp32);
+    set wide_cursor = next_wide;
+    let (hit_pict, next_pict) = ranges_cover(ranges: pict, cursor: pict_cursor, cp: cp32);
+    set pict_cursor = next_pict;
+    let is_pict_cn = band(hit_pict, hit_cn);
+    let class_changed = resolved != previous_class;
+    if class_changed {
+      let room_starts = class_starts.inner.len < class_starts.inner.cap;
+      let room_values = class_values.inner.len < class_values.inner.cap;
+      if room_starts {
+        if room_values {
+          place_back(window: &class_starts.inner, value: cp32);
+          place_back(window: &class_values.inner, value: resolved);
+        }
+      }
+      set previous_class = resolved;
+    }
+    let wide_changed = ene(hit_wide, previous_wide);
+    if wide_changed {
+      let room = wide_starts.inner.len < wide_starts.inner.cap;
+      if room {
+        place_back(window: &wide_starts.inner, value: cp32);
+      }
+      set previous_wide = hit_wide;
+    }
+    let pict_cn_changed = ene(is_pict_cn, previous_pict_cn);
+    if pict_cn_changed {
+      let room = pict_cn_starts.inner.len < pict_cn_starts.inner.cap;
+      if room {
+        place_back(window: &pict_cn_starts.inner, value: cp32);
+      }
+      set previous_pict_cn = is_pict_cn;
+    }
+  }
+  let made = SweepResult(class_starts: move class_starts, class_values: move class_values, wide_starts: move wide_starts, pict_cn_starts: move pict_cn_starts);
+  return move made;
+}
