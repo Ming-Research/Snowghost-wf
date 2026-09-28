@@ -1,0 +1,192 @@
+const text_ceiling: u64 = 1073741824_u64;
+
+const attribute_ceiling: u64 = 268435456_u64;
+
+const text_initial_capacity: u64 = 256_u64;
+
+const attribute_initial_capacity: u64 = 16_u64;
+
+fn bytes_push<T: copy>(cell: &Box<Slots<T>>, value: T, ceiling: u64, initial: u64) -> result: unit writes(cell) contract {
+  requires ceiling <= 1073741824_u64;
+} {
+  doc "Appends value to cell, doubling a full backing (or starting it at initial) within ceiling.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    let doubled = if empty {
+      give initial;
+    } else {
+      give capacity +wrap capacity;
+    }
+    let bounded = doubled <= ceiling;
+    let larger = doubled >= capacity;
+    if bounded {
+      if larger {
+        grow(cell: cell, capacity: doubled);
+      }
+    }
+  }
+  let room = cell^.inner.len < cell^.inner.cap;
+  if room {
+    place_back(window: &cell^.inner, value: value);
+  }
+  return unit;
+}
+
+fn push_byte(text: &Box<Slots<u8>>, value: u8) -> result: unit writes(text) {
+  doc "Appends one byte to the token text buffer, growing it as needed.";
+  bytes_push::<u8>(cell: text, value: value, ceiling: text_ceiling, initial: text_initial_capacity);
+  return unit;
+}
+
+fn push_attribute(attributes: &Box<Slots<Attribute>>, value: Attribute) -> result: unit writes(attributes) {
+  doc "Appends one attribute record, growing the attribute buffer as needed.";
+  bytes_push::<Attribute>(cell: attributes, value: value, ceiling: attribute_ceiling, initial: attribute_initial_capacity);
+  return unit;
+}
+
+fn push_codepoint(text: &Box<Slots<u8>>, cp: u32) -> result: unit writes(text) {
+  doc "Appends cp to the token text buffer as WTF-8: a lone surrogate encodes as an ordinary 3-byte form, exactly as a decoded input lone surrogate does.";
+  let ascii = cp <= 127_u32;
+  if ascii {
+    let byte = cvt.wrap::<u32, u8>(cp);
+    push_byte(text: text, value: byte);
+    return unit;
+  }
+  let two_byte = cp <= 2047_u32;
+  if two_byte {
+    let high = ishr.wrap(cp, 6_u32);
+    let high_byte_wide = ior(high, 192_u32);
+    let high_byte = cvt.wrap::<u32, u8>(high_byte_wide);
+    let low = iand(cp, 63_u32);
+    let low_byte_wide = ior(low, 128_u32);
+    let low_byte = cvt.wrap::<u32, u8>(low_byte_wide);
+    push_byte(text: text, value: high_byte);
+    push_byte(text: text, value: low_byte);
+    return unit;
+  }
+  let three_byte = cp <= 65535_u32;
+  if three_byte {
+    let s0 = ishr.wrap(cp, 12_u32);
+    let b0_wide = ior(s0, 224_u32);
+    let b0 = cvt.wrap::<u32, u8>(b0_wide);
+    let s1 = ishr.wrap(cp, 6_u32);
+    let m1 = iand(s1, 63_u32);
+    let b1_wide = ior(m1, 128_u32);
+    let b1 = cvt.wrap::<u32, u8>(b1_wide);
+    let m2 = iand(cp, 63_u32);
+    let b2_wide = ior(m2, 128_u32);
+    let b2 = cvt.wrap::<u32, u8>(b2_wide);
+    push_byte(text: text, value: b0);
+    push_byte(text: text, value: b1);
+    push_byte(text: text, value: b2);
+    return unit;
+  }
+  let s0 = ishr.wrap(cp, 18_u32);
+  let b0_wide = ior(s0, 240_u32);
+  let b0 = cvt.wrap::<u32, u8>(b0_wide);
+  let s1 = ishr.wrap(cp, 12_u32);
+  let m1 = iand(s1, 63_u32);
+  let b1_wide = ior(m1, 128_u32);
+  let b1 = cvt.wrap::<u32, u8>(b1_wide);
+  let s2 = ishr.wrap(cp, 6_u32);
+  let m2 = iand(s2, 63_u32);
+  let b2_wide = ior(m2, 128_u32);
+  let b2 = cvt.wrap::<u32, u8>(b2_wide);
+  let m3 = iand(cp, 63_u32);
+  let b3_wide = ior(m3, 128_u32);
+  let b3 = cvt.wrap::<u32, u8>(b3_wide);
+  push_byte(text: text, value: b0);
+  push_byte(text: text, value: b1);
+  push_byte(text: text, value: b2);
+  push_byte(text: text, value: b3);
+  return unit;
+}
+
+fn is_ascii_upper(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is an ASCII upper-case letter.";
+  let low = byte >= 65_u8;
+  let high = byte <= 90_u8;
+  return band(low, high);
+}
+
+fn is_ascii_lower(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is an ASCII lower-case letter.";
+  let low = byte >= 97_u8;
+  let high = byte <= 122_u8;
+  return band(low, high);
+}
+
+fn is_ascii_alpha(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is an ASCII letter.";
+  let upper = is_ascii_upper(byte: byte);
+  let lower = is_ascii_lower(byte: byte);
+  return bor(upper, lower);
+}
+
+fn is_ascii_digit(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is an ASCII digit.";
+  let low = byte >= 48_u8;
+  let high = byte <= 57_u8;
+  return band(low, high);
+}
+
+fn is_ascii_alnum(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is an ASCII letter or digit.";
+  let alpha = is_ascii_alpha(byte: byte);
+  let digit = is_ascii_digit(byte: byte);
+  return bor(alpha, digit);
+}
+
+fn is_ascii_hex(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is an ASCII hexadecimal digit.";
+  let digit = is_ascii_digit(byte: byte);
+  let upper_low = byte >= 65_u8;
+  let upper_high = byte <= 70_u8;
+  let upper = band(upper_low, upper_high);
+  let lower_low = byte >= 97_u8;
+  let lower_high = byte <= 102_u8;
+  let lower = band(lower_low, lower_high);
+  let hexish = bor(upper, lower);
+  return bor(digit, hexish);
+}
+
+fn ascii_lower_byte(byte: u8) -> result: u8 pure {
+  doc "Returns byte with an ASCII upper-case letter folded to lower case.";
+  let upper = is_ascii_upper(byte: byte);
+  if upper {
+    let widened = cvt::<u8, u32>(byte);
+    let shifted = widened +wrap 32_u32;
+    let narrowed = cvt.wrap::<u32, u8>(shifted);
+    return narrowed;
+  }
+  return byte;
+}
+
+fn is_tag_terminator(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte ends a tag or attribute name run: tab, LF, FF, space, solidus, or greater-than.";
+  let tab = byte == 9_u8;
+  let lf = byte == 10_u8;
+  let ff = byte == 12_u8;
+  let space = byte == 32_u8;
+  let solidus = byte == 47_u8;
+  let closer = byte == 62_u8;
+  let a = bor(tab, lf);
+  let b = bor(ff, space);
+  let c = bor(solidus, closer);
+  let d = bor(a, b);
+  return bor(d, c);
+}
+
+fn is_whitespace(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is tab, LF, FF, or space.";
+  let tab = byte == 9_u8;
+  let lf = byte == 10_u8;
+  let ff = byte == 12_u8;
+  let space = byte == 32_u8;
+  let a = bor(tab, lf);
+  let b = bor(ff, space);
+  return bor(a, b);
+}
