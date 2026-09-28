@@ -22,3 +22,8 @@ None yet.
   the models. Add the equivalent when the documents grow enough that a missed
   link or leaked path costs review time, or when one first reaches a pull
   request.
+- **CI rebuilds the Whitefoot compiler on every push.** A `make check` run
+  takes about two and a half minutes, most of it the compiler build. Cache
+  the built compiler keyed by the `whitefoot/` pin when the gate's run time
+  starts to slow down work, or when the pin moves often enough that the
+  build dominates.

@@ -21,17 +21,20 @@ any run, and each is judged by an oracle independent of Snowghost. The three
 tasks stand for three classes of implementer work.
 
 1. **Line breaking**, a table-driven algorithm: the break opportunities of
-   Unicode UAX #14 for a sequence of code points. The oracle is
-   `LineBreakTest.txt`; the property tables come from `LineBreak.txt` and
-   the other data files the algorithm names, all from one pinned Unicode
-   version.
+   Unicode UAX #14 for a sequence of code points, Unicode 17.0.0. The oracle
+   is `LineBreakTest.txt`; the property tables come from `LineBreak.txt` and
+   the other data files the algorithm names, `EastAsianWidth.txt`,
+   `DerivedGeneralCategory.txt` and `emoji-data.txt`. The implementer also
+   writes the program that generates the tables.
 2. **CSS syntax**, a specification-driven parser: tokenizing and parsing
-   component values under CSS Syntax Module Level 3. The oracle is the
-   tokenization and component-value tests of css-parsing-tests at a pinned
-   revision.
+   component values under CSS Syntax Module Level 3. The oracle is the 50
+   cases of `component_value_list.json` in css-parsing-tests at revision
+   203ce36b, which also fixes that suite's error reports and legacy
+   tokens.
 3. **PNG decoding**, a performance-sensitive decoder: decoding to 8-bit RGBA.
-   The oracle is the valid images of PngSuite decoded by libpng. Speed is
-   measured against libpng on a fixed set of large images.
+   The oracle is PngSuite 2017jul19: its 162 valid images decoded by libpng,
+   and its 14 corrupted images, which must be rejected. Speed is measured
+   against libpng on a fixed set of large images.
 
 ## Setup
 
@@ -42,14 +45,19 @@ tasks stand for three classes of implementer work.
   `pkg::oracle::css_syntax`, `pkg::oracle::png`) has a graph entry that runs
   the oracle through the interface and prints the number of cases that pass
   and fail.
-- **Oracle data.** `make oracle-data` downloads each file at its pinned
-  version, checks its SHA-256 and places it under `build/oracle/`, which git
-  ignores.
-- **PNG reference.** A C program under `tests/` decodes each image with
+- **Oracle data.** `make oracle-data` (`tests/oracle-data.sh`) downloads
+  each file at its pinned version, checks its SHA-256 and places it under
+  `build/oracle/`, which git ignores. `make oracle-line-break`, `oracle-css`,
+  `oracle-png` and `oracle-png-speed` build each driver entry and run it; the
+  CSS driver prints its results as JSON, which `tests/css/oracle.py` compares
+  with the suite.
+- **PNG reference.** `tests/png/reference.c` decodes each image with
   libpng into raw RGBA for the driver to compare. It also generates the
-  speed set: twelve 2048 by 2048 images of gradients, noise and synthetic
-  text, generated deterministically and encoded by libpng with default
-  settings.
+  speed set: twelve 2048 by 2048 images of gradients, noise, synthetic text
+  and an interface mock-up across the color types, 16-bit samples and Adam7,
+  generated deterministically and encoded by libpng with default settings.
+  On the trial container libpng 1.6.43 decodes the set in about 33 ms per
+  image.
 - **Supplied context.** Every run gets the same prompt: the task, the
   interface path, the relevant specification sections, and the commands to
   check the module and run its oracle. As references it gets the pinned
