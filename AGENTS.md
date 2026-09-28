@@ -33,10 +33,14 @@ and rejected alternatives, and its surviving decision goes to the design
 tree. Read only the material relevant to the task, and do not turn research
 into an implied implementation requirement.
 
-The pinned `whitefoot/` revision defines the language: its specification
-`whitefoot/spec/kernel-spec.md` and `whitefoot/docs/patterns.md` are the
-references for writing Whitefoot. Snowghost never edits files under
-`whitefoot/`; see [The Whitefoot boundary](#the-whitefoot-boundary).
+The pinned `whitefoot/` revision defines the language. Write Whitefoot from
+its specification `whitefoot/spec/kernel-spec.md`, which is normative, the
+compiler's diagnostics and repairs, and the maintained programs under
+`whitefoot/tests/programs` and `whitefoot/lib/std`, which Whitefoot's gate
+compiles on every change. `whitefoot/docs/patterns.md` lags the language and
+is not a reference; Snowghost is where current source patterns are tried.
+Snowghost never edits files under `whitefoot/`; see
+[The Whitefoot boundary](#the-whitefoot-boundary).
 
 A finished task is not evidence: a claim cites a design-tree decision, an
 investigation, a measurement with its workload, environment and comparison,
