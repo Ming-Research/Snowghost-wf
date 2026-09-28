@@ -40,3 +40,10 @@ example apart from the renderer code that exposed it
   the built compiler keyed by the `whitefoot/` pin when the gate's run time
   starts to slow down work, or when the pin moves often enough that the
   build dominates.
+- **pkg::css::color covers CSS Color Module Level 4 only.** System colors,
+  `color-mix()`, `light-dark()`, relative color syntax, `calc()` in
+  channels and the Level 5 spaces (`device-cmyk()`, `@color-profile`
+  spaces) parse as Invalid, and `color_functions_5.json` is not in the
+  oracle. Impact: pages using them lose the declaration. Change: extend
+  `ParsedColor` and the parser, and add the suite. Reopen when the style
+  system resolves colors, or a page in the corpus uses one.

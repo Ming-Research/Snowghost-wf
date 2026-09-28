@@ -71,7 +71,7 @@ def matches(actual, expected):
         if want is None or got is None or isinstance(got, str):
             if got != want:
                 return False
-        elif abs(got - want) > 1e-5 * max(abs(want), 1.0):
+        elif not abs(got - want) <= 1e-5 * max(abs(want), 1.0):
             return False
     return True
 
