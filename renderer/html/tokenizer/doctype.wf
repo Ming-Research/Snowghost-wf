@@ -1,0 +1,455 @@
+enum DoctypePhase {
+  BeforeName();
+  Name();
+  AfterName();
+  AfterPublicKeyword();
+  BeforePublicId();
+  PublicIdDouble();
+  PublicIdSingle();
+  AfterPublicId();
+  BetweenPublicSystem();
+  AfterSystemKeyword();
+  BeforeSystemId();
+  SystemIdDouble();
+  SystemIdSingle();
+  AfterSystemId();
+  Bogus();
+}
+
+const public_keyword: Array<u8, 6> = "PUBLIC";
+
+const system_keyword: Array<u8, 6> = "SYSTEM";
+
+fn keyword_matches(source: &[u8], pos: u64, keyword: &Array<u8, 6>) -> result: Bool reads(source), reads(keyword) {
+  doc "Tells whether source holds keyword's six ASCII letters at pos, case-insensitively.";
+  let length = source^.len;
+  let room = pos <= length;
+  let has_room = if room {
+    let remaining = length - pos;
+    give remaining >= 6_u64;
+  } else {
+    give False();
+  }
+  if has_room {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @cmp {
+    let more = i < 6_u64;
+    if more {
+    } else {
+      break @cmp;
+    }
+    let idx = pos +wrap i;
+    let in_range = idx < length;
+    if in_range {
+    } else {
+      return False();
+    }
+    let byte = source^[idx];
+    let lowered = ascii_lower_byte(byte: byte);
+    let want = keyword^[i];
+    let want_lowered = ascii_lower_byte(byte: want);
+    let differs = lowered != want_lowered;
+    if differs {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn optional_span(present: Bool, start: u64, end: u64) -> result: Option<Span> pure {
+  doc "Returns Some of the given span when present, None otherwise.";
+  if present {
+    let start32 = cvt.wrap::<u64, u32>(start);
+    let end32 = cvt.wrap::<u64, u32>(end);
+    let span = Span(start: start32, end: end32);
+    return Some<Span>(value: span);
+  }
+  return None<Span>();
+}
+
+fn build_doctype(name_present: Bool, name_start: u64, name_end: u64, public_present: Bool, public_start: u64, public_end: u64, system_present: Bool, system_start: u64, system_end: u64, force_quirks: Bool) -> result: Token pure {
+  doc "Builds a Doctype token from the collected parts.";
+  let name = optional_span(present: name_present, start: name_start, end: name_end);
+  let public_id = optional_span(present: public_present, start: public_start, end: public_end);
+  let system_id = optional_span(present: system_present, start: system_start, end: system_end);
+  let token = Token::Doctype(name: name, public_id: public_id, system_id: system_id, force_quirks: force_quirks);
+  return token;
+}
+
+fn parse_doctype(source: &[u8], output: &TokenText, start: u64) -> (token: Token, next: u64) reads(source), writes(output) {
+  doc "Parses a DOCTYPE's name and optional public/system identifiers from start, which follows the consumed \"<!DOCTYPE\", per 13.2.5.53-13.2.5.68. DOCTYPE state itself is not modeled separately: it only skips at most one leading whitespace byte before before-DOCTYPE-name-state, which skips as many as before-DOCTYPE-name-state does on its own.";
+  let position = start;
+  let phase = DoctypePhase::BeforeName();
+  let name_present = False();
+  let name_start = 0_u64;
+  let name_end = 0_u64;
+  let public_present = False();
+  let public_start = 0_u64;
+  let public_end = 0_u64;
+  let system_present = False();
+  let system_start = 0_u64;
+  let system_end = 0_u64;
+  let force_quirks = False();
+  loop @doctype {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      set force_quirks = True();
+      let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+      return token, position;
+    }
+    match phase {
+      BeforeName() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            set force_quirks = True();
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          set name_present = True();
+          set name_start = output^.text.inner.len;
+          let cleared = replace_nul(ch: ch);
+          let lowered = ascii_lower_char(ch: cleared);
+          push_codepoint(text: &output^.text, cp: lowered);
+          set name_end = output^.text.inner.len;
+          set position = after;
+          set phase = DoctypePhase::Name();
+        }
+      }
+      Name() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+          set phase = DoctypePhase::AfterName();
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let cleared = replace_nul(ch: ch);
+          let lowered = ascii_lower_char(ch: cleared);
+          push_codepoint(text: &output^.text, cp: lowered);
+          set name_end = output^.text.inner.len;
+          set position = after;
+        }
+      }
+      AfterName() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let is_public = keyword_matches(source: source, pos: position, keyword: &public_keyword);
+          if is_public {
+            set position = position +wrap 6_u64;
+            set phase = DoctypePhase::AfterPublicKeyword();
+          } else {
+            let is_system = keyword_matches(source: source, pos: position, keyword: &system_keyword);
+            if is_system {
+              set position = position +wrap 6_u64;
+              set phase = DoctypePhase::AfterSystemKeyword();
+            } else {
+              set force_quirks = True();
+              set phase = DoctypePhase::Bogus();
+            }
+          }
+        }
+      }
+      AfterPublicKeyword() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+          set phase = DoctypePhase::BeforePublicId();
+        } else {
+          let dq = ch == quotation_char;
+          let sq = ch == apostrophe_char;
+          if dq {
+            set public_present = True();
+            set public_start = output^.text.inner.len;
+            set public_end = public_start;
+            set position = after;
+            set phase = DoctypePhase::PublicIdDouble();
+          } else if sq {
+            set public_present = True();
+            set public_start = output^.text.inner.len;
+            set public_end = public_start;
+            set position = after;
+            set phase = DoctypePhase::PublicIdSingle();
+          } else {
+            let gt = ch == greater_than_char;
+            if gt {
+              set force_quirks = True();
+              let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+              return token, after;
+            }
+            set force_quirks = True();
+            set phase = DoctypePhase::Bogus();
+          }
+        }
+      }
+      BeforePublicId() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+        } else {
+          let dq = ch == quotation_char;
+          let sq = ch == apostrophe_char;
+          if dq {
+            set public_present = True();
+            set public_start = output^.text.inner.len;
+            set public_end = public_start;
+            set position = after;
+            set phase = DoctypePhase::PublicIdDouble();
+          } else if sq {
+            set public_present = True();
+            set public_start = output^.text.inner.len;
+            set public_end = public_start;
+            set position = after;
+            set phase = DoctypePhase::PublicIdSingle();
+          } else {
+            let gt = ch == greater_than_char;
+            if gt {
+              set force_quirks = True();
+              let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+              return token, after;
+            }
+            set force_quirks = True();
+            set phase = DoctypePhase::Bogus();
+          }
+        }
+      }
+      PublicIdDouble() => {
+        let dq = ch == quotation_char;
+        if dq {
+          set position = after;
+          set phase = DoctypePhase::AfterPublicId();
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            set force_quirks = True();
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set public_end = output^.text.inner.len;
+          set position = after;
+        }
+      }
+      PublicIdSingle() => {
+        let sq = ch == apostrophe_char;
+        if sq {
+          set position = after;
+          set phase = DoctypePhase::AfterPublicId();
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            set force_quirks = True();
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set public_end = output^.text.inner.len;
+          set position = after;
+        }
+      }
+      AfterPublicId() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+          set phase = DoctypePhase::BetweenPublicSystem();
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let dq = ch == quotation_char;
+          let sq = ch == apostrophe_char;
+          if dq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdDouble();
+          } else if sq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdSingle();
+          } else {
+            set force_quirks = True();
+            set phase = DoctypePhase::Bogus();
+          }
+        }
+      }
+      BetweenPublicSystem() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let dq = ch == quotation_char;
+          let sq = ch == apostrophe_char;
+          if dq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdDouble();
+          } else if sq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdSingle();
+          } else {
+            set force_quirks = True();
+            set phase = DoctypePhase::Bogus();
+          }
+        }
+      }
+      AfterSystemKeyword() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+          set phase = DoctypePhase::BeforeSystemId();
+        } else {
+          let dq = ch == quotation_char;
+          let sq = ch == apostrophe_char;
+          if dq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdDouble();
+          } else if sq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdSingle();
+          } else {
+            let gt = ch == greater_than_char;
+            if gt {
+              set force_quirks = True();
+              let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+              return token, after;
+            }
+            set force_quirks = True();
+            set phase = DoctypePhase::Bogus();
+          }
+        }
+      }
+      BeforeSystemId() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+        } else {
+          let dq = ch == quotation_char;
+          let sq = ch == apostrophe_char;
+          if dq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdDouble();
+          } else if sq {
+            set system_present = True();
+            set system_start = output^.text.inner.len;
+            set system_end = system_start;
+            set position = after;
+            set phase = DoctypePhase::SystemIdSingle();
+          } else {
+            let gt = ch == greater_than_char;
+            if gt {
+              set force_quirks = True();
+              let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+              return token, after;
+            }
+            set force_quirks = True();
+            set phase = DoctypePhase::Bogus();
+          }
+        }
+      }
+      SystemIdDouble() => {
+        let dq = ch == quotation_char;
+        if dq {
+          set position = after;
+          set phase = DoctypePhase::AfterSystemId();
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            set force_quirks = True();
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set system_end = output^.text.inner.len;
+          set position = after;
+        }
+      }
+      SystemIdSingle() => {
+        let sq = ch == apostrophe_char;
+        if sq {
+          set position = after;
+          set phase = DoctypePhase::AfterSystemId();
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            set force_quirks = True();
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set system_end = output^.text.inner.len;
+          set position = after;
+        }
+      }
+      AfterSystemId() => {
+        let ws = is_char_whitespace(ch: ch);
+        if ws {
+          set position = after;
+        } else {
+          let gt = ch == greater_than_char;
+          if gt {
+            let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+            return token, after;
+          }
+          set phase = DoctypePhase::Bogus();
+        }
+      }
+      Bogus() => {
+        let gt = ch == greater_than_char;
+        if gt {
+          let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+          return token, after;
+        }
+        set position = after;
+      }
+    }
+  }
+  let token = build_doctype(name_present: name_present, name_start: name_start, name_end: name_end, public_present: public_present, public_start: public_start, public_end: public_end, system_present: system_present, system_start: system_start, system_end: system_end, force_quirks: force_quirks);
+  return token, position;
+}

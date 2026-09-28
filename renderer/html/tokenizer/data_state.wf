@@ -1,0 +1,298 @@
+const doctype_keyword: Array<u8, 7> = "DOCTYPE";
+
+const cdata_open: Array<u8, 7> = "[CDATA[";
+
+fn match_dashes(source: &[u8], pos: u64) -> result: Bool reads(source) {
+  doc "Tells whether source holds two hyphen-minus bytes at pos.";
+  let length = source^.len;
+  let second_index = pos +wrap 1_u64;
+  let has_room = second_index < length;
+  if has_room {
+  } else {
+    return False();
+  }
+  let first_ok = pos < length;
+  if first_ok {
+  } else {
+    return False();
+  }
+  let b0 = source^[pos];
+  let b1 = source^[second_index];
+  let ok0 = b0 == 45_u8;
+  let ok1 = b1 == 45_u8;
+  return band(ok0, ok1);
+}
+
+fn match_doctype_keyword(source: &[u8], pos: u64) -> result: Bool reads(source) {
+  doc "Tells whether source holds the seven ASCII letters of DOCTYPE at pos, case-insensitively.";
+  return keyword7_matches(source: source, pos: pos, keyword: &doctype_keyword);
+}
+
+fn match_cdata_open(source: &[u8], pos: u64) -> result: Bool reads(source) {
+  doc "Tells whether source holds the seven bytes \"[CDATA[\" at pos, case-sensitively.";
+  let length = source^.len;
+  let room = pos <= length;
+  let has_room = if room {
+    let remaining = length - pos;
+    give remaining >= 7_u64;
+  } else {
+    give False();
+  }
+  if has_room {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @cmp {
+    let more = i < 7_u64;
+    if more {
+    } else {
+      break @cmp;
+    }
+    let idx = pos +wrap i;
+    let in_range = idx < length;
+    if in_range {
+    } else {
+      return False();
+    }
+    let byte = source^[idx];
+    let want = cdata_open[i];
+    let differs = byte != want;
+    if differs {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn keyword7_matches(source: &[u8], pos: u64, keyword: &Array<u8, 7>) -> result: Bool reads(source), reads(keyword) {
+  doc "Tells whether source holds keyword's seven ASCII letters at pos, case-insensitively.";
+  let length = source^.len;
+  let room = pos <= length;
+  let has_room = if room {
+    let remaining = length - pos;
+    give remaining >= 7_u64;
+  } else {
+    give False();
+  }
+  if has_room {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @cmp {
+    let more = i < 7_u64;
+    if more {
+    } else {
+      break @cmp;
+    }
+    let idx = pos +wrap i;
+    let in_range = idx < length;
+    if in_range {
+    } else {
+      return False();
+    }
+    let byte = source^[idx];
+    let lowered = ascii_lower_byte(byte: byte);
+    let want = keyword^[i];
+    let want_lowered = ascii_lower_byte(byte: want);
+    let differs = lowered != want_lowered;
+    if differs {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn markup_declaration_open(source: &[u8], output: &TokenText, pos: u64) -> (token: Token, next: u64) reads(source), writes(output) {
+  doc "Handles the markup declaration open state at pos, which follows the consumed \"<!\", per 13.2.5.42. The CDATA branch always falls back to a bogus comment: this tokenizer has no tree builder to supply an adjusted current node, exactly as html5lib-tests' tokenizer-only harness expects.";
+  let is_comment = match_dashes(source: source, pos: pos);
+  if is_comment {
+    let after_dashes = pos +wrap 2_u64;
+    let (token, next) = parse_comment(source: source, output: output, start: after_dashes);
+    return token, next;
+  }
+  let is_doctype = match_doctype_keyword(source: source, pos: pos);
+  if is_doctype {
+    let after_keyword = pos +wrap 7_u64;
+    let (token, next) = parse_doctype(source: source, output: output, start: after_keyword);
+    return token, next;
+  }
+  let is_cdata = match_cdata_open(source: source, pos: pos);
+  if is_cdata {
+    let data_start = output^.text.inner.len;
+    let i = 0_u64;
+    loop @copy {
+      let more = i < 7_u64;
+      if more {
+      } else {
+        break @copy;
+      }
+      let byte = cdata_open[i];
+      let widened = cvt::<u8, u32>(byte);
+      push_codepoint(text: &output^.text, cp: widened);
+      set i = i +wrap 1_u64;
+    }
+    let after_cdata = pos +wrap 7_u64;
+    let (token, next) = parse_bogus_comment(source: source, output: output, data_start: data_start, start: after_cdata);
+    return token, next;
+  }
+  let data_start = output^.text.inner.len;
+  let (token, next) = parse_bogus_comment(source: source, output: output, data_start: data_start, start: pos);
+  return token, next;
+}
+
+enum TagOpenKind {
+  Literal();
+  LiteralLtSlash();
+  Skip();
+  Produced();
+}
+
+fn open_tag(tokenizer: &Tokenizer, source: &[u8], output: &TokenText, pos: u64) -> (kind: TagOpenKind, token: Token, next: u64) reads(source), writes(tokenizer), writes(output) {
+  doc "Handles the tag open state at pos, which follows the consumed less-than sign, per 13.2.5.6-13.2.5.7. Literal names one literal less-than-sign character, reconsuming pos in the data state. LiteralLtSlash names two literal characters, less-than-sign then solidus, continuing from next. Skip names nothing at all consumed as characters, continuing from next.";
+  let (ch, after) = next_char(source: source, pos: pos);
+  let is_eof = ch == eof_char;
+  if is_eof {
+    let placeholder = Token::EndOfFile();
+    let literal = TagOpenKind::Literal();
+    return literal, placeholder, pos;
+  }
+  let is_bang = ch == bang_char;
+  if is_bang {
+    let (token, next) = markup_declaration_open(source: source, output: output, pos: after);
+    let produced = TagOpenKind::Produced();
+    return produced, token, next;
+  }
+  let is_slash = ch == solidus_char;
+  if is_slash {
+    let (ch2, after2) = next_char(source: source, pos: after);
+    let is_alpha2 = is_ascii_char_alpha(ch: ch2);
+    if is_alpha2 {
+      let is_end_tag = True();
+      let (token, next) = parse_tag(tokenizer: tokenizer, source: source, output: output, pos: after, is_end: is_end_tag);
+      let produced = TagOpenKind::Produced();
+      return produced, token, next;
+    }
+    let is_gt2 = ch2 == greater_than_char;
+    if is_gt2 {
+      let placeholder = Token::EndOfFile();
+      let skip = TagOpenKind::Skip();
+      return skip, placeholder, after2;
+    }
+    let is_eof2 = ch2 == eof_char;
+    if is_eof2 {
+      let placeholder = Token::EndOfFile();
+      let literal2 = TagOpenKind::LiteralLtSlash();
+      return literal2, placeholder, after;
+    }
+    let data_start = output^.text.inner.len;
+    let (token, next) = parse_bogus_comment(source: source, output: output, data_start: data_start, start: after);
+    let produced = TagOpenKind::Produced();
+    return produced, token, next;
+  }
+  let is_alpha = is_ascii_char_alpha(ch: ch);
+  if is_alpha {
+    let is_end_tag = False();
+    let (token, next) = parse_tag(tokenizer: tokenizer, source: source, output: output, pos: pos, is_end: is_end_tag);
+    let produced = TagOpenKind::Produced();
+    return produced, token, next;
+  }
+  let is_question = ch == question_char;
+  if is_question {
+    let data_start = output^.text.inner.len;
+    let (token, next) = parse_bogus_comment(source: source, output: output, data_start: data_start, start: pos);
+    let produced = TagOpenKind::Produced();
+    return produced, token, next;
+  }
+  let placeholder = Token::EndOfFile();
+  let literal = TagOpenKind::Literal();
+  return literal, placeholder, pos;
+}
+
+fn is_ascii_char_alpha(ch: u32) -> result: Bool pure {
+  doc "Tells whether ch is an ASCII letter.";
+  let low = ch >= 65_u32;
+  let mid = ch <= 90_u32;
+  let upper = band(low, mid);
+  let low2 = ch >= 97_u32;
+  let mid2 = ch <= 122_u32;
+  let lower = band(low2, mid2);
+  return bor(upper, lower);
+}
+
+fn scan_data(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) -> result: Token reads(source), writes(tokenizer), writes(output) {
+  doc "Runs the data state (13.2.5.1) from tokenizer's position, accumulating an ordinary run of characters and returning it as Characters, or delegating to a tag, comment or DOCTYPE token, or EndOfFile.";
+  let position = tokenizer^.position;
+  loop @run {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let produced = output^.text.inner.len;
+      let has_text = produced > 0_u64;
+      if has_text {
+        set tokenizer^.position = position;
+        let span = span_of(start: 0_u64, end: produced);
+        let token = Token::Characters(data: span);
+        return token;
+      }
+      set tokenizer^.position = position;
+      let token = Token::EndOfFile();
+      return token;
+    }
+    let is_lt = ch == less_than_char;
+    if is_lt {
+      let (kind, tag_token, tag_next) = open_tag(tokenizer: tokenizer, source: source, output: output, pos: after);
+      match kind {
+        Produced() => {
+          let produced = output^.text.inner.len;
+          let has_text = produced > 0_u64;
+          if has_text {
+            set tokenizer^.position = position;
+            let span = span_of(start: 0_u64, end: produced);
+            let token = Token::Characters(data: span);
+            return token;
+          }
+          set tokenizer^.position = tag_next;
+          return tag_token;
+        }
+        Literal() => {
+          push_codepoint(text: &output^.text, cp: less_than_char);
+          set position = tag_next;
+        }
+        LiteralLtSlash() => {
+          push_codepoint(text: &output^.text, cp: less_than_char);
+          push_codepoint(text: &output^.text, cp: solidus_char);
+          set position = tag_next;
+        }
+        Skip() => {
+          set position = tag_next;
+        }
+      }
+    } else {
+      let is_ref = ch == amp_char;
+      if is_ref {
+        let in_attr = False();
+        let (matched, ref_next, cp1, cp2, has_cp2) = resolve_character_reference(source: source, pos: position, in_attribute: in_attr);
+        if matched {
+          push_codepoint(text: &output^.text, cp: cp1);
+          if has_cp2 {
+            push_codepoint(text: &output^.text, cp: cp2);
+          }
+          set position = ref_next;
+        } else {
+          push_codepoint(text: &output^.text, cp: amp_char);
+          set position = after;
+        }
+      } else {
+        let cleared = replace_nul(ch: ch);
+        push_codepoint(text: &output^.text, cp: cleared);
+        set position = after;
+      }
+    }
+  }
+  let token = Token::EndOfFile();
+  return token;
+}
