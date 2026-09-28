@@ -1,0 +1,168 @@
+struct Range32 {
+  start: u32;
+  end: u32;
+}
+
+const exclusion_name: Array<u8, 26> =[70_u8, 117_u8, 108_u8, 108_u8, 95_u8, 67_u8, 111_u8, 109_u8, 112_u8, 111_u8, 115_u8, 105_u8, 116_u8, 105_u8, 111_u8, 110_u8, 95_u8, 69_u8, 120_u8, 99_u8, 108_u8, 117_u8, 115_u8, 105_u8, 111_u8, 110_u8];
+
+fn parse_range(text: &[u8], from: u64, stop: u64) -> result: Option<Range32> reads(text) {
+  doc "Parses text from from to stop as a UCD code point range: a single 'XXXX', or 'XXXX..YYYY'.";
+  let length = text^.len;
+  let ordered = from <= stop;
+  let within = stop <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return None<Range32>();
+  }
+  let dot_at = find_byte(text: text, from: from, stop: stop, target: dot);
+  let has_dot = dot_at < stop;
+  if has_dot {
+    let after_dot = dot_at +wrap 1_u64;
+    let second_dot = after_dot < stop;
+    let byte_ok = if second_dot {
+      let byte = text^[after_dot];
+      give byte == dot;
+    } else {
+      give False();
+    }
+    if byte_ok {
+    } else {
+      return None<Range32>();
+    }
+    let tail = after_dot +wrap 1_u64;
+    match parse_hex_u32(text: text, from: from, stop: dot_at) {
+      Some(value: first) => {
+        match parse_hex_u32(text: text, from: tail, stop: stop) {
+          Some(value: second) => {
+            let made = Range32(start: first, end: second);
+            return Some<Range32>(value: made);
+          }
+          None() => {
+            return None<Range32>();
+          }
+        }
+      }
+      None() => {
+        return None<Range32>();
+      }
+    }
+  }
+  match parse_hex_u32(text: text, from: from, stop: stop) {
+    Some(value: single) => {
+      let made = Range32(start: single, end: single);
+      return Some<Range32>(value: made);
+    }
+    None() => {
+      return None<Range32>();
+    }
+  }
+}
+
+fn field_is_exclusion(field: &[u8]) -> result: Bool reads(field) {
+  doc "Tells whether field is exactly the property name Full_Composition_Exclusion.";
+  let length = field^.len;
+  let want_len = exclusion_name.len;
+  let same_len = length == want_len;
+  if same_len {
+  } else {
+    return False();
+  }
+  for (at in 0_u64..want_len) {
+    let byte = field^[at];
+    let expected = exclusion_name[at];
+    let same = byte == expected;
+    if same {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn parse_exclusion_line(text: &[u8], start: u64, stop: u64, excluded: &Box<Array<u8>>) -> result: unit reads(text), writes(excluded) contract {
+  requires stop <= text^.len;
+} {
+  doc "Parses one line of DerivedNormalizationProps.txt: a blank or comment line does nothing; a range whose property field is Full_Composition_Exclusion marks every code point in the range, clamped to excluded's length.";
+  let empty = start >= stop;
+  if empty {
+    return unit;
+  }
+  let readable = start < text^.len;
+  if readable {
+  } else {
+    return unit;
+  }
+  let first = text^[start];
+  let comment = first == number_sign;
+  if comment {
+    return unit;
+  }
+  let semi = find_byte(text: text, from: start, stop: stop, target: semicolon);
+  let has_semi = semi < stop;
+  if has_semi {
+  } else {
+    return unit;
+  }
+  let range_end = trim_ws_end(text: text, from: start, stop: semi);
+  match parse_range(text: text, from: start, stop: range_end) {
+    Some(value: found) => {
+      let field_from = semi +wrap 1_u64;
+      let field_start = skip_ws(text: text, from: field_from, stop: stop);
+      let hash_at = find_byte(text: text, from: field_start, stop: stop, target: number_sign);
+      let field_end = trim_ws_end(text: text, from: field_start, stop: hash_at);
+      let ordered = field_start <= field_end;
+      let within = field_end <= text^.len;
+      if ordered {
+        if within {
+          let field = &text^[field_start..field_end];
+          let wanted = field_is_exclusion(field: field);
+          if wanted {
+            let excluded_len = excluded^.inner.len;
+            let start64 = cvt::<u32, u64>(found.start);
+            let end64 = cvt::<u32, u64>(found.end);
+            let clamped_end = if end64 < excluded_len {
+              give end64;
+            } else {
+              let last = excluded_len -wrap 1_u64;
+              give last;
+            }
+            let in_bounds = start64 < excluded_len;
+            if in_bounds {
+              let clamped_end_next = clamped_end +wrap 1_u64;
+              for (cp in start64..clamped_end_next) {
+                let cp_ok = cp < excluded^.inner.len;
+                if cp_ok {
+                  set excluded^.inner[cp] = 1_u8;
+                }
+              }
+            }
+          }
+        }
+      }
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
+  }
+}
+
+fn parse_full_composition_exclusion(text: &[u8]) -> result: Box<Array<u8>> reads(text) {
+  doc "Parses DerivedNormalizationProps.txt into a code-space array marking every code point with Full_Composition_Exclusion (1) or not (0).";
+  let excluded = box_array_filled::<u8>(count: code_space, value: 0_u8);
+  let length = text^.len;
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      return move excluded;
+    }
+    let found_stop = line_end(text: text, start: at);
+    let stop = imin(found_stop, length);
+    parse_exclusion_line(text: text, start: at, stop: stop, excluded: &excluded);
+    set at = stop +wrap 1_u64;
+  }
+  return move excluded;
+}

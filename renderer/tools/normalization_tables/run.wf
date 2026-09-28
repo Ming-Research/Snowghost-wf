@@ -1,0 +1,100 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias OutputStream = std::io::OutputStream;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+
+const usage_text: Array<u8, 45> =[117_u8, 115_u8, 97_u8, 103_u8, 101_u8, 58_u8, 32_u8, 110_u8, 111_u8, 114_u8, 109_u8, 97_u8, 108_u8, 105_u8, 122_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 95_u8, 116_u8, 97_u8, 98_u8, 108_u8, 101_u8, 115_u8, 95_u8, 114_u8, 117_u8, 110_u8, 32_u8, 85_u8, 67_u8, 68_u8, 95_u8, 68_u8, 73_u8, 82_u8, 69_u8, 67_u8, 84_u8, 79_u8, 82_u8, 89_u8];
+
+const unreadable_text: Array<u8, 49> =[99_u8, 97_u8, 110_u8, 110_u8, 111_u8, 116_u8, 32_u8, 111_u8, 112_u8, 101_u8, 110_u8, 32_u8, 111_u8, 114_u8, 32_u8, 114_u8, 101_u8, 97_u8, 100_u8, 32_u8, 97_u8, 32_u8, 102_u8, 105_u8, 108_u8, 101_u8, 32_u8, 105_u8, 110_u8, 32_u8, 116_u8, 104_u8, 101_u8, 32_u8, 103_u8, 105_u8, 118_u8, 101_u8, 110_u8, 32_u8, 100_u8, 105_u8, 114_u8, 101_u8, 99_u8, 116_u8, 111_u8, 114_u8, 121_u8];
+
+const unicode_data_filename: Array<u8, 15> =[85_u8, 110_u8, 105_u8, 99_u8, 111_u8, 100_u8, 101_u8, 68_u8, 97_u8, 116_u8, 97_u8, 46_u8, 116_u8, 120_u8, 116_u8];
+
+const line_feed: u8 = 10_u8;
+
+const derived_props_filename: Array<u8, 29> =[68_u8, 101_u8, 114_u8, 105_u8, 118_u8, 101_u8, 100_u8, 78_u8, 111_u8, 114_u8, 109_u8, 97_u8, 108_u8, 105_u8, 122_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8, 80_u8, 114_u8, 111_u8, 112_u8, 115_u8, 46_u8, 116_u8, 120_u8, 116_u8];
+
+fn run(inputs: Inputs) -> status: ExitStatus pure {
+  doc "Destructures the inputs, judges the invocation and closes the working directory.";
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let code = generate(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn report_unreadable(files: &HandleFactory, err: &OutputStream, report: &Box<Slots<u8>>) -> result: unit writes(files), writes(err), writes(report) {
+  doc "Writes the unreadable-directory message to err.";
+  let message = &unreadable_text[0_u64..unreadable_text.len];
+  put_text(buffer: report, text: message);
+  put_byte(buffer: report, value: line_feed);
+  let sent = flush(factory: files, output: err, buffer: report);
+  return unit;
+}
+
+fn generate(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) {
+  doc "Reads the one directory argument, opens it, reads UnicodeData.txt and DerivedNormalizationProps.txt below it and, on success, delegates to build_and_emit.";
+  let report = box_slots_new::<u8>(capacity: 4096_u64);
+  let count = args_count(args: args);
+  let usable = count == 2_u64;
+  if usable {
+  } else {
+    let usage = &usage_text[0_u64..usage_text.len];
+    put_text(buffer: &report, text: usage);
+    put_byte(buffer: &report, value: line_feed);
+    let sent = flush(factory: files, output: err, buffer: &report);
+    return 1_u8;
+  }
+  match argument_bytes(args: args, position: 1_u64) {
+    Some(value: dirname) => {
+      let dirname_len = dirname.inner.len;
+      let dirname_ref = &dirname.inner[0_u64..dirname_len];
+      match open_directory_path(factory: files, root: cwd, name: dirname_ref) {
+        Ok(value: directory) => {
+          let inner_code = read_and_build(factory: files, directory: &directory, out: out, err: err, report: &report);
+          close_directory(factory: files, directory: move directory);
+          return inner_code;
+        }
+        Err(error: problem) => {
+          report_unreadable(files: files, err: err, report: &report);
+          return 2_u8;
+        }
+      }
+    }
+    None() => {
+      report_unreadable(files: files, err: err, report: &report);
+      return 2_u8;
+    }
+  }
+}
+
+fn read_and_build(factory: &HandleFactory, directory: &DirectoryRead, out: &OutputStream, err: &OutputStream, report: &Box<Slots<u8>>) -> code: u8 reads(directory), writes(factory), writes(out), writes(err), writes(report) {
+  doc "Reads UnicodeData.txt and DerivedNormalizationProps.txt below directory and, on success, builds and prints every table.";
+  let data_name = &unicode_data_filename[0_u64..unicode_data_filename.len];
+  match read_directory_file(factory: factory, directory: directory, name: data_name) {
+    Ok(value: data_text) => {
+      let props_name = &derived_props_filename[0_u64..derived_props_filename.len];
+      match read_directory_file(factory: factory, directory: directory, name: props_name) {
+        Ok(value: props_text) => {
+          let data_len = data_text.inner.len;
+          let data_bytes = &data_text.inner[0_u64..data_len];
+          let props_len = props_text.inner.len;
+          let props_bytes = &props_text.inner[0_u64..props_len];
+          build_and_emit(factory: factory, data_text: data_bytes, props_text: props_bytes, out: out, report: report);
+          return 0_u8;
+        }
+        Err(error: problem) => {
+          report_unreadable(files: factory, err: err, report: report);
+          return 2_u8;
+        }
+      }
+    }
+    Err(error: problem) => {
+      report_unreadable(files: factory, err: err, report: report);
+      return 2_u8;
+    }
+  }
+}
