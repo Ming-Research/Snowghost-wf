@@ -1,0 +1,634 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Component = pkg::css::syntax::Component;
+alias Span = pkg::css::syntax::Span;
+
+const none_letters: Array<u8, 4> =[110_u8, 111_u8, 110_u8, 101_u8];
+
+const angle_deg: Array<u8, 3> =[100_u8, 101_u8, 103_u8];
+
+const angle_grad: Array<u8, 4> =[103_u8, 114_u8, 97_u8, 100_u8];
+
+const angle_rad: Array<u8, 3> =[114_u8, 97_u8, 100_u8];
+
+const angle_turn: Array<u8, 4> =[116_u8, 117_u8, 114_u8, 110_u8];
+
+const radians_to_degrees: f64 = 57.29577951308232_f64;
+
+fn narrow_f32(value: f64) -> result: f32 pure {
+  doc "Narrows value to f32: the ordinary rounded result, or a signed infinity when value overflows f32's finite range.";
+  let in_range = cvt.defined::<f64, f32>(value);
+  if in_range {
+    let narrowed = cvt::<f64, f32>(value);
+    return narrowed;
+  }
+  let negative = flt(value, 0.0_f64);
+  let inf = finf::<f32>();
+  if negative {
+    let neg_inf = fneg(inf);
+    return neg_inf;
+  }
+  return inf;
+}
+
+enum Lead {
+  End();
+  Whitespace();
+  Comma();
+  Slash();
+  Number(value: f64);
+  Percentage(value: f64);
+  Dimension(value: f64, unit_span: Span);
+  Ident(name: Span);
+  Hash(name: Span);
+  Function(name: Span, contents_start: u64, contents_end: u64);
+  Other();
+}
+
+enum ChannelParse {
+  Missing();
+  Present(value: f64);
+}
+
+fn ascii_lower_byte(b: u8) -> result: u8 pure {
+  doc "Lowercases b when it is an ASCII uppercase letter, and returns b unchanged otherwise.";
+  let is_upper_l = b >= 65_u8;
+  let is_upper_r = b <= 90_u8;
+  let is_upper = band(is_upper_l, is_upper_r);
+  if is_upper {
+    let lowered = b +wrap 32_u8;
+    return lowered;
+  }
+  return b;
+}
+
+fn span_matches_ci(values: &ComponentList, span: Span, literal: &[u8]) -> result: Bool reads(values.text.inner), reads(literal) contract {
+  requires literal^.len <= 32_u64;
+} {
+  doc "True when span names literal in values.text, byte for byte, ASCII case-insensitively.";
+  let start64 = cvt::<u32, u64>(span.start);
+  let end64 = cvt::<u32, u64>(span.end);
+  let length = literal^.len;
+  let expected_end = start64 +wrap length;
+  let right_len = end64 == expected_end;
+  if right_len {
+  } else {
+    return False();
+  }
+  let within = end64 <= values^.text.inner.len;
+  if within {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..length) {
+    let idx = start64 +wrap i;
+    let indexable = idx < values^.text.inner.len;
+    if indexable {
+    } else {
+      return False();
+    }
+    let b = values^.text.inner[idx];
+    let lowered = ascii_lower_byte(b: b);
+    let expected = literal^[i];
+    let expected_lowered = ascii_lower_byte(b: expected);
+    let letter_matches = lowered == expected_lowered;
+    if letter_matches {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn ident_is_none(values: &ComponentList, span: Span) -> result: Bool reads(values) {
+  doc "True when span names \"none\" in values.text, ASCII case-insensitively.";
+  let literal = &none_letters[0_u64..none_letters.len];
+  let matched = span_matches_ci(values: values, span: span, literal: literal);
+  return matched;
+}
+
+fn bound_arg_next(candidate: u32, at: u64, limit: u64) -> result: u64 pure contract {
+  requires at < limit;
+  ensures result > at;
+  ensures result <= limit;
+} {
+  doc "Clamps candidate, a Function's own declared end, to a proven range: greater than at and at most limit. Every admitted source keeps a nested end inside its parent, so this only ever guards against it; it never truncates a well-formed nesting.";
+  let cand64 = cvt::<u32, u64>(candidate);
+  let above = cand64 > at;
+  if above {
+    if cand64 <= limit {
+      return cand64;
+    }
+    return limit;
+  }
+  let fallback = at +wrap 1_u64;
+  if fallback <= limit {
+    return fallback;
+  }
+  return limit;
+}
+
+fn classify_component(c: Component, at: u64, limit: u64) -> result: Lead pure contract {
+  requires at < limit;
+} {
+  doc "Classifies component value c found at index at, at most limit, for color parsing. A Function carries its own contents bounded to limit; every other component this parser cares about carries its value, and everything else is Other.";
+  match c {
+    Ident(name: n) => {
+      let v = Lead::Ident(name: n);
+      return v;
+    }
+    Function(name: n, end: e) => {
+      let contents_start = at +wrap 1_u64;
+      let contents_end = bound_arg_next(candidate: e, at: at, limit: limit);
+      let v = Lead::Function(name: n, contents_start: contents_start, contents_end: contents_end);
+      return v;
+    }
+    AtKeyword(name: n) => {
+      return Lead::Other();
+    }
+    Hash(name: n, kind: k) => {
+      let v = Lead::Hash(name: n);
+      return v;
+    }
+    QuotedString(value: v) => {
+      return Lead::Other();
+    }
+    Url(value: v) => {
+      return Lead::Other();
+    }
+    Delim(code_point: cp) => {
+      let is_slash = cp == 47_u32;
+      if is_slash {
+        return Lead::Slash();
+      }
+      return Lead::Other();
+    }
+    Number(number: n) => {
+      let v = Lead::Number(value: n.value);
+      return v;
+    }
+    Percentage(number: n) => {
+      let v = Lead::Percentage(value: n.value);
+      return v;
+    }
+    Dimension(number: n, unit_name: u) => {
+      let v = Lead::Dimension(value: n.value, unit_span: u);
+      return v;
+    }
+    UnicodeRange(start: s, end: e) => {
+      return Lead::Other();
+    }
+    IncludeMatch() => {
+      return Lead::Other();
+    }
+    DashMatch() => {
+      return Lead::Other();
+    }
+    PrefixMatch() => {
+      return Lead::Other();
+    }
+    SuffixMatch() => {
+      return Lead::Other();
+    }
+    SubstringMatch() => {
+      return Lead::Other();
+    }
+    Column() => {
+      return Lead::Other();
+    }
+    Whitespace() => {
+      return Lead::Whitespace();
+    }
+    Cdo() => {
+      return Lead::Other();
+    }
+    Cdc() => {
+      return Lead::Other();
+    }
+    Colon() => {
+      return Lead::Other();
+    }
+    Semicolon() => {
+      return Lead::Other();
+    }
+    Comma() => {
+      return Lead::Comma();
+    }
+    ParenthesisBlock(end: e) => {
+      return Lead::Other();
+    }
+    BracketBlock(end: e) => {
+      return Lead::Other();
+    }
+    BraceBlock(end: e) => {
+      return Lead::Other();
+    }
+    Error(error: er) => {
+      return Lead::Other();
+    }
+  }
+}
+
+fn clamp_u64(x: u64, lo: u64, hi: u64) -> result: u64 pure contract {
+  requires lo <= hi;
+  ensures result >= lo;
+  ensures result <= hi;
+} {
+  doc "Clamps x into [lo, hi].";
+  if x < lo {
+    return lo;
+  }
+  if x > hi {
+    return hi;
+  }
+  return x;
+}
+
+fn next_lead(values: &ComponentList, at: u64, limit: u64) -> (token: Lead, next: u64) reads(values) contract {
+  requires at <= limit;
+  requires limit <= values^.components.inner.len;
+  ensures next >= at;
+  ensures next <= limit;
+} {
+  doc "Skips whitespace from at up to limit, then classifies and advances past the next component, per classify_component. End when only whitespace, or nothing, remains. The returned position is proved in range by clamp_u64 rather than by the scan itself, which only ever advances forward within limit.";
+  let pos = at;
+  loop @scan {
+    let more = pos < limit;
+    if more {
+    } else {
+      let safe = clamp_u64(x: pos, lo: at, hi: limit);
+      return Lead::End(), safe;
+    }
+    let c = values^.components.inner[pos];
+    let lead = classify_component(c: c, at: pos, limit: limit);
+    match lead {
+      End() => {
+        let safe = clamp_u64(x: pos, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Whitespace() => {
+        set pos = pos +wrap 1_u64;
+      }
+      Comma() => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Slash() => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Number(value: v) => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Percentage(value: v) => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Dimension(value: v, unit_span: u) => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Ident(name: n) => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Hash(name: n) => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Function(name: n, contents_start: cs, contents_end: ce) => {
+        let safe = clamp_u64(x: ce, lo: at, hi: limit);
+        return lead, safe;
+      }
+      Other() => {
+        let next = pos +wrap 1_u64;
+        let safe = clamp_u64(x: next, lo: at, hi: limit);
+        return lead, safe;
+      }
+    }
+  }
+  let safe = clamp_u64(x: pos, lo: at, hi: limit);
+  return Lead::End(), safe;
+}
+
+fn lead_is_percentage(token: Lead) -> result: Bool pure {
+  doc "True when token is a Percentage.";
+  match token {
+    End() => {
+      return False();
+    }
+    Whitespace() => {
+      return False();
+    }
+    Comma() => {
+      return False();
+    }
+    Slash() => {
+      return False();
+    }
+    Number(value: v) => {
+      return False();
+    }
+    Percentage(value: v) => {
+      return True();
+    }
+    Dimension(value: v, unit_span: u) => {
+      return False();
+    }
+    Ident(name: n) => {
+      return False();
+    }
+    Hash(name: n) => {
+      return False();
+    }
+    Function(name: n, contents_start: cs, contents_end: ce) => {
+      return False();
+    }
+    Other() => {
+      return False();
+    }
+  }
+}
+
+fn lead_is_number(token: Lead) -> result: Bool pure {
+  doc "True when token is a Number.";
+  match token {
+    End() => {
+      return False();
+    }
+    Whitespace() => {
+      return False();
+    }
+    Comma() => {
+      return False();
+    }
+    Slash() => {
+      return False();
+    }
+    Number(value: v) => {
+      return True();
+    }
+    Percentage(value: v) => {
+      return False();
+    }
+    Dimension(value: v, unit_span: u) => {
+      return False();
+    }
+    Ident(name: n) => {
+      return False();
+    }
+    Hash(name: n) => {
+      return False();
+    }
+    Function(name: n, contents_start: cs, contents_end: ce) => {
+      return False();
+    }
+    Other() => {
+      return False();
+    }
+  }
+}
+
+fn resolve_plain(values: &ComponentList, token: Lead, reference: f64) -> result: Option<f64> pure {
+  doc "Resolves token as a plain <percentage> (scaled by reference/100) or <number> (used as-is) channel; anything else, including none, is None.";
+  match token {
+    End() => {
+      return None<f64>();
+    }
+    Whitespace() => {
+      return None<f64>();
+    }
+    Comma() => {
+      return None<f64>();
+    }
+    Slash() => {
+      return None<f64>();
+    }
+    Number(value: v) => {
+      return Some<f64>(value: v);
+    }
+    Percentage(value: v) => {
+      let fraction = fdiv.strict(v, 1.0e2_f64);
+      let scaled = fmul.strict(fraction, reference);
+      return Some<f64>(value: scaled);
+    }
+    Dimension(value: v, unit_span: u) => {
+      return None<f64>();
+    }
+    Ident(name: n) => {
+      return None<f64>();
+    }
+    Hash(name: n) => {
+      return None<f64>();
+    }
+    Function(name: n, contents_start: cs, contents_end: ce) => {
+      return None<f64>();
+    }
+    Other() => {
+      return None<f64>();
+    }
+  }
+}
+
+fn resolve_channel(values: &ComponentList, token: Lead, reference: f64) -> result: Option<ChannelParse> reads(values) {
+  doc "Resolves token as a <percentage> | <number> | none channel against reference, per resolve_plain, with an ASCII case-insensitive none ident giving Missing.";
+  match token {
+    End() => {
+      return None<ChannelParse>();
+    }
+    Whitespace() => {
+      return None<ChannelParse>();
+    }
+    Comma() => {
+      return None<ChannelParse>();
+    }
+    Slash() => {
+      return None<ChannelParse>();
+    }
+    Number(value: v) => {
+      let present = ChannelParse::Present(value: v);
+      return Some<ChannelParse>(value: present);
+    }
+    Percentage(value: v) => {
+      let fraction = fdiv.strict(v, 1.0e2_f64);
+      let scaled = fmul.strict(fraction, reference);
+      let present = ChannelParse::Present(value: scaled);
+      return Some<ChannelParse>(value: present);
+    }
+    Dimension(value: v, unit_span: u) => {
+      return None<ChannelParse>();
+    }
+    Ident(name: n) => {
+      let is_none = ident_is_none(values: values, span: n);
+      if is_none {
+        let missing = ChannelParse::Missing();
+        return Some<ChannelParse>(value: missing);
+      }
+      return None<ChannelParse>();
+    }
+    Hash(name: n) => {
+      return None<ChannelParse>();
+    }
+    Function(name: n, contents_start: cs, contents_end: ce) => {
+      return None<ChannelParse>();
+    }
+    Other() => {
+      return None<ChannelParse>();
+    }
+  }
+}
+
+fn clamp01(value: f64) -> result: f64 pure {
+  doc "Clamps value into [0, 1].";
+  let low = fmax(value, 0.0_f64);
+  let high = fmin(low, 1.0_f64);
+  return high;
+}
+
+fn resolve_alpha(values: &ComponentList, token: Lead) -> result: Option<ChannelParse> reads(values) {
+  doc "Resolves token as an <alpha-value>: none, or a <percentage> | <number> against a reference of 1, clamped to [0, 1].";
+  let resolved = resolve_channel(values: values, token: token, reference: 1.0_f64);
+  match resolved {
+    None() => {
+      return None<ChannelParse>();
+    }
+    Some(value: parsed) => {
+      match parsed {
+        Missing() => {
+          return Some<ChannelParse>(value: parsed);
+        }
+        Present(value: v) => {
+          let clamped = clamp01(value: v);
+          let present = ChannelParse::Present(value: clamped);
+          return Some<ChannelParse>(value: present);
+        }
+      }
+    }
+  }
+}
+
+fn normalize_hue(value: f64) -> result: f64 pure {
+  doc "Normalizes value to the half-open range [0, 360) by reducing it modulo 360 (frem, the sign of the dividend) and correcting a negative remainder.";
+  let remainder = frem(value, 3.6e2_f64);
+  let negative = flt(remainder, 0.0_f64);
+  if negative {
+    let corrected = fadd.strict(remainder, 3.6e2_f64);
+    return corrected;
+  }
+  return remainder;
+}
+
+fn angle_to_degrees(values: &ComponentList, unit_span: Span, value: f64) -> result: Option<f64> reads(values) {
+  doc "Converts value in the angle unit named by unit (deg, grad, rad or turn, ASCII case-insensitively) to degrees, or None for another unit.";
+  let deg_literal = &angle_deg[0_u64..angle_deg.len];
+  let is_deg = span_matches_ci(values: values, span: unit_span, literal: deg_literal);
+  if is_deg {
+    return Some<f64>(value: value);
+  }
+  let grad_literal = &angle_grad[0_u64..angle_grad.len];
+  let is_grad = span_matches_ci(values: values, span: unit_span, literal: grad_literal);
+  if is_grad {
+    let degrees = fmul.strict(value, 0.9_f64);
+    return Some<f64>(value: degrees);
+  }
+  let rad_literal = &angle_rad[0_u64..angle_rad.len];
+  let is_rad = span_matches_ci(values: values, span: unit_span, literal: rad_literal);
+  if is_rad {
+    let degrees = fmul.strict(value, radians_to_degrees);
+    return Some<f64>(value: degrees);
+  }
+  let turn_literal = &angle_turn[0_u64..angle_turn.len];
+  let is_turn = span_matches_ci(values: values, span: unit_span, literal: turn_literal);
+  if is_turn {
+    let degrees = fmul.strict(value, 3.6e2_f64);
+    return Some<f64>(value: degrees);
+  }
+  return None<f64>();
+}
+
+fn resolve_hue(values: &ComponentList, token: Lead) -> result: Option<ChannelParse> reads(values) {
+  doc "Resolves token as a <hue>: none, a bare Number of degrees, or a Dimension in deg, grad, rad or turn, each normalized to [0, 360); a Percentage or anything else is None.";
+  match token {
+    End() => {
+      return None<ChannelParse>();
+    }
+    Whitespace() => {
+      return None<ChannelParse>();
+    }
+    Comma() => {
+      return None<ChannelParse>();
+    }
+    Slash() => {
+      return None<ChannelParse>();
+    }
+    Number(value: v) => {
+      let degrees = normalize_hue(value: v);
+      let present = ChannelParse::Present(value: degrees);
+      return Some<ChannelParse>(value: present);
+    }
+    Percentage(value: v) => {
+      return None<ChannelParse>();
+    }
+    Dimension(value: v, unit_span: u) => {
+      let converted = angle_to_degrees(values: values, unit_span: u, value: v);
+      match converted {
+        None() => {
+          return None<ChannelParse>();
+        }
+        Some(value: degrees_raw) => {
+          let degrees = normalize_hue(value: degrees_raw);
+          let present = ChannelParse::Present(value: degrees);
+          return Some<ChannelParse>(value: present);
+        }
+      }
+    }
+    Ident(name: n) => {
+      let is_none = ident_is_none(values: values, span: n);
+      if is_none {
+        let missing = ChannelParse::Missing();
+        return Some<ChannelParse>(value: missing);
+      }
+      return None<ChannelParse>();
+    }
+    Hash(name: n) => {
+      return None<ChannelParse>();
+    }
+    Function(name: n, contents_start: cs, contents_end: ce) => {
+      return None<ChannelParse>();
+    }
+    Other() => {
+      return None<ChannelParse>();
+    }
+  }
+}
+
+fn channel_value(parsed: ChannelParse) -> result: f64 pure {
+  doc "The numeric value of parsed, zero when it is Missing, per the interface's none-counts-as-zero rule for a channel a caller does not track separately.";
+  match parsed {
+    Missing() => {
+      return 0.0_f64;
+    }
+    Present(value: v) => {
+      return v;
+    }
+  }
+}
+
+fn channel_missing(parsed: ChannelParse) -> result: Bool pure {
+  doc "True when parsed is Missing.";
+  match parsed {
+    Missing() => {
+      return True();
+    }
+    Present(value: v) => {
+      return False();
+    }
+  }
+}
