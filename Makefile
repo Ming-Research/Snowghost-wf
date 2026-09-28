@@ -18,7 +18,8 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
-	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-png oracle-png-speed
+	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color \
+	oracle-png oracle-png-speed
 
 check: compiler renderer design-lint
 
@@ -73,6 +74,9 @@ oracle-css: $(BUILD)/css_syntax_oracle
 
 oracle-css-rules: $(BUILD)/css_rules_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/rules_oracle.py build/oracle/css $<
+
+oracle-css-color: $(BUILD)/css_color_oracle
+	@cd $(ROOT) && $(PY) -B tests/css/color_oracle.py build/oracle/css $<
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
