@@ -1,0 +1,415 @@
+struct Ipv4TailPieces {
+  a: u32;
+  b: u32;
+}
+
+fn parse_ipv4_tail_pieces(input: &[u8], start: u64, length: u64) -> result: Option<Ipv4TailPieces> reads(input) contract {
+  requires start <= length;
+  requires length == input^.len;
+} {
+  doc "Parses the four-octet IPv4 tail of an IPv6 address starting at start, per the IPv6 parser's embedded IPv4 handling: exactly four dot-separated decimal octets (0 to 255, no leading zero in a multi-digit octet), packed two per 16-bit piece.";
+  let pos = start;
+  let numbers_seen = 0_u64;
+  let piece_a = 0_u32;
+  let piece_b = 0_u32;
+  loop @quad {
+    let has_c = pos < length;
+    if has_c {
+    } else {
+      break @quad;
+    }
+    if numbers_seen > 0_u64 {
+      let cur = input^[pos];
+      let is_dot = cur == 46_u8;
+      let room = numbers_seen < 4_u64;
+      let ok = band(is_dot, room);
+      if ok {
+        set pos = pos +wrap 1_u64;
+      } else {
+        return None<Ipv4TailPieces>();
+      }
+    }
+    let has_c2 = pos < length;
+    if has_c2 {
+    } else {
+      return None<Ipv4TailPieces>();
+    }
+    let first_byte = input^[pos];
+    let first_digit = is_ascii_digit(byte: first_byte);
+    if first_digit {
+    } else {
+      return None<Ipv4TailPieces>();
+    }
+    let octet = 0_u32;
+    let have_octet = False();
+    loop @octet_digits {
+      let more_digits = pos < length;
+      if more_digits {
+      } else {
+        break @octet_digits;
+      }
+      let db = input^[pos];
+      let is_digit = is_ascii_digit(byte: db);
+      if is_digit {
+      } else {
+        break @octet_digits;
+      }
+      let digit8 = db -wrap 48_u8;
+      let digit32 = cvt::<u8, u32>(digit8);
+      if have_octet {
+        let zero_so_far = octet == 0_u32;
+        if zero_so_far {
+          return None<Ipv4TailPieces>();
+        }
+        let scaled = octet *wrap 10_u32;
+        set octet = scaled +wrap digit32;
+      } else {
+        set octet = digit32;
+        set have_octet = True();
+      }
+      let too_big = octet > 255_u32;
+      if too_big {
+        return None<Ipv4TailPieces>();
+      }
+      set pos = pos +wrap 1_u64;
+    }
+    let scaled_piece = if numbers_seen < 2_u64 {
+      give piece_a;
+    } else {
+      give piece_b;
+    }
+    let widened = scaled_piece *wrap 256_u32;
+    let updated = widened +wrap octet;
+    if numbers_seen < 2_u64 {
+      set piece_a = updated;
+    } else {
+      set piece_b = updated;
+    }
+    set numbers_seen = numbers_seen +wrap 1_u64;
+  }
+  let complete = numbers_seen == 4_u64;
+  if complete {
+  } else {
+    return None<Ipv4TailPieces>();
+  }
+  let result = Ipv4TailPieces(a: piece_a, b: piece_b);
+  return Some<Ipv4TailPieces>(value: result);
+}
+
+fn parse_ipv6_address(input: &[u8]) -> result: Option<Array<u32, 8>> reads(input) {
+  doc "The IPv6 parser, given the bracket-stripped address text: compression (::), up to eight 16-bit pieces, and an embedded four-octet IPv4 tail.";
+  let length = input^.len;
+  let pieces = array_filled::<u32, 8>(value: 0_u32);
+  let piece_index = 0_u64;
+  let has_compress = False();
+  let compress_index = 0_u64;
+  let pos = 0_u64;
+  let has_first = length > 0_u64;
+  if has_first {
+    let b0 = input^[0_u64];
+    let leading_colon = b0 == 58_u8;
+    if leading_colon {
+      let has_two = length >= 2_u64;
+      if has_two {
+      } else {
+        return None<Array<u32, 8>>();
+      }
+      let b1 = input^[1_u64];
+      let second_colon = b1 == 58_u8;
+      if second_colon {
+      } else {
+        return None<Array<u32, 8>>();
+      }
+      set pos = 2_u64;
+      set piece_index = 1_u64;
+      set has_compress = True();
+      set compress_index = 1_u64;
+    }
+  }
+  loop @main {
+    let more = pos < length;
+    if more {
+    } else {
+      break @main;
+    }
+    let too_many = piece_index == 8_u64;
+    if too_many {
+      return None<Array<u32, 8>>();
+    }
+    let c = input^[pos];
+    let is_colon = c == 58_u8;
+    if is_colon {
+      if has_compress {
+        return None<Array<u32, 8>>();
+      }
+      set pos = pos +wrap 1_u64;
+      set piece_index = piece_index +wrap 1_u64;
+      set has_compress = True();
+      set compress_index = piece_index;
+    } else {
+      let digit_start = pos;
+      let value = 0_u32;
+      let digit_count = 0_u64;
+      loop @hex {
+        let room = digit_count < 4_u64;
+        if room {
+        } else {
+          break @hex;
+        }
+        let has_more = pos < length;
+        if has_more {
+        } else {
+          break @hex;
+        }
+        let ch = input^[pos];
+        let is_hex = is_ascii_hex_digit(byte: ch);
+        if is_hex {
+        } else {
+          break @hex;
+        }
+        let digit8 = hex_digit_value(byte: ch);
+        let digit32 = cvt::<u8, u32>(digit8);
+        let shifted = ishl.wrap(value, 4_u32);
+        set value = ior(shifted, digit32);
+        set pos = pos +wrap 1_u64;
+        set digit_count = digit_count +wrap 1_u64;
+      }
+      let at_end = pos >= length;
+      let next_is_dot = False();
+      let next_is_colon = False();
+      if at_end {
+      } else {
+        let ch2 = input^[pos];
+        let dotc = ch2 == 46_u8;
+        let colc = ch2 == 58_u8;
+        set next_is_dot = dotc;
+        set next_is_colon = colc;
+      }
+      if next_is_dot {
+        let zero_digits = digit_count == 0_u64;
+        if zero_digits {
+          return None<Array<u32, 8>>();
+        }
+        let too_many_before = piece_index > 6_u64;
+        if too_many_before {
+          return None<Array<u32, 8>>();
+        }
+        match parse_ipv4_tail_pieces(input: input, start: digit_start, length: length) {
+          Some(value: tail) => {
+            let index_ok = piece_index < 8_u64;
+            if index_ok {
+            } else {
+              return None<Array<u32, 8>>();
+            }
+            set pieces[piece_index] = tail.a;
+            let next_index = piece_index +wrap 1_u64;
+            let next_ok = next_index < 8_u64;
+            if next_ok {
+            } else {
+              return None<Array<u32, 8>>();
+            }
+            set pieces[next_index] = tail.b;
+            set piece_index = next_index +wrap 1_u64;
+            break @main;
+          }
+          None() => {
+            return None<Array<u32, 8>>();
+          }
+        }
+      } else if next_is_colon {
+        set pos = pos +wrap 1_u64;
+        let now_end = pos >= length;
+        if now_end {
+          return None<Array<u32, 8>>();
+        }
+        let index_ok = piece_index < 8_u64;
+        if index_ok {
+        } else {
+          return None<Array<u32, 8>>();
+        }
+        set pieces[piece_index] = value;
+        set piece_index = piece_index +wrap 1_u64;
+      } else if at_end {
+        let index_ok = piece_index < 8_u64;
+        if index_ok {
+        } else {
+          return None<Array<u32, 8>>();
+        }
+        set pieces[piece_index] = value;
+        set piece_index = piece_index +wrap 1_u64;
+      } else {
+        return None<Array<u32, 8>>();
+      }
+    }
+  }
+  if has_compress {
+    let compress_ok = compress_index <= piece_index;
+    if compress_ok {
+    } else {
+      return None<Array<u32, 8>>();
+    }
+    let swaps = piece_index -wrap compress_index;
+    let write_index = 7_u64;
+    loop @swap {
+      let cont1 = write_index != 0_u64;
+      let cont2 = swaps > 0_u64;
+      let cont = band(cont1, cont2);
+      if cont {
+      } else {
+        break @swap;
+      }
+      let offset = swaps -wrap 1_u64;
+      let src_index = compress_index +wrap offset;
+      let write_ok = write_index < 8_u64;
+      let src_ok = src_index < 8_u64;
+      let both_ok = band(write_ok, src_ok);
+      if both_ok {
+      } else {
+        return None<Array<u32, 8>>();
+      }
+      let a = pieces[write_index];
+      let b = pieces[src_index];
+      set pieces[write_index] = b;
+      set pieces[src_index] = a;
+      set write_index = write_index -wrap 1_u64;
+      set swaps = swaps -wrap 1_u64;
+    }
+  } else {
+    let complete = piece_index == 8_u64;
+    if complete {
+    } else {
+      return None<Array<u32, 8>>();
+    }
+  }
+  return Some<Array<u32, 8>>(value: pieces);
+}
+
+fn ipv6_compressed_index(pieces: &Array<u32, 8>) -> result: Option<u64> reads(pieces) {
+  doc "Finds the IPv6 address compressed piece index: the start of the longest run of zero pieces, at least two long, preferring the first among equally long runs.";
+  let longest_index = 0_u64;
+  let longest_size = 1_u64;
+  let have_longest = False();
+  let found_index = 0_u64;
+  let found_size = 0_u64;
+  let have_found = False();
+  for (piece_index in 0_u64..8_u64) {
+    let value = pieces^[piece_index];
+    let zero = value == 0_u32;
+    if zero {
+      if have_found {
+      } else {
+        set found_index = piece_index;
+        set have_found = True();
+      }
+      set found_size = found_size +wrap 1_u64;
+    } else {
+      let bigger = found_size > longest_size;
+      if bigger {
+        set longest_index = found_index;
+        set longest_size = found_size;
+        set have_longest = True();
+      }
+      set found_size = 0_u64;
+      set have_found = False();
+    }
+  }
+  let bigger = found_size > longest_size;
+  if bigger {
+    set longest_index = found_index;
+    set longest_size = found_size;
+    set have_longest = True();
+  }
+  if have_longest {
+    return Some<u64>(value: longest_index);
+  }
+  return None<u64>();
+}
+
+fn push_hex_lower(buffer: &Box<Slots<u8>>, value: u32) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "Appends value (0 to 0xFFFF) as the shortest possible lowercase hexadecimal number, at least one digit.";
+  let nibble3 = ishr.wrap(value, 12_u32);
+  let digit3 = iand(nibble3, 15_u32);
+  let has3 = digit3 > 0_u32;
+  if has3 {
+    let byte = hex_lower_digit(nibble: digit3);
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  let nibble2 = ishr.wrap(value, 8_u32);
+  let digit2 = iand(nibble2, 15_u32);
+  let has2a = digit2 > 0_u32;
+  let has2 = bor(has3, has2a);
+  if has2 {
+    let byte = hex_lower_digit(nibble: digit2);
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  let nibble1 = ishr.wrap(value, 4_u32);
+  let digit1 = iand(nibble1, 15_u32);
+  let has1a = digit1 > 0_u32;
+  let has1 = bor(has2, has1a);
+  if has1 {
+    let byte = hex_lower_digit(nibble: digit1);
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  let digit0 = iand(value, 15_u32);
+  let byte = hex_lower_digit(nibble: digit0);
+  let pushed = propagate push_byte(buffer: buffer, value: byte);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn hex_lower_digit(nibble: u32) -> result: u8 pure {
+  doc "The lowercase ASCII hex digit byte for nibble, a value 0 to 15.";
+  let narrow = cvt.wrap::<u32, u8>(nibble);
+  let small = narrow <= 9_u8;
+  if small {
+    let byte = narrow +wrap 48_u8;
+    return byte;
+  }
+  let byte = narrow +wrap 87_u8;
+  return byte;
+}
+
+fn serialize_ipv6(buffer: &Box<Slots<u8>>, pieces: &Array<u32, 8>) -> result: Result<unit, UrlError> reads(pieces), writes(buffer) {
+  doc "The IPv6 serializer: pieces joined by U+003A, with the longest run of zero pieces (at least two) compressed to ::.";
+  let compress = ipv6_compressed_index(pieces: pieces);
+  let ignore0 = False();
+  for (piece_index in 0_u64..8_u64) {
+    let value = pieces^[piece_index];
+    let skip = if ignore0 {
+      give value == 0_u32;
+    } else {
+      give False();
+    }
+    if skip {
+    } else {
+      if ignore0 {
+        set ignore0 = False();
+      }
+      let at_compress = match compress {
+        Some(value: index) => {
+          give index == piece_index;
+        }
+        None() => {
+          give False();
+        }
+      }
+      if at_compress {
+        let at_start = piece_index == 0_u64;
+        if at_start {
+          let p1 = propagate push_byte(buffer: buffer, value: 58_u8);
+          let p2 = propagate push_byte(buffer: buffer, value: 58_u8);
+        } else {
+          let p1 = propagate push_byte(buffer: buffer, value: 58_u8);
+        }
+        set ignore0 = True();
+      } else {
+        let pushed = propagate push_hex_lower(buffer: buffer, value: value);
+        let last = piece_index == 7_u64;
+        if last {
+        } else {
+          let p1 = propagate push_byte(buffer: buffer, value: 58_u8);
+        }
+      }
+    }
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
