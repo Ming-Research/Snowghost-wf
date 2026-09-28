@@ -1,7 +1,7 @@
 # Agent writer trial
 
-Status: running. The criterion below was fixed before any run; the results
-so far are recorded at the end.
+Status: complete. The criterion below was fixed before any run; the results
+are recorded at the end.
 
 ## Question
 
@@ -165,12 +165,49 @@ counted as an intervention. The CSS run found the files on its own.
   set no length bound, so the writer invented one.
 - **Default for the table-driven class: Sonnet**, at the bar.
 
-### PNG decoding: Sonnet, then Opus
+### PNG decoding: Sonnet, then Opus, done
 
-- Sonnet reached a correct decoder (all 176 cases) in about 88 minutes, 418
-  tool calls and about 657,000 tokens, but decoded the speed set at 2.9 to
-  3.3 times libpng's time, over the bar. Under the escalation rule the task
-  moved to Opus, continuing from its branch at 8ac3741.
+- **Sonnet** reached a correct decoder (all 176 cases) in about 88 minutes,
+  418 tool calls and about 657,000 tokens, but decoded the speed set at 2.9
+  to 3.3 times libpng's time, over the bar. Under the escalation rule the
+  task moved to Opus, continuing from its branch at 8ac3741.
+- **Opus** profiled with callgrind (18.25 billion instructions for one pass
+  of the speed set, down to 5.3 billion) and rewrote the three hot parts:
+  one proved loop per filter type, one per row format for RGBA expansion,
+  and an inflate that loads eight bytes at a time and decodes a whole
+  length and distance pair per table lookup. About 53 minutes, 188 tool
+  calls and about 472,000 tokens.
+- **Criterion:** met. The module checks; all 176 cases pass and the
+  checksum matches libpng's (rerun independently); the speed set takes 1.1
+  to 1.45 times libpng's single-thread time over three runs (libpng's own
+  time varies from 1.2 to 1.5 s); the reviewer scored it 4 of 5; no
+  interventions beyond the escalation.
+- **Reviewer:** readability 4, interface fidelity 4, use of Whitefoot 5,
+  performance 4. Remaining defects are small: two guards the reviewer
+  judged unreachable (the writer kept them because the header's bounds do
+  not travel back through a struct result), a Malformed condition the
+  interface doc does not list (a second IHDR), one duplicated test.
+- **Default for the performance-sensitive class: Opus.** Sonnet writes a
+  correct decoder but did not find the speed.
+
+### A later task: the HTML tokenizer
+
+After the trial, the HTML tokenizer (specification-driven) ran on Sonnet
+under the same prompt, with the text-literal compiler of Whitefoot PR #166:
+all 7,032 html5lib-tests cases pass, reviewer 3 of 5 (performance 2: a
+linear scan of the 2,231 named references per `&`). It confirms Sonnet for
+the class, with the same need for a review pass that the other runs had.
+
+### Model defaults
+
+| Class | Default | Evidence |
+|---|---|---|
+| Specification-driven | Sonnet | CSS syntax 4/5, HTML tokenizer 3/5 |
+| Table-driven | Sonnet | Line breaking 3/5 |
+| Performance-sensitive | Opus | PNG: Sonnet correct at 3.3x, Opus 1.1 to 1.45x and 4/5 |
+
+Every Sonnet module needed a follow-up pass on the review's findings; the
+review is part of the class's cost, not optional.
 
 ### Whitefoot findings
 
@@ -182,6 +219,14 @@ counted as an intervention. The CSS run found the files on its own.
 - **An allocation count without a target-sized bound** passes the module
   check and fails the build with no source location: being fixed in
   Whitefoot.
+- **Facts do not travel back through struct results or fields**
+  (`ensures` routes only through `Result`'s `Ok` and bare integer results),
+  so bounds a parser validated are checked again by its caller; certificates
+  over nonlinear products need their factors named by calls; the prover's
+  redundancy verdict on `use` steps is hard to predict; header invariants do
+  not survive a `break`; reassigning a range reference or `swap` loses
+  length facts; there is no bulk copy or vector primitive. Reported by the
+  PNG runs; not yet filed as Whitefoot requirements.
 - Friction the language keeps by design (card #20): flat three-address form,
   exhaustive matches without a wildcard, explicit `move`, exact effect rows.
   Each run named the flat form as its largest source of length.
