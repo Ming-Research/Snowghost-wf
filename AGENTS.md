@@ -132,6 +132,16 @@ submodule pin included; if it changes after approval or after its successful
 check, rules 2 and 3 apply to the new revision. No other workflow step is an
 approval or merge precondition.
 
+## Checks
+
+`make check` is the gate. It needs git, Rust stable at least at the
+`rust-version` in `whitefoot/compiler/Cargo.toml`, Python 3, and a clone
+with its submodule: `git clone --recurse-submodules`, or
+`git submodule update --init` in an existing clone. It builds the pinned
+compiler with Whitefoot's own build target, leaving it at
+`whitefoot/compiler/target/gate/whitefootc`, and runs the design lint; CI runs
+the same targets on every push.
+
 ## The Whitefoot boundary
 
 - Snowghost builds with exactly the pinned `whitefoot/` revision, and moving

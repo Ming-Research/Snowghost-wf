@@ -4,10 +4,10 @@
 PY ?= python3
 WHITEFOOT := whitefoot
 
-# The live design trees, by root node name. A change that adds a tree's root
-# node adds its name here in the same change; with none, the lint still
-# checks amendments and the log.
-DESIGN_TREES :=
+# The live design trees: every root node file directly under design/ except
+# the log, so a tree is linted in the same change that adds it. With none,
+# the lint still checks amendments and the log.
+DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard design/*.md))))
 
 # The revision a design-tree change is reviewed against. CI selects it per
 # event with .github/design-review-base.sh.
