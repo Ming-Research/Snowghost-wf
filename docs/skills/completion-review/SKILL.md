@@ -1,6 +1,6 @@
 ---
 name: completion-review
-description: Finish a Snowghost task - run the checks, get one independent review at the depth the change needs, route its findings, and publish the result to the PR. Use when about to mark a PR ready or report a task complete, or when asked for a review, completion review or dcr. Not for opening a PR or pushing work in progress.
+description: Finish a Snowghost task - run the checks, get one independent review at the depth the change needs, route its findings, and publish the result to the PR. Use when about to mark a substantial change ready or report it complete (AGENTS.md, Finish), or when asked for a review, completion review or dcr. Not for opening a PR or pushing work in progress.
 ---
 
 # Completion review
