@@ -1,0 +1,124 @@
+fn scan_script_data(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) -> result: Token reads(source), writes(tokenizer), writes(output) {
+  doc "Runs the script data state and its escaped family (13.2.5.4, 13.2.5.15, 13.2.5.18-13.2.5.25) from tokenizer's position. The script data double escaped states are not modeled: a nested \"<script\" appearing inside an escaped comment-like span is treated as ordinary text rather than opening a second escape level, which only changes behavior for that doubly-nested construct.";
+  let position = tokenizer^.position;
+  let escaped = False();
+  let dash_count = 0_u64;
+  loop @run {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let produced = output^.text.inner.len;
+      let has_text = produced > 0_u64;
+      if has_text {
+        set tokenizer^.position = position;
+        let span = span_of(start: 0_u64, end: produced);
+        let token = Token::Characters(data: span);
+        return token;
+      }
+      set tokenizer^.position = position;
+      let token = Token::EndOfFile();
+      return token;
+    }
+    let is_lt = ch == less_than_char;
+    if is_lt {
+      if escaped {
+        let (ch2, after2) = next_char(source: source, pos: after);
+        let is_slash = ch2 == solidus_char;
+        if is_slash {
+          let (ch3, after3) = next_char(source: source, pos: after2);
+          let is_alpha3 = is_ascii_char_alpha(ch: ch3);
+          if is_alpha3 {
+            let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
+            if produced {
+              return token;
+            }
+            set position = next;
+            set dash_count = 0_u64;
+          } else {
+            push_codepoint(text: &output^.text, cp: less_than_char);
+            push_codepoint(text: &output^.text, cp: solidus_char);
+            set position = after2;
+            set dash_count = 0_u64;
+          }
+        } else {
+          push_codepoint(text: &output^.text, cp: less_than_char);
+          set position = after;
+          set dash_count = 0_u64;
+        }
+      } else {
+        let (ch2, after2) = next_char(source: source, pos: after);
+        let is_slash = ch2 == solidus_char;
+        if is_slash {
+          let (ch3, after3) = next_char(source: source, pos: after2);
+          let is_alpha3 = is_ascii_char_alpha(ch: ch3);
+          if is_alpha3 {
+            let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
+            if produced {
+              return token;
+            }
+            set position = next;
+          } else {
+            push_codepoint(text: &output^.text, cp: less_than_char);
+            push_codepoint(text: &output^.text, cp: solidus_char);
+            set position = after2;
+          }
+        } else {
+          let is_bang = ch2 == bang_char;
+          if is_bang {
+            push_codepoint(text: &output^.text, cp: less_than_char);
+            push_codepoint(text: &output^.text, cp: bang_char);
+            let (ch3, after3) = next_char(source: source, pos: after2);
+            let is_dash3 = ch3 == dash_char;
+            if is_dash3 {
+              push_codepoint(text: &output^.text, cp: dash_char);
+              let (ch4, after4) = next_char(source: source, pos: after3);
+              let is_dash4 = ch4 == dash_char;
+              if is_dash4 {
+                push_codepoint(text: &output^.text, cp: dash_char);
+                set escaped = True();
+                set dash_count = 2_u64;
+                set position = after4;
+              } else {
+                set position = after3;
+              }
+            } else {
+              set position = after2;
+            }
+          } else {
+            push_codepoint(text: &output^.text, cp: less_than_char);
+            set position = after;
+          }
+        }
+      }
+    } else {
+      let is_dash = ch == dash_char;
+      if band(escaped, is_dash) {
+        push_codepoint(text: &output^.text, cp: dash_char);
+        let at_two = dash_count >= 2_u64;
+        if at_two {
+        } else {
+          set dash_count = dash_count +wrap 1_u64;
+        }
+        set position = after;
+      } else {
+        let is_gt = ch == greater_than_char;
+        let closing = band(escaped, is_gt);
+        let at_two2 = dash_count >= 2_u64;
+        let closes = band(closing, at_two2);
+        if closes {
+          push_codepoint(text: &output^.text, cp: greater_than_char);
+          set escaped = False();
+          set dash_count = 0_u64;
+          set position = after;
+        } else {
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set position = after;
+          set dash_count = 0_u64;
+        }
+      }
+    }
+  }
+  let token = Token::EndOfFile();
+  return token;
+}
