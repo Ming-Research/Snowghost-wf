@@ -1,0 +1,98 @@
+alias NormalizationForm = pkg::text::normalization::NormalizationForm;
+alias normalize = pkg::text::normalization::normalize;
+
+const normalize_ceiling: u64 = 268435456_u64;
+
+fn leading_mark_bad(content: &[u32]) -> result: Bool reads(content) {
+  doc "Validity criterion V6: the label must not begin with a combining mark, General_Category=Mark.";
+  let length = content^.len;
+  let has_first = length > 0_u64;
+  if has_first {
+  } else {
+    return False();
+  }
+  let first = content^[0_u64];
+  let mark = is_mark_of(cp: first);
+  return mark;
+}
+
+fn has_dot(content: &[u32]) -> result: Bool reads(content) {
+  doc "Validity criterion V5: the label must not contain a U+002E FULL STOP.";
+  let length = content^.len;
+  for (at in 0_u64..length) {
+    let value = content^[at];
+    let is_dot = value == full_stop;
+    if is_dot {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn all_status_ok(content: &[u32]) -> result: Bool reads(content) {
+  doc "Validity criterion V7 for Nontransitional Processing: every code point's IDNA mapping status must be valid or deviation, which status_of already reduces to status_valid.";
+  let length = content^.len;
+  for (at in 0_u64..length) {
+    let value = content^[at];
+    let st = status_of(cp: value);
+    let ok = st == status_valid;
+    if ok {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn label_nfc_ok(content: &[u32], nfc_scratch: &Box<Slots<u32>>) -> result: Bool reads(content), writes(nfc_scratch) {
+  doc "Validity criterion V1: the label must be in Unicode Normalization Form NFC. Normalizes content into nfc_scratch (truncated to empty first) and compares.";
+  truncate_codepoints_to(buffer: nfc_scratch, length: 0_u64);
+  let length = content^.len;
+  let within = length <= normalize_ceiling;
+  if within {
+  } else {
+    return False();
+  }
+  let composed = NormalizationForm::Composed();
+  match normalize(form: composed, text: content, output: nfc_scratch) {
+    Ok(value: done) => {
+      let produced_len = nfc_scratch^.inner.len;
+      let produced = &nfc_scratch^.inner[0_u64..produced_len];
+      let same = sequences_equal(a: content, b: produced);
+      return same;
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn validate_label(content: &[u32], is_xn: Bool, nfc_scratch: &Box<Slots<u32>>) -> result: Bool reads(content), writes(nfc_scratch) {
+  doc "Section 4.1's validity criteria for one non-empty label, without the hyphen checks (CheckHyphens is false): NFC only when is_xn (an ordinary label is already NFC by construction, split from the NFC-normalized whole domain at a U+002E boundary), not beginning with 'xn--' (CheckHyphens is false so V4 always applies), no U+002E, no leading combining mark, every code point's status valid or deviation, and CheckJoiners' ContextJ rules.";
+  if is_xn {
+    let nfc_ok = label_nfc_ok(content: content, nfc_scratch: nfc_scratch);
+    if nfc_ok {
+    } else {
+      return False();
+    }
+  }
+  let begins_xn = begins_with_xn(content: content);
+  if begins_xn {
+    return False();
+  }
+  let contains_dot = has_dot(content: content);
+  if contains_dot {
+    return False();
+  }
+  let bad_leading_mark = leading_mark_bad(content: content);
+  if bad_leading_mark {
+    return False();
+  }
+  let statuses_ok = all_status_ok(content: content);
+  if statuses_ok {
+  } else {
+    return False();
+  }
+  let contextj_ok = check_contextj(content: content);
+  return contextj_ok;
+}
