@@ -1,35 +1,38 @@
-fn consume_string_contents(source: &[u8], length: u64, start: u64, quote: u32, text: &Box<Slots<u8>>) -> (span: Span, next: u64, bad: Bool, hit_eof: Bool) reads(source), writes(text) contract {
+fn span_since(text: &Box<Slots<u8>>, text_start: u64) -> result: Span reads(text) {
+  doc "The Span of text from text_start to its current end.";
+  let text_end = text^.inner.len;
+  let start32 = cvt.wrap::<u64, u32>(text_start);
+  let end32 = cvt.wrap::<u64, u32>(text_end);
+  let span = Span(start: start32, end: end32);
+  return span;
+}
+
+fn consume_string_token(source: &[u8], length: u64, start: u64, quote: u32, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
   requires length == source^.len;
 } {
-  doc "Consumes string content from start up to quote (not itself part of the ending quote), per CSS Syntax 4.3.5. bad is true on an unescaped newline, whose position next does not advance past; hit_eof is true when input ran out before the ending quote.";
+  doc "Consumes a string token from start, the position right after its opening quote, up to quote, per CSS Syntax 4.3.5. Appends its QuotedString component, followed by an eof-in-string error when input runs out first; an unescaped newline instead appends a lone bad-string error and is not consumed.";
   let text_start = text^.inner.len;
   let pos = start;
   loop @content {
     let has = pos < length;
     if has {
     } else {
-      let text_end = text^.inner.len;
-      let start32 = cvt.wrap::<u64, u32>(text_start);
-      let end32 = cvt.wrap::<u64, u32>(text_end);
-      let span = Span(start: start32, end: end32);
-      return span, pos, False(), True();
+      break @content;
     }
     let (cp, after) = peek_pp(source: source, length: length, pos: pos);
     let is_quote = cp == quote;
     if is_quote {
-      let text_end = text^.inner.len;
-      let start32 = cvt.wrap::<u64, u32>(text_start);
-      let end32 = cvt.wrap::<u64, u32>(text_end);
-      let span = Span(start: start32, end: end32);
-      return span, after, False(), False();
+      let span = span_since(text: text, text_start: text_start);
+      let comp = Component::QuotedString(value: span);
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      return Ok<u64, SyntaxError>(value: after);
     }
     let is_newline = cp == 10_u32;
     if is_newline {
-      let text_end = text^.inner.len;
-      let start32 = cvt.wrap::<u64, u32>(text_start);
-      let end32 = cvt.wrap::<u64, u32>(text_end);
-      let span = Span(start: start32, end: end32);
-      return span, pos, True(), False();
+      let comp_err = ParseError::BadString();
+      let comp = Component::Error(error: comp_err);
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      return Ok<u64, SyntaxError>(value: pos);
     }
     let is_bs = cp == 92_u32;
     if is_bs {
@@ -41,43 +44,24 @@ fn consume_string_contents(source: &[u8], length: u64, start: u64, quote: u32, t
           set pos = afternext;
         } else {
           let (ecp, eafter) = consume_escape(source: source, length: length, pos: after);
-          push_code_point(text: text, cp: ecp);
+          let ecp_pushed = propagate push_code_point(text: text, cp: ecp);
           set pos = eafter;
         }
       } else {
         set pos = after;
       }
     } else {
-      push_code_point(text: text, cp: cp);
+      let cp_pushed = propagate push_code_point(text: text, cp: cp);
       set pos = after;
     }
   }
-  let text_end = text^.inner.len;
-  let start32 = cvt.wrap::<u64, u32>(text_start);
-  let end32 = cvt.wrap::<u64, u32>(text_end);
-  let span = Span(start: start32, end: end32);
-  return span, pos, False(), False();
-}
-
-fn consume_string_token(source: &[u8], length: u64, start: u64, quote: u32, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
-  requires length == source^.len;
-} {
-  doc "Consumes a string token from start, the position right after its opening quote, and appends its component plus a trailing eof-in-string error on unterminated input, or a lone bad-string error on an unescaped newline.";
-  let (span, after, bad, hit_eof) = consume_string_contents(source: source, length: length, start: start, quote: quote, text: text);
-  if bad {
-    let comp_err = ParseError::BadString();
-    let comp = Component::Error(error: comp_err);
-    push_component(components: components, value: comp);
-    return after;
-  }
+  let span = span_since(text: text, text_start: text_start);
   let comp = Component::QuotedString(value: span);
-  push_component(components: components, value: comp);
-  if hit_eof {
-    let err_err = ParseError::EofInString();
-    let err = Component::Error(error: err_err);
-    push_component(components: components, value: err);
-  }
-  return after;
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  let err_err = ParseError::EofInString();
+  let err = Component::Error(error: err_err);
+  let err_pushed = propagate push_component(components: components, value: err);
+  return Ok<u64, SyntaxError>(value: pos);
 }
 
 fn consume_bad_url_remnants(source: &[u8], length: u64, start: u64) -> next: u64 reads(source) contract {
@@ -113,7 +97,7 @@ fn consume_bad_url_remnants(source: &[u8], length: u64, start: u64) -> next: u64
   return pos;
 }
 
-fn consume_url_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+fn consume_url_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
   requires length == source^.len;
 } {
   doc "Consumes an unquoted url token's value from start, the position right after url( and any leading whitespace already known not to lead into a string, per CSS Syntax 4.3.6.";
@@ -140,27 +124,21 @@ fn consume_url_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8
     let has = pos < length;
     if has {
     } else {
-      let text_end = text^.inner.len;
-      let start32 = cvt.wrap::<u64, u32>(text_start);
-      let end32 = cvt.wrap::<u64, u32>(text_end);
-      let span = Span(start: start32, end: end32);
+      let span = span_since(text: text, text_start: text_start);
       let comp = Component::Url(value: span);
-      push_component(components: components, value: comp);
+      let comp_pushed = propagate push_component(components: components, value: comp);
       let err_err = ParseError::EofInUrl();
       let err = Component::Error(error: err_err);
-      push_component(components: components, value: err);
-      return pos;
+      let err_pushed = propagate push_component(components: components, value: err);
+      return Ok<u64, SyntaxError>(value: pos);
     }
     let (cp, after) = peek_pp(source: source, length: length, pos: pos);
     let is_close = cp == 41_u32;
     if is_close {
-      let text_end = text^.inner.len;
-      let start32 = cvt.wrap::<u64, u32>(text_start);
-      let end32 = cvt.wrap::<u64, u32>(text_end);
-      let span = Span(start: start32, end: end32);
+      let span = span_since(text: text, text_start: text_start);
       let comp = Component::Url(value: span);
-      push_component(components: components, value: comp);
-      return after;
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      return Ok<u64, SyntaxError>(value: after);
     }
     let is_ws = is_whitespace_cp(cp: cp);
     if is_ws {
@@ -187,32 +165,26 @@ fn consume_url_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8
         let b3 = source^[wpos];
         let closes = b3 == 41_u8;
         if closes {
-          let text_end = text^.inner.len;
-          let start32 = cvt.wrap::<u64, u32>(text_start);
-          let end32 = cvt.wrap::<u64, u32>(text_end);
-          let span = Span(start: start32, end: end32);
+          let span = span_since(text: text, text_start: text_start);
           let comp = Component::Url(value: span);
-          push_component(components: components, value: comp);
+          let comp_pushed = propagate push_component(components: components, value: comp);
           let after_close = wpos +wrap 1_u64;
-          return after_close;
+          return Ok<u64, SyntaxError>(value: after_close);
         }
       } else {
-        let text_end = text^.inner.len;
-        let start32 = cvt.wrap::<u64, u32>(text_start);
-        let end32 = cvt.wrap::<u64, u32>(text_end);
-        let span = Span(start: start32, end: end32);
+        let span = span_since(text: text, text_start: text_start);
         let comp = Component::Url(value: span);
-        push_component(components: components, value: comp);
+        let comp_pushed = propagate push_component(components: components, value: comp);
         let err_err = ParseError::EofInUrl();
         let err = Component::Error(error: err_err);
-        push_component(components: components, value: err);
-        return wpos;
+        let err_pushed = propagate push_component(components: components, value: err);
+        return Ok<u64, SyntaxError>(value: wpos);
       }
       let remnant_end = consume_bad_url_remnants(source: source, length: length, start: wpos);
       let comp_err = ParseError::BadUrl();
       let comp = Component::Error(error: comp_err);
-      push_component(components: components, value: comp);
-      return remnant_end;
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      return Ok<u64, SyntaxError>(value: remnant_end);
     }
     let is_quote_char_l = cp == 34_u32;
     let is_quote_char_r = cp == 39_u32;
@@ -225,27 +197,27 @@ fn consume_url_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8
       let remnant_end = consume_bad_url_remnants(source: source, length: length, start: after);
       let comp_err = ParseError::BadUrl();
       let comp = Component::Error(error: comp_err);
-      push_component(components: components, value: comp);
-      return remnant_end;
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      return Ok<u64, SyntaxError>(value: remnant_end);
     }
     let is_bs = cp == 92_u32;
     if is_bs {
       let esc_ok = would_start_valid_escape(source: source, length: length, pos: pos);
       if esc_ok {
         let (ecp, eafter) = consume_escape(source: source, length: length, pos: after);
-        push_code_point(text: text, cp: ecp);
+        let ecp_pushed = propagate push_code_point(text: text, cp: ecp);
         set pos = eafter;
       } else {
         let remnant_end = consume_bad_url_remnants(source: source, length: length, start: after);
         let comp_err = ParseError::BadUrl();
         let comp = Component::Error(error: comp_err);
-        push_component(components: components, value: comp);
-        return remnant_end;
+        let comp_pushed = propagate push_component(components: components, value: comp);
+        return Ok<u64, SyntaxError>(value: remnant_end);
       }
     } else {
-      push_code_point(text: text, cp: cp);
+      let cp_pushed = propagate push_code_point(text: text, cp: cp);
       set pos = after;
     }
   }
-  return pos;
+  return Ok<u64, SyntaxError>(value: pos);
 }
