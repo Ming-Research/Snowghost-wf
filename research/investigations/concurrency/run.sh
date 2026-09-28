@@ -80,18 +80,22 @@ sheets_of() {
 	esac
 }
 
-# Repetitions per page and stage, chosen so the stage dominates T(REPS): one
-# count for the shapes A, B and C, and one for the intern post-pass, which
+# Repetitions per page and stage, chosen so the stage is at least two thirds
+# of T(REPS) with the --par build at four workers, the configuration with the
+# shortest stage and, because the HTML tree builder hands out statement-sized
+# tasks under --par, the longest T(0): 17.5 s on ecma262 and 10 s on html5
+# against 0.3 s at one worker, measured on the development machine. One
+# count serves the shapes A, B and C, and one the intern post-pass, which
 # costs far less than a shape while its T(0) holds one run of C.
 reps_of() {
 	case $1 in
-	ecma262) shapes=3 intern=300 ;;
-	html5) shapes=3 intern=300 ;;
-	apollo11) shapes=3 intern=300 ;;
-	flat) shapes=20 intern=300 ;;
-	deep) shapes=400 intern=3000 ;;
-	unbalanced) shapes=40 intern=300 ;;
-	paragraph) shapes=2000 intern=3000 ;;
+	ecma262) shapes=20 intern=800 ;;
+	html5) shapes=15 intern=800 ;;
+	apollo11) shapes=6 intern=2000 ;;
+	flat) shapes=100 intern=300 ;;
+	deep) shapes=1000 intern=2000 ;;
+	unbalanced) shapes=100 intern=300 ;;
+	paragraph) shapes=20000 intern=20000 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
 	case $2 in
