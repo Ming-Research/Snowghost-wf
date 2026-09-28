@@ -37,6 +37,12 @@ struct BacktrackState {
   current: NodeId;
 }
 
+const result_restart_later_sibling: u8 = 0_u8;
+
+const result_restart_descendant: u8 = 1_u8;
+
+const result_not_matched_globally: u8 = 2_u8;
+
 fn atom_bounds(atoms: &AtomTable, atom: Atom) -> (start: u64, end: u64) reads(atoms) contract {
   ensures start <= end;
   ensures end <= atoms^.text.inner.len;
@@ -782,35 +788,54 @@ fn compound_matches(list: &SelectorList, document: &Document, atoms: &AtomTable,
   return True();
 }
 
-fn backtrack(document: &Document, stack: &Slots<Frame, 64>) -> result: Option<BacktrackState> reads(document), writes(stack) {
-  doc "Pops frames until one yields a further ancestor or sibling candidate, pushing an updated frame for it and returning the resume state; None when the stack empties without one.";
+fn backtrack(document: &Document, stack: &Slots<Frame, 64>, failure: u8) -> result: Option<BacktrackState> reads(document), writes(stack) {
+  doc "Resolves failure (one of the result_* codes above, already folded for any child combinator crossed since the top frame) against stack, following the restart-result policy Servo's selectors crate uses in matches_complex_selector_internal: result_not_matched_globally ends the walk with None regardless of stack; otherwise, against the top frame, a descendant frame (kind 0) always tries its next ancestor, its own exhaustion (no ancestor left) being result_not_matched_globally, so an exhausted descendant frame also ends the walk with None; a subsequent-sibling frame (kind 1) tries its next previous sibling when failure is result_restart_later_sibling, and is otherwise abandoned without retrying, its own exhaustion under a retry also yielding result_restart_descendant, so an abandoned or exhausted subsequent-sibling frame alike is popped and the same result_restart_descendant carried to the frame below. Pushes an updated frame and returns the resume state for a step that retries; None when the stack empties without one.";
+  let result = failure;
   loop @bt {
+    let is_global = result == result_not_matched_globally;
+    if is_global {
+      return None<BacktrackState>();
+    }
     let empty = stack^.len == 0_u64;
     if empty {
       return None<BacktrackState>();
     }
     let frame = take_back(window: stack);
     let is_descendant = frame.kind == 0_u8;
-    let next_candidate = if is_descendant {
-      let p = parent_of(document: document, node: frame.last_tried);
-      give p;
-    } else {
-      let p = previous_element_sibling(document: document, node: frame.last_tried);
-      give p;
-    }
-    match next_candidate {
-      Some(value: nc) => {
-        let room = stack^.len < stack^.cap;
-        if room {
-          let new_frame = Frame(compound_index: frame.compound_index, last_tried: nc, kind: frame.kind);
-          place_back(window: stack, value: new_frame);
-          let state = BacktrackState(i: frame.compound_index, current: nc);
-          let some_state = Some<BacktrackState>(value: state);
-          return some_state;
+    if is_descendant {
+      match parent_of(document: document, node: frame.last_tried) {
+        Some(value: p) => {
+          let room = stack^.len < stack^.cap;
+          if room {
+            let new_frame = Frame(compound_index: frame.compound_index, last_tried: p, kind: frame.kind);
+            place_back(window: stack, value: new_frame);
+            let state = BacktrackState(i: frame.compound_index, current: p);
+            return Some<BacktrackState>(value: state);
+          }
+          return None<BacktrackState>();
         }
-        return None<BacktrackState>();
+        None() => {
+          return None<BacktrackState>();
+        }
       }
-      None() => {
+    } else {
+      let should_retry = result == result_restart_later_sibling;
+      if should_retry {
+        match previous_element_sibling(document: document, node: frame.last_tried) {
+          Some(value: p) => {
+            let room = stack^.len < stack^.cap;
+            if room {
+              let new_frame = Frame(compound_index: frame.compound_index, last_tried: p, kind: frame.kind);
+              place_back(window: stack, value: new_frame);
+              let state = BacktrackState(i: frame.compound_index, current: p);
+              return Some<BacktrackState>(value: state);
+            }
+            return None<BacktrackState>();
+          }
+          None() => {
+            set result = result_restart_descendant;
+          }
+        }
       }
     }
   }
@@ -818,7 +843,7 @@ fn backtrack(document: &Document, stack: &Slots<Frame, 64>) -> result: Option<Ba
 }
 
 fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, comp_start: u32, comp_end: u32, target: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
-  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector. Compounds are stored in source (left-to-right, ancestor-to-descendant) order, so the walk starts at index comp_end - 1 (the rightmost, target-anchored compound) and decrements; each compound's own combinator field names the combinator connecting it to its predecessor in source order, which is exactly the step to take when moving from it toward comp_start. An explicit stack, sized to max_compounds_per_selector, backtracks over descendant and subsequent-sibling combinators.";
+  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector. Compounds are stored in source (left-to-right, ancestor-to-descendant) order, so the walk starts at index comp_end - 1 (the rightmost, target-anchored compound) and decrements; each compound's own combinator field names the combinator connecting it to its predecessor in source order, which is exactly the step to take when moving from it toward comp_start. An explicit stack, sized to max_compounds_per_selector, holds one frame per unresolved descendant or subsequent-sibling combinator. A mismatched compound fails with result_restart_later_sibling, and a combinator with no candidate left fails with result_restart_descendant (the two sibling combinators) or result_not_matched_globally (child and descendant); crossed_child folds a child combinator crossed since the last frame into that result, since child has no frame of its own and its own failure is always result_restart_descendant, while a next-sibling combinator, also frameless, passes its inner result through unchanged. backtrack then resolves the (possibly folded) result against the stack: retrying the top frame, popping a subsequent-sibling frame that a result_restart_descendant does not retry, and stopping the walk on result_not_matched_globally. A candidate further along an axis sees a subset of the ancestors, or preceding siblings, of a nearer one, so a result_not_matched_globally at the nearer one is final and no compound is ever retested against elements an earlier failure already ruled out.";
   let has_any = comp_start < comp_end;
   if has_any {
   } else {
@@ -828,6 +853,7 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
   let last = comp_end -wrap 1_u32;
   let i = last;
   let current = target;
+  let crossed_child = False();
   loop @search {
     let i_wide = cvt::<u32, u64>(i);
     let i_order_ok = i_wide < list^.compound_order.inner.len;
@@ -859,17 +885,10 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
             Some(value: p) => {
               set i = prev_i;
               set current = p;
+              set crossed_child = True();
             }
             None() => {
-              match backtrack(document: document, stack: &stack) {
-                Some(value: st) => {
-                  set i = st.i;
-                  set current = st.current;
-                }
-                None() => {
-                  return False();
-                }
-              }
+              return False();
             }
           }
         }
@@ -880,10 +899,11 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
               set current = p;
             }
             None() => {
-              match backtrack(document: document, stack: &stack) {
+              match backtrack(document: document, stack: &stack, failure: result_restart_descendant) {
                 Some(value: st) => {
                   set i = st.i;
                   set current = st.current;
+                  set crossed_child = False();
                 }
                 None() => {
                   return False();
@@ -901,20 +921,13 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
                 place_back(window: &stack, value: frame);
                 set i = prev_i;
                 set current = p;
+                set crossed_child = False();
               } else {
                 return False();
               }
             }
             None() => {
-              match backtrack(document: document, stack: &stack) {
-                Some(value: st) => {
-                  set i = st.i;
-                  set current = st.current;
-                }
-                None() => {
-                  return False();
-                }
-              }
+              return False();
             }
           }
         }
@@ -927,15 +940,17 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
                 place_back(window: &stack, value: frame);
                 set i = prev_i;
                 set current = p;
+                set crossed_child = False();
               } else {
                 return False();
               }
             }
             None() => {
-              match backtrack(document: document, stack: &stack) {
+              match backtrack(document: document, stack: &stack, failure: result_restart_descendant) {
                 Some(value: st) => {
                   set i = st.i;
                   set current = st.current;
+                  set crossed_child = False();
                 }
                 None() => {
                   return False();
@@ -946,10 +961,16 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
         }
       }
     } else {
-      match backtrack(document: document, stack: &stack) {
+      let failure = if crossed_child {
+        give result_restart_descendant;
+      } else {
+        give result_restart_later_sibling;
+      }
+      match backtrack(document: document, stack: &stack, failure: failure) {
         Some(value: st) => {
           set i = st.i;
           set current = st.current;
+          set crossed_child = False();
         }
         None() => {
           return False();
