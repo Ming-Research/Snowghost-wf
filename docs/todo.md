@@ -66,3 +66,12 @@ example apart from the renderer code that exposed it
   before any font reaches the shell, and one shaper leaf per script
   family. Reopen when the first page needs a web font, a non-Latin script
   beyond Greek and Cyrillic, or the shell rasterizes.
+- **load_face ignores a whole malformed GDEF, GSUB or GPOS table.** Chrome
+  passes these tables to HarfBuzz unsanitized, and HarfBuzz's sanitizer
+  neuters each offset it cannot follow, so the lookups that parse still
+  apply. pkg::font drops the whole table instead. The two agree when the
+  table is unreadable as a whole or when the neutered offset is the only
+  structure a feature uses; otherwise a font with one broken lookup loses
+  its other lookups here. Change: validate per lookup and ignore only the
+  failing lookup, matching HarfBuzz's neutering. Reopen when a real web
+  font with a partly broken layout table renders differently from Chrome.

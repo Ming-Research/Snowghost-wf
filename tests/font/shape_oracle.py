@@ -79,6 +79,9 @@ def cases(udhr_dir):
             out.append(("cyrillic pair %04X %04X" % (a, b), "Cyrl", [a, b]))
     for text in ["0123456789", "1+1=2", "(12.5%)", "…", "a — b", ""]:
         out.append(("common %r" % text, "Zyyy", [ord(c) for c in text]))
+    for text in ["1\u20442", "3\u204416", "12\u2044345 kg", "a\u20442", "1\u2044b", "\u20442"]:
+        for script in ("Zyyy", "Latn"):
+            out.append(("fraction %r %s" % (text, script), script, [ord(c) for c in text]))
     for ignorable in [0x200D, 0x200C, 0x00AD, 0x200B, 0x2060, 0xFEFF, 0x034F]:
         out.append(("ignorable %04X" % ignorable, "Latn", [0x61, ignorable, 0x62]))
     for space in range(0x2000, 0x200B):
@@ -109,7 +112,7 @@ def expected(font_path, script, values):
     buffer.script = script
     hb.shape(font, buffer)
     return [[info.codepoint, info.cluster, pos.x_advance, pos.y_advance, pos.x_offset, pos.y_offset]
-            for info, pos in zip(buffer.glyph_infos, buffer.glyph_positions)]
+            for info, pos in zip(buffer.glyph_infos, buffer.glyph_positions or [])]
 
 
 def main():
@@ -137,7 +140,7 @@ def main():
             buffer.script = script
             hb.shape(fonts[font_index], buffer)
             wanted.append([[i.codepoint, i.cluster, p.x_advance, p.y_advance, p.x_offset, p.y_offset]
-                           for i, p in zip(buffer.glyph_infos, buffer.glyph_positions)])
+                           for i, p in zip(buffer.glyph_infos, buffer.glyph_positions or [])])
     arguments = [driver] + [os.path.relpath(os.path.join(font_dir, name)) for name in FONTS]
     run = subprocess.run(arguments + [os.path.relpath(cases_path)], capture_output=True)
     lines = run.stdout.decode("utf-8", "replace").splitlines()

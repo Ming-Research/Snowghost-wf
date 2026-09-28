@@ -21,8 +21,10 @@ or, when load_face refuses the font, the one line `refused Invalid`,
 `refused Unsupported` or `refused TooLarge`. Numbers are decimal except
 SCALAR; USE_TYPO is 0 or 1. The script computes the same lines with
 fontTools and compares them. It also writes corrupted copies of the first
-font (CORRUPTIONS) beside the fonts and expects each to be refused as
-listed.
+font (corruptions()) beside the fonts. A corrupted core table must be
+refused as listed; a corrupted GDEF, GSUB or GPOS table must be ignored, so
+the copy dumps as the intact font does, with every class 0 when GDEF is the
+one ignored.
 """
 
 import os
@@ -31,6 +33,8 @@ import subprocess
 import sys
 
 FONTS = ["NotoSans-Regular.ttf", "NotoSerif-Regular.ttf"]
+INTACT = "intact"
+NO_GDEF = "no GDEF"
 
 
 def expected_dump(path):
@@ -84,7 +88,9 @@ def table_records(data):
 
 
 def corruptions(data):
-    """Copies of a font that load_face must refuse, with the expected line."""
+    """Copies of a font with what load_face must do with each: the one line
+    of a refusal, or INTACT (dump as the intact font) or NO_GDEF (dump as
+    the intact font with every class 0) for an ignored layout table."""
     records = table_records(data)
     out = []
     for cut in (0, 11, 12 + 16, len(data) // 2, len(data) - 1):
@@ -103,15 +109,22 @@ def corruptions(data):
         struct.pack_into(">I", changed, cmap + 4 + 8 * index + 4, cmap_length + 64)
     out.append(("cmap-subtable-past-table", bytes(changed), "refused Invalid"))
     changed = bytearray(data)
-    _, gsub, _ = records["GSUB"]
+    _, gsub, gsub_length = records["GSUB"]
+    assert gsub_length < 0xFFF0
     struct.pack_into(">H", changed, gsub + 8, 0xFFF0)
-    out.append(("gsub-lookup-list-past-table", bytes(changed), "refused Invalid"))
+    out.append(("gsub-lookup-list-past-table", bytes(changed), INTACT))
     changed = bytearray(data)
-    _, gpos, _ = records["GPOS"]
+    _, gpos, gpos_length = records["GPOS"]
     lookups = gpos + struct.unpack(">H", data[gpos + 8:gpos + 10])[0]
     first = lookups + struct.unpack(">H", data[lookups + 2:lookups + 4])[0]
-    struct.pack_into(">H", changed, first + 6, 0xFFF0)
-    out.append(("gpos-subtable-past-table", bytes(changed), "refused Invalid"))
+    assert first + 6 + 2 * 0xFFFF > gpos + gpos_length
+    struct.pack_into(">H", changed, first + 4, 0xFFFF)
+    out.append(("gpos-subtable-count-past-table", bytes(changed), INTACT))
+    changed = bytearray(data)
+    _, gdef, gdef_length = records["GDEF"]
+    assert gdef_length < 0xFFF0
+    struct.pack_into(">H", changed, gdef + 4, 0xFFF0)
+    out.append(("gdef-class-definition-past-table", bytes(changed), NO_GDEF))
     changed = bytearray(data)
     _, hhea, _ = records["hhea"]
     struct.pack_into(">H", changed, hhea + 34, 0)
@@ -151,15 +164,24 @@ def main():
                 print("  " + result.stderr.decode("utf-8", "replace")[-500:])
     with open(os.path.join(font_dir, FONTS[0]), "rb") as file:
         data = file.read()
+    intact = expected_dump(os.path.join(font_dir, FONTS[0]))
+    no_gdef = [line if not line.startswith("class ") else " ".join(line.split()[:2] + ["0"])
+               for line in intact]
     for label, corrupted, want in corruptions(data):
         path = os.path.join(font_dir, "corrupt-%s.ttf" % label)
         with open(path, "wb") as file:
             file.write(corrupted)
         got, result = run(driver, path)
         cases += 1
-        if got != [want] or result.returncode != 0:
+        lines = intact if want == INTACT else no_gdef if want == NO_GDEF else [want]
+        if got != lines or result.returncode != 0:
             failed += 1
-            print(f"{label}: expected {want!r}, actual {got[:2]!r} (exit {result.returncode})")
+            first = next((i for i in range(max(len(got), len(lines)))
+                          if i >= len(got) or i >= len(lines) or got[i] != lines[i]), 0)
+            expected = lines[first] if first < len(lines) else "(missing)"
+            actual = got[first] if first < len(got) else "(missing)"
+            print(f"{label}: expected {want!r}; line {first + 1}: expected {expected!r}, "
+                  f"actual {actual!r} (exit {result.returncode})")
     print(f"font_face: {cases} cases, {cases - failed} passed, {failed} failed")
     return 0 if failed == 0 else 1
 
