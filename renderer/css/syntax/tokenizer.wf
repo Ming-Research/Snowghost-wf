@@ -7,7 +7,7 @@ fn ones_mask(bits: u32) -> result: u32 pure {
 }
 
 fn patch_component(components: &Box<Slots<Component>>, index: u64, value: Component) -> result: Result<unit, SyntaxError> writes(components) {
-  doc "Overwrites the component at index with value. Every caller passes the index of a component it pushed earlier, and components only grow, so an index past the end refuses the parse rather than being skipped.";
+  doc "Overwrites the component at index with value. The index comes from open_blocks, which records only components already pushed, and components only grow; the bound is not carried through the heap stack, so an index past the end refuses the parse rather than being skipped.";
   let within = index < components^.inner.len;
   if within {
     set components^.inner[index] = value;
@@ -73,55 +73,76 @@ fn consume_comment(source: &[u8], length: u64, start: u64) -> next: u64 reads(so
   return pos;
 }
 
-fn consume_block(source: &[u8], length: u64, start: u64, kind: u8, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
-  requires length == source^.len;
-} {
-  doc "Opens a parenthesis (kind 1), bracket (kind 2), or brace (kind 3) block at start, the position right after its opening byte, consumes its contents, and patches its end.";
-  let open_index = components^.inner.len;
-  let placeholder = if kind == 1_u8 {
-    give Component::ParenthesisBlock(end: 0_u32);
-  } else if kind == 2_u8 {
-    give Component::BracketBlock(end: 0_u32);
-  } else {
-    give Component::BraceBlock(end: 0_u32);
-  }
-  let placeholder_pushed = propagate push_component(components: components, value: placeholder);
-  let ending_cp = if kind == 1_u8 {
-    give 41_u32;
-  } else if kind == 2_u8 {
-    give 93_u32;
-  } else {
-    give 125_u32;
-  }
-  let has_ending = True();
-  let after = propagate consume_list_of_component_values(source: source, length: length, start: start, has_ending: has_ending, ending_cp: ending_cp, text: text, components: components);
-  let end_len = components^.inner.len;
-  let end32 = cvt.wrap::<u64, u32>(end_len);
-  let final_comp = if kind == 1_u8 {
-    give Component::ParenthesisBlock(end: end32);
-  } else if kind == 2_u8 {
-    give Component::BracketBlock(end: end32);
-  } else {
-    give Component::BraceBlock(end: end32);
-  }
-  let final_comp_pushed = propagate patch_component(components: components, index: open_index, value: final_comp);
-  return Ok<u64, SyntaxError>(value: after);
+enum OpenKind {
+  Parenthesis();
+  Bracket();
+  Brace();
+  Function(name: Span);
 }
 
-fn consume_function(source: &[u8], length: u64, start: u64, name: Span, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
-  requires length == source^.len;
+struct OpenBlock {
+  index: u64;
+  kind: OpenKind;
+}
+
+fn opened_component(kind: OpenKind, end: u32) -> result: Component pure {
+  doc "The component that opens a block or function of kind, with end as its end index.";
+  let component = match kind {
+    Parenthesis() => {
+      give Component::ParenthesisBlock(end: end);
+    }
+    Bracket() => {
+      give Component::BracketBlock(end: end);
+    }
+    Brace() => {
+      give Component::BraceBlock(end: end);
+    }
+    Function(name: function_name) => {
+      give Component::Function(name: function_name, end: end);
+    }
+  }
+  return component;
+}
+
+fn closing_code_point(kind: OpenKind) -> result: u32 pure {
+  doc "The code point that closes a block or function of kind.";
+  let closing = match kind {
+    Parenthesis() => {
+      give 41_u32;
+    }
+    Bracket() => {
+      give 93_u32;
+    }
+    Brace() => {
+      give 125_u32;
+    }
+    Function(..) => {
+      give 41_u32;
+    }
+  }
+  return closing;
+}
+
+fn open_block(components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>, kind: OpenKind) -> result: Result<unit, SyntaxError> writes(components), writes(open_blocks) {
+  doc "Appends the opening component of a block or function of kind, with end 0 until it closes, and records its index and kind on open_blocks.";
+  let index = components^.inner.len;
+  let placeholder = opened_component(kind: kind, end: 0_u32);
+  let placed = propagate push_component(components: components, value: placeholder);
+  let block = OpenBlock(index: index, kind: kind);
+  let recorded = propagate push_open_block(open_blocks: open_blocks, value: block);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn close_innermost(components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<unit, SyntaxError> writes(components), writes(open_blocks) contract {
+  requires open_blocks^.inner.len > 0_u64;
 } {
-  doc "Opens a Function component named name at start, the position right after its opening parenthesis, consumes its contents, and patches its end.";
-  let open_index = components^.inner.len;
-  let placeholder = Component::Function(name: name, end: 0_u32);
-  let placeholder_pushed = propagate push_component(components: components, value: placeholder);
-  let has_ending = True();
-  let after = propagate consume_list_of_component_values(source: source, length: length, start: start, has_ending: has_ending, ending_cp: 41_u32, text: text, components: components);
-  let end_len = components^.inner.len;
-  let end32 = cvt.wrap::<u64, u32>(end_len);
-  let final_comp = Component::Function(name: name, end: end32);
-  let final_comp_pushed = propagate patch_component(components: components, index: open_index, value: final_comp);
-  return Ok<u64, SyntaxError>(value: after);
+  doc "Removes the innermost open block from open_blocks and patches its opening component with the current component count as its end.";
+  let block = take_back(window: &open_blocks^.inner);
+  let count = components^.inner.len;
+  let end = cvt.wrap::<u64, u32>(count);
+  let closed = opened_component(kind: block.kind, end: end);
+  let patched = propagate patch_component(components: components, index: block.index, value: closed);
+  return Ok<unit, SyntaxError>(value: unit);
 }
 
 fn name_matches_url_ci(text: &Box<Slots<u8>>, span: Span) -> result: Bool reads(text) {
@@ -158,10 +179,10 @@ fn name_matches_url_ci(text: &Box<Slots<u8>>, span: Span) -> result: Bool reads(
   return result;
 }
 
-fn consume_ident_like(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+fn consume_ident_like(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
   requires length == source^.len;
 } {
-  doc "Consumes an ident sequence at start and dispatches it as an Ident, a Function, or a url token, per CSS Syntax 4.3.4.";
+  doc "Consumes an ident sequence at start and dispatches it as an Ident, a url token, or a Function, per CSS Syntax 4.3.4; a Function opens on open_blocks and its contents follow in the caller's loop.";
   let scanned_name = propagate consume_ident_sequence(source: source, length: length, start: start, text: text);
   let name = scanned_name.span;
   let after_name = scanned_name.next;
@@ -196,14 +217,16 @@ fn consume_ident_like(source: &[u8], length: u64, start: u64, text: &Box<Slots<u
       }
     }
     if is_quote_probe {
-      let n = propagate consume_function(source: source, length: length, start: after_paren, name: name, text: text, components: components);
-      return Ok<u64, SyntaxError>(value: n);
+      let kind = OpenKind::Function(name: name);
+      let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+      return Ok<u64, SyntaxError>(value: after_paren);
     }
     let n = propagate consume_url_token(source: source, length: length, start: after_paren, text: text, components: components);
     return Ok<u64, SyntaxError>(value: n);
   }
-  let n = propagate consume_function(source: source, length: length, start: after_paren, name: name, text: text, components: components);
-  return Ok<u64, SyntaxError>(value: n);
+  let kind = OpenKind::Function(name: name);
+  let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+  return Ok<u64, SyntaxError>(value: after_paren);
 }
 
 fn consume_numeric_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
@@ -357,7 +380,7 @@ fn consume_unicode_range(source: &[u8], length: u64, start: u64, components: &Bo
   return Ok<u64, SyntaxError>(value: final_pos);
 }
 
-fn consume_u(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+fn consume_u(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
   requires length == source^.len;
 } {
   doc "Dispatches a leading u or U as a unicode-range token when it is immediately followed by + and a hex digit or ?, or otherwise as an ordinary ident-like token.";
@@ -385,7 +408,7 @@ fn consume_u(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<
     let n = propagate consume_unicode_range(source: source, length: length, start: pos_plus, components: components);
     return Ok<u64, SyntaxError>(value: n);
   }
-  let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+  let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
   return Ok<u64, SyntaxError>(value: n);
 }
 
@@ -471,7 +494,7 @@ fn suffix_or_delim(source: &[u8], length: u64, after: u64, cp: u32, op: MatchOpe
   return Ok<u64, SyntaxError>(value: after);
 }
 
-fn consume_dash(source: &[u8], length: u64, pos: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+fn consume_dash(source: &[u8], length: u64, pos: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
   requires length == source^.len;
 } {
   doc "Dispatches a leading hyphen-minus as a number, a CDC token, an ident-like token, or a delim, per CSS Syntax 4.3.3.";
@@ -506,7 +529,7 @@ fn consume_dash(source: &[u8], length: u64, pos: u64, text: &Box<Slots<u8>>, com
   }
   let starts_ident = would_start_identifier(source: source, length: length, pos: pos);
   if starts_ident {
-    let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+    let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
     return Ok<u64, SyntaxError>(value: n);
   }
   let comp = Component::Delim(code_point: 45_u32);
@@ -623,10 +646,10 @@ fn consume_pipe(source: &[u8], length: u64, after: u64, components: &Box<Slots<C
   return Ok<u64, SyntaxError>(value: after);
 }
 
-fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
   requires length == source^.len;
 } {
-  doc "Consumes one component value that is not an unmatched closing token, dispatched on its leading preprocessed code point cp, per CSS Syntax 4.3.3.";
+  doc "Consumes one token that is not a closing token, dispatched on its leading preprocessed code point cp, per CSS Syntax 4.3.3. An opening token or a Function opens on open_blocks; the caller's loop consumes its contents.";
   let is_ws = is_whitespace_cp(cp: cp);
   if is_ws {
     let end_ws = skip_whitespace_run(source: source, length: length, start: after);
@@ -654,8 +677,9 @@ fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, 
   }
   let is_lparen = cp == 40_u32;
   if is_lparen {
-    let n = propagate consume_block(source: source, length: length, start: after, kind: 1_u8, text: text, components: components);
-    return Ok<u64, SyntaxError>(value: n);
+    let kind = OpenKind::Parenthesis();
+    let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+    return Ok<u64, SyntaxError>(value: after);
   }
   let is_star = cp == 42_u32;
   if is_star {
@@ -682,7 +706,7 @@ fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, 
   }
   let is_dash = cp == 45_u32;
   if is_dash {
-    let n = propagate consume_dash(source: source, length: length, pos: pos, text: text, components: components);
+    let n = propagate consume_dash(source: source, length: length, pos: pos, text: text, components: components, open_blocks: open_blocks);
     return Ok<u64, SyntaxError>(value: n);
   }
   let is_dot = cp == 46_u32;
@@ -732,14 +756,15 @@ fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, 
   }
   let is_lbracket = cp == 91_u32;
   if is_lbracket {
-    let n = propagate consume_block(source: source, length: length, start: after, kind: 2_u8, text: text, components: components);
-    return Ok<u64, SyntaxError>(value: n);
+    let kind = OpenKind::Bracket();
+    let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+    return Ok<u64, SyntaxError>(value: after);
   }
   let is_backslash = cp == 92_u32;
   if is_backslash {
     let esc_ok = would_start_valid_escape(source: source, length: length, pos: pos);
     if esc_ok {
-      let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+      let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
       return Ok<u64, SyntaxError>(value: n);
     }
     let comp = Component::Delim(code_point: cp);
@@ -754,8 +779,9 @@ fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, 
   }
   let is_lbrace = cp == 123_u32;
   if is_lbrace {
-    let n = propagate consume_block(source: source, length: length, start: after, kind: 3_u8, text: text, components: components);
-    return Ok<u64, SyntaxError>(value: n);
+    let kind = OpenKind::Brace();
+    let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+    return Ok<u64, SyntaxError>(value: after);
   }
   let is_pipe = cp == 124_u32;
   if is_pipe {
@@ -772,12 +798,12 @@ fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, 
   let is_u_lower = cp == 117_u32;
   let is_u = bor(is_u_upper, is_u_lower);
   if is_u {
-    let n = propagate consume_u(source: source, length: length, pos: pos, after: after, text: text, components: components);
+    let n = propagate consume_u(source: source, length: length, pos: pos, after: after, text: text, components: components, open_blocks: open_blocks);
     return Ok<u64, SyntaxError>(value: n);
   }
   let starts_ident = would_start_identifier(source: source, length: length, pos: pos);
   if starts_ident {
-    let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+    let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
     return Ok<u64, SyntaxError>(value: n);
   }
   let comp = Component::Delim(code_point: cp);
@@ -785,11 +811,12 @@ fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, 
   return Ok<u64, SyntaxError>(value: after);
 }
 
-fn consume_list_of_component_values(source: &[u8], length: u64, start: u64, has_ending: Bool, ending_cp: u32, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+fn consume_component_values(source: &[u8], length: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<unit, SyntaxError> reads(source), writes(text), writes(components) contract {
   requires length == source^.len;
 } {
-  doc "Consumes component values from start up to and including a matching ending_cp close token, when has_ending, or to EOF, per CSS Syntax 5.4.1 and 5.4.7. A mismatched close token becomes an Error component and consumption continues.";
-  let pos = start;
+  doc "Consumes component values from the start of source to EOF, per CSS Syntax 5.4.1 and 5.4.7, in one loop. open_blocks holds the blocks and functions still open, innermost last: a close token that matches the innermost one closes it and patches its end, any other close token becomes an Error component, and the blocks still open at EOF end there.";
+  let open_blocks = box_slots_new::<OpenBlock>(capacity: 0_u64);
+  let pos = 0_u64;
   loop @list {
     let has = pos < length;
     if has {
@@ -803,28 +830,47 @@ fn consume_list_of_component_values(source: &[u8], length: u64, start: u64, has_
     let a = bor(is_paren_close, is_bracket_close);
     let is_any_close = bor(a, is_brace_close);
     if is_any_close {
-      let same = cp == ending_cp;
-      let matches_ending = band(has_ending, same);
-      if matches_ending {
-        set pos = after;
-        break @list;
+      let closed = False();
+      let depth = open_blocks.inner.len;
+      let nested = depth > 0_u64;
+      if nested {
+        let top_at = depth - 1_u64;
+        let top = open_blocks.inner[top_at];
+        let closing = closing_code_point(kind: top.kind);
+        let matches = cp == closing;
+        if matches {
+          let finished = propagate close_innermost(components: components, open_blocks: &open_blocks);
+          set closed = True();
+        }
       }
-      let err_kind = if is_paren_close {
-        give ParseError::UnmatchedParenthesis();
-      } else if is_bracket_close {
-        give ParseError::UnmatchedBracket();
+      if closed {
       } else {
-        give ParseError::UnmatchedBrace();
+        let err_kind = if is_paren_close {
+          give ParseError::UnmatchedParenthesis();
+        } else if is_bracket_close {
+          give ParseError::UnmatchedBracket();
+        } else {
+          give ParseError::UnmatchedBrace();
+        }
+        let comp = Component::Error(error: err_kind);
+        let comp_pushed = propagate push_component(components: components, value: comp);
       }
-      let comp = Component::Error(error: err_kind);
-      let comp_pushed = propagate push_component(components: components, value: comp);
       set pos = after;
     } else {
-      let next_pos = propagate consume_component(source: source, length: length, pos: pos, cp: cp, after: after, text: text, components: components);
+      let next_pos = propagate consume_component(source: source, length: length, pos: pos, cp: cp, after: after, text: text, components: components, open_blocks: &open_blocks);
       set pos = next_pos;
     }
   }
-  return Ok<u64, SyntaxError>(value: pos);
+  loop @unclosed {
+    let depth = open_blocks.inner.len;
+    let nested = depth > 0_u64;
+    if nested {
+    } else {
+      break @unclosed;
+    }
+    let finished = propagate close_innermost(components: components, open_blocks: &open_blocks);
+  }
+  return Ok<unit, SyntaxError>(value: unit);
 }
 
 fn parse_component_values(source: &[u8]) -> result: Result<ComponentList, SyntaxError> reads(source) contract {
@@ -834,8 +880,7 @@ fn parse_component_values(source: &[u8]) -> result: Result<ComponentList, Syntax
   let length = source^.len;
   let text = box_slots_new::<u8>(capacity: 0_u64);
   let components = box_slots_new::<Component>(capacity: 0_u64);
-  let no_ending = False();
-  let end = propagate consume_list_of_component_values(source: source, length: length, start: 0_u64, has_ending: no_ending, ending_cp: 0_u32, text: &text, components: &components);
+  let consumed = propagate consume_component_values(source: source, length: length, text: &text, components: &components);
   let list = ComponentList(components: move components, text: move text);
   return Ok<ComponentList, SyntaxError>(value: move list);
 }
