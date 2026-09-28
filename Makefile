@@ -18,6 +18,7 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
+	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed
 
 check: compiler renderer design-lint
@@ -42,6 +43,21 @@ RENDERER_MODULES = $(shell sed -n 's/^\(pkg[a-z_:]*\):.*/\1/p' $(ROOT)/renderer/
 renderer: compiler
 	@cd $(ROOT)/renderer && for module in $(RENDERER_MODULES); do \
 		$(WHITEFOOTC) --graph modules.wfg --check-module $$module || exit 1; done
+
+# Regenerates pkg::base::static_atoms from its name list with the
+# static_atoms tool; the record is replaced only when the tool succeeds.
+static-atoms: $(BUILD)/static_atoms
+	@cd $(ROOT)/renderer && $< < tools/static_atoms/names.txt > $(BUILD)/static_atoms.wfm
+	@mv $(BUILD)/static_atoms.wfm $(ROOT)/renderer/base/static_atoms/module.wfm
+
+# Builds the document arena and atom self-test and runs it; it exits with 0
+# only when every check passes.
+dom-selftest: $(BUILD)/dom_selftest
+	@$<
+
+$(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
+	@mkdir -p $(BUILD)
+	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --entry $(notdir $@) -o $@
 
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
