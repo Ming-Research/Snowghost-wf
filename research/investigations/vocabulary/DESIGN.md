@@ -76,8 +76,12 @@ in Whitefoot alongside the range-length diagnostic work.
    computed style is a small struct of group identifiers, so equal styles
    share storage and a style comparison is a comparison of identifiers.
    Inheritance copies an identifier.
-5. **Text is UTF-8 and names are atoms.** Text content lives in UTF-8 byte
-   arenas addressed by spans. Tag, attribute and property names are atoms:
+5. **Text is WTF-8 and names are atoms.** Text content lives in byte arenas
+   addressed by spans, encoded as WTF-8: UTF-8 that also encodes lone
+   surrogates, as Servo stores DOM strings. Script's strings are UTF-16 and
+   may hold a lone surrogate that the document must keep, while every other
+   stage reads UTF-8; consumers that follow the CSS or HTML preprocessing
+   rules already turn a surrogate into U+FFFD. Tag, attribute and property names are atoms:
    `u32` indices into an atom table, with the names the renderer knows given
    fixed indices by a generated table, so comparing a name is comparing an
    integer.
