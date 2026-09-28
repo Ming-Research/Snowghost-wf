@@ -14,6 +14,7 @@ css=https://raw.githubusercontent.com/SimonSapin/css-parsing-tests/203ce36bffd61
 pngsuite=http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz
 # html5lib's tree-construction tests now live in WPT.
 wpt_parsing=https://raw.githubusercontent.com/web-platform-tests/wpt/b48a5c3fb57854fd217421e247a4f4a0149951a7/html/syntax/parsing/resources
+wpt_nodes=https://raw.githubusercontent.com/web-platform-tests/wpt/b48a5c3fb57854fd217421e247a4f4a0149951a7/dom/nodes
 html5lib=https://raw.githubusercontent.com/html5lib/html5lib-tests/224991ec10db04f056a89eed8b0bd8695fd2950e
 # The HTML standard's named character references; the file is unversioned,
 # so its hash pins the copy the tokenizer was written against.
@@ -120,6 +121,9 @@ fetch $css/declaration_list.json css/declaration_list.json 5d9e4680f64e9a92d9e66
 fetch $css/blocks_contents.json css/blocks_contents.json 340c0397813fa100a2a02fb3de2126003a0fe3e678cc9ff9509246e9729efa9c
 fetch $css/one_rule.json css/one_rule.json 88f7b1b6049be88e1e2827673b75fc9261986b216e8ee6bf09621fecbe274e3c
 fetch $css/one_declaration.json css/one_declaration.json 5360083bfba780c54c2f129080816a87cc68ea0c6ba0de930ba6bbcf85064dd6
+fetch $css/An+B.json css/An+B.json 0deb798e84ecf7f08de3c89b3ecdc65caceb8f31a45b03fcf3622e6ba69dfd2b
+fetch $wpt_nodes/selectors.js wpt-nodes/selectors.js cffc3f46deb933d63d4cb2cfd811d3ec21ec7804faab4826c8aba1868459e8d1
+fetch $wpt_nodes/ParentNode-querySelector-All-content.html wpt-nodes/ParentNode-querySelector-All-content.html 40eff9f6df0986178d2e138c256369fd22f09a8d15ba03fd1bef2ac2c104f9e2
 fetch $pngsuite PngSuite-2017jul19.tgz 0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
 
 # PngSuite: every image with its libpng reference, and the case list
