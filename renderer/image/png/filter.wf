@@ -48,9 +48,14 @@ fn unfilter_row(filter_type: u8, bpp: u64, payload: &[u8], prev: &[u8], cur: &[u
     let error = PngError::Malformed();
     return Err<unit, PngError>(error: error);
   }
+  let payload_room = payload^.len;
+  let prev_room = prev^.len;
+  let needs_a = bor(is_sub, is_average);
+  let needs_a2 = bor(needs_a, is_paeth);
+  let needs_b = bor(is_up, is_average);
+  let needs_b2 = bor(needs_b, is_paeth);
   let x = 0_u64;
   loop @unfilter {
-    let payload_room = payload^.len;
     let inside = x < payload_room;
     if inside {
     } else {
@@ -64,24 +69,27 @@ fn unfilter_row(filter_type: u8, bpp: u64, payload: &[u8], prev: &[u8], cur: &[u
     }
     let a = 0_u8;
     if has_left {
-      let cur_room_a = cur^.len;
-      let left_ok = left_index < cur_room_a;
-      if left_ok {
-        set a = cur^[left_index];
+      if needs_a2 {
+        let left_ok = left_index < width_bytes;
+        if left_ok {
+          set a = cur^[left_index];
+        }
       }
     }
-    let prev_room = prev^.len;
     let b = 0_u8;
-    let up_ok = x < prev_room;
-    if up_ok {
-      set b = prev^[x];
+    if needs_b2 {
+      let up_ok = x < prev_room;
+      if up_ok {
+        set b = prev^[x];
+      }
     }
     let c = 0_u8;
     if has_left {
-      let prev_room_c = prev^.len;
-      let up_left_ok = left_index < prev_room_c;
-      if up_left_ok {
-        set c = prev^[left_index];
+      if is_paeth {
+        let up_left_ok = left_index < prev_room;
+        if up_left_ok {
+          set c = prev^[left_index];
+        }
       }
     }
     let recon = filt;
@@ -99,11 +107,34 @@ fn unfilter_row(filter_type: u8, bpp: u64, payload: &[u8], prev: &[u8], cur: &[u
       let avg = cvt.wrap::<u32, u8>(avg32);
       set recon = filt +wrap avg;
     } else {
-      let predicted = paeth_predictor(a: a, b: b, c: c);
+      let aa = cvt::<u8, i32>(a);
+      let bb = cvt::<u8, i32>(b);
+      let cc = cvt::<u8, i32>(c);
+      let ab = aa +wrap bb;
+      let p = ab -wrap cc;
+      let pa_raw = p -wrap aa;
+      let pb_raw = p -wrap bb;
+      let pc_raw = p -wrap cc;
+      let pa = iabs.wrap(pa_raw);
+      let pb = iabs.wrap(pb_raw);
+      let pc = iabs.wrap(pc_raw);
+      let a_le_b = pa <= pb;
+      let a_le_c = pa <= pc;
+      let a_best = band(a_le_b, a_le_c);
+      let predicted = a;
+      if a_best {
+        set predicted = a;
+      } else {
+        let b_le_c = pb <= pc;
+        if b_le_c {
+          set predicted = b;
+        } else {
+          set predicted = c;
+        }
+      }
       set recon = filt +wrap predicted;
     }
-    let cur_room_w = cur^.len;
-    let write_ok = x < cur_room_w;
+    let write_ok = x < width_bytes;
     if write_ok {
       set cur^[x] = recon;
     } else {
