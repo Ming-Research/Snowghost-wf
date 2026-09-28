@@ -61,9 +61,13 @@ task size and file count do not decide which a change is.
    owner-ruled tree change or a pending amendment: load the `design-tree`
    skill whenever a task makes, proposes or applies a design decision or edits
    `design/`.
-4. **Finish:** load the `completion-review` skill before marking a PR ready or
-   reporting completion (checks, one independent review, finding routing,
-   publication), and the `owner-handoff` skill whenever you stop for the
+4. **Finish:** run the checks and publish before marking a PR ready or
+   reporting completion. Load the `completion-review` skill for an
+   independent review when the change is substantial: it edits `design/` or
+   the renderer-shell format, adds or changes a module interface, or changes
+   more code than a small fix. A small fix, a documentation change or a
+   process change needs only the checks, which keeps review cost in step with
+   a young project. Load the `owner-handoff` skill whenever you stop for the
    owner.
 
 Routine fixes under unchanged design need no decision record. Record reasons
@@ -104,8 +108,8 @@ them.
   parallel. An implementer that finds an interface insufficient reports the
   gap to the primary agent with a minimal example instead of editing the
   interface.
-- A separate reviewer agent that did not implement a change reviews it under
-  the completion-review skill.
+- A separate reviewer agent that did not implement a change reviews a
+  substantial change under the completion-review skill.
 - The primary agent dispatches and supervises implementer and reviewer agents
   and chooses the model for each kind of task from measured agent writer
   trials (investigation skill).
