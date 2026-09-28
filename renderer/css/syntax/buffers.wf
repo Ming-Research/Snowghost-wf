@@ -1,0 +1,111 @@
+const text_capacity_seed: u64 = 4096_u64;
+
+const text_growth_limit: u64 = 67108864_u64;
+
+const component_capacity_seed: u64 = 1024_u64;
+
+const component_growth_limit: u64 = 16777216_u64;
+
+const open_capacity_seed: u64 = 64_u64;
+
+const open_growth_limit: u64 = 8388608_u64;
+
+fn push_within<T: copy>(cell: &Box<Slots<T>>, value: T, seed: u64, limit: u64) -> result: Result<unit, SyntaxError> writes(cell) contract {
+  requires seed > 0_u64;
+  requires seed <= limit;
+  requires limit <= 67108864_u64;
+} {
+  doc "Appends value to cell. A full cell grows to seed, or doubles while its capacity is at most limit, so its capacity never passes the larger of seed and twice limit; a push past that refuses with TooLarge. The push is proved here from the room check or the grow postcondition, with the standing len <= cap fact.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let small = capacity < seed;
+    if small {
+      grow(cell: cell, capacity: seed);
+    } else {
+      let within = capacity <= limit;
+      if within {
+      } else {
+        let refusal = SyntaxError::TooLarge();
+        return Err<unit, SyntaxError>(error: refusal);
+      }
+      let doubled = capacity + capacity;
+      grow(cell: cell, capacity: doubled);
+    }
+  }
+  place_back(window: &cell^.inner, value: value);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn push_raw_byte(text: &Box<Slots<u8>>, value: u8) -> result: Result<unit, SyntaxError> writes(text) {
+  doc "Appends one byte to text, whose capacity stops at 128 MiB: eight bytes per byte of the largest admitted source, where each source byte yields at most three.";
+  let pushed = propagate push_within::<u8>(cell: text, value: value, seed: text_capacity_seed, limit: text_growth_limit);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn push_component(components: &Box<Slots<Component>>, value: Component) -> result: Result<unit, SyntaxError> writes(components) {
+  doc "Appends one component to components, whose capacity stops at 32 Mi: two components per byte of the largest admitted source, where each source byte yields at most two.";
+  let pushed = propagate push_within::<Component>(cell: components, value: value, seed: component_capacity_seed, limit: component_growth_limit);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn push_open_block(open_blocks: &Box<Slots<OpenBlock>>, value: OpenBlock) -> result: Result<unit, SyntaxError> writes(open_blocks) {
+  doc "Appends one open block to open_blocks, whose capacity stops at 16 Mi: one per byte of the largest admitted source, where each open block consumes at least one.";
+  let pushed = propagate push_within::<OpenBlock>(cell: open_blocks, value: value, seed: open_capacity_seed, limit: open_growth_limit);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn utf8_lead_byte(code_point: u32, shift: u32, marker: u32) -> result: u8 pure {
+  doc "Returns the lead byte of a UTF-8 sequence: the bits of code_point from shift upward, joined with marker.";
+  let high = ishr.wrap(code_point, shift);
+  let joined = ior(high, marker);
+  let byte = cvt.wrap::<u32, u8>(joined);
+  return byte;
+}
+
+fn utf8_continuation_byte(code_point: u32, shift: u32) -> result: u8 pure {
+  doc "Returns the UTF-8 continuation byte that carries the six bits of code_point starting at shift.";
+  let moved = ishr.wrap(code_point, shift);
+  let bits = iand(moved, 63_u32);
+  let joined = ior(bits, 128_u32);
+  let byte = cvt.wrap::<u32, u8>(joined);
+  return byte;
+}
+
+fn push_code_point(text: &Box<Slots<u8>>, cp: u32) -> result: Result<unit, SyntaxError> writes(text) {
+  doc "Appends cp to text as UTF-8: one to four bytes depending on its magnitude.";
+  let one_byte = cp < 128_u32;
+  let two_bytes = cp < 2048_u32;
+  let three_bytes = cp < 65536_u32;
+  if one_byte {
+    let byte = cvt.wrap::<u32, u8>(cp);
+    let byte_pushed = propagate push_raw_byte(text: text, value: byte);
+    return Ok<unit, SyntaxError>(value: unit);
+  }
+  if two_bytes {
+    let lead = utf8_lead_byte(code_point: cp, shift: 6_u32, marker: 192_u32);
+    let last = utf8_continuation_byte(code_point: cp, shift: 0_u32);
+    let lead_pushed = propagate push_raw_byte(text: text, value: lead);
+    let last_pushed = propagate push_raw_byte(text: text, value: last);
+    return Ok<unit, SyntaxError>(value: unit);
+  }
+  if three_bytes {
+    let lead = utf8_lead_byte(code_point: cp, shift: 12_u32, marker: 224_u32);
+    let middle = utf8_continuation_byte(code_point: cp, shift: 6_u32);
+    let last = utf8_continuation_byte(code_point: cp, shift: 0_u32);
+    let lead_pushed = propagate push_raw_byte(text: text, value: lead);
+    let middle_pushed = propagate push_raw_byte(text: text, value: middle);
+    let last_pushed = propagate push_raw_byte(text: text, value: last);
+    return Ok<unit, SyntaxError>(value: unit);
+  }
+  let lead = utf8_lead_byte(code_point: cp, shift: 18_u32, marker: 240_u32);
+  let upper = utf8_continuation_byte(code_point: cp, shift: 12_u32);
+  let middle = utf8_continuation_byte(code_point: cp, shift: 6_u32);
+  let last = utf8_continuation_byte(code_point: cp, shift: 0_u32);
+  let lead_pushed = propagate push_raw_byte(text: text, value: lead);
+  let upper_pushed = propagate push_raw_byte(text: text, value: upper);
+  let middle_pushed = propagate push_raw_byte(text: text, value: middle);
+  let last_pushed = propagate push_raw_byte(text: text, value: last);
+  return Ok<unit, SyntaxError>(value: unit);
+}

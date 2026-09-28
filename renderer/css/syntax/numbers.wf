@@ -1,0 +1,319 @@
+const exponent_ceiling: u64 = 100000_u64;
+
+fn pow10(exponent: u64) -> result: f64 pure {
+  doc "Returns 10 raised to exponent as f64, by exponentiation by squaring.";
+  let acc = 1.0_f64;
+  let base = 10.0_f64;
+  let e = exponent;
+  loop @pow {
+    let done = e == 0_u64;
+    if done {
+      break @pow;
+    }
+    let bit = iand(e, 1_u64);
+    let is_odd = bit == 1_u64;
+    if is_odd {
+      set acc = fmul.strict(acc, base);
+    }
+    set base = fmul.strict(base, base);
+    set e = ishr.wrap(e, 1_u32);
+  }
+  return acc;
+}
+
+fn digit_value_f64(b: u8) -> result: f64 pure {
+  doc "The f64 value 0.0 through 9.0 of an ASCII digit byte.";
+  let n = b -wrap 48_u8;
+  let widened = cvt::<u8, u32>(n);
+  let value = cvt::<u32, f64>(widened);
+  return value;
+}
+
+fn would_start_number(source: &[u8], length: u64, pos: u64) -> result: Bool reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "True when the bytes at and after pos would start a number, per CSS Syntax 4.3.10. Sign, digit, dot, e and E are all ASCII, so a raw byte check agrees with a preprocessed check at every position.";
+  let has0 = pos < length;
+  if has0 {
+  } else {
+    return False();
+  }
+  let b0 = source^[pos];
+  let is_digit0 = digit_byte(b: b0);
+  if is_digit0 {
+    return True();
+  }
+  let is_plus = b0 == 43_u8;
+  let is_minus = b0 == 45_u8;
+  let is_sign = bor(is_plus, is_minus);
+  let is_dot = b0 == 46_u8;
+  if is_sign {
+    let pos1 = pos +wrap 1_u64;
+    let has1 = pos1 < length;
+    if has1 {
+    } else {
+      return False();
+    }
+    let b1 = source^[pos1];
+    let digit1 = digit_byte(b: b1);
+    if digit1 {
+      return True();
+    }
+    let dot1 = b1 == 46_u8;
+    if dot1 {
+      let pos2 = pos1 +wrap 1_u64;
+      let has2 = pos2 < length;
+      if has2 {
+      } else {
+        return False();
+      }
+      let b2 = source^[pos2];
+      let digit2 = digit_byte(b: b2);
+      return digit2;
+    }
+    return False();
+  }
+  if is_dot {
+    let pos1 = pos +wrap 1_u64;
+    let has1 = pos1 < length;
+    if has1 {
+    } else {
+      return False();
+    }
+    let b1 = source^[pos1];
+    let digit1 = digit_byte(b: b1);
+    return digit1;
+  }
+  return False();
+}
+
+struct ScannedNumber {
+  number: Numeric;
+  next: u64;
+}
+
+fn consume_number(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>) -> result: Result<ScannedNumber, SyntaxError> reads(source), writes(text) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes a number from start, which the caller has already verified with would_start_number, per CSS Syntax 4.3.13, appending its verbatim representation to text.";
+  let text_start = text^.inner.len;
+  let pos = start;
+  let sign_negative = False();
+  let has_sign = pos < length;
+  if has_sign {
+    let b = source^[pos];
+    let is_plus = b == 43_u8;
+    let is_minus = b == 45_u8;
+    if is_plus {
+      let b_pushed = propagate push_raw_byte(text: text, value: b);
+      let next_pos = pos +wrap 1_u64;
+      set pos = next_pos;
+    } else if is_minus {
+      let b_pushed = propagate push_raw_byte(text: text, value: b);
+      set sign_negative = True();
+      let next_pos = pos +wrap 1_u64;
+      set pos = next_pos;
+    }
+  }
+  let int_value = 0.0_f64;
+  loop @intdigits {
+    let has = pos < length;
+    if has {
+      let b = source^[pos];
+      let is_d = digit_byte(b: b);
+      if is_d {
+        let b_pushed = propagate push_raw_byte(text: text, value: b);
+        let dv = digit_value_f64(b: b);
+        let scaled = fmul.strict(int_value, 10.0_f64);
+        set int_value = fadd.strict(scaled, dv);
+        let next_pos = pos +wrap 1_u64;
+        set pos = next_pos;
+      }
+      if is_d {
+      } else {
+        break @intdigits;
+      }
+    } else {
+      break @intdigits;
+    }
+  }
+  let is_number_kind = False();
+  let frac_value = 0.0_f64;
+  let frac_count = 0_u64;
+  let dot_here = False();
+  let has_dot0 = pos < length;
+  if has_dot0 {
+    let b = source^[pos];
+    let is_dot_byte = b == 46_u8;
+    if is_dot_byte {
+      let pos1 = pos +wrap 1_u64;
+      let has1 = pos1 < length;
+      if has1 {
+        let b1 = source^[pos1];
+        let d1 = digit_byte(b: b1);
+        if d1 {
+          set dot_here = True();
+        }
+      }
+    }
+  }
+  let dot_in_range = pos < length;
+  let commit_dot = band(dot_here, dot_in_range);
+  if commit_dot {
+    set is_number_kind = True();
+    let b = source^[pos];
+    let b_pushed = propagate push_raw_byte(text: text, value: b);
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+    loop @fracdigits {
+      let has = pos < length;
+      if has {
+        let fb = source^[pos];
+        let is_d = digit_byte(b: fb);
+        if is_d {
+          let fb_pushed = propagate push_raw_byte(text: text, value: fb);
+          let dv = digit_value_f64(b: fb);
+          let scaled = fmul.strict(frac_value, 10.0_f64);
+          set frac_value = fadd.strict(scaled, dv);
+          let next_count = frac_count +wrap 1_u64;
+          set frac_count = next_count;
+          let frac_next = pos +wrap 1_u64;
+          set pos = frac_next;
+        }
+        if is_d {
+        } else {
+          break @fracdigits;
+        }
+      } else {
+        break @fracdigits;
+      }
+    }
+  }
+  let has_exponent = False();
+  let exp_negative = False();
+  let exp_value = 0_u64;
+  let exp_starts = False();
+  let has_e0 = pos < length;
+  if has_e0 {
+    let b = source^[pos];
+    let is_e_l = b == 101_u8;
+    let is_e_r = b == 69_u8;
+    let is_e = bor(is_e_l, is_e_r);
+    if is_e {
+      let pos1 = pos +wrap 1_u64;
+      let has1 = pos1 < length;
+      if has1 {
+        let b1 = source^[pos1];
+        let digit1 = digit_byte(b: b1);
+        if digit1 {
+          set exp_starts = True();
+        } else {
+          let sign1_l = b1 == 43_u8;
+          let sign1_r = b1 == 45_u8;
+          let sign1 = bor(sign1_l, sign1_r);
+          if sign1 {
+            let pos2 = pos1 +wrap 1_u64;
+            let has2 = pos2 < length;
+            if has2 {
+              let b2 = source^[pos2];
+              let digit2 = digit_byte(b: b2);
+              if digit2 {
+                set exp_starts = True();
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let exp_in_range = pos < length;
+  let commit_exp = band(exp_starts, exp_in_range);
+  if commit_exp {
+    set has_exponent = True();
+    set is_number_kind = True();
+    let eb = source^[pos];
+    let eb_pushed = propagate push_raw_byte(text: text, value: eb);
+    let after_e = pos +wrap 1_u64;
+    set pos = after_e;
+    let has_sign_byte = pos < length;
+    if has_sign_byte {
+      let sb = source^[pos];
+      let is_minus_e = sb == 45_u8;
+      let is_plus_e = sb == 43_u8;
+      let is_sign_e = bor(is_minus_e, is_plus_e);
+      if is_sign_e {
+        let sb_pushed = propagate push_raw_byte(text: text, value: sb);
+        if is_minus_e {
+          set exp_negative = True();
+        }
+        let after_sign = pos +wrap 1_u64;
+        set pos = after_sign;
+      }
+    }
+    loop @expdigits {
+      let has = pos < length;
+      if has {
+        let db = source^[pos];
+        let is_d = digit_byte(b: db);
+        if is_d {
+          let db_pushed = propagate push_raw_byte(text: text, value: db);
+          let dn = db -wrap 48_u8;
+          let dv_u32 = cvt::<u8, u32>(dn);
+          let dv_u64 = cvt::<u32, u64>(dv_u32);
+          let room = exp_value < exponent_ceiling;
+          if room {
+            let scaled = exp_value *wrap 10_u64;
+            set exp_value = scaled +wrap dv_u64;
+          }
+          let next_pos = pos +wrap 1_u64;
+          set pos = next_pos;
+        }
+        if is_d {
+        } else {
+          break @expdigits;
+        }
+      } else {
+        break @expdigits;
+      }
+    }
+  }
+  let frac_scaled = if frac_count > 0_u64 {
+    let divisor = pow10(exponent: frac_count);
+    let scaled = fdiv.strict(frac_value, divisor);
+    give scaled;
+  } else {
+    give 0.0_f64;
+  }
+  let magnitude = fadd.strict(int_value, frac_scaled);
+  let signed = if sign_negative {
+    let negated = fneg(magnitude);
+    give negated;
+  } else {
+    give magnitude;
+  }
+  let final_value = if has_exponent {
+    let power = pow10(exponent: exp_value);
+    let scaled = if exp_negative {
+      let d = fdiv.strict(signed, power);
+      give d;
+    } else {
+      let m = fmul.strict(signed, power);
+      give m;
+    }
+    give scaled;
+  } else {
+    give signed;
+  }
+  let text_end = text^.inner.len;
+  let start32 = cvt.wrap::<u64, u32>(text_start);
+  let end32 = cvt.wrap::<u64, u32>(text_end);
+  let representation = Span(start: start32, end: end32);
+  let kind = if is_number_kind {
+    give NumberKind::Number();
+  } else {
+    give NumberKind::Integer();
+  }
+  let numeric = Numeric(value: final_value, kind: kind, representation: representation);
+  let scanned = ScannedNumber(number: numeric, next: pos);
+  return Ok<ScannedNumber, SyntaxError>(value: scanned);
+}
