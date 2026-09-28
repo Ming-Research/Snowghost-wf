@@ -17,88 +17,7 @@ alias document_new = pkg::dom::document_new;
 alias next_token = pkg::html::tokenizer::next_token;
 alias token_text_new = pkg::html::tokenizer::token_text_new;
 alias tokenizer_new = pkg::html::tokenizer::tokenizer_new;
-
-fn doctype_field_present(field: Option<Span>) -> result: Bool pure {
-  doc "Tells whether a DOCTYPE token's optional name/public_id/system_id field is present.";
-  match field {
-    Some(value: sp) => {
-      return True();
-    }
-    None() => {
-      return False();
-    }
-  }
-}
-
-fn doctype_field_span(field: Option<Span>) -> result: Span pure {
-  doc "Returns a DOCTYPE token's optional name/public_id/system_id field's span, or a zero span when absent.";
-  match field {
-    Some(value: sp) => {
-      return sp;
-    }
-    None() => {
-      let zero = Span(start: 0_u32, end: 0_u32);
-      return zero;
-    }
-  }
-}
-
-fn prescan_quirks_mode(source: &[u8]) -> result: Result<QuirksMode, TreeError> reads(source) contract {
-  requires source^.len <= 1073741824_u64;
-} {
-  doc "Runs a throwaway tokenizer over source's leading tokens, far enough to determine the Document's quirks mode per 13.2.6.4.1 \"initial\", without yet creating the real Document: Document.nodes cannot be written after document_new, so the quirks mode document_new needs must already be known.";
-  let data_state = ContentState::Data();
-  let empty_buf = box_slots_new::<u8>(capacity: 0_u64);
-  let empty_slice = &empty_buf.inner[0_u64..0_u64];
-  let tokenizer = tokenizer_new(state: data_state, last_start_tag: empty_slice);
-  let tok_text = token_text_new();
-  loop @scan {
-    let token = next_token(tokenizer: &tokenizer, source: source, output: &tok_text);
-    match token {
-      Characters(data: d) => {
-        let (s, e) = span_range(text: &tok_text, span: d);
-        let bytes = &tok_text.text.inner[s..e];
-        let ws = bytes_all_ws(bytes: bytes);
-        if ws {
-        } else {
-          let quirks = QuirksMode::Quirks();
-          return Ok<QuirksMode, TreeError>(value: quirks);
-        }
-      }
-      Comment(data: d2) => {
-      }
-      Doctype(name: n, public_id: p, system_id: si, force_quirks: fq) => {
-        let has_n = doctype_field_present(field: n);
-        let n_span = doctype_field_span(field: n);
-        let (ns, ne) = span_range(text: &tok_text, span: n_span);
-        let name_bytes = &tok_text.text.inner[ns..ne];
-        let has_s = doctype_field_present(field: si);
-        let s_span = doctype_field_span(field: si);
-        let (ss, se) = span_range(text: &tok_text, span: s_span);
-        let sys_bytes = &tok_text.text.inner[ss..se];
-        let p_span = doctype_field_span(field: p);
-        let (ps, pe) = span_range(text: &tok_text, span: p_span);
-        let pub_bytes = &tok_text.text.inner[ps..pe];
-        let quirks2 = quirks_mode_for_doctype(force_quirks: fq, has_name: has_n, name: name_bytes, has_system: has_s, system_id: sys_bytes, public_id: pub_bytes);
-        return Ok<QuirksMode, TreeError>(value: quirks2);
-      }
-      StartTag(name: n2, first_attribute: fa, end_attribute: ea, self_closing: sc) => {
-        let quirks3 = QuirksMode::Quirks();
-        return Ok<QuirksMode, TreeError>(value: quirks3);
-      }
-      EndTag(name: n3) => {
-        let quirks4 = QuirksMode::Quirks();
-        return Ok<QuirksMode, TreeError>(value: quirks4);
-      }
-      EndOfFile() => {
-        let quirks5 = QuirksMode::Quirks();
-        return Ok<QuirksMode, TreeError>(value: quirks5);
-      }
-    }
-  }
-  let fallback = QuirksMode::Quirks();
-  return Ok<QuirksMode, TreeError>(value: fallback);
-}
+alias tokenizer_set_cdata_allowed = pkg::html::tokenizer::tokenizer_set_cdata_allowed;
 
 fn drive_tree_construction(document: &Document, state: &State, atoms: &AtomTable, kw: &Keywords, content_state: ContentState, last_start_tag: &[u8], source: &[u8]) -> result: Result<unit, TreeError> reads(kw), reads(last_start_tag), reads(source), writes(document), writes(state), writes(atoms) contract {
   requires last_start_tag^.len <= 1024_u64;
@@ -108,6 +27,8 @@ fn drive_tree_construction(document: &Document, state: &State, atoms: &AtomTable
   let tokenizer = tokenizer_new(state: content_state, last_start_tag: last_start_tag);
   let tok_text = token_text_new();
   loop @drive {
+    let cdata_ok = adjusted_current_node_is_foreign(state: state);
+    let set_cdata = tokenizer_set_cdata_allowed(tokenizer: &tokenizer, allowed: cdata_ok);
     let token = next_token(tokenizer: &tokenizer, source: source, output: &tok_text);
     let is_eof = token_is_eof(token: token);
     let processed = propagate process_token(state: state, document: document, atoms: atoms, tokenizer: &tokenizer, kw: kw, tok_text: &tok_text, token: token);
@@ -121,9 +42,9 @@ fn drive_tree_construction(document: &Document, state: &State, atoms: &AtomTable
 fn parse_document(source: &[u8], scripting: Bool, atoms: &AtomTable) -> result: Result<Document, TreeError> reads(source), writes(atoms) contract {
   requires source^.len <= 1073741824_u64;
 } {
-  doc "Pre-scans source to fix the Document's quirks mode, creates the Document, then drives the tokenizer and the tree construction dispatcher from the \"initial\" insertion mode through end of file.";
-  let quirks = propagate prescan_quirks_mode(source: source);
-  let document = document_new(quirks: quirks);
+  doc "Creates the Document (quirks mode starts as NoQuirks and is set for real by the \"initial\" insertion mode once it sees the DOCTYPE token or decides there is none), then drives the tokenizer and the tree construction dispatcher from \"initial\" through end of file.";
+  let starting_quirks = QuirksMode::NoQuirks();
+  let document = document_new(quirks: starting_quirks);
   let kw = propagate keywords_new(atoms: atoms);
   let no_ns = Namespace::Html();
   let no_atom = Atom(index: 0_u32);

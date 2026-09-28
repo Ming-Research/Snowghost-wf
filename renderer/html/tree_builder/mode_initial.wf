@@ -1,12 +1,39 @@
 alias Document = pkg::dom::Document;
 alias NodeData = pkg::dom::NodeData;
 alias NodeId = pkg::dom::NodeId;
+alias QuirksMode = pkg::dom::QuirksMode;
 alias Span = pkg::html::tokenizer::Span;
 alias TextSpan = pkg::dom::TextSpan;
 alias Token = pkg::html::tokenizer::Token;
 alias TokenText = pkg::html::tokenizer::TokenText;
 alias create_node = pkg::dom::create_node;
+alias set_quirks_mode = pkg::dom::set_quirks_mode;
 alias store_text = pkg::dom::store_text;
+
+fn doctype_field_present(field: Option<Span>) -> result: Bool pure {
+  doc "Tells whether a DOCTYPE token's optional name/public_id/system_id field is present.";
+  match field {
+    Some(value: sp) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn doctype_field_span(field: Option<Span>) -> result: Span pure {
+  doc "Returns a DOCTYPE token's optional name/public_id/system_id field's span, or a zero span when absent.";
+  match field {
+    Some(value: sp) => {
+      return sp;
+    }
+    None() => {
+      let zero = Span(start: 0_u32, end: 0_u32);
+      return zero;
+    }
+  }
+}
 
 fn store_doctype_field(document: &Document, tok_text: &TokenText, field: Option<Span>) -> result: Result<TextSpan, TreeError> reads(tok_text), writes(document) {
   doc "Copies the bytes a DOCTYPE token's optional name/public_id/system_id span names (in tok_text) into document's own text storage, or returns an empty TextSpan when field is None.";
@@ -36,14 +63,16 @@ fn store_doctype_field(document: &Document, tok_text: &TokenText, field: Option<
   }
 }
 
-fn initial_anything_else(state: &State) -> result: unit writes(state) {
-  doc "The \"initial\" insertion mode's \"anything else\": switch to \"before html\" and reprocess. Quirks mode is already fixed by the caller's pre-scan at document creation, so there is nothing further to do here.";
+fn initial_anything_else(state: &State, document: &Document) -> result: unit writes(state), writes(document) {
+  doc "The \"initial\" insertion mode's \"anything else\": no DOCTYPE token was seen before real content, so the Document is set to quirks mode (parse_document starts every Document as NoQuirks, and set_quirks_mode is the only way to change it); switch to \"before html\" and reprocess.";
+  let quirks = QuirksMode::Quirks();
+  set_quirks_mode(document: document, quirks: quirks);
   set_mode_before_html(state: state);
   return unit;
 }
 
 fn mode_initial(state: &State, document: &Document, tok_text: &TokenText, token: Token) -> result: Result<Bool, TreeError> reads(tok_text), writes(state), writes(document) {
-  doc "13.2.6.4.1 \"initial\". The document's quirks mode was already determined by parse_document's pre-scan and fixed at document_new time, since Document.nodes is not writable from here; this mode's own job is only to place any leading comments and a DOCTYPE node as children of the Document, and to hand off to \"before html\".";
+  doc "13.2.6.4.1 \"initial\": determines the Document's quirks mode from the DOCTYPE token (or its absence) and sets it via set_quirks_mode, places any leading comments and a DOCTYPE node as children of the Document, and hands off to \"before html\".";
   match token {
     Characters(data: d) => {
       let (s, e) = span_range(text: tok_text, span: d);
@@ -53,7 +82,7 @@ fn mode_initial(state: &State, document: &Document, tok_text: &TokenText, token:
         let r0 = False();
         return Ok<Bool, TreeError>(value: r0);
       }
-      initial_anything_else(state: state);
+      initial_anything_else(state: state, document: document);
       let r1 = True();
       return Ok<Bool, TreeError>(value: r1);
     }
@@ -71,6 +100,19 @@ fn mode_initial(state: &State, document: &Document, tok_text: &TokenText, token:
       return Ok<Bool, TreeError>(value: r2);
     }
     Doctype(name: n, public_id: p, system_id: si, force_quirks: fq) => {
+      let has_n = doctype_field_present(field: n);
+      let n_span = doctype_field_span(field: n);
+      let (ns3, ne3) = span_range(text: tok_text, span: n_span);
+      let name_bytes = &tok_text^.text.inner[ns3..ne3];
+      let has_s = doctype_field_present(field: si);
+      let s_span = doctype_field_span(field: si);
+      let (ss3, se3) = span_range(text: tok_text, span: s_span);
+      let sys_bytes = &tok_text^.text.inner[ss3..se3];
+      let p_span = doctype_field_span(field: p);
+      let (ps3, pe3) = span_range(text: tok_text, span: p_span);
+      let pub_bytes = &tok_text^.text.inner[ps3..pe3];
+      let quirks = quirks_mode_for_doctype(force_quirks: fq, has_name: has_n, name: name_bytes, has_system: has_s, system_id: sys_bytes, public_id: pub_bytes);
+      set_quirks_mode(document: document, quirks: quirks);
       let name_stored = propagate store_doctype_field(document: document, tok_text: tok_text, field: n);
       let pub_stored = propagate store_doctype_field(document: document, tok_text: tok_text, field: p);
       let sys_stored = propagate store_doctype_field(document: document, tok_text: tok_text, field: si);
@@ -90,17 +132,17 @@ fn mode_initial(state: &State, document: &Document, tok_text: &TokenText, token:
       return Ok<Bool, TreeError>(value: r3);
     }
     StartTag(name: n2, first_attribute: fa, end_attribute: ea, self_closing: sc) => {
-      initial_anything_else(state: state);
+      initial_anything_else(state: state, document: document);
       let r4 = True();
       return Ok<Bool, TreeError>(value: r4);
     }
     EndTag(name: n3) => {
-      initial_anything_else(state: state);
+      initial_anything_else(state: state, document: document);
       let r5 = True();
       return Ok<Bool, TreeError>(value: r5);
     }
     EndOfFile() => {
-      initial_anything_else(state: state);
+      initial_anything_else(state: state, document: document);
       let r6 = True();
       return Ok<Bool, TreeError>(value: r6);
     }
