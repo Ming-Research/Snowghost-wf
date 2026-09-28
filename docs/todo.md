@@ -45,3 +45,11 @@ example apart from the renderer code that exposed it
   NFC only. Change: add the compatibility decompositions to the generated
   tables and two NormalizationForm variants. Reopen when a consumer needs a
   compatibility form.
+- **Punycode encoding is quadratic in the worst case.**
+  `pkg::text::idna`'s encoder follows RFC 3492's reference structure: it
+  scans the whole label once per distinct non-ASCII code point, so a label
+  of n strictly ascending distinct code points costs O(n^2). With
+  VerifyDnsLength false a label has no length limit, so a hostile URL can
+  reach it. Change: sort the label's non-ASCII code points once and walk
+  them in order. Reopen when URL parsing runs on untrusted input at scale,
+  or a profile shows it.
