@@ -1,0 +1,182 @@
+fn decompose_one(value: u32, output: &Box<Slots<u32>>) -> result: Bool writes(output) {
+  doc "Appends the (unordered) canonical decomposition of one input value to output: a Hangul syllable's jamo arithmetically, a table-listed scalar value's full recursive decomposition, or the value itself when it has none (including every value that is not a Unicode scalar value). Returns False, leaving output unchanged from this call, when output hit its ceiling partway.";
+  let (is_hangul, l, v, has_t, t) = decompose_hangul(cp: value);
+  if is_hangul {
+    let ok_l = append_scalar(output: output, value: l);
+    if ok_l {
+    } else {
+      return False();
+    }
+    let ok_v = append_scalar(output: output, value: v);
+    if ok_v {
+    } else {
+      return False();
+    }
+    if has_t {
+      let ok_t = append_scalar(output: output, value: t);
+      if ok_t {
+      } else {
+        return False();
+      }
+    }
+    return True();
+  }
+  let (found, offset, length) = decomposition_of(cp: value);
+  if found {
+    let stop = offset +wrap length;
+    for (k in offset..stop) {
+      match decomposition_value_at(k: k) {
+        Some(value: piece) => {
+          let ok = append_scalar(output: output, value: piece);
+          if ok {
+          } else {
+            return False();
+          }
+        }
+        None() => {
+        }
+      }
+    }
+    return True();
+  }
+  let ok = append_scalar(output: output, value: value);
+  return ok;
+}
+
+fn decompose_all(text: &[u32], output: &Box<Slots<u32>>) -> result: Bool reads(text), writes(output) {
+  doc "Appends the canonical (unordered) decomposition of every value of text, in order, to output. Returns False, leaving the appended prefix in place, as soon as one value cannot be appended within output_ceiling; the caller is responsible for discarding whatever this call appended.";
+  let count = text^.len;
+  for (i in 0_u64..count) {
+    let value = text^[i];
+    let ok = decompose_one(value: value, output: output);
+    if ok {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn run_end(output: &Box<Slots<u32>>, from: u64) -> result: u64 reads(output) contract {
+  requires from <= output^.inner.len;
+  ensures result >= from;
+  ensures result <= output^.inner.len;
+} {
+  doc "Returns the end (exclusive) of the maximal run of consecutive non-starter (combining class not 0) values in output starting at from, which must itself be a non-starter; at most output's length.";
+  let total = output^.inner.len;
+  let at = from;
+  loop @scan (
+    invariant lower: at >= from,
+    invariant upper: at <= total
+  ) {
+    let inside = at < total;
+    if inside {
+    } else {
+      return at;
+    }
+    let value = output^.inner[at];
+    let class = ccc_of(cp: value);
+    let starter = class == 0_u8;
+    if starter {
+      return at;
+    }
+    let next = at +wrap 1_u64;
+    invariant next_lower: next >= from;
+    invariant next_upper: next <= total;
+    set at = next;
+  }
+  return at;
+}
+
+fn sort_run(output: &Box<Slots<u32>>, run_start: u64, span: u64) -> result: unit writes(output) contract {
+  requires span <= 1073741824_u64;
+} {
+  doc "Stably reorders output[run_start..run_start + span) by combining class using a 256-bucket counting sort: two linear passes over the run plus one fixed 256-entry prefix sum, so the whole canonical-ordering pass is linear in output's length even over a long run of combining marks. A run of at most one value needs no work.";
+  let trivial = span <= 1_u64;
+  if trivial {
+    return unit;
+  }
+  let run_stop = run_start +wrap span;
+  let counts = array_filled::<u64, 256>(value: 0_u64);
+  for (i in run_start..run_stop) {
+    let in_range = i < output^.inner.len;
+    if in_range {
+      let value = output^.inner[i];
+      let class = ccc_of(cp: value);
+      let class64 = cvt::<u8, u64>(class);
+      let current = counts[class64];
+      let next = current +wrap 1_u64;
+      set counts[class64] = next;
+    }
+  }
+  let running = 0_u64;
+  let starts = array_filled::<u64, 256>(value: 0_u64);
+  for (c in 0_u64..256_u64) {
+    set starts[c] = running;
+    let count_c = counts[c];
+    let advanced = running +wrap count_c;
+    set running = advanced;
+  }
+  let scratch = box_slots_new::<u32>(capacity: span);
+  for (k in 0_u64..span) {
+    let room = scratch.inner.len < scratch.inner.cap;
+    if room {
+      place_back(window: &scratch.inner, value: 0_u32);
+    }
+  }
+  for (i in run_start..run_stop) {
+    let in_range = i < output^.inner.len;
+    if in_range {
+      let value = output^.inner[i];
+      let class = ccc_of(cp: value);
+      let class64 = cvt::<u8, u64>(class);
+      let slot = starts[class64];
+      let slot_ok = slot < scratch.inner.len;
+      if slot_ok {
+        set scratch.inner[slot] = value;
+      }
+      let next_slot = slot +wrap 1_u64;
+      set starts[class64] = next_slot;
+    }
+  }
+  for (k in 0_u64..span) {
+    let dest = run_start +wrap k;
+    let dest_ok = dest < output^.inner.len;
+    let src_ok = k < scratch.inner.len;
+    let ok = band(dest_ok, src_ok);
+    if ok {
+      let value = scratch.inner[k];
+      set output^.inner[dest] = value;
+    }
+  }
+  return unit;
+}
+
+fn canonical_order(output: &Box<Slots<u32>>, start: u64) -> result: unit writes(output) {
+  doc "Canonically orders output[start..output's length) by combining class: UAX #15's canonical ordering algorithm, applied to every maximal run of consecutive non-starter values in turn. Linear in the ordered span, including a long run of combining marks.";
+  let pos = start;
+  loop @scan {
+    let total = output^.inner.len;
+    let more = pos < total;
+    if more {
+    } else {
+      break @scan;
+    }
+    let value = output^.inner[pos];
+    let class = ccc_of(cp: value);
+    let starter = class == 0_u8;
+    if starter {
+      let next = pos +wrap 1_u64;
+      set pos = next;
+    } else {
+      let stop = run_end(output: output, from: pos);
+      let span = stop -wrap pos;
+      let span_ok = span <= 1073741824_u64;
+      if span_ok {
+        sort_run(output: output, run_start: pos, span: span);
+      }
+      set pos = stop;
+    }
+  }
+  return unit;
+}
