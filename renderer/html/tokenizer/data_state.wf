@@ -106,8 +106,8 @@ fn keyword7_matches(source: &[u8], pos: u64, keyword: &Array<u8, 7>) -> result: 
   return True();
 }
 
-fn markup_declaration_open(source: &[u8], output: &TokenText, pos: u64) -> (token: Token, next: u64) reads(source), writes(output) {
-  doc "Handles the markup declaration open state at pos, which follows the consumed \"<!\", per 13.2.5.42. The CDATA branch always falls back to a bogus comment: this tokenizer has no tree builder to supply an adjusted current node, exactly as html5lib-tests' tokenizer-only harness expects.";
+fn markup_declaration_open(tokenizer: &Tokenizer, source: &[u8], output: &TokenText, pos: u64) -> (token: Token, next: u64) reads(source), writes(tokenizer), writes(output) {
+  doc "Handles the markup declaration open state at pos, which follows the consumed \"<!\", per 13.2.5.42. The CDATA branch starts a CDATA section only when tokenizer.cdata_allowed (the tree builder's adjusted-current-node fact, set through tokenizer_set_cdata_allowed); otherwise, as when there is no tree builder at all (the tokenizer's own oracle), it falls back to a bogus comment.";
   let is_comment = match_dashes(source: source, pos: pos);
   if is_comment {
     let after_dashes = pos +wrap 2_u64;
@@ -122,6 +122,16 @@ fn markup_declaration_open(source: &[u8], output: &TokenText, pos: u64) -> (toke
   }
   let is_cdata = match_cdata_open(source: source, pos: pos);
   if is_cdata {
+    let cdata_ok = tokenizer^.cdata_allowed;
+    if cdata_ok {
+      let after_cdata2 = pos +wrap 7_u64;
+      set tokenizer^.position = after_cdata2;
+      let cdata_state = ContentState::CdataSection();
+      set tokenizer^.state = cdata_state;
+      let token2 = scan_cdata_section(tokenizer: tokenizer, source: source, output: output);
+      let next2 = tokenizer^.position;
+      return token2, next2;
+    }
     let data_start = output^.text.inner.len;
     let i = 0_u64;
     loop @copy {
@@ -162,7 +172,7 @@ fn open_tag(tokenizer: &Tokenizer, source: &[u8], output: &TokenText, pos: u64) 
   }
   let is_bang = ch == '!'_u32;
   if is_bang {
-    let (token, next) = markup_declaration_open(source: source, output: output, pos: after);
+    let (token, next) = markup_declaration_open(tokenizer: tokenizer, source: source, output: output, pos: after);
     let produced = TagOpenKind::Produced();
     return produced, token, next;
   }
