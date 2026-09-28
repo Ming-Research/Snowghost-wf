@@ -355,34 +355,41 @@ fn foreign_end_tag_matches_current(state: &State, atoms: &AtomTable, name_bytes:
   }
 }
 
-fn foreign_any_other_end_tag(state: &State, atoms: &AtomTable, name_bytes: &[u8]) -> result: unit reads(atoms), reads(name_bytes), writes(state) {
-  doc "13.2.6.5 \"any other end tag\": pops elements while the current node's lowercased tag name is not name_bytes, stopping at the topmost element or an HTML-namespace element.";
-  loop @walk {
-    let cur = current_entry(state: state);
-    match cur {
-      None() => {
-        break @walk;
-      }
-      Some(value: c) => {
-        let len = open_len(state: state);
-        let at_top = len <= 1_u64;
-        let same = atom_text_eq_ci(atoms: atoms, atom: c.local_name, bytes: name_bytes);
-        if same {
-          pop_until_node(state: state, target: c.node);
-          break @walk;
-        }
-        if at_top {
-          break @walk;
-        }
-        pop_open_if_any(state: state);
-        let html = ns_is_html(namespace: c.namespace);
-        if html {
-          break @walk;
-        }
-      }
-    }
+fn foreign_any_other_end_tag(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, kw: &Keywords, tok_text: &TokenText, token: Token, name_bytes: &[u8]) -> result: Result<Bool, TreeError> reads(name_bytes), reads(tok_text), reads(kw), writes(state), writes(document), writes(atoms), writes(tokenizer) {
+  doc "13.2.6.5 \"any other end tag\": searches the stack of open elements from the current node backward for an element whose lowercased tag name is name_bytes, without popping anything while searching. A match pops through it. Reaching an HTML-namespace element with no match instead processes the token per the current insertion mode's HTML content rules, since the search never removes an HTML ancestor it has not matched.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    let r0 = False();
+    return Ok<Bool, TreeError>(value: r0);
   }
-  return unit;
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < len;
+    let elem = open_at(state: state, index: prev);
+    let same = atom_text_eq_ci(atoms: atoms, atom: elem.local_name, bytes: name_bytes);
+    if same {
+      pop_until_node(state: state, target: elem.node);
+      let r1 = False();
+      return Ok<Bool, TreeError>(value: r1);
+    }
+    let html = ns_is_html(namespace: elem.namespace);
+    if html {
+      break @scan;
+    }
+    set idx = prev;
+  }
+  let handled = propagate dispatch_html_content(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token);
+  return Ok<Bool, TreeError>(value: handled);
 }
 
 fn process_foreign_content(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, tok_text: &TokenText, kw: &Keywords, token: Token, current_namespace: Namespace) -> result: Result<Bool, TreeError> reads(tok_text), reads(kw), writes(state), writes(document), writes(atoms), writes(tokenizer) {
@@ -415,12 +422,15 @@ fn process_foreign_content(state: &State, document: &Document, atoms: &AtomTable
     StartTag(name: n2, first_attribute: fa, end_attribute: ea, self_closing: sc) => {
       let breakout_name = propagate is_foreign_breakout_start_tag(token: token, text: tok_text, atoms: atoms, kw: kw);
       let is_frag = state^.is_fragment;
-      let fragment_breakout = band(breakout_name, is_frag);
+      let stack_len_a = open_len(state: state);
+      let stack_is_one_a = stack_len_a == 1_u64;
+      let is_substituted_a = band(is_frag, stack_is_one_a);
+      let fragment_breakout = band(breakout_name, is_substituted_a);
       if fragment_breakout {
         let handled = propagate dispatch_html_content(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token);
         return Ok<Bool, TreeError>(value: handled);
       }
-      let not_fragment = bnot(is_frag);
+      let not_fragment = bnot(is_substituted_a);
       let breakout = band(breakout_name, not_fragment);
       if breakout {
         pop_out_of_foreign_content(state: state, document: document);
@@ -438,21 +448,23 @@ fn process_foreign_content(state: &State, document: &Document, atoms: &AtomTable
       let is_p = bytes_eq(a: name_bytes, b: &p_lit[0_u64..p_lit.len]);
       let breakout_name2 = bor(is_br, is_p);
       let is_frag2 = state^.is_fragment;
-      let fragment_breakout2 = band(breakout_name2, is_frag2);
+      let stack_len_b = open_len(state: state);
+      let stack_is_one_b = stack_len_b == 1_u64;
+      let is_substituted_b = band(is_frag2, stack_is_one_b);
+      let fragment_breakout2 = band(breakout_name2, is_substituted_b);
       if fragment_breakout2 {
         let handled2 = propagate dispatch_html_content(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token);
         return Ok<Bool, TreeError>(value: handled2);
       }
-      let not_fragment2 = bnot(is_frag2);
+      let not_fragment2 = bnot(is_substituted_b);
       let breakout2 = band(breakout_name2, not_fragment2);
       if breakout2 {
         pop_out_of_foreign_content(state: state, document: document);
         let ok_val = True();
         return Ok<Bool, TreeError>(value: ok_val);
       }
-      foreign_any_other_end_tag(state: state, atoms: atoms, name_bytes: name_bytes);
-      let ok_val = False();
-      return Ok<Bool, TreeError>(value: ok_val);
+      let handled3 = propagate foreign_any_other_end_tag(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token, name_bytes: name_bytes);
+      return Ok<Bool, TreeError>(value: handled3);
     }
     EndOfFile() => {
       let ok_val = True();
