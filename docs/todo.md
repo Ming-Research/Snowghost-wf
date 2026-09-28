@@ -40,3 +40,20 @@ example apart from the renderer code that exposed it
   the built compiler keyed by the `whitefoot/` pin when the gate's run time
   starts to slow down work, or when the pin moves often enough that the
   build dominates.
+- **`bytes_push` (`html/tokenizer/buffers.wf`) leaves cell unchanged, rather
+  than proving it, when a push would cross `ceiling`.** `text_ceiling` (3 *
+  2^30) and `attribute_ceiling` (2^30) are sized from `next_token`'s own
+  `source^.len <= 2^30` requirement and this module's worst-case per-source-byte
+  expansion (a NUL becoming three-byte U+FFFD; no attribute without consuming
+  a source byte), so no legitimate caller reaches ceiling and the guard is
+  dead on every input the module accepts. Proving that mechanically needs a
+  loop-position invariant (current output length vs. source position
+  consumed) in every `scan_*` state that pushes text or attributes
+  (`data_state.wf`, `text_states.wf`, `script_data.wf`, `comments.wf`,
+  `doctype.wf`, `tags.wf`), tying each state's own advancement to the
+  3x/1x bound above; `bytes_push` and its `push_byte`/`push_codepoint`/
+  `push_attribute` callers already carry the exact `requires`/`ensures`
+  pair such a proof would need (drafted and reverted; the reachable half,
+  within `bytes_push` itself, checks). Add it if a stress input, fuzz run or
+  future state addition raises real doubt that the sizing argument still
+  holds, or when another finding forces the same loop-invariant work anyway.

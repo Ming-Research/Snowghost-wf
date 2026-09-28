@@ -1,35 +1,43 @@
-const text_ceiling: u64 = 1073741824_u64;
+const text_ceiling: u64 = 3221225472_u64;
 
-const attribute_ceiling: u64 = 268435456_u64;
+const attribute_ceiling: u64 = 1073741824_u64;
 
 const text_initial_capacity: u64 = 256_u64;
 
 const attribute_initial_capacity: u64 = 16_u64;
 
 fn bytes_push<T: copy>(cell: &Box<Slots<T>>, value: T, ceiling: u64, initial: u64) -> result: unit writes(cell) contract {
-  requires ceiling <= 1073741824_u64;
+  requires ceiling <= 4294967295_u64;
+  requires initial > 0_u64;
+  requires initial <= ceiling;
 } {
-  doc "Appends value to cell, doubling a full backing (or starting it at initial) within ceiling.";
+  doc "Appends value to cell, doubling a full backing (or starting it at initial) within ceiling. text_ceiling (3 * 2^30) and attribute_ceiling (2^30) are sized so no legitimate caller in this module reaches ceiling: next_token clears the text buffer every token and requires source^.len <= 2^30, no state here expands one source byte into more than three output bytes (a NUL becoming U+FFFD), and no attribute is accepted without consuming at least one source byte. Proving that bound would take a loop-position invariant in every scan_* state (see docs/todo.md); short of that, a push that would cross ceiling leaves cell unchanged rather than growing past it, so this can only silently drop a value on an input this module's own contracts already forbid, never within source^.len <= 2^30.";
   let length = cell^.inner.len;
   let capacity = cell^.inner.cap;
   let full = length >= capacity;
   if full {
     let empty = capacity == 0_u64;
-    let doubled = if empty {
-      give initial;
+    if empty {
+      grow(cell: cell, capacity: initial);
+      place_back(window: &cell^.inner, value: value);
     } else {
-      give capacity +wrap capacity;
-    }
-    let bounded = doubled <= ceiling;
-    let larger = doubled >= capacity;
-    if bounded {
-      if larger {
-        grow(cell: cell, capacity: doubled);
+      let raw_doubled = capacity +sat capacity;
+      let over = raw_doubled > ceiling;
+      if over {
+        let room = capacity < ceiling;
+        if room {
+          grow(cell: cell, capacity: ceiling);
+          place_back(window: &cell^.inner, value: value);
+        }
+      } else {
+        let grew = raw_doubled > capacity;
+        if grew {
+          grow(cell: cell, capacity: raw_doubled);
+          place_back(window: &cell^.inner, value: value);
+        }
       }
     }
-  }
-  let room = cell^.inner.len < cell^.inner.cap;
-  if room {
+  } else {
     place_back(window: &cell^.inner, value: value);
   }
   return unit;
