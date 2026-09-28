@@ -1,0 +1,213 @@
+const code_space: u64 = 1114112_u64;
+
+const raw_decomp_capacity: u64 = 4096_u64;
+
+struct DataFields {
+  ok: Bool;
+  cp_start: u64;
+  cp_end: u64;
+  ccc_start: u64;
+  ccc_end: u64;
+  decomp_start: u64;
+  decomp_end: u64;
+}
+
+struct DecompField {
+  kind: u8;
+  v1: u32;
+  v2: u32;
+}
+
+struct UnicodeDataTables {
+  ccc_by_cp: Box<Array<u8>>;
+  raw_decomp_id_by_cp: Box<Array<u16>>;
+  raw_val1: Box<Slots<u32>>;
+  raw_val2: Box<Slots<u32>>;
+  raw_len: Box<Slots<u8>>;
+  raw_composed_cp: Box<Slots<u32>>;
+}
+
+fn split_data_fields(text: &[u8], line_start: u64, line_stop: u64) -> result: DataFields reads(text) {
+  doc "Splits one UnicodeData.txt data line into its semicolon-delimited fields 0 (code point), 3 (canonical combining class) and 5 (decomposition mapping); reports ok False for a line with fewer than six fields.";
+  let length = text^.len;
+  let no = False();
+  let bad = DataFields(ok: no, cp_start: 0_u64, cp_end: 0_u64, ccc_start: 0_u64, ccc_end: 0_u64, decomp_start: 0_u64, decomp_end: 0_u64);
+  let within = line_stop <= length;
+  let ordered = line_start <= line_stop;
+  let usable = band(within, ordered);
+  if usable {
+  } else {
+    return bad;
+  }
+  let f0_start = line_start;
+  let f0_end = find_byte(text: text, from: f0_start, stop: line_stop, target: semicolon);
+  let has0 = f0_end < line_stop;
+  if has0 {
+  } else {
+    return bad;
+  }
+  let f1_start = f0_end +wrap 1_u64;
+  let f1_end = find_byte(text: text, from: f1_start, stop: line_stop, target: semicolon);
+  let has1 = f1_end < line_stop;
+  if has1 {
+  } else {
+    return bad;
+  }
+  let f2_start = f1_end +wrap 1_u64;
+  let f2_end = find_byte(text: text, from: f2_start, stop: line_stop, target: semicolon);
+  let has2 = f2_end < line_stop;
+  if has2 {
+  } else {
+    return bad;
+  }
+  let f3_start = f2_end +wrap 1_u64;
+  let f3_end = find_byte(text: text, from: f3_start, stop: line_stop, target: semicolon);
+  let has3 = f3_end < line_stop;
+  if has3 {
+  } else {
+    return bad;
+  }
+  let f4_start = f3_end +wrap 1_u64;
+  let f4_end = find_byte(text: text, from: f4_start, stop: line_stop, target: semicolon);
+  let has4 = f4_end < line_stop;
+  if has4 {
+  } else {
+    return bad;
+  }
+  let f5_start = f4_end +wrap 1_u64;
+  let f5_end = find_byte(text: text, from: f5_start, stop: line_stop, target: semicolon);
+  let yes = True();
+  let good = DataFields(ok: yes, cp_start: f0_start, cp_end: f0_end, ccc_start: f3_start, ccc_end: f3_end, decomp_start: f5_start, decomp_end: f5_end);
+  return good;
+}
+
+fn parse_decomposition(text: &[u8], start: u64, end: u64) -> result: DecompField reads(text) {
+  doc "Parses the decomposition mapping field of one UnicodeData.txt line: empty for no decomposition (kind 0), a `<tag> ...` compatibility mapping treated as no canonical decomposition (kind 0), a single code point (kind 1, v1) or a pair (kind 2, v1, v2). Any other shape also reports kind 0, since UnicodeData.txt's canonical decompositions are always exactly one or two code points.";
+  let none = DecompField(kind: 0_u8, v1: 0_u32, v2: 0_u32);
+  let empty = start >= end;
+  if empty {
+    return none;
+  }
+  let readable = start < text^.len;
+  let bounded = end <= text^.len;
+  let usable = band(readable, bounded);
+  if usable {
+  } else {
+    return none;
+  }
+  let first = text^[start];
+  let tagged = first == less_than;
+  if tagged {
+    return none;
+  }
+  let space_at = find_byte(text: text, from: start, stop: end, target: space);
+  let has_space = space_at < end;
+  if has_space {
+  } else {
+    match parse_hex_u32(text: text, from: start, stop: end) {
+      Some(value: single) => {
+        let made = DecompField(kind: 1_u8, v1: single, v2: 0_u32);
+        return made;
+      }
+      None() => {
+        return none;
+      }
+    }
+  }
+  let second_start = space_at +wrap 1_u64;
+  let extra_space = find_byte(text: text, from: second_start, stop: end, target: space);
+  let clean = extra_space >= end;
+  if clean {
+  } else {
+    return none;
+  }
+  match parse_hex_u32(text: text, from: start, stop: space_at) {
+    Some(value: first_value) => {
+      match parse_hex_u32(text: text, from: second_start, stop: end) {
+        Some(value: second_value) => {
+          let made = DecompField(kind: 2_u8, v1: first_value, v2: second_value);
+          return made;
+        }
+        None() => {
+          return none;
+        }
+      }
+    }
+    None() => {
+      return none;
+    }
+  }
+}
+
+fn parse_unicode_data(text: &[u8]) -> result: UnicodeDataTables reads(text) {
+  doc "Parses every line of UnicodeData.txt, filling ccc_by_cp (default 0) and, for every code point with a canonical decomposition mapping (untagged), recording its raw one-step mapping in the parallel raw_val1/raw_val2/raw_len arrays and its 1-based index in raw_decomp_id_by_cp (default 0, meaning none). Hangul syllables carry no decomposition field in UnicodeData.txt, so they are left at the defaults and handled arithmetically by the caller.";
+  let length = text^.len;
+  let ccc_by_cp = box_array_filled::<u8>(count: code_space, value: 0_u8);
+  let raw_decomp_id_by_cp = box_array_filled::<u16>(count: code_space, value: 0_u16);
+  let raw_val1 = box_slots_new::<u32>(capacity: raw_decomp_capacity);
+  let raw_val2 = box_slots_new::<u32>(capacity: raw_decomp_capacity);
+  let raw_len = box_slots_new::<u8>(capacity: raw_decomp_capacity);
+  let raw_composed_cp = box_slots_new::<u32>(capacity: raw_decomp_capacity);
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      let made = UnicodeDataTables(ccc_by_cp: move ccc_by_cp, raw_decomp_id_by_cp: move raw_decomp_id_by_cp, raw_val1: move raw_val1, raw_val2: move raw_val2, raw_len: move raw_len, raw_composed_cp: move raw_composed_cp);
+      return move made;
+    }
+    let found_stop = line_end(text: text, start: at);
+    let stop = imin(found_stop, length);
+    let fields = split_data_fields(text: text, line_start: at, line_stop: stop);
+    if fields.ok {
+      match parse_hex_u32(text: text, from: fields.cp_start, stop: fields.cp_end) {
+        Some(value: cp) => {
+          let cp64 = cvt::<u32, u64>(cp);
+          let in_space_ccc = cp64 < ccc_by_cp.inner.len;
+          if in_space_ccc {
+            match parse_decimal_u32(text: text, from: fields.ccc_start, stop: fields.ccc_end) {
+              Some(value: ccc) => {
+                let fits = ccc <= 255_u32;
+                if fits {
+                  let ccc8 = cvt.wrap::<u32, u8>(ccc);
+                  set ccc_by_cp.inner[cp64] = ccc8;
+                }
+              }
+              None() => {
+              }
+            }
+          }
+          let in_space_decomp = cp64 < raw_decomp_id_by_cp.inner.len;
+          if in_space_decomp {
+            let decomp = parse_decomposition(text: text, start: fields.decomp_start, end: fields.decomp_end);
+            let has_decomp = decomp.kind > 0_u8;
+            if has_decomp {
+              let index = raw_len.inner.len;
+              let room1 = raw_val1.inner.len < raw_val1.inner.cap;
+              let room2 = raw_val2.inner.len < raw_val2.inner.cap;
+              let room3 = raw_len.inner.len < raw_len.inner.cap;
+              let room4 = raw_composed_cp.inner.len < raw_composed_cp.inner.cap;
+              let room12 = band(room1, room2);
+              let room34 = band(room3, room4);
+              let room = band(room12, room34);
+              if room {
+                place_back(window: &raw_val1.inner, value: decomp.v1);
+                place_back(window: &raw_val2.inner, value: decomp.v2);
+                place_back(window: &raw_len.inner, value: decomp.kind);
+                place_back(window: &raw_composed_cp.inner, value: cp);
+                let id64 = index +wrap 1_u64;
+                let id16 = cvt.wrap::<u64, u16>(id64);
+                set raw_decomp_id_by_cp.inner[cp64] = id16;
+              }
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+    set at = stop +wrap 1_u64;
+  }
+  let made = UnicodeDataTables(ccc_by_cp: move ccc_by_cp, raw_decomp_id_by_cp: move raw_decomp_id_by_cp, raw_val1: move raw_val1, raw_val2: move raw_val2, raw_len: move raw_len, raw_composed_cp: move raw_composed_cp);
+  return move made;
+}
