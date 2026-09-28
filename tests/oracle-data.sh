@@ -1,6 +1,6 @@
 #!/bin/sh
-# Fetches the pinned oracle data for the agent writer trial into DIR
-# (research/investigations/agent-writer-trial), checks every file's SHA-256,
+# Fetches the pinned oracle data of the renderer's leaf modules into DIR
+# (the agent writer trial and later leaves), checks every file's SHA-256,
 # and derives the PNG references with the libpng program REFERENCE.
 #
 #   tests/oracle-data.sh DIR REFERENCE
@@ -14,6 +14,10 @@ css=https://raw.githubusercontent.com/SimonSapin/css-parsing-tests/203ce36bffd61
 pngsuite=http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz
 # html5lib's tree-construction tests now live in WPT.
 wpt_parsing=https://raw.githubusercontent.com/web-platform-tests/wpt/b48a5c3fb57854fd217421e247a4f4a0149951a7/html/syntax/parsing/resources
+html5lib=https://raw.githubusercontent.com/html5lib/html5lib-tests/224991ec10db04f056a89eed8b0bd8695fd2950e
+# The HTML standard's named character references; the file is unversioned,
+# so its hash pins the copy the tokenizer was written against.
+entities=https://html.spec.whatwg.org/entities.json
 
 fetch() { # URL FILE SHA256
     if [ -f "$dir/$2" ] && echo "$3  $dir/$2" | sha256sum -c --status; then
@@ -96,6 +100,20 @@ fetch $wpt_parsing/tricky01.dat wpt-parsing/tricky01.dat 3fb6d24c5e371860d096ef0
 fetch $wpt_parsing/void-in-phrasing.dat wpt-parsing/void-in-phrasing.dat c8855173aca8ecbd218abc26db34a631393ce0285fffebffdaf69b8bdd6224e9
 fetch $wpt_parsing/webkit01.dat wpt-parsing/webkit01.dat 063ca232535a792fa238ae769eeb0ddcc9bd2ee961d3da327ca134612d35d93c
 fetch $wpt_parsing/webkit02.dat wpt-parsing/webkit02.dat 03b215350d352faf110df2cc6eac23a44a7f70945b4ea962f0b17bed103459f7
+fetch $html5lib/tokenizer/contentModelFlags.test html5lib/contentModelFlags.test 77784a505a528950761cfb3c76617afade28b27c3be2a8c37dce3c3d8988391d
+fetch $html5lib/tokenizer/domjs.test html5lib/domjs.test 3273e7861bbdb094571e4b0813ffdd934fe2bfd65864600fef62e8e3b807131a
+fetch $html5lib/tokenizer/entities.test html5lib/entities.test fe17483810a00247579f5f129ca9c007fbab6755ba839523e29aa9f8875f4085
+fetch $html5lib/tokenizer/escapeFlag.test html5lib/escapeFlag.test edbd2e070a14fc67f6bbc104e50207f0fe206a21891c260deea3d227b32c93c9
+fetch $html5lib/tokenizer/namedEntities.test html5lib/namedEntities.test a7f0e59ff7653820330548776cb3031c18e45f5fd1481a9813d9c7acee89bd6e
+fetch $html5lib/tokenizer/numericEntities.test html5lib/numericEntities.test 679296c976252322ece27e2b113a5358a0aa3b0b8ecd2d6d9b365f9d1b0f9632
+fetch $html5lib/tokenizer/pendingSpecChanges.test html5lib/pendingSpecChanges.test 6b56d81ca09afa47d8cb0f33e3fb7169010c3a64493e608ebec921ac098ff8e9
+fetch $html5lib/tokenizer/test1.test html5lib/test1.test 524fcfa4d561a14f0c4e72e0573549abe6341fd4dfb8e16bc2dcf59a608a7219
+fetch $html5lib/tokenizer/test2.test html5lib/test2.test f6450e77760cea823258de86f8e08894a1815671dbec0d74e7fbdab075596e37
+fetch $html5lib/tokenizer/test3.test html5lib/test3.test 9912fa27f03344243f1baa96d9690a5c2a4a9c9426c70da5cbf5c62391d62de4
+fetch $html5lib/tokenizer/test4.test html5lib/test4.test c4967118aecbf8eb2ca34d5c5306f536614acca03e58610f75fbd9efa89fbb42
+fetch $html5lib/tokenizer/unicodeChars.test html5lib/unicodeChars.test 22b7263a840da38179b13693bbfe72f0507dcd41951622456a0d3f5300ba42bd
+fetch $html5lib/tokenizer/unicodeCharsProblematic.test html5lib/unicodeCharsProblematic.test 3c166d5cfa24ee60fd7310ff0f5057e4ae0c649842ec446b5949215759e19a68
+fetch $entities html/entities.json d741d877ac77c4194c4ad526b5b4a19aef8dfe411ab840a466891cdbb9f362e6
 fetch $pngsuite PngSuite-2017jul19.tgz 0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
 
 # PngSuite: every image with its libpng reference, and the case list
