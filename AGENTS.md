@@ -3,8 +3,8 @@
 Snowghost is a cross-platform renderer for user interfaces built with web
 technology. It implements a chosen subset of the web platform in Whitefoot,
 with a rendering pipeline meant to be parallel and incremental from end to
-end, and measures itself against Chromium and Servo. Whitefoot, the language
-and its compiler, is pinned as the `whitefoot/` submodule.
+end. Whitefoot, the language and its compiler, is pinned as the `whitefoot/`
+submodule.
 
 ## Project goal
 

@@ -10,11 +10,7 @@ silent overflow, and the independence it uses to run code in parallel.
 The aim is a light platform for web-built applications, with a rendering
 pipeline that is parallel and incremental from end to end: a change to one
 element reruns only the stages and the parts of the page it affects, and the
-independent parts of every stage run on all cores. Snowghost measures itself
-against Chromium and Servo on rendering performance.
-
-The name comes from the snow ghosts of Big White, the rime-covered trees of
-the mountain where Whitefoot also takes its name.
+independent parts of every stage run on all cores.
 
 ## Status
 
