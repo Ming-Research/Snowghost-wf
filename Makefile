@@ -18,7 +18,7 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
-	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed
+	oracle-data oracle-line-break oracle-css oracle-html-tokenizer oracle-png oracle-png-speed
 
 check: compiler renderer design-lint
 
@@ -70,6 +70,9 @@ oracle-line-break: $(BUILD)/line_break_oracle
 
 oracle-css: $(BUILD)/css_syntax_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/oracle.py build/oracle/css/component_value_list.json $<
+
+oracle-html-tokenizer: $(BUILD)/html_tokenizer_oracle
+	@cd $(ROOT) && $(PY) -B tests/html/oracle.py build/oracle/html5lib $<
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
