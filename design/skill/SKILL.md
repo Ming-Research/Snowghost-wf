@@ -197,9 +197,12 @@ In Snowghost, `make design-lint` checks form during draft work. The separate
 pull requests that are ready for review and on main
 (`.github/workflows/design-readiness.yml`); a draft shows it skipped, so
 pending proposals never turn draft CI red. It must pass before the PR
-becomes ready. The Makefile's `DESIGN_TREES` names the live trees; a change
-that adds a tree's root node adds its name there in the same change, and
-with no live tree the lint still checks amendments and the log.
+becomes ready. The Makefile derives the live trees from the root node files
+directly under `design/` (every `.md` there except `log.md`), so a new tree
+is linted in the change that adds it, and with no live tree the lint still
+checks amendments and the log. Removing a tree's root node also removes the
+tree from that list, so the lint cannot see a whole tree's retirement: it
+still needs the owner's ruling and a log entry naming the retired nodes.
 
 ## Design checks
 
