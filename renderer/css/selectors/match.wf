@@ -811,45 +811,46 @@ fn backtrack(document: &Document, stack: &Slots<Frame, 64>) -> result: Option<Ba
 }
 
 fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, comp_start: u32, comp_end: u32, target: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
-  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector; an explicit stack, sized to max_compounds_per_selector, backtracks over descendant and subsequent-sibling combinators.";
+  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector. Compounds are stored in source (left-to-right, ancestor-to-descendant) order, so the walk starts at index comp_end - 1 (the rightmost, target-anchored compound) and decrements; each compound's own combinator field names the combinator connecting it to its predecessor in source order, which is exactly the step to take when moving from it toward comp_start. An explicit stack, sized to max_compounds_per_selector, backtracks over descendant and subsequent-sibling combinators.";
+  let has_any = comp_start < comp_end;
+  if has_any {
+  } else {
+    return False();
+  }
   let stack = slots_new::<Frame, 64>();
-  let i = comp_start;
+  let last = comp_end -wrap 1_u32;
+  let i = last;
   let current = target;
   loop @search {
-    let index_ok = i < comp_end;
-    if index_ok {
+    let i_wide = cvt::<u32, u64>(i);
+    let i_order_ok = i_wide < list^.compound_order.inner.len;
+    if i_order_ok {
     } else {
       return False();
     }
-    let i_wide = cvt::<u32, u64>(i);
-    let i_in_bounds = i_wide < list^.compounds.inner.len;
+    let actual_i = list^.compound_order.inner[i_wide];
+    let actual_i_wide = cvt::<u32, u64>(actual_i);
+    let i_in_bounds = actual_i_wide < list^.compounds.inner.len;
     if i_in_bounds {
     } else {
       return False();
     }
-    let compound = list^.compounds.inner[i_wide];
+    let compound = list^.compounds.inner[actual_i_wide];
     let ok = compound_matches(list: list, document: document, atoms: atoms, compound: compound, node: current, context: context);
     if ok {
-      let next_i = i +wrap 1_u32;
-      let is_last = next_i == comp_end;
-      if is_last {
+      let at_start = i == comp_start;
+      if at_start {
         return True();
       }
-      let next_i_wide = cvt::<u32, u64>(next_i);
-      let next_i_in_bounds = next_i_wide < list^.compounds.inner.len;
-      if next_i_in_bounds {
-      } else {
-        return False();
-      }
-      let next_compound = list^.compounds.inner[next_i_wide];
-      match next_compound.combinator {
+      let prev_i = i -wrap 1_u32;
+      match compound.combinator {
         Start() => {
           return False();
         }
         Child() => {
           match parent_of(document: document, node: current) {
             Some(value: p) => {
-              set i = next_i;
+              set i = prev_i;
               set current = p;
             }
             None() => {
@@ -868,7 +869,7 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
         NextSibling() => {
           match previous_element_sibling(document: document, node: current) {
             Some(value: p) => {
-              set i = next_i;
+              set i = prev_i;
               set current = p;
             }
             None() => {
@@ -889,9 +890,9 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
             Some(value: p) => {
               let room = stack.len < stack.cap;
               if room {
-                let frame = Frame(compound_index: next_i, last_tried: p, kind: 0_u8);
+                let frame = Frame(compound_index: prev_i, last_tried: p, kind: 0_u8);
                 place_back(window: &stack, value: frame);
-                set i = next_i;
+                set i = prev_i;
                 set current = p;
               } else {
                 return False();
@@ -915,9 +916,9 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, co
             Some(value: p) => {
               let room = stack.len < stack.cap;
               if room {
-                let frame = Frame(compound_index: next_i, last_tried: p, kind: 1_u8);
+                let frame = Frame(compound_index: prev_i, last_tried: p, kind: 1_u8);
                 place_back(window: &stack, value: frame);
-                set i = next_i;
+                set i = prev_i;
                 set current = p;
               } else {
                 return False();
@@ -957,12 +958,19 @@ fn list_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, alt
   let start_wide = cvt::<u32, u64>(alt_start);
   let end_wide = cvt::<u32, u64>(alt_end);
   for (i in start_wide..end_wide) {
-    let in_bounds = i < list^.alts.inner.len;
+    let order_in_bounds = i < list^.alt_order.inner.len;
+    if order_in_bounds {
+    } else {
+      return False();
+    }
+    let actual_i = list^.alt_order.inner[i];
+    let actual_i_wide = cvt::<u32, u64>(actual_i);
+    let in_bounds = actual_i_wide < list^.alts.inner.len;
     if in_bounds {
     } else {
       return False();
     }
-    let alt = list^.alts.inner[i];
+    let alt = list^.alts.inner[actual_i_wide];
     if alt.never_matches {
     } else {
       let m = match_complex(list: list, document: document, atoms: atoms, comp_start: alt.compound_start, comp_end: alt.compound_end, target: node, context: context);
