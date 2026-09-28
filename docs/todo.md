@@ -40,3 +40,16 @@ example apart from the renderer code that exposed it
   the built compiler keyed by the `whitefoot/` pin when the gate's run time
   starts to slow down work, or when the pin moves often enough that the
   build dominates.
+- **pkg::text::normalization has NFC and NFD only.** NFKC and NFKD, and
+  their NormalizationTest.txt invariants, are not implemented: IDNA needs
+  NFC only. Change: add the compatibility decompositions to the generated
+  tables and two NormalizationForm variants. Reopen when a consumer needs a
+  compatibility form.
+- **pkg::url computes no origin or search parameters and encodes queries
+  as UTF-8 only.** The record has no origin (blob: URLs and opaque origins
+  need modelling) and no application/x-www-form-urlencoded parsing, and a
+  document's non-UTF-8 encoding does not reach the query's
+  percent-encoding; WPT's origin and searchParams fields are not compared.
+  Change: add an origin function and a search-parameter parser, and an
+  encoding argument once text decoding exists. Reopen when fetch or
+  same-origin checks need an origin, or a legacy-encoded page is loaded.
