@@ -37,6 +37,9 @@ values:
 
 - it tests every style rule of the page's sheets and of a small UA sheet in
   this directory (no rule hashing);
+- it takes the rules inside `@media` and `@supports` blocks as if their
+  condition held, and skips every other at-rule;
+- it skips inline `style` attributes;
 - it cascades `display`, `float`, `position` and `overflow` by source order
   (no specificity, which `pkg::css::selectors` does not expose);
 - it fills four groups of eight `u64` from its matched rules. Two groups are

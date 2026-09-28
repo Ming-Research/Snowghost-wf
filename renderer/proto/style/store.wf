@@ -1,0 +1,785 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Component = pkg::css::syntax::Component;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+alias Document = pkg::dom::Document;
+alias Links = pkg::dom::Links;
+alias Namespace = pkg::dom::Namespace;
+alias NodeData = pkg::dom::NodeData;
+alias NodeId = pkg::dom::NodeId;
+alias RuleItem = pkg::css::rules::RuleItem;
+alias RuleItems = pkg::css::rules::RuleItems;
+alias Span = pkg::css::syntax::Span;
+alias TextSpan = pkg::dom::TextSpan;
+alias atom_style = pkg::base::static_atoms::atom_style;
+alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_declaration_list = pkg::css::rules::parse_declaration_list;
+alias parse_rule_list = pkg::css::rules::parse_rule_list;
+alias parse_selector_list = pkg::css::selectors::parse_selector_list;
+alias parse_stylesheet = pkg::css::rules::parse_stylesheet;
+
+const rule_ceiling: u64 = 4194304_u64;
+
+const record_ceiling: u64 = 268435456_u64;
+
+const nesting_ceiling: u64 = 16777216_u64;
+
+const sheet_ceiling: u64 = 16777216_u64;
+
+const component_ceiling: u64 = 4294967295_u64;
+
+struct Pending {
+  items: RuleItems;
+  next: u64;
+}
+
+fn push<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> result: Result<unit, StyleError> writes(cell) contract {
+  requires ceiling <= 4294967296_u64;
+} {
+  doc "Appends value to cell. A full cell grows to 8 slots, or doubles while its capacity is below ceiling, so its capacity never passes twice ceiling; TooLarge when a full cell has reached ceiling.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length < capacity {
+    place_back(window: &cell^.inner, value: move value);
+    return Ok<unit, StyleError>(value: unit);
+  }
+  if capacity >= ceiling {
+    let refusal = StyleError::TooLarge();
+    return Err<unit, StyleError>(error: refusal);
+  }
+  if capacity < 8_u64 {
+    grow(cell: cell, capacity: 8_u64);
+  } else {
+    let doubled = capacity + capacity;
+    grow(cell: cell, capacity: doubled);
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn rule_store_new() -> made: RuleStore pure {
+  doc "Returns an empty store.";
+  let rules = box_slots_new::<Rule>(capacity: 0_u64);
+  let records = box_slots_new::<Declared>(capacity: 0_u64);
+  return RuleStore(rules: move rules, records: move records);
+}
+
+fn rule_count(store: &RuleStore) -> count: u64 reads(store) {
+  doc "Returns the number of rules.";
+  return store^.rules.inner.len;
+}
+
+fn add_sheet(store: &RuleStore, source: &[u8], atoms: &AtomTable) -> result: Result<unit, StyleError> reads(source), writes(store), writes(atoms) contract {
+  requires source^.len <= 16777216_u64;
+} {
+  doc "Tokenizes source, parses it as a stylesheet and adds its rules.";
+  let parsed = parse_component_values(source: source);
+  let list = match move parsed {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: refusal) => {
+      let failure = StyleError::TooLarge();
+      return Err<unit, StyleError>(error: failure);
+    }
+  }
+  let count = list.components.inner.len;
+  let fits = count <= component_ceiling;
+  if fits {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<unit, StyleError>(error: failure);
+  }
+  let last = cvt::<u64, u32>(count);
+  let whole = ComponentRange(start: 0_u32, end: last);
+  let top = parse_stylesheet(values: &list, range: whole);
+  let items = match move top {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: refusal) => {
+      let failure = StyleError::TooLarge();
+      return Err<unit, StyleError>(error: failure);
+    }
+  }
+  let walked = propagate walk_rules(store: store, list: &list, items: move items, atoms: atoms);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn walk_rules(store: &RuleStore, list: &ComponentList, items: RuleItems, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds the style rules of items in source order, descending into each @media and @supports block where it stands. An explicit stack holds the rule lists still being read, the innermost on top, so nesting depth follows the input without recursion.";
+  let stack = box_slots_new::<Pending>(capacity: 0_u64);
+  let first = Pending(items: move items, next: 0_u64);
+  let started = propagate push::<Pending>(cell: &stack, value: move first, ceiling: nesting_ceiling);
+  loop @lists {
+    let depth = stack.inner.len;
+    if depth == 0_u64 {
+      break @lists;
+    }
+    let top = depth - 1_u64;
+    let position = stack.inner[top].next;
+    let count = stack.inner[top].items.items.inner.len;
+    let more = position < count;
+    if more {
+      let item = stack.inner[top].items.items.inner[position];
+      let next = position + 1_u64;
+      set stack.inner[top].next = next;
+      let nested = propagate take_item(store: store, list: list, item: item, atoms: atoms);
+      match move nested {
+        Some(value: inner) => {
+          let frame = Pending(items: move inner, next: 0_u64);
+          let pushed = propagate push::<Pending>(cell: &stack, value: move frame, ceiling: nesting_ceiling);
+        }
+        None() => {
+        }
+      }
+    } else {
+      let finished = take_back(window: &stack.inner);
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn take_item(store: &RuleStore, list: &ComponentList, item: RuleItem, atoms: &AtomTable) -> result: Result<Option<RuleItems>, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds item when it is a style rule, and returns the rule list of an @media or @supports block for the caller to read next; every other item adds nothing.";
+  match item {
+    QualifiedRule(prelude: selectors, block: body) => {
+      let added = propagate add_rule(store: store, list: list, prelude: selectors, block: body, atoms: atoms);
+      let none = None<RuleItems>();
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+    AtRule(name: rule_name, prelude: condition, block: body) => {
+      let (start, end) = span_bounds(list: list, span: rule_name);
+      let conditional = is_conditional_group(name: &list^.text.inner[start..end]);
+      if conditional {
+        match body {
+          Some(value: contents) => {
+            let parsed = parse_rule_list(values: list, range: contents);
+            match move parsed {
+              Ok(value: inner) => {
+                let found = Some<RuleItems>(value: move inner);
+                return Ok<Option<RuleItems>, StyleError>(value: move found);
+              }
+              Err(error: refusal) => {
+                let failure = StyleError::TooLarge();
+                return Err<Option<RuleItems>, StyleError>(error: failure);
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+      let none = None<RuleItems>();
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+    Declaration(name: declared, value: declared_value, important: flagged) => {
+      let none = None<RuleItems>();
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+    Invalid() => {
+      let none = None<RuleItems>();
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+  }
+}
+
+fn add_rule(store: &RuleStore, list: &ComponentList, prelude: ComponentRange, block: ComponentRange, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds one style rule: its selector list, skipping the rule when the prelude is Invalid, and one record per declaration of its block, in order.";
+  let parsed = parse_selector_list(values: list, range: prelude, atoms: atoms);
+  let selectors = match move parsed {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: failure) => {
+      match failure {
+        Invalid() => {
+          return Ok<unit, StyleError>(value: unit);
+        }
+        TooLarge() => {
+          let refusal = StyleError::TooLarge();
+          return Err<unit, StyleError>(error: refusal);
+        }
+      }
+    }
+  }
+  let declarations = parse_declaration_list(values: list, range: block);
+  let items = match move declarations {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: refusal) => {
+      let failure = StyleError::TooLarge();
+      return Err<unit, StyleError>(error: failure);
+    }
+  }
+  let first = store^.records.inner.len;
+  let count = items.items.inner.len;
+  for (at in 0_u64..count) {
+    let item = items.items.inner[at];
+    match item {
+      Declaration(name: declared, value: declared_value, important: flagged) => {
+        let record = make_record(list: list, name: declared, value: declared_value);
+        let pushed = propagate push::<Declared>(cell: &store^.records, value: record, ceiling: record_ceiling);
+      }
+      QualifiedRule(..) => {
+      }
+      AtRule(..) => {
+      }
+      Invalid() => {
+      }
+    }
+  }
+  let end = store^.records.inner.len;
+  let rule = Rule(selectors: move selectors, first: first, end: end);
+  let placed = propagate push::<Rule>(cell: &store^.rules, value: move rule, ceiling: rule_ceiling);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn span_bounds(list: &ComponentList, span: Span) -> (start: u64, end: u64) reads(list) contract {
+  ensures start <= end;
+  ensures end <= list^.text.inner.len;
+} {
+  doc "Returns the range of list's text that span names, or an empty range when span lies outside it.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = list^.text.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let located = band(ordered, inside);
+  if located {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn component_bounds(list: &ComponentList, range: ComponentRange) -> (start: u64, end: u64) reads(list) contract {
+  ensures start <= end;
+  ensures end <= list^.components.inner.len;
+} {
+  doc "Returns the range of list's components that range names, or an empty range when it lies outside them.";
+  let start = cvt::<u32, u64>(range.start);
+  let end = cvt::<u32, u64>(range.end);
+  let length = list^.components.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let located = band(ordered, inside);
+  if located {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn single_ident(list: &ComponentList, value: ComponentRange) -> name: Option<Span> reads(list) {
+  doc "Returns the name of value's one component when value is exactly one identifier, and None otherwise.";
+  let (start, end) = component_bounds(list: list, range: value);
+  let size = end - start;
+  if size == 1_u64 {
+  } else {
+    return None<Span>();
+  }
+  let component = list^.components.inner[start];
+  match component {
+    Ident(name: ident) => {
+      return Some<Span>(value: ident);
+    }
+    Function(..) => {
+    }
+    AtKeyword(..) => {
+    }
+    Hash(..) => {
+    }
+    QuotedString(..) => {
+    }
+    Url(..) => {
+    }
+    Delim(..) => {
+    }
+    Number(..) => {
+    }
+    Percentage(..) => {
+    }
+    Dimension(..) => {
+    }
+    UnicodeRange(..) => {
+    }
+    IncludeMatch() => {
+    }
+    DashMatch() => {
+    }
+    PrefixMatch() => {
+    }
+    SuffixMatch() => {
+    }
+    SubstringMatch() => {
+    }
+    Column() => {
+    }
+    Whitespace() => {
+    }
+    Cdo() => {
+    }
+    Cdc() => {
+    }
+    Colon() => {
+    }
+    Semicolon() => {
+    }
+    Comma() => {
+    }
+    ParenthesisBlock(..) => {
+    }
+    BracketBlock(..) => {
+    }
+    BraceBlock(..) => {
+    }
+    Error(..) => {
+    }
+  }
+  return None<Span>();
+}
+
+fn keyword_record(list: &ComponentList, property: Property, value: ComponentRange) -> record: Option<Declared> reads(list) {
+  doc "Returns the keyword record of a display, float, position or overflow declaration whose value is one identifier naming one of the property's keywords, and None for every other declaration.";
+  let name = match single_ident(list: list, value: value) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+  let (start, end) = span_bounds(list: list, span: name);
+  let text = &list^.text.inner[start..end];
+  match property {
+    Display() => {
+      match display_keyword(text: text) {
+        Some(value: keyword) => {
+          let record = Declared::SetDisplay(value: keyword);
+          return Some<Declared>(value: record);
+        }
+        None() => {
+        }
+      }
+    }
+    Floating() => {
+      match float_keyword(text: text) {
+        Some(value: keyword) => {
+          let record = Declared::SetFloat(value: keyword);
+          return Some<Declared>(value: record);
+        }
+        None() => {
+        }
+      }
+    }
+    Positioning() => {
+      match position_keyword(text: text) {
+        Some(value: keyword) => {
+          let record = Declared::SetPosition(value: keyword);
+          return Some<Declared>(value: record);
+        }
+        None() => {
+        }
+      }
+    }
+    Overflowing() => {
+      match overflow_keyword(text: text) {
+        Some(value: keyword) => {
+          let record = Declared::SetOverflow(value: keyword);
+          return Some<Declared>(value: record);
+        }
+        None() => {
+        }
+      }
+    }
+    Other() => {
+    }
+  }
+  return None<Declared>();
+}
+
+fn make_record(list: &ComponentList, name: Span, value: ComponentRange) -> record: Declared reads(list) {
+  doc "Returns one declaration's record: a keyword record when keyword_record finds one, and otherwise its group value, placed by the hash of its lowercased name.";
+  let (start, end) = span_bounds(list: list, span: name);
+  let text = &list^.text.inner[start..end];
+  let property = property_of(name: text);
+  match keyword_record(list: list, property: property, value: value) {
+    Some(value: found) => {
+      return found;
+    }
+    None() => {
+    }
+  }
+  let name_hash = fnv_lower_bytes(hash: fnv_offset, bytes: text);
+  let group = name_hash % 4_u64;
+  let quarter = name_hash / 4_u64;
+  let slot = quarter % 8_u64;
+  let value_hash = hash_components(list: list, value: value);
+  let inherited = group < 2_u64;
+  if inherited {
+    let base = group * 8_u64;
+    let index = base + slot;
+    return Declared::SetInherited(slot: index, hash: value_hash);
+  }
+  let reset_group = group - 2_u64;
+  let reset_base = reset_group * 8_u64;
+  let reset_index = reset_base + slot;
+  return Declared::SetReset(slot: reset_index, hash: value_hash);
+}
+
+fn hash_components(list: &ComponentList, value: ComponentRange) -> hash: u64 reads(list) {
+  doc "Returns the 64-bit FNV-1a hash of value's components in preorder, each fed as its variant's ordinal followed by its payload.";
+  let (start, end) = component_bounds(list: list, range: value);
+  let current = fnv_offset;
+  for (at in start..end) {
+    let component = list^.components.inner[at];
+    set current = hash_component(hash: current, list: list, component: component);
+  }
+  return current;
+}
+
+fn hash_span(hash: u64, list: &ComponentList, span: Span) -> next: u64 reads(list) {
+  doc "Feeds the text span names to the hash.";
+  let (start, end) = span_bounds(list: list, span: span);
+  let fed = fnv_bytes(hash: hash, bytes: &list^.text.inner[start..end]);
+  return fed;
+}
+
+fn hash_component(hash: u64, list: &ComponentList, component: Component) -> next: u64 reads(list) {
+  doc "Feeds one component to the hash: its variant's ordinal in pkg::css::syntax::Component, then a span's text, a Hash's kind, a Delim's code point, a number's representation, a Dimension's unit after it, a unicode-range's bounds or an Error's kind.";
+  match component {
+    Ident(name: ident) => {
+      let tagged = fnv_byte(hash: hash, byte: 0_u8);
+      let fed = hash_span(hash: tagged, list: list, span: ident);
+      return fed;
+    }
+    Function(name: function_name, end: closing) => {
+      let tagged = fnv_byte(hash: hash, byte: 1_u8);
+      let fed = hash_span(hash: tagged, list: list, span: function_name);
+      return fed;
+    }
+    AtKeyword(name: keyword_name) => {
+      let tagged = fnv_byte(hash: hash, byte: 2_u8);
+      let fed = hash_span(hash: tagged, list: list, span: keyword_name);
+      return fed;
+    }
+    Hash(name: hash_name, kind: hash_kind) => {
+      let tagged = fnv_byte(hash: hash, byte: 3_u8);
+      let fed = hash_span(hash: tagged, list: list, span: hash_name);
+      match hash_kind {
+        Id() => {
+          let marked = fnv_byte(hash: fed, byte: 0_u8);
+          return marked;
+        }
+        Unrestricted() => {
+          let marked = fnv_byte(hash: fed, byte: 1_u8);
+          return marked;
+        }
+      }
+    }
+    QuotedString(value: text) => {
+      let tagged = fnv_byte(hash: hash, byte: 4_u8);
+      let fed = hash_span(hash: tagged, list: list, span: text);
+      return fed;
+    }
+    Url(value: text) => {
+      let tagged = fnv_byte(hash: hash, byte: 5_u8);
+      let fed = hash_span(hash: tagged, list: list, span: text);
+      return fed;
+    }
+    Delim(code_point: delimiter) => {
+      let tagged = fnv_byte(hash: hash, byte: 6_u8);
+      let fed = fnv_u32(hash: tagged, value: delimiter);
+      return fed;
+    }
+    Number(number: numeric) => {
+      let tagged = fnv_byte(hash: hash, byte: 7_u8);
+      let fed = hash_span(hash: tagged, list: list, span: numeric.representation);
+      return fed;
+    }
+    Percentage(number: numeric) => {
+      let tagged = fnv_byte(hash: hash, byte: 8_u8);
+      let fed = hash_span(hash: tagged, list: list, span: numeric.representation);
+      return fed;
+    }
+    Dimension(number: numeric, unit_name: unit_span) => {
+      let tagged = fnv_byte(hash: hash, byte: 9_u8);
+      let fed = hash_span(hash: tagged, list: list, span: numeric.representation);
+      let united = hash_span(hash: fed, list: list, span: unit_span);
+      return united;
+    }
+    UnicodeRange(start: first, end: last) => {
+      let tagged = fnv_byte(hash: hash, byte: 10_u8);
+      let low = fnv_u32(hash: tagged, value: first);
+      let high = fnv_u32(hash: low, value: last);
+      return high;
+    }
+    IncludeMatch() => {
+      let tagged = fnv_byte(hash: hash, byte: 11_u8);
+      return tagged;
+    }
+    DashMatch() => {
+      let tagged = fnv_byte(hash: hash, byte: 12_u8);
+      return tagged;
+    }
+    PrefixMatch() => {
+      let tagged = fnv_byte(hash: hash, byte: 13_u8);
+      return tagged;
+    }
+    SuffixMatch() => {
+      let tagged = fnv_byte(hash: hash, byte: 14_u8);
+      return tagged;
+    }
+    SubstringMatch() => {
+      let tagged = fnv_byte(hash: hash, byte: 15_u8);
+      return tagged;
+    }
+    Column() => {
+      let tagged = fnv_byte(hash: hash, byte: 16_u8);
+      return tagged;
+    }
+    Whitespace() => {
+      let tagged = fnv_byte(hash: hash, byte: 17_u8);
+      return tagged;
+    }
+    Cdo() => {
+      let tagged = fnv_byte(hash: hash, byte: 18_u8);
+      return tagged;
+    }
+    Cdc() => {
+      let tagged = fnv_byte(hash: hash, byte: 19_u8);
+      return tagged;
+    }
+    Colon() => {
+      let tagged = fnv_byte(hash: hash, byte: 20_u8);
+      return tagged;
+    }
+    Semicolon() => {
+      let tagged = fnv_byte(hash: hash, byte: 21_u8);
+      return tagged;
+    }
+    Comma() => {
+      let tagged = fnv_byte(hash: hash, byte: 22_u8);
+      return tagged;
+    }
+    ParenthesisBlock(end: closing) => {
+      let tagged = fnv_byte(hash: hash, byte: 23_u8);
+      return tagged;
+    }
+    BracketBlock(end: closing) => {
+      let tagged = fnv_byte(hash: hash, byte: 24_u8);
+      return tagged;
+    }
+    BraceBlock(end: closing) => {
+      let tagged = fnv_byte(hash: hash, byte: 25_u8);
+      return tagged;
+    }
+    Error(error: kind) => {
+      let tagged = fnv_byte(hash: hash, byte: 26_u8);
+      let ordinal = parse_error_ordinal(kind: kind);
+      let fed = fnv_byte(hash: tagged, byte: ordinal);
+      return fed;
+    }
+  }
+}
+
+fn parse_error_ordinal(kind: pkg::css::syntax::ParseError) -> ordinal: u8 pure {
+  doc "Returns the ordinal of a ParseError variant in its declaration.";
+  match kind {
+    BadString() => {
+      return 0_u8;
+    }
+    BadUrl() => {
+      return 1_u8;
+    }
+    EofInString() => {
+      return 2_u8;
+    }
+    EofInUrl() => {
+      return 3_u8;
+    }
+    UnmatchedParenthesis() => {
+      return 4_u8;
+    }
+    UnmatchedBracket() => {
+      return 5_u8;
+    }
+    UnmatchedBrace() => {
+      return 6_u8;
+    }
+  }
+}
+
+fn add_style_elements(store: &RuleStore, document: &Document, traversal: &Traversal, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(store), writes(atoms) {
+  doc "Adds the text of each HTML style element among traversal's elements as one sheet, in their order.";
+  let count = traversal^.elements.inner.len;
+  for (at in 0_u64..count) {
+    let node = traversal^.elements.inner[at];
+    let styled = is_html_style(document: document, node: node);
+    if styled {
+      let text = propagate element_text(document: document, node: node);
+      let length = text.inner.len;
+      let small = length <= sheet_ceiling;
+      if small {
+      } else {
+        let failure = StyleError::TooLarge();
+        return Err<unit, StyleError>(error: failure);
+      }
+      let added = propagate add_sheet(store: store, source: &text.inner[0_u64..length], atoms: atoms);
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn is_html_style(document: &Document, node: NodeId) -> styled: Bool reads(document) {
+  doc "Tells whether node is a style element in the HTML namespace.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+  } else {
+    return False();
+  }
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Element(namespace: space, local_name: local, attributes: list, template_contents: held) => {
+      let named = local^.index == atom_style;
+      let html = match space^ {
+        Html() => {
+          give True();
+        }
+        Svg() => {
+          give False();
+        }
+        MathMl() => {
+          give False();
+        }
+      }
+      let both = band(named, html);
+      return both;
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return False();
+}
+
+fn node_links(document: &Document, node: NodeId) -> links: Option<Links> reads(document) {
+  doc "Returns the links of node, or None when it names no node.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+    let links = document^.nodes.inner[index].links;
+    return Some<Links>(value: links);
+  }
+  return None<Links>();
+}
+
+fn text_span_of(document: &Document, node: NodeId) -> span: Option<TextSpan> reads(document) {
+  doc "Returns the data span of node when it is a Text node, and None otherwise.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+  } else {
+    return None<TextSpan>();
+  }
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Text(data: span) => {
+      return Some<TextSpan>(value: span^);
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Element(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return None<TextSpan>();
+}
+
+fn element_text(document: &Document, node: NodeId) -> result: Result<Box<Slots<u8>>, StyleError> reads(document) {
+  doc "Returns the concatenated data of node's Text children, in order. The walk along next-sibling links takes at most one step per node; Inconsistent when it would take more, and TooLarge past sheet_ceiling bytes.";
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  let links = match node_links(document: document, node: node) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      let failure = StyleError::Inconsistent();
+      return Err<Box<Slots<u8>>, StyleError>(error: failure);
+    }
+  }
+  let cursor = links.first_child;
+  let count = document^.nodes.inner.len;
+  for (step in 0_u64..count) {
+    let child = match cursor {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return Ok<Box<Slots<u8>>, StyleError>(value: move text);
+      }
+    }
+    match text_span_of(document: document, node: child) {
+      Some(value: span) => {
+        let appended = propagate append_span(text: &text, document: document, span: span);
+      }
+      None() => {
+      }
+    }
+    let child_links = match node_links(document: document, node: child) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        let failure = StyleError::Inconsistent();
+        return Err<Box<Slots<u8>>, StyleError>(error: failure);
+      }
+    }
+    set cursor = child_links.next_sibling;
+  }
+  match cursor {
+    Some(value: found) => {
+      let failure = StyleError::Inconsistent();
+      return Err<Box<Slots<u8>>, StyleError>(error: failure);
+    }
+    None() => {
+      return Ok<Box<Slots<u8>>, StyleError>(value: move text);
+    }
+  }
+}
+
+fn append_span(text: &Box<Slots<u8>>, document: &Document, span: TextSpan) -> result: Result<unit, StyleError> reads(document), writes(text) {
+  doc "Appends the document text span names to text; Inconsistent when the span lies outside the document's text.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = document^.text.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  for (at in start..end) {
+    let byte = document^.text.inner[at];
+    let pushed = propagate push::<u8>(cell: text, value: byte, ceiling: sheet_ceiling);
+  }
+  return Ok<unit, StyleError>(value: unit);
+}

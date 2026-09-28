@@ -1,0 +1,326 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+
+const words_ceiling: u64 = 65536_u64;
+
+fn refuse<T: drop>(failure: StyleError) -> result: Result<T, StyleError> pure {
+  doc "Returns failure as a refusal.";
+  return Err<T, StyleError>(error: failure);
+}
+
+fn style_level(store: &RuleStore, document: &Document, atoms: &AtomTable, elements: &[NodeId], parent_slots: &[u32], parents: &[Computed], out: &[Computed]) -> consistent: Bool reads(store), reads(document), reads(atoms), reads(elements), reads(parent_slots), reads(parents), writes(out) contract {
+  requires elements^.len <= out^.len;
+  requires elements^.len >= out^.len;
+  requires parent_slots^.len <= out^.len;
+  requires parent_slots^.len >= out^.len;
+} {
+  doc "Shape A, one tree level: iteration k styles the element at level position k from its parent's values, read at its parent slot in parents, the previous level, and writes slot k of out. False when a parent slot lies outside parents.";
+  let count = out^.len;
+  let consistent = True();
+  for (k in 0_u64..count) {
+    let element = elements^[k];
+    let raw = parent_slots^[k];
+    let slot = cvt::<u32, u64>(raw);
+    let inside = slot < parents^.len;
+    set consistent = band(consistent, inside);
+    let parent = if inside {
+      give parents^[slot];
+    } else {
+      let blank = blank_computed();
+      give blank;
+    }
+    let computed = style_element(store: store, document: document, atoms: atoms, element: element, parent: parent);
+    set out^[k] = computed;
+  }
+  return consistent;
+}
+
+fn style_shape_a(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Box<Array<Computed>>, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
+  doc "Shape A, level order: returns the values of every level position, the document's blank values at position 0, computed one tree level after another, each level by style_level from the level before it.";
+  let count = traversal^.elements.inner.len;
+  let small = count <= 4294967294_u64;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let slots = count + 1_u64;
+  let listed_elements = traversal^.level_elements.inner.len == slots;
+  let listed_parents = traversal^.level_parents.inner.len == slots;
+  let listed = band(listed_elements, listed_parents);
+  let bounds = traversal^.level_start.inner.len;
+  let leveled = bounds >= 2_u64;
+  let shaped = band(listed, leveled);
+  if shaped {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let blank = blank_computed();
+  let results = box_array_filled::<Computed>(count: slots, value: blank);
+  let last = bounds - 1_u64;
+  for (level in 1_u64..last) {
+    let before = level - 1_u64;
+    let after = level + 1_u64;
+    let previous = cvt::<u32, u64>(traversal^.level_start.inner[before]);
+    let low = cvt::<u32, u64>(traversal^.level_start.inner[level]);
+    let high = cvt::<u32, u64>(traversal^.level_start.inner[after]);
+    let rising = previous <= low;
+    let ordered = low <= high;
+    let inside = high <= slots;
+    let monotone = band(rising, ordered);
+    let located = band(monotone, inside);
+    if located {
+    } else {
+      let failure = StyleError::Inconsistent();
+      return refuse::<Box<Array<Computed>>>(failure: failure);
+    }
+    let parents = &results.inner[previous..low];
+    let out = &results.inner[low..high];
+    let elements = &traversal^.level_elements.inner[low..high];
+    let parent_slots = &traversal^.level_parents.inner[low..high];
+    let consistent = style_level(store: store, document: document, atoms: atoms, elements: elements, parent_slots: parent_slots, parents: parents, out: out);
+    if consistent {
+    } else {
+      let failure = StyleError::Inconsistent();
+      return refuse::<Box<Array<Computed>>>(failure: failure);
+    }
+  }
+  return Ok<Box<Array<Computed>>, StyleError>(value: move results);
+}
+
+fn style_subtree(out: &[Computed], first: u64, parent: Computed, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> consistent: Bool reads(store), reads(document), reads(atoms), reads(traversal), writes(out) {
+  doc "Shape B, one subtree: out is the preorder range of the subtree whose root has preorder index first. Styles the root into out^[0] from parent, then the run of its children into the rest of out. False when out is empty or the traversal does not describe the subtree.";
+  let count = out^.len;
+  if count == 0_u64 {
+    return False();
+  }
+  let listed = first < traversal^.elements.inner.len;
+  let started = first < traversal^.child_start.inner.len;
+  let ended = first < traversal^.child_end.inner.len;
+  let known = band(listed, started);
+  let ranged = band(known, ended);
+  if ranged {
+  } else {
+    return False();
+  }
+  let element = traversal^.elements.inner[first];
+  let computed = style_element(store: store, document: document, atoms: atoms, element: element, parent: parent);
+  set out^[0_u64] = computed;
+  let low = cvt::<u32, u64>(traversal^.child_start.inner[first]);
+  let high = cvt::<u32, u64>(traversal^.child_end.inner[first]);
+  let next = first + 1_u64;
+  let kids = &out^[1_u64..count];
+  let rest = style_run(siblings: kids, run_first: next, child_lo: low, child_hi: high, parent: computed, store: store, document: document, atoms: atoms, traversal: traversal);
+  return rest;
+}
+
+fn style_run(siblings: &[Computed], run_first: u64, child_lo: u64, child_hi: u64, parent: Computed, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> consistent: Bool reads(store), reads(document), reads(atoms), reads(traversal), writes(siblings) {
+  doc "Shape B, one run of sibling subtrees: the children listed from child_lo to child_hi in the traversal's children array, whose subtrees occupy siblings, starting at preorder index run_first. A run of one child is its subtree; a longer run splits at its middle child, whose preorder index divides siblings into two disjoint ranges, and styles the two halves. False when the traversal does not describe the run.";
+  let length = siblings^.len;
+  let empty = child_hi <= child_lo;
+  if empty {
+    return length == 0_u64;
+  }
+  let count = child_hi - child_lo;
+  if count == 1_u64 {
+    let listed = child_lo < traversal^.children.inner.len;
+    if listed {
+    } else {
+      return False();
+    }
+    let only = cvt::<u32, u64>(traversal^.children.inner[child_lo]);
+    let aligned = only == run_first;
+    if aligned {
+    } else {
+      return False();
+    }
+    let one = style_subtree(out: siblings, first: run_first, parent: parent, store: store, document: document, atoms: atoms, traversal: traversal);
+    return one;
+  }
+  let half = count / 2_u64;
+  let middle = child_lo + half;
+  let listed = middle < traversal^.children.inner.len;
+  if listed {
+  } else {
+    return False();
+  }
+  let split_first = cvt::<u32, u64>(traversal^.children.inner[middle]);
+  let after = split_first >= run_first;
+  if after {
+  } else {
+    return False();
+  }
+  let offset = split_first - run_first;
+  let within = offset <= length;
+  if within {
+  } else {
+    return False();
+  }
+  let left = style_run(siblings: &siblings^[0_u64..offset], run_first: run_first, child_lo: child_lo, child_hi: middle, parent: parent, store: store, document: document, atoms: atoms, traversal: traversal);
+  let right = style_run(siblings: &siblings^[offset..length], run_first: split_first, child_lo: middle, child_hi: child_hi, parent: parent, store: store, document: document, atoms: atoms, traversal: traversal);
+  let both = band(left, right);
+  return both;
+}
+
+fn style_shape_b(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Box<Array<Computed>>, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
+  doc "Shape B, preorder halving: returns every element's values in preorder, computed by style_run over the document's run of root elements, which covers the whole result.";
+  let count = traversal^.elements.inner.len;
+  let small = count <= 4294967294_u64;
+  let started = count < traversal^.child_start.inner.len;
+  let ended = count < traversal^.child_end.inner.len;
+  let ranged = band(started, ended);
+  let usable = band(small, ranged);
+  if usable {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let blank = blank_computed();
+  let results = box_array_filled::<Computed>(count: count, value: blank);
+  let low = cvt::<u32, u64>(traversal^.child_start.inner[count]);
+  let high = cvt::<u32, u64>(traversal^.child_end.inner[count]);
+  let whole = &results.inner[0_u64..count];
+  let consistent = style_run(siblings: whole, run_first: 0_u64, child_lo: low, child_hi: high, parent: blank, store: store, document: document, atoms: atoms, traversal: traversal);
+  if consistent {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  return Ok<Box<Array<Computed>>, StyleError>(value: move results);
+}
+
+fn match_elements(bits: &[u64], words: u64, elements: &[NodeId], store: &RuleStore, document: &Document, atoms: &AtomTable) -> fits: Bool reads(elements), reads(store), reads(document), reads(atoms), writes(bits) {
+  doc "Shape C, the match loop: iteration i matches the element at preorder index i and writes only its own run of words words, from words * i. False when bits is not words words per element or a matching rule has no bit.";
+  let count = elements^.len;
+  let few_words = words <= words_ceiling;
+  let few_elements = count <= 4294967296_u64;
+  let small = band(few_words, few_elements);
+  if small {
+  } else {
+    return False();
+  }
+  let total = words * count;
+  let exact = bits^.len == total;
+  if exact {
+  } else {
+    return False();
+  }
+  let all = True();
+  for (i in 0_u64..count) {
+    let element = elements^[i];
+    let start = words * i;
+    let end = start + words;
+    invariant within: end <= total {
+      use words times (i + 1_u64 <= count);
+    }
+    let fits = match_element(bits: &bits^[start..end], store: store, document: document, atoms: atoms, element: element);
+    set all = band(all, fits);
+  }
+  return all;
+}
+
+fn cascade_elements(bits: &[u64], words: u64, parents: &[u32], out: &[Computed], store: &RuleStore) -> consistent: Bool reads(bits), reads(parents), reads(store), writes(out) contract {
+  requires parents^.len == out^.len;
+} {
+  doc "Shape C, the cascade: a sequential preorder pass that computes each element from its own run of match bits and its parent's values, which preorder has already computed. False when bits is not words words per element, a parent neither precedes its child nor is the document, or a set bit names no rule.";
+  let count = out^.len;
+  let few_words = words <= words_ceiling;
+  let few_elements = count <= 4294967296_u64;
+  let small = band(few_words, few_elements);
+  if small {
+  } else {
+    return False();
+  }
+  let total = words * count;
+  let exact = bits^.len == total;
+  if exact {
+  } else {
+    return False();
+  }
+  let blank = blank_computed();
+  let consistent = True();
+  for (at in 0_u64..count) {
+    let start = words * at;
+    let end = start + words;
+    invariant within: end <= total {
+      use words times (at + 1_u64 <= count);
+    }
+    let raw = cvt::<u32, u64>(parents^[at]);
+    let earlier = raw < at;
+    let root = raw == count;
+    let placed = bor(earlier, root);
+    let parent = if earlier {
+      give out^[raw];
+    } else {
+      give blank;
+    }
+    let (computed, known) = cascade_element(bits: &bits^[start..end], store: store, parent: parent);
+    set out^[at] = computed;
+    let sound = band(placed, known);
+    set consistent = band(consistent, sound);
+  }
+  return consistent;
+}
+
+fn style_shape_c(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Box<Array<Computed>>, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
+  doc "Shape C, flat match then cascade: returns every element's values in preorder, matched by match_elements into a bit array of one run of ceil(rules / 64) words per element and then cascaded by cascade_elements.";
+  let count = traversal^.elements.inner.len;
+  let rules = store^.rules.inner.len;
+  let few_elements = count <= 4294967294_u64;
+  let few_rules = rules <= 4194304_u64;
+  let listed = traversal^.parents.inner.len == count;
+  let small = band(few_elements, few_rules);
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  if listed {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let padded = rules + 63_u64;
+  let words = padded / 64_u64;
+  let total = words * count;
+  let bits = box_array_filled::<u64>(count: total, value: 0_u64);
+  let matched = bits.inner.len;
+  let elements = &traversal^.elements.inner[0_u64..count];
+  let fits = match_elements(bits: &bits.inner[0_u64..matched], words: words, elements: elements, store: store, document: document, atoms: atoms);
+  if fits {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let blank = blank_computed();
+  let results = box_array_filled::<Computed>(count: count, value: blank);
+  let parents = &traversal^.parents.inner[0_u64..count];
+  let out = &results.inner[0_u64..count];
+  let consistent = cascade_elements(bits: &bits.inner[0_u64..matched], words: words, parents: parents, out: out, store: store);
+  if consistent {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  return Ok<Box<Array<Computed>>, StyleError>(value: move results);
+}
+
+fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
+  doc "Runs shape C and wraps its result.";
+  let computed = propagate style_shape_c(store: store, document: document, atoms: atoms, traversal: traversal);
+  let made = Styles(computed: move computed);
+  return Ok<Styles, StyleError>(value: move made);
+}
+
+fn element_boxing(styles: &Styles, element: u64) -> boxing: Option<Boxing> reads(styles) {
+  doc "Reads one element's keywords.";
+  let count = styles^.computed.inner.len;
+  let known = element < count;
+  if known {
+    let found = styles^.computed.inner[element].boxing;
+    return Some<Boxing>(value: found);
+  }
+  return None<Boxing>();
+}

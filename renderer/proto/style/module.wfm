@@ -1,0 +1,135 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias NodeId = pkg::dom::NodeId;
+alias SelectorList = pkg::css::selectors::SelectorList;
+
+public enum DisplayKeyword {
+  Inline();
+  Block();
+  None();
+  Contents();
+  ListItem();
+  InlineBlock();
+  FlowRoot();
+  Flow();
+  RunIn();
+  Table();
+  InlineTable();
+  TableRowGroup();
+  TableHeaderGroup();
+  TableFooterGroup();
+  TableRow();
+  TableCell();
+  TableColumnGroup();
+  TableColumn();
+  TableCaption();
+  Flex();
+  InlineFlex();
+  Grid();
+  InlineGrid();
+  Ruby();
+  RubyBase();
+  RubyText();
+  RubyBaseContainer();
+  RubyTextContainer();
+  Math();
+}
+
+public enum FloatKeyword {
+  None();
+  Left();
+  Right();
+  InlineStart();
+  InlineEnd();
+}
+
+public enum PositionKeyword {
+  Static();
+  Relative();
+  Absolute();
+  Fixed();
+  Sticky();
+}
+
+public enum OverflowKeyword {
+  Visible();
+  Hidden();
+  Clip();
+  Scroll();
+  Auto();
+}
+
+public struct Boxing {
+  public display: DisplayKeyword;
+  public float: FloatKeyword;
+  public position: PositionKeyword;
+  public overflow: OverflowKeyword;
+}
+
+public enum StyleError {
+  TooLarge();
+  TooDeep();
+  Inconsistent();
+}
+
+enum Declared {
+  SetDisplay(value: DisplayKeyword);
+  SetFloat(value: FloatKeyword);
+  SetPosition(value: PositionKeyword);
+  SetOverflow(value: OverflowKeyword);
+  SetInherited(slot: u64, hash: u64);
+  SetReset(slot: u64, hash: u64);
+}
+
+struct Rule {
+  selectors: SelectorList;
+  first: u64;
+  end: u64;
+}
+
+public struct RuleStore {
+  rules: Box<Slots<Rule>>;
+  records: Box<Slots<Declared>>;
+}
+
+struct Computed {
+  boxing: Boxing;
+  inherited: Array<u64, 16>;
+  reset: Array<u64, 16>;
+}
+
+public struct Styles {
+  computed: Box<Array<Computed>>;
+}
+
+public struct Traversal {
+  public readonly elements: Box<Slots<NodeId>>;
+  public readonly parents: Box<Slots<u32>>;
+  public readonly child_start: Box<Array<u32>>;
+  public readonly child_end: Box<Array<u32>>;
+  public readonly children: Box<Array<u32>>;
+  public readonly level_start: Box<Array<u32>>;
+  public readonly level_elements: Box<Array<NodeId>>;
+  public readonly level_parents: Box<Array<u32>>;
+  public readonly level_positions: Box<Array<u32>>;
+}
+
+public fn rule_store_new() -> made: RuleStore pure doc "Returns a rule store that holds no rule. A store holds, in the order they were added, the style rules of the sheets added to it: each rule's selector list and a range of declaration records. The prototype's cascade tests every rule of the store against every element in that order, the later matching rule winning, so the user agent sheet is added first and the page's sheets after it in document order.";
+
+public fn add_sheet(store: &RuleStore, source: &[u8], atoms: &AtomTable) -> result: Result<unit, StyleError> reads(source), writes(store), writes(atoms) contract {
+  requires source^.len <= 16777216_u64;
+} doc "Parses source as a style sheet with pkg::css::syntax and pkg::css::rules and appends its style rules to store in source order. A qualified rule whose prelude pkg::css::selectors::parse_selector_list rejects as Invalid is skipped; its names are interned in atoms. The rules inside an @media or @supports block, at any depth, are taken as if the block's condition held; every other at-rule is skipped. A rule's block is parsed by parse_declaration_list, and each of its declarations becomes one record, in order; the at-rules and nested rules of a block are skipped, and !important is ignored. A declaration of display, float, position or overflow, the name compared ASCII case-insensitively, whose value is exactly one identifier naming one of that property's keywords in DisplayKeyword, FloatKeyword, PositionKeyword or OverflowKeyword, compared ASCII case-insensitively, becomes that keyword. Every other declaration becomes a group value: with h the 64-bit FNV-1a hash of its name in ASCII lowercase, its group is h mod 4 and its slot (h / 4) mod 8, and its value is the 64-bit FNV-1a hash of its value's components in preorder, each fed as its variant's ordinal in pkg::css::syntax::Component followed by its payload: a span's text, a Hash's kind, a Delim's code point, a number's representation, a Dimension's unit, a unicode-range's bounds, an Error's kind. Groups 0 and 1 are inherited, 2 and 3 are not. TooLarge when the sheet or the store would pass a storage limit, a sheet with more than 2^32 - 1 components included, or the store would pass 4194304 rules; store then holds the rules added before the refusal.";
+
+public fn add_style_elements(store: &RuleStore, document: &Document, traversal: &Traversal, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(store), writes(atoms) doc "Adds, as add_sheet does, one sheet for each style element in the HTML namespace among traversal's elements, in their order: the concatenated data of its Text children. Its media and type attributes are not read. traversal is build_traversal's result for document. TooLarge as add_sheet, and when one element's text passes 16777216 bytes.";
+
+public fn rule_count(store: &RuleStore) -> count: u64 reads(store) doc "Returns the number of rules store holds.";
+
+public fn build_traversal(document: &Document) -> result: Result<Traversal, StyleError> reads(document) doc "Returns the traversal arrays of document's elements. elements holds every Element node of the document tree in tree order (preorder), which a walk from the document root through first children and next siblings visits; template contents are not in the tree. Each array indexed by element holds a preorder index: parents holds, for each element, the preorder index of its parent element, or the element count n for an element whose parent is the document. child_start and child_end hold n + 1 entries, one per element and one for the document at n: entry e names, from child_start to child_end, the run of the children array holding e's child elements' preorder indices in order, so children lists every element once. Level arrays serve the level-order shape: level position 0 is a slot that stands for the document, and each tree level d, the roots being level 0, occupies the level positions from level_start[d + 1] to level_start[d + 2], in preorder; level_start holds the number of levels plus two entries, the first 0 and the last n + 1. level_elements and level_parents hold n + 1 entries, one per level position: the element there, the document root's node at position 0, and the position of its parent counted from the start of the previous level, 0 at position 0 and for the roots. level_positions maps each preorder index to its level position. TooLarge when the arrays would pass 2^32 - 2 elements or a storage limit; TooDeep when an element lies deeper than 4096 levels, the depth the preorder-halving shape recurses by; Inconsistent when the document's links do not describe a tree.";
+
+public fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) doc "Computes every element's style with the flat-match-then-cascade shape. One counted loop over traversal's elements in preorder tests every rule of store in order with pkg::css::selectors::selector_matches, with no match target or scope, and records the matching rules as one bit per rule in the element's own run of a flat bit array. A sequential preorder pass then starts each element with display inline, float none, position static and overflow visible, its inherited groups copied from its parent's computed values, zero for a root, and its other groups zero, and applies the records of its matching rules in rule order, a later record replacing an earlier one's keyword or slot. traversal is build_traversal's result for document, and atoms holds the names of both the document and store. TooLarge when the arrays would pass a storage limit; Inconsistent when traversal does not describe one tree.";
+
+public fn element_boxing(styles: &Styles, element: u64) -> boxing: Option<Boxing> reads(styles) doc "Returns the computed display, float, position and overflow of the element at preorder index element, or None when styles holds no such element.";
+
+public fn run(inputs: Inputs) -> status: ExitStatus pure waits doc "The proto_style entry, invoked as `proto_style SHAPE REPS PAGE SHEET...` with every path relative to the working directory. PAGE is parsed by pkg::html::tree_builder::parse_document with scripting on, and the rule store is loaded once: each SHEET file by add_sheet in the order given, the user agent sheet first and then the files the page's style sheet links load, in document order, followed by the page's style elements by add_style_elements. SHAPE A styles every element level by level with one counted loop per tree level, B by preorder halving of sibling runs, C by a flat match loop and a sequential cascade; each runs REPS times. intern runs C once and then the intern post-pass REPS times, which interns each of the four groups of every element into a per-group open-addressed table sized to the element count and replaces the group by its index. check runs A, B and C once each, compares them element by element, keywords and all 32 group values, and checks the intern post-pass on C's result; any difference is reported on standard error and exits 1. On success it prints one line to standard output: the shape, the element count, the rule count, REPS and a 64-bit checksum of the last result, in preorder, hexadecimal; the intern line also prints each group's distinct value count. Exits 2 when the invocation, a file, the page or a sheet cannot be used.";
