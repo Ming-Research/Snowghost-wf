@@ -1,0 +1,137 @@
+const text_ceiling: u64 = 100000000_u64;
+
+fn code_to_opportunity(code: u8) -> result: BreakOpportunity pure {
+  doc "Converts a 0/1/2 decision code (opp_prohibited/opp_allowed/opp_mandatory) to its BreakOpportunity value.";
+  let prohibited = code == opp_prohibited;
+  if prohibited {
+    let value = BreakOpportunity::Prohibited();
+    return value;
+  }
+  let mandatory = code == opp_mandatory;
+  if mandatory {
+    let value = BreakOpportunity::Mandatory();
+    return value;
+  }
+  let value = BreakOpportunity::Allowed();
+  return value;
+}
+
+fn decide_all(runs: &Runs) -> result: Box<Slots<u8>> reads(runs) contract {
+  requires runs^.count <= text_ceiling;
+} {
+  doc "Decides every inter-run boundary in order, carrying the SpaceState forward, and returns one decision code per boundary (runs^.count - 1 of them, or none when there is at most one run).";
+  let n = runs^.count;
+  let out = box_slots_new::<u8>(capacity: n);
+  let has_any = n > 0_u64;
+  if has_any {
+  } else {
+    return move out;
+  }
+  let state = initial_state(runs: runs);
+  let last = n - 1_u64;
+  for (j in 0_u64..last) {
+    let decision = decide_boundary(runs: runs, j: j, state: state);
+    let room = out.inner.len < out.inner.cap;
+    if room {
+      place_back(window: &out.inner, value: decision);
+    }
+    let next_j = j + 1_u64;
+    set state = advance_state(runs: runs, state: state, previous_index: j, current_index: next_j);
+  }
+  return move out;
+}
+
+fn write_run_span(opportunities: &[BreakOpportunity], start: u64, last_pos: u64, final_value: u8) -> result: unit writes(opportunities) contract {
+  requires start <= last_pos;
+  requires last_pos < opportunities^.len;
+} {
+  doc "Writes Prohibited to every position from start to last_pos exclusive (a run's internal, already-absorbed positions) and the decided final_value, converted to a BreakOpportunity, to last_pos.";
+  for (i in start..last_pos) {
+    let prohibited = BreakOpportunity::Prohibited();
+    set opportunities^[i] = prohibited;
+  }
+  let final_opp = code_to_opportunity(code: final_value);
+  set opportunities^[last_pos] = final_opp;
+  return unit;
+}
+
+fn write_runs(runs: &Runs, decisions: &Box<Slots<u8>>, opportunities: &[BreakOpportunity]) -> result: unit reads(runs), reads(decisions.inner), writes(opportunities) contract {
+  requires runs^.count >= 1_u64;
+} {
+  doc "Walks every run and writes its span into opportunities: internal positions Prohibited, and the run's own final position either the decided inter-run boundary (from decisions) or, for the last run, Mandatory (LB3, the end of text).";
+  let run_count = runs^.count;
+  let starts_len = runs^.starts.inner.len;
+  let ends_len = runs^.ends.inner.len;
+  let decisions_len = decisions^.inner.len;
+  let opp_len = opportunities^.len;
+  let last_run = run_count - 1_u64;
+  for (r in 0_u64..run_count) {
+    let start_ok = r < starts_len;
+    let end_ok = r < ends_len;
+    if start_ok {
+      if end_ok {
+        let start = runs^.starts.inner[r];
+        let end = runs^.ends.inner[r];
+        let has_span = end >= 1_u64;
+        if has_span {
+          let last_pos = end - 1_u64;
+          let ordered = start <= last_pos;
+          let inside = last_pos < opp_len;
+          if ordered {
+            if inside {
+              let is_last = r == last_run;
+              let final_value = if is_last {
+                give opp_mandatory;
+              } else {
+                let has_decision = r < decisions_len;
+                if has_decision {
+                  let value = decisions^.inner[r];
+                  give value;
+                } else {
+                  give opp_allowed;
+                }
+              }
+              write_run_span(opportunities: opportunities, start: start, last_pos: last_pos, final_value: final_value);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn find_line_breaks(text: &[u32], opportunities: &[BreakOpportunity]) -> result: unit reads(text), writes(opportunities) contract {
+  requires opportunities^.len == text^.len;
+} {
+  doc "Writes the line break opportunity after each code point of text into the same position of opportunities. See module.wfm for the full contract.";
+  let length = text^.len;
+  let empty = length == 0_u64;
+  if empty {
+    return unit;
+  }
+  let too_long = length > text_ceiling;
+  if too_long {
+    for (i in 0_u64..length) {
+      let allowed = BreakOpportunity::Allowed();
+      set opportunities^[i] = allowed;
+    }
+    return unit;
+  }
+  let runs = build_runs(text: text);
+  let run_count_ok = runs.count <= text_ceiling;
+  if run_count_ok {
+  } else {
+    for (i in 0_u64..length) {
+      let allowed = BreakOpportunity::Allowed();
+      set opportunities^[i] = allowed;
+    }
+    return unit;
+  }
+  let decisions = decide_all(runs: &runs);
+  let has_run = runs.count >= 1_u64;
+  if has_run {
+    write_runs(runs: &runs, decisions: &decisions, opportunities: opportunities);
+  }
+  return unit;
+}

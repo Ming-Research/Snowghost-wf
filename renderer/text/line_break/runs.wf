@@ -1,0 +1,206 @@
+const class_bk: u8 = 0_u8;
+
+const class_cr: u8 = 1_u8;
+
+const class_lf: u8 = 2_u8;
+
+const class_nl: u8 = 3_u8;
+
+const class_sp: u8 = 4_u8;
+
+const class_zw: u8 = 5_u8;
+
+const class_wj: u8 = 6_u8;
+
+const class_gl: u8 = 7_u8;
+
+const class_cl: u8 = 8_u8;
+
+const class_cp: u8 = 9_u8;
+
+const class_ex: u8 = 10_u8;
+
+const class_in: u8 = 11_u8;
+
+const class_ns: u8 = 12_u8;
+
+const class_op: u8 = 13_u8;
+
+const class_qu_pi: u8 = 14_u8;
+
+const class_qu_pf: u8 = 15_u8;
+
+const class_qu_other: u8 = 16_u8;
+
+const class_is: u8 = 17_u8;
+
+const class_nu: u8 = 18_u8;
+
+const class_po: u8 = 19_u8;
+
+const class_pr: u8 = 20_u8;
+
+const class_sy: u8 = 21_u8;
+
+const class_ak: u8 = 22_u8;
+
+const class_al: u8 = 23_u8;
+
+const class_ap: u8 = 24_u8;
+
+const class_as: u8 = 25_u8;
+
+const class_b2: u8 = 26_u8;
+
+const class_ba: u8 = 27_u8;
+
+const class_bb: u8 = 28_u8;
+
+const class_cb: u8 = 29_u8;
+
+const class_eb: u8 = 30_u8;
+
+const class_em: u8 = 31_u8;
+
+const class_h2: u8 = 32_u8;
+
+const class_h3: u8 = 33_u8;
+
+const class_hh: u8 = 34_u8;
+
+const class_hl: u8 = 35_u8;
+
+const class_hy: u8 = 36_u8;
+
+const class_id: u8 = 37_u8;
+
+const class_jl: u8 = 38_u8;
+
+const class_jt: u8 = 39_u8;
+
+const class_jv: u8 = 40_u8;
+
+const class_ri: u8 = 41_u8;
+
+const class_vf: u8 = 42_u8;
+
+const class_vi: u8 = 43_u8;
+
+const class_cm: u8 = 44_u8;
+
+const class_zwj: u8 = 45_u8;
+
+const dotted_circle: u32 = 9676_u32;
+
+struct Runs {
+  count: u64;
+  classes: Box<Slots<u8>>;
+  base_cps: Box<Slots<u32>>;
+  ends_zwj: Box<Slots<Bool>>;
+  starts: Box<Slots<u64>>;
+  ends: Box<Slots<u64>>;
+  wide: Box<Slots<Bool>>;
+}
+
+fn is_absorbable(raw: u8) -> result: Bool pure {
+  doc "Tells whether raw is CM or ZWJ, the two classes LB9 may fold into a preceding run.";
+  let is_cm = raw == class_cm;
+  let is_zwj = raw == class_zwj;
+  let result = bor(is_cm, is_zwj);
+  return result;
+}
+
+fn blocks_absorption(raw: u8) -> result: Bool pure {
+  doc "Tells whether raw excludes a following CM or ZWJ from attaching to it (LB9's X exclusion: BK, CR, LF, NL, SP, ZW), which are exactly the runtime ids 0 through 5.";
+  let result = raw <= class_zw;
+  return result;
+}
+
+fn push_run(runs: &Runs, class: u8, base_cp: u32, ends_zwj: Bool, start: u64, end: u64, wide: Bool) -> result: unit writes(runs) {
+  doc "Appends one run, when every parallel window has room; the six windows are always grown together so they share one length.";
+  let room_classes = runs^.classes.inner.len < runs^.classes.inner.cap;
+  let room_base = runs^.base_cps.inner.len < runs^.base_cps.inner.cap;
+  let room_zwj = runs^.ends_zwj.inner.len < runs^.ends_zwj.inner.cap;
+  let room_starts = runs^.starts.inner.len < runs^.starts.inner.cap;
+  let room_ends = runs^.ends.inner.len < runs^.ends.inner.cap;
+  let room_wide = runs^.wide.inner.len < runs^.wide.inner.cap;
+  if room_classes {
+    if room_base {
+      if room_zwj {
+        if room_starts {
+          if room_ends {
+            if room_wide {
+              place_back(window: &runs^.classes.inner, value: class);
+              place_back(window: &runs^.base_cps.inner, value: base_cp);
+              place_back(window: &runs^.ends_zwj.inner, value: ends_zwj);
+              place_back(window: &runs^.starts.inner, value: start);
+              place_back(window: &runs^.ends.inner, value: end);
+              place_back(window: &runs^.wide.inner, value: wide);
+              set runs^.count = runs^.count +wrap 1_u64;
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn extend_last_run(runs: &Runs, end: u64, ends_zwj: Bool) -> result: unit writes(runs) {
+  doc "Extends the most recently pushed run to end, updating whether it now ends with a ZWJ; does nothing when there is no run yet.";
+  let has_run = runs^.count > 0_u64;
+  if has_run {
+  } else {
+    return unit;
+  }
+  let last = runs^.count - 1_u64;
+  let inside_ends = last < runs^.ends.inner.len;
+  let inside_zwj = last < runs^.ends_zwj.inner.len;
+  if inside_ends {
+    if inside_zwj {
+      set runs^.ends.inner[last] = end;
+      set runs^.ends_zwj.inner[last] = ends_zwj;
+    }
+  }
+  return unit;
+}
+
+fn build_runs(text: &[u32]) -> result: Runs reads(text) contract {
+  requires text^.len <= 100000000_u64;
+} {
+  doc "Builds the run sequence LB9 (combining sequences) and LB10 (remaining CM/ZWJ default to AL) describe: each run is a maximal base character plus any CM or ZWJ attached to it, carrying the base's runtime class, its code point (for the LB28a dotted-circle and LB30b unassigned-emoji checks), whether it ends with a raw ZWJ (LB8a), its span of text and its East_Asian_Width wideness.";
+  let length = text^.len;
+  let classes = box_slots_new::<u8>(capacity: length);
+  let base_cps = box_slots_new::<u32>(capacity: length);
+  let ends_zwj = box_slots_new::<Bool>(capacity: length);
+  let starts = box_slots_new::<u64>(capacity: length);
+  let ends = box_slots_new::<u64>(capacity: length);
+  let wide = box_slots_new::<Bool>(capacity: length);
+  let runs = Runs(count: 0_u64, classes: move classes, base_cps: move base_cps, ends_zwj: move ends_zwj, starts: move starts, ends: move ends, wide: move wide);
+  let previous_raw = class_bk;
+  for (i in 0_u64..length) {
+    let cp = text^[i];
+    let raw = class_of(cp: cp);
+    let absorbable = is_absorbable(raw: raw);
+    if absorbable {
+      let excluded = blocks_absorption(raw: previous_raw);
+      if excluded {
+        let next = i + 1_u64;
+        let is_zwj = raw == class_zwj;
+        let not_wide = False();
+        push_run(runs: &runs, class: class_al, base_cp: cp, ends_zwj: is_zwj, start: i, end: next, wide: not_wide);
+      } else {
+        let next = i + 1_u64;
+        let is_zwj = raw == class_zwj;
+        extend_last_run(runs: &runs, end: next, ends_zwj: is_zwj);
+      }
+    } else {
+      let next = i + 1_u64;
+      let base_wide = is_ea_wide(cp: cp);
+      let not_zwj = False();
+      push_run(runs: &runs, class: raw, base_cp: cp, ends_zwj: not_zwj, start: i, end: next, wide: base_wide);
+    }
+    set previous_raw = raw;
+  }
+  return move runs;
+}
