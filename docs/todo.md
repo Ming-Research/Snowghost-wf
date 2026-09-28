@@ -45,6 +45,13 @@ example apart from the renderer code that exposed it
   NFC only. Change: add the compatibility decompositions to the generated
   tables and two NormalizationForm variants. Reopen when a consumer needs a
   compatibility form.
+- **pkg::oracle::support has no signed decimal writer.** The font drivers
+  print negative metrics, advances and offsets, so `pkg::oracle::font_face`
+  (`put_signed_field`) and `pkg::oracle::font_shape` (`put_signed_item`)
+  each carry the same sign-and-magnitude step beside support's unsigned
+  `put_decimal`. Change: add a signed writer to support's interface and use
+  it in both drivers. Reopen when a third driver prints signed numbers or
+  support's interface next changes.
 - **pkg::font reads only raw sfnt fonts for simple scripts.** WOFF and
   WOFF2 (which needs a Brotli decoder), font collections, variable fonts
   and CFF2 are refused as Unsupported; shaping covers horizontal
