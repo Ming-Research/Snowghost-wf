@@ -1,0 +1,181 @@
+fn read_u16(bytes: &[u8], base: u64, offset: u64) -> result: Result<u16, FontError> reads(bytes) {
+  doc "Reads the big-endian u16 at base + offset of bytes; Invalid when any of its bytes lies past the end.";
+  let length = bytes^.len;
+  if base <= length {
+    let room = length - base;
+    if offset <= room {
+      let rest = room - offset;
+      if rest >= 2_u64 {
+        let at = base + offset;
+        let next = at + 1_u64;
+        let high = cvt::<u8, u16>(bytes^[at]);
+        let low = cvt::<u8, u16>(bytes^[next]);
+        let shifted = ishl(high, 8_u32);
+        let value = ior(shifted, low);
+        return Ok<u16, FontError>(value: value);
+      }
+    }
+  }
+  let invalid = FontError::Invalid();
+  return Err<u16, FontError>(error: invalid);
+}
+
+fn read_i16(bytes: &[u8], base: u64, offset: u64) -> result: Result<i16, FontError> reads(bytes) {
+  doc "Reads the big-endian two's-complement i16 at base + offset of bytes; Invalid when any of its bytes lies past the end.";
+  let bits = propagate read_u16(bytes: bytes, base: base, offset: offset);
+  let value = reinterpret::<u16, i16>(bits);
+  return Ok<i16, FontError>(value: value);
+}
+
+fn read_u32(bytes: &[u8], base: u64, offset: u64) -> result: Result<u32, FontError> reads(bytes) {
+  doc "Reads the big-endian u32 at base + offset of bytes; Invalid when any of its bytes lies past the end.";
+  let length = bytes^.len;
+  if base <= length {
+    let room = length - base;
+    if offset <= room {
+      let rest = room - offset;
+      if rest >= 4_u64 {
+        let at = base + offset;
+        let at1 = at + 1_u64;
+        let at2 = at + 2_u64;
+        let at3 = at + 3_u64;
+        let b0 = cvt::<u8, u32>(bytes^[at]);
+        let b1 = cvt::<u8, u32>(bytes^[at1]);
+        let b2 = cvt::<u8, u32>(bytes^[at2]);
+        let b3 = cvt::<u8, u32>(bytes^[at3]);
+        let s0 = ishl(b0, 24_u32);
+        let s1 = ishl(b1, 16_u32);
+        let s2 = ishl(b2, 8_u32);
+        let high = ior(s0, s1);
+        let low = ior(s2, b3);
+        let value = ior(high, low);
+        return Ok<u32, FontError>(value: value);
+      }
+    }
+  }
+  let invalid = FontError::Invalid();
+  return Err<u32, FontError>(error: invalid);
+}
+
+fn locate(bytes: &[u8], base: u64, offset: u64) -> result: Result<u64, FontError> reads(bytes) {
+  doc "Returns base + offset, the position a non-null offset from base selects; Invalid when it lies past the end of bytes.";
+  let length = bytes^.len;
+  if base <= length {
+    let room = length - base;
+    if offset <= room {
+      let at = base + offset;
+      return Ok<u64, FontError>(value: at);
+    }
+  }
+  let invalid = FontError::Invalid();
+  return Err<u64, FontError>(error: invalid);
+}
+
+fn follow16(bytes: &[u8], base: u64, offset: u64) -> result: Result<u64, FontError> reads(bytes) {
+  doc "Reads the Offset16 at base + offset and returns the position it selects relative to base, or 0 for a null offset; a selected position is never 0, since a non-null offset is positive. Invalid when the offset or its position lies past the end of bytes.";
+  let value = propagate read_u16(bytes: bytes, base: base, offset: offset);
+  if value == 0_u16 {
+    return Ok<u64, FontError>(value: 0_u64);
+  }
+  let distance = cvt::<u16, u64>(value);
+  let at = propagate locate(bytes: bytes, base: base, offset: distance);
+  return Ok<u64, FontError>(value: at);
+}
+
+fn follow32(bytes: &[u8], base: u64, offset: u64) -> result: Result<u64, FontError> reads(bytes) {
+  doc "Reads the Offset32 at base + offset and returns the position it selects relative to base, or 0 for a null offset, as follow16 does.";
+  let value = propagate read_u32(bytes: bytes, base: base, offset: offset);
+  if value == 0_u32 {
+    return Ok<u64, FontError>(value: 0_u64);
+  }
+  let distance = cvt::<u32, u64>(value);
+  let at = propagate locate(bytes: bytes, base: base, offset: distance);
+  return Ok<u64, FontError>(value: at);
+}
+
+fn record_at(header: u64, index: u64, size: u64) -> result: u64 pure contract {
+  requires header <= 65536_u64;
+  requires index <= 65535_u64;
+  requires size <= 256_u64;
+  ensures result <= 16842496_u64;
+} {
+  doc "Returns the offset of record index of an array of size-byte records that starts header bytes into its table, at most 65536 + 65535 * 256.";
+  let scaled = index * size;
+  let at = header + scaled;
+  return at;
+}
+
+fn pack_tag(name: &Array<u8, 4>) -> result: u32 reads(name) {
+  doc "Returns the four bytes of name as the big-endian u32 an OpenType tag is stored as.";
+  let b0 = cvt::<u8, u32>(name^[0_u64]);
+  let b1 = cvt::<u8, u32>(name^[1_u64]);
+  let b2 = cvt::<u8, u32>(name^[2_u64]);
+  let b3 = cvt::<u8, u32>(name^[3_u64]);
+  let s0 = ishl(b0, 24_u32);
+  let s1 = ishl(b1, 16_u32);
+  let s2 = ishl(b2, 8_u32);
+  let high = ior(s0, s1);
+  let low = ior(s2, b3);
+  let value = ior(high, low);
+  return value;
+}
+
+fn push<T: copy>(list: &Box<Slots<T>>, value: T, ceiling: u64) -> result: Result<unit, FontError> writes(list) contract {
+  requires ceiling <= 1073741824_u64;
+} {
+  doc "Appends value to list, doubling its capacity (to at least 16) when it is full, never past ceiling entries. TooLarge when list already holds ceiling entries.";
+  let length = list^.inner.len;
+  let capacity = list^.inner.cap;
+  if length < capacity {
+    place_back(window: &list^.inner, value: value);
+    return Ok<unit, FontError>(value: unit);
+  }
+  if length >= ceiling {
+    let refusal = FontError::TooLarge();
+    return Err<unit, FontError>(error: refusal);
+  }
+  let doubled = imax(capacity, 8_u64);
+  let wanted = doubled + doubled;
+  if wanted <= ceiling {
+    grow(cell: list, capacity: wanted);
+  } else {
+    grow(cell: list, capacity: ceiling);
+  }
+  place_back(window: &list^.inner, value: value);
+  return Ok<unit, FontError>(value: unit);
+}
+
+fn next_index<T>(list: &Box<Slots<T>>) -> result: Result<u32, FontError> reads(list) {
+  doc "Returns the index list's next entry will take. TooLarge past 2^32 - 1, which the ceilings push enforces keep every list below.";
+  let length = list^.inner.len;
+  match cvt.checked::<u64, u32>(length) {
+    Ok(value: index) => {
+      return Ok<u32, FontError>(value: index);
+    }
+    Err(error: narrow) => {
+      let refusal = FontError::TooLarge();
+      return Err<u32, FontError>(error: refusal);
+    }
+  }
+}
+
+fn extent_since<T>(list: &Box<Slots<T>>, start: u32) -> result: Result<Extent, FontError> reads(list) {
+  doc "Returns the Extent of the entries appended to list since its length was start. TooLarge when its count passes 2^32 - 1, which the ceilings push enforces exclude; Invalid when list is shorter than start, which appending alone never makes it.";
+  let length = list^.inner.len;
+  let first = cvt::<u32, u64>(start);
+  if length < first {
+    let invalid = FontError::Invalid();
+    return Err<Extent, FontError>(error: invalid);
+  }
+  let appended = length - first;
+  match cvt.checked::<u64, u32>(appended) {
+    Ok(value: count) => {
+      let run = Extent(start: start, count: count);
+      return Ok<Extent, FontError>(value: run);
+    }
+    Err(error: narrow) => {
+      let refusal = FontError::TooLarge();
+      return Err<Extent, FontError>(error: refusal);
+    }
+  }
+}

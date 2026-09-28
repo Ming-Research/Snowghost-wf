@@ -1,0 +1,341 @@
+const cmap_preferences: Array<u32, 8> =[196618_u32, 6_u32, 4_u32, 196609_u32, 3_u32, 2_u32, 1_u32, 0_u32];
+
+const cmap_record_size: u64 = 8_u64;
+
+const segment_ceiling: u64 = 65536_u64;
+
+const range_ceiling: u64 = 1114112_u64;
+
+const listed_glyph_ceiling: u64 = 65536_u64;
+
+const last_scalar: u32 = 1114111_u32;
+
+const surrogate_first: u32 = 55296_u32;
+
+const surrogate_last: u32 = 57343_u32;
+
+fn compile_character_map(cmap: &[u8], glyph_count: u64) -> result: Result<CharacterMap, FontError> reads(cmap) contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Checks the cmap header and that every encoding record's subtable starts within the table, selects the Unicode subtable load_face's doc names, and compiles it. Unsupported when no preferred record has a format 4 or 12 subtable.";
+  let version = propagate read_u16(bytes: cmap, base: 0_u64, offset: 0_u64);
+  if version != 0_u16 {
+    let invalid = FontError::Invalid();
+    return Err<CharacterMap, FontError>(error: invalid);
+  }
+  let record_count = propagate read_u16(bytes: cmap, base: 0_u64, offset: 2_u64);
+  let count = cvt::<u16, u64>(record_count);
+  for (index in 0_u64..count) {
+    let at = record_at(header: 4_u64, index: index, size: cmap_record_size);
+    let offset_at = at + 4_u64;
+    let subtable = propagate follow32(bytes: cmap, base: 0_u64, offset: offset_at);
+    let format = propagate read_u16(bytes: cmap, base: subtable, offset: 0_u64);
+  }
+  for (preference in 0_u64..8_u64) {
+    let wanted = cmap_preferences[preference];
+    for (index in 0_u64..count) {
+      let at = record_at(header: 4_u64, index: index, size: cmap_record_size);
+      let platform = propagate read_u16(bytes: cmap, base: 0_u64, offset: at);
+      let encoding_at = at + 2_u64;
+      let encoding = propagate read_u16(bytes: cmap, base: 0_u64, offset: encoding_at);
+      let wide_platform = cvt::<u16, u32>(platform);
+      let wide_encoding = cvt::<u16, u32>(encoding);
+      let shifted = ishl(wide_platform, 16_u32);
+      let pair = ior(shifted, wide_encoding);
+      if pair == wanted {
+        let offset_at = at + 4_u64;
+        let subtable = propagate follow32(bytes: cmap, base: 0_u64, offset: offset_at);
+        let format = propagate read_u16(bytes: cmap, base: subtable, offset: 0_u64);
+        if format == 4_u16 {
+          let compiled = propagate compile_segments(cmap: cmap, at: subtable, glyph_count: glyph_count);
+          return Ok<CharacterMap, FontError>(value: move compiled);
+        }
+        if format == 12_u16 {
+          let compiled = propagate compile_groups(cmap: cmap, at: subtable, glyph_count: glyph_count);
+          return Ok<CharacterMap, FontError>(value: move compiled);
+        }
+      }
+    }
+  }
+  let unsupported = FontError::Unsupported();
+  return Err<CharacterMap, FontError>(error: unsupported);
+}
+
+fn compile_segments(cmap: &[u8], at: u64, glyph_count: u64) -> result: Result<CharacterMap, FontError> reads(cmap) contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Compiles the format 4 subtable at at. Its segments must lie within the subtable's length, each with start at most end, in ascending and disjoint order, the last ending at 0xFFFF; an idRangeOffset must be even and select glyphIdArray entries within the subtable; and every glyph a segment maps must be below the glyph count, as OpenType Sanitizer requires.";
+  let declared = propagate read_u16(bytes: cmap, base: at, offset: 2_u64);
+  let size = cvt::<u16, u64>(declared);
+  let end = propagate locate(bytes: cmap, base: at, offset: size);
+  let (start, stop) = checked_range(start: at, end: end, length: cmap^.len);
+  let subtable = &cmap^[start..stop];
+  let doubled = propagate read_u16(bytes: subtable, base: 0_u64, offset: 6_u64);
+  let doubled_count = cvt::<u16, u64>(doubled);
+  let parity = iand(doubled_count, 1_u64);
+  let odd = parity != 0_u64;
+  let empty = doubled_count == 0_u64;
+  let malformed = bor(odd, empty);
+  if malformed {
+    let invalid = FontError::Invalid();
+    return Err<CharacterMap, FontError>(error: invalid);
+  }
+  let segment_count = doubled_count / 2_u64;
+  let starts_at = 16_u64 + doubled_count;
+  let deltas_at = starts_at + doubled_count;
+  let offsets_at = deltas_at + doubled_count;
+  let glyphs_at = offsets_at + doubled_count;
+  let subtable_size = subtable^.len;
+  if glyphs_at > subtable_size {
+    let invalid = FontError::Invalid();
+    return Err<CharacterMap, FontError>(error: invalid);
+  }
+  let array_bytes = subtable_size - glyphs_at;
+  let array_count = array_bytes / 2_u64;
+  let ranges = box_slots_new::<CmapRange>(capacity: 0_u64);
+  let glyphs = box_slots_new::<u16>(capacity: 0_u64);
+  let previous_end = 0_u64;
+  for (segment in 0_u64..segment_count) {
+    let pair = segment * 2_u64;
+    let end_at = 14_u64 + pair;
+    let start_at = starts_at + pair;
+    let delta_at = deltas_at + pair;
+    let range_at = offsets_at + pair;
+    let last_code = propagate read_u16(bytes: subtable, base: 0_u64, offset: end_at);
+    let first_code = propagate read_u16(bytes: subtable, base: 0_u64, offset: start_at);
+    let delta = propagate read_u16(bytes: subtable, base: 0_u64, offset: delta_at);
+    let range_offset = propagate read_u16(bytes: subtable, base: 0_u64, offset: range_at);
+    let first = cvt::<u16, u64>(first_code);
+    let last = cvt::<u16, u64>(last_code);
+    let reversed = first > last;
+    let later = segment > 0_u64;
+    let behind = first <= previous_end;
+    let overlapping = band(later, behind);
+    let disordered = bor(reversed, overlapping);
+    if disordered {
+      let invalid = FontError::Invalid();
+      return Err<CharacterMap, FontError>(error: invalid);
+    }
+    set previous_end = last;
+    let span = last - first;
+    let shift = cvt::<u16, u64>(delta);
+    if range_offset == 0_u16 {
+      let shifted = first + shift;
+      let first_glyph = iand(shifted, 65535_u64);
+      let last_glyph = first_glyph + span;
+      if last_glyph >= glyph_count {
+        let invalid = FontError::Invalid();
+        return Err<CharacterMap, FontError>(error: invalid);
+      }
+      let origin = cvt::<u64, u32>(first_glyph);
+      let sequential = False();
+      let range = cmap_range(first: first, last: last, base: origin, listed: sequential);
+      let pushed = propagate push::<CmapRange>(list: &ranges, value: range, ceiling: segment_ceiling);
+    } else {
+      let offset = cvt::<u16, u64>(range_offset);
+      let offset_parity = iand(offset, 1_u64);
+      let words = offset / 2_u64;
+      let reach = words + segment;
+      let odd_offset = offset_parity != 0_u64;
+      let before_array = reach < segment_count;
+      let misplaced = bor(odd_offset, before_array);
+      if misplaced {
+        let invalid = FontError::Invalid();
+        return Err<CharacterMap, FontError>(error: invalid);
+      }
+      let first_index = reach - segment_count;
+      let last_index = first_index + span;
+      if last_index >= array_count {
+        let invalid = FontError::Invalid();
+        return Err<CharacterMap, FontError>(error: invalid);
+      }
+      let after = last_index + 1_u64;
+      let listed_base = propagate next_index::<u16>(list: &glyphs);
+      for (slot in first_index..after) {
+        let entry_at = slot * 2_u64;
+        let listed = propagate listed_glyph(subtable: subtable, glyphs_at: glyphs_at, entry_at: entry_at, delta: delta, glyph_count: glyph_count);
+        let pushed = propagate push::<u16>(list: &glyphs, value: listed, ceiling: listed_glyph_ceiling);
+      }
+      let listed_mapping = True();
+      let range = cmap_range(first: first, last: last, base: listed_base, listed: listed_mapping);
+      let pushed = propagate push::<CmapRange>(list: &ranges, value: range, ceiling: segment_ceiling);
+    }
+  }
+  if previous_end != 65535_u64 {
+    let invalid = FontError::Invalid();
+    return Err<CharacterMap, FontError>(error: invalid);
+  }
+  let map = CharacterMap(ranges: move ranges, glyphs: move glyphs);
+  return Ok<CharacterMap, FontError>(value: move map);
+}
+
+fn listed_glyph(subtable: &[u8], glyphs_at: u64, entry_at: u64, delta: u16, glyph_count: u64) -> result: Result<u16, FontError> reads(subtable) {
+  doc "Returns the glyph the format 4 glyphIdArray entry entry_at bytes past glyphs_at maps its code point to: 0 for an entry of 0, and otherwise the entry plus delta, modulo 65536. Invalid when that glyph is not below the glyph count.";
+  let value = propagate read_u16(bytes: subtable, base: glyphs_at, offset: entry_at);
+  if value == 0_u16 {
+    return Ok<u16, FontError>(value: 0_u16);
+  }
+  let glyph = value +wrap delta;
+  let wide = cvt::<u16, u64>(glyph);
+  if wide >= glyph_count {
+    let invalid = FontError::Invalid();
+    return Err<u16, FontError>(error: invalid);
+  }
+  return Ok<u16, FontError>(value: glyph);
+}
+
+fn compile_groups(cmap: &[u8], at: u64, glyph_count: u64) -> result: Result<CharacterMap, FontError> reads(cmap) contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Compiles the format 12 subtable at at. Its groups must lie within the subtable's length, each with start at most end at most 0x10FFFF, in ascending and disjoint order, and every glyph a group maps must be below the glyph count.";
+  let declared = propagate read_u32(bytes: cmap, base: at, offset: 4_u64);
+  let size = cvt::<u32, u64>(declared);
+  let end = propagate locate(bytes: cmap, base: at, offset: size);
+  let (start, stop) = checked_range(start: at, end: end, length: cmap^.len);
+  let subtable = &cmap^[start..stop];
+  let group_total = propagate read_u32(bytes: subtable, base: 0_u64, offset: 12_u64);
+  let group_count = cvt::<u32, u64>(group_total);
+  let subtable_size = subtable^.len;
+  let available = subtable_size / 12_u64;
+  if group_count > available {
+    let invalid = FontError::Invalid();
+    return Err<CharacterMap, FontError>(error: invalid);
+  }
+  let ranges = box_slots_new::<CmapRange>(capacity: 0_u64);
+  let glyphs = box_slots_new::<u16>(capacity: 0_u64);
+  let previous_end = 0_u64;
+  for (group in 0_u64..group_count) {
+    let scaled = group * 12_u64;
+    let first_at = 16_u64 + scaled;
+    let last_at = first_at + 4_u64;
+    let glyph_at = first_at + 8_u64;
+    let first_code = propagate read_u32(bytes: subtable, base: 0_u64, offset: first_at);
+    let last_code = propagate read_u32(bytes: subtable, base: 0_u64, offset: last_at);
+    let start_glyph = propagate read_u32(bytes: subtable, base: 0_u64, offset: glyph_at);
+    let first = cvt::<u32, u64>(first_code);
+    let last = cvt::<u32, u64>(last_code);
+    let glyph = cvt::<u32, u64>(start_glyph);
+    let reversed = first > last;
+    let beyond = last > 1114111_u64;
+    let later = group > 0_u64;
+    let behind = first <= previous_end;
+    let overlapping = band(later, behind);
+    let unordered = bor(reversed, overlapping);
+    let disordered = bor(unordered, beyond);
+    if disordered {
+      let invalid = FontError::Invalid();
+      return Err<CharacterMap, FontError>(error: invalid);
+    }
+    set previous_end = last;
+    let span = last - first;
+    let last_glyph = glyph + span;
+    if last_glyph >= glyph_count {
+      let invalid = FontError::Invalid();
+      return Err<CharacterMap, FontError>(error: invalid);
+    }
+    let sequential = False();
+    let range = cmap_range(first: first, last: last, base: start_glyph, listed: sequential);
+    let pushed = propagate push::<CmapRange>(list: &ranges, value: range, ceiling: range_ceiling);
+  }
+  let map = CharacterMap(ranges: move ranges, glyphs: move glyphs);
+  return Ok<CharacterMap, FontError>(value: move map);
+}
+
+fn cmap_range(first: u64, last: u64, base: u32, listed: Bool) -> result: CmapRange pure contract {
+  requires first <= last;
+  requires last <= 1114111_u64;
+} {
+  doc "Builds the compiled range of the code points first to last, Listed from glyphs entry base when listed is True and Sequential from glyph base otherwise.";
+  let low = cvt::<u64, u32>(first);
+  let high = cvt::<u64, u32>(last);
+  let mapping = if listed {
+    give CmapMapping::Listed();
+  } else {
+    give CmapMapping::Sequential();
+  }
+  let range = CmapRange(first: low, last: high, base: base, mapping: mapping);
+  return range;
+}
+
+fn checked_range(start: u64, end: u64, length: u64) -> (low: u64, high: u64) pure contract {
+  ensures low <= high;
+  ensures high <= length;
+} {
+  doc "Returns start and end when start <= end <= length, which the callers' locate checks establish, and the empty range at 0 otherwise.";
+  if start <= end {
+    if end <= length {
+      return start, end;
+    }
+  }
+  return 0_u64, 0_u64;
+}
+
+fn nominal_glyph(face: &Face, scalar: u32) -> result: u16 reads(face) {
+  doc "Binary-searches the compiled cmap ranges for the one holding scalar and maps it through that range; 0 for a value that is not a Unicode scalar value or that no range holds.";
+  if scalar > last_scalar {
+    return 0_u16;
+  }
+  let above_low = scalar >= surrogate_first;
+  let below_high = scalar <= surrogate_last;
+  let surrogate = band(above_low, below_high);
+  if surrogate {
+    return 0_u16;
+  }
+  let count = face^.characters.ranges.inner.len;
+  let glyph = find_glyph(face: face, scalar: scalar, low: 0_u64, high: count);
+  return glyph;
+}
+
+fn find_glyph(face: &Face, scalar: u32, low: u64, high: u64) -> result: u16 reads(face) contract {
+  requires low <= high;
+  requires high <= face^.characters.ranges.inner.len;
+} {
+  doc "Binary-searches the compiled cmap ranges from low up to high, which are sorted and disjoint, for the one holding scalar, and returns the glyph it maps scalar to, or 0 when none holds it. Each step halves the span in a guaranteed tail call.";
+  if low >= high {
+    return 0_u16;
+  }
+  let span = high - low;
+  let less = span - 1_u64;
+  let half = less / 2_u64;
+  let middle = low + half;
+  let range = face^.characters.ranges.inner[middle];
+  let first = range.first;
+  let last = range.last;
+  if scalar < first {
+    return musttail find_glyph(face: face, scalar: scalar, low: low, high: middle);
+  }
+  if scalar > last {
+    let next = middle + 1_u64;
+    return musttail find_glyph(face: face, scalar: scalar, low: next, high: high);
+  }
+  let distance = scalar - first;
+  let glyph = mapped_glyph(face: face, range: range, distance: distance);
+  return glyph;
+}
+
+fn mapped_glyph(face: &Face, range: CmapRange, distance: u32) -> result: u16 reads(face) {
+  doc "Returns the glyph range maps its code point distance past first to; 0 when a Listed entry lies past the compiled glyphs or a glyph passes 65535, which load_face's checks exclude.";
+  let base = cvt::<u32, u64>(range.base);
+  let offset = cvt::<u32, u64>(distance);
+  let position = base + offset;
+  match range.mapping {
+    Sequential() => {
+      match cvt.checked::<u64, u16>(position) {
+        Ok(value: glyph) => {
+          return glyph;
+        }
+        Err(error: overflow) => {
+          return 0_u16;
+        }
+      }
+    }
+    Listed() => {
+      let count = face^.characters.glyphs.inner.len;
+      if position < count {
+        let glyph = face^.characters.glyphs.inner[position];
+        return glyph;
+      }
+      return 0_u16;
+    }
+  }
+}

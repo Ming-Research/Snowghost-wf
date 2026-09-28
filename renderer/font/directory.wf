@@ -1,0 +1,119 @@
+struct TableSpan {
+  doc "Where one table lies in the font data: from start to end, and whether the table directory lists it.";
+  present: Bool;
+  start: u64;
+  end: u64;
+}
+
+const truetype_version: u32 = 65536_u32;
+
+const cff_version_name: Array<u8, 4> = "OTTO";
+
+const apple_version_name: Array<u8, 4> = "true";
+
+const collection_name: Array<u8, 4> = "ttcf";
+
+const woff_name: Array<u8, 4> = "wOFF";
+
+const woff2_name: Array<u8, 4> = "wOF2";
+
+const directory_header_size: u64 = 12_u64;
+
+const table_record_size: u64 = 16_u64;
+
+fn check_directory(data: &[u8]) -> result: Result<unit, FontError> reads(data) {
+  doc "Checks that data starts with an sfnt table directory with TrueType or CFF outlines (Unsupported for a font collection, WOFF or WOFF2) and that the directory and every table record lie within data.";
+  let version = propagate read_u32(bytes: data, base: 0_u64, offset: 0_u64);
+  let collection = pack_tag(name: &collection_name);
+  let woff = pack_tag(name: &woff_name);
+  let woff2 = pack_tag(name: &woff2_name);
+  let wrapped = version == collection;
+  let compressed = version == woff;
+  let compressed2 = version == woff2;
+  let packaged = bor(wrapped, compressed);
+  let unsupported = bor(packaged, compressed2);
+  if unsupported {
+    let refusal = FontError::Unsupported();
+    return Err<unit, FontError>(error: refusal);
+  }
+  let cff = pack_tag(name: &cff_version_name);
+  let apple = pack_tag(name: &apple_version_name);
+  let is_truetype = version == truetype_version;
+  let is_cff = version == cff;
+  let is_apple = version == apple;
+  let outlines = bor(is_truetype, is_cff);
+  let known = bor(outlines, is_apple);
+  if known {
+  } else {
+    let invalid = FontError::Invalid();
+    return Err<unit, FontError>(error: invalid);
+  }
+  let table_count = propagate read_u16(bytes: data, base: 0_u64, offset: 4_u64);
+  let count = cvt::<u16, u64>(table_count);
+  let length = data^.len;
+  let records = count * table_record_size;
+  let directory_end = directory_header_size + records;
+  if directory_end > length {
+    let invalid = FontError::Invalid();
+    return Err<unit, FontError>(error: invalid);
+  }
+  for (index in 0_u64..count) {
+    let at = record_at(header: directory_header_size, index: index, size: table_record_size);
+    let offset_at = at + 8_u64;
+    let length_at = at + 12_u64;
+    let offset = propagate read_u32(bytes: data, base: 0_u64, offset: offset_at);
+    let size = propagate read_u32(bytes: data, base: 0_u64, offset: length_at);
+    let start = cvt::<u32, u64>(offset);
+    let span = cvt::<u32, u64>(size);
+    let end = start + span;
+    if end > length {
+      let invalid = FontError::Invalid();
+      return Err<unit, FontError>(error: invalid);
+    }
+  }
+  return Ok<unit, FontError>(value: unit);
+}
+
+fn find_table(data: &[u8], name: &Array<u8, 4>) -> result: Result<TableSpan, FontError> reads(data), reads(name) {
+  doc "Returns where the table name lies, from a directory check_directory accepted, with present False when the directory does not list it. Invalid when it lists the table more than once.";
+  let tag = pack_tag(name: name);
+  let table_count = propagate read_u16(bytes: data, base: 0_u64, offset: 4_u64);
+  let count = cvt::<u16, u64>(table_count);
+  let absent = False();
+  let found = TableSpan(present: absent, start: 0_u64, end: 0_u64);
+  for (index in 0_u64..count) {
+    let at = record_at(header: directory_header_size, index: index, size: table_record_size);
+    let record_tag = propagate read_u32(bytes: data, base: 0_u64, offset: at);
+    if record_tag == tag {
+      if found.present {
+        let invalid = FontError::Invalid();
+        return Err<TableSpan, FontError>(error: invalid);
+      }
+      let offset_at = at + 8_u64;
+      let length_at = at + 12_u64;
+      let offset = propagate read_u32(bytes: data, base: 0_u64, offset: offset_at);
+      let size = propagate read_u32(bytes: data, base: 0_u64, offset: length_at);
+      let start = cvt::<u32, u64>(offset);
+      let span = cvt::<u32, u64>(size);
+      let end = start + span;
+      let present = True();
+      set found = TableSpan(present: present, start: start, end: end);
+    }
+  }
+  return Ok<TableSpan, FontError>(value: found);
+}
+
+fn span_bounds(span: TableSpan, length: u64) -> (start: u64, end: u64) pure contract {
+  ensures start <= end;
+  ensures end <= length;
+} {
+  doc "Returns the bounds of span within data of length bytes, which a span find_table returns from a directory check_directory accepted always lies in; any other span gives the empty range at 0, which no table check accepts.";
+  let start = span.start;
+  let end = span.end;
+  if start <= end {
+    if end <= length {
+      return start, end;
+    }
+  }
+  return 0_u64, 0_u64;
+}
