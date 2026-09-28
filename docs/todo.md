@@ -75,3 +75,15 @@ example apart from the renderer code that exposed it
   four `webkit02.dat` cases that observe it. Change: implement the element
   behaviour where DOM insertion steps live. Reopen when form controls are
   rendered.
+- **`pkg::css::rules` keeps whitespace in declaration values that its
+  interface says it drops.** `parse_stylesheet`'s doc, which the other
+  parsers share, says a Declaration's value is "the siblings after the colon
+  without surrounding whitespace", but the implementation keeps the
+  whitespace after the colon and before a trailing `!important`, as
+  css-parsing-tests at revision 203ce36b represents a declaration
+  (`" a: b !important"` gives the value `[" ", b, " "]`). Impact: a consumer
+  that trusts the doc misreads every `name: value` with a space; the style
+  prototype (`pkg::proto::style`) trims the value itself. Change: state the
+  kept whitespace in the interface doc, or trim it in the implementation and
+  in the oracle's comparison. Reopen when the real style stage reads
+  declaration values.
