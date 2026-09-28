@@ -1,0 +1,221 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+
+fn attempt_qualified_rule(values: &ComponentList, start: u64, limit: u64, items: &Box<Slots<RuleItem>>) -> result: Result<u64, RulesError> reads(values), writes(items) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Runs consume_qualified_rule from start to limit and pushes its item, or an Invalid item when it fails; returns the position it reached.";
+  let (maybe_item, reached) = consume_qualified_rule(values: values, start: start, limit: limit);
+  match maybe_item {
+    Some(value: rule_item) => {
+      let pushed = propagate push_item(items: items, value: rule_item);
+      return Ok<u64, RulesError>(value: reached);
+    }
+    None() => {
+      let invalid = RuleItem::Invalid();
+      let pushed = propagate push_item(items: items, value: invalid);
+      return Ok<u64, RulesError>(value: reached);
+    }
+  }
+}
+
+fn attempt_declaration(values: &ComponentList, start: u64, limit: u64, items: &Box<Slots<RuleItem>>) -> result: Result<u64, RulesError> reads(values), writes(items) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Bounds a declaration attempt at the next top-level semicolon or limit, consumes it, and pushes a Declaration or an Invalid item; returns the position reached, leaving a boundary semicolon unconsumed for the caller.";
+  let stop = scan_to_semicolon(values: values, start: start, limit: limit);
+  let parsed = consume_declaration(values: values, start: start, limit: stop);
+  match parsed {
+    Some(value: decl) => {
+      let item = RuleItem::Declaration(name: decl.name, value: decl.value, important: decl.important);
+      let pushed = propagate push_item(items: items, value: item);
+      return Ok<u64, RulesError>(value: stop);
+    }
+    None() => {
+      let invalid = RuleItem::Invalid();
+      let pushed = propagate push_item(items: items, value: invalid);
+      return Ok<u64, RulesError>(value: stop);
+    }
+  }
+}
+
+fn consume_rules_list(values: &ComponentList, start: u64, limit: u64, top_level: Bool) -> result: Result<RuleItems, RulesError> reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes a list of rules from start to limit, per CSS Syntax 5.4.1. When top_level, CDO and CDC between rules do nothing; otherwise they begin a qualified-rule attempt like any other component. An at-keyword always yields an at-rule; anything else is a qualified-rule attempt, Invalid standing for a failed one.";
+  let items = box_slots_new::<RuleItem>(capacity: 0_u64);
+  let pos = start;
+  loop @rules {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @rules;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_ws = step_is_whitespace(step: step);
+    if is_ws {
+      let next = step_advance(step: step, at: pos, limit: limit);
+      set pos = next;
+    } else {
+      let is_cdo = step_is_cdo(step: step);
+      let is_cdc = step_is_cdc(step: step);
+      let is_boundary = bor(is_cdo, is_cdc);
+      let skip_boundary = band(is_boundary, top_level);
+      if skip_boundary {
+        let next = step_advance(step: step, at: pos, limit: limit);
+        set pos = next;
+      } else {
+        let at_name = step_at_keyword_name(step: step);
+        match at_name {
+          Some(value: named) => {
+            let after_name = step_advance(step: step, at: pos, limit: limit);
+            let (at_item, at_next) = consume_at_rule(values: values, name: named, start: after_name, limit: limit);
+            let pushed = propagate push_item(items: &items, value: at_item);
+            set pos = at_next;
+          }
+          None() => {
+            let attempted = propagate attempt_qualified_rule(values: values, start: pos, limit: limit, items: &items);
+            set pos = attempted;
+          }
+        }
+      }
+    }
+  }
+  let result_items = RuleItems(items: move items);
+  return Ok<RuleItems, RulesError>(value: move result_items);
+}
+
+fn consume_declaration_list(values: &ComponentList, start: u64, limit: u64) -> result: Result<RuleItems, RulesError> reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes a list of declarations and at-rules from start to limit, per CSS Syntax 5.4.4: whitespace and semicolons between items do nothing, an at-keyword begins an at-rule, and anything else is a declaration attempt bounded at the next top-level semicolon, Invalid standing for a failed one.";
+  let items = box_slots_new::<RuleItem>(capacity: 0_u64);
+  let pos = start;
+  loop @decls {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @decls;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_ws = step_is_whitespace(step: step);
+    if is_ws {
+      let next = step_advance(step: step, at: pos, limit: limit);
+      set pos = next;
+    } else {
+      let is_semi = step_is_semicolon(step: step);
+      if is_semi {
+        let next = step_advance(step: step, at: pos, limit: limit);
+        set pos = next;
+      } else {
+        let at_name = step_at_keyword_name(step: step);
+        match at_name {
+          Some(value: named) => {
+            let after_name = step_advance(step: step, at: pos, limit: limit);
+            let (at_item, at_next) = consume_at_rule(values: values, name: named, start: after_name, limit: limit);
+            let pushed = propagate push_item(items: &items, value: at_item);
+            set pos = at_next;
+          }
+          None() => {
+            let attempted = propagate attempt_declaration(values: values, start: pos, limit: limit, items: &items);
+            set pos = attempted;
+          }
+        }
+      }
+    }
+  }
+  let result_items = RuleItems(items: move items);
+  return Ok<RuleItems, RulesError>(value: move result_items);
+}
+
+fn consume_block_contents(values: &ComponentList, start: u64, limit: u64) -> result: Result<RuleItems, RulesError> reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes a style block's contents from start to limit: declarations, at-rules and nested qualified rules, per the disambiguation CSS Nesting adds to CSS Syntax 5.4.4. Whitespace and semicolons between items do nothing, an at-keyword begins an at-rule, and anything else is a qualified rule when a top-level brace block precedes the next top-level semicolon and a bounded declaration attempt otherwise, Invalid standing for a failed attempt.";
+  let items = box_slots_new::<RuleItem>(capacity: 0_u64);
+  let pos = start;
+  loop @block {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @block;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_ws = step_is_whitespace(step: step);
+    if is_ws {
+      let next = step_advance(step: step, at: pos, limit: limit);
+      set pos = next;
+    } else {
+      let is_semi = step_is_semicolon(step: step);
+      if is_semi {
+        let next = step_advance(step: step, at: pos, limit: limit);
+        set pos = next;
+      } else {
+        let at_name = step_at_keyword_name(step: step);
+        match at_name {
+          Some(value: named) => {
+            let after_name = step_advance(step: step, at: pos, limit: limit);
+            let (at_item, at_next) = consume_at_rule(values: values, name: named, start: after_name, limit: limit);
+            let pushed = propagate push_item(items: &items, value: at_item);
+            set pos = at_next;
+          }
+          None() => {
+            let lead = find_leading_brace(values: values, start: pos, limit: limit);
+            match lead {
+              Some(value: found) => {
+                let prelude_range = range32(from: pos, to: found.prelude_end);
+                let block_range = range32(from: found.contents_start, to: found.contents_end);
+                let item = RuleItem::QualifiedRule(prelude: prelude_range, block: block_range);
+                let pushed = propagate push_item(items: &items, value: item);
+                set pos = found.next;
+              }
+              None() => {
+                let attempted = propagate attempt_declaration(values: values, start: pos, limit: limit, items: &items);
+                set pos = attempted;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let result_items = RuleItems(items: move items);
+  return Ok<RuleItems, RulesError>(value: move result_items);
+}
+
+fn parse_stylesheet(values: &ComponentList, range: ComponentRange) -> result: Result<RuleItems, RulesError> reads(values) {
+  doc "Parses range of values as a stylesheet: consume_rules_list with top_level set, per CSS Syntax 5.3.1 and 5.4.1.";
+  let (start, limit) = clamp_range(values: values, range: range);
+  let top_level = True();
+  let parsed = consume_rules_list(values: values, start: start, limit: limit, top_level: top_level);
+  return move parsed;
+}
+
+fn parse_rule_list(values: &ComponentList, range: ComponentRange) -> result: Result<RuleItems, RulesError> reads(values) {
+  doc "Parses range of values as a list of rules that is not at the top level: consume_rules_list with top_level unset, per CSS Syntax 5.3.2 and 5.4.1.";
+  let (start, limit) = clamp_range(values: values, range: range);
+  let top_level = False();
+  let parsed = consume_rules_list(values: values, start: start, limit: limit, top_level: top_level);
+  return move parsed;
+}
+
+fn parse_declaration_list(values: &ComponentList, range: ComponentRange) -> result: Result<RuleItems, RulesError> reads(values) {
+  doc "Parses range of values as a list of declarations and at-rules: consume_declaration_list, per CSS Syntax 5.3.4 and 5.4.4.";
+  let (start, limit) = clamp_range(values: values, range: range);
+  let parsed = consume_declaration_list(values: values, start: start, limit: limit);
+  return move parsed;
+}
+
+fn parse_block_contents(values: &ComponentList, range: ComponentRange) -> result: Result<RuleItems, RulesError> reads(values) {
+  doc "Parses range of values as a block's contents: consume_block_contents.";
+  let (start, limit) = clamp_range(values: values, range: range);
+  let parsed = consume_block_contents(values: values, start: start, limit: limit);
+  return move parsed;
+}
