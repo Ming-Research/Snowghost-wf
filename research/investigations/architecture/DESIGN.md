@@ -1,9 +1,10 @@
 # Architecture
 
-Status: proposal under discussion with the owner. The decisions it proposes
-are amendments in [`design/amendments/`](../../../design/amendments/) until
-the owner rules on them. Everything else here is reasoning, estimates and
-plans, not settled decisions.
+Status: under discussion with the owner. The owner adopted the `pipeline`
+and `script` decisions into the design tree; the `scope` decision is an
+amendment in [`design/amendments/`](../../../design/amendments/), revised
+with the owner's selection criteria and awaiting confirmation. Everything
+else here is reasoning, estimates and plans, not settled decisions.
 
 ## Question
 
@@ -23,11 +24,18 @@ Snowghost serves two kinds of content with different compatibility needs:
 - **Mainstream sites.** Their long tail of features never ends; they set the
   compatibility bar and the comparison workloads.
 
-The subset is chosen from measured feature use, such as Chromium's
-per-feature use counters and a crawl of target sites, not from the
-specifications' tables of contents. Out of scope at first: video and audio,
-WebGL and WebGPU, printing and paged media, vertical writing modes, and
-complex-script shaping beyond what the first target content needs.
+The subset is chosen feature by feature, not from the specifications'
+tables of contents, by weighing two things: how much target content uses the
+feature (Chromium's per-feature use counters and crawls of target sites
+measure this), and what it costs in performance. A feature that would cost
+parallelism or speed while mattering little to what is rendered, or that can
+be approximated without that cost, is left out or approximated: where
+performance and strict conformance conflict, performance wins. There is no
+uniform line; each case is decided on its own.
+
+Out of scope at first: video and audio, WebGL and WebGPU, printing and paged
+media, vertical writing modes, and complex-script shaping beyond what the
+first target content needs.
 
 ## Pipeline
 
@@ -99,7 +107,7 @@ Each stage processes only dirty paths:
 ## Script
 
 JavaScript runs on an interpreter written in Whitefoot, with no just-in-time
-compiler (the `script` amendment):
+compiler (the `script` decision in the design tree):
 
 - iOS does not let ordinary third-party applications generate executable
   code at run time, and an embedded just-in-time compiler is a security risk.
@@ -184,10 +192,18 @@ minimal example.
   checked on one thread take about 15 minutes. Modules check in parallel and
   incrementally, so this bounds only a cold build; the rate on large modular
   programs still needs measuring.
-- **W3. A platform boundary**: windows, GPU surfaces, input and input
-  methods, font enumeration, clipboard and accessibility on each operating
-  system, as host modules in the trusted runtime. This enlarges the trusted
-  base; its extent is the owner's decision.
+- **W3. A platform boundary.** A Whitefoot program calls no foreign code: the
+  operating system reaches it only through host modules that the compiler's
+  own runtime implements in C, as the completion runtime does for I/O today.
+  That runtime is trusted, not proved. Snowghost needs windows, GPU surfaces,
+  input and input methods, font files, the clipboard and accessibility from
+  each operating system, so the question is how much of the platform layer
+  lives in that runtime. A thin boundary passes only what the operating
+  system alone can provide and keeps everything computed, such as font
+  rasterization, text shaping, layout and compositing, in Whitefoot. A thick
+  one also uses the operating system's text and compositing services, which
+  is faster to build and leaves more unproved code. The extent is the
+  owner's decision.
 - **W4. Concurrency**: tree-shaped dynamic parallelism, long-lived threads
   for the compositor, input and script, and read-only snapshots shared across
   frames and threads. Whether the current ownership model expresses the
@@ -216,9 +232,8 @@ content:
 2. relayout of the whole page when the viewport width changes;
 3. frame time after one element's layout property changes in a large page.
 
-The owner sets the criteria before any measurement. Placeholders: on eight
-cores, first render and full relayout at least three times faster than
-Chromium, and a single-element change under 2 ms per frame.
+The owner sets the criteria once the milestone has first results; until
+then no comparison selects a design.
 
 ## Agent writer trial (proposal)
 
@@ -246,12 +261,15 @@ evidence for Whitefoot's design.
 - Ekioh's Flow lays out page elements concurrently on multiple threads
   ([Flow][flow]).
 
+## Platforms
+
+Linux and macOS come first: continuous integration runs on Linux and the
+owner develops on macOS. Windows follows later.
+
 ## Open questions for the owner
 
-1. The criteria for the first milestone.
-2. Which operating system gets the platform layer first.
-3. The extent of the trusted platform boundary (W3).
-4. How the subset is selected: use counters, a crawl of target sites, or both.
+1. The extent of the trusted platform boundary (W3).
+2. The criteria for the first milestone, once it has first results.
 
 [spec]: https://github.com/mbbill/Whitefoot/blob/c84c4dd7ab46848f6a5b816fcf57fce32b98158e/spec/kernel-spec.md
 [modular]: https://github.com/mbbill/Whitefoot/blob/c84c4dd7ab46848f6a5b816fcf57fce32b98158e/research/investigations/modular-compilation/DESIGN.md#architect-and-implementer-workflow
