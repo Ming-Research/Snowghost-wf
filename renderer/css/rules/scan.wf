@@ -1,0 +1,388 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+const important_letters: Array<u8, 9> =[105_u8, 109_u8, 112_u8, 111_u8, 114_u8, 116_u8, 97_u8, 110_u8, 116_u8];
+
+struct BraceLead {
+  prelude_end: u64;
+  contents_start: u64;
+  contents_end: u64;
+  next: u64;
+}
+
+struct DeclarationParse {
+  name: Span;
+  value: ComponentRange;
+  important: Bool;
+}
+
+fn clamp_between(x: u64, lo: u64, hi: u64) -> result: u64 pure contract {
+  requires lo <= hi;
+  ensures result >= lo;
+  ensures result <= hi;
+} {
+  doc "Clamps x into [lo, hi].";
+  if x < lo {
+    return lo;
+  }
+  if x > hi {
+    return hi;
+  }
+  return x;
+}
+
+fn range32(from: u64, to: u64) -> result: ComponentRange pure {
+  doc "Narrows from and to to u32 and builds the ComponentRange they bound.";
+  let start32 = cvt.wrap::<u64, u32>(from);
+  let end32 = cvt.wrap::<u64, u32>(to);
+  let range = ComponentRange(start: start32, end: end32);
+  return range;
+}
+
+fn clamp_range(values: &ComponentList, range: ComponentRange) -> (start: u64, limit: u64) reads(values) contract {
+  ensures start <= limit;
+  ensures limit <= values^.components.inner.len;
+} {
+  doc "Widens range to u64 and clamps it to values.components' length, so every position it names from start to limit is in bounds regardless of what range holds.";
+  let count = values^.components.inner.len;
+  let end_wide = cvt::<u32, u64>(range.end);
+  let start_wide = cvt::<u32, u64>(range.start);
+  if end_wide <= count {
+    if start_wide <= end_wide {
+      return start_wide, end_wide;
+    }
+    return end_wide, end_wide;
+  }
+  if start_wide <= count {
+    return start_wide, count;
+  }
+  return count, count;
+}
+
+fn skip_ws(values: &ComponentList, at: u64, limit: u64) -> result: u64 reads(values) contract {
+  requires at <= limit;
+  requires limit <= values^.components.inner.len;
+  ensures result >= at;
+  ensures result <= limit;
+} {
+  doc "Advances at past every top-level Whitespace component up to limit.";
+  let pos = at;
+  loop @ws {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @ws;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_ws = step_is_whitespace(step: step);
+    if is_ws {
+    } else {
+      break @ws;
+    }
+    let next = step_advance(step: step, at: pos, limit: limit);
+    set pos = next;
+  }
+  let safe = clamp_between(x: pos, lo: at, hi: limit);
+  return safe;
+}
+
+fn scan_to_semicolon(values: &ComponentList, start: u64, limit: u64) -> result: u64 reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+  ensures result >= start;
+  ensures result <= limit;
+} {
+  doc "Advances start to the first top-level Semicolon component at or before limit, or to limit when there is none; a Function or block is skipped whole, never inspected for a semicolon inside it.";
+  let pos = start;
+  loop @scan {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @scan;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_semi = step_is_semicolon(step: step);
+    if is_semi {
+      break @scan;
+    }
+    let next = step_advance(step: step, at: pos, limit: limit);
+    set pos = next;
+  }
+  let safe = clamp_between(x: pos, lo: start, hi: limit);
+  return safe;
+}
+
+fn find_leading_brace(values: &ComponentList, start: u64, limit: u64) -> result: Option<BraceLead> reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Scans siblings from start to limit for the first top-level BraceBlock component, stopping early at a top-level Semicolon: the disambiguation CSS Nesting adds so a style block's contents can tell a nested qualified rule from a declaration.";
+  let pos = start;
+  loop @scan {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @scan;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_semi = step_is_semicolon(step: step);
+    if is_semi {
+      return None<BraceLead>();
+    }
+    let next = step_advance(step: step, at: pos, limit: limit);
+    let brace = step_brace(step: step);
+    match brace {
+      Some(value: bounds) => {
+        let lead = BraceLead(prelude_end: pos, contents_start: bounds.start, contents_end: bounds.end, next: next);
+        return Some<BraceLead>(value: lead);
+      }
+      None() => {
+      }
+    }
+    set pos = next;
+  }
+  return None<BraceLead>();
+}
+
+fn consume_at_rule(values: &ComponentList, name: Span, start: u64, limit: u64) -> (item: RuleItem, next: u64) reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+  ensures next <= limit;
+} {
+  doc "Consumes an at-rule's prelude and optional block from start to limit, per CSS Syntax 5.4.2: the prelude runs to the first top-level Semicolon, which it consumes, or BraceBlock, which it assigns as the block; reaching limit without either ends the at-rule with no block.";
+  let pos = start;
+  loop @prelude {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @prelude;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_semi = step_is_semicolon(step: step);
+    let next = step_advance(step: step, at: pos, limit: limit);
+    if is_semi {
+      let prelude_range = range32(from: start, to: pos);
+      let no_block = None<ComponentRange>();
+      let item = RuleItem::AtRule(name: name, prelude: prelude_range, block: no_block);
+      return item, next;
+    }
+    let brace = step_brace(step: step);
+    match brace {
+      Some(value: bounds) => {
+        let prelude_range = range32(from: start, to: pos);
+        let block_range = range32(from: bounds.start, to: bounds.end);
+        let has_block = Some<ComponentRange>(value: block_range);
+        let item = RuleItem::AtRule(name: name, prelude: prelude_range, block: has_block);
+        return item, next;
+      }
+      None() => {
+      }
+    }
+    set pos = next;
+  }
+  let safe = clamp_between(x: pos, lo: start, hi: limit);
+  let prelude_range = range32(from: start, to: safe);
+  let no_block = None<ComponentRange>();
+  let item = RuleItem::AtRule(name: name, prelude: prelude_range, block: no_block);
+  return item, safe;
+}
+
+fn consume_qualified_rule(values: &ComponentList, start: u64, limit: u64) -> (item: Option<RuleItem>, next: u64) reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+  ensures next <= limit;
+} {
+  doc "Consumes a qualified rule's prelude and block from start to limit, per CSS Syntax 5.4.3: the prelude runs to the first top-level BraceBlock, ignoring semicolons; reaching limit without one fails, having consumed the whole span.";
+  let pos = start;
+  loop @prelude {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @prelude;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let next = step_advance(step: step, at: pos, limit: limit);
+    let brace = step_brace(step: step);
+    match brace {
+      Some(value: bounds) => {
+        let prelude_range = range32(from: start, to: pos);
+        let block_range = range32(from: bounds.start, to: bounds.end);
+        let item = RuleItem::QualifiedRule(prelude: prelude_range, block: block_range);
+        return Some<RuleItem>(value: item), next;
+      }
+      None() => {
+      }
+    }
+    set pos = next;
+  }
+  return None<RuleItem>(), limit;
+}
+
+fn ascii_lower_byte(b: u8) -> result: u8 pure {
+  doc "Lowercases b when it is an ASCII uppercase letter, and returns b unchanged otherwise.";
+  let is_upper_l = b >= 65_u8;
+  let is_upper_r = b <= 90_u8;
+  let is_upper = band(is_upper_l, is_upper_r);
+  if is_upper {
+    let lowered = b +wrap 32_u8;
+    return lowered;
+  }
+  return b;
+}
+
+fn name_matches_important_ci(values: &ComponentList, span: Span) -> result: Bool reads(values) {
+  doc "True when span names exactly the nine bytes of \"important\" in values.text, ASCII case-insensitively.";
+  let start64 = cvt::<u32, u64>(span.start);
+  let end64 = cvt::<u32, u64>(span.end);
+  let expected_end = start64 +wrap 9_u64;
+  let right_len = end64 == expected_end;
+  if right_len {
+  } else {
+    return False();
+  }
+  let within = end64 <= values^.text.inner.len;
+  if within {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @chars {
+    let more = i < 9_u64;
+    if more {
+    } else {
+      break @chars;
+    }
+    let idx = start64 +wrap i;
+    let b = values^.text.inner[idx];
+    let lowered = ascii_lower_byte(b: b);
+    let expected = important_letters[i];
+    let letter_matches = lowered == expected;
+    if letter_matches {
+    } else {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn strip_important(values: &ComponentList, start: u64, limit: u64) -> (value: ComponentRange, important: Bool) reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Finds a declaration value's top-level trailing !important, per CSS Syntax 5.4.5: when the last two non-whitespace top-level siblings from start to limit are a Delim '!' then an Ident case-insensitively \"important\", the value ends before the whitespace preceding that Delim and important is true; otherwise the whole span is the value and important is false. One forward pass, tracking only the last two non-whitespace sibling starts.";
+  let pos = start;
+  let has_last = False();
+  let last_start = start;
+  let has_prev = False();
+  let prev_start = start;
+  loop @scan {
+    let more = pos < limit;
+    if more {
+    } else {
+      break @scan;
+    }
+    let c = values^.components.inner[pos];
+    let step = classify_step(c: c, at: pos);
+    let is_ws = step_is_whitespace(step: step);
+    if is_ws {
+    } else {
+      set has_prev = has_last;
+      set prev_start = last_start;
+      set has_last = True();
+      set last_start = pos;
+    }
+    let next = step_advance(step: step, at: pos, limit: limit);
+    set pos = next;
+  }
+  let whole = range32(from: start, to: limit);
+  if has_last {
+  } else {
+    return whole, False();
+  }
+  let last_indexable = last_start < values^.components.inner.len;
+  if last_indexable {
+  } else {
+    return whole, False();
+  }
+  let last_c = values^.components.inner[last_start];
+  let last_step = classify_step(c: last_c, at: last_start);
+  let last_name = step_ident_name(step: last_step);
+  let matched = match last_name {
+    Some(value: nm) => {
+      let m = name_matches_important_ci(values: values, span: nm);
+      give m;
+    }
+    None() => {
+      give False();
+    }
+  }
+  if matched {
+  } else {
+    return whole, False();
+  }
+  if has_prev {
+  } else {
+    return whole, False();
+  }
+  let prev_indexable = prev_start < values^.components.inner.len;
+  if prev_indexable {
+  } else {
+    return whole, False();
+  }
+  let prev_c = values^.components.inner[prev_start];
+  let prev_step = classify_step(c: prev_c, at: prev_start);
+  let is_bang = step_is_bang(step: prev_step);
+  if is_bang {
+  } else {
+    return whole, False();
+  }
+  let truncated = range32(from: start, to: prev_start);
+  return truncated, True();
+}
+
+fn consume_declaration(values: &ComponentList, start: u64, limit: u64) -> result: Option<DeclarationParse> reads(values) contract {
+  requires start <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes one declaration from start to limit, per CSS Syntax 5.4.5/5.4.6: an ident name, optional whitespace, a colon, optional whitespace, then a value with a trailing !important stripped. None when no ident-colon prefix is present.";
+  let name_pos = skip_ws(values: values, at: start, limit: limit);
+  let has_name = name_pos < limit;
+  if has_name {
+  } else {
+    return None<DeclarationParse>();
+  }
+  let name_c = values^.components.inner[name_pos];
+  let name_step = classify_step(c: name_c, at: name_pos);
+  let name_option = step_ident_name(step: name_step);
+  match name_option {
+    Some(value: decl_name) => {
+      let after_name = step_advance(step: name_step, at: name_pos, limit: limit);
+      let colon_pos = skip_ws(values: values, at: after_name, limit: limit);
+      let has_colon = colon_pos < limit;
+      if has_colon {
+      } else {
+        return None<DeclarationParse>();
+      }
+      let colon_c = values^.components.inner[colon_pos];
+      let colon_step = classify_step(c: colon_c, at: colon_pos);
+      let is_colon = step_is_colon(step: colon_step);
+      if is_colon {
+      } else {
+        return None<DeclarationParse>();
+      }
+      let value_start = step_advance(step: colon_step, at: colon_pos, limit: limit);
+      let (value_range, important) = strip_important(values: values, start: value_start, limit: limit);
+      let decl = DeclarationParse(name: decl_name, value: value_range, important: important);
+      return Some<DeclarationParse>(value: decl);
+    }
+    None() => {
+      return None<DeclarationParse>();
+    }
+  }
+}

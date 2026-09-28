@@ -43,15 +43,17 @@ tasks stand for three classes of implementer work.
   at `renderer/`. Each task's interface is a module (`pkg::text::line_break`,
   `pkg::css::syntax`, `pkg::image::png`) whose `module.wfm` is written
   before the runs. A driver module per task (`pkg::oracle::line_break`,
-  `pkg::oracle::css_syntax`, `pkg::oracle::png`) has a graph entry that runs
-  the oracle through the interface and prints the number of cases that pass
-  and fail.
+  `pkg::oracle::css_syntax`, `pkg::oracle::css_rules`, `pkg::oracle::png`)
+  has a graph entry that runs the oracle through the interface and prints
+  the number of cases that pass and fail, or, for the CSS drivers, one JSON
+  line per case, with components written by the shared
+  `pkg::oracle::css_json`.
 - **Oracle data.** `make oracle-data` (`tests/oracle-data.sh`) downloads
   each file at its pinned version, checks its SHA-256 and places it under
   `build/oracle/`, which git ignores. `make oracle-line-break`, `oracle-css`,
-  `oracle-png` and `oracle-png-speed` build each driver entry and run it; the
-  CSS driver prints its results as JSON, which `tests/css/oracle.py` compares
-  with the suite.
+  `oracle-css-rules`, `oracle-png` and `oracle-png-speed` build each driver
+  entry and run it; `tests/css/oracle.py` and `tests/css/rules_oracle.py`
+  compare the CSS drivers' JSON lines with the suites.
 - **PNG reference.** `tests/png/reference.c` decodes each image with
   libpng into raw RGBA for the driver to compare. It also generates the
   speed set: twelve 2048 by 2048 images of gradients, noise, synthetic text
@@ -209,6 +211,38 @@ the class, with the same need for a review pass that the other runs had.
 Every Sonnet module needed a follow-up pass on the review's findings; the
 review is part of the class's cost, not optional.
 
+### The follow-up passes
+
+- **Line breaking (Sonnet):** met the review: the fallback is gone behind a
+  new interface length bound, lookups use a two-stage table generated from
+  the same data (the module still checks in 0.37 s with 294 KB of tables),
+  the rule function is split by rule group, and the generator depends on
+  the standard library only. Six guards stay: facts about the arrays of a
+  struct result do not reach the callers (Whitefoot PR #169).
+- **HTML tokenizer (Sonnet):** met the review: named references indexed by
+  first byte (the suite's run from 33 to 10 ms, an adversarial input from
+  800 to 70 ms), character literals throughout.
+- **CSS syntax: Sonnet failed, Opus succeeded.** Sonnet tried to prove at
+  every push that the output storage has room, which needs one invariant
+  over the scan position threaded through the whole tokenizer; after 4.5
+  hours and 1,403 tool calls the module no longer compiled (kept on branch
+  `attempt/css-capacity-proofs`). The architect changed the interface to
+  refuse storage past its ceiling (`Result` with `TooLarge`), and Opus, in
+  14 minutes, made each push prove its room locally or refuse, and
+  replaced the recursion with an explicit stack: 16 MiB of nested `(` now
+  parses (the recursive version exhausted the stack near one million
+  levels), and its output matched the old version byte for byte on 24
+  generated inputs.
+
+**Default for proof-heavy restructuring: Opus.** Sonnet writes the code but
+does not find a proof structure that closes; when a proof must span many
+functions, the architect should first ask whether the interface can let
+each function refuse locally.
+
+**Pattern refined:** prove capacity where the proof is local; where it would
+span many functions, refuse locally through the module's error result
+rather than threading a global invariant.
+
 ### Whitefoot findings
 
 - **No text literals** made every message a byte array and every character
@@ -227,6 +261,11 @@ review is part of the class's cost, not optional.
   not survive a `break`; reassigning a range reference or `swap` loses
   length facts; there is no bulk copy or vector primitive. Reported by the
   PNG runs; not yet filed as Whitefoot requirements.
+- **Enums are laid out as products**, each variant with its own storage: the
+  CSS `Component` enum takes about 176 bytes, so a 15 MB stylesheet needs
+  1.4 GB and every push copies the whole value. Whitefoot's todo already
+  defers general enum layout until a workload dominated by it appears; this
+  is one.
 - Friction the language keeps by design (card #20): flat three-address form,
   exhaustive matches without a wildcard, explicit `move`, exact effect rows.
   Each run named the flat form as its largest source of length.

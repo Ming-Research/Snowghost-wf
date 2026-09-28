@@ -1,0 +1,886 @@
+fn ones_mask(bits: u32) -> result: u32 pure {
+  doc "A run of bits one-bits: (1 << bits) - 1.";
+  let one = 1_u32;
+  let shifted = ishl.wrap(one, bits);
+  let mask = shifted -wrap one;
+  return mask;
+}
+
+fn patch_component(components: &Box<Slots<Component>>, index: u64, value: Component) -> result: Result<unit, SyntaxError> writes(components) {
+  doc "Overwrites the component at index with value. The index comes from open_blocks, which records only components already pushed, and components only grow; the bound is not carried through the heap stack, so an index past the end refuses the parse rather than being skipped.";
+  let within = index < components^.inner.len;
+  if within {
+    set components^.inner[index] = value;
+    return Ok<unit, SyntaxError>(value: unit);
+  }
+  let refusal = SyntaxError::TooLarge();
+  return Err<unit, SyntaxError>(error: refusal);
+}
+
+fn skip_whitespace_run(source: &[u8], length: u64, start: u64) -> result: u64 reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "Returns the position of the first byte at or after start that is not raw whitespace, or length.";
+  let p = start;
+  loop @skip {
+    let has = p < length;
+    if has {
+      let b = source^[p];
+      let ws = is_whitespace_byte(b: b);
+      if ws {
+        let next_p = p +wrap 1_u64;
+        set p = next_p;
+      }
+      if ws {
+      } else {
+        break @skip;
+      }
+    } else {
+      break @skip;
+    }
+  }
+  return p;
+}
+
+fn consume_comment(source: &[u8], length: u64, start: u64) -> next: u64 reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "Skips a comment body from start, the position right after its opening /*, through the closing */ or to EOF. A comment produces no component.";
+  let pos = start;
+  loop @comment {
+    let has = pos < length;
+    if has {
+    } else {
+      break @comment;
+    }
+    let b = source^[pos];
+    let is_star = b == 42_u8;
+    if is_star {
+      let pos1 = pos +wrap 1_u64;
+      let has1 = pos1 < length;
+      if has1 {
+        let b1 = source^[pos1];
+        let is_slash = b1 == 47_u8;
+        if is_slash {
+          let after = pos1 +wrap 1_u64;
+          return after;
+        }
+      }
+    }
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+  }
+  return pos;
+}
+
+enum OpenKind {
+  Parenthesis();
+  Bracket();
+  Brace();
+  Function(name: Span);
+}
+
+struct OpenBlock {
+  index: u64;
+  kind: OpenKind;
+}
+
+fn opened_component(kind: OpenKind, end: u32) -> result: Component pure {
+  doc "The component that opens a block or function of kind, with end as its end index.";
+  let component = match kind {
+    Parenthesis() => {
+      give Component::ParenthesisBlock(end: end);
+    }
+    Bracket() => {
+      give Component::BracketBlock(end: end);
+    }
+    Brace() => {
+      give Component::BraceBlock(end: end);
+    }
+    Function(name: function_name) => {
+      give Component::Function(name: function_name, end: end);
+    }
+  }
+  return component;
+}
+
+fn closing_code_point(kind: OpenKind) -> result: u32 pure {
+  doc "The code point that closes a block or function of kind.";
+  let closing = match kind {
+    Parenthesis() => {
+      give 41_u32;
+    }
+    Bracket() => {
+      give 93_u32;
+    }
+    Brace() => {
+      give 125_u32;
+    }
+    Function(..) => {
+      give 41_u32;
+    }
+  }
+  return closing;
+}
+
+fn open_block(components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>, kind: OpenKind) -> result: Result<unit, SyntaxError> writes(components), writes(open_blocks) {
+  doc "Appends the opening component of a block or function of kind, with end 0 until it closes, and records its index and kind on open_blocks.";
+  let index = components^.inner.len;
+  let placeholder = opened_component(kind: kind, end: 0_u32);
+  let placed = propagate push_component(components: components, value: placeholder);
+  let block = OpenBlock(index: index, kind: kind);
+  let recorded = propagate push_open_block(open_blocks: open_blocks, value: block);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn close_innermost(components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<unit, SyntaxError> writes(components), writes(open_blocks) contract {
+  requires open_blocks^.inner.len > 0_u64;
+} {
+  doc "Removes the innermost open block from open_blocks and patches its opening component with the current component count as its end.";
+  let block = take_back(window: &open_blocks^.inner);
+  let count = components^.inner.len;
+  let end = cvt.wrap::<u64, u32>(count);
+  let closed = opened_component(kind: block.kind, end: end);
+  let patched = propagate patch_component(components: components, index: block.index, value: closed);
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn name_matches_url_ci(text: &Box<Slots<u8>>, span: Span) -> result: Bool reads(text) {
+  doc "True when span names exactly the three bytes u/U r/R l/L in text.";
+  let start64 = cvt::<u32, u64>(span.start);
+  let end64 = cvt::<u32, u64>(span.end);
+  let expected_end = start64 +wrap 3_u64;
+  let len_ok = end64 == expected_end;
+  if len_ok {
+  } else {
+    return False();
+  }
+  let within = end64 <= text^.inner.len;
+  if within {
+  } else {
+    return False();
+  }
+  let b0 = text^.inner[start64];
+  let idx1 = start64 +wrap 1_u64;
+  let b1 = text^.inner[idx1];
+  let idx2 = start64 +wrap 2_u64;
+  let b2 = text^.inner[idx2];
+  let u_ok_l = b0 == 117_u8;
+  let u_ok_r = b0 == 85_u8;
+  let u_ok = bor(u_ok_l, u_ok_r);
+  let r_ok_l = b1 == 114_u8;
+  let r_ok_r = b1 == 82_u8;
+  let r_ok = bor(r_ok_l, r_ok_r);
+  let l_ok_l = b2 == 108_u8;
+  let l_ok_r = b2 == 76_u8;
+  let l_ok = bor(l_ok_l, l_ok_r);
+  let a = band(u_ok, r_ok);
+  let result = band(a, l_ok);
+  return result;
+}
+
+fn consume_ident_like(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes an ident sequence at start and dispatches it as an Ident, a url token, or a Function, per CSS Syntax 4.3.4; a Function opens on open_blocks and its contents follow in the caller's loop.";
+  let scanned_name = propagate consume_ident_sequence(source: source, length: length, start: start, text: text);
+  let name = scanned_name.span;
+  let after_name = scanned_name.next;
+  let has_paren = after_name < length;
+  let opens = False();
+  if has_paren {
+    let b = source^[after_name];
+    let is_paren = b == 40_u8;
+    if is_paren {
+      set opens = True();
+    }
+  }
+  if opens {
+  } else {
+    let comp = Component::Ident(name: name);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after_name);
+  }
+  let after_paren = after_name +wrap 1_u64;
+  let is_url = name_matches_url_ci(text: text, span: name);
+  if is_url {
+    let probe = skip_whitespace_run(source: source, length: length, start: after_paren);
+    let has_probe = probe < length;
+    let is_quote_probe = False();
+    if has_probe {
+      let pb = source^[probe];
+      let q_l = pb == 34_u8;
+      let q_r = pb == 39_u8;
+      let q = bor(q_l, q_r);
+      if q {
+        set is_quote_probe = True();
+      }
+    }
+    if is_quote_probe {
+      let kind = OpenKind::Function(name: name);
+      let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+      return Ok<u64, SyntaxError>(value: after_paren);
+    }
+    let n = propagate consume_url_token(source: source, length: length, start: after_paren, text: text, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let kind = OpenKind::Function(name: name);
+  let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+  return Ok<u64, SyntaxError>(value: after_paren);
+}
+
+fn consume_numeric_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes a number at start and dispatches it as a Percentage, a Dimension, or a Number, per CSS Syntax 4.3.3.";
+  let scanned = propagate consume_number(source: source, length: length, start: start, text: text);
+  let numeric = scanned.number;
+  let after = scanned.next;
+  let has_pct = after < length;
+  if has_pct {
+    let b = source^[after];
+    let is_pct = b == 37_u8;
+    if is_pct {
+      let comp = Component::Percentage(number: numeric);
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      let next_pos = after +wrap 1_u64;
+      return Ok<u64, SyntaxError>(value: next_pos);
+    }
+  }
+  let would_ident = would_start_identifier(source: source, length: length, pos: after);
+  if would_ident {
+    let scanned_unit = propagate consume_ident_sequence(source: source, length: length, start: after, text: text);
+    let unit_span = scanned_unit.span;
+    let after_unit = scanned_unit.next;
+    let comp = Component::Dimension(number: numeric, unit_name: unit_span);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after_unit);
+  }
+  let comp = Component::Number(number: numeric);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_unicode_range(source: &[u8], length: u64, start: u64, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes a unicode-range token's digits, wildcards and optional end value from start, the position right after u+ or U+, per CSS Syntax 4.3.11.";
+  let pos = start;
+  let count = 0_u64;
+  let value = 0_u32;
+  loop @digits {
+    let room = count < 6_u64;
+    if room {
+    } else {
+      break @digits;
+    }
+    let has = pos < length;
+    if has {
+    } else {
+      break @digits;
+    }
+    let b = source^[pos];
+    let hexd = ascii_hex_byte(b: b);
+    if hexd {
+    } else {
+      break @digits;
+    }
+    let hv = ascii_hex_value(b: b);
+    let scaled = value *wrap 16_u32;
+    set value = scaled +wrap hv;
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+    let next_count = count +wrap 1_u64;
+    set count = next_count;
+  }
+  let wild_count = 0_u64;
+  let remaining = 6_u64 -wrap count;
+  loop @wild {
+    let room = wild_count < remaining;
+    if room {
+    } else {
+      break @wild;
+    }
+    let has = pos < length;
+    if has {
+    } else {
+      break @wild;
+    }
+    let b = source^[pos];
+    let q = b == 63_u8;
+    if q {
+    } else {
+      break @wild;
+    }
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+    let next_wc = wild_count +wrap 1_u64;
+    set wild_count = next_wc;
+  }
+  let has_wild = wild_count > 0_u64;
+  if has_wild {
+    let shift = wild_count *wrap 4_u64;
+    let shift32 = cvt.wrap::<u64, u32>(shift);
+    let start_val = ishl.wrap(value, shift32);
+    let ones = ones_mask(bits: shift32);
+    let end_val = ior(start_val, ones);
+    let comp = Component::UnicodeRange(start: start_val, end: end_val);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: pos);
+  }
+  let range_end = value;
+  let final_pos = pos;
+  let has_dash = pos < length;
+  if has_dash {
+    let b = source^[pos];
+    let dash = b == 45_u8;
+    if dash {
+      let pos1 = pos +wrap 1_u64;
+      let has1 = pos1 < length;
+      if has1 {
+        let b1 = source^[pos1];
+        let hexd1 = ascii_hex_byte(b: b1);
+        if hexd1 {
+          let epos = pos1;
+          let ecount = 0_u64;
+          let evalue = 0_u32;
+          loop @edigits {
+            let eroom = ecount < 6_u64;
+            if eroom {
+            } else {
+              break @edigits;
+            }
+            let ehas = epos < length;
+            if ehas {
+            } else {
+              break @edigits;
+            }
+            let eb = source^[epos];
+            let ehex = ascii_hex_byte(b: eb);
+            if ehex {
+            } else {
+              break @edigits;
+            }
+            let ehv = ascii_hex_value(b: eb);
+            let escaled = evalue *wrap 16_u32;
+            set evalue = escaled +wrap ehv;
+            let next_epos = epos +wrap 1_u64;
+            set epos = next_epos;
+            let next_ecount = ecount +wrap 1_u64;
+            set ecount = next_ecount;
+          }
+          set range_end = evalue;
+          set final_pos = epos;
+        }
+      }
+    }
+  }
+  let comp = Component::UnicodeRange(start: value, end: range_end);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: final_pos);
+}
+
+fn consume_u(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading u or U as a unicode-range token when it is immediately followed by + and a hex digit or ?, or otherwise as an ordinary ident-like token.";
+  let has1 = after < length;
+  let is_range = False();
+  if has1 {
+    let b1 = source^[after];
+    let plus = b1 == 43_u8;
+    if plus {
+      let pos2 = after +wrap 1_u64;
+      let has2 = pos2 < length;
+      if has2 {
+        let b2 = source^[pos2];
+        let hexd = ascii_hex_byte(b: b2);
+        let quest = b2 == 63_u8;
+        let ok2 = bor(hexd, quest);
+        if ok2 {
+          set is_range = True();
+        }
+      }
+    }
+  }
+  if is_range {
+    let pos_plus = after +wrap 1_u64;
+    let n = propagate consume_unicode_range(source: source, length: length, start: pos_plus, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
+  return Ok<u64, SyntaxError>(value: n);
+}
+
+fn consume_hash(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading # as a Hash token when a name follows, per CSS Syntax 4.3.3, or otherwise as a delim.";
+  let has1 = after < length;
+  let name_ok = False();
+  if has1 {
+    let (c1, after1) = peek_pp(source: source, length: length, pos: after);
+    let nc = name_char_cp(cp: c1);
+    if nc {
+      set name_ok = True();
+    } else {
+      let esc = would_start_valid_escape(source: source, length: length, pos: after);
+      if esc {
+        set name_ok = True();
+      }
+    }
+  }
+  if name_ok {
+  } else {
+    let comp = Component::Delim(code_point: 35_u32);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_id = would_start_identifier(source: source, length: length, pos: after);
+  let kind = if is_id {
+    give HashKind::Id();
+  } else {
+    give HashKind::Unrestricted();
+  }
+  let scanned = propagate consume_ident_sequence(source: source, length: length, start: after, text: text);
+  let span = scanned.span;
+  let next = scanned.next;
+  let comp = Component::Hash(name: span, kind: kind);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: next);
+}
+
+enum MatchOperator {
+  PrefixMatch();
+  IncludeMatch();
+  SuffixMatch();
+  SubstringMatch();
+}
+
+fn suffix_or_delim(source: &[u8], length: u64, after: u64, cp: u32, op: MatchOperator, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches $, *, ^ or ~ as their X= match token (op selects which) when = follows, or otherwise as a delim.";
+  let has1 = after < length;
+  let is_eq = False();
+  if has1 {
+    let b1 = source^[after];
+    let eqb = b1 == 61_u8;
+    if eqb {
+      set is_eq = True();
+    }
+  }
+  if is_eq {
+    let comp = match op {
+      PrefixMatch() => {
+        give Component::PrefixMatch();
+      }
+      IncludeMatch() => {
+        give Component::IncludeMatch();
+      }
+      SuffixMatch() => {
+        give Component::SuffixMatch();
+      }
+      SubstringMatch() => {
+        give Component::SubstringMatch();
+      }
+    }
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    let next_pos = after +wrap 1_u64;
+    return Ok<u64, SyntaxError>(value: next_pos);
+  }
+  let comp = Component::Delim(code_point: cp);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_dash(source: &[u8], length: u64, pos: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading hyphen-minus as a number, a CDC token, an ident-like token, or a delim, per CSS Syntax 4.3.3.";
+  let starts_num = would_start_number(source: source, length: length, pos: pos);
+  if starts_num {
+    let n = propagate consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let pos1 = pos +wrap 1_u64;
+  let has1 = pos1 < length;
+  let is_cdc = False();
+  if has1 {
+    let b1 = source^[pos1];
+    let dash2 = b1 == 45_u8;
+    if dash2 {
+      let pos2 = pos1 +wrap 1_u64;
+      let has2 = pos2 < length;
+      if has2 {
+        let b2 = source^[pos2];
+        let gt = b2 == 62_u8;
+        if gt {
+          set is_cdc = True();
+        }
+      }
+    }
+  }
+  if is_cdc {
+    let comp = Component::Cdc();
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    let after = pos +wrap 3_u64;
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let starts_ident = would_start_identifier(source: source, length: length, pos: pos);
+  if starts_ident {
+    let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let comp = Component::Delim(code_point: 45_u32);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  let after = pos +wrap 1_u64;
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_slash(source: &[u8], length: u64, after: u64, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading solidus as a comment or a delim.";
+  let has1 = after < length;
+  let is_comment = False();
+  if has1 {
+    let b1 = source^[after];
+    let star = b1 == 42_u8;
+    if star {
+      set is_comment = True();
+    }
+  }
+  if is_comment {
+    let body_start = after +wrap 1_u64;
+    let end = consume_comment(source: source, length: length, start: body_start);
+    return Ok<u64, SyntaxError>(value: end);
+  }
+  let comp = Component::Delim(code_point: 47_u32);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_lt(source: &[u8], length: u64, pos: u64, after: u64, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading less-than sign as a CDO token when followed by !-- or otherwise as a delim.";
+  let has1 = after < length;
+  let is_cdo = False();
+  if has1 {
+    let b1 = source^[after];
+    let bang = b1 == 33_u8;
+    if bang {
+      let p2 = after +wrap 1_u64;
+      let has2 = p2 < length;
+      if has2 {
+        let b2 = source^[p2];
+        let dash1 = b2 == 45_u8;
+        if dash1 {
+          let p3 = p2 +wrap 1_u64;
+          let has3 = p3 < length;
+          if has3 {
+            let b3 = source^[p3];
+            let dash2 = b3 == 45_u8;
+            if dash2 {
+              set is_cdo = True();
+            }
+          }
+        }
+      }
+    }
+  }
+  if is_cdo {
+    let comp = Component::Cdo();
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    let end = pos +wrap 4_u64;
+    return Ok<u64, SyntaxError>(value: end);
+  }
+  let comp = Component::Delim(code_point: 60_u32);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_at(source: &[u8], length: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading commercial at as an AtKeyword token when an identifier follows, per CSS Syntax 4.3.3, or otherwise as a delim.";
+  let starts_ident = would_start_identifier(source: source, length: length, pos: after);
+  if starts_ident {
+    let scanned = propagate consume_ident_sequence(source: source, length: length, start: after, text: text);
+    let span = scanned.span;
+    let next = scanned.next;
+    let comp = Component::AtKeyword(name: span);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: next);
+  }
+  let comp = Component::Delim(code_point: 64_u32);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_pipe(source: &[u8], length: u64, after: u64, components: &Box<Slots<Component>>) -> result: Result<u64, SyntaxError> reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading vertical line as DashMatch, Column, or a delim.";
+  let has1 = after < length;
+  if has1 {
+    let b1 = source^[after];
+    let eq = b1 == 61_u8;
+    if eq {
+      let comp = Component::DashMatch();
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      let next_pos = after +wrap 1_u64;
+      return Ok<u64, SyntaxError>(value: next_pos);
+    }
+    let pipe2 = b1 == 124_u8;
+    if pipe2 {
+      let comp = Component::Column();
+      let comp_pushed = propagate push_component(components: components, value: comp);
+      let next_pos = after +wrap 1_u64;
+      return Ok<u64, SyntaxError>(value: next_pos);
+    }
+  }
+  let comp = Component::Delim(code_point: 124_u32);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>, open_blocks: &Box<Slots<OpenBlock>>) -> result: Result<u64, SyntaxError> reads(source), writes(text), writes(components), writes(open_blocks) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes one token that is not a closing token, dispatched on its leading preprocessed code point cp, per CSS Syntax 4.3.3. An opening token or a Function opens on open_blocks; the caller's loop consumes its contents.";
+  let is_ws = is_whitespace_cp(cp: cp);
+  if is_ws {
+    let end_ws = skip_whitespace_run(source: source, length: length, start: after);
+    let comp = Component::Whitespace();
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: end_ws);
+  }
+  let is_quote_l = cp == 34_u32;
+  let is_quote_r = cp == 39_u32;
+  let is_quote = bor(is_quote_l, is_quote_r);
+  if is_quote {
+    let n = propagate consume_string_token(source: source, length: length, start: after, quote: cp, text: text, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_hash = cp == 35_u32;
+  if is_hash {
+    let n = propagate consume_hash(source: source, length: length, pos: pos, after: after, text: text, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_dollar = cp == 36_u32;
+  if is_dollar {
+    let op = MatchOperator::SuffixMatch();
+    let n = propagate suffix_or_delim(source: source, length: length, after: after, cp: cp, op: op, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_lparen = cp == 40_u32;
+  if is_lparen {
+    let kind = OpenKind::Parenthesis();
+    let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_star = cp == 42_u32;
+  if is_star {
+    let op = MatchOperator::SubstringMatch();
+    let n = propagate suffix_or_delim(source: source, length: length, after: after, cp: cp, op: op, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_plus = cp == 43_u32;
+  if is_plus {
+    let starts_num = would_start_number(source: source, length: length, pos: pos);
+    if starts_num {
+      let n = propagate consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+      return Ok<u64, SyntaxError>(value: n);
+    }
+    let comp = Component::Delim(code_point: cp);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_comma = cp == 44_u32;
+  if is_comma {
+    let comp = Component::Comma();
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_dash = cp == 45_u32;
+  if is_dash {
+    let n = propagate consume_dash(source: source, length: length, pos: pos, text: text, components: components, open_blocks: open_blocks);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_dot = cp == 46_u32;
+  if is_dot {
+    let starts_num = would_start_number(source: source, length: length, pos: pos);
+    if starts_num {
+      let n = propagate consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+      return Ok<u64, SyntaxError>(value: n);
+    }
+    let comp = Component::Delim(code_point: cp);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_slash = cp == 47_u32;
+  if is_slash {
+    let n = propagate consume_slash(source: source, length: length, after: after, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_digit_l = cp >= 48_u32;
+  let is_digit_r = cp <= 57_u32;
+  let is_digit = band(is_digit_l, is_digit_r);
+  if is_digit {
+    let n = propagate consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_colon = cp == 58_u32;
+  if is_colon {
+    let comp = Component::Colon();
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_semicolon = cp == 59_u32;
+  if is_semicolon {
+    let comp = Component::Semicolon();
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_lt = cp == 60_u32;
+  if is_lt {
+    let n = propagate consume_lt(source: source, length: length, pos: pos, after: after, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_at = cp == 64_u32;
+  if is_at {
+    let n = propagate consume_at(source: source, length: length, after: after, text: text, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_lbracket = cp == 91_u32;
+  if is_lbracket {
+    let kind = OpenKind::Bracket();
+    let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_backslash = cp == 92_u32;
+  if is_backslash {
+    let esc_ok = would_start_valid_escape(source: source, length: length, pos: pos);
+    if esc_ok {
+      let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
+      return Ok<u64, SyntaxError>(value: n);
+    }
+    let comp = Component::Delim(code_point: cp);
+    let comp_pushed = propagate push_component(components: components, value: comp);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_caret = cp == 94_u32;
+  if is_caret {
+    let op = MatchOperator::PrefixMatch();
+    let n = propagate suffix_or_delim(source: source, length: length, after: after, cp: cp, op: op, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_lbrace = cp == 123_u32;
+  if is_lbrace {
+    let kind = OpenKind::Brace();
+    let opened = propagate open_block(components: components, open_blocks: open_blocks, kind: kind);
+    return Ok<u64, SyntaxError>(value: after);
+  }
+  let is_pipe = cp == 124_u32;
+  if is_pipe {
+    let n = propagate consume_pipe(source: source, length: length, after: after, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_tilde = cp == 126_u32;
+  if is_tilde {
+    let op = MatchOperator::IncludeMatch();
+    let n = propagate suffix_or_delim(source: source, length: length, after: after, cp: cp, op: op, components: components);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let is_u_upper = cp == 85_u32;
+  let is_u_lower = cp == 117_u32;
+  let is_u = bor(is_u_upper, is_u_lower);
+  if is_u {
+    let n = propagate consume_u(source: source, length: length, pos: pos, after: after, text: text, components: components, open_blocks: open_blocks);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let starts_ident = would_start_identifier(source: source, length: length, pos: pos);
+  if starts_ident {
+    let n = propagate consume_ident_like(source: source, length: length, start: pos, text: text, components: components, open_blocks: open_blocks);
+    return Ok<u64, SyntaxError>(value: n);
+  }
+  let comp = Component::Delim(code_point: cp);
+  let comp_pushed = propagate push_component(components: components, value: comp);
+  return Ok<u64, SyntaxError>(value: after);
+}
+
+fn consume_component_values(source: &[u8], length: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> result: Result<unit, SyntaxError> reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes component values from the start of source to EOF, per CSS Syntax 5.4.1 and 5.4.7, in one loop. open_blocks holds the blocks and functions still open, innermost last: a close token that matches the innermost one closes it and patches its end, any other close token becomes an Error component, and the blocks still open at EOF end there.";
+  let open_blocks = box_slots_new::<OpenBlock>(capacity: 0_u64);
+  let pos = 0_u64;
+  loop @list {
+    let has = pos < length;
+    if has {
+    } else {
+      break @list;
+    }
+    let (cp, after) = peek_pp(source: source, length: length, pos: pos);
+    let is_paren_close = cp == 41_u32;
+    let is_bracket_close = cp == 93_u32;
+    let is_brace_close = cp == 125_u32;
+    let a = bor(is_paren_close, is_bracket_close);
+    let is_any_close = bor(a, is_brace_close);
+    if is_any_close {
+      let closed = False();
+      let depth = open_blocks.inner.len;
+      let nested = depth > 0_u64;
+      if nested {
+        let top_at = depth - 1_u64;
+        let top = open_blocks.inner[top_at];
+        let closing = closing_code_point(kind: top.kind);
+        let matches = cp == closing;
+        if matches {
+          let finished = propagate close_innermost(components: components, open_blocks: &open_blocks);
+          set closed = True();
+        }
+      }
+      if closed {
+      } else {
+        let err_kind = if is_paren_close {
+          give ParseError::UnmatchedParenthesis();
+        } else if is_bracket_close {
+          give ParseError::UnmatchedBracket();
+        } else {
+          give ParseError::UnmatchedBrace();
+        }
+        let comp = Component::Error(error: err_kind);
+        let comp_pushed = propagate push_component(components: components, value: comp);
+      }
+      set pos = after;
+    } else {
+      let next_pos = propagate consume_component(source: source, length: length, pos: pos, cp: cp, after: after, text: text, components: components, open_blocks: &open_blocks);
+      set pos = next_pos;
+    }
+  }
+  loop @unclosed {
+    let depth = open_blocks.inner.len;
+    let nested = depth > 0_u64;
+    if nested {
+    } else {
+      break @unclosed;
+    }
+    let finished = propagate close_innermost(components: components, open_blocks: &open_blocks);
+  }
+  return Ok<unit, SyntaxError>(value: unit);
+}
+
+fn parse_component_values(source: &[u8]) -> result: Result<ComponentList, SyntaxError> reads(source) contract {
+  requires source^.len <= 16777216_u64;
+} {
+  doc "Tokenizes source into a flat preorder list of component values, per CSS Syntax Module Level 3 sections 3 through 5, or refuses with TooLarge when the output would pass a storage limit.";
+  let length = source^.len;
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  let components = box_slots_new::<Component>(capacity: 0_u64);
+  let consumed = propagate consume_component_values(source: source, length: length, text: &text, components: &components);
+  let list = ComponentList(components: move components, text: move text);
+  return Ok<ComponentList, SyntaxError>(value: move list);
+}
