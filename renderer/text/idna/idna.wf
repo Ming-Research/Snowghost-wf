@@ -1,4 +1,3 @@
-alias NormalizationError = pkg::text::normalization::NormalizationError;
 alias NormalizationForm = pkg::text::normalization::NormalizationForm;
 alias normalize = pkg::text::normalization::normalize;
 
@@ -57,7 +56,7 @@ fn label_content_of(nfc: &Box<Slots<u32>>, start: u64, end: u64, decoded: &Box<S
   requires start <= end;
   requires end <= nfc^.inner.len;
 } {
-  doc "Computes the validation content of one label nfc[start..end): for an xn-- label whose remainder is all ASCII, its Punycode decode into decoded (truncated to empty first), with ok False on a non-ASCII remainder or a decode failure; for any other label, ok is always True and decoded is left empty (the caller reads the label directly from nfc). is_xn tells the caller which content to use.";
+  doc "Computes the validation content of one label nfc[start..end): for an xn-- label whose remainder is all ASCII, its Punycode decode into decoded (truncated to empty first), with ok False on a non-ASCII remainder, a decode failure, or (Convert/Validate step 3) a decoded result that is empty or holds only ASCII code points; for any other label, ok is always True and decoded is left empty (the caller reads the label directly from nfc). is_xn tells the caller which content to use.";
   truncate_codepoints_to(buffer: decoded, length: 0_u64);
   let label = &nfc^.inner[start..end];
   let label_len = end -wrap start;
@@ -81,7 +80,22 @@ fn label_content_of(nfc: &Box<Slots<u32>>, start: u64, end: u64, decoded: &Box<S
         return no, is_xn;
       }
       let decoded_ok = punycode_decode(digits: remainder, output: decoded);
-      return decoded_ok, is_xn;
+      if decoded_ok {
+      } else {
+        let no = False();
+        return no, is_xn;
+      }
+      let decoded_len = decoded^.inner.len;
+      let decoded_ref = &decoded^.inner[0_u64..decoded_len];
+      let decoded_empty = decoded_len == 0_u64;
+      let decoded_ascii_only = all_ascii(content: decoded_ref);
+      let step3_error = bor(decoded_empty, decoded_ascii_only);
+      if step3_error {
+        let no = False();
+        return no, is_xn;
+      }
+      let yes = True();
+      return yes, is_xn;
     }
   }
   let yes = True();
@@ -94,16 +108,9 @@ fn scan_labels_pass1(nfc: &Box<Slots<u32>>, decoded: &Box<Slots<u32>>, nfc_scrat
   let total = nfc^.inner.len;
   let pos = 0_u64;
   let is_bidi_domain = False();
-  loop @labels {
-    let more = pos <= total;
-    if more {
-    } else {
-      break @labels;
-    }
-    let at_end = pos >= total;
-    if at_end {
-      break @labels;
-    }
+  loop @labels (
+    invariant pos_bounded: pos <= total
+  ) {
     let slice = &nfc^.inner[0_u64..total];
     let start = pos;
     let end = label_end(text: slice, from: start);
@@ -132,7 +139,13 @@ fn scan_labels_pass1(nfc: &Box<Slots<u32>>, decoded: &Box<Slots<u32>>, nfc_scrat
         set is_bidi_domain = True();
       }
     }
+    let done = end >= total;
+    if done {
+      let no = False();
+      return no, is_bidi_domain;
+    }
     let next = end +wrap 1_u64;
+    invariant next_bounded: next <= total;
     set pos = next;
   }
   let no = False();
@@ -143,11 +156,9 @@ fn scan_labels_pass2_bidi(nfc: &Box<Slots<u32>>, decoded: &Box<Slots<u32>>) -> r
   doc "Walks every label of nfc again and applies RFC 5893 section 2's six conditions to each non-empty label's content, once the domain is known to be a Bidi domain name. Returns False (an error) as soon as one label fails.";
   let total = nfc^.inner.len;
   let pos = 0_u64;
-  loop @labels {
-    let at_end = pos >= total;
-    if at_end {
-      break @labels;
-    }
+  loop @labels (
+    invariant pos_bounded: pos <= total
+  ) {
     let slice = &nfc^.inner[0_u64..total];
     let start = pos;
     let end = label_end(text: slice, from: start);
@@ -170,7 +181,12 @@ fn scan_labels_pass2_bidi(nfc: &Box<Slots<u32>>, decoded: &Box<Slots<u32>>) -> r
         return False();
       }
     }
+    let done = end >= total;
+    if done {
+      return True();
+    }
     let next = end +wrap 1_u64;
+    invariant next_bounded: next <= total;
     set pos = next;
   }
   return True();
@@ -181,11 +197,9 @@ fn assemble_labels(nfc: &Box<Slots<u32>>, output: &Box<Slots<u8>>) -> result: Bo
   let total = nfc^.inner.len;
   let pos = 0_u64;
   let first = True();
-  loop @labels {
-    let at_end = pos >= total;
-    if at_end {
-      break @labels;
-    }
+  loop @labels (
+    invariant pos_bounded: pos <= total
+  ) {
     if first {
       set first = False();
     } else {
@@ -226,7 +240,12 @@ fn assemble_labels(nfc: &Box<Slots<u32>>, output: &Box<Slots<u8>>) -> result: Bo
         return False();
       }
     }
+    let done = end >= total;
+    if done {
+      return True();
+    }
     let next = end +wrap 1_u64;
+    invariant next_bounded: next <= total;
     set pos = next;
   }
   return True();
