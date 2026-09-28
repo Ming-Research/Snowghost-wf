@@ -1,5 +1,3 @@
-Node: scope
-
 Decision: Snowghost implements a subset of the web platform chosen feature by feature, weighing how much mainstream sites and the applications AI coding tools generate use a feature against what it costs in performance, and where a feature would cost parallelism or speed while mattering little to what is rendered, or can be approximated without that cost, it is left out or approximated, because the goal is a light and fast platform for those sites and applications and performance outweighs strict conformance where the two conflict, instead of complete coverage of the web platform or a subset chosen by frequency of use alone.
 
 Decision: Snowghost's renderer is written in Whitefoot, because the project shows what Whitefoot's proofs give a renderer, namely memory safety, freedom from data races and proved independence of parallel work, and it drives Whitefoot's development with a large real program, instead of an established systems language.

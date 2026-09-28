@@ -1,11 +1,8 @@
 # Architecture
 
-Status: under discussion with the owner. The owner adopted the `pipeline`,
-`script` and `processes` decisions into the design tree; the `scope`
-decision is an amendment in [`design/amendments/`](../../../design/amendments/),
-revised with the owner's selection criteria and awaiting confirmation.
-Everything else here is reasoning, estimates and plans, not settled
-decisions.
+Status: the owner adopted its `scope`, `pipeline`, `script` and
+`processes` decisions into the design tree. Everything else here is
+reasoning, estimates and plans, not settled decisions.
 
 ## Question
 
