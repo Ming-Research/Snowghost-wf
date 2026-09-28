@@ -1,0 +1,124 @@
+const jt_c_word: Array<u8, 1> =[67_u8];
+
+const jt_d_word: Array<u8, 1> =[68_u8];
+
+const jt_l_word: Array<u8, 1> =[76_u8];
+
+const jt_r_word: Array<u8, 1> =[82_u8];
+
+const jt_t_word: Array<u8, 1> =[84_u8];
+
+const joining_u: u8 = 0_u8;
+
+const joining_c: u8 = 1_u8;
+
+const joining_d: u8 = 2_u8;
+
+const joining_l: u8 = 3_u8;
+
+const joining_r: u8 = 4_u8;
+
+const joining_t: u8 = 5_u8;
+
+fn joining_type_id(word: &[u8]) -> result: u8 reads(word) {
+  doc "Classifies one DerivedJoiningType.txt property value abbreviation (C, D, L, R, T) into its id; anything else, including the unlisted default, is joining_u (Non_Joining).";
+  let c_ref = &jt_c_word[0_u64..jt_c_word.len];
+  if field_equals(field: word, want: c_ref) {
+    return joining_c;
+  }
+  let d_ref = &jt_d_word[0_u64..jt_d_word.len];
+  if field_equals(field: word, want: d_ref) {
+    return joining_d;
+  }
+  let l_ref = &jt_l_word[0_u64..jt_l_word.len];
+  if field_equals(field: word, want: l_ref) {
+    return joining_l;
+  }
+  let r_ref = &jt_r_word[0_u64..jt_r_word.len];
+  if field_equals(field: word, want: r_ref) {
+    return joining_r;
+  }
+  let t_ref = &jt_t_word[0_u64..jt_t_word.len];
+  if field_equals(field: word, want: t_ref) {
+    return joining_t;
+  }
+  return joining_u;
+}
+
+fn set_joining_range(joining_by_cp: &Box<Array<u8>>, value: u8, start: u64, stop: u64) -> result: unit writes(joining_by_cp) {
+  doc "Sets joining_by_cp[cp] to value for every cp in start..stop, clamped to the table's length.";
+  for (cp in start..stop) {
+    let cp_ok = cp < joining_by_cp^.inner.len;
+    if cp_ok {
+      set joining_by_cp^.inner[cp] = value;
+    }
+  }
+  return unit;
+}
+
+fn parse_joining_line(text: &[u8], line_start: u64, line_stop: u64, joining_by_cp: &Box<Array<u8>>) -> result: unit reads(text), writes(joining_by_cp) contract {
+  requires line_stop <= text^.len;
+} {
+  doc "Parses one explicit RANGE;VALUE line of DerivedJoiningType.txt; a blank, comment, or malformed line does nothing.";
+  let empty = line_start >= line_stop;
+  if empty {
+    return unit;
+  }
+  let readable = line_start < text^.len;
+  if readable {
+  } else {
+    return unit;
+  }
+  let first = text^[line_start];
+  let comment = first == number_sign;
+  if comment {
+    return unit;
+  }
+  let semi = find_byte(text: text, from: line_start, stop: line_stop, target: semicolon);
+  let has_semi = semi < line_stop;
+  if has_semi {
+  } else {
+    return unit;
+  }
+  let range_field_end = trim_ws_end(text: text, from: line_start, stop: semi);
+  match parse_range(text: text, from: line_start, stop: range_field_end) {
+    Some(value: found) => {
+      let value_start_raw = semi +wrap 1_u64;
+      let value_start = skip_ws(text: text, from: value_start_raw, stop: line_stop);
+      let value_field_end = line_field_end(text: text, from: value_start, stop: line_stop);
+      let value_end = trim_ws_end(text: text, from: value_start, stop: value_field_end);
+      let ok = value_end <= line_stop;
+      if ok {
+        let word = &text^[value_start..value_end];
+        let id = joining_type_id(word: word);
+        let start64 = cvt::<u32, u64>(found.start);
+        let end64 = cvt::<u32, u64>(found.end);
+        let stop64 = end64 +wrap 1_u64;
+        set_joining_range(joining_by_cp: joining_by_cp, value: id, start: start64, stop: stop64);
+      }
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
+  }
+}
+
+fn parse_derived_joining_type(text: &[u8]) -> result: Box<Array<u8>> reads(text) {
+  doc "Builds the Joining_Type id (joining_u default, joining_c, joining_d, joining_l, joining_r, joining_t) for every code point from DerivedJoiningType.txt's explicit RANGE;VALUE lines, defaulted to joining_u (Non_Joining) per the file's documented @missing.";
+  let joining_by_cp = box_array_filled::<u8>(count: code_space, value: joining_u);
+  let length = text^.len;
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      return move joining_by_cp;
+    }
+    let found_stop = line_end(text: text, start: at);
+    let stop = imin(found_stop, length);
+    parse_joining_line(text: text, line_start: at, line_stop: stop, joining_by_cp: &joining_by_cp);
+    set at = stop +wrap 1_u64;
+  }
+  return move joining_by_cp;
+}

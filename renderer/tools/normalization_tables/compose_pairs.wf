@@ -1,0 +1,149 @@
+const composition_starter_capacity: u64 = 1024_u64;
+
+const composition_pair_capacity: u64 = 2048_u64;
+
+struct CompositionTables {
+  composition_id_by_cp: Box<Array<u16>>;
+  offsets: Box<Slots<u32>>;
+  counts: Box<Slots<u8>>;
+  combining: Box<Slots<u32>>;
+  composed: Box<Slots<u32>>;
+}
+
+fn build_composition_tables(data: &UnicodeDataTables, excluded: &Box<Array<u8>>) -> result: CompositionTables reads(data), reads(excluded) {
+  doc "Builds the primary canonical composition pairs: every raw two-code-point canonical decomposition (starter, mark) whose composed code point is not Full_Composition_Exclusion, grouped by starter. First counts each starter's pairs (a code-space pass), assigns 1-based ids to starters with at least one pair in code point order, and computes each id's offset into the shared combining/composed arrays; then places every pair at its starter's offset plus a per-starter cursor, in the order the raw entries were parsed (ascending by composed code point), so lookups scan a short, bounded run.";
+  let raw_len = data^.raw_len.inner.len;
+  let counts_by_cp = box_array_filled::<u16>(count: code_space, value: 0_u16);
+  for (i in 0_u64..raw_len) {
+    let klen = data^.raw_len.inner[i];
+    let pair = klen == 2_u8;
+    let composed_in_space = i < data^.raw_composed_cp.inner.len;
+    let val1_in_space = i < data^.raw_val1.inner.len;
+    if pair {
+      if composed_in_space {
+        if val1_in_space {
+          let composed_cp = data^.raw_composed_cp.inner[i];
+          let composed64 = cvt::<u32, u64>(composed_cp);
+          let in_space = composed64 < excluded^.inner.len;
+          let is_excluded = if in_space {
+            let flag = excluded^.inner[composed64];
+            give flag > 0_u8;
+          } else {
+            give False();
+          }
+          if is_excluded {
+          } else {
+            let starter = data^.raw_val1.inner[i];
+            let starter64 = cvt::<u32, u64>(starter);
+            let starter_in_space = starter64 < counts_by_cp.inner.len;
+            if starter_in_space {
+              let current = counts_by_cp.inner[starter64];
+              let next = current +wrap 1_u16;
+              set counts_by_cp.inner[starter64] = next;
+            }
+          }
+        }
+      }
+    }
+  }
+  let composition_id_by_cp = box_array_filled::<u16>(count: code_space, value: 0_u16);
+  let offsets = box_slots_new::<u32>(capacity: composition_starter_capacity);
+  let counts = box_slots_new::<u8>(capacity: composition_starter_capacity);
+  let cursors = box_array_filled::<u16>(count: composition_starter_capacity, value: 0_u16);
+  let running_offset = 0_u32;
+  for (cp in 0_u64..code_space) {
+    let count16 = counts_by_cp.inner[cp];
+    let has = count16 > 0_u16;
+    if has {
+      let count8 = cvt.wrap::<u16, u8>(count16);
+      let room_o = offsets.inner.len < offsets.inner.cap;
+      let room_c = counts.inner.len < counts.inner.cap;
+      let room = band(room_o, room_c);
+      if room {
+        place_back(window: &offsets.inner, value: running_offset);
+        place_back(window: &counts.inner, value: count8);
+        let id64 = offsets.inner.len;
+        let id16 = cvt.wrap::<u64, u16>(id64);
+        set composition_id_by_cp.inner[cp] = id16;
+        let count32 = cvt::<u16, u32>(count16);
+        set running_offset = running_offset +wrap count32;
+      }
+    }
+  }
+  let total_pairs = running_offset;
+  let total_pairs64 = cvt::<u32, u64>(total_pairs);
+  let combining = box_slots_new::<u32>(capacity: composition_pair_capacity);
+  let composed = box_slots_new::<u32>(capacity: composition_pair_capacity);
+  for (k in 0_u64..total_pairs64) {
+    let room_a = combining.inner.len < combining.inner.cap;
+    if room_a {
+      place_back(window: &combining.inner, value: 0_u32);
+    }
+    let room_b = composed.inner.len < composed.inner.cap;
+    if room_b {
+      place_back(window: &composed.inner, value: 0_u32);
+    }
+  }
+  for (i in 0_u64..raw_len) {
+    let klen = data^.raw_len.inner[i];
+    let pair = klen == 2_u8;
+    let composed_in_space = i < data^.raw_composed_cp.inner.len;
+    let val1_in_space = i < data^.raw_val1.inner.len;
+    let val2_in_space = i < data^.raw_val2.inner.len;
+    if pair {
+      if composed_in_space {
+        if val1_in_space {
+          if val2_in_space {
+            let composed_cp = data^.raw_composed_cp.inner[i];
+            let composed64 = cvt::<u32, u64>(composed_cp);
+            let in_space = composed64 < excluded^.inner.len;
+            let is_excluded = if in_space {
+              let flag = excluded^.inner[composed64];
+              give flag > 0_u8;
+            } else {
+              give False();
+            }
+            if is_excluded {
+            } else {
+              let starter = data^.raw_val1.inner[i];
+              let mark = data^.raw_val2.inner[i];
+              let starter64 = cvt::<u32, u64>(starter);
+              let starter_in_space = starter64 < composition_id_by_cp.inner.len;
+              if starter_in_space {
+                let comp_id = composition_id_by_cp.inner[starter64];
+                let has_id = comp_id > 0_u16;
+                if has_id {
+                  let comp_id64 = cvt::<u16, u64>(comp_id);
+                  let slot_index = comp_id64 -wrap 1_u64;
+                  let slot_ok = slot_index < offsets.inner.len;
+                  if slot_ok {
+                    let base = offsets.inner[slot_index];
+                    let base64 = cvt::<u32, u64>(base);
+                    let cursor_ok = slot_index < cursors.inner.len;
+                    if cursor_ok {
+                      let cursor = cursors.inner[slot_index];
+                      let cursor64 = cvt::<u16, u64>(cursor);
+                      let position = base64 +wrap cursor64;
+                      let position_ok = position < combining.inner.len;
+                      let position_ok2 = position < composed.inner.len;
+                      if position_ok {
+                        if position_ok2 {
+                          set combining.inner[position] = mark;
+                          set composed.inner[position] = composed_cp;
+                          let next_cursor = cursor +wrap 1_u16;
+                          set cursors.inner[slot_index] = next_cursor;
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let made = CompositionTables(composition_id_by_cp: move composition_id_by_cp, offsets: move offsets, counts: move counts, combining: move combining, composed: move composed);
+  return move made;
+}
