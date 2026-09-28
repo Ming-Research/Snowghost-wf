@@ -9,7 +9,9 @@ is pinned as the `whitefoot/` submodule.
 
 ## Project goal
 
-Reach, as early as possible, renderings and measurements that show whether an
+Snowghost exists to serve Whitefoot: it is the large real program that shows
+what Whitefoot gives a renderer and exposes what Whitefoot still lacks. Reach,
+as early as possible, renderings and measurements that show whether an
 end-to-end parallel and incremental pipeline written in Whitefoot beats the
 engines in use today, then grow to the subset of the web that mainstream
 sites and generated applications need.
@@ -155,10 +157,12 @@ the same targets on every push.
   Whitefoot's own AGENTS.md, as a branch and PR in its repository, never as
   an edit to the submodule's files. While that PR is open, a Snowghost work
   branch may pin its head.
-- State a Whitefoot gap as its minimal semantic example, apart from the
-  renderer code that exposed it, and record it under *Whitefoot requirements*
-  in `docs/todo.md` until Whitefoot resolves it. A renderer problem is fixed
-  in Snowghost, not by generalizing the language.
+- When a missing Whitefoot feature would bend Snowghost's implementation or
+  architecture, add the feature to Whitefoot instead of working around it.
+  State the gap as its minimal semantic example, apart from the renderer code
+  that exposed it, and record it under *Whitefoot requirements* in
+  `docs/todo.md` until Whitefoot resolves it. A problem that belongs to the
+  renderer alone is fixed in Snowghost, not by generalizing the language.
 
 ## Code and tests
 
