@@ -1,0 +1,812 @@
+fn ones_mask(bits: u32) -> result: u32 pure {
+  doc "A run of bits one-bits: (1 << bits) - 1.";
+  let one = 1_u32;
+  let shifted = ishl.wrap(one, bits);
+  let mask = shifted -wrap one;
+  return mask;
+}
+
+fn patch_component(components: &Box<Slots<Component>>, index: u64, value: Component) -> result: unit writes(components) {
+  doc "Overwrites the component at index with value, when index is still within the current bounds of components.";
+  let safe = index < components^.inner.len;
+  if safe {
+    set components^.inner[index] = value;
+  }
+  return unit;
+}
+
+fn skip_whitespace_run(source: &[u8], length: u64, start: u64) -> result: u64 reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "Returns the position of the first byte at or after start that is not raw whitespace, or length.";
+  let p = start;
+  loop @skip {
+    let has = p < length;
+    if has {
+      let b = source^[p];
+      let ws = is_whitespace_byte(b: b);
+      if ws {
+        let next_p = p +wrap 1_u64;
+        set p = next_p;
+      }
+      if ws {
+      } else {
+        break @skip;
+      }
+    } else {
+      break @skip;
+    }
+  }
+  return p;
+}
+
+fn consume_comment(source: &[u8], length: u64, start: u64) -> next: u64 reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "Skips a comment body from start, the position right after its opening /*, through the closing */ or to EOF. A comment produces no component.";
+  let pos = start;
+  loop @comment {
+    let has = pos < length;
+    if has {
+    } else {
+      break @comment;
+    }
+    let b = source^[pos];
+    let is_star = b == 42_u8;
+    if is_star {
+      let pos1 = pos +wrap 1_u64;
+      let has1 = pos1 < length;
+      if has1 {
+        let b1 = source^[pos1];
+        let is_slash = b1 == 47_u8;
+        if is_slash {
+          let after = pos1 +wrap 1_u64;
+          return after;
+        }
+      }
+    }
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+  }
+  return pos;
+}
+
+fn consume_block(source: &[u8], length: u64, start: u64, kind: u8, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Opens a parenthesis (kind 1), bracket (kind 2), or brace (kind 3) block at start, the position right after its opening byte, consumes its contents, and patches its end.";
+  let open_index = components^.inner.len;
+  let placeholder = if kind == 1_u8 {
+    give Component::ParenthesisBlock(end: 0_u32);
+  } else if kind == 2_u8 {
+    give Component::BracketBlock(end: 0_u32);
+  } else {
+    give Component::BraceBlock(end: 0_u32);
+  }
+  push_component(components: components, value: placeholder);
+  let ending_cp = if kind == 1_u8 {
+    give 41_u32;
+  } else if kind == 2_u8 {
+    give 93_u32;
+  } else {
+    give 125_u32;
+  }
+  let has_ending = True();
+  let after = consume_list_of_component_values(source: source, length: length, start: start, has_ending: has_ending, ending_cp: ending_cp, text: text, components: components);
+  let end_len = components^.inner.len;
+  let end32 = cvt.wrap::<u64, u32>(end_len);
+  let final_comp = if kind == 1_u8 {
+    give Component::ParenthesisBlock(end: end32);
+  } else if kind == 2_u8 {
+    give Component::BracketBlock(end: end32);
+  } else {
+    give Component::BraceBlock(end: end32);
+  }
+  patch_component(components: components, index: open_index, value: final_comp);
+  return after;
+}
+
+fn consume_function(source: &[u8], length: u64, start: u64, name: Span, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Opens a Function component named name at start, the position right after its opening parenthesis, consumes its contents, and patches its end.";
+  let open_index = components^.inner.len;
+  let placeholder = Component::Function(name: name, end: 0_u32);
+  push_component(components: components, value: placeholder);
+  let has_ending = True();
+  let after = consume_list_of_component_values(source: source, length: length, start: start, has_ending: has_ending, ending_cp: 41_u32, text: text, components: components);
+  let end_len = components^.inner.len;
+  let end32 = cvt.wrap::<u64, u32>(end_len);
+  let final_comp = Component::Function(name: name, end: end32);
+  patch_component(components: components, index: open_index, value: final_comp);
+  return after;
+}
+
+fn name_matches_url_ci(text: &Box<Slots<u8>>, span: Span) -> result: Bool reads(text) {
+  doc "True when span names exactly the three bytes u/U r/R l/L in text.";
+  let start64 = cvt::<u32, u64>(span.start);
+  let end64 = cvt::<u32, u64>(span.end);
+  let expected_end = start64 +wrap 3_u64;
+  let len_ok = end64 == expected_end;
+  if len_ok {
+  } else {
+    return False();
+  }
+  let within = end64 <= text^.inner.len;
+  if within {
+  } else {
+    return False();
+  }
+  let b0 = text^.inner[start64];
+  let idx1 = start64 +wrap 1_u64;
+  let b1 = text^.inner[idx1];
+  let idx2 = start64 +wrap 2_u64;
+  let b2 = text^.inner[idx2];
+  let u_ok_l = b0 == 117_u8;
+  let u_ok_r = b0 == 85_u8;
+  let u_ok = bor(u_ok_l, u_ok_r);
+  let r_ok_l = b1 == 114_u8;
+  let r_ok_r = b1 == 82_u8;
+  let r_ok = bor(r_ok_l, r_ok_r);
+  let l_ok_l = b2 == 108_u8;
+  let l_ok_r = b2 == 76_u8;
+  let l_ok = bor(l_ok_l, l_ok_r);
+  let a = band(u_ok, r_ok);
+  let result = band(a, l_ok);
+  return result;
+}
+
+fn consume_ident_like(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes an ident sequence at start and dispatches it as an Ident, a Function, or a url token, per CSS Syntax 4.3.4.";
+  let (name, after_name) = consume_ident_sequence(source: source, length: length, start: start, text: text);
+  let has_paren = after_name < length;
+  let opens = False();
+  if has_paren {
+    let b = source^[after_name];
+    let is_paren = b == 40_u8;
+    if is_paren {
+      set opens = True();
+    }
+  }
+  if opens {
+  } else {
+    let comp = Component::Ident(name: name);
+    push_component(components: components, value: comp);
+    return after_name;
+  }
+  let after_paren = after_name +wrap 1_u64;
+  let is_url = name_matches_url_ci(text: text, span: name);
+  if is_url {
+    let probe = skip_whitespace_run(source: source, length: length, start: after_paren);
+    let has_probe = probe < length;
+    let is_quote_probe = False();
+    if has_probe {
+      let pb = source^[probe];
+      let q_l = pb == 34_u8;
+      let q_r = pb == 39_u8;
+      let q = bor(q_l, q_r);
+      if q {
+        set is_quote_probe = True();
+      }
+    }
+    if is_quote_probe {
+      let n = consume_function(source: source, length: length, start: after_paren, name: name, text: text, components: components);
+      return n;
+    }
+    let n = consume_url_token(source: source, length: length, start: after_paren, text: text, components: components);
+    return n;
+  }
+  let n = consume_function(source: source, length: length, start: after_paren, name: name, text: text, components: components);
+  return n;
+}
+
+fn consume_numeric_token(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes a number at start and dispatches it as a Percentage, a Dimension, or a Number, per CSS Syntax 4.3.3.";
+  let (numeric, after) = consume_number(source: source, length: length, start: start, text: text);
+  let has_pct = after < length;
+  if has_pct {
+    let b = source^[after];
+    let is_pct = b == 37_u8;
+    if is_pct {
+      let comp = Component::Percentage(number: numeric);
+      push_component(components: components, value: comp);
+      let next_pos = after +wrap 1_u64;
+      return next_pos;
+    }
+  }
+  let would_ident = would_start_identifier(source: source, length: length, pos: after);
+  if would_ident {
+    let (unit_span, after_unit) = consume_ident_sequence(source: source, length: length, start: after, text: text);
+    let comp = Component::Dimension(number: numeric, unit_name: unit_span);
+    push_component(components: components, value: comp);
+    return after_unit;
+  }
+  let comp = Component::Number(number: numeric);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_unicode_range(source: &[u8], length: u64, start: u64, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes a unicode-range token's digits, wildcards and optional end value from start, the position right after u+ or U+, per CSS Syntax 4.3.11.";
+  let pos = start;
+  let count = 0_u64;
+  let value = 0_u32;
+  loop @digits {
+    let room = count < 6_u64;
+    if room {
+    } else {
+      break @digits;
+    }
+    let has = pos < length;
+    if has {
+    } else {
+      break @digits;
+    }
+    let b = source^[pos];
+    let hexd = ascii_hex_byte(b: b);
+    if hexd {
+    } else {
+      break @digits;
+    }
+    let hv = ascii_hex_value(b: b);
+    let scaled = value *wrap 16_u32;
+    set value = scaled +wrap hv;
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+    let next_count = count +wrap 1_u64;
+    set count = next_count;
+  }
+  let wild_count = 0_u64;
+  let remaining = 6_u64 -wrap count;
+  loop @wild {
+    let room = wild_count < remaining;
+    if room {
+    } else {
+      break @wild;
+    }
+    let has = pos < length;
+    if has {
+    } else {
+      break @wild;
+    }
+    let b = source^[pos];
+    let q = b == 63_u8;
+    if q {
+    } else {
+      break @wild;
+    }
+    let next_pos = pos +wrap 1_u64;
+    set pos = next_pos;
+    let next_wc = wild_count +wrap 1_u64;
+    set wild_count = next_wc;
+  }
+  let has_wild = wild_count > 0_u64;
+  if has_wild {
+    let shift = wild_count *wrap 4_u64;
+    let shift32 = cvt.wrap::<u64, u32>(shift);
+    let start_val = ishl.wrap(value, shift32);
+    let ones = ones_mask(bits: shift32);
+    let end_val = ior(start_val, ones);
+    let comp = Component::UnicodeRange(start: start_val, end: end_val);
+    push_component(components: components, value: comp);
+    return pos;
+  }
+  let range_end = value;
+  let final_pos = pos;
+  let has_dash = pos < length;
+  if has_dash {
+    let b = source^[pos];
+    let dash = b == 45_u8;
+    if dash {
+      let pos1 = pos +wrap 1_u64;
+      let has1 = pos1 < length;
+      if has1 {
+        let b1 = source^[pos1];
+        let hexd1 = ascii_hex_byte(b: b1);
+        if hexd1 {
+          let epos = pos1;
+          let ecount = 0_u64;
+          let evalue = 0_u32;
+          loop @edigits {
+            let eroom = ecount < 6_u64;
+            if eroom {
+            } else {
+              break @edigits;
+            }
+            let ehas = epos < length;
+            if ehas {
+            } else {
+              break @edigits;
+            }
+            let eb = source^[epos];
+            let ehex = ascii_hex_byte(b: eb);
+            if ehex {
+            } else {
+              break @edigits;
+            }
+            let ehv = ascii_hex_value(b: eb);
+            let escaled = evalue *wrap 16_u32;
+            set evalue = escaled +wrap ehv;
+            let next_epos = epos +wrap 1_u64;
+            set epos = next_epos;
+            let next_ecount = ecount +wrap 1_u64;
+            set ecount = next_ecount;
+          }
+          set range_end = evalue;
+          set final_pos = epos;
+        }
+      }
+    }
+  }
+  let comp = Component::UnicodeRange(start: value, end: range_end);
+  push_component(components: components, value: comp);
+  return final_pos;
+}
+
+fn consume_u(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading u or U as a unicode-range token when it is immediately followed by + and a hex digit or ?, or otherwise as an ordinary ident-like token.";
+  let has1 = after < length;
+  let is_range = False();
+  if has1 {
+    let b1 = source^[after];
+    let plus = b1 == 43_u8;
+    if plus {
+      let pos2 = after +wrap 1_u64;
+      let has2 = pos2 < length;
+      if has2 {
+        let b2 = source^[pos2];
+        let hexd = ascii_hex_byte(b: b2);
+        let quest = b2 == 63_u8;
+        let ok2 = bor(hexd, quest);
+        if ok2 {
+          set is_range = True();
+        }
+      }
+    }
+  }
+  if is_range {
+    let pos_plus = after +wrap 1_u64;
+    let n = consume_unicode_range(source: source, length: length, start: pos_plus, components: components);
+    return n;
+  }
+  let n = consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+  return n;
+}
+
+fn consume_hash(source: &[u8], length: u64, pos: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading # as a Hash token when a name follows, per CSS Syntax 4.3.3, or otherwise as a delim.";
+  let has1 = after < length;
+  let name_ok = False();
+  if has1 {
+    let (c1, after1) = peek_pp(source: source, length: length, pos: after);
+    let nc = name_char_cp(cp: c1);
+    if nc {
+      set name_ok = True();
+    } else {
+      let esc = would_start_valid_escape(source: source, length: length, pos: after);
+      if esc {
+        set name_ok = True();
+      }
+    }
+  }
+  if name_ok {
+  } else {
+    let comp = Component::Delim(code_point: 35_u32);
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_id = would_start_identifier(source: source, length: length, pos: after);
+  let kind = if is_id {
+    give HashKind::Id();
+  } else {
+    give HashKind::Unrestricted();
+  }
+  let (span, next) = consume_ident_sequence(source: source, length: length, start: after, text: text);
+  let comp = Component::Hash(name: span, kind: kind);
+  push_component(components: components, value: comp);
+  return next;
+}
+
+fn suffix_or_delim(source: &[u8], length: u64, after: u64, cp: u32, eq_kind: u8, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches $, *, ^ or ~ as their X= match token (eq_kind selects which) when = follows, or otherwise as a delim.";
+  let has1 = after < length;
+  let is_eq = False();
+  if has1 {
+    let b1 = source^[after];
+    let eqb = b1 == 61_u8;
+    if eqb {
+      set is_eq = True();
+    }
+  }
+  if is_eq {
+    let comp = if eq_kind == 3_u8 {
+      give Component::PrefixMatch();
+    } else if eq_kind == 4_u8 {
+      give Component::IncludeMatch();
+    } else if eq_kind == 5_u8 {
+      give Component::SuffixMatch();
+    } else {
+      give Component::SubstringMatch();
+    }
+    push_component(components: components, value: comp);
+    let next_pos = after +wrap 1_u64;
+    return next_pos;
+  }
+  let comp = Component::Delim(code_point: cp);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_dash(source: &[u8], length: u64, pos: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading hyphen-minus as a number, a CDC token, an ident-like token, or a delim, per CSS Syntax 4.3.3.";
+  let starts_num = would_start_number(source: source, length: length, pos: pos);
+  if starts_num {
+    let n = consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+    return n;
+  }
+  let pos1 = pos +wrap 1_u64;
+  let has1 = pos1 < length;
+  let is_cdc = False();
+  if has1 {
+    let b1 = source^[pos1];
+    let dash2 = b1 == 45_u8;
+    if dash2 {
+      let pos2 = pos1 +wrap 1_u64;
+      let has2 = pos2 < length;
+      if has2 {
+        let b2 = source^[pos2];
+        let gt = b2 == 62_u8;
+        if gt {
+          set is_cdc = True();
+        }
+      }
+    }
+  }
+  if is_cdc {
+    let comp = Component::Cdc();
+    push_component(components: components, value: comp);
+    let after = pos +wrap 3_u64;
+    return after;
+  }
+  let starts_ident = would_start_identifier(source: source, length: length, pos: pos);
+  if starts_ident {
+    let n = consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+    return n;
+  }
+  let comp = Component::Delim(code_point: 45_u32);
+  push_component(components: components, value: comp);
+  let after = pos +wrap 1_u64;
+  return after;
+}
+
+fn consume_slash(source: &[u8], length: u64, after: u64, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading solidus as a comment or a delim.";
+  let has1 = after < length;
+  let is_comment = False();
+  if has1 {
+    let b1 = source^[after];
+    let star = b1 == 42_u8;
+    if star {
+      set is_comment = True();
+    }
+  }
+  if is_comment {
+    let body_start = after +wrap 1_u64;
+    let end = consume_comment(source: source, length: length, start: body_start);
+    return end;
+  }
+  let comp = Component::Delim(code_point: 47_u32);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_lt(source: &[u8], length: u64, pos: u64, after: u64, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading less-than sign as a CDO token when followed by !-- or otherwise as a delim.";
+  let has1 = after < length;
+  let is_cdo = False();
+  if has1 {
+    let b1 = source^[after];
+    let bang = b1 == 33_u8;
+    if bang {
+      let p2 = after +wrap 1_u64;
+      let has2 = p2 < length;
+      if has2 {
+        let b2 = source^[p2];
+        let dash1 = b2 == 45_u8;
+        if dash1 {
+          let p3 = p2 +wrap 1_u64;
+          let has3 = p3 < length;
+          if has3 {
+            let b3 = source^[p3];
+            let dash2 = b3 == 45_u8;
+            if dash2 {
+              set is_cdo = True();
+            }
+          }
+        }
+      }
+    }
+  }
+  if is_cdo {
+    let comp = Component::Cdo();
+    push_component(components: components, value: comp);
+    let end = pos +wrap 4_u64;
+    return end;
+  }
+  let comp = Component::Delim(code_point: 60_u32);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_at(source: &[u8], length: u64, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading commercial at as an AtKeyword token when an identifier follows, per CSS Syntax 4.3.3, or otherwise as a delim.";
+  let starts_ident = would_start_identifier(source: source, length: length, pos: after);
+  if starts_ident {
+    let (span, next) = consume_ident_sequence(source: source, length: length, start: after, text: text);
+    let comp = Component::AtKeyword(name: span);
+    push_component(components: components, value: comp);
+    return next;
+  }
+  let comp = Component::Delim(code_point: 64_u32);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_pipe(source: &[u8], length: u64, after: u64, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Dispatches a leading vertical line as DashMatch, Column, or a delim.";
+  let has1 = after < length;
+  if has1 {
+    let b1 = source^[after];
+    let eq = b1 == 61_u8;
+    if eq {
+      let comp = Component::DashMatch();
+      push_component(components: components, value: comp);
+      let next_pos = after +wrap 1_u64;
+      return next_pos;
+    }
+    let pipe2 = b1 == 124_u8;
+    if pipe2 {
+      let comp = Component::Column();
+      push_component(components: components, value: comp);
+      let next_pos = after +wrap 1_u64;
+      return next_pos;
+    }
+  }
+  let comp = Component::Delim(code_point: 124_u32);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_component(source: &[u8], length: u64, pos: u64, cp: u32, after: u64, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes one component value that is not an unmatched closing token, dispatched on its leading preprocessed code point cp, per CSS Syntax 4.3.3.";
+  let is_ws = is_whitespace_cp(cp: cp);
+  if is_ws {
+    let end_ws = skip_whitespace_run(source: source, length: length, start: after);
+    let comp = Component::Whitespace();
+    push_component(components: components, value: comp);
+    return end_ws;
+  }
+  let is_quote_l = cp == 34_u32;
+  let is_quote_r = cp == 39_u32;
+  let is_quote = bor(is_quote_l, is_quote_r);
+  if is_quote {
+    let n = consume_string_token(source: source, length: length, start: after, quote: cp, text: text, components: components);
+    return n;
+  }
+  let is_hash = cp == 35_u32;
+  if is_hash {
+    let n = consume_hash(source: source, length: length, pos: pos, after: after, text: text, components: components);
+    return n;
+  }
+  let is_dollar = cp == 36_u32;
+  if is_dollar {
+    let n = suffix_or_delim(source: source, length: length, after: after, cp: cp, eq_kind: 5_u8, components: components);
+    return n;
+  }
+  let is_lparen = cp == 40_u32;
+  if is_lparen {
+    let n = consume_block(source: source, length: length, start: after, kind: 1_u8, text: text, components: components);
+    return n;
+  }
+  let is_star = cp == 42_u32;
+  if is_star {
+    let n = suffix_or_delim(source: source, length: length, after: after, cp: cp, eq_kind: 6_u8, components: components);
+    return n;
+  }
+  let is_plus = cp == 43_u32;
+  if is_plus {
+    let starts_num = would_start_number(source: source, length: length, pos: pos);
+    if starts_num {
+      let n = consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+      return n;
+    }
+    let comp = Component::Delim(code_point: cp);
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_comma = cp == 44_u32;
+  if is_comma {
+    let comp = Component::Comma();
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_dash = cp == 45_u32;
+  if is_dash {
+    let n = consume_dash(source: source, length: length, pos: pos, text: text, components: components);
+    return n;
+  }
+  let is_dot = cp == 46_u32;
+  if is_dot {
+    let starts_num = would_start_number(source: source, length: length, pos: pos);
+    if starts_num {
+      let n = consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+      return n;
+    }
+    let comp = Component::Delim(code_point: cp);
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_slash = cp == 47_u32;
+  if is_slash {
+    let n = consume_slash(source: source, length: length, after: after, components: components);
+    return n;
+  }
+  let is_digit_l = cp >= 48_u32;
+  let is_digit_r = cp <= 57_u32;
+  let is_digit = band(is_digit_l, is_digit_r);
+  if is_digit {
+    let n = consume_numeric_token(source: source, length: length, start: pos, text: text, components: components);
+    return n;
+  }
+  let is_colon = cp == 58_u32;
+  if is_colon {
+    let comp = Component::Colon();
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_semicolon = cp == 59_u32;
+  if is_semicolon {
+    let comp = Component::Semicolon();
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_lt = cp == 60_u32;
+  if is_lt {
+    let n = consume_lt(source: source, length: length, pos: pos, after: after, components: components);
+    return n;
+  }
+  let is_at = cp == 64_u32;
+  if is_at {
+    let n = consume_at(source: source, length: length, after: after, text: text, components: components);
+    return n;
+  }
+  let is_lbracket = cp == 91_u32;
+  if is_lbracket {
+    let n = consume_block(source: source, length: length, start: after, kind: 2_u8, text: text, components: components);
+    return n;
+  }
+  let is_backslash = cp == 92_u32;
+  if is_backslash {
+    let esc_ok = would_start_valid_escape(source: source, length: length, pos: pos);
+    if esc_ok {
+      let n = consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+      return n;
+    }
+    let comp = Component::Delim(code_point: cp);
+    push_component(components: components, value: comp);
+    return after;
+  }
+  let is_caret = cp == 94_u32;
+  if is_caret {
+    let n = suffix_or_delim(source: source, length: length, after: after, cp: cp, eq_kind: 3_u8, components: components);
+    return n;
+  }
+  let is_lbrace = cp == 123_u32;
+  if is_lbrace {
+    let n = consume_block(source: source, length: length, start: after, kind: 3_u8, text: text, components: components);
+    return n;
+  }
+  let is_pipe = cp == 124_u32;
+  if is_pipe {
+    let n = consume_pipe(source: source, length: length, after: after, components: components);
+    return n;
+  }
+  let is_tilde = cp == 126_u32;
+  if is_tilde {
+    let n = suffix_or_delim(source: source, length: length, after: after, cp: cp, eq_kind: 4_u8, components: components);
+    return n;
+  }
+  let is_u_upper = cp == 85_u32;
+  let is_u_lower = cp == 117_u32;
+  let is_u = bor(is_u_upper, is_u_lower);
+  if is_u {
+    let n = consume_u(source: source, length: length, pos: pos, after: after, text: text, components: components);
+    return n;
+  }
+  let starts_ident = would_start_identifier(source: source, length: length, pos: pos);
+  if starts_ident {
+    let n = consume_ident_like(source: source, length: length, start: pos, text: text, components: components);
+    return n;
+  }
+  let comp = Component::Delim(code_point: cp);
+  push_component(components: components, value: comp);
+  return after;
+}
+
+fn consume_list_of_component_values(source: &[u8], length: u64, start: u64, has_ending: Bool, ending_cp: u32, text: &Box<Slots<u8>>, components: &Box<Slots<Component>>) -> next: u64 reads(source), writes(text), writes(components) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes component values from start up to and including a matching ending_cp close token, when has_ending, or to EOF, per CSS Syntax 5.4.1 and 5.4.7. A mismatched close token becomes an Error component and consumption continues.";
+  let pos = start;
+  loop @list {
+    let has = pos < length;
+    if has {
+    } else {
+      break @list;
+    }
+    let (cp, after) = peek_pp(source: source, length: length, pos: pos);
+    let is_paren_close = cp == 41_u32;
+    let is_bracket_close = cp == 93_u32;
+    let is_brace_close = cp == 125_u32;
+    let a = bor(is_paren_close, is_bracket_close);
+    let is_any_close = bor(a, is_brace_close);
+    if is_any_close {
+      let same = cp == ending_cp;
+      let matches_ending = band(has_ending, same);
+      if matches_ending {
+        set pos = after;
+        break @list;
+      }
+      let err_kind = if is_paren_close {
+        give ParseError::UnmatchedParenthesis();
+      } else if is_bracket_close {
+        give ParseError::UnmatchedBracket();
+      } else {
+        give ParseError::UnmatchedBrace();
+      }
+      let comp = Component::Error(error: err_kind);
+      push_component(components: components, value: comp);
+      set pos = after;
+    } else {
+      let next_pos = consume_component(source: source, length: length, pos: pos, cp: cp, after: after, text: text, components: components);
+      set pos = next_pos;
+    }
+  }
+  return pos;
+}
+
+fn parse_component_values(source: &[u8]) -> list: ComponentList reads(source) contract {
+  requires source^.len <= 16777216_u64;
+} {
+  doc "Tokenizes source into a flat preorder list of component values, per CSS Syntax Module Level 3 sections 3 through 5.";
+  let length = source^.len;
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  let components = box_slots_new::<Component>(capacity: 0_u64);
+  let no_ending = False();
+  let end = consume_list_of_component_values(source: source, length: length, start: 0_u64, has_ending: no_ending, ending_cp: 0_u32, text: &text, components: &components);
+  return ComponentList(components: move components, text: move text);
+}
