@@ -128,6 +128,10 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
   let code_tree_allow_single = False();
   let code_tree_allow_empty = False();
   let code_table = propagate build_huffman_table(lengths: code_window, symbol_count: 19_u64, max_bits: 7_u32, allow_single: code_tree_allow_single, allow_empty: code_tree_allow_empty);
+  let code_fast_result = build_fast_lookup(table: &code_table);
+  let code_fast_bits = code_fast_result.bits;
+  let code_fast_len = code_fast_result.data.inner.len;
+  let code_fast = &code_fast_result.data.inner[0_u64..code_fast_len];
   let literal_lengths = slots_new::<u8, 286>();
   for @reserve_literal_lengths (
     at in 0_u64..286_u64,
@@ -153,7 +157,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
       break @expand_lengths;
     } else {
       let length_symbol = 0_u64;
-      match decode_table_symbol(state: state, input: input, table: &code_table) {
+      match decode_fast_symbol(state: state, input: input, fast: code_fast, max_bits: code_fast_bits) {
         Ok(value: decoded_symbol) => {
           set length_symbol = decoded_symbol;
         }
@@ -268,9 +272,17 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
   let literal_table = propagate build_huffman_table(lengths: literal_window, symbol_count: literal_count, max_bits: 15_u32, allow_single: literal_distance_allow_single, allow_empty: code_tree_allow_empty);
   let distance_allow_empty = True();
   let distance_table = propagate build_huffman_table(lengths: distance_window, symbol_count: distance_count, max_bits: 15_u32, allow_single: literal_distance_allow_single, allow_empty: distance_allow_empty);
+  let literal_fast_result = build_fast_lookup(table: &literal_table);
+  let literal_fast_bits = literal_fast_result.bits;
+  let literal_fast_len = literal_fast_result.data.inner.len;
+  let literal_fast = &literal_fast_result.data.inner[0_u64..literal_fast_len];
+  let distance_fast_result = build_fast_lookup(table: &distance_table);
+  let distance_fast_bits = distance_fast_result.bits;
+  let distance_fast_len = distance_fast_result.data.inner.len;
+  let distance_fast = &distance_fast_result.data.inner[0_u64..distance_fast_len];
   loop @dynamic_codes {
     let symbol = 0_u64;
-    match decode_table_symbol(state: state, input: input, table: &literal_table) {
+    match decode_fast_symbol(state: state, input: input, fast: literal_fast, max_bits: literal_fast_bits) {
       Ok(value: decoded_symbol) => {
         set symbol = decoded_symbol;
       }
@@ -281,13 +293,15 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
     let literal = symbol <= 255_u64;
     if literal {
       let byte = cvt::<u64, u8>(symbol);
-      match emit_byte(state: state, out: out, value: byte) {
-        Ok(value: emitted) => {
-        }
-        Err(error: emit_error) => {
-          return Err<unit, InflateError>(error: emit_error);
-        }
+      let out_room = out^.len;
+      let out_ok = state^.output_offset < out_room;
+      if out_ok {
+      } else {
+        let error = InflateError::OutputFull();
+        return Err<unit, InflateError>(error: error);
       }
+      set out^[state^.output_offset] = byte;
+      set state^.output_offset = state^.output_offset +wrap 1_u64;
     } else {
       let end_of_block = symbol == 256_u64;
       if end_of_block {
@@ -308,7 +322,7 @@ fn decode_dynamic(state: &InflateState, input: &[u8], out: &[u8]) -> result: Res
           let error = InflateError::InvalidDistance();
           return Err<unit, InflateError>(error: error);
         }
-        match decode_table_symbol(state: state, input: input, table: &distance_table) {
+        match decode_fast_symbol(state: state, input: input, fast: distance_fast, max_bits: distance_fast_bits) {
           Ok(value: decoded_distance) => {
             set distance_symbol = decoded_distance;
           }

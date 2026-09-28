@@ -139,13 +139,15 @@ fn decode_fixed(state: &InflateState, input: &[u8], out: &[u8]) -> result: Resul
     let literal = symbol <= 255_u64;
     if literal {
       let byte = cvt::<u64, u8>(symbol);
-      match emit_byte(state: state, out: out, value: byte) {
-        Ok(value: emitted) => {
-        }
-        Err(error: emit_error) => {
-          return Err<unit, InflateError>(error: emit_error);
-        }
+      let out_room = out^.len;
+      let out_ok = state^.output_offset < out_room;
+      if out_ok {
+      } else {
+        let error = InflateError::OutputFull();
+        return Err<unit, InflateError>(error: error);
       }
+      set out^[state^.output_offset] = byte;
+      set state^.output_offset = state^.output_offset +wrap 1_u64;
     } else {
       let end_of_block = symbol == 256_u64;
       if end_of_block {
@@ -215,6 +217,10 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
     }
     let stored_block = block_type == 0_u64;
     if stored_block {
+      let buffered_whole_bytes = ishr.wrap(state.bits, 3_u32);
+      let buffered_whole_bytes64 = cvt::<u32, u64>(buffered_whole_bytes);
+      let realigned_offset = state.input_offset -wrap buffered_whole_bytes64;
+      set state.input_offset = realigned_offset;
       set state.hold = 0_u64;
       set state.bits = 0_u32;
       let length_bytes_remaining = input_length -wrap state.input_offset;
@@ -285,30 +291,33 @@ fn inflate(out: &[u8], input: &[u8]) -> result: Result<u64, InflateError> reads(
         return Err<u64, InflateError>(error: error);
       }
       let copied = 0_u64;
+      let stored_room = input^.len;
+      let dest_room = out^.len;
       loop @copy_stored {
         let copy_done = copied == copy_length;
         if copy_done {
           break @copy_stored;
         } else {
           let source_index = state.input_offset +wrap copied;
-          let stored_room = input^.len;
+          let dest_index = state.output_offset +wrap copied;
           let source_in_input = source_index < stored_room;
           if source_in_input {
           } else {
             let error = InflateError::Truncated();
             return Err<u64, InflateError>(error: error);
           }
-          let byte = input^[source_index];
-          match emit_byte(state: &state, out: out, value: byte) {
-            Ok(value: emitted) => {
-            }
-            Err(error: emit_error) => {
-              return Err<u64, InflateError>(error: emit_error);
-            }
+          let dest_in_output = dest_index < dest_room;
+          if dest_in_output {
+          } else {
+            let error = InflateError::OutputFull();
+            return Err<u64, InflateError>(error: error);
           }
+          let byte = input^[source_index];
+          set out^[dest_index] = byte;
           set copied = copied +wrap 1_u64;
         }
       }
+      set state.output_offset = state.output_offset +wrap copy_length;
       set state.input_offset = state.input_offset +wrap copy_length;
     } else {
       let fixed_block = block_type == 1_u64;

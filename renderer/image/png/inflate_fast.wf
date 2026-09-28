@@ -1,0 +1,171 @@
+fn bit_reverse_low(value: u64, bits: u32) -> result: u64 pure {
+  doc "Reverses the low bits bits of value, most significant becoming least; used to turn a canonical MSB-first Huffman code into the key a peeked, LSB-first bit reservoir compares against.";
+  let result = 0_u64;
+  let remaining = bits;
+  let v = value;
+  loop @rev {
+    let done = remaining == 0_u32;
+    if done {
+      break @rev;
+    }
+    let bit = iand(v, 1_u64);
+    let shifted = ishl.wrap(result, 1_u32);
+    set result = ior(shifted, bit);
+    set v = ishr.wrap(v, 1_u32);
+    set remaining = remaining -wrap 1_u32;
+  }
+  return result;
+}
+
+struct FastTable {
+  data: Box<Array<u16>>;
+  bits: u32;
+}
+
+fn actual_max_length(table: &HuffmanTable) -> result: u32 reads(table.counts), reads(table.max_bits) {
+  doc "Returns the longest code length that table.counts actually uses, so build_fast_lookup can size its table to the tree's real depth instead of always to max_bits.";
+  let ceiling = table^.max_bits;
+  let best = 1_u32;
+  let l = 1_u32;
+  loop @scan_lengths {
+    let done = l > ceiling;
+    if done {
+      break @scan_lengths;
+    }
+    let l_index = cvt::<u32, u64>(l);
+    let room = table^.counts.len;
+    let ok = l_index < room;
+    let count_l = 0_u64;
+    if ok {
+      set count_l = table^.counts[l_index];
+    }
+    let nonzero = count_l > 0_u64;
+    if nonzero {
+      set best = l;
+    }
+    set l = l +wrap 1_u32;
+  }
+  return best;
+}
+
+fn build_fast_lookup(table: &HuffmanTable) -> result: FastTable reads(table.counts), reads(table.symbols), reads(table.max_bits) {
+  doc "Builds a direct 2^max_bits lookup table from a canonical HuffmanTable, sized to the tree's actual longest code rather than the table's ceiling: each slot packs a decoded symbol and its code length as (symbol << 4) | length, replicated across every peeked value whose low length bits match that symbol's code, so decode_fast_symbol resolves one symbol in O(1).";
+  let max_bits = actual_max_length(table: table);
+  let table_size = ishl.wrap(1_u64, max_bits);
+  let size_ok = table_size <= 1073741824_u64;
+  let sized = table_size;
+  if size_ok {
+  } else {
+    set sized = 0_u64;
+  }
+  let fast = box_array_filled::<u16>(count: sized, value: 0_u16);
+  if size_ok {
+    let code = 0_u64;
+    let offset = 0_u64;
+    let l = 1_u32;
+    loop @lengths {
+      let lengths_done = l > max_bits;
+      if lengths_done {
+        break @lengths;
+      }
+      let l_index = cvt::<u32, u64>(l);
+      let counts_room = table^.counts.len;
+      let l_ok = l_index < counts_room;
+      let count_l = 0_u64;
+      if l_ok {
+        set count_l = table^.counts[l_index];
+      }
+      let shift_amount = max_bits -wrap l;
+      let fill_count = ishl.wrap(1_u64, shift_amount);
+      let i = 0_u64;
+      loop @symbols_at_length {
+        let symbols_done = i == count_l;
+        if symbols_done {
+          break @symbols_at_length;
+        }
+        let sym_index = offset +wrap i;
+        let symbols_room = table^.symbols.len;
+        let sym_ok = sym_index < symbols_room;
+        let symbol = 0_u64;
+        if sym_ok {
+          set symbol = table^.symbols[sym_index];
+        }
+        let reversed = bit_reverse_low(value: code, bits: l);
+        let symbol16 = cvt.wrap::<u64, u16>(symbol);
+        let l16 = cvt.wrap::<u32, u16>(l);
+        let sym_shifted = ishl.wrap(symbol16, 4_u32);
+        let packed = ior(sym_shifted, l16);
+        let combo = 0_u64;
+        loop @fill_entries {
+          let fill_done = combo == fill_count;
+          if fill_done {
+            break @fill_entries;
+          }
+          let combo_shifted = ishl.wrap(combo, l);
+          let idx = ior(reversed, combo_shifted);
+          let fast_room = fast.inner.len;
+          let idx_ok = idx < fast_room;
+          if idx_ok {
+            set fast.inner[idx] = packed;
+          }
+          set combo = combo +wrap 1_u64;
+        }
+        set code = code +wrap 1_u64;
+        set i = i +wrap 1_u64;
+      }
+      set offset = offset +wrap count_l;
+      set code = ishl.wrap(code, 1_u32);
+      set l = l +wrap 1_u32;
+    }
+  }
+  let result = FastTable(data: move fast, bits: max_bits);
+  return move result;
+}
+
+fn decode_fast_symbol(state: &InflateState, input: &[u8], fast: &[u16], max_bits: u32) -> result: Result<u64, InflateError> reads(input), reads(fast), writes(state.input_offset), writes(state.hold), writes(state.bits) {
+  doc "Decodes one Huffman symbol in O(1) by peeking max_bits from the bit reservoir and consulting a table build_fast_lookup built, tolerating fewer real bits only at the true end of input.";
+  loop @fill_fast {
+    let enough = state^.bits >= max_bits;
+    if enough {
+      break @fill_fast;
+    }
+    let input_length = input^.len;
+    let input_done = state^.input_offset >= input_length;
+    if input_done {
+      break @fill_fast;
+    }
+    let next_byte = input^[state^.input_offset];
+    let next_word = cvt::<u8, u64>(next_byte);
+    let shifted = ishl.wrap(next_word, state^.bits);
+    set state^.hold = ior(state^.hold, shifted);
+    set state^.bits = state^.bits +wrap 8_u32;
+    set state^.input_offset = state^.input_offset +wrap 1_u64;
+  }
+  let mask_high = ishl.wrap(1_u64, max_bits);
+  let mask = mask_high -wrap 1_u64;
+  let idx = iand(state^.hold, mask);
+  let room = fast^.len;
+  let in_range = idx < room;
+  let packed = 0_u16;
+  if in_range {
+    set packed = fast^[idx];
+  }
+  let length16 = iand(packed, 15_u16);
+  let length = cvt::<u16, u32>(length16);
+  let zero_length = length == 0_u32;
+  if zero_length {
+    let error = InflateError::InvalidHuffmanCode();
+    return Err<u64, InflateError>(error: error);
+  }
+  let have_enough = state^.bits >= length;
+  if have_enough {
+  } else {
+    let error = InflateError::Truncated();
+    return Err<u64, InflateError>(error: error);
+  }
+  set state^.hold = ishr.wrap(state^.hold, length);
+  set state^.bits = state^.bits -wrap length;
+  let symbol16 = ishr.wrap(packed, 4_u32);
+  let symbol = cvt::<u16, u64>(symbol16);
+  return Ok<u64, InflateError>(value: symbol);
+}
