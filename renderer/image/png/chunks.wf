@@ -8,10 +8,7 @@ struct Header {
 
 struct ParsedPng {
   header: Header;
-  plte_start: u64;
-  plte_count: u64;
-  trns_start: u64;
-  trns_count: u64;
+  colors: ColorChunks;
   idat: Box<Slots<u8>>;
 }
 
@@ -218,7 +215,7 @@ fn pad_stream(stream: &Box<Slots<u8>>) -> result: Result<u64, PngError> writes(s
 fn parse_chunks(data: &[u8], table: &Array<u32, 256>) -> outcome: Result<ParsedPng, PngError> reads(data), reads(table) contract {
   requires 8_u64 <= data^.len;
 } {
-  doc "Scans the chunk stream after the 8-byte signature, checking every chunk CRC, validating IHDR, capturing PLTE and tRNS as offsets into data, and concatenating IDAT data; stops at IEND.";
+  doc "Scans the chunk stream after the 8-byte signature up to IEND, checking every chunk CRC, validating IHDR and the chunk order, reading PLTE and tRNS into the image's color chunks, and concatenating the IDAT data.";
   let length = data^.len;
   let offset = 8_u64;
   let chunk_index = 0_u64;
@@ -226,11 +223,7 @@ fn parse_chunks(data: &[u8], table: &Array<u32, 256>) -> outcome: Result<ParsedP
   let not_interlaced = False();
   let header = Header(width: 0_u32, height: 0_u32, bit_depth: 0_u8, color: no_color, interlaced: not_interlaced);
   let header_seen = False();
-  let plte_start = 0_u64;
-  let plte_count = 0_u64;
-  let has_palette = False();
-  let trns_start = 0_u64;
-  let trns_count = 0_u64;
+  let colors = no_color_chunks();
   let idat = box_slots_new::<u8>(capacity: 0_u64);
   let idat_seen = False();
   let idat_closed = False();
@@ -262,6 +255,7 @@ fn parse_chunks(data: &[u8], table: &Array<u32, 256>) -> outcome: Result<ParsedP
       let error = PngError::Malformed();
       return Err<ParsedPng, PngError>(error: error);
     }
+    let chunk = &data^[data_start..data_end];
     let is_ihdr = chunk_type_is(data: data, at: type_at, name: &ihdr_name);
     let is_plte = chunk_type_is(data: data, at: type_at, name: &plte_name);
     let is_idat = chunk_type_is(data: data, at: type_at, name: &idat_name);
@@ -296,39 +290,27 @@ fn parse_chunks(data: &[u8], table: &Array<u32, 256>) -> outcome: Result<ParsedP
       let error = PngError::Malformed();
       return Err<ParsedPng, PngError>(error: error);
     }
+    let indexed = is_palette(color: header.color);
     if is_plte {
-      match header.color {
-        Palette() => {
-          let nonempty = chunk_length > 0_u64;
-          let partial_entry = chunk_length % 3_u64;
-          let whole_entries = partial_entry == 0_u64;
-          let within_table = chunk_length <= 768_u64;
-          let shaped = band(nonempty, whole_entries);
-          let valid = band(shaped, within_table);
-          let before_idat = bnot(idat_seen);
-          let placed = band(valid, before_idat);
-          if placed {
-          } else {
-            let error = PngError::Malformed();
-            return Err<ParsedPng, PngError>(error: error);
-          }
-          set plte_start = data_start;
-          set plte_count = chunk_length / 3_u64;
-          set has_palette = True();
+      if indexed {
+        let nonempty = chunk_length > 0_u64;
+        let partial_entry = chunk_length % 3_u64;
+        let whole_entries = partial_entry == 0_u64;
+        let within_table = chunk_length <= 768_u64;
+        let shaped = band(nonempty, whole_entries);
+        let valid = band(shaped, within_table);
+        let before_idat = bnot(idat_seen);
+        let placed = band(valid, before_idat);
+        if placed {
+        } else {
+          let error = PngError::Malformed();
+          return Err<ParsedPng, PngError>(error: error);
         }
-        Gray() => {
-        }
-        Rgb() => {
-        }
-        GrayAlpha() => {
-        }
-        Rgba() => {
-        }
+        store_palette(colors: &colors, entries: chunk);
       }
     }
     if is_trns {
-      set trns_start = data_start;
-      set trns_count = chunk_length;
+      store_transparency(colors: &colors, color: header.color, chunk: chunk);
     }
     if is_idat {
       if idat_closed {
@@ -353,23 +335,13 @@ fn parse_chunks(data: &[u8], table: &Array<u32, 256>) -> outcome: Result<ParsedP
     let error = PngError::Malformed();
     return Err<ParsedPng, PngError>(error: error);
   }
-  match header.color {
-    Palette() => {
-      if has_palette {
-      } else {
-        let error = PngError::Malformed();
-        return Err<ParsedPng, PngError>(error: error);
-      }
-    }
-    Gray() => {
-    }
-    Rgb() => {
-    }
-    GrayAlpha() => {
-    }
-    Rgba() => {
-    }
+  let indexed = is_palette(color: header.color);
+  let no_palette = colors.palette_count == 0_u64;
+  let palette_missing = band(indexed, no_palette);
+  if palette_missing {
+    let error = PngError::Malformed();
+    return Err<ParsedPng, PngError>(error: error);
   }
-  let parsed = ParsedPng(header: header, plte_start: plte_start, plte_count: plte_count, trns_start: trns_start, trns_count: trns_count, idat: move idat);
+  let parsed = ParsedPng(header: header, colors: colors, idat: move idat);
   return Ok<ParsedPng, PngError>(value: move parsed);
 }
