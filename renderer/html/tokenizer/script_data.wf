@@ -1,7 +1,57 @@
+enum ScriptMode {
+  Normal();
+  Escaped();
+  DoubleEscaped();
+}
+
+const script_word: Array<u8, 6> = "script";
+
+fn double_escape_word(source: &[u8], output: &TokenText, start: u64) -> (is_script: Bool, next: u64) reads(source), writes(output) {
+  doc "Consumes the script data double escape start/end states' ASCII-letter run from start, emitting each letter as-is (not lowercased) into output's text, and stopping at (and emitting) the first whitespace, solidus or greater-than byte, or reconsuming any other byte unconsumed. is_script tells whether the run was exactly the six letters of \"script\", case-insensitively.";
+  let position = start;
+  let matches_script = True();
+  let letters_seen = 0_u64;
+  loop @word {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_alpha = is_ascii_char_alpha(ch: ch);
+    if is_alpha {
+      let lowered = ascii_lower_char(ch: ch);
+      let in_range = letters_seen < 6_u64;
+      let expected = if in_range {
+        let byte = script_word[letters_seen];
+        let widened = cvt::<u8, u32>(byte);
+        give widened;
+      } else {
+        give 0_u32;
+      }
+      let matches_letter = lowered == expected;
+      let letter_ok = band(in_range, matches_letter);
+      if letter_ok {
+      } else {
+        set matches_script = False();
+      }
+      push_codepoint(text: &output^.text, cp: ch);
+      set letters_seen = letters_seen +wrap 1_u64;
+      set position = after;
+    } else {
+      let is_terminator = is_end_tag_terminator(ch: ch);
+      if is_terminator {
+        push_codepoint(text: &output^.text, cp: ch);
+        let saw_six = letters_seen == 6_u64;
+        let is_script = band(matches_script, saw_six);
+        return is_script, after;
+      }
+      return False(), position;
+    }
+  }
+  return False(), position;
+}
+
 fn scan_script_data(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) -> result: Token reads(source), writes(tokenizer), writes(output) {
-  doc "Runs the script data state and its escaped family (13.2.5.4, 13.2.5.15, 13.2.5.18-13.2.5.25) from tokenizer's position. The script data double escaped states are not modeled: a nested \"<script\" appearing inside an escaped comment-like span is treated as ordinary text rather than opening a second escape level, which only changes behavior for that doubly-nested construct.";
+  doc "Runs the script data state and its escaped and double escaped families (13.2.5.4, 13.2.5.15, 13.2.5.18-13.2.5.31) from tokenizer's position.";
   let position = tokenizer^.position;
-  let escaped = False();
+  let mode = ScriptMode::Normal();
+  let escaped_flag = False();
   let dash_count = 0_u64;
   loop @run {
     let (ch, after) = next_char(source: source, pos: position);
@@ -21,78 +71,111 @@ fn scan_script_data(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) ->
     }
     let is_lt = ch == less_than_char;
     if is_lt {
-      if escaped {
-        let (ch2, after2) = next_char(source: source, pos: after);
-        let is_slash = ch2 == solidus_char;
-        if is_slash {
-          let (ch3, after3) = next_char(source: source, pos: after2);
-          let is_alpha3 = is_ascii_char_alpha(ch: ch3);
-          if is_alpha3 {
-            let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
-            if produced {
-              return token;
-            }
-            set position = next;
-            set dash_count = 0_u64;
-          } else {
-            push_codepoint(text: &output^.text, cp: less_than_char);
-            push_codepoint(text: &output^.text, cp: solidus_char);
-            set position = after2;
-            set dash_count = 0_u64;
-          }
-        } else {
-          push_codepoint(text: &output^.text, cp: less_than_char);
-          set position = after;
-          set dash_count = 0_u64;
-        }
-      } else {
-        let (ch2, after2) = next_char(source: source, pos: after);
-        let is_slash = ch2 == solidus_char;
-        if is_slash {
-          let (ch3, after3) = next_char(source: source, pos: after2);
-          let is_alpha3 = is_ascii_char_alpha(ch: ch3);
-          if is_alpha3 {
-            let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
-            if produced {
-              return token;
-            }
-            set position = next;
-          } else {
-            push_codepoint(text: &output^.text, cp: less_than_char);
-            push_codepoint(text: &output^.text, cp: solidus_char);
-            set position = after2;
-          }
-        } else {
-          let is_bang = ch2 == bang_char;
-          if is_bang {
-            push_codepoint(text: &output^.text, cp: less_than_char);
-            push_codepoint(text: &output^.text, cp: bang_char);
+      match mode {
+        Normal() => {
+          let (ch2, after2) = next_char(source: source, pos: after);
+          let is_slash = ch2 == solidus_char;
+          if is_slash {
             let (ch3, after3) = next_char(source: source, pos: after2);
-            let is_dash3 = ch3 == dash_char;
-            if is_dash3 {
-              push_codepoint(text: &output^.text, cp: dash_char);
-              let (ch4, after4) = next_char(source: source, pos: after3);
-              let is_dash4 = ch4 == dash_char;
-              if is_dash4 {
-                push_codepoint(text: &output^.text, cp: dash_char);
-                set escaped = True();
-                set dash_count = 2_u64;
-                set position = after4;
-              } else {
-                set position = after3;
+            let is_alpha3 = is_ascii_char_alpha(ch: ch3);
+            if is_alpha3 {
+              let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
+              if produced {
+                return token;
               }
+              set position = next;
             } else {
+              push_codepoint(text: &output^.text, cp: less_than_char);
+              push_codepoint(text: &output^.text, cp: solidus_char);
               set position = after2;
             }
           } else {
-            push_codepoint(text: &output^.text, cp: less_than_char);
+            let is_bang = ch2 == bang_char;
+            if is_bang {
+              push_codepoint(text: &output^.text, cp: less_than_char);
+              push_codepoint(text: &output^.text, cp: bang_char);
+              let (ch3, after3) = next_char(source: source, pos: after2);
+              let is_dash3 = ch3 == dash_char;
+              if is_dash3 {
+                push_codepoint(text: &output^.text, cp: dash_char);
+                let (ch4, after4) = next_char(source: source, pos: after3);
+                let is_dash4 = ch4 == dash_char;
+                if is_dash4 {
+                  push_codepoint(text: &output^.text, cp: dash_char);
+                  set mode = ScriptMode::Escaped();
+                  set escaped_flag = True();
+                  set dash_count = 2_u64;
+                  set position = after4;
+                } else {
+                  set position = after3;
+                }
+              } else {
+                set position = after2;
+              }
+            } else {
+              push_codepoint(text: &output^.text, cp: less_than_char);
+              set position = after;
+            }
+          }
+        }
+        Escaped() => {
+          let (ch2, after2) = next_char(source: source, pos: after);
+          let is_slash = ch2 == solidus_char;
+          if is_slash {
+            let (ch3, after3) = next_char(source: source, pos: after2);
+            let is_alpha3 = is_ascii_char_alpha(ch: ch3);
+            if is_alpha3 {
+              let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
+              if produced {
+                return token;
+              }
+              set position = next;
+              set dash_count = 0_u64;
+            } else {
+              push_codepoint(text: &output^.text, cp: less_than_char);
+              push_codepoint(text: &output^.text, cp: solidus_char);
+              set position = after2;
+              set dash_count = 0_u64;
+            }
+          } else {
+            let is_alpha2 = is_ascii_char_alpha(ch: ch2);
+            if is_alpha2 {
+              push_codepoint(text: &output^.text, cp: less_than_char);
+              let (is_script, next) = double_escape_word(source: source, output: output, start: after);
+              if is_script {
+                set mode = ScriptMode::DoubleEscaped();
+              }
+              set position = next;
+              set dash_count = 0_u64;
+            } else {
+              push_codepoint(text: &output^.text, cp: less_than_char);
+              set position = after;
+              set dash_count = 0_u64;
+            }
+          }
+        }
+        DoubleEscaped() => {
+          push_codepoint(text: &output^.text, cp: less_than_char);
+          let (ch2, after2) = next_char(source: source, pos: after);
+          let is_slash = ch2 == solidus_char;
+          if is_slash {
+            push_codepoint(text: &output^.text, cp: solidus_char);
+            let (is_script, next) = double_escape_word(source: source, output: output, start: after2);
+            if is_script {
+              set mode = ScriptMode::Escaped();
+            }
+            set position = next;
+          } else {
             set position = after;
           }
+          set dash_count = 0_u64;
         }
       }
     } else {
       let is_dash = ch == dash_char;
-      if band(escaped, is_dash) {
+      let in_escape = escaped_flag;
+      let escaped_dash = band(in_escape, is_dash);
+      if escaped_dash {
         push_codepoint(text: &output^.text, cp: dash_char);
         let at_two = dash_count >= 2_u64;
         if at_two {
@@ -102,12 +185,13 @@ fn scan_script_data(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) ->
         set position = after;
       } else {
         let is_gt = ch == greater_than_char;
-        let closing = band(escaped, is_gt);
+        let closing = band(in_escape, is_gt);
         let at_two2 = dash_count >= 2_u64;
         let closes = band(closing, at_two2);
         if closes {
           push_codepoint(text: &output^.text, cp: greater_than_char);
-          set escaped = False();
+          set mode = ScriptMode::Normal();
+          set escaped_flag = False();
           set dash_count = 0_u64;
           set position = after;
         } else {
