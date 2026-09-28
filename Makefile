@@ -18,7 +18,7 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
-	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed
+	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed oracle-idna
 
 check: compiler renderer design-lint
 
@@ -73,6 +73,9 @@ oracle-css: $(BUILD)/css_syntax_oracle
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
+
+oracle-idna: $(BUILD)/idna_oracle
+	@cd $(ROOT) && $(PY) -B tests/text/idna_oracle.py build/oracle/idna/IdnaTestV2.txt $<
 
 # Decodes the speed set three times with each decoder, single-threaded.
 SPEED_SET = $(sort $(wildcard $(ORACLE)/png-speed/*.png))
