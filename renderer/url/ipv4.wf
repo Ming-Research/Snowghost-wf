@@ -1,0 +1,496 @@
+const ipv4_number_ceiling: u64 = 4294967296_u64;
+
+fn parse_ipv4_number(part: &[u8]) -> result: Option<u64> reads(part) {
+  doc "The IPv4 number parser: reads an optional 0x/0X (radix 16) or leading 0 (radix 8) prefix, otherwise radix 10, and returns the mathematical value of the remaining radix-R digits, saturated at ipv4_number_ceiling (already past every threshold parse_ipv4_address checks). None for an empty input or a digit outside the radix.";
+  let length = part^.len;
+  let empty = length == 0_u64;
+  if empty {
+    return None<u64>();
+  }
+  let radix = 10_u64;
+  let start = 0_u64;
+  let has_two = length >= 2_u64;
+  if has_two {
+    let b0 = part^[0_u64];
+    let b1 = part^[1_u64];
+    let zero = b0 == 48_u8;
+    let is_x = b1 == 120_u8;
+    let is_xu = b1 == 88_u8;
+    let is_hex_prefix = bor(is_x, is_xu);
+    let hex_form = band(zero, is_hex_prefix);
+    if hex_form {
+      set radix = 16_u64;
+      set start = 2_u64;
+    } else if zero {
+      set radix = 8_u64;
+      set start = 1_u64;
+    }
+  }
+  let remaining_empty = start == length;
+  if remaining_empty {
+    return Some<u64>(value: 0_u64);
+  }
+  let value = 0_u64;
+  for (at in start..length) {
+    let byte = part^[at];
+    let is_hex = is_ascii_hex_digit(byte: byte);
+    if is_hex {
+    } else {
+      return None<u64>();
+    }
+    let digit8 = hex_digit_value(byte: byte);
+    let digit = cvt::<u8, u64>(digit8);
+    let in_radix = digit < radix;
+    if in_radix {
+    } else {
+      return None<u64>();
+    }
+    let over_cap = value > ipv4_number_ceiling;
+    if over_cap {
+    } else {
+      let scaled = value *wrap radix;
+      let candidate = scaled +wrap digit;
+      let too_big = candidate > ipv4_number_ceiling;
+      if too_big {
+        set value = ipv4_number_ceiling;
+      } else {
+        set value = candidate;
+      }
+    }
+  }
+  return Some<u64>(value: value);
+}
+
+fn find_dot_or_end(input: &[u8], start: u64, length: u64) -> result: u64 reads(input) contract {
+  requires start <= length;
+  requires length == input^.len;
+  ensures result <= length;
+  ensures result >= start;
+} {
+  doc "Returns the index of the first U+002E at or after start, or length when there is none.";
+  let pos = start;
+  loop @scan (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = input^[pos];
+    let dot = byte == 46_u8;
+    if dot {
+      break @scan;
+    }
+    let next = pos +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  let result = pos;
+  let too_far = result > length;
+  if too_far {
+    set result = length;
+  }
+  let too_near = result < start;
+  if too_near {
+    set result = start;
+  }
+  return result;
+}
+
+fn ipv4_number_or_fail(part: &[u8]) -> result: Option<u64> reads(part) {
+  doc "Runs parse_ipv4_number on part.";
+  let parsed = parse_ipv4_number(part: part);
+  return parsed;
+}
+
+fn combine_ipv4_1(v0: u64) -> result: Option<u32> pure {
+  doc "Combines one IPv4 part into an address: the part itself, which must be below 2^32.";
+  let too_big = v0 >= ipv4_number_ceiling;
+  if too_big {
+    return None<u32>();
+  }
+  let value = cvt.wrap::<u64, u32>(v0);
+  return Some<u32>(value: value);
+}
+
+fn combine_ipv4_2(v0: u64, v1: u64) -> result: Option<u32> pure {
+  doc "Combines two IPv4 parts: the first must be at most 255, the second (the base) below 2^24.";
+  let non_last_ok = v0 <= 255_u64;
+  if non_last_ok {
+  } else {
+    return None<u32>();
+  }
+  let threshold = 16777216_u64;
+  let last_ok = v1 < threshold;
+  if last_ok {
+  } else {
+    return None<u32>();
+  }
+  let weighted = v0 *wrap threshold;
+  let address = weighted +wrap v1;
+  let narrowed = cvt.wrap::<u64, u32>(address);
+  return Some<u32>(value: narrowed);
+}
+
+fn combine_ipv4_3(v0: u64, v1: u64, v2: u64) -> result: Option<u32> pure {
+  doc "Combines three IPv4 parts: the first two must be at most 255, the third (the base) below 2^16.";
+  let ok0 = v0 <= 255_u64;
+  let ok1 = v1 <= 255_u64;
+  let non_last_ok = band(ok0, ok1);
+  if non_last_ok {
+  } else {
+    return None<u32>();
+  }
+  let threshold = 65536_u64;
+  let last_ok = v2 < threshold;
+  if last_ok {
+  } else {
+    return None<u32>();
+  }
+  let weight0 = 16777216_u64;
+  let part0 = v0 *wrap weight0;
+  let part1 = v1 *wrap threshold;
+  let sum01 = part0 +wrap part1;
+  let address = sum01 +wrap v2;
+  let narrowed = cvt.wrap::<u64, u32>(address);
+  return Some<u32>(value: narrowed);
+}
+
+fn combine_ipv4_4(v0: u64, v1: u64, v2: u64, v3: u64) -> result: Option<u32> pure {
+  doc "Combines four IPv4 parts: the first three must be at most 255, the fourth (the base) below 2^8.";
+  let ok0 = v0 <= 255_u64;
+  let ok1 = v1 <= 255_u64;
+  let ok2 = v2 <= 255_u64;
+  let a = band(ok0, ok1);
+  let non_last_ok = band(a, ok2);
+  if non_last_ok {
+  } else {
+    return None<u32>();
+  }
+  let threshold = 256_u64;
+  let last_ok = v3 < threshold;
+  if last_ok {
+  } else {
+    return None<u32>();
+  }
+  let weight0 = 16777216_u64;
+  let weight1 = 65536_u64;
+  let part0 = v0 *wrap weight0;
+  let part1 = v1 *wrap weight1;
+  let part2 = v2 *wrap threshold;
+  let sum01 = part0 +wrap part1;
+  let sum012 = sum01 +wrap part2;
+  let address = sum012 +wrap v3;
+  let narrowed = cvt.wrap::<u64, u32>(address);
+  return Some<u32>(value: narrowed);
+}
+
+fn parse_ipv4_address(input: &[u8]) -> result: Option<u32> reads(input) {
+  doc "The IPv4 parser: strictly splits input on U+002E into at most five parts (a sixth means too many regardless of the trailing-empty rule below), drops one trailing empty part when more than one part remains, requires 1 to 4 parts, parses each with the IPv4 number parser, and combines them into a 32-bit address.";
+  let length = input^.len;
+  let s0 = 0_u64;
+  let e0 = find_dot_or_end(input: input, start: 0_u64, length: length);
+  let count = 1_u64;
+  let s1 = 0_u64;
+  let e1 = 0_u64;
+  let s2 = 0_u64;
+  let e2 = 0_u64;
+  let s3 = 0_u64;
+  let e3 = 0_u64;
+  let s4 = 0_u64;
+  let e4 = 0_u64;
+  let cursor = e0;
+  loop @split {
+    let at_end = cursor >= length;
+    if at_end {
+      break @split;
+    }
+    let seg_start = cursor +wrap 1_u64;
+    let within = seg_start <= length;
+    if within {
+    } else {
+      break @split;
+    }
+    let seg_end = find_dot_or_end(input: input, start: seg_start, length: length);
+    let slot = count;
+    if slot == 1_u64 {
+      set s1 = seg_start;
+      set e1 = seg_end;
+    } else if slot == 2_u64 {
+      set s2 = seg_start;
+      set e2 = seg_end;
+    } else if slot == 3_u64 {
+      set s3 = seg_start;
+      set e3 = seg_end;
+    } else if slot == 4_u64 {
+      set s4 = seg_start;
+      set e4 = seg_end;
+    } else {
+      return None<u32>();
+    }
+    set count = count +wrap 1_u64;
+    set cursor = seg_end;
+  }
+  let last_empty = if count == 1_u64 {
+    give e0 == s0;
+  } else if count == 2_u64 {
+    give e1 == s1;
+  } else if count == 3_u64 {
+    give e2 == s2;
+  } else if count == 4_u64 {
+    give e3 == s3;
+  } else {
+    give e4 == s4;
+  }
+  let more_than_one = count > 1_u64;
+  let drop_last = band(last_empty, more_than_one);
+  if drop_last {
+    set count = count -wrap 1_u64;
+  }
+  let too_many = count > 4_u64;
+  if too_many {
+    return None<u32>();
+  }
+  if count == 1_u64 {
+    let part0 = &input^[s0..e0];
+    match parse_ipv4_number(part: part0) {
+      Some(value: v0) => {
+        let result = combine_ipv4_1(v0: v0);
+        return result;
+      }
+      None() => {
+        return None<u32>();
+      }
+    }
+  }
+  if count == 2_u64 {
+    let ok1a = s1 <= e1;
+    let ok1b = e1 <= length;
+    let ok1 = band(ok1a, ok1b);
+    if ok1 {
+    } else {
+      return None<u32>();
+    }
+    let part0 = &input^[s0..e0];
+    let part1 = &input^[s1..e1];
+    match parse_ipv4_number(part: part0) {
+      Some(value: v0) => {
+        match parse_ipv4_number(part: part1) {
+          Some(value: v1) => {
+            let result = combine_ipv4_2(v0: v0, v1: v1);
+            return result;
+          }
+          None() => {
+            return None<u32>();
+          }
+        }
+      }
+      None() => {
+        return None<u32>();
+      }
+    }
+  }
+  if count == 3_u64 {
+    let ok1a = s1 <= e1;
+    let ok1b = e1 <= length;
+    let ok2a = s2 <= e2;
+    let ok2b = e2 <= length;
+    let a1 = band(ok1a, ok1b);
+    let a2 = band(ok2a, ok2b);
+    let ok123 = band(a1, a2);
+    if ok123 {
+    } else {
+      return None<u32>();
+    }
+    let part0 = &input^[s0..e0];
+    let part1 = &input^[s1..e1];
+    let part2 = &input^[s2..e2];
+    match parse_ipv4_number(part: part0) {
+      Some(value: v0) => {
+        match parse_ipv4_number(part: part1) {
+          Some(value: v1) => {
+            match parse_ipv4_number(part: part2) {
+              Some(value: v2) => {
+                let result = combine_ipv4_3(v0: v0, v1: v1, v2: v2);
+                return result;
+              }
+              None() => {
+                return None<u32>();
+              }
+            }
+          }
+          None() => {
+            return None<u32>();
+          }
+        }
+      }
+      None() => {
+        return None<u32>();
+      }
+    }
+  }
+  let ok1a = s1 <= e1;
+  let ok1b = e1 <= length;
+  let ok2a = s2 <= e2;
+  let ok2b = e2 <= length;
+  let ok3a = s3 <= e3;
+  let ok3b = e3 <= length;
+  let a1 = band(ok1a, ok1b);
+  let a2 = band(ok2a, ok2b);
+  let a3 = band(ok3a, ok3b);
+  let a12 = band(a1, a2);
+  let a123 = band(a12, a3);
+  if a123 {
+  } else {
+    return None<u32>();
+  }
+  let part0 = &input^[s0..e0];
+  let part1 = &input^[s1..e1];
+  let part2 = &input^[s2..e2];
+  let part3 = &input^[s3..e3];
+  match parse_ipv4_number(part: part0) {
+    Some(value: v0) => {
+      match parse_ipv4_number(part: part1) {
+        Some(value: v1) => {
+          match parse_ipv4_number(part: part2) {
+            Some(value: v2) => {
+              match parse_ipv4_number(part: part3) {
+                Some(value: v3) => {
+                  let result = combine_ipv4_4(v0: v0, v1: v1, v2: v2, v3: v3);
+                  return result;
+                }
+                None() => {
+                  return None<u32>();
+                }
+              }
+            }
+            None() => {
+              return None<u32>();
+            }
+          }
+        }
+        None() => {
+          return None<u32>();
+        }
+      }
+    }
+    None() => {
+      return None<u32>();
+    }
+  }
+}
+
+fn all_ascii_digits(part: &[u8]) -> result: Bool reads(part) {
+  doc "True when every byte of part is an ASCII digit; False for an empty part.";
+  let length = part^.len;
+  let empty = length == 0_u64;
+  if empty {
+    return False();
+  }
+  for (at in 0_u64..length) {
+    let byte = part^[at];
+    let digit = is_ascii_digit(byte: byte);
+    if digit {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn last_label(input: &[u8]) -> (start: u64, end: u64) reads(input) contract {
+  requires input^.len > 0_u64;
+  ensures start <= end;
+  ensures end <= input^.len;
+} {
+  doc "The bounds of the last label of the strict split of input on U+002E, dropping one trailing empty label first.";
+  let length = input^.len;
+  let last_index = length -wrap 1_u64;
+  let last_byte = input^[last_index];
+  let trailing_dot = last_byte == 46_u8;
+  let trimmed_end = length;
+  if trailing_dot {
+    set trimmed_end = last_index;
+  }
+  let last_dot = trimmed_end;
+  for (at in 0_u64..trimmed_end) {
+    let byte = input^[at];
+    let dot = byte == 46_u8;
+    if dot {
+      set last_dot = at;
+    }
+  }
+  let found = last_dot < trimmed_end;
+  let start = 0_u64;
+  if found {
+    set start = last_dot +wrap 1_u64;
+  }
+  return start, trimmed_end;
+}
+
+fn ends_in_a_number(input: &[u8]) -> result: Bool reads(input) contract {
+  requires input^.len > 0_u64;
+} {
+  doc "The ends-in-a-number checker: true when the last label (after dropping a trailing empty one) is all ASCII digits, or parses as an IPv4 number.";
+  let (start, end) = last_label(input: input);
+  let last = &input^[start..end];
+  let digits = all_ascii_digits(part: last);
+  if digits {
+    return True();
+  }
+  let parsed = parse_ipv4_number(part: last);
+  match parsed {
+    Some(value: number) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn serialize_ipv4(buffer: &Box<Slots<u8>>, address: u32) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "The IPv4 serializer: four decimal octets, most significant first, separated by U+002E.";
+  let byte3 = ishr.wrap(address, 24_u32);
+  let byte2 = ishr.wrap(address, 16_u32);
+  let byte1 = ishr.wrap(address, 8_u32);
+  let byte0 = address;
+  let octet3 = iand(byte3, 255_u32);
+  let octet2 = iand(byte2, 255_u32);
+  let octet1 = iand(byte1, 255_u32);
+  let octet0 = iand(byte0, 255_u32);
+  let first = propagate push_decimal_u32(buffer: buffer, value: octet3);
+  let dot1 = propagate push_byte(buffer: buffer, value: 46_u8);
+  let second = propagate push_decimal_u32(buffer: buffer, value: octet2);
+  let dot2 = propagate push_byte(buffer: buffer, value: 46_u8);
+  let third = propagate push_decimal_u32(buffer: buffer, value: octet1);
+  let dot3 = propagate push_byte(buffer: buffer, value: 46_u8);
+  let fourth = propagate push_decimal_u32(buffer: buffer, value: octet0);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn push_decimal_u32(buffer: &Box<Slots<u8>>, value: u32) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "Appends the decimal digits of value (0 to 255 in practice), at least one digit.";
+  let hundreds = value / 100_u32;
+  let has_hundreds = hundreds > 0_u32;
+  if has_hundreds {
+    let digit = cvt.wrap::<u32, u8>(hundreds);
+    let byte = digit +wrap 48_u8;
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  let rem_after_hundreds = value % 100_u32;
+  let tens = rem_after_hundreds / 10_u32;
+  let tens_nonzero = tens > 0_u32;
+  let has_tens = bor(has_hundreds, tens_nonzero);
+  if has_tens {
+    let digit = cvt.wrap::<u32, u8>(tens);
+    let byte = digit +wrap 48_u8;
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  let ones = value % 10_u32;
+  let digit = cvt.wrap::<u32, u8>(ones);
+  let byte = digit +wrap 48_u8;
+  let pushed = propagate push_byte(buffer: buffer, value: byte);
+  return Ok<unit, UrlError>(value: unit);
+}
