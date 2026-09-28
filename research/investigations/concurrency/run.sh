@@ -225,17 +225,20 @@ check() {
 }
 
 # Prints the elapsed seconds of one run of the driver: the sequential build
-# for "seq", and otherwise the --par build with WF_WORKERS set to the first
-# argument. A run that fails stops the script.
+# for "seq", whose runtime still refuses a WF_WORKERS that is no count, and
+# otherwise the --par build with WF_WORKERS set to the first argument. A run
+# that fails stops the script.
 elapsed() {
 	mode=$1
 	shift
 	if [ "$mode" = seq ]; then
 		binary=build/proto_style_seq
+		lanes=1
 	else
 		binary=build/proto_style
+		lanes=$mode
 	fi
-	if ! WF_WORKERS=$mode command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>"$data/time.txt"; then
+	if ! WF_WORKERS=$lanes command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>"$data/time.txt"; then
 		echo "run.sh: $binary $* failed" >&2
 		exit 1
 	fi
