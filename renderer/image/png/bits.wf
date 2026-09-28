@@ -1,0 +1,112 @@
+enum InflateError {
+  Truncated();
+  InvalidStoredLength();
+  InvalidHuffmanTree();
+  InvalidHuffmanCode();
+  InvalidDistance();
+  InvalidBlockType();
+  OutputFull();
+}
+
+struct BitReader {
+  position: u64;
+  hold: u64;
+  bits: u32;
+}
+
+fn load_le_u64(input: &[u8], at: u64) -> result: u64 reads(input) contract {
+  define length = input^.len;
+  requires at + 8_u64 <= length;
+} {
+  doc "Reads the little-endian u64 that starts at index at of input.";
+  let at1 = at + 1_u64;
+  let at2 = at + 2_u64;
+  let at3 = at + 3_u64;
+  let at4 = at + 4_u64;
+  let at5 = at + 5_u64;
+  let at6 = at + 6_u64;
+  let at7 = at + 7_u64;
+  let b0 = cvt::<u8, u64>(input^[at]);
+  let b1 = cvt::<u8, u64>(input^[at1]);
+  let b2 = cvt::<u8, u64>(input^[at2]);
+  let b3 = cvt::<u8, u64>(input^[at3]);
+  let b4 = cvt::<u8, u64>(input^[at4]);
+  let b5 = cvt::<u8, u64>(input^[at5]);
+  let b6 = cvt::<u8, u64>(input^[at6]);
+  let b7 = cvt::<u8, u64>(input^[at7]);
+  let s1 = ishl(b1, 8_u32);
+  let s2 = ishl(b2, 16_u32);
+  let s3 = ishl(b3, 24_u32);
+  let s4 = ishl(b4, 32_u32);
+  let s5 = ishl(b5, 40_u32);
+  let s6 = ishl(b6, 48_u32);
+  let s7 = ishl(b7, 56_u32);
+  let w01 = ior(b0, s1);
+  let w23 = ior(s2, s3);
+  let w45 = ior(s4, s5);
+  let w67 = ior(s6, s7);
+  let w03 = ior(w01, w23);
+  let w47 = ior(w45, w67);
+  return ior(w03, w47);
+}
+
+fn refill(input: &[u8], position: u64, hold: u64, bits: u32) -> (next_position: u64, next_hold: u64, next_bits: u32) reads(input) contract {
+  ensures next_bits >= 56_u32;
+  ensures next_bits <= 63_u32;
+} {
+  doc "Tops a bit reservoir of bits bits (at most 63, least significant first in hold, zero above them except for bytes still to be counted) up to 56..63 bits: it ORs in the eight input bytes at position and advances position past the whole bytes that fit. The stream carries 16 bytes of zero padding past its end, so a well-formed stream always finds eight bytes; past the padding the reservoir is filled with zero bits instead, and the caller's final over-read check rejects the stream.";
+  let length = input^.len;
+  let kept = iand(bits, 7_u32);
+  let filled = ior(kept, 56_u32);
+  if position <= length {
+    let rest = length - position;
+    if rest >= 8_u64 {
+      let word = load_le_u64(input: input, at: position);
+      let shifted = ishl.wrap(word, bits);
+      let merged = ior(hold, shifted);
+      let room = 63_u32 -wrap bits;
+      let whole = ishr(room, 3_u32);
+      let advance = cvt::<u32, u64>(whole);
+      let advanced = position +wrap advance;
+      return advanced, merged, filled;
+    }
+  }
+  return position, hold, filled;
+}
+
+fn take_bits(reader: &BitReader, input: &[u8], count: u32, mask: u64) -> result: u64 reads(input), writes(reader) contract {
+  requires count <= 32_u32;
+  ensures result <= mask;
+} {
+  doc "Takes the next count bits of the stream, least significant first; mask is 2^count - 1.";
+  let (position, hold, bits) = refill(input: input, position: reader^.position, hold: reader^.hold, bits: reader^.bits);
+  let value = iand(hold, mask);
+  set reader^.position = position;
+  set reader^.hold = ishr.wrap(hold, count);
+  set reader^.bits = bits - count;
+  return value;
+}
+
+fn decode_symbol(reader: &BitReader, input: &[u8], table: &[u32], table_bits: u32) -> result: Result<u64, InflateError> reads(input), reads(table), writes(reader) contract {
+  requires table_bits <= 15_u32;
+  requires table^.len >= 32768_u64;
+  ensures when Ok(value: symbol): symbol <= 65535_u64;
+} {
+  doc "Decodes one symbol through a table built by build_table and returns its value field. A bit pattern no code covers is InvalidHuffmanCode.";
+  let (position, hold, bits) = refill(input: input, position: reader^.position, hold: reader^.hold, bits: reader^.bits);
+  let size = ishl(1_u64, table_bits);
+  let mask = size - 1_u64;
+  let index = iand(hold, mask);
+  let packed = table^[index];
+  let length = iand(packed, 15_u32);
+  if length == 0_u32 {
+    let error = InflateError::InvalidHuffmanCode();
+    return Err<u64, InflateError>(error: error);
+  }
+  set reader^.position = position;
+  set reader^.hold = ishr(hold, length);
+  set reader^.bits = bits - length;
+  let value = ishr(packed, 16_u32);
+  let symbol = cvt::<u32, u64>(value);
+  return Ok<u64, InflateError>(value: symbol);
+}
