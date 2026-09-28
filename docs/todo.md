@@ -26,6 +26,16 @@ example apart from the renderer code that exposed it
   open that follows links. Reopen when oracle runs from such worktrees are
   needed.
 
+- **No rounding conversion between float formats.** [OP-6]'s `cvt`
+  from f64 to f32 is defined only for a value exactly representable in
+  f32, and no operation rounds. `pkg::css::color` therefore narrows its
+  channels by IEEE 754 round-to-nearest-even computed from the bits
+  (`narrow_f32`, flushing results below f32's normal range to zero). A
+  minimal example: `let x = fdiv.strict(136.0_f64, 255.0_f64);` has no
+  total conversion to the nearest f32. Change: a total rounding conversion
+  for float destinations. Reopen when Whitefoot adds one; then replace
+  `narrow_f32`.
+
 ## Snowghost
 
 - **No mechanical check for documents and artifacts.** `make check` does not
