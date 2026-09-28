@@ -1,6 +1,7 @@
 # Agent writer trial
 
-Status: planned. The criterion below is fixed before any run.
+Status: running. The criterion below was fixed before any run; the results
+so far are recorded at the end.
 
 ## Question
 
@@ -123,4 +124,79 @@ the task continues.
 
 ## Results
 
-None yet.
+Runs started 2026-09-28 at 09:41 UTC from harness commit 5290d73, each on
+its own branch (`trial/run-css`, `trial/run-line-break`, `trial/run-png`).
+One harness defect showed during the runs: the run worktrees had an empty
+`whitefoot/` submodule, so the reference paths in the prompt did not exist.
+The supervisor sent the corrected paths to the line-break and PNG runs; this
+corrected the harness and gave no information about the code, so it is not
+counted as an intervention. The CSS run found the files on its own.
+
+### CSS syntax: Sonnet, done
+
+- **Criterion:** met. The module checks against the unchanged interface; all
+  50 cases pass (rerun independently); the reviewer scored it 4 of 5; no
+  interventions.
+- **Run:** about 31 minutes, 106 tool calls, about 405,000 tokens; six files,
+  1,964 lines; the module checks in 0.3 s.
+- **Reviewer:** readability 4, interface fidelity 4, use of Whitefoot 3,
+  performance 4. Defects: output buffers grow by hand-written doubling whose
+  full branch silently drops the byte instead of proving room; block kinds
+  are `u8` codes rather than an enum; nesting recurses once per block, so a
+  16 MiB input of `(` recurses millions of levels.
+- **Default for the specification-driven class: Sonnet.**
+
+### Line breaking: Sonnet, done
+
+- **Criterion:** met. The module checks; all 19,338 cases pass (rerun
+  independently); the generator reproduces the checked-in tables byte for
+  byte from the Unicode 17.0.0 files; the reviewer scored it 3 of 5; no
+  interventions.
+- **Run:** about 60 minutes, 354 tool calls, about 657,000 tokens; 2,620
+  lines plus 50 KB of generated tables (2,637 class ranges searched by
+  bisection). The oracle's 19,338 cases run in 25 ms.
+- **Reviewer:** readability 3, interface fidelity 4, use of Whitefoot 3,
+  performance 3. Defects: one 437-line function holds LB4 to LB31; classes
+  are `u8` codes; guards that should be proved instead silently skip; the
+  generator depends on the oracle drivers' support module; two bisections
+  per code point where a two-stage table would take one or two loads; a
+  fallback past 100 million code points marks every position Allowed, which
+  the interface does not state. That last one is the interface's fault: it
+  set no length bound, so the writer invented one.
+- **Default for the table-driven class: Sonnet**, at the bar.
+
+### PNG decoding: Sonnet, then Opus
+
+- Sonnet reached a correct decoder (all 176 cases) in about 88 minutes, 418
+  tool calls and about 657,000 tokens, but decoded the speed set at 2.9 to
+  3.3 times libpng's time, over the bar. Under the escalation rule the task
+  moved to Opus, continuing from its branch at 8ac3741.
+
+### Whitefoot findings
+
+- **No text literals** made every message a byte array and every character
+  a number (card #18): Whitefoot PR #166 adds them.
+- **Range lengths:** two ranges formed at a call could not be related by
+  `==`, and the repair for a range-length goal misled the writer (card #19):
+  Whitefoot PR #167.
+- **An allocation count without a target-sized bound** passes the module
+  check and fails the build with no source location: being fixed in
+  Whitefoot.
+- Friction the language keeps by design (card #20): flat three-address form,
+  exhaustive matches without a wildcard, explicit `move`, exact effect rows.
+  Each run named the flat form as its largest source of length.
+
+### Patterns the runs establish
+
+- **Prove capacity or refuse; never skip silently.** Every run wrote guards
+  of the form `if room { place_back(...) }` whose false branch does nothing,
+  where the capacity was sufficient by construction. Size storage up front
+  and carry the bound in a contract (the standard library's `GrowVector`
+  requires `len < ceiling`), or return the module's error variant when the
+  bound can fail.
+- **State size limits in the interface.** A `requires` bound on every input
+  length keeps the implementer from inventing a fallback.
+- **Enums for internal classifications**, so a match checks every case.
+- **Explicit stacks for input-driven nesting.** Stack exhaustion is outside
+  Whitefoot's outcome model, so recursion depth must not follow the input.
+- **Tools depend on the standard library,** not on test support modules.
