@@ -1,0 +1,7 @@
+Node: pipeline
+
+Decision: Every rendering stage, from the document through style, layout, paint and compositing to the screen, is incremental and parallel end to end, so that a change reruns only the stages and the parts of the page it affects and the independent parts of each stage run concurrently, because in current engines a change to a layout property reruns most of the pipeline and only changes the compositor handles alone, such as transform and opacity animations, stay fast, instead of a lifecycle of whole-document passes guarded by dirty flags.
+
+Decision: The independent formatting context, meaning a block formatting context root, a flex or grid item, an absolutely positioned box or a table cell, is the unit of storage, parallel work, invalidation and caching in every stage, because it is the finest boundary at which the CSS layout rules let a change stop and two such units are laid out without reading each other once their constraints are known, instead of a per-element unit, which floats, margin collapsing and line breaking couple inside one block formatting context.
+
+Decision: Each stage is a pure Whitefoot function of explicit inputs whose result is memoized by those inputs, because the compiler then proves the memoization key complete and a result that read anything outside its key does not compile, instead of hand-maintained invalidation rules and caches, where a missed dependency renders stale output.
