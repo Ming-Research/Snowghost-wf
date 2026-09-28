@@ -1,0 +1,327 @@
+fn last_start_tag_matches(tokenizer: &Tokenizer, output: &TokenText, name_start: u64, name_end: u64) -> result: Bool reads(tokenizer), reads(output) {
+  doc "Tells whether output's text from name_start to name_end equals tokenizer's last start tag exactly, byte for byte.";
+  let ordered = name_start <= name_end;
+  if ordered {
+  } else {
+    return False();
+  }
+  let name_len = name_end - name_start;
+  let tag_len = tokenizer^.last_start_tag.inner.len;
+  let same_len = name_len == tag_len;
+  if same_len {
+  } else {
+    return False();
+  }
+  let text_len = output^.text.inner.len;
+  let within = name_end <= text_len;
+  if within {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @cmp {
+    let more = i < name_len;
+    if more {
+    } else {
+      break @cmp;
+    }
+    let src_index = name_start +wrap i;
+    let in_src = src_index < output^.text.inner.len;
+    let in_tag = i < tokenizer^.last_start_tag.inner.len;
+    let both = band(in_src, in_tag);
+    if both {
+    } else {
+      return False();
+    }
+    let a = output^.text.inner[src_index];
+    let b = tokenizer^.last_start_tag.inner[i];
+    let differs = a != b;
+    if differs {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn try_end_tag_open(tokenizer: &Tokenizer, source: &[u8], output: &TokenText, run_start: u64, after2: u64) -> (produced: Bool, token: Token, next: u64) reads(source), writes(tokenizer), writes(output) {
+  doc "Handles an end-tag-open attempt for RCDATA, RAWTEXT and script data alike, after the consumed less-than-sign and solidus: after2 names the byte right after the solidus. produced is False when the attempt fell back to literal text (already appended to output's text, ending at next, unconsumed) rather than an appropriate end tag; when produced is True, tokenizer's position is already set and the caller returns token immediately.";
+  let pending_len = output^.text.inner.len;
+  push_codepoint(text: &output^.text, cp: less_than_char);
+  push_codepoint(text: &output^.text, cp: solidus_char);
+  let name_start = output^.text.inner.len;
+  let (term_ch, term_at, name_end) = scan_end_tag_name(source: source, output: output, start: after2);
+  let is_terminator = is_end_tag_terminator(ch: term_ch);
+  let appropriate = if is_terminator {
+    give last_start_tag_matches(tokenizer: tokenizer, output: output, name_start: name_start, name_end: name_end);
+  } else {
+    give False();
+  }
+  if appropriate {
+    truncate_bytes(cell: &output^.text, length: pending_len);
+    let has_text = pending_len > 0_u64;
+    if has_text {
+      set tokenizer^.position = run_start;
+      let span = span_of(start: 0_u64, end: pending_len);
+      let token = Token::Characters(data: span);
+      return True(), token, run_start;
+    }
+    let is_end_tag = True();
+    let (token, next) = parse_tag(tokenizer: tokenizer, source: source, output: output, pos: after2, is_end: is_end_tag);
+    set tokenizer^.position = next;
+    return True(), token, next;
+  }
+  let placeholder = Token::EndOfFile();
+  return False(), placeholder, term_at;
+}
+
+fn scan_foreign_text(tokenizer: &Tokenizer, source: &[u8], output: &TokenText, allow_refs: Bool) -> result: Token reads(source), writes(tokenizer), writes(output) {
+  doc "Runs the RCDATA (13.2.5.2, allow_refs True) or RAWTEXT (13.2.5.3, allow_refs False) state from tokenizer's position, recognizing only an appropriate end tag as a real tag and treating every other less-than-sign as literal text.";
+  let position = tokenizer^.position;
+  loop @run {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let produced = output^.text.inner.len;
+      let has_text = produced > 0_u64;
+      if has_text {
+        set tokenizer^.position = position;
+        let span = span_of(start: 0_u64, end: produced);
+        let token = Token::Characters(data: span);
+        return token;
+      }
+      set tokenizer^.position = position;
+      let token = Token::EndOfFile();
+      return token;
+    }
+    let is_lt = ch == less_than_char;
+    if is_lt {
+      let (ch2, after2) = next_char(source: source, pos: after);
+      let is_slash = ch2 == solidus_char;
+      if is_slash {
+        let (ch3, after3) = next_char(source: source, pos: after2);
+        let is_alpha3 = is_ascii_char_alpha(ch: ch3);
+        if is_alpha3 {
+          let (produced, token, next) = try_end_tag_open(tokenizer: tokenizer, source: source, output: output, run_start: position, after2: after2);
+          if produced {
+            return token;
+          }
+          set position = next;
+        } else {
+          push_codepoint(text: &output^.text, cp: less_than_char);
+          push_codepoint(text: &output^.text, cp: solidus_char);
+          set position = after2;
+        }
+      } else {
+        push_codepoint(text: &output^.text, cp: less_than_char);
+        set position = after;
+      }
+    } else {
+      let is_amp = ch == amp_char;
+      let is_ref = band(allow_refs, is_amp);
+      if is_ref {
+        let in_attr = False();
+        let (matched, ref_next, cp1, cp2, has_cp2) = resolve_character_reference(source: source, pos: position, in_attribute: in_attr);
+        if matched {
+          push_codepoint(text: &output^.text, cp: cp1);
+          if has_cp2 {
+            push_codepoint(text: &output^.text, cp: cp2);
+          }
+          set position = ref_next;
+        } else {
+          push_codepoint(text: &output^.text, cp: amp_char);
+          set position = after;
+        }
+      } else {
+        let cleared = replace_nul(ch: ch);
+        push_codepoint(text: &output^.text, cp: cleared);
+        set position = after;
+      }
+    }
+  }
+  let token = Token::EndOfFile();
+  return token;
+}
+
+fn is_end_tag_terminator(ch: u32) -> result: Bool pure {
+  doc "Tells whether ch ends an RCDATA/RAWTEXT/script-data end tag name attempt: whitespace, solidus or greater-than.";
+  let ws = is_char_whitespace(ch: ch);
+  let slash = ch == solidus_char;
+  let gt = ch == greater_than_char;
+  let a = bor(ws, slash);
+  return bor(a, gt);
+}
+
+fn scan_end_tag_name(source: &[u8], output: &TokenText, start: u64) -> (term_ch: u32, term_at: u64, name_end: u64) reads(source), writes(output) {
+  doc "Consumes a run of ASCII letters from start, lowercasing them into output's text, stopping at and reporting the first byte that is not an ASCII letter, unconsumed: term_at names that byte itself (or the source's end), not the position after it.";
+  let position = start;
+  loop @scan {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_alpha = is_ascii_char_alpha(ch: ch);
+    if is_alpha {
+      let lowered = ascii_lower_char(ch: ch);
+      push_codepoint(text: &output^.text, cp: lowered);
+      set position = after;
+    } else {
+      let name_end = output^.text.inner.len;
+      return ch, position, name_end;
+    }
+  }
+  let name_end = output^.text.inner.len;
+  return eof_char, position, name_end;
+}
+
+fn scan_plaintext(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) -> result: Token reads(source), writes(tokenizer), writes(output) {
+  doc "Runs the PLAINTEXT state (13.2.5.5) from tokenizer's position: every byte through the source's end is literal text.";
+  let position = tokenizer^.position;
+  loop @run {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let produced = output^.text.inner.len;
+      let has_text = produced > 0_u64;
+      if has_text {
+        set tokenizer^.position = position;
+        let span = span_of(start: 0_u64, end: produced);
+        let token = Token::Characters(data: span);
+        return token;
+      }
+      set tokenizer^.position = position;
+      let token = Token::EndOfFile();
+      return token;
+    }
+    let cleared = replace_nul(ch: ch);
+    push_codepoint(text: &output^.text, cp: cleared);
+    set position = after;
+  }
+  let token = Token::EndOfFile();
+  return token;
+}
+
+fn scan_cdata_section(tokenizer: &Tokenizer, source: &[u8], output: &TokenText) -> result: Token reads(source), writes(tokenizer), writes(output) {
+  doc "Runs the CDATA section state (13.2.5.69-71) from tokenizer's position: no NUL replacement, watching for \"]]>\" and switching the tokenizer to the data state once it is found; text after that marker, within the same run, continues under the data state's own rules.";
+  let position = tokenizer^.position;
+  let in_cdata = True();
+  loop @run {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let produced = output^.text.inner.len;
+      let has_text = produced > 0_u64;
+      if has_text {
+        set tokenizer^.position = position;
+        let span = span_of(start: 0_u64, end: produced);
+        let token = Token::Characters(data: span);
+        return token;
+      }
+      set tokenizer^.position = position;
+      let token = Token::EndOfFile();
+      return token;
+    }
+    if in_cdata {
+      let is_bracket = ch == right_bracket_char;
+      if is_bracket {
+        let is_close = match_cdata_close(source: source, pos: position);
+        if is_close {
+          set in_cdata = False();
+          set position = position +wrap 3_u64;
+        } else {
+          push_codepoint(text: &output^.text, cp: right_bracket_char);
+          set position = after;
+        }
+      } else {
+        push_codepoint(text: &output^.text, cp: ch);
+        set position = after;
+      }
+    } else {
+      let is_lt = ch == less_than_char;
+      if is_lt {
+        set tokenizer^.state = ContentState::Data();
+        let (kind, tag_token, tag_next) = open_tag(tokenizer: tokenizer, source: source, output: output, pos: after);
+        match kind {
+          Produced() => {
+            let produced = output^.text.inner.len;
+            let has_text = produced > 0_u64;
+            if has_text {
+              set tokenizer^.position = position;
+              let span = span_of(start: 0_u64, end: produced);
+              let token = Token::Characters(data: span);
+              return token;
+            }
+            set tokenizer^.position = tag_next;
+            return tag_token;
+          }
+          Literal() => {
+            push_codepoint(text: &output^.text, cp: less_than_char);
+            set position = tag_next;
+          }
+          LiteralLtSlash() => {
+            push_codepoint(text: &output^.text, cp: less_than_char);
+            push_codepoint(text: &output^.text, cp: solidus_char);
+            set position = tag_next;
+          }
+          Skip() => {
+            set position = tag_next;
+          }
+        }
+      } else {
+        let is_ref = ch == amp_char;
+        if is_ref {
+          let in_attr = False();
+          let (matched, ref_next, cp1, cp2, has_cp2) = resolve_character_reference(source: source, pos: position, in_attribute: in_attr);
+          if matched {
+            push_codepoint(text: &output^.text, cp: cp1);
+            if has_cp2 {
+              push_codepoint(text: &output^.text, cp: cp2);
+            }
+            set position = ref_next;
+          } else {
+            push_codepoint(text: &output^.text, cp: amp_char);
+            set position = after;
+          }
+        } else {
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set position = after;
+        }
+      }
+    }
+  }
+  let token = Token::EndOfFile();
+  return token;
+}
+
+fn match_cdata_close(source: &[u8], pos: u64) -> result: Bool reads(source) {
+  doc "Tells whether source holds \"]]>\" at pos.";
+  let length = source^.len;
+  let room = pos <= length;
+  let has_room = if room {
+    let remaining = length - pos;
+    give remaining >= 3_u64;
+  } else {
+    give False();
+  }
+  if has_room {
+  } else {
+    return False();
+  }
+  let i1 = pos +wrap 1_u64;
+  let i2 = pos +wrap 2_u64;
+  let ok_pos = pos < length;
+  let ok_i1 = i1 < length;
+  let ok_i2 = i2 < length;
+  let ok01 = band(ok_pos, ok_i1);
+  let ok_all = band(ok01, ok_i2);
+  if ok_all {
+  } else {
+    return False();
+  }
+  let b0 = source^[pos];
+  let b1 = source^[i1];
+  let b2 = source^[i2];
+  let ok0 = b0 == 93_u8;
+  let ok1 = b1 == 93_u8;
+  let ok2 = b2 == 62_u8;
+  let a = band(ok0, ok1);
+  return band(a, ok2);
+}
