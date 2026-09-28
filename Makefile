@@ -19,7 +19,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
 	static-atoms dom-selftest \
-	oracle-data oracle-line-break oracle-css oracle-html-tokenizer oracle-png oracle-png-speed
+	oracle-data oracle-line-break oracle-css oracle-html-tokenizer oracle-html-tree oracle-png oracle-png-speed
 
 check: compiler renderer dom-selftest design-lint
 
@@ -89,6 +89,9 @@ oracle-css: $(BUILD)/css_syntax_oracle
 
 oracle-html-tokenizer: $(BUILD)/html_tokenizer_oracle
 	@cd $(ROOT) && $(PY) -B tests/html/oracle.py build/oracle/html5lib $<
+
+oracle-html-tree: $(BUILD)/html_tree_oracle
+	@cd $(ROOT) && $(PY) -B tests/html/tree_oracle.py build/oracle/wpt-parsing $<
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite

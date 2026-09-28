@@ -1,0 +1,357 @@
+alias Args = std::text::Args;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias Namespace = pkg::dom::Namespace;
+alias OutputStream = std::io::OutputStream;
+alias TreeError = pkg::html::tree_builder::TreeError;
+alias args_count = std::text::args_count;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias atom_table_new = pkg::base::atom::atom_table_new;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias flush = pkg::oracle::support::flush;
+alias line_end = pkg::oracle::support::line_end;
+alias parse_decimal = pkg::oracle::support::parse_decimal;
+alias parse_document = pkg::html::tree_builder::parse_document;
+alias parse_fragment = pkg::html::tree_builder::parse_fragment;
+alias put_argument = pkg::oracle::support::put_argument;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_host_error = pkg::oracle::support::put_host_error;
+alias put_text = pkg::oracle::support::put_text;
+alias read_argument_file = pkg::oracle::support::read_argument_file;
+alias serialize_document = pkg::oracle::dom_serialize::serialize_document;
+
+enum CaseKind {
+  WholeDocument();
+  Fragment(namespace: Namespace, name_start: u64);
+}
+
+const end_line: Array<u8, 5> = "#end\n";
+
+const parse_failed_text: Array<u8, 28> = "| driver: parse failed (Dom ";
+
+const too_large_text: Array<u8, 34> = "| driver: parse failed (TooLarge)\n";
+
+const invalid_node_text: Array<u8, 11> = "InvalidNode";
+
+const wrong_kind_text: Array<u8, 9> = "WrongKind";
+
+const dom_too_large_text: Array<u8, 8> = "TooLarge";
+
+const close_failure_text: Array<u8, 2> = ")\n";
+
+const broken_links_text: Array<u8, 38> = "| driver: tree links are inconsistent\n";
+
+const context_refused_text: Array<u8, 58> = "| driver: atom_intern refused the context name (TooLarge)\n";
+
+const context_range_text: Array<u8, 47> = "| driver: context name starts past the context\n";
+
+const context_long_text: Array<u8, 47> = "| driver: context name longer than 65536 bytes\n";
+
+const usage_text: Array<u8, 29> = "usage: html_tree_oracle PATH\n";
+
+const unreadable_text: Array<u8, 30> = "html_tree_oracle: cannot read ";
+
+const malformed_text: Array<u8, 46> = "html_tree_oracle: malformed case file at byte ";
+
+const svg_prefix: Array<u8, 4> = "svg ";
+
+const math_prefix: Array<u8, 5> = "math ";
+
+const source_ceiling: u64 = 1073741824_u64;
+
+const name_ceiling: u64 = 65536_u64;
+
+fn run(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Destructures the inputs, prints every case and closes the working directory.";
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let code = judge_file(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn judge_file(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+  doc "Reads the case file named by the one argument and prints its cases; returns 0 when the whole file was well formed and 2 otherwise.";
+  let report = box_slots_new::<u8>(capacity: 4096_u64);
+  let count = args_count(args: args);
+  let usable = count == 2_u64;
+  if usable {
+  } else {
+    put_text(buffer: &report, text: &usage_text[0_u64..usage_text.len]);
+    let written = flush(factory: files, output: err, buffer: &report);
+    return 2_u8;
+  }
+  match read_argument_file(factory: files, cwd: cwd, args: args, position: 1_u64) {
+    Ok(value: content) => {
+      let length = content.inner.len;
+      let text = &content.inner[0_u64..length];
+      let atoms = atom_table_new();
+      let complete = print_cases(text: text, atoms: &atoms, out: out, err: err, files: files, report: &report);
+      if complete {
+        return 0_u8;
+      }
+      return 2_u8;
+    }
+    Err(error: problem) => {
+      put_text(buffer: &report, text: &unreadable_text[0_u64..unreadable_text.len]);
+      put_argument(buffer: &report, args: args, position: 1_u64);
+      put_host_error(buffer: &report, error: problem);
+      put_byte(buffer: &report, value: '\n'_u8);
+      let written = flush(factory: files, output: err, buffer: &report);
+      return 2_u8;
+    }
+  }
+}
+
+fn report_malformed(err: &OutputStream, files: &HandleFactory, report: &Box<Slots<u8>>, position: u64) -> result: unit writes(err), writes(files), writes(report) waits {
+  doc "Reports on standard error that the case starting at byte position of the case file is malformed.";
+  put_text(buffer: report, text: &malformed_text[0_u64..malformed_text.len]);
+  put_decimal(buffer: report, value: position);
+  put_byte(buffer: report, value: '\n'_u8);
+  let written = flush(factory: files, output: err, buffer: report);
+  return unit;
+}
+
+fn space_index(text: &[u8], from: u64, stop: u64) -> result: u64 reads(text) {
+  doc "Returns the index of the first space in text at or after from and before stop, or stop when there is none.";
+  let length = text^.len;
+  let at = from;
+  loop @scan {
+    let inside = at < length;
+    let before = at < stop;
+    let more = band(inside, before);
+    if more {
+    } else {
+      return stop;
+    }
+    if text^[at] == ' '_u8 {
+      return at;
+    }
+    set at = at +wrap 1_u64;
+  }
+  return stop;
+}
+
+fn starts_with(text: &[u8], prefix: &[u8]) -> result: Bool reads(text), reads(prefix) {
+  doc "Tells whether text begins with every byte of prefix.";
+  let length = prefix^.len;
+  if length > text^.len {
+    return False();
+  }
+  for (at in 0_u64..length) {
+    if text^[at] == prefix^[at] {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn case_kind(context: &[u8]) -> kind: Option<CaseKind> reads(context) {
+  doc "Classifies a case by its context: empty for a whole document; `svg NAME` and `math NAME` for an SVG or MathML context element and NAME alone for an HTML one, with NAME starting at name_start. None when NAME is empty, holds a space or is longer than atom_intern admits.";
+  let length = context^.len;
+  if length == 0_u64 {
+    let whole = CaseKind::WholeDocument();
+    return Some<CaseKind>(value: whole);
+  }
+  let svg = starts_with(text: context, prefix: &svg_prefix[0_u64..svg_prefix.len]);
+  let math = starts_with(text: context, prefix: &math_prefix[0_u64..math_prefix.len]);
+  let space_kind = Namespace::Html();
+  let start = 0_u64;
+  if svg {
+    set space_kind = Namespace::Svg();
+    set start = svg_prefix.len;
+  } else if math {
+    set space_kind = Namespace::MathMl();
+    set start = math_prefix.len;
+  }
+  let name_length = length -wrap start;
+  let named = start < length;
+  let short = name_length <= name_ceiling;
+  let sized = band(named, short);
+  if sized {
+  } else {
+    return None<CaseKind>();
+  }
+  let spaced = space_index(text: context, from: start, stop: length);
+  if spaced < length {
+    return None<CaseKind>();
+  }
+  let fragment = CaseKind::Fragment(namespace: space_kind, name_start: start);
+  return Some<CaseKind>(value: fragment);
+}
+
+fn print_cases(text: &[u8], atoms: &AtomTable, out: &OutputStream, err: &OutputStream, files: &HandleFactory, report: &Box<Slots<u8>>) -> complete: Bool reads(text), writes(atoms), writes(out), writes(err), writes(files), writes(report) waits {
+  doc "Walks the case file: a header line of three decimal fields separated by single spaces, the context's bytes, the input's bytes, then a line feed. Prints each case's lines and flushes them at once. Returns False after reporting the first malformed case.";
+  let length = text^.len;
+  let position = 0_u64;
+  loop @cases {
+    if position < length {
+    } else {
+      break @cases;
+    }
+    let header_end = line_end(text: text, start: position);
+    let scripting_end = space_index(text: text, from: position, stop: header_end);
+    let context_field = scripting_end +wrap 1_u64;
+    let context_field_end = space_index(text: text, from: context_field, stop: header_end);
+    let input_field = context_field_end +wrap 1_u64;
+    let scripting_value = parse_decimal(text: text, start: position, end: scripting_end);
+    let context_size = parse_decimal(text: text, start: context_field, end: context_field_end);
+    let input_size = parse_decimal(text: text, start: input_field, end: header_end);
+    let scripting = match scripting_value {
+      Some(value: flag) => {
+        if flag == 0_u64 {
+          give False();
+        } else if flag == 1_u64 {
+          give True();
+        } else {
+          report_malformed(err: err, files: files, report: report, position: position);
+          return False();
+        }
+      }
+      None() => {
+        report_malformed(err: err, files: files, report: report, position: position);
+        return False();
+      }
+    }
+    let context_length = match context_size {
+      Some(value: size) => {
+        give size;
+      }
+      None() => {
+        report_malformed(err: err, files: files, report: report, position: position);
+        return False();
+      }
+    }
+    let input_length = match input_size {
+      Some(value: size) => {
+        give size;
+      }
+      None() => {
+        report_malformed(err: err, files: files, report: report, position: position);
+        return False();
+      }
+    }
+    let context_start = header_end +wrap 1_u64;
+    let context_end = context_start +wrap context_length;
+    let input_end = context_end +wrap input_length;
+    let context_ordered = context_start <= context_end;
+    let input_ordered = context_end <= input_end;
+    let terminated = input_end < length;
+    let ordered = band(context_ordered, input_ordered);
+    let located = band(ordered, terminated);
+    if located {
+    } else {
+      report_malformed(err: err, files: files, report: report, position: position);
+      return False();
+    }
+    if text^[input_end] == '\n'_u8 {
+    } else {
+      report_malformed(err: err, files: files, report: report, position: position);
+      return False();
+    }
+    let context = &text^[context_start..context_end];
+    let source = &text^[context_end..input_end];
+    let kind = match case_kind(context: context) {
+      Some(value: classified) => {
+        give classified;
+      }
+      None() => {
+        report_malformed(err: err, files: files, report: report, position: position);
+        return False();
+      }
+    }
+    let small = source^.len <= source_ceiling;
+    if small {
+    } else {
+      report_malformed(err: err, files: files, report: report, position: position);
+      return False();
+    }
+    print_case(kind: kind, context: context, source: source, scripting: scripting, atoms: atoms, buffer: report);
+    let written = flush(factory: files, output: out, buffer: report);
+    set position = input_end +wrap 1_u64;
+  }
+  return True();
+}
+
+fn print_case(kind: CaseKind, context: &[u8], source: &[u8], scripting: Bool, atoms: &AtomTable, buffer: &Box<Slots<u8>>) -> result: unit reads(context), reads(source), writes(atoms), writes(buffer) contract {
+  requires source^.len <= 1073741824_u64;
+} {
+  doc "Parses one case as kind says and appends its tree, or the line naming the failure, and then the `#end` line. The context name's range and length are checked again for atom_intern's contract; case_kind has already refused a context that fails them.";
+  let parsed = match kind {
+    WholeDocument() => {
+      give parse_document(source: source, scripting: scripting, atoms: atoms);
+    }
+    Fragment(namespace: space_kind, name_start: start) => {
+      let length = context^.len;
+      let inside = start <= length;
+      if inside {
+      } else {
+        put_text(buffer: buffer, text: &context_range_text[0_u64..context_range_text.len]);
+        put_text(buffer: buffer, text: &end_line[0_u64..end_line.len]);
+        return unit;
+      }
+      let name_bytes = &context^[start..length];
+      let short = name_bytes^.len <= name_ceiling;
+      if short {
+      } else {
+        put_text(buffer: buffer, text: &context_long_text[0_u64..context_long_text.len]);
+        put_text(buffer: buffer, text: &end_line[0_u64..end_line.len]);
+        return unit;
+      }
+      match atom_intern(table: atoms, name: name_bytes) {
+        Ok(value: name) => {
+          give parse_fragment(source: source, context_namespace: space_kind, context_name: name, scripting: scripting, atoms: atoms);
+        }
+        Err(error: problem) => {
+          put_text(buffer: buffer, text: &context_refused_text[0_u64..context_refused_text.len]);
+          put_text(buffer: buffer, text: &end_line[0_u64..end_line.len]);
+          return unit;
+        }
+      }
+    }
+  }
+  match move parsed {
+    Ok(value: document) => {
+      let complete = serialize_document(document: &document, atoms: atoms, out: buffer);
+      if complete {
+      } else {
+        put_text(buffer: buffer, text: &broken_links_text[0_u64..broken_links_text.len]);
+      }
+    }
+    Err(error: failure) => {
+      put_failure(buffer: buffer, failure: failure);
+    }
+  }
+  put_text(buffer: buffer, text: &end_line[0_u64..end_line.len]);
+  return unit;
+}
+
+fn put_failure(buffer: &Box<Slots<u8>>, failure: TreeError) -> result: unit writes(buffer) {
+  doc "Appends the line `| driver: parse failed (TooLarge)` or `| driver: parse failed (Dom NAME)` naming the DomError.";
+  match failure {
+    TooLarge() => {
+      put_text(buffer: buffer, text: &too_large_text[0_u64..too_large_text.len]);
+    }
+    Dom(error: refusal) => {
+      put_text(buffer: buffer, text: &parse_failed_text[0_u64..parse_failed_text.len]);
+      match refusal {
+        InvalidNode() => {
+          put_text(buffer: buffer, text: &invalid_node_text[0_u64..invalid_node_text.len]);
+        }
+        WrongKind() => {
+          put_text(buffer: buffer, text: &wrong_kind_text[0_u64..wrong_kind_text.len]);
+        }
+        TooLarge() => {
+          put_text(buffer: buffer, text: &dom_too_large_text[0_u64..dom_too_large_text.len]);
+        }
+      }
+      put_text(buffer: buffer, text: &close_failure_text[0_u64..close_failure_text.len]);
+    }
+  }
+  return unit;
+}
