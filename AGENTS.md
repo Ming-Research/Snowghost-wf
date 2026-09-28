@@ -100,11 +100,12 @@ them.
 
 - The owner and the primary agent own the architecture: the design tree, the
   module graph and the Whitefoot module interfaces (`.wfm`), with their
-  contracts and effect rows.
-- Implementer agents write module bodies (`.wf`) against those interfaces, in
-  parallel. An implementer that finds an interface insufficient reports the
-  gap to the primary agent with a minimal example instead of editing the
-  interface.
+  contracts and effect rows, and the format the renderer and the shell
+  exchange.
+- Implementer agents write module bodies (`.wf`) against those interfaces,
+  and the shell's Rust components against that format, in parallel. An
+  implementer that finds an interface or the format insufficient reports the
+  gap to the primary agent with a minimal example instead of editing it.
 - A separate reviewer agent that did not implement a change reviews it under
   the completion-review skill.
 - The primary agent dispatches and supervises implementer and reviewer agents
