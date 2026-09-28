@@ -152,7 +152,7 @@ counted as an intervention. The CSS run found the files on its own.
   independently); the generator reproduces the checked-in tables byte for
   byte from the Unicode 17.0.0 files; the reviewer scored it 3 of 5; no
   interventions.
-- **Run:** about 60 minutes, 354 tool calls, about 657,000 tokens; 2,620
+- **Run:** about 60 minutes, 354 tool calls, about 657,000 tokens; 2,613
   lines plus 50 KB of generated tables (2,637 class ranges searched by
   bisection). The oracle's 19,338 cases run in 25 ms.
 - **Reviewer:** readability 3, interface fidelity 4, use of Whitefoot 3,
