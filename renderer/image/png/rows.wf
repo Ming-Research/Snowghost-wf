@@ -1,0 +1,182 @@
+fn reconstruct_row(row: &[u8], prev: &[u8], cur: &[u8], distance: u64) -> result: Result<unit, PngError> reads(row), reads(prev), writes(cur) contract {
+  define payload_bytes = cur^.len;
+  requires row^.len >= payload_bytes + 1_u64;
+  requires prev^.len >= payload_bytes;
+  requires distance <= payload_bytes;
+} {
+  doc "Reconstructs one filtered scanline row, its filter-type byte followed by its payload, into cur using the previous reconstructed scanline prev. An unknown filter type is Malformed.";
+  let row_length = row^.len;
+  let filter = propagate filter_type(byte: row^[0_u64]);
+  let payload = &row^[1_u64..row_length];
+  unfilter_row(filter: filter, bpp: distance, payload: payload, prev: prev, cur: cur);
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn scatter_pixels(src: &[u8], dst: &[u8], width: u64, start: u64, step: u64) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires step >= 1_u64;
+  requires step <= 8_u64;
+} {
+  doc "Copies the consecutive RGBA pixels of src into the columns start, start + step, start + 2 * step, ... of the RGBA row dst, which must hold width pixels, until either runs out.";
+  let dst_need = width * 4_u64;
+  if dst_need <= dst^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let src_length = src^.len;
+  let column = start;
+  let at = 0_u64;
+  loop @columns (
+    invariant consumed: at <= src_length
+  ) {
+    if column < width {
+    } else {
+      break @columns;
+    }
+    let rest = src_length - at;
+    if rest < 4_u64 {
+      break @columns;
+    }
+    let next = at + 4_u64;
+    invariant next_inside: next <= src_length;
+    let green_at = at + 1_u64;
+    let blue_at = at + 2_u64;
+    let alpha_at = at + 3_u64;
+    let out = column * 4_u64;
+    invariant out_in: out + 4_u64 <= dst_need {
+      use 4 times (column + 1_u64 <= width);
+    }
+    put_rgba(dst: dst, at: out, red: src^[at], green: src^[green_at], blue: src^[blue_at], alpha: src^[alpha_at]);
+    set at = next;
+    set column = column + step;
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn decode_row(row: &[u8], prev: &[u8], cur: &[u8], distance: u64, format: &PixelFormat, rgba: &[u8], out: &[u8], width: u64, start_x: u64, step_x: u64, count: u64) -> result: Result<unit, PngError> reads(row), reads(prev), reads(format), writes(cur), writes(rgba), writes(out) contract {
+  define payload_bytes = cur^.len;
+  requires row^.len >= payload_bytes + 1_u64;
+  requires prev^.len >= payload_bytes;
+  requires distance <= payload_bytes;
+  requires width <= 67108864_u64;
+  requires start_x <= 8_u64;
+  requires step_x >= 1_u64;
+  requires step_x <= 8_u64;
+  requires count <= width;
+} {
+  doc "Reconstructs one filtered scanline into cur and stores its count pixels in the RGBA image row out at the columns start_x, start_x + step_x, ...: straight into out when the lattice covers every column, and through the scratch RGBA row rgba otherwise.";
+  let reconstructed = propagate reconstruct_row(row: row, prev: prev, cur: cur, distance: distance);
+  if step_x == 1_u64 {
+    return expand_row(format: format, src: cur, dst: out, width: count);
+  }
+  let expanded = propagate expand_row(format: format, src: cur, dst: rgba, width: count);
+  return scatter_pixels(src: rgba, dst: out, width: width, start: start_x, step: step_x);
+}
+
+fn lattice_position(start: u64, index: u64, step: u64) -> result: u64 pure contract {
+  requires start <= 8_u64;
+  requires index <= 67108864_u64;
+  requires step <= 8_u64;
+} {
+  doc "Returns start + index * step, the image row or column of the index-th position of an Adam7 lattice. It is a call so that its result is one value a certificate can scale by [PRF-1].";
+  let offset = index * step;
+  let position = start + offset;
+  return position;
+}
+
+fn decode_pass(raw: &[u8], pixels: &[u8], format: &PixelFormat, pixel_bits: u64, width: u64, height: u64, start_x: u64, start_y: u64, step_x: u64, step_y: u64) -> result: Result<u64, PngError> reads(raw), reads(format), writes(pixels) contract {
+  requires width <= 67108864_u64;
+  requires height <= 67108864_u64;
+  requires pixel_bits >= 1_u64;
+  requires pixel_bits <= 64_u64;
+  requires start_x <= 8_u64;
+  requires start_y <= 8_u64;
+  requires step_x >= 1_u64;
+  requires step_x <= 8_u64;
+  requires step_y >= 1_u64;
+  requires step_y <= 8_u64;
+  ensures when Ok(value: used): used <= raw^.len;
+} {
+  doc "Reconstructs the pixels at columns start_x, start_x + step_x, ... and rows start_y, start_y + step_y, ... of a width by height image from the filtered scanlines at the start of raw, stores them in their places in pixels, and returns the raw bytes used. An Adam7 pass is one such lattice and a non-interlaced image is the lattice with start 0 and step 1, whose rows expand straight into pixels; a lattice holding no pixels uses no bytes. Too little data in raw is Malformed.";
+  let pass_width = pass_dimension(size: width, start: start_x, step: step_x);
+  let pass_height = pass_dimension(size: height, start: start_y, step: step_y);
+  if pass_width == 0_u64 {
+    return Ok<u64, PngError>(value: 0_u64);
+  }
+  let (payload_bytes, row_len, distance) = row_geometry(pixel_bits: pixel_bits, width: pass_width);
+  let pass_bytes = row_len * pass_height;
+  if pass_bytes <= raw^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<u64, PngError>(error: error);
+  }
+  invariant raw_fits: pass_bytes <= raw^.len;
+  let stride = rgba_row_bytes(width: width);
+  let pixel_need = stride * height;
+  if pixel_need <= pixels^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<u64, PngError>(error: error);
+  }
+  invariant pixels_fit: pixel_need <= pixels^.len;
+  let pass_stride = rgba_row_bytes(width: pass_width);
+  let rgba_cell = box_array_filled::<u8>(count: pass_stride, value: 0_u8);
+  let even_cell = box_array_filled::<u8>(count: payload_bytes, value: 0_u8);
+  let odd_cell = box_array_filled::<u8>(count: payload_bytes, value: 0_u8);
+  for (y in 0_u64..pass_height) {
+    let row_start = y * row_len;
+    let row_end = row_start + row_len;
+    invariant row_in: row_end <= pass_bytes {
+      use row_len times (y + 1_u64 <= pass_height);
+    }
+    let filtered = &raw^[row_start..row_end];
+    let image_row = lattice_position(start: start_y, index: y, step: step_y);
+    if image_row < height {
+    } else {
+      let error = PngError::Malformed();
+      return Err<u64, PngError>(error: error);
+    }
+    let out_start = image_row * stride;
+    let out_end = out_start + stride;
+    invariant out_in: out_end <= pixel_need {
+      use stride times (image_row + 1_u64 <= height);
+    }
+    let out = &pixels^[out_start..out_end];
+    let rgba = &rgba_cell.inner[0_u64..pass_stride];
+    let parity = iand(y, 1_u64);
+    if parity == 0_u64 {
+      let prev = &even_cell.inner[0_u64..payload_bytes];
+      let cur = &odd_cell.inner[0_u64..payload_bytes];
+      let decoded = propagate decode_row(row: filtered, prev: prev, cur: cur, distance: distance, format: format, rgba: rgba, out: out, width: width, start_x: start_x, step_x: step_x, count: pass_width);
+    } else {
+      let prev = &odd_cell.inner[0_u64..payload_bytes];
+      let cur = &even_cell.inner[0_u64..payload_bytes];
+      let decoded = propagate decode_row(row: filtered, prev: prev, cur: cur, distance: distance, format: format, rgba: rgba, out: out, width: width, start_x: start_x, step_x: step_x, count: pass_width);
+    }
+  }
+  return Ok<u64, PngError>(value: pass_bytes);
+}
+
+fn decode_interlaced(raw: &[u8], pixels: &[u8], format: &PixelFormat, pixel_bits: u64, width: u64, height: u64) -> result: Result<unit, PngError> reads(raw), reads(format), writes(pixels) contract {
+  requires width <= 67108864_u64;
+  requires height <= 67108864_u64;
+  requires pixel_bits >= 1_u64;
+  requires pixel_bits <= 64_u64;
+} {
+  doc "Reconstructs the seven Adam7 passes of an interlaced image, stored one after another in raw, into pixels.";
+  let raw_length = raw^.len;
+  let pass_start = 0_u64;
+  for (
+    pass in 0_u64..7_u64,
+    invariant consumed: pass_start <= raw_length
+  ) {
+    let (start_x, start_y, step_x, step_y) = adam7_geometry(pass: pass);
+    let rest = &raw^[pass_start..raw_length];
+    let used = propagate decode_pass(raw: rest, pixels: pixels, format: format, pixel_bits: pixel_bits, width: width, height: height, start_x: start_x, start_y: start_y, step_x: step_x, step_y: step_y);
+    let next = pass_start + used;
+    invariant next_inside: next <= raw_length;
+    set pass_start = next;
+  }
+  return Ok<unit, PngError>(value: unit);
+}

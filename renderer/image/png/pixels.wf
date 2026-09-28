@@ -1,568 +1,221 @@
-struct RgbaPixel {
-  r: u8;
-  g: u8;
-  b: u8;
-  a: u8;
+struct RgbKey {
+  red: u16;
+  green: u16;
+  blue: u16;
 }
 
-fn read_channel_sample(cur: &[u8], x: u64, channel: u64, channels: u64, bit_depth: u8) -> result: u32 reads(cur) {
-  doc "Reads one channel's raw sample value (0 .. 2^bit_depth - 1) of pixel x from a reconstructed scanline.";
-  let room = cur^.len;
-  let is1 = bit_depth == 1_u8;
-  let is2 = bit_depth == 2_u8;
-  let is4 = bit_depth == 4_u8;
-  let sub8_a = bor(is1, is2);
-  let sub8 = bor(sub8_a, is4);
-  if sub8 {
-    let depth = cvt::<u8, u64>(bit_depth);
-    let bit_offset = x *wrap depth;
-    let byte_index = bit_offset / 8_u64;
-    let bit_in_byte = bit_offset % 8_u64;
-    let shift_amount = 8_u64 -wrap bit_in_byte;
-    let shift = shift_amount -wrap depth;
-    let ok = byte_index < room;
-    let byte = 0_u8;
-    if ok {
-      set byte = cur^[byte_index];
-    }
-    let widened = cvt::<u8, u32>(byte);
-    let shift32 = cvt.wrap::<u64, u32>(shift);
-    let shifted = ishr.wrap(widened, shift32);
-    let depth32 = cvt.wrap::<u64, u32>(depth);
-    let range = ishl.wrap(1_u32, depth32);
-    let mask = range -wrap 1_u32;
-    let value = iand(shifted, mask);
-    return value;
-  }
-  let is16 = bit_depth == 16_u8;
-  if is16 {
-    let stride = channels *wrap 2_u64;
-    let base = x *wrap stride;
-    let coff = channel *wrap 2_u64;
-    let idx0 = base +wrap coff;
-    let idx1 = idx0 +wrap 1_u64;
-    let ok0 = idx0 < room;
-    let ok1 = idx1 < room;
-    let hi = 0_u8;
-    let lo = 0_u8;
-    if ok0 {
-      set hi = cur^[idx0];
-    }
-    if ok1 {
-      set lo = cur^[idx1];
-    }
-    let hiw = cvt::<u8, u32>(hi);
-    let low = cvt::<u8, u32>(lo);
-    let hishift = ishl.wrap(hiw, 8_u32);
-    let value = ior(hishift, low);
-    return value;
-  }
-  let idx0 = x *wrap channels;
-  let idx1 = idx0 +wrap channel;
-  let ok = idx1 < room;
-  let byte = 0_u8;
-  if ok {
-    set byte = cur^[idx1];
-  }
-  let value = cvt::<u8, u32>(byte);
-  return value;
+enum RowFormat {
+  Indexed8();
+  Indexed1();
+  Indexed2();
+  Indexed4();
+  Gray16();
+  GrayAlpha8();
+  GrayAlpha16();
+  Rgb8();
+  Rgb16();
+  Rgba8();
+  Rgba16();
 }
 
-fn scale_sample(raw_value: u32, bit_depth: u8) -> result: u8 pure {
-  doc "Scales a raw sample of bit_depth bits to an 8-bit output: an exact 255/(2^depth-1) multiply below 8 bits, the value itself at 8 bits, and the high byte at 16 bits.";
-  let is1 = bit_depth == 1_u8;
-  if is1 {
-    let scaled = raw_value *wrap 255_u32;
-    return cvt.wrap::<u32, u8>(scaled);
-  }
-  let is2 = bit_depth == 2_u8;
-  if is2 {
-    let scaled = raw_value *wrap 85_u32;
-    return cvt.wrap::<u32, u8>(scaled);
-  }
-  let is4 = bit_depth == 4_u8;
-  if is4 {
-    let scaled = raw_value *wrap 17_u32;
-    return cvt.wrap::<u32, u8>(scaled);
-  }
-  let is16 = bit_depth == 16_u8;
-  if is16 {
-    let shifted = ishr.wrap(raw_value, 8_u32);
-    return cvt.wrap::<u32, u8>(shifted);
-  }
-  return cvt.wrap::<u32, u8>(raw_value);
+struct PixelFormat {
+  row: RowFormat;
+  table: Array<u8, 1024>;
+  table_count: u64;
+  gray_key: Option<u16>;
+  rgb_key: Option<RgbKey>;
 }
 
-fn trns_key(trns: &[u8], offset: u64) -> result: u32 reads(trns) {
-  doc "Reads the big-endian 16-bit key that starts at offset of a tRNS chunk's bytes.";
-  let room = trns^.len;
-  let o1 = offset +wrap 1_u64;
-  let ok0 = offset < room;
-  let ok1 = o1 < room;
-  let hi = 0_u8;
-  let lo = 0_u8;
-  if ok0 {
-    set hi = trns^[offset];
+fn packed_format(bit_depth: u8) -> result: RowFormat pure {
+  doc "Returns the table-lookup row format of 1-, 2- or 4-bit samples; any other depth reads as 4-bit, which the caller never passes.";
+  if bit_depth == 1_u8 {
+    return RowFormat::Indexed1();
   }
-  if ok1 {
-    set lo = trns^[o1];
+  if bit_depth == 2_u8 {
+    return RowFormat::Indexed2();
   }
-  let hiw = cvt::<u8, u32>(hi);
-  let low = cvt::<u8, u32>(lo);
-  let shifted = ishl.wrap(hiw, 8_u32);
+  return RowFormat::Indexed4();
+}
+
+fn row_format(color: ColorType, bit_depth: u8) -> result: RowFormat pure {
+  doc "Chooses how one reconstructed scanline of color and bit_depth expands to RGBA. Grayscale up to 8 bits and palette images both go through the color table, one table entry per sample value.";
+  let wide = bit_depth == 16_u8;
+  let byte = bit_depth == 8_u8;
+  let packed = packed_format(bit_depth: bit_depth);
+  match color {
+    Gray() => {
+      if wide {
+        return RowFormat::Gray16();
+      }
+      if byte {
+        return RowFormat::Indexed8();
+      }
+      return packed;
+    }
+    Palette() => {
+      if byte {
+        return RowFormat::Indexed8();
+      }
+      return packed;
+    }
+    GrayAlpha() => {
+      if wide {
+        return RowFormat::GrayAlpha16();
+      }
+      return RowFormat::GrayAlpha8();
+    }
+    Rgb() => {
+      if wide {
+        return RowFormat::Rgb16();
+      }
+      return RowFormat::Rgb8();
+    }
+    Rgba() => {
+      if wide {
+        return RowFormat::Rgba16();
+      }
+      return RowFormat::Rgba8();
+    }
+  }
+}
+
+fn be_u16(bytes: &[u8], at: u64) -> result: u16 reads(bytes) contract {
+  define length = bytes^.len;
+  requires at + 2_u64 <= length;
+} {
+  doc "Reads the big-endian u16 that starts at index at of bytes.";
+  let high = cvt::<u8, u16>(bytes^[at]);
+  let low_at = at + 1_u64;
+  let low = cvt::<u8, u16>(bytes^[low_at]);
+  let shifted = ishl(high, 8_u32);
   return ior(shifted, low);
 }
 
-fn decode_pixel_depth8(cur: &[u8], x: u64, color_type: u8, channels: u64, palette: &[u8], palette_count: u64, has_trns: Bool, trns: &[u8], trns_count: u64) -> result: Result<RgbaPixel, PngError> reads(cur), reads(palette), reads(trns) {
-  doc "The 8-bit-depth fast path of decode_pixel: every sample is already one byte, so channels are read directly with no bit unpacking or scaling.";
-  let room = cur^.len;
-  let base = x *wrap channels;
-  let is_gray = color_type == 0_u8;
-  if is_gray {
-    let ok = base < room;
-    let g = 0_u8;
-    if ok {
-      set g = cur^[base];
-    }
-    let alpha = 255_u8;
-    if has_trns {
-      let key = trns_key(trns: trns, offset: 0_u64);
-      let gw = cvt::<u8, u32>(g);
-      let key_matches = gw == key;
-      if key_matches {
-        set alpha = 0_u8;
+fn palette_table(palette: &[u8], trns: &[u8]) -> table: Array<u8, 1024> reads(palette), reads(trns) {
+  doc "Builds the RGBA color table of a palette image: entry i holds PLTE entry i with alpha from tRNS entry i, or 255 past the end of the tRNS table. Entries past the PLTE table stay zero; decoding rejects an index that reaches them.";
+  let table = array_filled::<u8, 1024>(value: 0_u8);
+  let palette_length = palette^.len;
+  let trns_length = trns^.len;
+  for (index in 0_u64..256_u64) {
+    let source = index * 3_u64;
+    let source_end = source + 3_u64;
+    if source_end <= palette_length {
+      let target = index * 4_u64;
+      let green_at = source + 1_u64;
+      let blue_at = source + 2_u64;
+      let target_green = target + 1_u64;
+      let target_blue = target + 2_u64;
+      let target_alpha = target + 3_u64;
+      set table[target] = palette^[source];
+      set table[target_green] = palette^[green_at];
+      set table[target_blue] = palette^[blue_at];
+      let alpha = 255_u8;
+      if index < trns_length {
+        set alpha = trns^[index];
       }
+      set table[target_alpha] = alpha;
     }
-    let pixel = RgbaPixel(r: g, g: g, b: g, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
   }
-  let is_rgb = color_type == 2_u8;
-  if is_rgb {
-    let i1 = base +wrap 1_u64;
-    let i2 = base +wrap 2_u64;
-    let ok0 = base < room;
-    let ok1 = i1 < room;
-    let ok2 = i2 < room;
-    let r = 0_u8;
-    let g = 0_u8;
-    let b = 0_u8;
-    if ok0 {
-      set r = cur^[base];
-    }
-    if ok1 {
-      set g = cur^[i1];
-    }
-    if ok2 {
-      set b = cur^[i2];
-    }
-    let alpha = 255_u8;
-    if has_trns {
-      let key_r = trns_key(trns: trns, offset: 0_u64);
-      let key_g = trns_key(trns: trns, offset: 2_u64);
-      let key_b = trns_key(trns: trns, offset: 4_u64);
-      let rw = cvt::<u8, u32>(r);
-      let gw = cvt::<u8, u32>(g);
-      let bw = cvt::<u8, u32>(b);
-      let match_r = rw == key_r;
-      let match_g = gw == key_g;
-      let match_b = bw == key_b;
-      let match_rg = band(match_r, match_g);
-      let match_all = band(match_rg, match_b);
-      if match_all {
-        set alpha = 0_u8;
-      }
-    }
-    let pixel = RgbaPixel(r: r, g: g, b: b, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
+  return table;
+}
+
+fn gray_scale(bit_depth: u8) -> result: u32 pure {
+  doc "Returns 255 / (2^bit_depth - 1), the factor that spreads gray levels of bit_depth bits over 0..255: 255, 85 and 17 for 1, 2 and 4 bits, and 1 for 8 bits.";
+  if bit_depth == 1_u8 {
+    return 255_u32;
   }
-  let is_palette = color_type == 3_u8;
-  if is_palette {
-    let ok = base < room;
-    let idx8 = 0_u8;
-    if ok {
-      set idx8 = cur^[base];
-    }
-    let index = cvt::<u8, u64>(idx8);
-    let in_palette = index < palette_count;
-    if in_palette {
-    } else {
-      let error = PngError::Malformed();
-      return Err<RgbaPixel, PngError>(error: error);
-    }
-    let g_off = base +wrap 1_u64;
-    let b_off = base +wrap 2_u64;
-    let pbase = index *wrap 3_u64;
-    let pg = pbase +wrap 1_u64;
-    let pb = pbase +wrap 2_u64;
-    let proom = palette^.len;
-    let pok0 = pbase < proom;
-    let pok1 = pg < proom;
-    let pok2 = pb < proom;
-    let r = 0_u8;
-    let g = 0_u8;
-    let b = 0_u8;
-    if pok0 {
-      set r = palette^[pbase];
-    }
-    if pok1 {
-      set g = palette^[pg];
-    }
-    if pok2 {
-      set b = palette^[pb];
-    }
+  if bit_depth == 2_u8 {
+    return 85_u32;
+  }
+  if bit_depth == 4_u8 {
+    return 17_u32;
+  }
+  return 1_u32;
+}
+
+fn gray_table(bit_depth: u8, key: Option<u16>) -> table: Array<u8, 1024> pure {
+  doc "Builds the RGBA color table of a grayscale image of at most 8 bits: entry i is gray level i scaled by 255 / (2^bit_depth - 1), opaque unless i equals the tRNS key. Entries past 2^bit_depth are unused.";
+  let table = array_filled::<u8, 1024>(value: 0_u8);
+  let scale = gray_scale(bit_depth: bit_depth);
+  for (index in 0_u64..256_u64) {
+    let level = cvt::<u64, u32>(index);
+    let scaled = level *wrap scale;
+    let gray = cvt.wrap::<u32, u8>(scaled);
     let alpha = 255_u8;
-    if has_trns {
-      let has_entry = index < trns_count;
-      if has_entry {
-        let troom = trns^.len;
-        let tok = index < troom;
-        if tok {
-          set alpha = trns^[index];
+    match key {
+      Some(value: sample) => {
+        let wide_sample = cvt::<u16, u32>(sample);
+        if level == wide_sample {
+          set alpha = 0_u8;
         }
       }
+      None() => {
+      }
     }
-    let pixel = RgbaPixel(r: r, g: g, b: b, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
+    let target = index * 4_u64;
+    let target_green = target + 1_u64;
+    let target_blue = target + 2_u64;
+    let target_alpha = target + 3_u64;
+    set table[target] = gray;
+    set table[target_green] = gray;
+    set table[target_blue] = gray;
+    set table[target_alpha] = alpha;
   }
-  let is_gray_alpha = color_type == 4_u8;
-  if is_gray_alpha {
-    let i1 = base +wrap 1_u64;
-    let ok0 = base < room;
-    let ok1 = i1 < room;
-    let g = 0_u8;
-    let a = 0_u8;
-    if ok0 {
-      set g = cur^[base];
-    }
-    if ok1 {
-      set a = cur^[i1];
-    }
-    let pixel = RgbaPixel(r: g, g: g, b: g, a: a);
-    return Ok<RgbaPixel, PngError>(value: pixel);
-  }
-  let i1 = base +wrap 1_u64;
-  let i2 = base +wrap 2_u64;
-  let i3 = base +wrap 3_u64;
-  let ok0 = base < room;
-  let ok1 = i1 < room;
-  let ok2 = i2 < room;
-  let ok3 = i3 < room;
-  let r = 0_u8;
-  let g = 0_u8;
-  let b = 0_u8;
-  let a = 0_u8;
-  if ok0 {
-    set r = cur^[base];
-  }
-  if ok1 {
-    set g = cur^[i1];
-  }
-  if ok2 {
-    set b = cur^[i2];
-  }
-  if ok3 {
-    set a = cur^[i3];
-  }
-  let pixel = RgbaPixel(r: r, g: g, b: b, a: a);
-  return Ok<RgbaPixel, PngError>(value: pixel);
+  return table;
 }
 
-fn decode_pixel(cur: &[u8], x: u64, color_type: u8, bit_depth: u8, channels: u64, palette: &[u8], palette_count: u64, has_palette: Bool, trns: &[u8], trns_count: u64, has_trns: Bool) -> result: Result<RgbaPixel, PngError> reads(cur), reads(palette), reads(trns) {
-  doc "Decodes one pixel of a reconstructed scanline to non-premultiplied RGBA, expanding palette and grayscale samples and applying a tRNS transparency key.";
-  let depth8 = bit_depth == 8_u8;
-  if depth8 {
-    let pixel = propagate decode_pixel_depth8(cur: cur, x: x, color_type: color_type, channels: channels, palette: palette, palette_count: palette_count, has_trns: has_trns, trns: trns, trns_count: trns_count);
-    return Ok<RgbaPixel, PngError>(value: pixel);
+fn pixel_format(header: Header, palette: &[u8], trns: &[u8]) -> result: PixelFormat reads(palette), reads(trns) {
+  doc "Gathers everything row expansion needs for one image: its row format, the color table for palette and low-depth grayscale images, and the tRNS key of a grayscale or truecolor image. A tRNS chunk whose length does not fit the color type carries no key and is ignored.";
+  let bit_depth = header.bit_depth;
+  let color = header.color;
+  let row = row_format(color: color, bit_depth: bit_depth);
+  let trns_length = trns^.len;
+  let gray_key = None<u16>();
+  if trns_length == 2_u64 {
+    let sample = be_u16(bytes: trns, at: 0_u64);
+    set gray_key = Some<u16>(value: sample);
   }
-  let is_gray = color_type == 0_u8;
-  if is_gray {
-    let raw = read_channel_sample(cur: cur, x: x, channel: 0_u64, channels: channels, bit_depth: bit_depth);
-    let out = scale_sample(raw_value: raw, bit_depth: bit_depth);
-    let alpha = 255_u8;
-    if has_trns {
-      let key = trns_key(trns: trns, offset: 0_u64);
-      let key_matches = raw == key;
-      if key_matches {
-        set alpha = 0_u8;
+  let rgb_key = None<RgbKey>();
+  if trns_length == 6_u64 {
+    let red = be_u16(bytes: trns, at: 0_u64);
+    let green = be_u16(bytes: trns, at: 2_u64);
+    let blue = be_u16(bytes: trns, at: 4_u64);
+    let key = RgbKey(red: red, green: green, blue: blue);
+    set rgb_key = Some<RgbKey>(value: key);
+  }
+  let no_gray_key = None<u16>();
+  let no_rgb_key = None<RgbKey>();
+  let unused = array_filled::<u8, 1024>(value: 0_u8);
+  match color {
+    Palette() => {
+      let table = palette_table(palette: palette, trns: trns);
+      let palette_length = palette^.len;
+      let count = palette_length / 3_u64;
+      let format = PixelFormat(row: row, table: table, table_count: count, gray_key: no_gray_key, rgb_key: no_rgb_key);
+      return format;
+    }
+    Gray() => {
+      if bit_depth <= 8_u8 {
+        let table = gray_table(bit_depth: bit_depth, key: gray_key);
+        let depth = cvt::<u8, u32>(bit_depth);
+        let levels = ishl(1_u64, depth);
+        let format = PixelFormat(row: row, table: table, table_count: levels, gray_key: no_gray_key, rgb_key: no_rgb_key);
+        return format;
       }
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: gray_key, rgb_key: no_rgb_key);
+      return format;
     }
-    let pixel = RgbaPixel(r: out, g: out, b: out, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
-  }
-  let is_rgb = color_type == 2_u8;
-  if is_rgb {
-    let raw_r = read_channel_sample(cur: cur, x: x, channel: 0_u64, channels: channels, bit_depth: bit_depth);
-    let raw_g = read_channel_sample(cur: cur, x: x, channel: 1_u64, channels: channels, bit_depth: bit_depth);
-    let raw_b = read_channel_sample(cur: cur, x: x, channel: 2_u64, channels: channels, bit_depth: bit_depth);
-    let out_r = scale_sample(raw_value: raw_r, bit_depth: bit_depth);
-    let out_g = scale_sample(raw_value: raw_g, bit_depth: bit_depth);
-    let out_b = scale_sample(raw_value: raw_b, bit_depth: bit_depth);
-    let alpha = 255_u8;
-    if has_trns {
-      let key_r = trns_key(trns: trns, offset: 0_u64);
-      let key_g = trns_key(trns: trns, offset: 2_u64);
-      let key_b = trns_key(trns: trns, offset: 4_u64);
-      let match_r = raw_r == key_r;
-      let match_g = raw_g == key_g;
-      let match_b = raw_b == key_b;
-      let match_rg = band(match_r, match_g);
-      let match_all = band(match_rg, match_b);
-      if match_all {
-        set alpha = 0_u8;
-      }
+    Rgb() => {
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: no_gray_key, rgb_key: rgb_key);
+      return format;
     }
-    let pixel = RgbaPixel(r: out_r, g: out_g, b: out_b, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
-  }
-  let is_palette = color_type == 3_u8;
-  if is_palette {
-    let raw_index = read_channel_sample(cur: cur, x: x, channel: 0_u64, channels: channels, bit_depth: bit_depth);
-    let index = cvt::<u32, u64>(raw_index);
-    let in_palette = index < palette_count;
-    if in_palette {
-    } else {
-      let error = PngError::Malformed();
-      return Err<RgbaPixel, PngError>(error: error);
+    GrayAlpha() => {
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: no_gray_key, rgb_key: no_rgb_key);
+      return format;
     }
-    let base = index *wrap 3_u64;
-    let g_off = base +wrap 1_u64;
-    let b_off = base +wrap 2_u64;
-    let palette_room = palette^.len;
-    let base_ok = base < palette_room;
-    let g_ok = g_off < palette_room;
-    let b_ok = b_off < palette_room;
-    let r = 0_u8;
-    let g = 0_u8;
-    let b = 0_u8;
-    if base_ok {
-      set r = palette^[base];
+    Rgba() => {
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: no_gray_key, rgb_key: no_rgb_key);
+      return format;
     }
-    if g_ok {
-      set g = palette^[g_off];
-    }
-    if b_ok {
-      set b = palette^[b_off];
-    }
-    let alpha = 255_u8;
-    if has_trns {
-      let has_entry = index < trns_count;
-      if has_entry {
-        let trns_room = trns^.len;
-        let entry_ok = index < trns_room;
-        if entry_ok {
-          set alpha = trns^[index];
-        }
-      }
-    }
-    let pixel = RgbaPixel(r: r, g: g, b: b, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
   }
-  let is_gray_alpha = color_type == 4_u8;
-  if is_gray_alpha {
-    let raw_gray = read_channel_sample(cur: cur, x: x, channel: 0_u64, channels: channels, bit_depth: bit_depth);
-    let raw_alpha = read_channel_sample(cur: cur, x: x, channel: 1_u64, channels: channels, bit_depth: bit_depth);
-    let out = scale_sample(raw_value: raw_gray, bit_depth: bit_depth);
-    let alpha = scale_sample(raw_value: raw_alpha, bit_depth: bit_depth);
-    let pixel = RgbaPixel(r: out, g: out, b: out, a: alpha);
-    return Ok<RgbaPixel, PngError>(value: pixel);
-  }
-  let raw_r = read_channel_sample(cur: cur, x: x, channel: 0_u64, channels: channels, bit_depth: bit_depth);
-  let raw_g = read_channel_sample(cur: cur, x: x, channel: 1_u64, channels: channels, bit_depth: bit_depth);
-  let raw_b = read_channel_sample(cur: cur, x: x, channel: 2_u64, channels: channels, bit_depth: bit_depth);
-  let raw_a = read_channel_sample(cur: cur, x: x, channel: 3_u64, channels: channels, bit_depth: bit_depth);
-  let out_r = scale_sample(raw_value: raw_r, bit_depth: bit_depth);
-  let out_g = scale_sample(raw_value: raw_g, bit_depth: bit_depth);
-  let out_b = scale_sample(raw_value: raw_b, bit_depth: bit_depth);
-  let out_a = scale_sample(raw_value: raw_a, bit_depth: bit_depth);
-  let pixel = RgbaPixel(r: out_r, g: out_g, b: out_b, a: out_a);
-  return Ok<RgbaPixel, PngError>(value: pixel);
-}
-
-fn decode_and_write_depth8(cur: &[u8], x: u64, color_type: u8, channels: u64, palette: &[u8], palette_count: u64, has_trns: Bool, trns: &[u8], trns_count: u64, pixels: &[u8], image_width: u64, fx: u64, fy: u64) -> result: Result<unit, PngError> reads(cur), reads(palette), reads(trns), writes(pixels) {
-  doc "The fused, 8-bit-depth fast path: decodes pixel x of cur and writes it straight into pixels, without an intermediate RgbaPixel value or a second call.";
-  let pixel = propagate decode_pixel_depth8(cur: cur, x: x, color_type: color_type, channels: channels, palette: palette, palette_count: palette_count, has_trns: has_trns, trns: trns, trns_count: trns_count);
-  let row_offset = fy *wrap image_width;
-  let pixel_index = row_offset +wrap fx;
-  let byte_index = pixel_index *wrap 4_u64;
-  let i1 = byte_index +wrap 1_u64;
-  let i2 = byte_index +wrap 2_u64;
-  let i3 = byte_index +wrap 3_u64;
-  let room = pixels^.len;
-  let ok0 = byte_index < room;
-  if ok0 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  let ok1 = i1 < room;
-  if ok1 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  let ok2 = i2 < room;
-  if ok2 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  let ok3 = i3 < room;
-  if ok3 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  set pixels^[byte_index] = pixel.r;
-  set pixels^[i1] = pixel.g;
-  set pixels^[i2] = pixel.b;
-  set pixels^[i3] = pixel.a;
-  return Ok<unit, PngError>(value: unit);
-}
-
-fn write_pixel(pixels: &[u8], image_width: u64, fx: u64, fy: u64, color: RgbaPixel) -> result: Result<unit, PngError> writes(pixels) {
-  doc "Writes one RGBA pixel into the four bytes of pixels at row fy, column fx of an image image_width pixels wide.";
-  let row_offset = fy *wrap image_width;
-  let pixel_index = row_offset +wrap fx;
-  let byte_index = pixel_index *wrap 4_u64;
-  let i1 = byte_index +wrap 1_u64;
-  let i2 = byte_index +wrap 2_u64;
-  let i3 = byte_index +wrap 3_u64;
-  let room = pixels^.len;
-  let ok0 = byte_index < room;
-  if ok0 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  let ok1 = i1 < room;
-  if ok1 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  let ok2 = i2 < room;
-  if ok2 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  let ok3 = i3 < room;
-  if ok3 {
-  } else {
-    let error = PngError::Malformed();
-    return Err<unit, PngError>(error: error);
-  }
-  set pixels^[byte_index] = color.r;
-  set pixels^[i1] = color.g;
-  set pixels^[i2] = color.b;
-  set pixels^[i3] = color.a;
-  return Ok<unit, PngError>(value: unit);
-}
-
-fn decode_pass(raw: &[u8], raw_offset: u64, pass_width: u64, pass_height: u64, color_type: u8, bit_depth: u8, bpp_bits: u64, palette: &[u8], palette_count: u64, has_palette: Bool, trns: &[u8], trns_count: u64, has_trns: Bool, start_x: u64, start_y: u64, step_x: u64, step_y: u64, image_width: u64, pixels: &[u8]) -> result: Result<u64, PngError> reads(raw), reads(palette), reads(trns), writes(pixels) {
-  doc "Reconstructs one Adam7 pass (or the whole image, called with start 0, 0 and step 1, 1) from raw starting at raw_offset, scattering its pixels into the full-size pixels buffer, and returns the number of raw bytes the pass consumed.";
-  let channels = channel_count(color_type: color_type);
-  let row_payload = row_payload_bytes(bpp_bits: bpp_bits, width: pass_width);
-  let row_len = row_payload +wrap 1_u64;
-  let bpp = bytes_per_complete_pixel(bpp_bits: bpp_bits);
-  let row_within_ceiling = row_payload <= 1073741824_u64;
-  if row_within_ceiling {
-  } else {
-    let error = PngError::Malformed();
-    return Err<u64, PngError>(error: error);
-  }
-  let prev_cell = box_slots_new::<u8>(capacity: row_payload);
-  for @fill_prev (
-    at in 0_u64..row_payload,
-    invariant grown: prev_cell.inner.len == at
-  ) {
-    place_back(window: &prev_cell.inner, value: 0_u8);
-  }
-  let cur_cell = box_slots_new::<u8>(capacity: row_payload);
-  for @fill_cur (
-    at in 0_u64..row_payload,
-    invariant grown: cur_cell.inner.len == at
-  ) {
-    place_back(window: &cur_cell.inner, value: 0_u8);
-  }
-  let y = 0_u64;
-  loop @rows {
-    let rows_done = y == pass_height;
-    if rows_done {
-      break @rows;
-    }
-    let row_index = y *wrap row_len;
-    let row_start = raw_offset +wrap row_index;
-    let raw_room = raw^.len;
-    let filter_ok = row_start < raw_room;
-    if filter_ok {
-    } else {
-      let error = PngError::Malformed();
-      return Err<u64, PngError>(error: error);
-    }
-    let filter_byte = raw^[row_start];
-    let payload_start = row_start +wrap 1_u64;
-    let payload_end = payload_start +wrap row_payload;
-    let payload_ok = payload_end <= raw_room;
-    let payload_ordered = payload_start <= payload_end;
-    if payload_ok {
-    } else {
-      let error = PngError::Malformed();
-      return Err<u64, PngError>(error: error);
-    }
-    if payload_ordered {
-    } else {
-      let error = PngError::Malformed();
-      return Err<u64, PngError>(error: error);
-    }
-    let payload = &raw^[payload_start..payload_end];
-    let prev_room = prev_cell.inner.len;
-    let prev_size_ok = row_payload <= prev_room;
-    if prev_size_ok {
-    } else {
-      let error = PngError::Malformed();
-      return Err<u64, PngError>(error: error);
-    }
-    let cur_room = cur_cell.inner.len;
-    let cur_size_ok = row_payload <= cur_room;
-    if cur_size_ok {
-    } else {
-      let error = PngError::Malformed();
-      return Err<u64, PngError>(error: error);
-    }
-    let prev_view = &prev_cell.inner[0_u64..row_payload];
-    let cur_view = &cur_cell.inner[0_u64..row_payload];
-    let unfiltered = propagate unfilter_row(filter_type: filter_byte, bpp: bpp, payload: payload, prev: prev_view, cur: cur_view);
-    let y_offset = y *wrap step_y;
-    let fy = start_y +wrap y_offset;
-    let x = 0_u64;
-    loop @cols {
-      let cols_done = x == pass_width;
-      if cols_done {
-        break @cols;
-      }
-      let cur_room2 = cur_cell.inner.len;
-      let cur_size_ok2 = row_payload <= cur_room2;
-      if cur_size_ok2 {
-      } else {
-        let error = PngError::Malformed();
-        return Err<u64, PngError>(error: error);
-      }
-      let cur_view2 = &cur_cell.inner[0_u64..row_payload];
-      let x_offset = x *wrap step_x;
-      let fx = start_x +wrap x_offset;
-      let depth8 = bit_depth == 8_u8;
-      if depth8 {
-        let written2 = propagate decode_and_write_depth8(cur: cur_view2, x: x, color_type: color_type, channels: channels, palette: palette, palette_count: palette_count, has_trns: has_trns, trns: trns, trns_count: trns_count, pixels: pixels, image_width: image_width, fx: fx, fy: fy);
-      } else {
-        let pixel = propagate decode_pixel(cur: cur_view2, x: x, color_type: color_type, bit_depth: bit_depth, channels: channels, palette: palette, palette_count: palette_count, has_palette: has_palette, trns: trns, trns_count: trns_count, has_trns: has_trns);
-        let written = propagate write_pixel(pixels: pixels, image_width: image_width, fx: fx, fy: fy, color: pixel);
-      }
-      set x = x +wrap 1_u64;
-    }
-    swap(first: &prev_cell, second: &cur_cell);
-    set y = y +wrap 1_u64;
-  }
-  let consumed = row_len *wrap pass_height;
-  return Ok<u64, PngError>(value: consumed);
 }

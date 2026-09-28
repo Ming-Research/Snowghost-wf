@@ -1,156 +1,115 @@
+const signature: Array<u8, 8> =[137_u8, 80_u8, 78_u8, 71_u8, 13_u8, 10_u8, 26_u8, 10_u8];
+
+fn has_signature(data: &[u8]) -> result: Bool reads(data) {
+  doc "Tells whether data starts with the 8-byte PNG signature.";
+  if data^.len < 8_u64 {
+    return False();
+  }
+  for (at in 0_u64..8_u64) {
+    if data^[at] == signature[at] {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
 fn decode_png(data: &[u8]) -> result: Result<Image, PngError> reads(data) {
   let length = data^.len;
-  let sig_ok = length >= 8_u64;
-  if sig_ok {
-  } else {
-    let error = PngError::Malformed();
-    return Err<Image, PngError>(error: error);
-  }
-  let s0 = data^[0_u64];
-  let s1 = data^[1_u64];
-  let s2 = data^[2_u64];
-  let s3 = data^[3_u64];
-  let s4 = data^[4_u64];
-  let s5 = data^[5_u64];
-  let s6 = data^[6_u64];
-  let s7 = data^[7_u64];
-  let m0 = s0 == 137_u8;
-  let m1 = s1 == 80_u8;
-  let m2 = s2 == 78_u8;
-  let m3 = s3 == 71_u8;
-  let m4 = s4 == 13_u8;
-  let m5 = s5 == 10_u8;
-  let m6 = s6 == 26_u8;
-  let m7 = s7 == 10_u8;
-  let a01 = band(m0, m1);
-  let a23 = band(m2, m3);
-  let a45 = band(m4, m5);
-  let a67 = band(m6, m7);
-  let a03 = band(a01, a23);
-  let a47 = band(a45, a67);
-  let signature_ok = band(a03, a47);
-  if signature_ok {
+  let signed = has_signature(data: data);
+  let long_enough = length >= 8_u64;
+  let framed = band(signed, long_enough);
+  if framed {
   } else {
     let error = PngError::Malformed();
     return Err<Image, PngError>(error: error);
   }
   let table = crc32_table();
   let parsed = propagate parse_chunks(data: data, table: &table);
-  let width = parsed.width;
-  let height = parsed.height;
-  let bit_depth = parsed.bit_depth;
-  let color_type = parsed.color_type;
-  let interlace = parsed.interlace;
-  let width_u = cvt::<u32, u64>(width);
-  let height_u = cvt::<u32, u64>(height);
-  let bpp_bits = bits_per_pixel(color_type: color_type, bit_depth: bit_depth);
-  let is_interlaced = interlace == 1_u8;
-  let total_raw = 0_u64;
-  if is_interlaced {
-    set total_raw = raw_size_interlaced(bpp_bits: bpp_bits, width: width_u, height: height_u);
-  } else {
-    set total_raw = raw_size_noninterlaced(bpp_bits: bpp_bits, width: width_u, height: height_u);
+  let header = parsed.header;
+  let width = cvt::<u32, u64>(header.width);
+  let height = cvt::<u32, u64>(header.height);
+  let bit_depth = header.bit_depth;
+  let area = width * height;
+  if area > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
   }
-  let raw_within_ceiling = total_raw <= 1073741824_u64;
-  if raw_within_ceiling {
-  } else {
+  if width > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  if height > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  if width == 0_u64 {
     let error = PngError::Malformed();
     return Err<Image, PngError>(error: error);
   }
-  let raw_cell = box_array_filled::<u8>(count: total_raw, value: 0_u8);
-  let raw_room = raw_cell.inner.len;
-  let raw_size_ok = total_raw <= raw_room;
-  if raw_size_ok {
-  } else {
+  if height == 0_u64 {
     let error = PngError::Malformed();
     return Err<Image, PngError>(error: error);
   }
-  let raw_view = &raw_cell.inner[0_u64..total_raw];
-  let idat_len = parsed.idat.inner.len;
-  let idat_room = parsed.idat.inner.len;
-  let idat_size_ok = idat_len <= idat_room;
-  if idat_size_ok {
-  } else {
+  if bit_depth < 1_u8 {
     let error = PngError::Malformed();
     return Err<Image, PngError>(error: error);
   }
-  let idat_view = &parsed.idat.inner[0_u64..idat_len];
-  let decompressed = propagate zlib_decompress(out: raw_view, stream: idat_view);
-  let pixel_count = width_u *wrap height_u;
-  let pixel_bytes = pixel_count *wrap 4_u64;
-  let pixels_within_ceiling = pixel_bytes <= 1073741824_u64;
-  if pixels_within_ceiling {
-  } else {
+  if bit_depth > 16_u8 {
     let error = PngError::Malformed();
     return Err<Image, PngError>(error: error);
   }
+  let stride = width * 4_u64;
+  invariant stride_bound: stride <= 268435456_u64;
+  let pixel_bytes = stride * height;
+  let plte_span = parsed.plte_count *wrap 3_u64;
+  let plte_end = parsed.plte_start +wrap plte_span;
+  let palette = &data^[0_u64..0_u64];
+  let plte_ordered = parsed.plte_start <= plte_end;
+  let plte_inside = plte_end <= length;
+  let plte_ok = band(plte_ordered, plte_inside);
+  if plte_ok {
+    set palette = &data^[parsed.plte_start..plte_end];
+  }
+  let trns_end = parsed.trns_start +wrap parsed.trns_count;
+  let trns = &data^[0_u64..0_u64];
+  let trns_ordered = parsed.trns_start <= trns_end;
+  let trns_inside = trns_end <= length;
+  let trns_ok = band(trns_ordered, trns_inside);
+  if trns_ok {
+    set trns = &data^[parsed.trns_start..trns_end];
+  }
+  let format = pixel_format(header: header, palette: palette, trns: trns);
+  let bits = bits_per_pixel(color: header.color, bit_depth: bit_depth);
+  let raw_size = 0_u64;
+  if header.interlaced {
+    set raw_size = raw_size_interlaced(pixel_bits: bits, width: width, height: height);
+  } else {
+    set raw_size = raw_size_noninterlaced(pixel_bits: bits, width: width, height: height);
+  }
+  if raw_size > 1073741824_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  let raw_cell = box_array_filled::<u8>(count: raw_size, value: 0_u8);
+  let raw = &raw_cell.inner[0_u64..raw_size];
+  let idat_length = parsed.idat.inner.len;
+  let idat = &parsed.idat.inner[0_u64..idat_length];
+  let inflated = propagate zlib_decompress(out: raw, stream: idat);
   let pixels_cell = box_slots_new::<u8>(capacity: pixel_bytes);
   for @fill_pixels (
     at in 0_u64..pixel_bytes,
-    invariant grown: pixels_cell.inner.len == at
+    invariant grown: pixels_cell.inner.len == at,
+    invariant kept: pixels_cell.inner.cap == pixel_bytes
   ) {
     place_back(window: &pixels_cell.inner, value: 0_u8);
   }
-  let pixels_room = pixels_cell.inner.len;
-  let pixels_size_ok = pixel_bytes <= pixels_room;
-  if pixels_size_ok {
+  let pixels = &pixels_cell.inner[0_u64..pixel_bytes];
+  if header.interlaced {
+    let decoded = propagate decode_interlaced(raw: raw, pixels: pixels, format: &format, pixel_bits: bits, width: width, height: height);
   } else {
-    let error = PngError::Malformed();
-    return Err<Image, PngError>(error: error);
+    let used = propagate decode_pass(raw: raw, pixels: pixels, format: &format, pixel_bits: bits, width: width, height: height, start_x: 0_u64, start_y: 0_u64, step_x: 1_u64, step_y: 1_u64);
   }
-  let pixels_view = &pixels_cell.inner[0_u64..pixel_bytes];
-  let plte_span = parsed.plte_count *wrap 3_u64;
-  let plte_end = parsed.plte_start +wrap plte_span;
-  let plte_end_ok = plte_end <= length;
-  let plte_order_ok = parsed.plte_start <= plte_end;
-  let plte_bounds_ok = band(plte_end_ok, plte_order_ok);
-  let palette_ready = band(parsed.has_palette, plte_bounds_ok);
-  let palette_view = &data^[0_u64..0_u64];
-  if palette_ready {
-    set palette_view = &data^[parsed.plte_start..plte_end];
-  }
-  let trns_end = parsed.trns_start +wrap parsed.trns_count;
-  let trns_end_ok = trns_end <= length;
-  let trns_order_ok = parsed.trns_start <= trns_end;
-  let trns_bounds_ok = band(trns_end_ok, trns_order_ok);
-  let trns_ready = band(parsed.has_trns, trns_bounds_ok);
-  let trns_view = &data^[0_u64..0_u64];
-  if trns_ready {
-    set trns_view = &data^[parsed.trns_start..trns_end];
-  }
-  let effective_palette_count = 0_u64;
-  if palette_ready {
-    set effective_palette_count = parsed.plte_count;
-  }
-  let effective_trns_count = 0_u64;
-  if trns_ready {
-    set effective_trns_count = parsed.trns_count;
-  }
-  let effective_has_palette = palette_ready;
-  let effective_has_trns = trns_ready;
-  if is_interlaced {
-    let raw_offset = 0_u64;
-    let pass = 0_u64;
-    loop @passes {
-      let passes_done = pass == 7_u64;
-      if passes_done {
-        break @passes;
-      }
-      let (start_x, start_y, step_x, step_y) = adam7_geometry(pass: pass);
-      let pass_width = pass_dimension(size: width_u, start: start_x, step: step_x);
-      let pass_height = pass_dimension(size: height_u, start: start_y, step: step_y);
-      let has_width = pass_width > 0_u64;
-      let has_height = pass_height > 0_u64;
-      let has_pixels = band(has_width, has_height);
-      if has_pixels {
-        let consumed = propagate decode_pass(raw: raw_view, raw_offset: raw_offset, pass_width: pass_width, pass_height: pass_height, color_type: color_type, bit_depth: bit_depth, bpp_bits: bpp_bits, palette: palette_view, palette_count: effective_palette_count, has_palette: effective_has_palette, trns: trns_view, trns_count: effective_trns_count, has_trns: effective_has_trns, start_x: start_x, start_y: start_y, step_x: step_x, step_y: step_y, image_width: width_u, pixels: pixels_view);
-        set raw_offset = raw_offset +wrap consumed;
-      }
-      set pass = pass +wrap 1_u64;
-    }
-  } else {
-    let consumed = propagate decode_pass(raw: raw_view, raw_offset: 0_u64, pass_width: width_u, pass_height: height_u, color_type: color_type, bit_depth: bit_depth, bpp_bits: bpp_bits, palette: palette_view, palette_count: effective_palette_count, has_palette: effective_has_palette, trns: trns_view, trns_count: effective_trns_count, has_trns: effective_has_trns, start_x: 0_u64, start_y: 0_u64, step_x: 1_u64, step_y: 1_u64, image_width: width_u, pixels: pixels_view);
-  }
-  let image = Image(width: width, height: height, pixels: move pixels_cell);
+  let image = Image(width: header.width, height: header.height, pixels: move pixels_cell);
   return Ok<Image, PngError>(value: move image);
 }
