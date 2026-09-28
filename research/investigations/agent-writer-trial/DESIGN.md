@@ -43,15 +43,15 @@ tasks stand for three classes of implementer work.
   at `renderer/`. Each task's interface is a module (`pkg::text::line_break`,
   `pkg::css::syntax`, `pkg::image::png`) whose `module.wfm` is written
   before the runs. A driver module per task (`pkg::oracle::line_break`,
-  `pkg::oracle::css_syntax`, `pkg::oracle::png`) has a graph entry that runs
-  the oracle through the interface and prints the number of cases that pass
-  and fail.
+  `pkg::oracle::css_syntax`, `pkg::oracle::png`, `pkg::oracle::url`) has a
+  graph entry that runs the oracle through the interface and prints the
+  number of cases that pass and fail.
 - **Oracle data.** `make oracle-data` (`tests/oracle-data.sh`) downloads
   each file at its pinned version, checks its SHA-256 and places it under
   `build/oracle/`, which git ignores. `make oracle-line-break`, `oracle-css`,
-  `oracle-png` and `oracle-png-speed` build each driver entry and run it; the
-  CSS driver prints its results as JSON, which `tests/css/oracle.py` compares
-  with the suite.
+  `oracle-png`, `oracle-png-speed` and `oracle-url` build each driver entry
+  and run it; the CSS and URL drivers print their results as JSON, which
+  `tests/css/oracle.py` and `tests/url/oracle.py` compare with their suites.
 - **PNG reference.** `tests/png/reference.c` decodes each image with
   libpng into raw RGBA for the driver to compare. It also generates the
   speed set: twelve 2048 by 2048 images of gradients, noise, synthetic text
