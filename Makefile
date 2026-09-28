@@ -21,7 +21,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed
 
-check: compiler renderer design-lint
+check: compiler renderer dom-selftest design-lint
 
 # Builds the pinned compiler with Whitefoot's own build target, which
 # leaves it at whitefoot/compiler/target/gate/whitefootc.
