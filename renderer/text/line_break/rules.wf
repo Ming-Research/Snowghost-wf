@@ -1,0 +1,262 @@
+const opp_prohibited: u8 = 0_u8;
+
+const opp_allowed: u8 = 1_u8;
+
+const opp_mandatory: u8 = 2_u8;
+
+const class_none: u8 = 255_u8;
+
+fn run_class_at(runs: &Runs, index: u64) -> result: u8 reads(runs) {
+  doc "Returns the class of the run at index, or class_none when index is past the last run.";
+  let count = runs^.classes.inner.len;
+  let inside = index < count;
+  if inside {
+    let value = runs^.classes.inner[index];
+    return value;
+  }
+  return class_none;
+}
+
+fn run_base_at(runs: &Runs, index: u64) -> result: u32 reads(runs) {
+  doc "Returns the base code point of the run at index, or 0 when index is past the last run.";
+  let count = runs^.base_cps.inner.len;
+  let inside = index < count;
+  if inside {
+    let value = runs^.base_cps.inner[index];
+    return value;
+  }
+  return 0_u32;
+}
+
+fn run_wide_at(runs: &Runs, index: u64) -> result: Bool reads(runs) {
+  doc "Returns whether the run at index is East Asian wide, or False when index is past the last run.";
+  let count = runs^.wide.inner.len;
+  let inside = index < count;
+  if inside {
+    let value = runs^.wide.inner[index];
+    return value;
+  }
+  return False();
+}
+
+fn run_ends_zwj_at(runs: &Runs, index: u64) -> result: Bool reads(runs) {
+  doc "Returns whether the run at index ends with a raw ZWJ, or False when index is past the last run.";
+  let count = runs^.ends_zwj.inner.len;
+  let inside = index < count;
+  if inside {
+    let value = runs^.ends_zwj.inner[index];
+    return value;
+  }
+  return False();
+}
+
+fn is_al_hl(class: u8) -> result: Bool pure {
+  doc "Tells whether class is AL or HL.";
+  let a = class == class_al;
+  let b = class == class_hl;
+  let result = bor(a, b);
+  return result;
+}
+
+fn is_pr_po(class: u8) -> result: Bool pure {
+  doc "Tells whether class is PR or PO.";
+  let a = class == class_pr;
+  let b = class == class_po;
+  let result = bor(a, b);
+  return result;
+}
+
+fn is_cl_cp(class: u8) -> result: Bool pure {
+  doc "Tells whether class is CL or CP.";
+  let a = class == class_cl;
+  let b = class == class_cp;
+  let result = bor(a, b);
+  return result;
+}
+
+fn is_id_eb_em(class: u8) -> result: Bool pure {
+  doc "Tells whether class is ID, EB or EM.";
+  let a = class == class_id;
+  let b = class == class_eb;
+  let c = class == class_em;
+  let ab = bor(a, b);
+  let result = bor(ab, c);
+  return result;
+}
+
+fn is_hard_break(class: u8) -> result: Bool pure {
+  doc "BK, CR, LF or NL: the classes LB4, LB5 and LB6 single out, occupying runtime ids 0 through 3.";
+  let result = class <= class_nl;
+  return result;
+}
+
+fn is_sy_is(class: u8) -> result: Bool pure {
+  doc "Tells whether class is SY or IS.";
+  let a = class == class_sy;
+  let b = class == class_is;
+  let result = bor(a, b);
+  return result;
+}
+
+fn is_jamo_or_syllable(class: u8) -> result: Bool pure {
+  doc "JL, JV, JT, H2 or H3: LB26/LB27's Korean syllable-block classes, occupying runtime ids 32 through 33 and 38 through 40.";
+  let h_low = class >= class_h2;
+  let h_high = class <= class_h3;
+  let is_h = band(h_low, h_high);
+  let j_low = class >= class_jl;
+  let j_high = class <= class_jv;
+  let is_j = band(j_low, j_high);
+  let result = bor(is_h, is_j);
+  return result;
+}
+
+fn is_ak_as_dotted(runs: &Runs, index: u64) -> result: Bool reads(runs) {
+  doc "Tells whether the run at index is AK, AS, or based on U+25CC DOTTED CIRCLE, the ad hoc dotted-circle class LB28a adds to AK and AS.";
+  let class = run_class_at(runs: runs, index: index);
+  let is_ak = class == class_ak;
+  let is_as = class == class_as;
+  let akas = bor(is_ak, is_as);
+  if akas {
+    return True();
+  }
+  let base = run_base_at(runs: runs, index: index);
+  let dotted = base == dotted_circle;
+  return dotted;
+}
+
+fn is_quote(class: u8) -> result: Bool pure {
+  doc "Tells whether class is any of the three QU variants (QU_PI, QU_PF, QU_OTHER), runtime ids 14 through 16.";
+  let low = class >= class_qu_pi;
+  let high = class <= class_qu_other;
+  let result = band(low, high);
+  return result;
+}
+
+fn in_lb15a_context(class: u8) -> result: Bool pure {
+  doc "The context LB15a admits before an initial quotation mark: sot (class_none, since run_class_at reports it past either end), BK, CR, LF, NL, OP, any QU variant, GL, SP or ZW.";
+  let a = class == class_none;
+  let b = class <= class_zw;
+  let c = class == class_op;
+  let d = is_quote(class: class);
+  let e = class == class_gl;
+  let ab = bor(a, b);
+  let cd = bor(c, d);
+  let abcd = bor(ab, cd);
+  let result = bor(abcd, e);
+  return result;
+}
+
+fn in_lb15b_context(class: u8) -> result: Bool pure {
+  doc "The context LB15b admits after a final quotation mark: SP, GL, WJ, CL, any QU variant, CP, EX, IS, SY, BK, CR, LF, NL, ZW or eot (class_none).";
+  let a = class == class_none;
+  let b = class <= class_zw;
+  let c = class == class_wj;
+  let d = class == class_cl;
+  let e = is_quote(class: class);
+  let f = class == class_cp;
+  let g = class == class_ex;
+  let h = class == class_is;
+  let i = class == class_sy;
+  let ab = bor(a, b);
+  let cd = bor(c, d);
+  let ef = bor(e, f);
+  let gh = bor(g, h);
+  let efgh = bor(ef, gh);
+  let abcd = bor(ab, cd);
+  let abcdefgh = bor(abcd, efgh);
+  let result = bor(abcdefgh, i);
+  return result;
+}
+
+fn in_lb20a_context(class: u8) -> result: Bool pure {
+  doc "The context LB20a admits before a word-initial hyphen: sot (class_none), BK, CR, LF, NL, SP, ZW, CB or GL.";
+  let a = class == class_none;
+  let b = class <= class_zw;
+  let c = class == class_cb;
+  let d = class == class_gl;
+  let ab = bor(a, b);
+  let cd = bor(c, d);
+  let result = bor(ab, cd);
+  return result;
+}
+
+struct SpaceState {
+  pre_space_class: u8;
+  pre_space_quote_pi_ok: Bool;
+  ri_active: Bool;
+  ri_odd: Bool;
+  num_tail: Bool;
+  num_close: Bool;
+}
+
+fn initial_state(runs: &Runs) -> result: SpaceState reads(runs) {
+  doc "Seeds the carried decision state to treat run 0 as the current position, its own left context being sot.";
+  let first = run_class_at(runs: runs, index: 0_u64);
+  let is_sp = first == class_sp;
+  let pre_class = if is_sp {
+    give class_none;
+  } else {
+    give first;
+  }
+  let quote_ok = if is_sp {
+    give False();
+  } else {
+    let is_pi = first == class_qu_pi;
+    give is_pi;
+  }
+  let is_ri = first == class_ri;
+  let is_nu = first == class_nu;
+  let no_close = False();
+  let made = SpaceState(pre_space_class: pre_class, pre_space_quote_pi_ok: quote_ok, ri_active: is_ri, ri_odd: is_ri, num_tail: is_nu, num_close: no_close);
+  return made;
+}
+
+fn advance_state(runs: &Runs, state: SpaceState, previous_index: u64, current_index: u64) -> result: SpaceState reads(runs) {
+  doc "Advances the carried decision state from previous_index being current to current_index being current.";
+  let current = run_class_at(runs: runs, index: current_index);
+  let is_sp = current == class_sp;
+  let pre_class = if is_sp {
+    give state.pre_space_class;
+  } else {
+    give current;
+  }
+  let quote_ok = if is_sp {
+    give state.pre_space_quote_pi_ok;
+  } else {
+    let is_pi = current == class_qu_pi;
+    if is_pi {
+      let previous = run_class_at(runs: runs, index: previous_index);
+      let ok = in_lb15a_context(class: previous);
+      give ok;
+    } else {
+      give False();
+    }
+  }
+  let is_ri = current == class_ri;
+  let ri_odd_next = if is_ri {
+    if state.ri_active {
+      let flipped = bnot(state.ri_odd);
+      give flipped;
+    } else {
+      give True();
+    }
+  } else {
+    give False();
+  }
+  let is_nu = current == class_nu;
+  let is_sy_or_is = is_sy_is(class: current);
+  let is_closer = is_cl_cp(class: current);
+  let num_tail_next = if is_nu {
+    give True();
+  } else if is_sy_or_is {
+    give state.num_tail;
+  } else {
+    give False();
+  }
+  let num_close_next = if is_closer {
+    give state.num_tail;
+  } else {
+    give False();
+  }
+  return SpaceState(pre_space_class: pre_class, pre_space_quote_pi_ok: quote_ok, ri_active: is_ri, ri_odd: ri_odd_next, num_tail: num_tail_next, num_close: num_close_next);
+}
