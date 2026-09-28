@@ -1,0 +1,638 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias HandleFactory = std::io::HandleFactory;
+alias IoError = std::io::IoError;
+alias OutputStream = std::io::OutputStream;
+alias ReadFile = std::fs::ReadFile;
+alias arg_get = std::text::arg_get;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias host_bytes_len = std::text::host_bytes_len;
+alias host_copy_bytes = std::text::host_copy_bytes;
+alias open_directory = std::fs::open_directory;
+alias open_file = std::fs::open_file;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+alias write_once = std::io::write_once;
+
+const line_feed: u8 = 10_u8;
+
+const slash: u8 = 47_u8;
+
+const digit_zero: u8 = 48_u8;
+
+const digit_nine: u8 = 57_u8;
+
+const decimal_glyphs: Array<u8, 10> =[48_u8, 49_u8, 50_u8, 51_u8, 52_u8, 53_u8, 54_u8, 55_u8, 56_u8, 57_u8];
+
+const lower_hex_glyphs: Array<u8, 16> =[48_u8, 49_u8, 50_u8, 51_u8, 52_u8, 53_u8, 54_u8, 55_u8, 56_u8, 57_u8, 97_u8, 98_u8, 99_u8, 100_u8, 101_u8, 102_u8];
+
+const upper_hex_glyphs: Array<u8, 16> =[48_u8, 49_u8, 50_u8, 51_u8, 52_u8, 53_u8, 54_u8, 55_u8, 56_u8, 57_u8, 65_u8, 66_u8, 67_u8, 68_u8, 69_u8, 70_u8];
+
+const summary_separator: Array<u8, 2> =[58_u8, 32_u8];
+
+const summary_cases: Array<u8, 8> =[32_u8, 99_u8, 97_u8, 115_u8, 101_u8, 115_u8, 44_u8, 32_u8];
+
+const summary_passed: Array<u8, 9> =[32_u8, 112_u8, 97_u8, 115_u8, 115_u8, 101_u8, 100_u8, 44_u8, 32_u8];
+
+const summary_failed: Array<u8, 8> =[32_u8, 102_u8, 97_u8, 105_u8, 108_u8, 101_u8, 100_u8, 10_u8];
+
+const host_error_text: Array<u8, 13> =[32_u8, 40_u8, 104_u8, 111_u8, 115_u8, 116_u8, 32_u8, 101_u8, 114_u8, 114_u8, 111_u8, 114_u8, 32_u8];
+
+const right_parenthesis: u8 = 41_u8;
+
+const file_ceiling: u64 = 1073741824_u64;
+
+const first_read_window: u64 = 65536_u64;
+
+const argument_ceiling: u64 = 65536_u64;
+
+const buffer_ceiling: u64 = 4294967296_u64;
+
+const empty_buffer_capacity: u64 = 4096_u64;
+
+fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
+  requires count <= 1073741824_u64;
+  ensures made.inner.len >= count;
+} {
+  doc "Takes one window of count bytes, every one zero, so a range reference can cover all of them.";
+  let built = box_slots_new::<u8>(capacity: count);
+  for @fill (
+    at in 0_u64..count,
+    invariant grown: built.inner.len == at
+  ) {
+    place_back(window: &built.inner, value: 0_u8);
+  }
+  return move built;
+}
+
+fn widen(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell) {
+  doc "Raises the capacity and len of one window to total, zero-filling the new bytes and keeping the old ones. Returns False, leaving the window unchanged, when total is past file_ceiling or below the current capacity.";
+  let capacity = cell^.inner.cap;
+  let bounded = total <= file_ceiling;
+  let larger = total >= capacity;
+  if bounded {
+    if larger {
+      grow(cell: cell, capacity: total);
+    } else {
+      return False();
+    }
+  } else {
+    return False();
+  }
+  loop @fill {
+    let length = cell^.inner.len;
+    let done = length >= total;
+    if done {
+      break @fill;
+    }
+    let room = cell^.inner.len < cell^.inner.cap;
+    if room {
+      place_back(window: &cell^.inner, value: 0_u8);
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn truncate(buffer: &Box<Slots<u8>>, length: u64) -> result: unit writes(buffer) {
+  doc "Takes bytes off the back of buffer until its len is at most length.";
+  loop @shrink {
+    let current = buffer^.inner.len;
+    let over = current > length;
+    if over {
+      let dropped = take_back(window: &buffer^.inner);
+    } else {
+      break @shrink;
+    }
+  }
+  return unit;
+}
+
+fn read_open_file(factory: &HandleFactory, file: &ReadFile) -> result: Result<Box<Slots<u8>>, IoError> writes(factory), writes(file) {
+  doc "Reads one open file from offset zero to its end into one window, doubling the window whenever the file fills it, and then cuts the window's len to the bytes read. A read that makes no progress counts as the end of the file.";
+  let cell = zeroed_bytes(count: first_read_window);
+  let filled = 0_u64;
+  loop @read {
+    let window = cell.inner.len;
+    let full = filled >= window;
+    if full {
+      let doubled = window +wrap window;
+      let widened = widen(cell: &cell, total: doubled);
+      if widened {
+      } else {
+        let too_large = IoError::FileTooLarge(code: 0_u32, origin: 0_u8);
+        return Err<Box<Slots<u8>>, IoError>(error: too_large);
+      }
+    }
+    let room = cell.inner.len;
+    let ordered = filled < room;
+    if ordered {
+    } else {
+      let too_large = IoError::FileTooLarge(code: 0_u32, origin: 0_u8);
+      return Err<Box<Slots<u8>>, IoError>(error: too_large);
+    }
+    let destination = &cell.inner[0_u64..room];
+    match read_at(factory: factory, file: file, destination: destination, file_offset: filled, start: filled, end: room) {
+      Ok(value: next) => {
+        let stalled = next == filled;
+        if stalled {
+          break @read;
+        }
+        set filled = next;
+      }
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            break @read;
+          }
+          ReadFailed(error: problem) => {
+            return Err<Box<Slots<u8>>, IoError>(error: problem);
+          }
+        }
+      }
+    }
+  }
+  truncate(buffer: &cell, length: filled);
+  return Ok<Box<Slots<u8>>, IoError>(value: move cell);
+}
+
+fn read_argument_file(factory: &HandleFactory, cwd: &DirectoryRead, args: &Args, position: u64) -> result: Result<Box<Slots<u8>>, IoError> reads(cwd), reads(args), writes(factory) {
+  doc "Opens the argument's path with open_read, reads it whole and closes it.";
+  let invalid = IoError::InvalidInput(code: 0_u32, origin: 0_u8);
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match relative_path(value: move text) {
+        Ok(value: path) => {
+          match open_read(factory: factory, root: cwd, path: &path) {
+            Ok(value: file) => {
+              let content = read_open_file(factory: factory, file: &file);
+              close_read(factory: factory, file: move file);
+              return move content;
+            }
+            Err(error: problem) => {
+              return Err<Box<Slots<u8>>, IoError>(error: problem);
+            }
+          }
+        }
+        Err(error: rejected) => {
+          return Err<Box<Slots<u8>>, IoError>(error: invalid);
+        }
+      }
+    }
+    Err(error: absent) => {
+      return Err<Box<Slots<u8>>, IoError>(error: invalid);
+    }
+  }
+}
+
+fn read_directory_file(factory: &HandleFactory, directory: &DirectoryRead, name: &[u8]) -> result: Result<Box<Slots<u8>>, IoError> reads(directory), reads(name), writes(factory) {
+  doc "Opens the named file with open_file, reads it whole and closes it.";
+  let length = name^.len;
+  match open_file(factory: factory, root: directory, name: name, start: 0_u64, end: length) {
+    Ok(value: file) => {
+      let content = read_open_file(factory: factory, file: &file);
+      close_read(factory: factory, file: move file);
+      return move content;
+    }
+    Err(error: problem) => {
+      return Err<Box<Slots<u8>>, IoError>(error: problem);
+    }
+  }
+}
+
+fn skip_separators(name: &[u8], from: u64) -> result: u64 reads(name) {
+  doc "Returns the index of the first byte at or after from that is not a slash, or the length of name.";
+  let length = name^.len;
+  let at = from;
+  loop @skip {
+    let inside = at < length;
+    if inside {
+    } else {
+      break @skip;
+    }
+    let byte = name^[at];
+    let separator = byte == slash;
+    if separator {
+    } else {
+      break @skip;
+    }
+    set at = at +wrap 1_u64;
+  }
+  return at;
+}
+
+fn component_end(name: &[u8], from: u64) -> result: u64 reads(name) {
+  doc "Returns the index of the first slash at or after from, or the length of name.";
+  let length = name^.len;
+  let at = from;
+  loop @scan {
+    let inside = at < length;
+    if inside {
+    } else {
+      break @scan;
+    }
+    let byte = name^[at];
+    let separator = byte == slash;
+    if separator {
+      break @scan;
+    }
+    set at = at +wrap 1_u64;
+  }
+  return at;
+}
+
+fn open_components(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], from: u64) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) {
+  doc "Opens the component of name that starts at from below root, then the rest of the path below that component, closing the intermediate directory on the way back.";
+  let length = name^.len;
+  let end = component_end(name: name, from: from);
+  let next = skip_separators(name: name, from: end);
+  let ordered = from < end;
+  let within = end <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    let invalid = IoError::InvalidPath(code: 0_u32, origin: 0_u8);
+    return Err<DirectoryRead, IoError>(error: invalid);
+  }
+  let last = next >= length;
+  match open_directory(factory: factory, root: root, name: name, start: from, end: end) {
+    Ok(value: opened) => {
+      if last {
+        return Ok<DirectoryRead, IoError>(value: move opened);
+      }
+      let deeper = open_components(factory: factory, root: &opened, name: name, from: next);
+      close_directory(factory: factory, directory: move opened);
+      return move deeper;
+    }
+    Err(error: problem) => {
+      return Err<DirectoryRead, IoError>(error: problem);
+    }
+  }
+}
+
+fn open_directory_path(factory: &HandleFactory, root: &DirectoryRead, name: &[u8]) -> result: Result<DirectoryRead, IoError> reads(root), reads(name), writes(factory) {
+  doc "Skips leading slashes and opens the path's components in order.";
+  let first = skip_separators(name: name, from: 0_u64);
+  let opened = open_components(factory: factory, root: root, name: name, from: first);
+  return move opened;
+}
+
+fn argument_bytes(args: &Args, position: u64) -> result: Option<Box<Slots<u8>>> reads(args) {
+  doc "Sizes a window from host_bytes_len and copies the argument into it.";
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      let length = host_bytes_len(value: &text);
+      let bounded = length <= argument_ceiling;
+      if bounded {
+      } else {
+        return None<Box<Slots<u8>>>();
+      }
+      let cell = zeroed_bytes(count: length);
+      let destination = &cell.inner[0_u64..length];
+      match host_copy_bytes(value: &text, destination: destination, start: 0_u64, end: length) {
+        Ok(value: next) => {
+          truncate(buffer: &cell, length: next);
+          return Some<Box<Slots<u8>>>(value: move cell);
+        }
+        Err(error: too_small) => {
+          return None<Box<Slots<u8>>>();
+        }
+      }
+    }
+    Err(error: absent) => {
+      return None<Box<Slots<u8>>>();
+    }
+  }
+}
+
+fn put_argument(buffer: &Box<Slots<u8>>, args: &Args, position: u64) -> result: unit reads(args), writes(buffer) {
+  doc "Copies the argument with argument_bytes and appends the copy.";
+  match argument_bytes(args: args, position: position) {
+    Some(value: argument) => {
+      let length = argument.inner.len;
+      let content = &argument.inner[0_u64..length];
+      put_text(buffer: buffer, text: content);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn io_error_code(error: IoError) -> result: u32 pure {
+  doc "Reads the code field that every IoError variant carries.";
+  match error {
+    NotFound(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    PermissionDenied(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    AlreadyExists(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    NotDirectory(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    IsDirectory(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    DirectoryNotEmpty(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    ReadOnly(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    ResourceBusy(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    InvalidInput(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    InvalidPath(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    Unsupported(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    TimedOut(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    BrokenPipe(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    WriteZero(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    UnexpectedEnd(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    ConnectionRefused(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    ConnectionReset(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    ConnectionAborted(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    NotConnected(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    AddressInUse(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    AddressUnavailable(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    ResourceExhausted(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    FileTooLarge(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    NoSpace(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    QuotaExceeded(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    CrossDevice(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    DeviceFailure(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+    Other(code: host_code, origin: host_origin) => {
+      return host_code;
+    }
+  }
+}
+
+fn put_host_error(buffer: &Box<Slots<u8>>, error: IoError) -> result: unit writes(buffer) {
+  doc "Appends ` (host error N)` for an error that carries a nonzero host code.";
+  let code = io_error_code(error: error);
+  let known = code != 0_u32;
+  if known {
+    let label = &host_error_text[0_u64..host_error_text.len];
+    put_text(buffer: buffer, text: label);
+    let widened = cvt::<u32, u64>(code);
+    put_decimal(buffer: buffer, value: widened);
+    put_byte(buffer: buffer, value: right_parenthesis);
+  }
+  return unit;
+}
+
+fn line_end(text: &[u8], start: u64) -> result: u64 reads(text) {
+  doc "Scans forward from start for a line feed.";
+  let length = text^.len;
+  let at = start;
+  loop @scan {
+    let inside = at < length;
+    if inside {
+    } else {
+      return length;
+    }
+    let byte = text^[at];
+    let found = byte == line_feed;
+    if found {
+      return at;
+    }
+    set at = at +wrap 1_u64;
+  }
+  return length;
+}
+
+fn parse_decimal(text: &[u8], start: u64, end: u64) -> result: Option<u64> reads(text) {
+  doc "Accumulates at most 18 digits, so the value stays below 10^18 and the arithmetic cannot overflow.";
+  let length = text^.len;
+  let ordered = start < end;
+  let within = end <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return None<u64>();
+  }
+  let count = end -wrap start;
+  let short = count <= 18_u64;
+  if short {
+  } else {
+    return None<u64>();
+  }
+  let value = 0_u64;
+  for (at in start..end) {
+    let byte = text^[at];
+    let low = byte >= digit_zero;
+    let high = byte <= digit_nine;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return None<u64>();
+    }
+    let offset = byte -wrap digit_zero;
+    let widened = cvt::<u8, u64>(offset);
+    let scaled = value *wrap 10_u64;
+    set value = scaled +wrap widened;
+  }
+  return Some<u64>(value: value);
+}
+
+fn put_byte(buffer: &Box<Slots<u8>>, value: u8) -> result: unit writes(buffer) {
+  doc "Doubles a full buffer, or gives an empty one empty_buffer_capacity bytes, within buffer_ceiling.";
+  let length = buffer^.inner.len;
+  let capacity = buffer^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    let doubled = if empty {
+      give empty_buffer_capacity;
+    } else {
+      give capacity +wrap capacity;
+    }
+    let bounded = doubled <= buffer_ceiling;
+    let larger = doubled >= capacity;
+    if bounded {
+      if larger {
+        grow(cell: buffer, capacity: doubled);
+      }
+    }
+  }
+  let room = buffer^.inner.len < buffer^.inner.cap;
+  if room {
+    place_back(window: &buffer^.inner, value: value);
+  }
+  return unit;
+}
+
+fn put_text(buffer: &Box<Slots<u8>>, text: &[u8]) -> result: unit reads(text), writes(buffer) {
+  doc "Appends the bytes of text one at a time.";
+  let count = text^.len;
+  for (at in 0_u64..count) {
+    let byte = text^[at];
+    put_byte(buffer: buffer, value: byte);
+  }
+  return unit;
+}
+
+fn put_decimal(buffer: &Box<Slots<u8>>, value: u64) -> result: unit writes(buffer) {
+  doc "Collects the digits least significant first in a 20-byte scratch array, then appends them in reverse.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @collect {
+    let digit = rest % 10_u64;
+    let inside = count < 20_u64;
+    if inside {
+      let glyph = decimal_glyphs[digit];
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    let done = rest == 0_u64;
+    if done {
+      break @collect;
+    }
+  }
+  loop @emit {
+    let finished = count == 0_u64;
+    if finished {
+      break @emit;
+    }
+    set count = count -wrap 1_u64;
+    let inside = count < 20_u64;
+    if inside {
+      let glyph = digits[count];
+      put_byte(buffer: buffer, value: glyph);
+    }
+  }
+  return unit;
+}
+
+fn put_hex(buffer: &Box<Slots<u8>>, value: u64, width: u64, uppercase: Bool) -> result: unit writes(buffer) {
+  doc "Counts the significant nibbles of value, widens that count to width within 16, and appends one glyph per nibble from the most significant.";
+  let needed = 1_u64;
+  let probe = ishr.wrap(value, 4_u32);
+  loop @measure {
+    let done = probe == 0_u64;
+    if done {
+      break @measure;
+    }
+    set needed = needed +wrap 1_u64;
+    set probe = ishr.wrap(probe, 4_u32);
+  }
+  let total = imax(needed, width);
+  let capped = imin(total, 16_u64);
+  let remaining = capped;
+  loop @emit {
+    let finished = remaining == 0_u64;
+    if finished {
+      break @emit;
+    }
+    set remaining = remaining -wrap 1_u64;
+    let bits = remaining *wrap 4_u64;
+    let shift = cvt.wrap::<u64, u32>(bits);
+    let shifted = ishr.wrap(value, shift);
+    let nibble = iand(shifted, 15_u64);
+    let inside = nibble < 16_u64;
+    if inside {
+      let glyph = if uppercase {
+        give upper_hex_glyphs[nibble];
+      } else {
+        give lower_hex_glyphs[nibble];
+      }
+      put_byte(buffer: buffer, value: glyph);
+    }
+  }
+  return unit;
+}
+
+fn put_summary(buffer: &Box<Slots<u8>>, name: &[u8], cases: u64, passed: u64, failed: u64) -> result: unit reads(name), writes(buffer) {
+  doc "Writes the name, then each count after its label.";
+  put_text(buffer: buffer, text: name);
+  let separator = &summary_separator[0_u64..summary_separator.len];
+  put_text(buffer: buffer, text: separator);
+  put_decimal(buffer: buffer, value: cases);
+  let cases_label = &summary_cases[0_u64..summary_cases.len];
+  put_text(buffer: buffer, text: cases_label);
+  put_decimal(buffer: buffer, value: passed);
+  let passed_label = &summary_passed[0_u64..summary_passed.len];
+  put_text(buffer: buffer, text: passed_label);
+  put_decimal(buffer: buffer, value: failed);
+  let failed_label = &summary_failed[0_u64..summary_failed.len];
+  put_text(buffer: buffer, text: failed_label);
+  return unit;
+}
+
+fn flush(factory: &HandleFactory, output: &OutputStream, buffer: &Box<Slots<u8>>) -> result: Bool writes(factory), writes(output), writes(buffer) {
+  doc "Repeats write_once until every byte is accepted or one write is refused, then empties buffer.";
+  let length = buffer^.inner.len;
+  let content = &buffer^.inner[0_u64..length];
+  let sent = 0_u64;
+  let accepted = True();
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    match write_once(factory: factory, output: output, source: content, start: sent, end: length) {
+      Ok(value: next) => {
+        let stalled = next == sent;
+        if stalled {
+          set accepted = False();
+          break @publish;
+        }
+        set sent = next;
+      }
+      Err(error: problem) => {
+        set accepted = False();
+        break @publish;
+      }
+    }
+  }
+  truncate(buffer: buffer, length: 0_u64);
+  return accepted;
+}

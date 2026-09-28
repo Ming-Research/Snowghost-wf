@@ -1,0 +1,98 @@
+fn read_be_u32(bytes: &[u8], at: u64) -> result: u32 reads(bytes) contract {
+  define length = bytes^.len;
+  requires at + 4_u64 <= length;
+} {
+  doc "Reads the big-endian u32 that starts at index at of bytes.";
+  let value = 0_u32;
+  for (offset in 0_u64..4_u64) {
+    let index = at + offset;
+    let byte = cvt::<u8, u32>(bytes^[index]);
+    let shifted = ishl.wrap(value, 8_u32);
+    set value = ior(shifted, byte);
+  }
+  return value;
+}
+
+fn crc32_table() -> table: Array<u32, 256> pure {
+  doc "Builds the standard CRC-32 (polynomial 0xEDB88320) lookup table PNG chunk checksums use.";
+  let table = array_filled::<u32, 256>(value: 0_u32);
+  for (index in 0_u64..256_u64) {
+    let value = cvt::<u64, u32>(index);
+    for (bit in 0_u64..8_u64) {
+      let low_bit = iand(value, 1_u32);
+      let shifted = ishr(value, 1_u32);
+      if low_bit == 1_u32 {
+        set value = ixor(shifted, 3988292384_u32);
+      } else {
+        set value = shifted;
+      }
+    }
+    set table[index] = value;
+  }
+  return table;
+}
+
+fn crc32_range(table: &Array<u32, 256>, data: &[u8], start: u64, end: u64) -> result: u32 reads(table), reads(data) contract {
+  define length = data^.len;
+  requires start <= end;
+  requires end <= length;
+} {
+  doc "Computes the CRC-32 of data from start to end, seeded with the initial value 0xFFFFFFFF and complemented at the end, as PNG chunk checksums require.";
+  let crc = 4294967295_u32;
+  for (at in start..end) {
+    let byte = cvt::<u8, u32>(data^[at]);
+    let mixed = ixor(crc, byte);
+    let low = iand(mixed, 255_u32);
+    let index = cvt::<u32, u64>(low);
+    let shifted = ishr(crc, 8_u32);
+    set crc = ixor(shifted, table^[index]);
+  }
+  return ixor(crc, 4294967295_u32);
+}
+
+fn adler32(data: &[u8]) -> result: u32 reads(data) {
+  doc "Computes the RFC 1950 Adler-32 checksum of data. The sums are reduced modulo 65521 once per block of 5552 bytes, the longest run over which the second sum cannot overflow 32 bits, and each block is summed eight bytes per iteration.";
+  let length = data^.len;
+  let sum_a = 1_u32;
+  let sum_b = 0_u32;
+  let block_start = 0_u64;
+  loop @blocks (
+    invariant inside: block_start <= length
+  ) {
+    let remaining = length - block_start;
+    if remaining == 0_u64 {
+      break @blocks;
+    }
+    let block = imin(remaining, 5552_u64);
+    let block_end = block_start + block;
+    invariant block_inside: block_end <= length;
+    let at = block_start;
+    loop @octets (
+      invariant within: at <= block_end
+    ) {
+      let left = block_end - at;
+      if left < 8_u64 {
+        break @octets;
+      }
+      let next = at + 8_u64;
+      invariant next_inside: next <= block_end;
+      for (offset in 0_u64..8_u64) {
+        let index = at + offset;
+        let byte = cvt::<u8, u32>(data^[index]);
+        set sum_a = sum_a +wrap byte;
+        set sum_b = sum_b +wrap sum_a;
+      }
+      set at = next;
+    }
+    for (index in at..block_end) {
+      let byte = cvt::<u8, u32>(data^[index]);
+      set sum_a = sum_a +wrap byte;
+      set sum_b = sum_b +wrap sum_a;
+    }
+    set sum_a = sum_a % 65521_u32;
+    set sum_b = sum_b % 65521_u32;
+    set block_start = block_end;
+  }
+  let shifted = ishl.wrap(sum_b, 16_u32);
+  return ior(shifted, sum_a);
+}

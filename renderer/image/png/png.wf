@@ -1,0 +1,100 @@
+const signature: Array<u8, 8> =[137_u8, 80_u8, 78_u8, 71_u8, 13_u8, 10_u8, 26_u8, 10_u8];
+
+fn has_signature(data: &[u8]) -> result: Bool reads(data) {
+  doc "Tells whether data starts with the 8-byte PNG signature.";
+  if data^.len < 8_u64 {
+    return False();
+  }
+  for (at in 0_u64..8_u64) {
+    if data^[at] == signature[at] {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn decode_png(data: &[u8]) -> result: Result<Image, PngError> reads(data) {
+  let length = data^.len;
+  let signed = has_signature(data: data);
+  let long_enough = length >= 8_u64;
+  let framed = band(signed, long_enough);
+  if framed {
+  } else {
+    let error = PngError::Malformed();
+    return Err<Image, PngError>(error: error);
+  }
+  let table = crc32_table();
+  let parsed = propagate parse_chunks(data: data, table: &table);
+  let header = parsed.header;
+  let width = cvt::<u32, u64>(header.width);
+  let height = cvt::<u32, u64>(header.height);
+  let bit_depth = header.bit_depth;
+  let area = width * height;
+  if area > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  if width > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  if height > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  if width == 0_u64 {
+    let error = PngError::Malformed();
+    return Err<Image, PngError>(error: error);
+  }
+  if height == 0_u64 {
+    let error = PngError::Malformed();
+    return Err<Image, PngError>(error: error);
+  }
+  if bit_depth < 1_u8 {
+    let error = PngError::Malformed();
+    return Err<Image, PngError>(error: error);
+  }
+  if bit_depth > 16_u8 {
+    let error = PngError::Malformed();
+    return Err<Image, PngError>(error: error);
+  }
+  let stride = width * 4_u64;
+  invariant stride_bound: stride <= 268435456_u64;
+  let pixel_bytes = stride * height;
+  let format = pixel_format(header: header, colors: &parsed.colors);
+  let bits = bits_per_pixel(color: header.color, bit_depth: bit_depth);
+  let raw_size = 0_u64;
+  if header.interlaced {
+    set raw_size = raw_size_interlaced(pixel_bits: bits, width: width, height: height);
+  } else {
+    set raw_size = raw_size_noninterlaced(pixel_bits: bits, width: width, height: height);
+  }
+  if raw_size > 1073741824_u64 {
+    let error = PngError::TooLarge();
+    return Err<Image, PngError>(error: error);
+  }
+  let raw_cell = box_array_filled::<u8>(count: raw_size, value: 0_u8);
+  let raw = &raw_cell.inner[0_u64..raw_size];
+  let idat_cell = move parsed.idat;
+  let stream_length = propagate pad_stream(stream: &idat_cell);
+  let padded_length = idat_cell.inner.len;
+  let stream = &idat_cell.inner[0_u64..padded_length];
+  let inflated = propagate zlib_decompress(out: raw, stream: stream, length: stream_length);
+  let pixels_cell = box_slots_new::<u8>(capacity: pixel_bytes);
+  for @fill_pixels (
+    at in 0_u64..pixel_bytes,
+    invariant grown: pixels_cell.inner.len == at,
+    invariant kept: pixels_cell.inner.cap == pixel_bytes
+  ) {
+    place_back(window: &pixels_cell.inner, value: 0_u8);
+  }
+  let pixels = &pixels_cell.inner[0_u64..pixel_bytes];
+  if header.interlaced {
+    let decoded = propagate decode_interlaced(raw: raw, pixels: pixels, format: &format, pixel_bits: bits, width: width, height: height);
+  } else {
+    let used = propagate decode_pass(raw: raw, pixels: pixels, format: &format, pixel_bits: bits, width: width, height: height, start_x: 0_u64, start_y: 0_u64, step_x: 1_u64, step_y: 1_u64);
+  }
+  let image = Image(width: header.width, height: header.height, pixels: move pixels_cell);
+  return Ok<Image, PngError>(value: move image);
+}

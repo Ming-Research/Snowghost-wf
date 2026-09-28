@@ -1,0 +1,116 @@
+fn inflate_codes(reader: &BitReader, input: &[u8], out: &[u8], written: u64, literal_table: &[u32], literal_bits: u32, distance_table: &[u32], distance_bits: u32) -> result: Result<u64, InflateError> reads(input), reads(literal_table), reads(distance_table), writes(reader), writes(out) contract {
+  requires written <= out^.len;
+  requires out^.len <= 4294967296_u64;
+  requires literal_bits <= 15_u32;
+  requires distance_bits <= 15_u32;
+  requires literal_table^.len >= 32768_u64;
+  requires distance_table^.len >= 32768_u64;
+  ensures when Ok(value: total): total <= out^.len;
+} {
+  doc "Decodes the Huffman-coded symbols of one fixed or dynamic block into out after its written bytes, until the end-of-block symbol, and returns the new written count. This is the decoder's hot loop, so it keeps the bit reservoir in locals: one refill of at least 56 bits per iteration covers the longest literal/length code, its 5 extra bits, the longest distance code and its 13 extra bits.";
+  let out_length = out^.len;
+  let literal_size = ishl(1_u64, literal_bits);
+  let literal_mask = literal_size - 1_u64;
+  let distance_size = ishl(1_u64, distance_bits);
+  let distance_mask = distance_size - 1_u64;
+  let position = reader^.position;
+  let hold = reader^.hold;
+  let bits = reader^.bits;
+  let at = written;
+  loop @symbols (
+    invariant inside: at <= out_length
+  ) {
+    let (loaded_position, loaded_hold, loaded_bits) = refill(input: input, position: position, hold: hold, bits: bits);
+    set position = loaded_position;
+    let literal_index = iand(loaded_hold, literal_mask);
+    let packed = literal_table^[literal_index];
+    let code_length = iand(packed, 15_u32);
+    if code_length == 0_u32 {
+      let error = InflateError::InvalidHuffmanCode();
+      return Err<u64, InflateError>(error: error);
+    }
+    let after_code = ishr(loaded_hold, code_length);
+    let bits_after_code = loaded_bits - code_length;
+    let kind_field = ishr(packed, 8_u32);
+    let kind = iand(kind_field, 3_u32);
+    let value = ishr(packed, 16_u32);
+    if kind == entry_value {
+      if at < out_length {
+      } else {
+        let error = InflateError::OutputFull();
+        return Err<u64, InflateError>(error: error);
+      }
+      set out^[at] = cvt.wrap::<u32, u8>(value);
+      set at = at + 1_u64;
+      set hold = after_code;
+      set bits = bits_after_code;
+    } else {
+      if kind == entry_end {
+        set reader^.position = position;
+        set reader^.hold = after_code;
+        set reader^.bits = bits_after_code;
+        return Ok<u64, InflateError>(value: at);
+      }
+      if kind == entry_invalid {
+        let error = InflateError::InvalidHuffmanCode();
+        return Err<u64, InflateError>(error: error);
+      }
+      let extra_field = ishr(packed, 4_u32);
+      let extra = iand(extra_field, 7_u32);
+      let extra_size = ishl(1_u64, extra);
+      let extra_mask = extra_size - 1_u64;
+      let extra_value = iand(after_code, extra_mask);
+      let length_base = cvt::<u32, u64>(value);
+      let copy_length = length_base + extra_value;
+      let after_length = ishr(after_code, extra);
+      let bits_after_length = bits_after_code - extra;
+      let distance_index = iand(after_length, distance_mask);
+      let distance_packed = distance_table^[distance_index];
+      let distance_code_length = iand(distance_packed, 15_u32);
+      if distance_code_length == 0_u32 {
+        let error = InflateError::InvalidDistance();
+        return Err<u64, InflateError>(error: error);
+      }
+      let distance_kind_field = ishr(distance_packed, 8_u32);
+      let distance_kind = iand(distance_kind_field, 3_u32);
+      if distance_kind == entry_base {
+      } else {
+        let error = InflateError::InvalidDistance();
+        return Err<u64, InflateError>(error: error);
+      }
+      let after_distance_code = ishr(after_length, distance_code_length);
+      let bits_after_distance_code = bits_after_length - distance_code_length;
+      let distance_extra_field = ishr(distance_packed, 4_u32);
+      let distance_extra = iand(distance_extra_field, 15_u32);
+      let distance_extra_size = ishl(1_u64, distance_extra);
+      let distance_extra_mask = distance_extra_size - 1_u64;
+      let distance_extra_value = iand(after_distance_code, distance_extra_mask);
+      let distance_base = ishr(distance_packed, 16_u32);
+      let distance_start = cvt::<u32, u64>(distance_base);
+      let distance = distance_start + distance_extra_value;
+      set hold = ishr(after_distance_code, distance_extra);
+      set bits = bits_after_distance_code - distance_extra;
+      if distance <= at {
+      } else {
+        let error = InflateError::InvalidDistance();
+        return Err<u64, InflateError>(error: error);
+      }
+      let copy_end = at + copy_length;
+      if copy_end <= out_length {
+      } else {
+        let error = InflateError::OutputFull();
+        return Err<u64, InflateError>(error: error);
+      }
+      let source = at - distance;
+      let source_end = source + copy_length;
+      invariant source_inside: source_end <= out_length;
+      for (from in source..source_end) {
+        let to = from + distance;
+        set out^[to] = out^[from];
+      }
+      set at = copy_end;
+    }
+  }
+  let error = InflateError::OutputFull();
+  return Err<u64, InflateError>(error: error);
+}

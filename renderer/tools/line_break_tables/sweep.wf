@@ -1,0 +1,140 @@
+const block_size: u64 = 256_u64;
+
+const block_count: u64 = 4352_u64;
+
+const block_capacity: u64 = 1114112_u64;
+
+const wide_bit: u8 = 64_u8;
+
+const pict_bit: u8 = 128_u8;
+
+struct PackedTables {
+  block_index: Box<Slots<u16>>;
+  packed_bytes: Box<Slots<u8>>;
+}
+
+fn ranges_cover(ranges: &BoolRanges, cursor: u64, cp: u32) -> (hit: Bool, next_cursor: u64) reads(ranges) {
+  doc "Advances cursor over ranges (ascending, non-overlapping) to the first range whose end is at or after cp, and reports whether that range covers cp.";
+  let ends_len = ranges^.ends.inner.len;
+  let starts_len = ranges^.starts.inner.len;
+  let ends = &ranges^.ends.inner[0_u64..ends_len];
+  let starts = &ranges^.starts.inner[0_u64..starts_len];
+  let advanced = advance_cursor(ends: ends, cursor: cursor, cp: cp);
+  let hit = cursor_covers(starts: starts, cursor: advanced, cp: cp);
+  return hit, advanced;
+}
+
+fn block_matches(packed_bytes: &Box<Slots<u8>>, dedup_index: u64, candidate: &Array<u8, 256>) -> result: Bool reads(packed_bytes.inner), reads(candidate) {
+  doc "Tells whether the 256-byte deduplicated block at dedup_index equals candidate, byte for byte.";
+  let base = dedup_index *wrap block_size;
+  for (k in 0_u64..block_size) {
+    let pos = base +wrap k;
+    let in_range = pos < packed_bytes^.inner.len;
+    if in_range {
+      let existing = packed_bytes^.inner[pos];
+      let value = candidate^[k];
+      let same = existing == value;
+      if same {
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn find_or_append_block(packed_bytes: &Box<Slots<u8>>, dedup_count: u64, candidate: &Array<u8, 256>) -> result: u64 reads(candidate), writes(packed_bytes.inner) {
+  doc "Returns the index of the existing deduplicated block equal to candidate, or appends candidate as a new deduplicated block and returns its (new) index.";
+  for (k in 0_u64..dedup_count) {
+    let matched = block_matches(packed_bytes: packed_bytes, dedup_index: k, candidate: candidate);
+    if matched {
+      return k;
+    }
+  }
+  for (k in 0_u64..block_size) {
+    let value = candidate^[k];
+    let room = packed_bytes^.inner.len < packed_bytes^.inner.cap;
+    if room {
+      place_back(window: &packed_bytes^.inner, value: value);
+    }
+  }
+  return dedup_count;
+}
+
+fn sweep_packed(lb: &LbRanges, cn: &BoolRanges, mn: &BoolRanges, mc: &BoolRanges, pi: &BoolRanges, pf: &BoolRanges, wide: &BoolRanges, pict: &BoolRanges) -> result: PackedTables reads(lb), reads(cn), reads(mn), reads(mc), reads(pi), reads(pf), reads(wide), reads(pict) {
+  doc "Sweeps every code point 0 through 0x10FFFF in order, resolving its runtime line-break class (raw_lb_class then resolve_lb), its East_Asian_Width wideness, and whether it is Cn intersected with Extended_Pictographic, packs the three into one byte (class in the low 6 bits, EA-wide in bit 6, ext-pict-Cn in bit 7), and groups every 256 consecutive code points (one block) into a deduplicated table: block_index names, per block, which deduplicated 256-byte block holds its bytes, and packed_bytes holds each distinct block's 256 bytes once.";
+  let block_index = box_slots_new::<u16>(capacity: block_count);
+  let packed_bytes = box_slots_new::<u8>(capacity: block_capacity);
+  let lb_cursor = 0_u64;
+  let cn_cursor = 0_u64;
+  let mn_cursor = 0_u64;
+  let mc_cursor = 0_u64;
+  let pi_cursor = 0_u64;
+  let pf_cursor = 0_u64;
+  let wide_cursor = 0_u64;
+  let pict_cursor = 0_u64;
+  for (block in 0_u64..block_count) {
+    let current_block = array_filled::<u8, 256>(value: 0_u8);
+    for (offset in 0_u64..block_size) {
+      let block_base = block *wrap block_size;
+      let cp64 = block_base +wrap offset;
+      let cp32 = cvt::<u64, u32>(cp64);
+      let lb_ends_len = lb^.ends.inner.len;
+      let lb_starts_len = lb^.starts.inner.len;
+      let lb_ends = &lb^.ends.inner[0_u64..lb_ends_len];
+      let lb_starts = &lb^.starts.inner[0_u64..lb_starts_len];
+      set lb_cursor = advance_cursor(ends: lb_ends, cursor: lb_cursor, cp: cp32);
+      let lb_hit = cursor_covers(starts: lb_starts, cursor: lb_cursor, cp: cp32);
+      let lb_values_len = lb^.values.inner.len;
+      let lb_cursor_in_values = lb_cursor < lb_values_len;
+      let lb_value_hit = band(lb_hit, lb_cursor_in_values);
+      let raw_class = if lb_value_hit {
+        let value = lb^.values.inner[lb_cursor];
+        give value;
+      } else {
+        give raw_xx;
+      }
+      let (hit_cn, next_cn) = ranges_cover(ranges: cn, cursor: cn_cursor, cp: cp32);
+      set cn_cursor = next_cn;
+      let (hit_mn, next_mn) = ranges_cover(ranges: mn, cursor: mn_cursor, cp: cp32);
+      set mn_cursor = next_mn;
+      let (hit_mc, next_mc) = ranges_cover(ranges: mc, cursor: mc_cursor, cp: cp32);
+      set mc_cursor = next_mc;
+      let (hit_pi, next_pi) = ranges_cover(ranges: pi, cursor: pi_cursor, cp: cp32);
+      set pi_cursor = next_pi;
+      let (hit_pf, next_pf) = ranges_cover(ranges: pf, cursor: pf_cursor, cp: cp32);
+      set pf_cursor = next_pf;
+      let is_mark = bor(hit_mn, hit_mc);
+      let resolved = resolve_lb(raw: raw_class, is_pi: hit_pi, is_pf: hit_pf, is_mark: is_mark);
+      let (hit_wide, next_wide) = ranges_cover(ranges: wide, cursor: wide_cursor, cp: cp32);
+      set wide_cursor = next_wide;
+      let (hit_pict, next_pict) = ranges_cover(ranges: pict, cursor: pict_cursor, cp: cp32);
+      set pict_cursor = next_pict;
+      let is_pict_cn = band(hit_pict, hit_cn);
+      let wide_add = if hit_wide {
+        give wide_bit;
+      } else {
+        give 0_u8;
+      }
+      let pict_add = if is_pict_cn {
+        give pict_bit;
+      } else {
+        give 0_u8;
+      }
+      let with_wide = resolved +wrap wide_add;
+      let packed = with_wide +wrap pict_add;
+      set current_block[offset] = packed;
+    }
+    let dedup_count = packed_bytes.inner.len / block_size;
+    let found = find_or_append_block(packed_bytes: &packed_bytes, dedup_count: dedup_count, candidate: &current_block);
+    let found16 = cvt.wrap::<u64, u16>(found);
+    let room = block_index.inner.len < block_index.inner.cap;
+    if room {
+      place_back(window: &block_index.inner, value: found16);
+    }
+  }
+  let made = PackedTables(block_index: move block_index, packed_bytes: move packed_bytes);
+  return move made;
+}

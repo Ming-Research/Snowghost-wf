@@ -1,0 +1,118 @@
+enum FilterType {
+  None();
+  Sub();
+  Up();
+  Average();
+  Paeth();
+}
+
+fn filter_type(byte: u8) -> result: Result<FilterType, PngError> pure {
+  doc "Reads the filter-type byte that leads each scanline; any value past 4 is Malformed.";
+  if byte == 0_u8 {
+    let filter = FilterType::None();
+    return Ok<FilterType, PngError>(value: filter);
+  }
+  if byte == 1_u8 {
+    let filter = FilterType::Sub();
+    return Ok<FilterType, PngError>(value: filter);
+  }
+  if byte == 2_u8 {
+    let filter = FilterType::Up();
+    return Ok<FilterType, PngError>(value: filter);
+  }
+  if byte == 3_u8 {
+    let filter = FilterType::Average();
+    return Ok<FilterType, PngError>(value: filter);
+  }
+  if byte == 4_u8 {
+    let filter = FilterType::Paeth();
+    return Ok<FilterType, PngError>(value: filter);
+  }
+  let error = PngError::Malformed();
+  return Err<FilterType, PngError>(error: error);
+}
+
+fn paeth_predictor(a: u8, b: u8, c: u8) -> result: u8 pure {
+  doc "The PNG Paeth predictor: whichever of a (left), b (up) and c (up-left) lies closest to p = a + b - c, ties preferring a, then b. The distances |p - a|, |p - b| and |p - c| are computed as |b - c|, |a - c| and |(b - c) + (a - c)|.";
+  let aa = cvt::<u8, i32>(a);
+  let bb = cvt::<u8, i32>(b);
+  let cc = cvt::<u8, i32>(c);
+  let from_up = bb - cc;
+  let from_left = aa - cc;
+  let combined = from_up + from_left;
+  let pa = iabs(from_up);
+  let pb = iabs(from_left);
+  let pc = iabs(combined);
+  let a_le_b = pa <= pb;
+  let a_le_c = pa <= pc;
+  let a_nearest = band(a_le_b, a_le_c);
+  if a_nearest {
+    return a;
+  }
+  if pb <= pc {
+    return b;
+  }
+  return c;
+}
+
+fn unfilter_row(filter: FilterType, bpp: u64, payload: &[u8], prev: &[u8], cur: &[u8]) -> result: unit reads(payload), reads(prev), writes(cur) contract {
+  define width_bytes = cur^.len;
+  requires payload^.len >= width_bytes;
+  requires prev^.len >= width_bytes;
+  requires bpp <= width_bytes;
+} {
+  doc "Reconstructs one scanline into cur from its filtered payload bytes and the already-reconstructed previous row prev (all zero above the first row), per the PNG filtering rules. bpp is the filtering byte distance: the bytes of one complete pixel, at least one. Each filter type runs its own loop, and the first bpp bytes, which have no left neighbour, are split from the rest so no iteration tests for one.";
+  let width_bytes = cur^.len;
+  match filter {
+    None() => {
+      for (x in 0_u64..width_bytes) {
+        set cur^[x] = payload^[x];
+      }
+    }
+    Sub() => {
+      for (x in 0_u64..bpp) {
+        set cur^[x] = payload^[x];
+      }
+      for (x in bpp..width_bytes) {
+        let left = x - bpp;
+        let a = cur^[left];
+        set cur^[x] = payload^[x] +wrap a;
+      }
+    }
+    Up() => {
+      for (x in 0_u64..width_bytes) {
+        set cur^[x] = payload^[x] +wrap prev^[x];
+      }
+    }
+    Average() => {
+      for (x in 0_u64..bpp) {
+        let b = prev^[x];
+        let half = ishr(b, 1_u32);
+        set cur^[x] = payload^[x] +wrap half;
+      }
+      for (x in bpp..width_bytes) {
+        let left = x - bpp;
+        let a = cvt::<u8, u16>(cur^[left]);
+        let b = cvt::<u8, u16>(prev^[x]);
+        let sum = a + b;
+        let mean = ishr(sum, 1_u32);
+        let mean8 = cvt.wrap::<u16, u8>(mean);
+        set cur^[x] = payload^[x] +wrap mean8;
+      }
+    }
+    Paeth() => {
+      for (x in 0_u64..bpp) {
+        set cur^[x] = payload^[x] +wrap prev^[x];
+      }
+      for (x in bpp..width_bytes) {
+        let left = x - bpp;
+        let a = cur^[left];
+        let b = prev^[x];
+        let c = prev^[left];
+        let predicted = paeth_predictor(a: a, b: b, c: c);
+        set cur^[x] = payload^[x] +wrap predicted;
+      }
+    }
+  }
+  return unit;
+}

@@ -1,0 +1,325 @@
+const replacement_character: u32 = 65533_u32;
+
+fn decode_utf8(source: &[u8], length: u64, pos: u64) -> (cp: u32, next: u64) reads(source) contract {
+  requires length == source^.len;
+  requires pos < length;
+} {
+  doc "Decodes one code point at pos under the WHATWG UTF-8 decoder: a maximal ill-formed subsequence decodes to U+FFFD and next is the position after that subsequence.";
+  let lead = source^[pos];
+  let ascii = lead <= 127_u8;
+  if ascii {
+    let value = cvt::<u8, u32>(lead);
+    let next = pos +wrap 1_u64;
+    return value, next;
+  }
+  let need = 0_u64;
+  let payload = 0_u32;
+  let low = 128_u8;
+  let high = 191_u8;
+  let valid_lead = True();
+  let two_l = lead >= 194_u8;
+  let two_r = lead <= 223_u8;
+  let two = band(two_l, two_r);
+  let e0 = lead == 224_u8;
+  let ed = lead == 237_u8;
+  let three_hi_l = lead >= 225_u8;
+  let three_hi_r = lead <= 239_u8;
+  let three_hi = band(three_hi_l, three_hi_r);
+  let not_ed = bnot(ed);
+  let three_regular = band(three_hi, not_ed);
+  let f0 = lead == 240_u8;
+  let f4 = lead == 244_u8;
+  let four_regular_l = lead >= 241_u8;
+  let four_regular_r = lead <= 243_u8;
+  let four_regular = band(four_regular_l, four_regular_r);
+  if two {
+    set need = 1_u64;
+    let base = lead -wrap 192_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if e0 {
+    set need = 2_u64;
+    set low = 160_u8;
+  } else if three_regular {
+    set need = 2_u64;
+    let base = lead -wrap 224_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if ed {
+    set need = 2_u64;
+    set high = 159_u8;
+    let base = lead -wrap 224_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if f0 {
+    set need = 3_u64;
+    set low = 144_u8;
+  } else if four_regular {
+    set need = 3_u64;
+    let base = lead -wrap 240_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if f4 {
+    set need = 3_u64;
+    set high = 143_u8;
+    let base = lead -wrap 240_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else {
+    set valid_lead = False();
+  }
+  if valid_lead {
+  } else {
+    let next = pos +wrap 1_u64;
+    return replacement_character, next;
+  }
+  let value = payload;
+  let index = 0_u64;
+  let ok = True();
+  loop @cont {
+    let more = index < need;
+    if more {
+    } else {
+      break @cont;
+    }
+    let base = pos +wrap 1_u64;
+    let at = base +wrap index;
+    let available = at < length;
+    if available {
+    } else {
+      set ok = False();
+      break @cont;
+    }
+    let byte = source^[at];
+    let first = index == 0_u64;
+    let lo = if first {
+      give low;
+    } else {
+      give 128_u8;
+    }
+    let hi = if first {
+      give high;
+    } else {
+      give 191_u8;
+    }
+    let above = byte >= lo;
+    let below = byte <= hi;
+    let within = band(above, below);
+    if within {
+    } else {
+      set ok = False();
+      break @cont;
+    }
+    let contrib = byte -wrap 128_u8;
+    let contrib32 = cvt::<u8, u32>(contrib);
+    let shifted = ishl.wrap(value, 6_u32);
+    set value = ior(shifted, contrib32);
+    set index = index +wrap 1_u64;
+  }
+  let base_next = pos +wrap 1_u64;
+  let next = base_next +wrap index;
+  if ok {
+    return value, next;
+  }
+  return replacement_character, next;
+}
+
+fn peek_pp(source: &[u8], length: u64, pos: u64) -> (cp: u32, next: u64) reads(source) contract {
+  requires length == source^.len;
+  requires pos < length;
+} {
+  doc "Decodes one preprocessed code point at pos: decode_utf8 followed by input preprocessing, which folds CR, FF and CRLF to one LF and replaces NUL with U+FFFD.";
+  let (raw, after) = decode_utf8(source: source, length: length, pos: pos);
+  let is_cr = raw == 13_u32;
+  if is_cr {
+    let more = after < length;
+    if more {
+      let (raw2, after2) = decode_utf8(source: source, length: length, pos: after);
+      let is_lf = raw2 == 10_u32;
+      if is_lf {
+        return 10_u32, after2;
+      }
+      return 10_u32, after;
+    }
+    return 10_u32, after;
+  }
+  let is_ff = raw == 12_u32;
+  if is_ff {
+    return 10_u32, after;
+  }
+  let is_nul = raw == 0_u32;
+  if is_nul {
+    return replacement_character, after;
+  }
+  return raw, after;
+}
+
+fn would_start_valid_escape(source: &[u8], length: u64, pos: u64) -> result: Bool reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "True when pos holds a reverse solidus that starts a valid escape: EOF or any code point other than a preprocessed newline may follow it.";
+  let has0 = pos < length;
+  if has0 {
+  } else {
+    return False();
+  }
+  let b0 = source^[pos];
+  let is_bs = b0 == 92_u8;
+  if is_bs {
+  } else {
+    return False();
+  }
+  let pos1 = pos +wrap 1_u64;
+  let has1 = pos1 < length;
+  if has1 {
+  } else {
+    return True();
+  }
+  let (c1, after1) = peek_pp(source: source, length: length, pos: pos1);
+  let is_newline = c1 == 10_u32;
+  let result = bnot(is_newline);
+  return result;
+}
+
+fn would_start_identifier(source: &[u8], length: u64, pos: u64) -> result: Bool reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "True when the code points at and after pos would start an identifier: a name-start code point, a valid escape, or a hyphen followed by a name-start code point, another hyphen, or a valid escape.";
+  let has0 = pos < length;
+  if has0 {
+  } else {
+    return False();
+  }
+  let (c0, after0) = peek_pp(source: source, length: length, pos: pos);
+  let start_char = name_start_cp(cp: c0);
+  if start_char {
+    return True();
+  }
+  let is_backslash = c0 == 92_u32;
+  if is_backslash {
+    let result = would_start_valid_escape(source: source, length: length, pos: pos);
+    return result;
+  }
+  let is_dash = c0 == 45_u32;
+  if is_dash {
+    let has1 = after0 < length;
+    if has1 {
+    } else {
+      return False();
+    }
+    let (c1, after1) = peek_pp(source: source, length: length, pos: after0);
+    let second_start = name_start_cp(cp: c1);
+    let second_dash = c1 == 45_u32;
+    let second_ok = bor(second_start, second_dash);
+    if second_ok {
+      return True();
+    }
+    let esc = would_start_valid_escape(source: source, length: length, pos: after0);
+    return esc;
+  }
+  return False();
+}
+
+fn consume_escape(source: &[u8], length: u64, pos: u64) -> (cp: u32, next: u64) reads(source) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes one escaped code point starting at pos, the position right after the reverse solidus, per CSS Syntax 4.3.7.";
+  let has0 = pos < length;
+  if has0 {
+  } else {
+    return replacement_character, pos;
+  }
+  let (c0, after0) = peek_pp(source: source, length: length, pos: pos);
+  let hex0 = hex_digit_cp(cp: c0);
+  if hex0 {
+  } else {
+    return c0, after0;
+  }
+  let value = hex_value_cp(cp: c0);
+  let cur = after0;
+  let count = 1_u64;
+  loop @hex {
+    let more_room = count < 6_u64;
+    if more_room {
+    } else {
+      break @hex;
+    }
+    let more_input = cur < length;
+    if more_input {
+    } else {
+      break @hex;
+    }
+    let (c, after) = peek_pp(source: source, length: length, pos: cur);
+    let is_hex = hex_digit_cp(cp: c);
+    if is_hex {
+    } else {
+      break @hex;
+    }
+    let digit = hex_value_cp(cp: c);
+    let scaled = value *wrap 16_u32;
+    set value = scaled +wrap digit;
+    set count = count +wrap 1_u64;
+    set cur = after;
+  }
+  let has_more = cur < length;
+  let final_pos = cur;
+  if has_more {
+    let (cw, afterw) = peek_pp(source: source, length: length, pos: cur);
+    let is_ws = is_whitespace_cp(cp: cw);
+    if is_ws {
+      set final_pos = afterw;
+    }
+  }
+  let zero = value == 0_u32;
+  let too_big = value > 1114111_u32;
+  let surrogate_low = value >= 55296_u32;
+  let surrogate_high = value <= 57343_u32;
+  let surrogate = band(surrogate_low, surrogate_high);
+  let a = bor(zero, too_big);
+  let bad = bor(a, surrogate);
+  if bad {
+    return replacement_character, final_pos;
+  }
+  return value, final_pos;
+}
+
+struct ScannedName {
+  span: Span;
+  next: u64;
+}
+
+fn consume_ident_sequence(source: &[u8], length: u64, start: u64, text: &Box<Slots<u8>>) -> result: Result<ScannedName, SyntaxError> reads(source), writes(text) contract {
+  requires length == source^.len;
+} {
+  doc "Consumes a name code points and valid escapes from start, appending each decoded code point's UTF-8 bytes to text, per CSS Syntax 4.3.12.";
+  let text_start = text^.inner.len;
+  let pos = start;
+  loop @name {
+    let has = pos < length;
+    if has {
+    } else {
+      break @name;
+    }
+    let (cp, after) = peek_pp(source: source, length: length, pos: pos);
+    let is_bs = cp == 92_u32;
+    if is_bs {
+      let esc_ok = would_start_valid_escape(source: source, length: length, pos: pos);
+      if esc_ok {
+        let (ecp, eafter) = consume_escape(source: source, length: length, pos: after);
+        let ecp_pushed = propagate push_code_point(text: text, cp: ecp);
+        set pos = eafter;
+      } else {
+        break @name;
+      }
+    } else {
+      let is_name = name_char_cp(cp: cp);
+      if is_name {
+        let cp_pushed = propagate push_code_point(text: text, cp: cp);
+        set pos = after;
+      } else {
+        break @name;
+      }
+    }
+  }
+  let text_end = text^.inner.len;
+  let start32 = cvt.wrap::<u64, u32>(text_start);
+  let end32 = cvt.wrap::<u64, u32>(text_end);
+  let span = Span(start: start32, end: end32);
+  let scanned = ScannedName(span: span, next: pos);
+  return Ok<ScannedName, SyntaxError>(value: scanned);
+}
