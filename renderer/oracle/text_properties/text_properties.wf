@@ -1,0 +1,464 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias GeneralCategory = pkg::text::properties::GeneralCategory;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias OutputStream = std::io::OutputStream;
+alias args_count = std::text::args_count;
+alias canonical_combining_class = pkg::text::normalization::canonical_combining_class;
+alias canonical_composition = pkg::text::normalization::canonical_composition;
+alias canonical_decomposition = pkg::text::normalization::canonical_decomposition;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias flush = pkg::oracle::support::flush;
+alias general_category = pkg::text::properties::general_category;
+alias is_extended_pictographic = pkg::text::properties::is_extended_pictographic;
+alias line_end = pkg::oracle::support::line_end;
+alias put_argument = pkg::oracle::support::put_argument;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_hex = pkg::oracle::support::put_hex;
+alias put_host_error = pkg::oracle::support::put_host_error;
+alias put_text = pkg::oracle::support::put_text;
+alias read_argument_file = pkg::oracle::support::read_argument_file;
+
+const gc_letters: Array<u8, 60> = "LuLlLtLmLoMnMcMeNdNlNoPcPdPsPePiPfPoSmScSkSoZsZlZpCcCfCsCoCn";
+
+const no_hex_digit: u8 = 16_u8;
+
+const usage_text: Array<u8, 35> = "usage: text_properties_oracle PAIRS";
+
+const unreadable_text: Array<u8, 36> = "text_properties_oracle: cannot read ";
+
+const malformed_text: Array<u8, 47> = "text_properties_oracle: malformed line in PAIRS";
+
+const unwritable_text: Array<u8, 55> = "text_properties_oracle: standard output refused a write";
+
+const code_space: u64 = 1114112_u64;
+
+const flush_threshold: u64 = 65536_u64;
+
+const output_capacity: u64 = 131072_u64;
+
+const report_capacity: u64 = 4096_u64;
+
+fn run(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Destructures the inputs, prints the properties dump and closes the working directory.";
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let code = judge(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn judge(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+  doc "Reads the PAIRS argument, prints every code point's line and then every pair's line, and reports the exit code: 0 after printing everything, 2 for a wrong argument count, an unreadable PAIRS, a malformed PAIRS line or a write standard output refused.";
+  let report = box_slots_new::<u8>(capacity: report_capacity);
+  let count = args_count(args: args);
+  let usable = count == 2_u64;
+  if usable {
+  } else {
+    let usage = &usage_text[0_u64..usage_text.len];
+    put_text(buffer: &report, text: usage);
+    put_byte(buffer: &report, value: '\n'_u8);
+    let sent = flush(factory: files, output: err, buffer: &report);
+    return 2_u8;
+  }
+  match read_argument_file(factory: files, cwd: cwd, args: args, position: 1_u64) {
+    Ok(value: content) => {
+      let output = box_slots_new::<u8>(capacity: output_capacity);
+      let points_delivered = put_all_points(out: out, files: files, output: &output);
+      let data_len = content.inner.len;
+      let data = &content.inner[0_u64..data_len];
+      let outcome = put_all_pairs(data: data, out: out, files: files, output: &output);
+      let last = flush(factory: files, output: out, buffer: &output);
+      if outcome.malformed {
+        let message = &malformed_text[0_u64..malformed_text.len];
+        put_text(buffer: &report, text: message);
+        put_byte(buffer: &report, value: '\n'_u8);
+        let sent = flush(factory: files, output: err, buffer: &report);
+        return 2_u8;
+      }
+      let step1 = band(points_delivered, outcome.delivered);
+      let all_delivered = band(step1, last);
+      if all_delivered {
+        return 0_u8;
+      }
+      let message = &unwritable_text[0_u64..unwritable_text.len];
+      put_text(buffer: &report, text: message);
+      put_byte(buffer: &report, value: '\n'_u8);
+      let sent = flush(factory: files, output: err, buffer: &report);
+      return 2_u8;
+    }
+    Err(error: problem) => {
+      let message = &unreadable_text[0_u64..unreadable_text.len];
+      put_text(buffer: &report, text: message);
+      put_argument(buffer: &report, args: args, position: 1_u64);
+      put_host_error(buffer: &report, error: problem);
+      put_byte(buffer: &report, value: '\n'_u8);
+      let sent = flush(factory: files, output: err, buffer: &report);
+      return 2_u8;
+    }
+  }
+}
+
+fn drain(files: &HandleFactory, out: &OutputStream, output: &Box<Slots<u8>>) -> delivered: Bool writes(files), writes(out), writes(output) waits {
+  doc "Flushes output to standard output once it holds flush_threshold bytes. Returns False when that flush fails and True otherwise.";
+  let full = output^.inner.len >= flush_threshold;
+  if full {
+    let sent = flush(factory: files, output: out, buffer: output);
+    return sent;
+  }
+  return True();
+}
+
+fn gc_letter_index(category: GeneralCategory) -> result: u64 pure {
+  doc "Returns category's 0-based index in the Unicode Standard's listed order, the order gc_letters spells two letters at a time and module.wfm names for the GC field.";
+  match category {
+    UppercaseLetter() => {
+      return 0_u64;
+    }
+    LowercaseLetter() => {
+      return 1_u64;
+    }
+    TitlecaseLetter() => {
+      return 2_u64;
+    }
+    ModifierLetter() => {
+      return 3_u64;
+    }
+    OtherLetter() => {
+      return 4_u64;
+    }
+    NonspacingMark() => {
+      return 5_u64;
+    }
+    SpacingMark() => {
+      return 6_u64;
+    }
+    EnclosingMark() => {
+      return 7_u64;
+    }
+    DecimalNumber() => {
+      return 8_u64;
+    }
+    LetterNumber() => {
+      return 9_u64;
+    }
+    OtherNumber() => {
+      return 10_u64;
+    }
+    ConnectorPunctuation() => {
+      return 11_u64;
+    }
+    DashPunctuation() => {
+      return 12_u64;
+    }
+    OpenPunctuation() => {
+      return 13_u64;
+    }
+    ClosePunctuation() => {
+      return 14_u64;
+    }
+    InitialPunctuation() => {
+      return 15_u64;
+    }
+    FinalPunctuation() => {
+      return 16_u64;
+    }
+    OtherPunctuation() => {
+      return 17_u64;
+    }
+    MathSymbol() => {
+      return 18_u64;
+    }
+    CurrencySymbol() => {
+      return 19_u64;
+    }
+    ModifierSymbol() => {
+      return 20_u64;
+    }
+    OtherSymbol() => {
+      return 21_u64;
+    }
+    SpaceSeparator() => {
+      return 22_u64;
+    }
+    LineSeparator() => {
+      return 23_u64;
+    }
+    ParagraphSeparator() => {
+      return 24_u64;
+    }
+    Control() => {
+      return 25_u64;
+    }
+    Format() => {
+      return 26_u64;
+    }
+    Surrogate() => {
+      return 27_u64;
+    }
+    PrivateUse() => {
+      return 28_u64;
+    }
+    Unassigned() => {
+      return 29_u64;
+    }
+  }
+}
+
+fn put_category(buffer: &Box<Slots<u8>>, category: GeneralCategory) -> result: unit writes(buffer) {
+  doc "Writes the two-letter General_Category abbreviation for category, sliced from gc_letters at gc_letter_index(category) * 2.";
+  let index = gc_letter_index(category: category);
+  let base = index *wrap 2_u64;
+  let letters_len = gc_letters.len;
+  let end = base +wrap 2_u64;
+  let ordered = base <= end;
+  let end_ok = end <= letters_len;
+  let ok = band(ordered, end_ok);
+  if ok {
+    let slice = &gc_letters[base..end];
+    put_text(buffer: buffer, text: slice);
+  }
+  return unit;
+}
+
+fn put_decomposition(buffer: &Box<Slots<u8>>, scalar: u32) -> result: unit writes(buffer) {
+  doc "Writes `-` when canonical_decomposition(scalar) is None, otherwise FIRST,SECOND in lowercase hexadecimal without leading zeros, second included even when it is 0 for a mapping to one character.";
+  let lowercase = False();
+  match canonical_decomposition(scalar: scalar) {
+    Some(value: split) => {
+      let first64 = cvt::<u32, u64>(split.first);
+      put_hex(buffer: buffer, value: first64, width: 1_u64, uppercase: lowercase);
+      put_byte(buffer: buffer, value: ','_u8);
+      let second64 = cvt::<u32, u64>(split.second);
+      put_hex(buffer: buffer, value: second64, width: 1_u64, uppercase: lowercase);
+    }
+    None() => {
+      put_byte(buffer: buffer, value: '-'_u8);
+    }
+  }
+  return unit;
+}
+
+fn put_all_points(out: &OutputStream, files: &HandleFactory, output: &Box<Slots<u8>>) -> delivered: Bool writes(out), writes(files), writes(output) waits {
+  doc "Prints `CODE GC CCC EP DECOMPOSITION` for every code point from 0 to 10FFFF, ascending, flushing output whenever it fills. Returns False when a flush fails.";
+  let sent_all = True();
+  let lowercase = False();
+  for (value in 0_u64..code_space) {
+    let scalar = cvt.wrap::<u64, u32>(value);
+    put_hex(buffer: output, value: value, width: 1_u64, uppercase: lowercase);
+    put_byte(buffer: output, value: ' '_u8);
+    let category = general_category(scalar: scalar);
+    put_category(buffer: output, category: category);
+    put_byte(buffer: output, value: ' '_u8);
+    let ccc = canonical_combining_class(scalar: scalar);
+    let ccc64 = cvt::<u8, u64>(ccc);
+    put_decimal(buffer: output, value: ccc64);
+    put_byte(buffer: output, value: ' '_u8);
+    let pictographic = is_extended_pictographic(scalar: scalar);
+    let ep_digit = if pictographic {
+      give '1'_u8;
+    } else {
+      give '0'_u8;
+    }
+    put_byte(buffer: output, value: ep_digit);
+    put_byte(buffer: output, value: ' '_u8);
+    put_decomposition(buffer: output, scalar: scalar);
+    put_byte(buffer: output, value: '\n'_u8);
+    let sent = drain(files: files, out: out, output: output);
+    set sent_all = band(sent_all, sent);
+  }
+  return sent_all;
+}
+
+fn find_byte(text: &[u8], from: u64, stop: u64, target: u8) -> result: u64 reads(text) contract {
+  requires from <= stop;
+  requires stop <= text^.len;
+  ensures result >= from;
+  ensures result <= stop;
+} {
+  doc "Returns the index of the first occurrence of target from from to stop, or stop.";
+  let length = text^.len;
+  let ordered = from <= stop;
+  let within = stop <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return stop;
+  }
+  for (at in from..stop) {
+    let byte = text^[at];
+    let found = byte == target;
+    if found {
+      return at;
+    }
+  }
+  return stop;
+}
+
+fn lower_hex_digit(byte: u8) -> result: u8 pure {
+  doc "Returns the value of one lowercase ASCII hexadecimal digit (0-9, a-f), or no_hex_digit for any other byte; PAIRS spells hex digits in lowercase alone.";
+  let decimal_low = byte >= '0'_u8;
+  let decimal_high = byte <= '9'_u8;
+  let decimal = band(decimal_low, decimal_high);
+  if decimal {
+    return byte -wrap '0'_u8;
+  }
+  let lower_low = byte >= 'a'_u8;
+  let lower_high = byte <= 'f'_u8;
+  let lower = band(lower_low, lower_high);
+  if lower {
+    let offset = byte -wrap 'a'_u8;
+    return offset +wrap 10_u8;
+  }
+  return no_hex_digit;
+}
+
+fn parse_lower_hex_u32(text: &[u8], start: u64, stop: u64) -> result: Option<u32> reads(text) {
+  doc "Parses text from start to stop as 1 to 8 lowercase hexadecimal digits.";
+  let length = text^.len;
+  let ordered = start < stop;
+  let within = stop <= length;
+  let located = band(ordered, within);
+  let size = stop -wrap start;
+  let short = size <= 8_u64;
+  let usable = band(located, short);
+  if usable {
+  } else {
+    return None<u32>();
+  }
+  let value = 0_u32;
+  for (at in start..stop) {
+    let byte = text^[at];
+    let digit = lower_hex_digit(byte: byte);
+    let valid = digit < no_hex_digit;
+    if valid {
+    } else {
+      return None<u32>();
+    }
+    let widened = cvt::<u8, u32>(digit);
+    let shifted = ishl.wrap(value, 4_u32);
+    set value = ior(shifted, widened);
+  }
+  return Some<u32>(value: value);
+}
+
+struct PairLine {
+  ok: Bool;
+  first_start: u64;
+  first_end: u64;
+  second_start: u64;
+  second_end: u64;
+  first: u32;
+  second: u32;
+}
+
+fn parse_pair_line(text: &[u8], start: u64, stop: u64) -> result: PairLine reads(text) {
+  doc "Parses one PAIRS line start..stop as `FIRST SECOND`, each 1 to 8 lowercase hexadecimal digits, separated by exactly one space and with no other space in the line. ok False, with the rest zeroed, for any other shape.";
+  let no = False();
+  let bad = PairLine(ok: no, first_start: start, first_end: start, second_start: start, second_end: start, first: 0_u32, second: 0_u32);
+  let length = text^.len;
+  let ordered = start <= stop;
+  let within = stop <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return bad;
+  }
+  let space_at = find_byte(text: text, from: start, stop: stop, target: ' '_u8);
+  let has_space = space_at < stop;
+  if has_space {
+  } else {
+    return bad;
+  }
+  let second_start = space_at +wrap 1_u64;
+  let extra_space = find_byte(text: text, from: second_start, stop: stop, target: ' '_u8);
+  let clean = extra_space >= stop;
+  if clean {
+  } else {
+    return bad;
+  }
+  match parse_lower_hex_u32(text: text, start: start, stop: space_at) {
+    Some(value: first) => {
+      match parse_lower_hex_u32(text: text, start: second_start, stop: stop) {
+        Some(value: second) => {
+          let yes = True();
+          let good = PairLine(ok: yes, first_start: start, first_end: space_at, second_start: second_start, second_end: stop, first: first, second: second);
+          return good;
+        }
+        None() => {
+          return bad;
+        }
+      }
+    }
+    None() => {
+      return bad;
+    }
+  }
+}
+
+struct PairsOutcome {
+  malformed: Bool;
+  delivered: Bool;
+}
+
+fn put_all_pairs(data: &[u8], out: &OutputStream, files: &HandleFactory, output: &Box<Slots<u8>>) -> result: PairsOutcome reads(data), writes(out), writes(files), writes(output) waits {
+  doc "Parses and prints `C FIRST SECOND RESULT` for every line of data, in order, echoing FIRST and SECOND exactly as read. malformed True, without printing that line, for the first line of any other shape.";
+  let length = data^.len;
+  let at = 0_u64;
+  let delivered = True();
+  let lowercase = False();
+  let no_fault = False();
+  let has_fault = True();
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      let done = PairsOutcome(malformed: no_fault, delivered: delivered);
+      return done;
+    }
+    let found_stop = line_end(text: data, start: at);
+    let stop = imin(found_stop, length);
+    let parsed = parse_pair_line(text: data, start: at, stop: stop);
+    if parsed.ok {
+    } else {
+      let bad = PairsOutcome(malformed: has_fault, delivered: delivered);
+      return bad;
+    }
+    put_byte(buffer: output, value: 'C'_u8);
+    put_byte(buffer: output, value: ' '_u8);
+    let first_ordered = parsed.first_start <= parsed.first_end;
+    let first_within = parsed.first_end <= length;
+    let first_ok = band(first_ordered, first_within);
+    if first_ok {
+      let first_text = &data^[parsed.first_start..parsed.first_end];
+      put_text(buffer: output, text: first_text);
+    }
+    put_byte(buffer: output, value: ' '_u8);
+    let second_ordered = parsed.second_start <= parsed.second_end;
+    let second_within = parsed.second_end <= length;
+    let second_ok = band(second_ordered, second_within);
+    if second_ok {
+      let second_text = &data^[parsed.second_start..parsed.second_end];
+      put_text(buffer: output, text: second_text);
+    }
+    put_byte(buffer: output, value: ' '_u8);
+    match canonical_composition(first: parsed.first, second: parsed.second) {
+      Some(value: composed) => {
+        let composed64 = cvt::<u32, u64>(composed);
+        put_hex(buffer: output, value: composed64, width: 1_u64, uppercase: lowercase);
+      }
+      None() => {
+        put_byte(buffer: output, value: '-'_u8);
+      }
+    }
+    put_byte(buffer: output, value: '\n'_u8);
+    let sent = drain(files: files, out: out, output: output);
+    set delivered = band(delivered, sent);
+    set at = stop +wrap 1_u64;
+  }
+  let done = PairsOutcome(malformed: no_fault, delivered: delivered);
+  return done;
+}
