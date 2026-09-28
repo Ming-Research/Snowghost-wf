@@ -17,9 +17,10 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 # event with .github/design-review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
-.PHONY: check compiler design-lint design-ready review-scope
+.PHONY: check compiler renderer design-lint design-ready review-scope \
+	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed
 
-check: compiler design-lint
+check: compiler renderer design-lint
 
 # Builds the pinned compiler with Whitefoot's own build target, which
 # leaves it at whitefoot/compiler/target/gate/whitefootc.
@@ -28,6 +29,15 @@ compiler:
 		echo "the whitefoot submodule is not checked out: git submodule update --init" >&2; \
 		exit 1; }
 	@$(MAKE) --no-print-directory -C $(WHITEFOOT)/compiler build
+
+WHITEFOOTC := $(WHITEFOOT)/compiler/target/gate/whitefootc
+BUILD := $(ROOT)/build
+ORACLE := $(BUILD)/oracle
+
+# Checks every renderer module against its interface; a module whose
+# functions are declared but not yet written passes as pending.
+renderer: compiler
+	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --check-modules
 
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
@@ -38,3 +48,33 @@ design-ready:
 
 review-scope:
 	@cd $(ROOT) && sh docs/skills/completion-review/scripts/review-scope.sh
+
+# The agent writer trial's oracles (research/investigations/agent-writer-trial).
+# They need network access, libpng and a C compiler, and stay out of `check`.
+$(BUILD)/png-reference: $(ROOT)/tests/png/reference.c
+	@mkdir -p $(BUILD)
+	@$(CC) -O2 -Wall -Wextra -o $@ $< $$(pkg-config --cflags --libs libpng)
+
+oracle-data: $(BUILD)/png-reference
+	@sh $(ROOT)/tests/oracle-data.sh $(ORACLE) $(BUILD)/png-reference
+
+$(BUILD)/%_oracle: compiler FORCE
+	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --entry $*_oracle -o $@
+
+oracle-line-break: $(BUILD)/line_break_oracle
+	@cd $(ROOT) && $< build/oracle/ucd/LineBreakTest.txt
+
+oracle-css: $(BUILD)/css_syntax_oracle
+	@cd $(ROOT) && $(PY) -B tests/css/oracle.py build/oracle/css/component_value_list.json $<
+
+oracle-png: $(BUILD)/png_oracle
+	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
+
+# Decodes the speed set three times with each decoder, single-threaded.
+SPEED_SET = $(sort $(wildcard $(ORACLE)/png-speed/*.png))
+oracle-png-speed: $(BUILD)/png_oracle $(BUILD)/png-reference
+	@cd $(ROOT) && echo libpng: && time -p $(BUILD)/png-reference time 3 $(SPEED_SET:$(ROOT)/%=%)
+	@cd $(ROOT) && echo whitefoot: && time -p $(BUILD)/png_oracle time 3 $(SPEED_SET:$(ROOT)/%=%)
+
+.PHONY: FORCE
+FORCE:
