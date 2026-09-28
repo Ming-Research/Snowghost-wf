@@ -9,6 +9,7 @@ set -eu
 dir=$1
 reference=$2
 ucd=https://www.unicode.org/Public/17.0.0/ucd
+idna=https://www.unicode.org/Public/17.0.0/idna
 css=https://raw.githubusercontent.com/SimonSapin/css-parsing-tests/203ce36bffd617db7f118c551e32794561fb273d
 # PngSuite is served over plain HTTP only; the pinned hash carries its integrity.
 pngsuite=http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz
@@ -34,6 +35,10 @@ fetch $ucd/auxiliary/LineBreakTest.txt ucd/LineBreakTest.txt e69884e0dde6a872487
 fetch $ucd/NormalizationTest.txt ucd/NormalizationTest.txt 5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db
 fetch $ucd/UnicodeData.txt ucd/UnicodeData.txt 2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c
 fetch $ucd/DerivedNormalizationProps.txt ucd/DerivedNormalizationProps.txt 71fd6a206a2c0cdd41feb6b7f656aa31091db45e9cedc926985d718397f9e488
+fetch $ucd/extracted/DerivedBidiClass.txt ucd/DerivedBidiClass.txt 4867b4b7f0731ed1bfcd34cc6251211ff1542541fce0734b6fbda139ee80b3a4
+fetch $ucd/extracted/DerivedJoiningType.txt ucd/DerivedJoiningType.txt f39ebe974825d6736aee15582250307aa532b2cfab3caf3f86bd23fddc9c5c4d
+fetch $idna/IdnaMappingTable.txt idna/IdnaMappingTable.txt 87f05505dc026fdb2bff16132bdc68a8014675836882a9a2b1844540ad3be382
+fetch $idna/IdnaTestV2.txt idna/IdnaTestV2.txt beb5d0be20e896189b03209a82fdc34f06351502bbd4b8e2523583fc2954d9cf
 fetch $css/component_value_list.json css/component_value_list.json a8d7a5252373b892cfcac359360930ad9a57ed918a84331bcf0c872b80f83200
 fetch $pngsuite PngSuite-2017jul19.tgz 0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
 
