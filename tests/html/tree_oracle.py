@@ -14,8 +14,8 @@ off. The driver prints each case's tree in the tests' `#document` format,
 one line per node or attribute, then a line holding only `#end`. Parse
 errors are not compared.
 
-Files in EXCLUDED are not run, each for the reason given; the summary line
-counts them.
+Files in EXCLUDED and cases in EXCLUDED_CASES are not run, each for the
+reason given; the summary line counts them.
 """
 
 import os
@@ -32,6 +32,22 @@ EXCLUDED = {
     "scripted_ark.dat": "needs script execution",
     "scripted_foster01.dat": "needs script execution",
     "scripted_webkit01.dat": "needs script execution",
+}
+
+EXCLUDED_CASES = {
+    # Processing instructions inside otherwise supported files, deferred as
+    # processing-instructions.dat is.
+    "html5test-com.dat #11": "processing instructions are deferred",
+    "tests1.dat #39": "processing instructions are deferred",
+    "tests1.dat #43": "processing instructions are deferred",
+    "tests1.dat #46": "processing instructions are deferred",
+    # These observe an option's contents cloned into selectedcontent, which
+    # the standard does in the option element's insertion steps rather than
+    # in tree construction; deferred with element behaviour (docs/todo.md).
+    "webkit02.dat #44": "selectedcontent cloning is deferred",
+    "webkit02.dat #45": "selectedcontent cloning is deferred",
+    "webkit02.dat #46": "selectedcontent cloning is deferred",
+    "webkit02.dat #47": "selectedcontent cloning is deferred",
 }
 
 
@@ -85,8 +101,12 @@ def main():
             found = parse_file(os.path.join(tests_dir, name))
             if name in EXCLUDED:
                 excluded += len(found)
-            else:
-                cases.extend(found)
+                continue
+            for case in found:
+                if case[0] in EXCLUDED_CASES:
+                    excluded += 1
+                else:
+                    cases.append(case)
     cases_path = os.path.join(tests_dir, "cases.bin")
     with open(cases_path, "wb") as file:
         for _, scripting, context, data, _ in cases:

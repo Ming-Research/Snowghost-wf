@@ -61,8 +61,17 @@ example apart from the renderer code that exposed it
   `<?target data?>` into processing instruction nodes (WPT's
   `processing-instructions.dat`, 124 cases), while the tokenizer's oracle,
   html5lib-tests' frozen tokenizer suite, still reads `<?` as a bogus
-  comment. The tree oracle excludes that file. Support needs a token and a
+  comment. The tree oracle excludes that file and four `<?` cases in other
+  files. Support needs a token and a
   node variant in `pkg::html::tokenizer` and `pkg::dom`, the serializer's
   `<?target data?>` form, and the tokenizer cases that expect a comment
   marked as superseded. Reopen when a target site uses processing
   instructions or the tokenizer oracle moves to a suite that has them.
+- **An option's contents are not cloned into `selectedcontent`.** The
+  standard clones the selected option into a customizable select's
+  `selectedcontent` element from the option element's insertion and
+  selectedness steps, not from tree construction, so
+  `pkg::html::tree_builder` does not do it; the tree oracle excludes the
+  four `webkit02.dat` cases that observe it. Change: implement the element
+  behaviour where DOM insertion steps live. Reopen when form controls are
+  rendered.
