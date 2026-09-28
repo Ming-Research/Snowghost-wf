@@ -51,12 +51,13 @@ synthetic_pages='flat deep unbalanced paragraph'
 # apollo11: the English Wikipedia article Apollo 11 at oldid 1371120273, as
 # index.php renders it with its skin, and the two ResourceLoader sheets of the
 # skin that the page links. The oldid pins the article's text only: Wikimedia
-# serves the page from its cache with per-request fields (the server's name,
-# its response time, experiment classes on body) and each ResourceLoader sheet
-# as currently deployed, with no revision to request, so the SHA-256 pins the
-# copies fetched on 2026-09-28. A later fetch that Wikimedia serves
-# differently fails the check; fetch keeps a file that already matches its
-# pin, so copying the verified files over reproduces the pages.
+# serves no revision-stable bytes, neither of the page, which comes from its
+# cache with per-request fields (the server's name, its response time,
+# experiment classes on body), nor of a ResourceLoader sheet, which comes as
+# currently deployed. The SHA-256 of these three files therefore identifies
+# the copies fetched on 2026-09-28. A re-fetch that fails the check means
+# copying build/research/concurrency/ from a machine that has them; fetch
+# keeps every file that already matches its pin.
 pins() {
 	cat <<'EOF'
 ecma262.html https://raw.githubusercontent.com/tc39/ecma262/24620d3341aaf1a59440fde65343cda3e3f0ad4c/index.html e2b29c85f37b8ded51873ce385b6573a35cbc26b467c21c14f8184f3bab5aa26
