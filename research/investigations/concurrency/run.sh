@@ -17,10 +17,10 @@
 # and T(REPS) as the best of RUNS runs (seven by default) and the stage time
 # (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and 4
 # (WORKERS overrides the list) and the sequential build. REPS is chosen per
-# page so the stage dominates T(REPS); a second argument overrides it. The
-# timed runs hold the Whitefoot check lock, taken with RUN_CHECK (by default
-# the pinned checkout's .github/run-check.pl), so no other heavy job shares
-# the machine.
+# page and stage so the stage dominates T(REPS); a second argument overrides
+# it. The timed runs hold the Whitefoot check lock, taken with RUN_CHECK (by
+# default the pinned checkout's .github/run-check.pl), so no other heavy job
+# shares the machine.
 #
 # The driver is built with WHITEFOOTC (by default the pinned compiler's gate
 # build, as the Makefile builds it).
@@ -48,11 +48,15 @@ synthetic_pages='flat deep unbalanced paragraph'
 # html5: WebKit's parser benchmark copy of the HTML specification at WebKit
 # commit e9f2cf896959ec35ce49b0458b2b1bcfbd301e86; its links load nothing, and
 # its first style element holds the WHATWG specification style sheet.
-# apollo11: the English Wikipedia article Apollo 11 at oldid 1371120273 with the
-# two ResourceLoader sheets of its skin that the page links. Wikimedia serves
-# no revision of those sheets or of the page's skin markup, so their SHA-256
-# pins the copy fetched on 2026-09-28; a later fetch that Wikimedia serves
-# differently fails the check and needs new pins.
+# apollo11: the English Wikipedia article Apollo 11 at oldid 1371120273, as
+# index.php renders it with its skin, and the two ResourceLoader sheets of the
+# skin that the page links. The oldid pins the article's text only: Wikimedia
+# serves the page from its cache with per-request fields (the server's name,
+# its response time, experiment classes on body) and each ResourceLoader sheet
+# as currently deployed, with no revision to request, so the SHA-256 pins the
+# copies fetched on 2026-09-28. A later fetch that Wikimedia serves
+# differently fails the check; fetch keeps a file that already matches its
+# pin, so copying the verified files over reproduces the pages.
 pins() {
 	cat <<'EOF'
 ecma262.html https://raw.githubusercontent.com/tc39/ecma262/24620d3341aaf1a59440fde65343cda3e3f0ad4c/index.html e2b29c85f37b8ded51873ce385b6573a35cbc26b467c21c14f8184f3bab5aa26
@@ -76,17 +80,23 @@ sheets_of() {
 	esac
 }
 
-# Repetitions per page for style, chosen so the stage dominates T(REPS).
+# Repetitions per page and stage, chosen so the stage dominates T(REPS): one
+# count for the shapes A, B and C, and one for the intern post-pass, which
+# costs far less than a shape while its T(0) holds one run of C.
 reps_of() {
 	case $1 in
-	ecma262) echo 3 ;;
-	html5) echo 3 ;;
-	apollo11) echo 3 ;;
-	flat) echo 10 ;;
-	deep) echo 400 ;;
-	unbalanced) echo 20 ;;
-	paragraph) echo 2000 ;;
+	ecma262) shapes=3 intern=300 ;;
+	html5) shapes=3 intern=300 ;;
+	apollo11) shapes=3 intern=300 ;;
+	flat) shapes=20 intern=300 ;;
+	deep) shapes=400 intern=3000 ;;
+	unbalanced) shapes=40 intern=300 ;;
+	paragraph) shapes=2000 intern=3000 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
+	esac
+	case $2 in
+	intern) echo "$intern" ;;
+	*) echo "$shapes" ;;
 	esac
 }
 
@@ -210,30 +220,39 @@ check() {
 	done
 }
 
-# Prints the elapsed seconds of one run of the driver, WF_WORKERS set to its
-# first argument when it is not "seq".
+# Prints the elapsed seconds of one run of the driver: the sequential build
+# for "seq", and otherwise the --par build with WF_WORKERS set to the first
+# argument. A run that fails stops the script.
 elapsed() {
 	mode=$1
 	shift
 	if [ "$mode" = seq ]; then
-		command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh build/proto_style_seq "$@" 2>&1 | awk '$1 == "real" { print $2 }'
+		binary=build/proto_style_seq
 	else
-		WF_WORKERS=$mode command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh build/proto_style "$@" 2>&1 | awk '$1 == "real" { print $2 }'
+		binary=build/proto_style
 	fi
+	if ! WF_WORKERS=$mode command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>"$data/time.txt"; then
+		echo "run.sh: $binary $* failed" >&2
+		exit 1
+	fi
+	awk '$1 == "real" { print $2 }' "$data/time.txt"
 }
 
 # Prints the least of RUNS elapsed times.
 best() {
+	times=
 	i=0
 	while [ "$i" -lt "$runs" ]; do
-		elapsed "$@"
+		seconds=$(elapsed "$@")
+		times="$times $seconds"
 		i=$((i + 1))
-	done | awk 'NR == 1 || $1 < least { least = $1 } END { print least }'
+	done
+	echo "$times" | awk '{ least = $1; for (i = 2; i <= NF; i++) if ($i < least) least = $i; print least }'
 }
 
 style() {
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
-		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh "$0" style "$@"
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh "$here/run.sh" style "$@"
 	fi
 	build
 	pages=${1:-$real_pages $synthetic_pages}
@@ -243,9 +262,10 @@ style() {
 	for page in $pages; do
 		file=$(page_file "$page")
 		sheets=$(sheets_of "$page")
-		reps=${2:-$(reps_of "$page")}
-		echo "# $page: $(build/proto_style C 0 "$file" "$ua" $sheets)"
+		counts=$(build/proto_style C 0 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5 }')
+		echo "# $page: $counts"
 		for shape in A B C intern; do
+			reps=${2:-$(reps_of "$page" "$shape")}
 			for mode in $workers seq; do
 				zero=$(best "$mode" "$shape" 0 "$file" "$ua" $sheets)
 				full=$(best "$mode" "$shape" "$reps" "$file" "$ua" $sheets)
