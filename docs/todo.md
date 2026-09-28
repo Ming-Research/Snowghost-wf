@@ -40,3 +40,8 @@ example apart from the renderer code that exposed it
   the built compiler keyed by the `whitefoot/` pin when the gate's run time
   starts to slow down work, or when the pin moves often enough that the
   build dominates.
+- **pkg::text::normalization has NFC and NFD only.** NFKC and NFKD, and
+  their NormalizationTest.txt invariants, are not implemented: IDNA needs
+  NFC only. Change: add the compatibility decompositions to the generated
+  tables and two NormalizationForm variants. Reopen when a consumer needs a
+  compatibility form.
