@@ -1,0 +1,108 @@
+alias Document = pkg::dom::Document;
+alias NodeData = pkg::dom::NodeData;
+alias NodeId = pkg::dom::NodeId;
+alias Span = pkg::html::tokenizer::Span;
+alias TextSpan = pkg::dom::TextSpan;
+alias Token = pkg::html::tokenizer::Token;
+alias TokenText = pkg::html::tokenizer::TokenText;
+alias create_node = pkg::dom::create_node;
+alias store_text = pkg::dom::store_text;
+
+fn store_doctype_field(document: &Document, tok_text: &TokenText, field: Option<Span>) -> result: Result<TextSpan, TreeError> reads(tok_text), writes(document) {
+  doc "Copies the bytes a DOCTYPE token's optional name/public_id/system_id span names (in tok_text) into document's own text storage, or returns an empty TextSpan when field is None.";
+  match field {
+    Some(value: sp) => {
+      let (s, e) = span_range(text: tok_text, span: sp);
+      let bytes = &tok_text^.text.inner[s..e];
+      let small = bytes^.len <= 1073741824_u64;
+      if small {
+        match store_text(document: document, text: bytes) {
+          Ok(value: stored) => {
+            return Ok<TextSpan, TreeError>(value: stored);
+          }
+          Err(error: problem) => {
+            let wrapped = to_tree_error(problem: problem);
+            return Err<TextSpan, TreeError>(error: wrapped);
+          }
+        }
+      }
+      let too_large = TreeError::TooLarge();
+      return Err<TextSpan, TreeError>(error: too_large);
+    }
+    None() => {
+      let empty = TextSpan(start: 0_u32, end: 0_u32);
+      return Ok<TextSpan, TreeError>(value: empty);
+    }
+  }
+}
+
+fn initial_anything_else(state: &State) -> result: unit writes(state) {
+  doc "The \"initial\" insertion mode's \"anything else\": switch to \"before html\" and reprocess. Quirks mode is already fixed by the caller's pre-scan at document creation, so there is nothing further to do here.";
+  set_mode_before_html(state: state);
+  return unit;
+}
+
+fn mode_initial(state: &State, document: &Document, tok_text: &TokenText, token: Token) -> result: Result<Bool, TreeError> reads(tok_text), writes(state), writes(document) {
+  doc "13.2.6.4.1 \"initial\". The document's quirks mode was already determined by parse_document's pre-scan and fixed at document_new time, since Document.nodes is not writable from here; this mode's own job is only to place any leading comments and a DOCTYPE node as children of the Document, and to hand off to \"before html\".";
+  match token {
+    Characters(data: d) => {
+      let (s, e) = span_range(text: tok_text, span: d);
+      let bytes = &tok_text^.text.inner[s..e];
+      let ws = bytes_all_ws(bytes: bytes);
+      if ws {
+        let r0 = False();
+        return Ok<Bool, TreeError>(value: r0);
+      }
+      initial_anything_else(state: state);
+      let r1 = True();
+      return Ok<Bool, TreeError>(value: r1);
+    }
+    Comment(data: d2) => {
+      let (s2, e2) = span_range(text: tok_text, span: d2);
+      let bytes2 = &tok_text^.text.inner[s2..e2];
+      let small = bytes2^.len <= 1073741824_u64;
+      if small {
+        let root = NodeId(index: 0_u32);
+        let no_ref = None<NodeId>();
+        let place = Place(parent: root, before: no_ref);
+        let ins = propagate insert_comment_at(document: document, place: place, data: bytes2);
+      }
+      let r2 = False();
+      return Ok<Bool, TreeError>(value: r2);
+    }
+    Doctype(name: n, public_id: p, system_id: si, force_quirks: fq) => {
+      let name_stored = propagate store_doctype_field(document: document, tok_text: tok_text, field: n);
+      let pub_stored = propagate store_doctype_field(document: document, tok_text: tok_text, field: p);
+      let sys_stored = propagate store_doctype_field(document: document, tok_text: tok_text, field: si);
+      let dt_data = NodeData::DocumentType(name: name_stored, public_id: pub_stored, system_id: sys_stored);
+      match create_node(document: document, data: move dt_data) {
+        Ok(value: dt_node) => {
+          let root = NodeId(index: 0_u32);
+          let placed = propagate append_child_wrap(document: document, parent: root, child: dt_node);
+        }
+        Err(error: problem) => {
+          let wrapped = to_tree_error(problem: problem);
+          return Err<Bool, TreeError>(error: wrapped);
+        }
+      }
+      set_mode_before_html(state: state);
+      let r3 = False();
+      return Ok<Bool, TreeError>(value: r3);
+    }
+    StartTag(name: n2, first_attribute: fa, end_attribute: ea, self_closing: sc) => {
+      initial_anything_else(state: state);
+      let r4 = True();
+      return Ok<Bool, TreeError>(value: r4);
+    }
+    EndTag(name: n3) => {
+      initial_anything_else(state: state);
+      let r5 = True();
+      return Ok<Bool, TreeError>(value: r5);
+    }
+    EndOfFile() => {
+      initial_anything_else(state: state);
+      let r6 = True();
+      return Ok<Bool, TreeError>(value: r6);
+    }
+  }
+}
