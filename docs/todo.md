@@ -45,3 +45,17 @@ example apart from the renderer code that exposed it
   NFC only. Change: add the compatibility decompositions to the generated
   tables and two NormalizationForm variants. Reopen when a consumer needs a
   compatibility form.
+- **pkg::font reads only raw sfnt fonts for simple scripts.** WOFF and
+  WOFF2 (which needs a Brotli decoder), font collections, variable fonts
+  and CFF2 are refused as Unsupported; shaping covers horizontal
+  left-to-right Latin, Greek and Cyrillic with HarfBuzz's default
+  features, not the complex-script shapers (Arabic, Indic, Khmer,
+  Myanmar, Hangul, Thai), vertical text, cmap format 14 variation
+  selectors or the GSUB and GPOS lookup types outside the listed ones;
+  and load_face validates only the tables shaping reads, not the outline
+  tables (glyf, loca, CFF) the shell's rasterizer will read. Impact: web
+  fonts, which are mostly WOFF2, and pages in other scripts cannot use
+  their fonts yet. Change: a WOFF2 and Brotli leaf, outline validation
+  before any font reaches the shell, and one shaper leaf per script
+  family. Reopen when the first page needs a web font, a non-Latin script
+  beyond Greek and Cyrillic, or the shell rasterizes.
