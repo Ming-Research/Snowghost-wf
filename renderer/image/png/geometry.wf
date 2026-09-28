@@ -1,0 +1,181 @@
+enum ColorType {
+  Gray();
+  Rgb();
+  Palette();
+  GrayAlpha();
+  Rgba();
+}
+
+fn is_palette(color: ColorType) -> result: Bool pure {
+  doc "Tells whether color is the indexed-color type.";
+  match color {
+    Palette() => {
+      return True();
+    }
+    Gray() => {
+      return False();
+    }
+    Rgb() => {
+      return False();
+    }
+    GrayAlpha() => {
+      return False();
+    }
+    Rgba() => {
+      return False();
+    }
+  }
+}
+
+fn channel_count(color: ColorType) -> result: u64 pure contract {
+  ensures result >= 1_u64;
+  ensures result <= 4_u64;
+} {
+  doc "Returns the samples per pixel of a color type: 1 for grayscale or palette, 2 for grayscale with alpha, 3 for truecolor, 4 for truecolor with alpha.";
+  match color {
+    Gray() => {
+      return 1_u64;
+    }
+    Rgb() => {
+      return 3_u64;
+    }
+    Palette() => {
+      return 1_u64;
+    }
+    GrayAlpha() => {
+      return 2_u64;
+    }
+    Rgba() => {
+      return 4_u64;
+    }
+  }
+}
+
+fn bits_per_pixel(color: ColorType, bit_depth: u8) -> result: u64 pure contract {
+  requires bit_depth >= 1_u8;
+  requires bit_depth <= 16_u8;
+  ensures result >= 1_u64;
+  ensures result <= 64_u64;
+} {
+  doc "Returns channels(color) * bit_depth, the packed bits of one pixel.";
+  let channels = channel_count(color: color);
+  let depth = cvt::<u8, u64>(bit_depth);
+  let bits = channels * depth;
+  return bits;
+}
+
+fn rgba_row_bytes(width: u64) -> result: u64 pure contract {
+  requires width <= 67108864_u64;
+  ensures result <= 268435456_u64;
+} {
+  doc "Returns the bytes of one row of width RGBA pixels. It is a function, not an inline product, so that a certificate scaling by the row size names one value [PRF-1].";
+  let bytes = width * 4_u64;
+  return bytes;
+}
+
+fn row_geometry(pixel_bits: u64, width: u64) -> (payload: u64, row_len: u64, distance: u64) pure contract {
+  requires pixel_bits >= 1_u64;
+  requires pixel_bits <= 64_u64;
+  requires width >= 1_u64;
+  requires width <= 67108864_u64;
+  ensures distance >= 1_u64;
+  ensures distance <= 8_u64;
+  ensures distance <= payload;
+  ensures payload <= 536870912_u64;
+  ensures row_len == payload + 1_u64;
+} {
+  doc "Returns the packed byte count of one scanline of width pixels without its filter-type byte, ceil(pixel_bits * width / 8), and the filtering byte distance to a pixel's left neighbour, ceil(pixel_bits / 8), with the filtered row length, one filter-type byte more than the payload. A PNG pixel is either narrower than a byte or a whole number of bytes wide, so the second case multiplies exactly.";
+  if pixel_bits < 8_u64 {
+    let bits = pixel_bits * width;
+    let padded = bits + 7_u64;
+    let bytes = ishr(padded, 3_u32);
+    let filtered = bytes + 1_u64;
+    return bytes, filtered, 1_u64;
+  }
+  let distance = ishr(pixel_bits, 3_u32);
+  let bytes = distance * width;
+  invariant covers: distance <= bytes {
+    use distance times (1_u64 <= width);
+  }
+  let filtered = bytes + 1_u64;
+  return bytes, filtered, distance;
+}
+
+fn adam7_geometry(pass: u64) -> (start_x: u64, start_y: u64, step_x: u64, step_y: u64) pure contract {
+  ensures step_x >= 1_u64;
+  ensures step_x <= 8_u64;
+  ensures step_y >= 1_u64;
+  ensures step_y <= 8_u64;
+  ensures start_x <= 4_u64;
+  ensures start_y <= 4_u64;
+} {
+  doc "Returns the starting column, starting row, column step and row step of Adam7 pass (0-based, 0..6).";
+  if pass == 0_u64 {
+    return 0_u64, 0_u64, 8_u64, 8_u64;
+  }
+  if pass == 1_u64 {
+    return 4_u64, 0_u64, 8_u64, 8_u64;
+  }
+  if pass == 2_u64 {
+    return 0_u64, 4_u64, 4_u64, 8_u64;
+  }
+  if pass == 3_u64 {
+    return 2_u64, 0_u64, 4_u64, 4_u64;
+  }
+  if pass == 4_u64 {
+    return 0_u64, 2_u64, 2_u64, 4_u64;
+  }
+  if pass == 5_u64 {
+    return 1_u64, 0_u64, 2_u64, 2_u64;
+  }
+  return 0_u64, 1_u64, 1_u64, 2_u64;
+}
+
+fn pass_dimension(size: u64, start: u64, step: u64) -> result: u64 pure contract {
+  requires step >= 1_u64;
+  ensures result <= size;
+} {
+  doc "Returns the count of positions start, start + step, start + 2 * step, ... below size, which is 0 when start is already at or past size.";
+  if start < size {
+  } else {
+    return 0_u64;
+  }
+  let span = size - start;
+  let last = span - 1_u64;
+  let steps = last / step;
+  let count = steps + 1_u64;
+  return count;
+}
+
+fn raw_size_noninterlaced(pixel_bits: u64, width: u64, height: u64) -> result: u64 pure contract {
+  requires pixel_bits >= 1_u64;
+  requires pixel_bits <= 64_u64;
+  requires width >= 1_u64;
+  requires width <= 67108864_u64;
+  requires height <= 67108864_u64;
+} {
+  doc "Returns the total filtered byte count of a non-interlaced image: height rows of one filter-type byte plus the packed payload.";
+  let (payload, row_len, distance) = row_geometry(pixel_bits: pixel_bits, width: width);
+  let total = row_len * height;
+  return total;
+}
+
+fn raw_size_interlaced(pixel_bits: u64, width: u64, height: u64) -> result: u64 pure contract {
+  requires pixel_bits >= 1_u64;
+  requires pixel_bits <= 64_u64;
+  requires width <= 67108864_u64;
+  requires height <= 67108864_u64;
+} {
+  doc "Returns the total filtered byte count of an Adam7-interlaced image: the sum, over its seven passes, of that pass's rows times its row length; a pass with no pixels contributes nothing.";
+  let total = 0_u64;
+  for (pass in 0_u64..7_u64) {
+    let (start_x, start_y, step_x, step_y) = adam7_geometry(pass: pass);
+    let pass_width = pass_dimension(size: width, start: start_x, step: step_x);
+    let pass_height = pass_dimension(size: height, start: start_y, step: step_y);
+    if pass_width > 0_u64 {
+      let pass_total = raw_size_noninterlaced(pixel_bits: pixel_bits, width: pass_width, height: pass_height);
+      set total = total +wrap pass_total;
+    }
+  }
+  return total;
+}

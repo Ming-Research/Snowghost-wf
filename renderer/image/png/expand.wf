@@ -1,0 +1,391 @@
+fn put_rgba(dst: &[u8], at: u64, red: u8, green: u8, blue: u8, alpha: u8) -> result: unit writes(dst) contract {
+  define length = dst^.len;
+  requires at + 4_u64 <= length;
+} {
+  doc "Stores one RGBA pixel in the four bytes of dst starting at at.";
+  let green_at = at + 1_u64;
+  let blue_at = at + 2_u64;
+  let alpha_at = at + 3_u64;
+  set dst^[at] = red;
+  set dst^[green_at] = green;
+  set dst^[blue_at] = blue;
+  set dst^[alpha_at] = alpha;
+  return unit;
+}
+
+fn expand_indexed8(src: &[u8], dst: &[u8], width: u64, table: &Array<u8, 1024>, count: u64) -> result: Result<unit, PngError> reads(src), reads(table), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of one-byte samples, a palette index or an 8-bit gray level, through the RGBA color table; a sample at or past count, the table's populated length, is Malformed.";
+  if width <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  for (x in 0_u64..width) {
+    let index = cvt::<u8, u64>(src^[x]);
+    if index < count {
+    } else {
+      let error = PngError::Malformed();
+      return Err<unit, PngError>(error: error);
+    }
+    let slot = index * 4_u64;
+    let slot_green = slot + 1_u64;
+    let slot_blue = slot + 2_u64;
+    let slot_alpha = slot + 3_u64;
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width {
+      use 4 times (x + 1_u64 <= width);
+    }
+    put_rgba(dst: dst, at: out, red: table^[slot], green: table^[slot_green], blue: table^[slot_blue], alpha: table^[slot_alpha]);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_indexed_packed(src: &[u8], dst: &[u8], width: u64, depth: u64, table: &Array<u8, 1024>, count: u64) -> result: Result<unit, PngError> reads(src), reads(table), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+  requires depth >= 1_u64;
+  requires depth <= 4_u64;
+} {
+  doc "Expands a scanline of 1-, 2- or 4-bit samples, packed from the most significant bit of each byte, through the RGBA color table; a sample at or past count is Malformed, as is a scanline too short for width samples.";
+  let src_length = src^.len;
+  let depth32 = cvt::<u64, u32>(depth);
+  let levels = ishl(1_u32, depth32);
+  let mask = levels - 1_u32;
+  for (x in 0_u64..width) {
+    let bit = x * depth;
+    let byte_at = ishr(bit, 3_u32);
+    if byte_at < src_length {
+    } else {
+      let error = PngError::Malformed();
+      return Err<unit, PngError>(error: error);
+    }
+    let byte = cvt::<u8, u32>(src^[byte_at]);
+    let within = iand(bit, 7_u64);
+    let within32 = cvt::<u64, u32>(within);
+    let below = 8_u32 -wrap within32;
+    let shift = below -wrap depth32;
+    let shifted = ishr.wrap(byte, shift);
+    let sample = iand(shifted, mask);
+    let index = cvt::<u32, u64>(sample);
+    if index < count {
+    } else {
+      let error = PngError::Malformed();
+      return Err<unit, PngError>(error: error);
+    }
+    let slot = index * 4_u64;
+    let slot_green = slot + 1_u64;
+    let slot_blue = slot + 2_u64;
+    let slot_alpha = slot + 3_u64;
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width {
+      use 4 times (x + 1_u64 <= width);
+    }
+    put_rgba(dst: dst, at: out, red: table^[slot], green: table^[slot_green], blue: table^[slot_blue], alpha: table^[slot_alpha]);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_gray16(src: &[u8], dst: &[u8], width: u64, key: Option<u16>) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 16-bit gray samples, keeping each sample's high byte; a sample equal to the tRNS key, compared at 16 bits, becomes transparent.";
+  let src_need = width * 2_u64;
+  if src_need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let keyed = False();
+  let key_gray = 0_u16;
+  match key {
+    Some(value: sample) => {
+      set keyed = True();
+      set key_gray = sample;
+    }
+    None() => {
+    }
+  }
+  for (x in 0_u64..width) {
+    let at = x * 2_u64;
+    invariant sample_in: at + 2_u64 <= src_need;
+    let gray = src^[at];
+    let sample = be_u16(bytes: src, at: at);
+    let key_hit = sample == key_gray;
+    let transparent = band(keyed, key_hit);
+    let alpha = 255_u8;
+    if transparent {
+      set alpha = 0_u8;
+    }
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: out, red: gray, green: gray, blue: gray, alpha: alpha);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_gray_alpha8(src: &[u8], dst: &[u8], width: u64) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 8-bit gray-and-alpha pixels.";
+  let src_need = width * 2_u64;
+  if src_need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  for (x in 0_u64..width) {
+    let at = x * 2_u64;
+    invariant sample_in: at + 2_u64 <= src_need;
+    let alpha_at = at + 1_u64;
+    let gray = src^[at];
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: out, red: gray, green: gray, blue: gray, alpha: src^[alpha_at]);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_gray_alpha16(src: &[u8], dst: &[u8], width: u64) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 16-bit gray-and-alpha pixels, keeping each sample's high byte.";
+  let src_need = width * 4_u64;
+  if src_need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  for (x in 0_u64..width) {
+    let at = x * 4_u64;
+    invariant sample_in: at + 4_u64 <= src_need {
+      use 4 times (x + 1_u64 <= width);
+    }
+    let alpha_at = at + 2_u64;
+    let gray = src^[at];
+    invariant out_in: at + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: at, red: gray, green: gray, blue: gray, alpha: src^[alpha_at]);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_rgb8_opaque(src: &[u8], dst: &[u8], width: u64) -> result: unit reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 3_u64 * width <= src^.len;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 8-bit truecolor pixels with no tRNS key, every pixel opaque. It is its own loop, free of the key comparison, because it is the most common row format.";
+  for (x in 0_u64..width) {
+    let at = x * 3_u64;
+    invariant sample_in: at + 3_u64 <= 3_u64 * width {
+      use 3 times (x + 1_u64 <= width);
+    }
+    let green_at = at + 1_u64;
+    let blue_at = at + 2_u64;
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: out, red: src^[at], green: src^[green_at], blue: src^[blue_at], alpha: 255_u8);
+  }
+  return unit;
+}
+
+fn expand_rgb8(src: &[u8], dst: &[u8], width: u64, key: Option<RgbKey>) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 8-bit truecolor pixels; a pixel equal to the tRNS key becomes transparent.";
+  let src_need = width * 3_u64;
+  if src_need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let key_red = 0_u16;
+  let key_green = 0_u16;
+  let key_blue = 0_u16;
+  match key {
+    Some(value: color) => {
+      set key_red = color.red;
+      set key_green = color.green;
+      set key_blue = color.blue;
+    }
+    None() => {
+      expand_rgb8_opaque(src: src, dst: dst, width: width);
+      return Ok<unit, PngError>(value: unit);
+    }
+  }
+  for (x in 0_u64..width) {
+    let at = x * 3_u64;
+    invariant sample_in: at + 3_u64 <= src_need {
+      use 3 times (x + 1_u64 <= width);
+    }
+    let green_at = at + 1_u64;
+    let blue_at = at + 2_u64;
+    let red = src^[at];
+    let green = src^[green_at];
+    let blue = src^[blue_at];
+    let red_wide = cvt::<u8, u16>(red);
+    let green_wide = cvt::<u8, u16>(green);
+    let blue_wide = cvt::<u8, u16>(blue);
+    let red_hit = red_wide == key_red;
+    let green_hit = green_wide == key_green;
+    let blue_hit = blue_wide == key_blue;
+    let red_green_hit = band(red_hit, green_hit);
+    let key_hit = band(red_green_hit, blue_hit);
+    let alpha = 255_u8;
+    if key_hit {
+      set alpha = 0_u8;
+    }
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: out, red: red, green: green, blue: blue, alpha: alpha);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_rgb16(src: &[u8], dst: &[u8], width: u64, key: Option<RgbKey>) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 16-bit truecolor pixels, keeping each sample's high byte; a pixel equal to the tRNS key, compared at 16 bits, becomes transparent.";
+  let src_need = width * 6_u64;
+  if src_need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let keyed = False();
+  let key_red = 0_u16;
+  let key_green = 0_u16;
+  let key_blue = 0_u16;
+  match key {
+    Some(value: color) => {
+      set keyed = True();
+      set key_red = color.red;
+      set key_green = color.green;
+      set key_blue = color.blue;
+    }
+    None() => {
+    }
+  }
+  for (x in 0_u64..width) {
+    let at = x * 6_u64;
+    invariant sample_in: at + 6_u64 <= src_need {
+      use 6 times (x + 1_u64 <= width);
+    }
+    let green_at = at + 2_u64;
+    let blue_at = at + 4_u64;
+    let red = be_u16(bytes: src, at: at);
+    let green = be_u16(bytes: src, at: green_at);
+    let blue = be_u16(bytes: src, at: blue_at);
+    let red_hit = red == key_red;
+    let green_hit = green == key_green;
+    let blue_hit = blue == key_blue;
+    let red_green_hit = band(red_hit, green_hit);
+    let key_hit = band(red_green_hit, blue_hit);
+    let transparent = band(keyed, key_hit);
+    let alpha = 255_u8;
+    if transparent {
+      set alpha = 0_u8;
+    }
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: out, red: src^[at], green: src^[green_at], blue: src^[blue_at], alpha: alpha);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_rgba8(src: &[u8], dst: &[u8], width: u64) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Copies a scanline of 8-bit truecolor-with-alpha pixels, already in the output layout.";
+  let need = width * 4_u64;
+  if need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  for (at in 0_u64..need) {
+    set dst^[at] = src^[at];
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_rgba16(src: &[u8], dst: &[u8], width: u64) -> result: Result<unit, PngError> reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+  requires 4_u64 * width <= dst^.len;
+} {
+  doc "Expands a scanline of 16-bit truecolor-with-alpha pixels, keeping each sample's high byte.";
+  let src_need = width * 8_u64;
+  if src_need <= src^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  for (x in 0_u64..width) {
+    let at = x * 8_u64;
+    invariant sample_in: at + 8_u64 <= src_need {
+      use 8 times (x + 1_u64 <= width);
+    }
+    let green_at = at + 2_u64;
+    let blue_at = at + 4_u64;
+    let alpha_at = at + 6_u64;
+    let out = x * 4_u64;
+    invariant out_in: out + 4_u64 <= 4_u64 * width;
+    put_rgba(dst: dst, at: out, red: src^[at], green: src^[green_at], blue: src^[blue_at], alpha: src^[alpha_at]);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn expand_row(format: &PixelFormat, src: &[u8], dst: &[u8], width: u64) -> result: Result<unit, PngError> reads(format), reads(src), writes(dst) contract {
+  requires width <= 67108864_u64;
+} {
+  doc "Expands the first width pixels of one reconstructed scanline src into non-premultiplied RGBA at the start of dst, by the image's row format. A dst shorter than width pixels, or a src shorter than width pixels of the format, is Malformed.";
+  let dst_need = width * 4_u64;
+  if dst_need <= dst^.len {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  match format^.row {
+    Indexed8() => {
+      return expand_indexed8(src: src, dst: dst, width: width, table: &format^.table, count: format^.table_count);
+    }
+    Indexed1() => {
+      return expand_indexed_packed(src: src, dst: dst, width: width, depth: 1_u64, table: &format^.table, count: format^.table_count);
+    }
+    Indexed2() => {
+      return expand_indexed_packed(src: src, dst: dst, width: width, depth: 2_u64, table: &format^.table, count: format^.table_count);
+    }
+    Indexed4() => {
+      return expand_indexed_packed(src: src, dst: dst, width: width, depth: 4_u64, table: &format^.table, count: format^.table_count);
+    }
+    Gray16() => {
+      return expand_gray16(src: src, dst: dst, width: width, key: format^.gray_key);
+    }
+    GrayAlpha8() => {
+      return expand_gray_alpha8(src: src, dst: dst, width: width);
+    }
+    GrayAlpha16() => {
+      return expand_gray_alpha16(src: src, dst: dst, width: width);
+    }
+    Rgb8() => {
+      return expand_rgb8(src: src, dst: dst, width: width, key: format^.rgb_key);
+    }
+    Rgb16() => {
+      return expand_rgb16(src: src, dst: dst, width: width, key: format^.rgb_key);
+    }
+    Rgba8() => {
+      return expand_rgba8(src: src, dst: dst, width: width);
+    }
+    Rgba16() => {
+      return expand_rgba16(src: src, dst: dst, width: width);
+    }
+  }
+}

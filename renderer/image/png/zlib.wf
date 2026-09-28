@@ -1,0 +1,57 @@
+fn zlib_decompress(out: &[u8], stream: &[u8], length: u64) -> result: Result<unit, PngError> reads(stream), writes(out) contract {
+  requires length + 16_u64 <= stream^.len;
+  requires stream^.len <= 2147483648_u64;
+  requires out^.len <= 4294967296_u64;
+} {
+  doc "Validates the RFC 1950 zlib header of the zlib stream in the first length bytes of stream, inflates its DEFLATE body so that it fills out exactly, and checks the trailing Adler-32 against the decompressed bytes. stream carries 16 bytes of padding past length for the bit reader.";
+  if length < 6_u64 {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let cmf = stream^[0_u64];
+  let flg = stream^[1_u64];
+  let method = iand(cmf, 15_u8);
+  let method_ok = method == 8_u8;
+  let window_bits = ishr(cmf, 4_u32);
+  let window_ok = window_bits <= 7_u8;
+  let cmf_word = cvt::<u8, u32>(cmf);
+  let flg_word = cvt::<u8, u32>(flg);
+  let cmf_shifted = ishl(cmf_word, 8_u32);
+  let combined = ior(cmf_shifted, flg_word);
+  let check_value = combined % 31_u32;
+  let check_ok = check_value == 0_u32;
+  let preset_dictionary = iand(flg, 32_u8);
+  let no_dictionary = preset_dictionary == 0_u8;
+  let format_ok = band(method_ok, window_ok);
+  let checks_ok = band(check_ok, no_dictionary);
+  let header_ok = band(format_ok, checks_ok);
+  if header_ok {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let trailer_at = length - 4_u64;
+  let padded_end = stream^.len;
+  let body = &stream^[2_u64..padded_end];
+  let body_end = trailer_at - 2_u64;
+  match inflate(out: out, input: body, end: body_end) {
+    Ok(value: written) => {
+      if written == out^.len {
+      } else {
+        let error = PngError::Malformed();
+        return Err<unit, PngError>(error: error);
+      }
+    }
+    Err(error: reason) => {
+      let error = PngError::Malformed();
+      return Err<unit, PngError>(error: error);
+    }
+  }
+  let computed = adler32(data: out);
+  let stored = read_be_u32(bytes: stream, at: trailer_at);
+  if computed == stored {
+    return Ok<unit, PngError>(value: unit);
+  }
+  let error = PngError::Malformed();
+  return Err<unit, PngError>(error: error);
+}

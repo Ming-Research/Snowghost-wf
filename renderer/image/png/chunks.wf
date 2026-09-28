@@ -1,0 +1,347 @@
+struct Header {
+  width: u32;
+  height: u32;
+  bit_depth: u8;
+  color: ColorType;
+  interlaced: Bool;
+}
+
+struct ParsedPng {
+  header: Header;
+  colors: ColorChunks;
+  idat: Box<Slots<u8>>;
+}
+
+fn chunk_type_is(data: &[u8], at: u64, name: &Array<u8, 4>) -> result: Bool reads(data), reads(name) contract {
+  define data_length = data^.len;
+  requires at + 4_u64 <= data_length;
+} {
+  doc "Tells whether the four chunk-type bytes of data starting at at spell name.";
+  for (offset in 0_u64..4_u64) {
+    let index = at + offset;
+    if data^[index] == name^[offset] {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+const ihdr_name: Array<u8, 4> =[73_u8, 72_u8, 68_u8, 82_u8];
+
+const plte_name: Array<u8, 4> =[80_u8, 76_u8, 84_u8, 69_u8];
+
+const idat_name: Array<u8, 4> =[73_u8, 68_u8, 65_u8, 84_u8];
+
+const iend_name: Array<u8, 4> =[73_u8, 69_u8, 78_u8, 68_u8];
+
+const trns_name: Array<u8, 4> =[116_u8, 82_u8, 78_u8, 83_u8];
+
+fn color_type(code: u8) -> result: Result<ColorType, PngError> pure {
+  doc "Reads an IHDR color-type byte; the five codes the PNG specification defines are 0, 2, 3, 4 and 6, and any other is Malformed.";
+  if code == 0_u8 {
+    let color = ColorType::Gray();
+    return Ok<ColorType, PngError>(value: color);
+  }
+  if code == 2_u8 {
+    let color = ColorType::Rgb();
+    return Ok<ColorType, PngError>(value: color);
+  }
+  if code == 3_u8 {
+    let color = ColorType::Palette();
+    return Ok<ColorType, PngError>(value: color);
+  }
+  if code == 4_u8 {
+    let color = ColorType::GrayAlpha();
+    return Ok<ColorType, PngError>(value: color);
+  }
+  if code == 6_u8 {
+    let color = ColorType::Rgba();
+    return Ok<ColorType, PngError>(value: color);
+  }
+  let error = PngError::Malformed();
+  return Err<ColorType, PngError>(error: error);
+}
+
+fn depth_allowed(color: ColorType, bit_depth: u8) -> result: Bool pure {
+  doc "Tells whether the PNG specification allows bit_depth for color: 1, 2, 4, 8 or 16 for grayscale, 1, 2, 4 or 8 for palette, and 8 or 16 for every other color type.";
+  let d1 = bit_depth == 1_u8;
+  let d2 = bit_depth == 2_u8;
+  let d4 = bit_depth == 4_u8;
+  let d8 = bit_depth == 8_u8;
+  let d16 = bit_depth == 16_u8;
+  let d12 = bor(d1, d2);
+  let low = bor(d12, d4);
+  let low_or_8 = bor(low, d8);
+  let wide = bor(d8, d16);
+  match color {
+    Gray() => {
+      return bor(low_or_8, d16);
+    }
+    Palette() => {
+      return low_or_8;
+    }
+    Rgb() => {
+      return wide;
+    }
+    GrayAlpha() => {
+      return wide;
+    }
+    Rgba() => {
+      return wide;
+    }
+  }
+}
+
+fn parse_header(data: &[u8], start: u64) -> result: Result<Header, PngError> reads(data) contract {
+  define data_length = data^.len;
+  requires start + 13_u64 <= data_length;
+} {
+  doc "Reads and validates the 13-byte IHDR payload at start: nonzero dimensions, an allowed color type and bit depth, compression and filter method 0, and interlace method 0 or 1. TooLarge reports width * height above 2^26.";
+  let width = read_be_u32(bytes: data, at: start);
+  let height_at = start + 4_u64;
+  let height = read_be_u32(bytes: data, at: height_at);
+  let depth_at = start + 8_u64;
+  let bit_depth = data^[depth_at];
+  let color_at = start + 9_u64;
+  let color = propagate color_type(code: data^[color_at]);
+  let compression_at = start + 10_u64;
+  let filter_at = start + 11_u64;
+  let interlace_at = start + 12_u64;
+  let compression = data^[compression_at];
+  let filter = data^[filter_at];
+  let interlace = data^[interlace_at];
+  let width_ok = width > 0_u32;
+  let height_ok = height > 0_u32;
+  let methods = ior(compression, filter);
+  let methods_ok = methods == 0_u8;
+  let interlace_ok = interlace <= 1_u8;
+  let depth_ok = depth_allowed(color: color, bit_depth: bit_depth);
+  let sizes_ok = band(width_ok, height_ok);
+  let modes_ok = band(methods_ok, interlace_ok);
+  let fields_ok = band(sizes_ok, modes_ok);
+  let valid = band(fields_ok, depth_ok);
+  if valid {
+  } else {
+    let error = PngError::Malformed();
+    return Err<Header, PngError>(error: error);
+  }
+  let wide = cvt::<u32, u64>(width);
+  let high = cvt::<u32, u64>(height);
+  let area = wide * high;
+  if area > 67108864_u64 {
+    let error = PngError::TooLarge();
+    return Err<Header, PngError>(error: error);
+  }
+  let interlaced = interlace == 1_u8;
+  let header = Header(width: width, height: height, bit_depth: bit_depth, color: color, interlaced: interlaced);
+  return Ok<Header, PngError>(value: header);
+}
+
+fn append_idat(idat: &Box<Slots<u8>>, data: &[u8], start: u64, count: u64) -> result: Result<unit, PngError> reads(data), writes(idat) contract {
+  define data_length = data^.len;
+  requires start + count <= data_length;
+} {
+  doc "Appends the count bytes of one IDAT chunk's data, starting at start of data, to the concatenated image data in idat, growing it geometrically so a stream split into many chunks copies each byte a bounded number of times. Concatenated data past 2^30 bytes is Malformed: no image within the 2^26-pixel limit compresses that badly.";
+  let held = idat^.inner.len;
+  let capacity = idat^.inner.cap;
+  if held <= 1073741824_u64 {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  if count <= 1073741824_u64 {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  let total = held + count;
+  if total <= 1073741824_u64 {
+  } else {
+    let error = PngError::Malformed();
+    return Err<unit, PngError>(error: error);
+  }
+  if total > capacity {
+    let doubled = capacity +wrap capacity;
+    let target = imax(doubled, total);
+    let bounded = imin(target, 1073741824_u64);
+    let grown = imax(bounded, total);
+    grow(cell: idat, capacity: grown);
+  }
+  let room = idat^.inner.cap;
+  for @copy_idat (
+    at in 0_u64..count,
+    invariant filled: idat^.inner.len == held + at,
+    invariant kept: idat^.inner.cap == room,
+    invariant fits: held + count <= room
+  ) {
+    let index = start + at;
+    let byte = data^[index];
+    invariant space: idat^.inner.len < idat^.inner.cap;
+    place_back(window: &idat^.inner, value: byte);
+  }
+  return Ok<unit, PngError>(value: unit);
+}
+
+fn pad_stream(stream: &Box<Slots<u8>>) -> result: Result<u64, PngError> writes(stream) contract {
+  ensures when Ok(value: length): length + 16_u64 <= stream^.inner.len;
+  ensures when Ok(value: length): length <= 1073741824_u64;
+  ensures when Ok(value: length): stream^.inner.len <= 1073741840_u64;
+} {
+  doc "Appends the 16 zero bytes the DEFLATE bit reader loads ahead into past the end of the concatenated IDAT data, and returns the data's length without them. Data past the 2^30-byte IDAT ceiling append_idat keeps is Malformed.";
+  let length = stream^.inner.len;
+  if length > 1073741824_u64 {
+    let error = PngError::Malformed();
+    return Err<u64, PngError>(error: error);
+  }
+  let total = length + 16_u64;
+  let capacity = stream^.inner.cap;
+  if total > capacity {
+    grow(cell: stream, capacity: total);
+  }
+  let room = stream^.inner.cap;
+  for @pad (
+    at in 0_u64..16_u64,
+    invariant filled: stream^.inner.len == length + at,
+    invariant kept: stream^.inner.cap == room,
+    invariant fits: length + 16_u64 <= room
+  ) {
+    invariant space: stream^.inner.len < stream^.inner.cap;
+    place_back(window: &stream^.inner, value: 0_u8);
+  }
+  return Ok<u64, PngError>(value: length);
+}
+
+fn parse_chunks(data: &[u8], table: &Array<u32, 256>) -> outcome: Result<ParsedPng, PngError> reads(data), reads(table) contract {
+  requires 8_u64 <= data^.len;
+} {
+  doc "Scans the chunk stream after the 8-byte signature up to IEND, checking every chunk CRC, validating IHDR and the chunk order, reading PLTE and tRNS into the image's color chunks, and concatenating the IDAT data.";
+  let length = data^.len;
+  let offset = 8_u64;
+  let chunk_index = 0_u64;
+  let no_color = ColorType::Gray();
+  let not_interlaced = False();
+  let header = Header(width: 0_u32, height: 0_u32, bit_depth: 0_u8, color: no_color, interlaced: not_interlaced);
+  let header_seen = False();
+  let colors = no_color_chunks();
+  let idat = box_slots_new::<u8>(capacity: 0_u64);
+  let idat_seen = False();
+  let idat_closed = False();
+  let iend_seen = False();
+  loop @chunks (
+    invariant inside: offset <= length
+  ) {
+    let remaining = length - offset;
+    if remaining < 12_u64 {
+      break @chunks;
+    }
+    let chunk_length_word = read_be_u32(bytes: data, at: offset);
+    let chunk_length = cvt::<u32, u64>(chunk_length_word);
+    let type_at = offset + 4_u64;
+    let data_start = offset + 8_u64;
+    let framed = remaining - 12_u64;
+    if chunk_length <= framed {
+    } else {
+      let error = PngError::Malformed();
+      return Err<ParsedPng, PngError>(error: error);
+    }
+    let data_end = data_start + chunk_length;
+    let crc_end = data_end + 4_u64;
+    invariant chunk_inside: crc_end <= length;
+    let stored_crc = read_be_u32(bytes: data, at: data_end);
+    let computed_crc = crc32_range(table: table, data: data, start: type_at, end: data_end);
+    if computed_crc == stored_crc {
+    } else {
+      let error = PngError::Malformed();
+      return Err<ParsedPng, PngError>(error: error);
+    }
+    let chunk = &data^[data_start..data_end];
+    let is_ihdr = chunk_type_is(data: data, at: type_at, name: &ihdr_name);
+    let is_plte = chunk_type_is(data: data, at: type_at, name: &plte_name);
+    let is_idat = chunk_type_is(data: data, at: type_at, name: &idat_name);
+    let is_iend = chunk_type_is(data: data, at: type_at, name: &iend_name);
+    let is_trns = chunk_type_is(data: data, at: type_at, name: &trns_name);
+    let first_type_byte = data^[type_at];
+    let case_bit = iand(first_type_byte, 32_u8);
+    let critical = case_bit == 0_u8;
+    let known_a = bor(is_ihdr, is_plte);
+    let known_b = bor(is_idat, is_iend);
+    let known = bor(known_a, known_b);
+    let not_known = bnot(known);
+    let unknown_critical = band(critical, not_known);
+    if unknown_critical {
+      let error = PngError::Malformed();
+      return Err<ParsedPng, PngError>(error: error);
+    }
+    if is_ihdr {
+      let first_chunk = chunk_index == 0_u64;
+      let sized = chunk_length == 13_u64;
+      let placed = band(first_chunk, sized);
+      if placed {
+      } else {
+        let error = PngError::Malformed();
+        return Err<ParsedPng, PngError>(error: error);
+      }
+      let parsed_header = propagate parse_header(data: data, start: data_start);
+      set header = parsed_header;
+      set header_seen = True();
+    } else if header_seen {
+    } else {
+      let error = PngError::Malformed();
+      return Err<ParsedPng, PngError>(error: error);
+    }
+    let indexed = is_palette(color: header.color);
+    if is_plte {
+      if indexed {
+        let nonempty = chunk_length > 0_u64;
+        let partial_entry = chunk_length % 3_u64;
+        let whole_entries = partial_entry == 0_u64;
+        let within_table = chunk_length <= 768_u64;
+        let shaped = band(nonempty, whole_entries);
+        let valid = band(shaped, within_table);
+        let before_idat = bnot(idat_seen);
+        let placed = band(valid, before_idat);
+        if placed {
+        } else {
+          let error = PngError::Malformed();
+          return Err<ParsedPng, PngError>(error: error);
+        }
+        store_palette(colors: &colors, entries: chunk);
+      }
+    }
+    if is_trns {
+      store_transparency(colors: &colors, color: header.color, chunk: chunk);
+    }
+    if is_idat {
+      if idat_closed {
+        let error = PngError::Malformed();
+        return Err<ParsedPng, PngError>(error: error);
+      }
+      set idat_seen = True();
+      let appended = propagate append_idat(idat: &idat, data: data, start: data_start, count: chunk_length);
+    } else if idat_seen {
+      set idat_closed = True();
+    }
+    if is_iend {
+      set iend_seen = True();
+      break @chunks;
+    }
+    set offset = crc_end;
+    set chunk_index = chunk_index +wrap 1_u64;
+  }
+  let complete = band(iend_seen, idat_seen);
+  if complete {
+  } else {
+    let error = PngError::Malformed();
+    return Err<ParsedPng, PngError>(error: error);
+  }
+  let indexed = is_palette(color: header.color);
+  let no_palette = colors.palette_count == 0_u64;
+  let palette_missing = band(indexed, no_palette);
+  if palette_missing {
+    let error = PngError::Malformed();
+    return Err<ParsedPng, PngError>(error: error);
+  }
+  let parsed = ParsedPng(header: header, colors: colors, idat: move idat);
+  return Ok<ParsedPng, PngError>(value: move parsed);
+}
