@@ -5,10 +5,10 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
-## 2026-09-28 Adopt the pipeline and script decisions
+## 2026-09-28 Adopt the pipeline, script and processes decisions
 
-Nodes: pipeline, script
+Nodes: pipeline, script, processes
 
-Owner-approved: The owner approved decision cards #10 and #11 in conversation, writing in Chinese that both were agreed, for the pipeline and script amendments exactly as shown in PR #2; for pipeline the owner added that many details remain to be refined later, and for script that the tail-call lowering can certainly be done.
+Owner-approved: The owner approved decision cards #10 and #11 in conversation, writing in Chinese that both were agreed, for the pipeline and script amendments exactly as shown in PR #2, adding for pipeline that many details remain to be refined later and for script that the tail-call lowering can certainly be done. The owner then approved decision card #14 with its follow-up, writing that the split is reasonable and decided: a renderer process written in Whitefoot, like a browser's renderer process, and a Rust shell that owns windows, input, accessibility, rasterization and compositing on existing libraries such as Skia, networking and storage, connected by a display-list and layer-tree format, with the pipeline's purity decision narrowed to the renderer's stages.
 
-Summary: The pipeline tree records three decisions: every stage from the document to the screen is incremental and parallel end to end; the independent formatting context is the unit of storage, parallel work, invalidation and caching; and each stage is a pure Whitefoot function memoized by its inputs, so the compiler proves the key complete. The script tree records an interpreter written in Whitefoot with no just-in-time compiler, dispatching through a match lowered to a tail-call chain, provisional until Whitefoot provides that lowering. The reasons are in research/investigations/architecture/DESIGN.md.
+Summary: The pipeline tree records that every stage is incremental and parallel end to end, that the independent formatting context is the unit of storage, parallel work, invalidation and caching, and that each renderer stage up to display lists and layer trees is a pure Whitefoot function memoized by its inputs. The script tree records an interpreter written in Whitefoot with no just-in-time compiler, dispatching through a match lowered to a tail-call chain, provisional until Whitefoot provides that lowering. The processes tree records the split into a Whitefoot renderer and a Rust shell, the data boundary between them, and what each owns. The reasons are in research/investigations/architecture/DESIGN.md.

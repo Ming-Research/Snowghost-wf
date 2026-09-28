@@ -1,10 +1,11 @@
 # Snowghost — agent instructions
 
 Snowghost is a cross-platform renderer for user interfaces built with web
-technology. It implements a chosen subset of the web platform in Whitefoot,
-with a rendering pipeline meant to be parallel and incremental from end to
-end. Whitefoot, the language and its compiler, is pinned as the `whitefoot/`
-submodule.
+technology. Its renderer implements a chosen subset of the web platform in
+Whitefoot, with a pipeline meant to be parallel and incremental from end to
+end, and a shell written in Rust hosts it on each operating system (the
+`processes` decision in `design/`). Whitefoot, the language and its compiler,
+is pinned as the `whitefoot/` submodule.
 
 ## Project goal
 

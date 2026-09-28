@@ -1,10 +1,11 @@
 # Architecture
 
-Status: under discussion with the owner. The owner adopted the `pipeline`
-and `script` decisions into the design tree; the `scope` decision is an
-amendment in [`design/amendments/`](../../../design/amendments/), revised
-with the owner's selection criteria and awaiting confirmation. Everything
-else here is reasoning, estimates and plans, not settled decisions.
+Status: under discussion with the owner. The owner adopted the `pipeline`,
+`script` and `processes` decisions into the design tree; the `scope`
+decision is an amendment in [`design/amendments/`](../../../design/amendments/),
+revised with the owner's selection criteria and awaiting confirmation.
+Everything else here is reasoning, estimates and plans, not settled
+decisions.
 
 ## Question
 
@@ -99,10 +100,49 @@ Each stage processes only dirty paths:
    windows, the form Whitefoot's parallel permission judgment already proves
    independent ([EFF-5 and OWN-7][spec]). The tree-shaped version is
    unverified; the first prototype checks it.
-3. **One process.** Multi-process isolation in current engines assumes the
-   renderer can be corrupted. A renderer proved memory safe can run in one
-   process and save that memory, provided the script engine is memory safe
-   too.
+3. **Fewer processes.** Multi-process isolation in current engines assumes
+   the renderer can be corrupted. A renderer proved memory safe, with a
+   memory-safe script engine, needs no process per site for that reason (see
+   [Processes](#processes) for what memory safety does not cover).
+
+## Processes
+
+Snowghost runs as two processes (the `processes` decision in the design
+tree), much as a browser separates its renderer from its browser, GPU and
+network processes:
+
+- **The renderer**, written in Whitefoot, owns the document, style, layout
+  including text shaping, paint, script, image decoding and font validation.
+  It produces display lists, layer trees and animation descriptions.
+- **The shell**, written in Rust, owns windows, input and input methods,
+  accessibility, the clipboard, system fonts, rasterization, compositing,
+  presentation, scrolling, compositor-only animations, networking and
+  storage. Rasterization and compositing start on Skia, networking on
+  existing Rust libraries such as rustls and hyper.
+- **Between them is data**: a versioned display-list and layer-tree format in
+  shared memory, and a channel for input and loaded resources. The
+  incremental pipeline sends only the units that changed in a frame. Chromium's
+  out-of-process rasterization already moves display lists to its GPU process
+  this way.
+
+Consequences:
+
+- The shell's libraries keep their threading constraints to themselves; the
+  renderer's parallelism is unaffected.
+- A shell component can be replaced later, by Whitefoot code or anything
+  else, without changing the renderer.
+- Unproved code stays in the shell's process. Untrusted page content is
+  parsed in Whitefoot: images are decoded there, and fonts are validated
+  before the shell rasterizes their glyphs, as Chromium does with its
+  OpenType Sanitizer.
+- The renderer needs no host modules for any operating system; porting to a
+  new system means porting the shell. Whitefoot needs only shared memory
+  with another process and cross-process signaling (W8).
+- Scrolling and compositor-only animations run in the shell without waiting
+  for the renderer, so the renderer needs no long-lived compositor thread.
+- A renderer proved memory safe could host several documents in one
+  process, but memory safety does not stop speculative-execution side
+  channels; whether different sites share a renderer is decided later.
 
 ## Script
 
@@ -111,7 +151,8 @@ compiler (the `script` decision in the design tree):
 
 - iOS does not let ordinary third-party applications generate executable
   code at run time, and an embedded just-in-time compiler is a security risk.
-- A single-process renderer needs its script engine to be memory safe too.
+- A renderer that relies on memory safety instead of per-site processes
+  needs its script engine to be memory safe too.
 - An exhaustive match over a closed sum type is Whitefoot's only dispatch, so
   bytecode dispatch is a match. Lowering a loop over that match to a chain of
   tail calls gives each instruction handler its own branch prediction and
@@ -126,29 +167,28 @@ compiler (the `script` decision in the design tree):
 
 ## Workload
 
-Order-of-magnitude estimates in Whitefoot lines for the scope above, refined
-as modules are measured:
+Order-of-magnitude estimates for the scope above, refined as modules are
+measured. In the renderer, in Whitefoot lines:
 
-- networking (HTTP/1.1, HTTP/2, TLS 1.3, DNS, cookies, cache, gzip and
-  brotli): 40,000 to 60,000;
 - HTML parsing, the DOM and events: 30,000 to 50,000;
 - CSS (parsing, selectors, cascade, about 200 properties, animations and
   transitions): 60,000 to 100,000;
 - layout (block, inline, float, flex, grid, positioned, sticky, table,
   overflow, replaced elements, intrinsic sizing): 80,000 to 150,000;
-- text (font parsing, WOFF2, shaping, bidirectional text, line breaking,
-  fallback, rasterization, emoji): 50,000 to 100,000;
+- text (font parsing and validation, WOFF2, shaping, bidirectional text,
+  line breaking, fallback): 40,000 to 80,000;
 - images (PNG, JPEG, GIF, WebP) and an SVG subset: 30,000 to 60,000;
-- paint, rasterization, compositing and scrolling: 50,000 to 100,000;
-- the platform layer for three operating systems (windows, input, input
-  methods, clipboard, GPU surfaces, basic accessibility): 30,000 to 60,000;
+- paint (display lists, layer trees, animation descriptions): 20,000 to
+  40,000;
 - web APIs (fetch, timers, animation frames, observers, storage, history,
   form controls, canvas 2D, workers, WebSocket, custom elements, shadow DOM):
   80,000 to 150,000;
 - the JavaScript engine: 150,000 to 250,000.
 
-The total is about 600,000 to 1,100,000 lines. The critical paths are the
-JavaScript engine, the layout core and the platform layer.
+That is about 500,000 to 900,000 lines. The shell, in Rust on existing
+libraries (windows, input, accessibility, rasterization and compositing,
+networking and storage), adds about 20,000 to 40,000 lines. The critical paths
+are the JavaScript engine and the layout core.
 
 ## Division of work
 
@@ -167,8 +207,9 @@ interfaces ([MOD-8][spec]; [architect and implementer workflow][modular]).
 - **The architect keeps the shared vocabulary and the skeleton**: node
   identity, geometry and fixed-point layout units, computed style, fragment
   trees, display lists and text runs; the incremental parallel scheduler,
-  box-tree construction, block and inline layout, paint order, compositing,
-  and the script object model and heap. They decide whether everything else
+  box-tree construction, block and inline layout, paint order, the
+  display-list and layer-tree format shared with the shell, and the script
+  object model and heap. They decide whether everything else
   can run in parallel and are the most expensive to change later.
 - **Contracts carry the division.** The `requires`, `ensures` and effect rows
   of a `.wfm` are checked against every body, so an implementer's work is
@@ -192,36 +233,31 @@ minimal example.
   checked on one thread take about 15 minutes. Modules check in parallel and
   incrementally, so this bounds only a cold build; the rate on large modular
   programs still needs measuring.
-- **W3. A platform boundary.** A Whitefoot program calls no foreign code: the
-  operating system reaches it only through host modules that the compiler's
-  own runtime implements in C, as the completion runtime does for I/O today.
-  That runtime is trusted, not proved. Snowghost needs windows, GPU surfaces,
-  input and input methods, font files, the clipboard and accessibility from
-  each operating system, so the question is how much of the platform layer
-  lives in that runtime. A thin boundary passes only what the operating
-  system alone can provide and keeps everything computed, such as font
-  rasterization, text shaping, layout and compositing, in Whitefoot. A thick
-  one also uses the operating system's text and compositing services, which
-  is faster to build and leaves more unproved code. The extent is the
-  owner's decision.
-- **W4. Concurrency**: tree-shaped dynamic parallelism, long-lived threads
-  for the compositor, input and script, and read-only snapshots shared across
-  frames and threads. Whether the current ownership model expresses the
+- **W3. A platform boundary**, resolved by the process split. A Whitefoot
+  program calls no foreign code, and the operating system reaches it only
+  through host modules that the compiler's own runtime implements in C, which
+  is trusted rather than proved. With the shell owning every operating-system
+  service, the renderer needs no such modules beyond W8.
+- **W4. Concurrency**: tree-shaped dynamic parallelism, a long-lived script
+  event loop, and read-only snapshots shared across frames and threads. Whether the current ownership model expresses the
   snapshots is unverified, and they are the foundation of the pipeline. This
   belongs with Whitefoot's I/O redesign.
 - **W5. A garbage-collected object heap** without unsafe code, such as
   handles into arenas with a tracing collector, for script values.
-- **W6. Vector code** for rasterization and decoding: measure whether
-  automatic vectorization is enough.
+- **W6. Vector code** for image decoding and other pixel work: measure
+  whether automatic vectorization is enough.
 - **W7. The impact report** of the modular design, which lists the
   implementation and caller tasks an interface edit creates. The compiler has
   the interface, module and composition checks but not this report, which is
   what dispatches work to implementers.
+- **W8. Shared memory with another process and cross-process signaling**, for
+  the boundary between the renderer and the shell. This belongs with
+  Whitefoot's I/O redesign.
 
 ## First milestone (proposal)
 
-Headless static rendering: an HTML and CSS subset rendered to pixels, with no
-network, window or script. It is the earliest publishable result, tests the
+Headless static rendering: an HTML and CSS subset rendered to pixels by the
+shell's offscreen rasterizer, with no network, window or script. It is the earliest publishable result, tests the
 pipeline thesis directly, avoids the three longest paths, and is the first
 scale test of the compiler and of the architect and implementer workflow.
 
@@ -268,8 +304,8 @@ owner develops on macOS. Windows follows later.
 
 ## Open questions for the owner
 
-1. The extent of the trusted platform boundary (W3).
-2. The criteria for the first milestone, once it has first results.
+1. The criteria for the first milestone, once it has first results.
+2. Whether different sites may share a renderer process.
 
 [spec]: https://github.com/mbbill/Whitefoot/blob/c84c4dd7ab46848f6a5b816fcf57fce32b98158e/spec/kernel-spec.md
 [modular]: https://github.com/mbbill/Whitefoot/blob/c84c4dd7ab46848f6a5b816fcf57fce32b98158e/research/investigations/modular-compilation/DESIGN.md#architect-and-implementer-workflow
