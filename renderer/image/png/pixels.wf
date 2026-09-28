@@ -1,0 +1,254 @@
+struct RgbKey {
+  red: u16;
+  green: u16;
+  blue: u16;
+}
+
+enum RowFormat {
+  Indexed8();
+  Indexed1();
+  Indexed2();
+  Indexed4();
+  Gray16();
+  GrayAlpha8();
+  GrayAlpha16();
+  Rgb8();
+  Rgb16();
+  Rgba8();
+  Rgba16();
+}
+
+struct PixelFormat {
+  row: RowFormat;
+  table: Array<u8, 1024>;
+  table_count: u64;
+  gray_key: Option<u16>;
+  rgb_key: Option<RgbKey>;
+}
+
+fn packed_format(bit_depth: u8) -> result: RowFormat pure {
+  doc "Returns the table-lookup row format of 1-, 2- or 4-bit samples; any other depth reads as 4-bit, which the caller never passes.";
+  if bit_depth == 1_u8 {
+    return RowFormat::Indexed1();
+  }
+  if bit_depth == 2_u8 {
+    return RowFormat::Indexed2();
+  }
+  return RowFormat::Indexed4();
+}
+
+fn row_format(color: ColorType, bit_depth: u8) -> result: RowFormat pure {
+  doc "Chooses how one reconstructed scanline of color and bit_depth expands to RGBA. Grayscale up to 8 bits and palette images both go through the color table, one table entry per sample value.";
+  let wide = bit_depth == 16_u8;
+  let byte = bit_depth == 8_u8;
+  let packed = packed_format(bit_depth: bit_depth);
+  match color {
+    Gray() => {
+      if wide {
+        return RowFormat::Gray16();
+      }
+      if byte {
+        return RowFormat::Indexed8();
+      }
+      return packed;
+    }
+    Palette() => {
+      if byte {
+        return RowFormat::Indexed8();
+      }
+      return packed;
+    }
+    GrayAlpha() => {
+      if wide {
+        return RowFormat::GrayAlpha16();
+      }
+      return RowFormat::GrayAlpha8();
+    }
+    Rgb() => {
+      if wide {
+        return RowFormat::Rgb16();
+      }
+      return RowFormat::Rgb8();
+    }
+    Rgba() => {
+      if wide {
+        return RowFormat::Rgba16();
+      }
+      return RowFormat::Rgba8();
+    }
+  }
+}
+
+fn be_u16(bytes: &[u8], at: u64) -> result: u16 reads(bytes) contract {
+  define length = bytes^.len;
+  requires at + 2_u64 <= length;
+} {
+  doc "Reads the big-endian u16 that starts at index at of bytes.";
+  let high = cvt::<u8, u16>(bytes^[at]);
+  let low_at = at + 1_u64;
+  let low = cvt::<u8, u16>(bytes^[low_at]);
+  let shifted = ishl(high, 8_u32);
+  return ior(shifted, low);
+}
+
+struct ColorChunks {
+  palette: Array<u8, 1024>;
+  palette_count: u64;
+  gray_key: Option<u16>;
+  rgb_key: Option<RgbKey>;
+}
+
+fn no_color_chunks() -> result: ColorChunks pure {
+  doc "Returns the color chunks of an image with neither PLTE nor tRNS.";
+  let palette = array_filled::<u8, 1024>(value: 0_u8);
+  let gray_key = None<u16>();
+  let rgb_key = None<RgbKey>();
+  return ColorChunks(palette: palette, palette_count: 0_u64, gray_key: gray_key, rgb_key: rgb_key);
+}
+
+fn store_palette(colors: &ColorChunks, entries: &[u8]) -> result: unit reads(entries), writes(colors) {
+  doc "Stores a PLTE chunk's RGB entries as the opaque RGBA palette entries 0, 1, ...; entries is a whole number of 3-byte entries, at most 256. A tRNS chunk, which follows PLTE, sets their alpha.";
+  let entry_bytes = entries^.len;
+  let count = 0_u64;
+  for (index in 0_u64..256_u64) {
+    let source = index * 3_u64;
+    let source_end = source + 3_u64;
+    if source_end <= entry_bytes {
+      let target = index * 4_u64;
+      let green_at = source + 1_u64;
+      let blue_at = source + 2_u64;
+      let target_green = target + 1_u64;
+      let target_blue = target + 2_u64;
+      let target_alpha = target + 3_u64;
+      set colors^.palette[target] = entries^[source];
+      set colors^.palette[target_green] = entries^[green_at];
+      set colors^.palette[target_blue] = entries^[blue_at];
+      set colors^.palette[target_alpha] = 255_u8;
+      set count = index + 1_u64;
+    }
+  }
+  set colors^.palette_count = count;
+  return unit;
+}
+
+fn store_transparency(colors: &ColorChunks, color: ColorType, chunk: &[u8]) -> result: unit reads(chunk), writes(colors) {
+  doc "Applies a tRNS chunk: for a palette image its bytes are the alphas of palette entries 0, 1, ..., and entries past its end stay opaque; for grayscale and truecolor it is the one 16-bit gray or RGB sample value that is transparent. A tRNS chunk before PLTE, one whose length does not fit a gray or RGB key, and one for a type that has an alpha channel are ignored.";
+  let chunk_length = chunk^.len;
+  match color {
+    Palette() => {
+      if colors^.palette_count == 0_u64 {
+        return unit;
+      }
+      let alphas = imin(chunk_length, 256_u64);
+      for (index in 0_u64..alphas) {
+        let target = index * 4_u64;
+        let target_alpha = target + 3_u64;
+        set colors^.palette[target_alpha] = chunk^[index];
+      }
+    }
+    Gray() => {
+      if chunk_length == 2_u64 {
+        let sample = be_u16(bytes: chunk, at: 0_u64);
+        set colors^.gray_key = Some<u16>(value: sample);
+      }
+    }
+    Rgb() => {
+      if chunk_length == 6_u64 {
+        let red = be_u16(bytes: chunk, at: 0_u64);
+        let green = be_u16(bytes: chunk, at: 2_u64);
+        let blue = be_u16(bytes: chunk, at: 4_u64);
+        let key = RgbKey(red: red, green: green, blue: blue);
+        set colors^.rgb_key = Some<RgbKey>(value: key);
+      }
+    }
+    GrayAlpha() => {
+    }
+    Rgba() => {
+    }
+  }
+  return unit;
+}
+
+fn gray_scale(bit_depth: u8) -> result: u32 pure {
+  doc "Returns 255 / (2^bit_depth - 1), the factor that spreads gray levels of bit_depth bits over 0..255: 255, 85 and 17 for 1, 2 and 4 bits, and 1 for 8 bits.";
+  if bit_depth == 1_u8 {
+    return 255_u32;
+  }
+  if bit_depth == 2_u8 {
+    return 85_u32;
+  }
+  if bit_depth == 4_u8 {
+    return 17_u32;
+  }
+  return 1_u32;
+}
+
+fn gray_table(bit_depth: u8, key: Option<u16>) -> table: Array<u8, 1024> pure {
+  doc "Builds the RGBA color table of a grayscale image of at most 8 bits: entry i is gray level i scaled by 255 / (2^bit_depth - 1), opaque unless i equals the tRNS key. Entries past 2^bit_depth are unused.";
+  let table = array_filled::<u8, 1024>(value: 0_u8);
+  let scale = gray_scale(bit_depth: bit_depth);
+  for (index in 0_u64..256_u64) {
+    let level = cvt::<u64, u32>(index);
+    let scaled = level *wrap scale;
+    let gray = cvt.wrap::<u32, u8>(scaled);
+    let alpha = 255_u8;
+    match key {
+      Some(value: sample) => {
+        let wide_sample = cvt::<u16, u32>(sample);
+        if level == wide_sample {
+          set alpha = 0_u8;
+        }
+      }
+      None() => {
+      }
+    }
+    let target = index * 4_u64;
+    let target_green = target + 1_u64;
+    let target_blue = target + 2_u64;
+    let target_alpha = target + 3_u64;
+    set table[target] = gray;
+    set table[target_green] = gray;
+    set table[target_blue] = gray;
+    set table[target_alpha] = alpha;
+  }
+  return table;
+}
+
+fn pixel_format(header: Header, colors: &ColorChunks) -> result: PixelFormat reads(colors) {
+  doc "Gathers everything row expansion needs for one image: its row format, the color table for palette and low-depth grayscale images, and the tRNS key of a 16-bit grayscale or a truecolor image.";
+  let bit_depth = header.bit_depth;
+  let color = header.color;
+  let row = row_format(color: color, bit_depth: bit_depth);
+  let no_gray_key = None<u16>();
+  let no_rgb_key = None<RgbKey>();
+  let unused = array_filled::<u8, 1024>(value: 0_u8);
+  match color {
+    Palette() => {
+      let format = PixelFormat(row: row, table: colors^.palette, table_count: colors^.palette_count, gray_key: no_gray_key, rgb_key: no_rgb_key);
+      return format;
+    }
+    Gray() => {
+      if bit_depth <= 8_u8 {
+        let table = gray_table(bit_depth: bit_depth, key: colors^.gray_key);
+        let depth = cvt::<u8, u32>(bit_depth);
+        let levels = ishl(1_u64, depth);
+        let format = PixelFormat(row: row, table: table, table_count: levels, gray_key: no_gray_key, rgb_key: no_rgb_key);
+        return format;
+      }
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: colors^.gray_key, rgb_key: no_rgb_key);
+      return format;
+    }
+    Rgb() => {
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: no_gray_key, rgb_key: colors^.rgb_key);
+      return format;
+    }
+    GrayAlpha() => {
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: no_gray_key, rgb_key: no_rgb_key);
+      return format;
+    }
+    Rgba() => {
+      let format = PixelFormat(row: row, table: unused, table_count: 0_u64, gray_key: no_gray_key, rgb_key: no_rgb_key);
+      return format;
+    }
+  }
+}
