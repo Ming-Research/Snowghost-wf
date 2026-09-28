@@ -19,7 +19,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
 	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed \
-	oracle-normalization oracle-font-face oracle-font-shape
+	oracle-normalization oracle-font-face oracle-font-shape oracle-text-properties
 
 check: compiler renderer design-lint
 
@@ -80,6 +80,9 @@ oracle-font-face: $(BUILD)/font_face_oracle
 
 oracle-font-shape: $(BUILD)/font_shape_oracle
 	@cd $(ROOT) && $(PY) -B tests/font/shape_oracle.py build/oracle/fonts build/oracle/udhr build/oracle/py $<
+
+oracle-text-properties: $(BUILD)/text_properties_oracle
+	@cd $(ROOT) && $(PY) -B tests/text/properties_oracle.py build/oracle/ucd $<
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
