@@ -13,10 +13,26 @@ the input's bytes and a newline. SCRIPTING is 1 for a test marked
 off. The driver prints each case's tree in the tests' `#document` format,
 one line per node or attribute, then a line holding only `#end`. Parse
 errors are not compared.
+
+Files in EXCLUDED are not run, each for the reason given; the summary line
+counts them.
 """
 
 import os
 import sys
+
+EXCLUDED = {
+    # The standard's newer processing instruction nodes; the tokenizer's
+    # oracle (html5lib-tests, frozen) still reads `<?` as a bogus comment.
+    # Deferred with the tokenizer and document support (docs/todo.md).
+    "processing-instructions.dat": "processing instructions are deferred",
+    # These observe script running during the parse; the tree builder runs
+    # no script (pkg::html::tree_builder).
+    "scripted_adoption01.dat": "needs script execution",
+    "scripted_ark.dat": "needs script execution",
+    "scripted_foster01.dat": "needs script execution",
+    "scripted_webkit01.dat": "needs script execution",
+}
 
 
 def parse_file(path):
@@ -63,9 +79,14 @@ def parse_file(path):
 def main():
     tests_dir, driver = sys.argv[1], sys.argv[2]
     cases = []
+    excluded = 0
     for name in sorted(os.listdir(tests_dir)):
         if name.endswith(".dat"):
-            cases.extend(parse_file(os.path.join(tests_dir, name)))
+            found = parse_file(os.path.join(tests_dir, name))
+            if name in EXCLUDED:
+                excluded += len(found)
+            else:
+                cases.extend(found)
     cases_path = os.path.join(tests_dir, "cases.bin")
     with open(cases_path, "wb") as file:
         for _, scripting, context, data, _ in cases:
@@ -96,7 +117,7 @@ def main():
         print(f"driver exited with status {run.returncode}")
         print(run.stderr.decode("utf-8", "replace")[-2000:])
     passed = len(cases) - len(failed)
-    print(f"html_tree: {len(cases)} cases, {passed} passed, {len(failed)} failed")
+    print(f"html_tree: {len(cases)} cases, {passed} passed, {len(failed)} failed, {excluded} excluded")
     return 0 if not failed and run.returncode == 0 else 1
 
 

@@ -57,3 +57,12 @@ example apart from the renderer code that exposed it
   within `bytes_push` itself, checks). Add it if a stress input, fuzz run or
   future state addition raises real doubt that the sizing argument still
   holds, or when another finding forces the same loop-invariant work anyway.
+- **Processing instructions are not parsed.** The HTML standard now parses
+  `<?target data?>` into processing instruction nodes (WPT's
+  `processing-instructions.dat`, 124 cases), while the tokenizer's oracle,
+  html5lib-tests' frozen tokenizer suite, still reads `<?` as a bogus
+  comment. The tree oracle excludes that file. Support needs a token and a
+  node variant in `pkg::html::tokenizer` and `pkg::dom`, the serializer's
+  `<?target data?>` form, and the tokenizer cases that expect a comment
+  marked as superseded. Reopen when a target site uses processing
+  instructions or the tokenizer oracle moves to a suite that has them.
