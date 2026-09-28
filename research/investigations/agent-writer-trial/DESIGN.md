@@ -4,9 +4,10 @@ Status: planned. The criterion below is fixed before any run.
 
 ## Question
 
-Which model should implement each class of Snowghost's leaf modules? Sonnet
-is the expected implementer. Haiku runs the same tasks as a comparison, and
-Opus runs a task only where Sonnet fails it.
+Which model should implement each class of Snowghost's leaf modules? The
+owner expects Opus to meet the bar and is unsure about Sonnet, and judges
+Haiku likely too weak. Each task therefore runs once, starting on Sonnet,
+and the supervisor moves it to Opus when Sonnet's code falls short.
 
 The trial also shows how agents learn current Whitefoot and which source
 patterns work for this code. `whitefoot/docs/patterns.md` lags the language,
@@ -62,11 +63,16 @@ tasks stand for three classes of implementer work.
 
 ## Runs
 
-- Sonnet and Haiku each attempt all three tasks.
-- Opus attempts a task only if Sonnet's run fails the criterion.
+- Each task runs once and starts on Sonnet. Haiku is not used for now.
+- The supervisor reads the code as the run produces it. It moves the task to
+  Opus when the code falls short: structure a reviewer would score below 3,
+  misuse of the interface, or no progress toward acceptance over repeated
+  repair cycles. Opus continues from the run's branch or starts afresh, as
+  the supervisor judges.
 - A run ends when the agent reports done or the supervisor stops it. Each
-  run records the model, the prompt, elapsed time, tool calls, tokens where
-  reported, supervisor interventions and the final revision.
+  run records the models used, the prompt, elapsed time, tool calls, tokens
+  where reported, the supervisor's interventions and escalations with their
+  reasons, and the final revision.
 
 ## Observations
 
@@ -87,7 +93,7 @@ source patterns that worked.
 
 ## Criterion
 
-A run meets the bar when all of these hold:
+A task is done when all of these hold:
 
 1. `whitefootc --check-module` accepts the module against its unchanged
    interface, and the graph builds;
@@ -99,11 +105,13 @@ A run meets the bar when all of these hold:
 5. for PNG decoding, it decodes the speed set in at most three times
    libpng's single-thread time on the same machine.
 
-For each class, the cheapest model whose run meets the bar is assigned the
-class, in the order Haiku, Sonnet, Opus. A class no model meets is analyzed
-before anything reruns: the failure is filed as a Whitefoot requirement, a
-documentation gap or an interface change, and the task reruns after that
-fix. An assignment holds until a later task of the class contradicts it.
+The model that finishes a task sets the default model for its class. A task
+Sonnet finishes alone makes Sonnet the default; a task moved to Opus makes
+Opus the default, and Sonnet is tried again on that class only when the
+supervisor sees reason to. A default holds until a later task of the class
+contradicts it. A failure caused by a missing Whitefoot feature, a
+documentation gap or an insufficient interface is fixed at its source before
+the task continues.
 
 ## Results
 
