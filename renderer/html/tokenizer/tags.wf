@@ -1,3 +1,17 @@
+struct AttributeLink {
+  next: u64;
+  hash: u64;
+}
+
+struct AttributeIndex {
+  heads: Box<Slots<u64>>;
+  links: Box<Slots<AttributeLink>>;
+}
+
+const attribute_index_initial_buckets: u64 = 8_u64;
+
+const attribute_index_doubling_limit: u64 = 536870912_u64;
+
 fn consume_attribute_name(source: &[u8], output: &TokenText, start: u64) -> (next: u64, hit_eof: Bool, ended_eq: Bool) reads(source), writes(output) {
   doc "Consumes an attribute name from start, lowercasing ASCII and replacing NUL, per the attribute name state. On a terminating whitespace, solidus or greater-than byte, next names that byte, unconsumed. On '=', next names the byte after it.";
   let position = start;
@@ -189,7 +203,7 @@ fn attribute_name_matches(output: &TokenText, left_start: u64, left_end: u64, ri
 }
 
 fn attribute_name_hash(output: &TokenText, name_start: u64, name_end: u64) -> result: u64 reads(output) {
-  doc "Returns a DJB2-style hash of output's text over [name_start, name_end), used only to route attribute_is_duplicate's search to one of a small number of buckets; two different names may share a hash, so a shared bucket still confirms equality with attribute_name_matches before treating it as a match.";
+  doc "Returns a DJB2-style hash of output's text over [name_start, name_end), used only to route attribute_is_duplicate's search to one bucket of an AttributeIndex; two different names may share a hash, so a shared bucket still confirms equality with attribute_name_matches before treating it as a match.";
   let h = 5381_u64;
   let i = name_start;
   loop @hash {
@@ -210,11 +224,80 @@ fn attribute_name_hash(output: &TokenText, name_start: u64, name_end: u64) -> re
   return h;
 }
 
-fn attribute_is_duplicate(output: &TokenText, first: u64, heads: &Array<u64, 64>, chain: &Box<Slots<u64>>, name_start: u64, name_end: u64) -> result: Bool reads(output), reads(heads), reads(chain) {
-  doc "Tells whether an attribute already pushed at or after first has the same name span as [name_start, name_end). heads and chain hold every already-pushed attribute of the current tag in a 64-bucket hash chain keyed by attribute_name_hash, so this walks only the (typically short) chain sharing name's bucket rather than every earlier attribute: linear in a tag's attribute count only when many names collide into the same bucket.";
-  let h = attribute_name_hash(output: output, name_start: name_start, name_end: name_end);
-  let bucket = h % 64_u64;
-  let cursor = heads^[bucket];
+fn attribute_index_new() -> made: AttributeIndex pure {
+  doc "Returns an index with no attributes and no buckets; attribute_index_reserve gives it attribute_index_initial_buckets before the first lookup.";
+  let heads = box_slots_new::<u64>(capacity: 0_u64);
+  let links = box_slots_new::<AttributeLink>(capacity: attribute_initial_capacity);
+  return AttributeIndex(heads: move heads, links: move links);
+}
+
+fn attribute_buckets(size: u64) -> buckets: Box<Slots<u64>> pure contract {
+  requires size <= attribute_ceiling;
+  ensures buckets.inner.len == size;
+} {
+  doc "Returns size empty buckets.";
+  let fresh = box_slots_new::<u64>(capacity: size);
+  for @fill (
+    at in 0_u64..size,
+    invariant filled: fresh.inner.len == at
+  ) {
+    place_back(window: &fresh.inner, value: 0_u64);
+  }
+  return move fresh;
+}
+
+fn attribute_index_reserve(index: &AttributeIndex) -> result: unit writes(index) contract {
+  ensures index^.heads.inner.len > 0_u64;
+} {
+  doc "Keeps more buckets than attributes, so that the chains stay short on average: when the attribute count has reached the bucket count, the buckets double (attribute_index_initial_buckets when there are none) and every attribute is linked again from its stored hash. Each doubling costs the attribute count, so a tag's lookups and insertions cost amortized constant time each apart from comparing names. The doubling stops at attribute_ceiling buckets, as many attributes as bytes_push lets index hold, so the load never passes one; attribute_index_doubling_limit, half of attribute_ceiling, is the largest bucket count that still doubles.";
+  let size = index^.heads.inner.len;
+  let total = index^.links.inner.len;
+  if total < size {
+    return unit;
+  }
+  if size > attribute_index_doubling_limit {
+    return unit;
+  }
+  if size == 0_u64 {
+    attribute_index_relink(index: index, target: attribute_index_initial_buckets);
+    return unit;
+  }
+  let doubled = size + size;
+  attribute_index_relink(index: index, target: doubled);
+  return unit;
+}
+
+fn attribute_index_relink(index: &AttributeIndex, target: u64) -> result: unit writes(index) contract {
+  requires target > 0_u64;
+  requires target <= attribute_ceiling;
+  ensures index^.heads.inner.len > 0_u64;
+} {
+  doc "Replaces index's buckets with target empty ones and links every attribute again into the bucket of its stored hash.";
+  let total = index^.links.inner.len;
+  let fresh = attribute_buckets(size: target);
+  for @relink (
+    rel in 0_u64..total,
+    invariant kept: index^.links.inner.len == total,
+    invariant sized: fresh.inner.len == target
+  ) {
+    let link = index^.links.inner[rel];
+    let chosen = link.hash % target;
+    let head = fresh.inner[chosen];
+    let relinked = AttributeLink(next: head, hash: link.hash);
+    set index^.links.inner[rel] = relinked;
+    set fresh.inner[chosen] = rel + 1_u64;
+  }
+  set index^.heads = move fresh;
+  return unit;
+}
+
+fn attribute_is_duplicate(output: &TokenText, first: u64, index: &AttributeIndex, hash: u64, name_start: u64, name_end: u64) -> result: Bool reads(output), reads(index) contract {
+  requires index^.heads.inner.len > 0_u64;
+} {
+  doc "Tells whether an attribute already pushed at or after first has the same name span as [name_start, name_end), whose attribute_name_hash is hash. index holds every already-pushed attribute of the current tag in hash chains, so this walks only the chain of hash's bucket, which attribute_index_reserve keeps short on average, rather than every earlier attribute.";
+  let size = index^.heads.inner.len;
+  let chosen = hash % size;
+  let cursor = index^.heads.inner[chosen];
   loop @scan {
     let empty = cursor == 0_u64;
     if empty {
@@ -232,9 +315,9 @@ fn attribute_is_duplicate(output: &TokenText, first: u64, heads: &Array<u64, 64>
         return True();
       }
     }
-    let has_link = rel < chain^.inner.len;
+    let has_link = rel < index^.links.inner.len;
     if has_link {
-      set cursor = chain^.inner[rel];
+      set cursor = index^.links.inner[rel].next;
     } else {
       break @scan;
     }
@@ -242,22 +325,27 @@ fn attribute_is_duplicate(output: &TokenText, first: u64, heads: &Array<u64, 64>
   return False();
 }
 
-fn attribute_hash_insert(output: &TokenText, heads: &Array<u64, 64>, chain: &Box<Slots<u64>>, name_start: u64, name_end: u64, rel: u64) -> result: unit reads(output), writes(heads), writes(chain) {
-  doc "Records the attribute at relative position rel (0-based, counted from the current tag's first attribute), just pushed with this name, in heads/chain's hash buckets for later attribute_is_duplicate lookups against this tag. Precondition: rel equals chain^.inner.len, i.e. every accepted attribute of the tag is inserted exactly once, in order.";
-  let h = attribute_name_hash(output: output, name_start: name_start, name_end: name_end);
-  let bucket = h % 64_u64;
-  let prev = heads^[bucket];
-  bytes_push::<u64>(cell: chain, value: prev, ceiling: attribute_ceiling, initial: attribute_initial_capacity);
-  let next_head = rel +wrap 1_u64;
-  set heads^[bucket] = next_head;
+fn attribute_index_insert(index: &AttributeIndex, hash: u64) -> result: unit writes(index) contract {
+  requires index^.heads.inner.len > 0_u64;
+} {
+  doc "Records the attribute just pushed, whose name hashes to hash, at the next relative position (0-based, counted from the current tag's first attribute), which is the number of attributes index already holds, for later attribute_is_duplicate lookups against this tag.";
+  let size = index^.heads.inner.len;
+  let chosen = hash % size;
+  let head = index^.heads.inner[chosen];
+  let rel = index^.links.inner.len;
+  set index^.heads.inner[chosen] = rel +wrap 1_u64;
+  let link = AttributeLink(next: head, hash: hash);
+  bytes_push::<AttributeLink>(cell: &index^.links, value: link, ceiling: attribute_ceiling, initial: attribute_initial_capacity);
   return unit;
 }
 
-fn push_attribute_dedup(output: &TokenText, first: u64, heads: &Array<u64, 64>, chain: &Box<Slots<u64>>, count: u64, name_start: u64, name_end: u64, value_start: u64, value_end: u64) -> result: u64 writes(output), writes(heads), writes(chain) {
-  doc "Pushes one attribute unless an earlier attribute of the current tag, from first onward, already has this name, then records it in heads/chain for later lookups. count is the number of attributes already accepted for this tag (chain^.inner.len); result is that count after this call, unchanged on a duplicate or one higher once accepted.";
-  let duplicate = attribute_is_duplicate(output: output, first: first, heads: heads, chain: chain, name_start: name_start, name_end: name_end);
+fn push_attribute_dedup(output: &TokenText, first: u64, index: &AttributeIndex, name_start: u64, name_end: u64, value_start: u64, value_end: u64) -> result: unit writes(output), writes(index) {
+  doc "Pushes one attribute unless an earlier attribute of the current tag, from first onward, already has this name, then records it in index for later lookups.";
+  attribute_index_reserve(index: index);
+  let hash = attribute_name_hash(output: output, name_start: name_start, name_end: name_end);
+  let duplicate = attribute_is_duplicate(output: output, first: first, index: index, hash: hash, name_start: name_start, name_end: name_end);
   if duplicate {
-    return count;
+    return unit;
   }
   let name_start32 = cvt.wrap::<u64, u32>(name_start);
   let name_end32 = cvt.wrap::<u64, u32>(name_end);
@@ -267,40 +355,38 @@ fn push_attribute_dedup(output: &TokenText, first: u64, heads: &Array<u64, 64>, 
   let value = Span(start: value_start32, end: value_end32);
   let attribute = Attribute(name: name, value: value);
   push_attribute(attributes: &output^.attributes, value: attribute);
-  attribute_hash_insert(output: output, heads: heads, chain: chain, name_start: name_start, name_end: name_end, rel: count);
-  return count +wrap 1_u64;
+  attribute_index_insert(index: index, hash: hash);
+  return unit;
 }
 
-fn handle_new_attribute_name(source: &[u8], output: &TokenText, first: u64, heads: &Array<u64, 64>, chain: &Box<Slots<u64>>, count: u64, name_start: u64, next1: u64, eof1: Bool, eq1: Bool) -> (done: Bool, self_closing: Bool, hit_eof: Bool, next: u64, has_pending: Bool, pending_start: u64, pending_end: u64, next_count: u64) reads(source), writes(output), writes(heads), writes(chain) {
-  doc "Finishes handling one freshly consumed attribute name: attaches a value when one follows, or reports it pending for the caller to finish when a value may still follow later, or reports the tag closed or the source exhausted. next_count carries push_attribute_dedup's running accepted-attribute count through, unchanged when no attribute is pushed here.";
+fn handle_new_attribute_name(source: &[u8], output: &TokenText, first: u64, index: &AttributeIndex, name_start: u64, next1: u64, eof1: Bool, eq1: Bool) -> (done: Bool, self_closing: Bool, hit_eof: Bool, next: u64, has_pending: Bool, pending_start: u64, pending_end: u64) reads(source), writes(output), writes(index) {
+  doc "Finishes handling one freshly consumed attribute name: attaches a value when one follows, or reports it pending for the caller to finish when a value may still follow later, or reports the tag closed or the source exhausted.";
   if eof1 {
-    return True(), False(), True(), next1, False(), 0_u64, 0_u64, count;
+    return True(), False(), True(), next1, False(), 0_u64, 0_u64;
   }
   let name_end = output^.text.inner.len;
   if eq1 {
     let (vs, ve, next2, eof2, gt2) = consume_attribute_value(source: source, output: output, start: next1);
     if eof2 {
-      return True(), False(), True(), next2, False(), 0_u64, 0_u64, count;
+      return True(), False(), True(), next2, False(), 0_u64, 0_u64;
     }
-    let count2 = push_attribute_dedup(output: output, first: first, heads: heads, chain: chain, count: count, name_start: name_start, name_end: name_end, value_start: vs, value_end: ve);
+    push_attribute_dedup(output: output, first: first, index: index, name_start: name_start, name_end: name_end, value_start: vs, value_end: ve);
     if gt2 {
-      return True(), False(), False(), next2, False(), 0_u64, 0_u64, count2;
+      return True(), False(), False(), next2, False(), 0_u64, 0_u64;
     }
-    return False(), False(), False(), next2, False(), 0_u64, 0_u64, count2;
+    return False(), False(), False(), next2, False(), 0_u64, 0_u64;
   }
-  return False(), False(), False(), next1, True(), name_start, name_end, count;
+  return False(), False(), False(), next1, True(), name_start, name_end;
 }
 
 fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -> (self_closing: Bool, hit_eof: Bool, next: u64) reads(source), writes(output) {
-  doc "Parses attributes from the before-attribute-name state at start through self-closing-start-tag-state or the tag's closing greater-than, per 13.2.5.32-13.2.5.40. heads/chain is this tag's attribute-name hash index (attribute_is_duplicate), fresh for each call.";
+  doc "Parses attributes from the before-attribute-name state at start through self-closing-start-tag-state or the tag's closing greater-than, per 13.2.5.32-13.2.5.40. index is this tag's attribute-name hash index (attribute_is_duplicate), fresh for each call.";
   let position = start;
   let quirky = True();
   let has_pending = False();
   let pending_start = 0_u64;
   let pending_end = 0_u64;
-  let heads = array_filled::<u64, 64>(value: 0_u64);
-  let chain = box_slots_new::<u64>(capacity: attribute_initial_capacity);
-  let attr_count = 0_u64;
+  let index = attribute_index_new();
   loop @attrs {
     let (ch, after) = next_char(source: source, pos: position);
     let is_eof = ch == eof_char;
@@ -314,7 +400,7 @@ fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -
       let slash = ch == '/'_u32;
       if slash {
         if has_pending {
-          set attr_count = push_attribute_dedup(output: output, first: first, heads: &heads, chain: &chain, count: attr_count, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
+          push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
           set has_pending = False();
         }
         let (ch2, after2) = next_char(source: source, pos: after);
@@ -332,7 +418,7 @@ fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -
         let gt = ch == '>'_u32;
         if gt {
           if has_pending {
-            set attr_count = push_attribute_dedup(output: output, first: first, heads: &heads, chain: &chain, count: attr_count, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
+            push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
           }
           return False(), False(), after;
         } else {
@@ -342,8 +428,7 @@ fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -
             let name_start = output^.text.inner.len;
             push_codepoint(text: &output^.text, cp: '='_u32);
             let (next1, eof1, eq1) = consume_attribute_name(source: source, output: output, start: after);
-            let (done, self_closing, hit_eof, next_pos, has_pending2, pend_s, pend_e, count2) = handle_new_attribute_name(source: source, output: output, first: first, heads: &heads, chain: &chain, count: attr_count, name_start: name_start, next1: next1, eof1: eof1, eq1: eq1);
-            set attr_count = count2;
+            let (done, self_closing, hit_eof, next_pos, has_pending2, pend_s, pend_e) = handle_new_attribute_name(source: source, output: output, first: first, index: &index, name_start: name_start, next1: next1, eof1: eof1, eq1: eq1);
             if done {
               return self_closing, hit_eof, next_pos;
             }
@@ -359,7 +444,7 @@ fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -
               if eof2 {
                 return False(), True(), next2;
               }
-              set attr_count = push_attribute_dedup(output: output, first: first, heads: &heads, chain: &chain, count: attr_count, name_start: pending_start, name_end: pending_end, value_start: vs, value_end: ve);
+              push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: vs, value_end: ve);
               set has_pending = False();
               if gt2 {
                 return False(), False(), next2;
@@ -368,13 +453,12 @@ fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -
               set quirky = True();
             } else {
               if has_pending {
-                set attr_count = push_attribute_dedup(output: output, first: first, heads: &heads, chain: &chain, count: attr_count, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
+                push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
                 set has_pending = False();
               }
               let name_start = output^.text.inner.len;
               let (next1, eof1, eq1) = consume_attribute_name(source: source, output: output, start: position);
-              let (done, self_closing, hit_eof, next_pos, has_pending2, pend_s, pend_e, count3) = handle_new_attribute_name(source: source, output: output, first: first, heads: &heads, chain: &chain, count: attr_count, name_start: name_start, next1: next1, eof1: eof1, eq1: eq1);
-              set attr_count = count3;
+              let (done, self_closing, hit_eof, next_pos, has_pending2, pend_s, pend_e) = handle_new_attribute_name(source: source, output: output, first: first, index: &index, name_start: name_start, next1: next1, eof1: eof1, eq1: eq1);
               if done {
                 return self_closing, hit_eof, next_pos;
               }
