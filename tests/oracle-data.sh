@@ -11,6 +11,7 @@ reference=$2
 ucd=https://www.unicode.org/Public/17.0.0/ucd
 idna=https://www.unicode.org/Public/17.0.0/idna
 css=https://raw.githubusercontent.com/SimonSapin/css-parsing-tests/203ce36bffd617db7f118c551e32794561fb273d
+wpt_url=https://raw.githubusercontent.com/web-platform-tests/wpt/b48a5c3fb57854fd217421e247a4f4a0149951a7/url/resources
 # PngSuite is served over plain HTTP only; the pinned hash carries its integrity.
 pngsuite=http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz
 
@@ -39,6 +40,9 @@ fetch $ucd/extracted/DerivedBidiClass.txt ucd/DerivedBidiClass.txt 4867b4b7f0731
 fetch $ucd/extracted/DerivedJoiningType.txt ucd/DerivedJoiningType.txt f39ebe974825d6736aee15582250307aa532b2cfab3caf3f86bd23fddc9c5c4d
 fetch $idna/IdnaMappingTable.txt idna/IdnaMappingTable.txt 87f05505dc026fdb2bff16132bdc68a8014675836882a9a2b1844540ad3be382
 fetch $idna/IdnaTestV2.txt idna/IdnaTestV2.txt beb5d0be20e896189b03209a82fdc34f06351502bbd4b8e2523583fc2954d9cf
+fetch $wpt_url/urltestdata.json wpt-url/urltestdata.json 81e85fd3c199c08ef9c34cf651b3580eeedd080316493bfaf277a6b5ff8cf652
+fetch $wpt_url/IdnaTestV2.json wpt-url/IdnaTestV2.json 338192b9815dbdace6c035cb1acd50cd737070cd67d6e3f620d2543f63eb0cbb
+fetch $wpt_url/toascii.json wpt-url/toascii.json 644eba9d5b593df8095cfa307222f3014542ff9cc02d555f8e5660059d80470f
 fetch $css/component_value_list.json css/component_value_list.json a8d7a5252373b892cfcac359360930ad9a57ed918a84331bcf0c872b80f83200
 fetch $pngsuite PngSuite-2017jul19.tgz 0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
 
