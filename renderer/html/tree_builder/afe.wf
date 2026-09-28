@@ -1,0 +1,471 @@
+alias Atom = pkg::base::atom::Atom;
+alias Attribute = pkg::dom::Attribute;
+alias AttributeNamespace = pkg::dom::AttributeNamespace;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+alias TextSpan = pkg::dom::TextSpan;
+
+const afe_attr_ceiling: u64 = 1048576_u64;
+
+fn push_afe(cell: &Box<Slots<AfeEntry>>, value: AfeEntry, ceiling: u64) -> result: Result<unit, TreeError> writes(cell) contract {
+  requires ceiling <= 4294967295_u64;
+} {
+  doc "Appends value to cell, doubling its backing (or starting it at 8) within ceiling; TooLarge when cell is already full at ceiling. AfeEntry is affine (it owns a Box), so this is push_generic's logic specialized to move value instead of copying it.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    if empty {
+      grow(cell: cell, capacity: 8_u64);
+      place_back(window: &cell^.inner, value: move value);
+      return Ok<unit, TreeError>(value: unit);
+    }
+    let doubled = capacity +sat capacity;
+    let over = doubled > ceiling;
+    if over {
+      let room = capacity < ceiling;
+      if room {
+        grow(cell: cell, capacity: ceiling);
+        place_back(window: &cell^.inner, value: move value);
+        return Ok<unit, TreeError>(value: unit);
+      }
+      let too_large = TreeError::TooLarge();
+      return Err<unit, TreeError>(error: too_large);
+    }
+    let grew = doubled > capacity;
+    if grew {
+      grow(cell: cell, capacity: doubled);
+      place_back(window: &cell^.inner, value: move value);
+      return Ok<unit, TreeError>(value: unit);
+    }
+    let too_large2 = TreeError::TooLarge();
+    return Err<unit, TreeError>(error: too_large2);
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn clone_attrs(attrs: &Box<Slots<Attribute>>) -> result: Result<Box<Slots<Attribute>>, TreeError> reads(attrs) {
+  doc "Copies every attribute of attrs into a freshly allocated list.";
+  let out = box_slots_new::<Attribute>(capacity: 0_u64);
+  let count = attrs^.inner.len;
+  let i = 0_u64;
+  loop @copy {
+    let more = i < count;
+    if more {
+    } else {
+      break @copy;
+    }
+    let one = attrs^.inner[i];
+    let pushed = propagate push_generic::<Attribute>(cell: &out, value: one, ceiling: afe_attr_ceiling);
+    set i = i +wrap 1_u64;
+  }
+  return Ok<Box<Slots<Attribute>>, TreeError>(value: move out);
+}
+
+fn afe_clone_attrs_at(state: &State, idx: u64) -> result: Result<Box<Slots<Attribute>>, TreeError> reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Copies every attribute of the element named at idx into a freshly allocated list.";
+  let out = box_slots_new::<Attribute>(capacity: 0_u64);
+  let count = afe_attr_count_at(state: state, idx: idx);
+  let i = 0_u64;
+  loop @copy {
+    let more = i < count;
+    if more {
+    } else {
+      break @copy;
+    }
+    let one = afe_attr_at(state: state, idx: idx, attr_idx: i);
+    let pushed = propagate push_generic::<Attribute>(cell: &out, value: one, ceiling: afe_attr_ceiling);
+    set i = i +wrap 1_u64;
+  }
+  return Ok<Box<Slots<Attribute>>, TreeError>(value: move out);
+}
+
+fn snapshot_element_attributes(document: &Document, node: NodeId) -> result: Result<Box<Slots<Attribute>>, TreeError> reads(document) {
+  doc "Copies node's currently stored attributes into a fresh list, for the list of active formatting elements to keep alongside the element it names.";
+  let out = box_slots_new::<Attribute>(capacity: 0_u64);
+  let len = document^.nodes.inner.len;
+  let idx64 = cvt::<u32, u64>(node.index);
+  let ok = idx64 < len;
+  if ok {
+  } else {
+    return Ok<Box<Slots<Attribute>>, TreeError>(value: move out);
+  }
+  match &document^.nodes.inner[idx64].data {
+    Element(namespace: ns, local_name: ln, attributes: attrs, template_contents: tc) => {
+      let count = attrs^.inner.len;
+      let i = 0_u64;
+      loop @copy (
+        invariant bound: i <= count
+      ) {
+        let more = i < count;
+        if more {
+        } else {
+          break @copy;
+        }
+        let one = attrs^.inner[i];
+        let pushed = propagate push_generic::<Attribute>(cell: &out, value: one, ceiling: afe_attr_ceiling);
+        set i = i +wrap 1_u64;
+      }
+    }
+    DocumentRoot(quirks: q) => {
+    }
+    DocumentType(name: n, public_id: p, system_id: s) => {
+    }
+    Text(data: d) => {
+    }
+    Comment(data: d) => {
+    }
+    Fragment() => {
+    }
+  }
+  return Ok<Box<Slots<Attribute>>, TreeError>(value: move out);
+}
+
+fn afe_len(state: &State) -> result: u64 reads(state) contract {
+  ensures result == state^.afe.inner.len;
+} {
+  doc "Returns the number of entries (elements and markers) in the list of active formatting elements.";
+  return state^.afe.inner.len;
+}
+
+fn afe_is_marker(state: &State, idx: u64) -> result: Bool pure contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Tells whether the list of active formatting elements holds a marker at idx.";
+  match &state^.afe.inner[idx] {
+    Marker() => {
+      return True();
+    }
+    Element(node: n, local_name: ln, attributes: attrs) => {
+      return False();
+    }
+  }
+}
+
+fn afe_node_at(state: &State, idx: u64) -> result: NodeId reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Returns the element node named at idx, which must not be a marker.";
+  match &state^.afe.inner[idx] {
+    Marker() => {
+      let zero = NodeId(index: 0_u32);
+      return zero;
+    }
+    Element(node: n, local_name: ln, attributes: attrs) => {
+      return n^;
+    }
+  }
+}
+
+fn afe_name_at(state: &State, idx: u64) -> result: Atom reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Returns the tag name atom of the element named at idx, which must not be a marker.";
+  match &state^.afe.inner[idx] {
+    Marker() => {
+      let zero = Atom(index: 0_u32);
+      return zero;
+    }
+    Element(node: n, local_name: ln, attributes: attrs) => {
+      return ln^;
+    }
+  }
+}
+
+fn afe_attr_count_at(state: &State, idx: u64) -> result: u64 reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Returns the number of attributes stored for the element named at idx.";
+  match &state^.afe.inner[idx] {
+    Marker() => {
+      return 0_u64;
+    }
+    Element(node: n, local_name: ln, attributes: attrs) => {
+      return attrs^.inner.len;
+    }
+  }
+}
+
+fn afe_attr_at(state: &State, idx: u64, attr_idx: u64) -> result: Attribute reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Returns the attribute at attr_idx of the element named at idx; out-of-range attr_idx returns a NoNamespace/atom-0/empty-span placeholder.";
+  match &state^.afe.inner[idx] {
+    Marker() => {
+      let no_ns = AttributeNamespace::NoNamespace();
+      let zero_atom = Atom(index: 0_u32);
+      let zero_span = TextSpan(start: 0_u32, end: 0_u32);
+      let placeholder = Attribute(namespace: no_ns, name: zero_atom, value: zero_span);
+      return placeholder;
+    }
+    Element(node: n, local_name: ln, attributes: attrs) => {
+      let count = attrs^.inner.len;
+      let ok = attr_idx < count;
+      if ok {
+        let value = attrs^.inner[attr_idx];
+        return value;
+      }
+      let no_ns2 = AttributeNamespace::NoNamespace();
+      let zero_atom2 = Atom(index: 0_u32);
+      let zero_span2 = TextSpan(start: 0_u32, end: 0_u32);
+      let placeholder2 = Attribute(namespace: no_ns2, name: zero_atom2, value: zero_span2);
+      return placeholder2;
+    }
+  }
+}
+
+fn afe_node_eq_attrs(state: &State, idx: u64, node: NodeId, name: Atom, attrs: &Box<Slots<Attribute>>) -> result: Bool reads(state), reads(attrs) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Tells whether the element named at idx has the same tag name and the same attributes (same name, namespace and value, any order) as (name, attrs): the Noah's Ark clause family test.";
+  let is_marker = afe_is_marker(state: state, idx: idx);
+  if is_marker {
+    return False();
+  }
+  let existing_name = afe_name_at(state: state, idx: idx);
+  let same_name = atom_eq(left: existing_name, right: name);
+  if same_name {
+  } else {
+    return False();
+  }
+  let existing_count = afe_attr_count_at(state: state, idx: idx);
+  let new_count = attrs^.inner.len;
+  let same_count = existing_count == new_count;
+  if same_count {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @scan (
+    invariant bound: i <= existing_count
+  ) {
+    let more = i < existing_count;
+    if more {
+    } else {
+      break @scan;
+    }
+    let want = attrs^.inner[i];
+    let found = afe_attr_find(state: state, idx: idx, namespace: want.namespace, name: want.name);
+    if found {
+    } else {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn afe_attr_find(state: &State, idx: u64, namespace: AttributeNamespace, name: Atom) -> result: Bool reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Tells whether the element named at idx has an attribute with namespace and name, ignoring its value (the caller has already matched value by requiring equal counts and a matching name for every source attribute of both entries in afe_node_eq_attrs, so a name-and-namespace match here is sufficient because both lists were built from the same distinct-name source).";
+  let count = afe_attr_count_at(state: state, idx: idx);
+  let i = 0_u64;
+  loop @scan (
+    invariant bound: i <= count
+  ) {
+    let more = i < count;
+    if more {
+    } else {
+      break @scan;
+    }
+    let have = afe_attr_at(state: state, idx: idx, attr_idx: i);
+    let ns_eq = eeq(have.namespace, namespace);
+    let name_eq = atom_eq(left: have.name, right: name);
+    let hit = band(ns_eq, name_eq);
+    if hit {
+      return True();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return False();
+}
+
+fn afe_push_marker(state: &State) -> result: Result<unit, TreeError> writes(state) {
+  doc "Inserts a marker at the end of the list of active formatting elements.";
+  let marker = AfeEntry::Marker();
+  let pushed = propagate push_afe(cell: &state^.afe, value: move marker, ceiling: afe_ceiling);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn afe_remove_at(state: &State, idx: u64) -> result: unit writes(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Removes the entry at idx from the list of active formatting elements.";
+  let removed = remove_at(window: &state^.afe.inner, index: idx);
+  return unit;
+}
+
+fn insert_afe_at(state: &State, idx: u64, value: AfeEntry) -> result: Result<unit, TreeError> writes(state) contract {
+  requires idx <= state^.afe.inner.len;
+} {
+  doc "Inserts value at idx in the list of active formatting elements, shifting it and every later entry up by one.";
+  let length = state^.afe.inner.len;
+  let capacity = state^.afe.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    if empty {
+      grow(cell: &state^.afe, capacity: 8_u64);
+    } else {
+      let doubled = capacity +sat capacity;
+      let over = doubled > afe_ceiling;
+      if over {
+        let room = capacity < afe_ceiling;
+        if room {
+          grow(cell: &state^.afe, capacity: afe_ceiling);
+        } else {
+          let too_large = TreeError::TooLarge();
+          return Err<unit, TreeError>(error: too_large);
+        }
+      } else {
+        let grew = doubled > capacity;
+        if grew {
+          grow(cell: &state^.afe, capacity: doubled);
+        } else {
+          let too_large2 = TreeError::TooLarge();
+          return Err<unit, TreeError>(error: too_large2);
+        }
+      }
+    }
+  }
+  let length2 = state^.afe.inner.len;
+  let capacity2 = state^.afe.inner.cap;
+  let index_ok = idx <= length2;
+  let cap_ok = length2 < capacity2;
+  let ok = band(index_ok, cap_ok);
+  if ok {
+    insert_at(window: &state^.afe.inner, index: idx, value: move value);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let too_large3 = TreeError::TooLarge();
+  return Err<unit, TreeError>(error: too_large3);
+}
+
+fn afe_index_of_node(state: &State, node: NodeId) -> found: Option<u64> reads(state) {
+  doc "Returns the index of node in the list of active formatting elements, or None.";
+  let len = afe_len(state: state);
+  let idx = 0_u64;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let is_marker = afe_is_marker(state: state, idx: idx);
+    if is_marker {
+    } else {
+      let have = afe_node_at(state: state, idx: idx);
+      let hit = node_eq(left: have, right: node);
+      if hit {
+        let made = Some<u64>(value: idx);
+        return made;
+      }
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return None<u64>();
+}
+
+fn afe_last_marker_index(state: &State) -> found: Option<u64> reads(state) {
+  doc "Returns the index of the last (most recently added) marker in the list of active formatting elements, or None.";
+  let len = afe_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    return None<u64>();
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let next_idx = idx -wrap 1_u64;
+    invariant next_bound: next_idx < len;
+    let is_marker = afe_is_marker(state: state, idx: next_idx);
+    if is_marker {
+      let made = Some<u64>(value: next_idx);
+      return made;
+    }
+    set idx = next_idx;
+  }
+  return None<u64>();
+}
+
+fn afe_push_element(state: &State, node: NodeId, name: Atom, attrs: Box<Slots<Attribute>>) -> result: Result<unit, TreeError> writes(state) {
+  doc "13.2.4.3: pushes an element onto the list of active formatting elements, first applying the Noah's Ark clause (removing the earliest of three or more same-family entries after the last marker).";
+  let last_marker = afe_last_marker_index(state: state);
+  let scan_from = match last_marker {
+    Some(value: m) => {
+      let after = m +wrap 1_u64;
+      give after;
+    }
+    None() => {
+      give 0_u64;
+    }
+  }
+  let len = afe_len(state: state);
+  let idx = scan_from;
+  let matches_seen = 0_u64;
+  let earliest = scan_from;
+  let have_earliest = False();
+  loop @scan {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let same = afe_node_eq_attrs(state: state, idx: idx, node: node, name: name, attrs: &attrs);
+    if same {
+      let first_hit = bnot(have_earliest);
+      if first_hit {
+        set earliest = idx;
+        set have_earliest = True();
+      }
+      set matches_seen = matches_seen +wrap 1_u64;
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  let three_or_more = matches_seen >= 3_u64;
+  let should_remove = band(have_earliest, three_or_more);
+  if should_remove {
+    let len_now = afe_len(state: state);
+    let in_range = earliest < len_now;
+    if in_range {
+      afe_remove_at(state: state, idx: earliest);
+    }
+  }
+  let elem = AfeEntry::Element(node: node, local_name: name, attributes: move attrs);
+  let pushed = propagate push_afe(cell: &state^.afe, value: move elem, ceiling: afe_ceiling);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn afe_clear_to_last_marker(state: &State) -> result: unit writes(state) {
+  doc "Clears the list of active formatting elements up to and including the last marker.";
+  loop @clear {
+    let len = afe_len(state: state);
+    let has = len > 0_u64;
+    if has {
+    } else {
+      break @clear;
+    }
+    let idx = len -wrap 1_u64;
+    invariant idx_bound: idx < len;
+    let is_marker = afe_is_marker(state: state, idx: idx);
+    afe_remove_at(state: state, idx: idx);
+    if is_marker {
+      break @clear;
+    }
+  }
+  return unit;
+}

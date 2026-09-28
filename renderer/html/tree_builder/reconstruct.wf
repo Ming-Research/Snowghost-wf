@@ -1,0 +1,94 @@
+alias Atom = pkg::base::atom::Atom;
+alias Attribute = pkg::dom::Attribute;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+
+fn afe_boundary_at(state: &State, idx: u64) -> result: Bool reads(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Tells whether the entry at idx is a marker or an element that is on the stack of open elements: a boundary the reconstruction rewind stops at.";
+  let is_marker = afe_is_marker(state: state, idx: idx);
+  if is_marker {
+    return True();
+  }
+  let node = afe_node_at(state: state, idx: idx);
+  let in_stack = stack_contains_node(state: state, target: node);
+  return in_stack;
+}
+
+fn reconstruct_start_index(state: &State, last: u64) -> result: u64 reads(state) contract {
+  requires last < state^.afe.inner.len;
+} {
+  doc "13.2.4.3 reconstruct: rewinds from last to find the earliest index that still needs its element re-created (the first entry after the nearest marker or already-open element before it, or 0 when there is none).";
+  let idx = last;
+  loop @rewind (
+    invariant bound: idx <= last
+  ) {
+    let at_start = idx == 0_u64;
+    if at_start {
+      return 0_u64;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < last;
+    let boundary = afe_boundary_at(state: state, idx: prev);
+    if boundary {
+      return idx;
+    }
+    set idx = prev;
+  }
+  return 0_u64;
+}
+
+fn reconstruct_one(state: &State, document: &Document, idx: u64) -> result: Result<unit, TreeError> writes(state), writes(document) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Re-creates the element named at idx (inserting it and pushing it onto the stack of open elements), then replaces the list entry with the new element, keeping its name and attributes.";
+  let name = afe_name_at(state: state, idx: idx);
+  let for_insert = propagate afe_clone_attrs_at(state: state, idx: idx);
+  let for_keep = propagate afe_clone_attrs_at(state: state, idx: idx);
+  let node = propagate insert_html_element_with_attrs(state: state, document: document, name: name, attrs: move for_insert);
+  let replacement = AfeEntry::Element(node: node, local_name: name, attributes: move for_keep);
+  let len_check = state^.afe.inner.len;
+  let ok2 = idx < len_check;
+  if ok2 {
+    set_afe_at(state: state, idx: idx, value: move replacement);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn set_afe_at(state: &State, idx: u64, value: AfeEntry) -> result: unit writes(state) contract {
+  requires idx < state^.afe.inner.len;
+} {
+  doc "Replaces the list-of-active-formatting-elements entry at idx with value.";
+  set state^.afe.inner[idx] = move value;
+  return unit;
+}
+
+fn reconstruct_active_formatting_elements(state: &State, document: &Document) -> result: Result<unit, TreeError> writes(state), writes(document) {
+  doc "13.2.4.3: reconstructs the active formatting elements, if any.";
+  let len = afe_len(state: state);
+  let empty = len == 0_u64;
+  if empty {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let last = len -wrap 1_u64;
+  invariant last_bound: last < len;
+  let boundary = afe_boundary_at(state: state, idx: last);
+  if boundary {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let start = reconstruct_start_index(state: state, last: last);
+  let idx = start;
+  loop @advance {
+    let len_now = afe_len(state: state);
+    let in_range = idx < len_now;
+    if in_range {
+    } else {
+      break @advance;
+    }
+    let done = propagate reconstruct_one(state: state, document: document, idx: idx);
+    set idx = idx +wrap 1_u64;
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
