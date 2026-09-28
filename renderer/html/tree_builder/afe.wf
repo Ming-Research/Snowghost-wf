@@ -218,7 +218,7 @@ fn afe_attr_at(state: &State, idx: u64, attr_idx: u64) -> result: Attribute read
   }
 }
 
-fn afe_node_eq_attrs(state: &State, idx: u64, node: NodeId, name: Atom, attrs: &Box<Slots<Attribute>>) -> result: Bool reads(state), reads(attrs) contract {
+fn afe_node_eq_attrs(state: &State, document: &Document, idx: u64, node: NodeId, name: Atom, attrs: &Box<Slots<Attribute>>) -> result: Bool reads(state), reads(document), reads(attrs) contract {
   requires idx < state^.afe.inner.len;
 } {
   doc "Tells whether the element named at idx has the same tag name and the same attributes (same name, namespace and value, any order) as (name, attrs): the Noah's Ark clause family test.";
@@ -249,7 +249,7 @@ fn afe_node_eq_attrs(state: &State, idx: u64, node: NodeId, name: Atom, attrs: &
       break @scan;
     }
     let want = attrs^.inner[i];
-    let found = afe_attr_find(state: state, idx: idx, namespace: want.namespace, name: want.name);
+    let found = afe_attr_find(state: state, document: document, idx: idx, namespace: want.namespace, name: want.name, value: want.value);
     if found {
     } else {
       return False();
@@ -259,10 +259,33 @@ fn afe_node_eq_attrs(state: &State, idx: u64, node: NodeId, name: Atom, attrs: &
   return True();
 }
 
-fn afe_attr_find(state: &State, idx: u64, namespace: AttributeNamespace, name: Atom) -> result: Bool reads(state) contract {
+fn afe_text_span_eq(document: &Document, a: TextSpan, b: TextSpan) -> result: Bool reads(document) {
+  doc "Tells whether spans a and b of document's text storage hold the same bytes; either span out of bounds compares unequal.";
+  let a_start = cvt::<u32, u64>(a.start);
+  let a_end = cvt::<u32, u64>(a.end);
+  let b_start = cvt::<u32, u64>(b.start);
+  let b_end = cvt::<u32, u64>(b.end);
+  let len = document^.text.inner.len;
+  let a_ok1 = a_start <= a_end;
+  let a_ok2 = a_end <= len;
+  let a_ok = band(a_ok1, a_ok2);
+  let b_ok1 = b_start <= b_end;
+  let b_ok2 = b_end <= len;
+  let b_ok = band(b_ok1, b_ok2);
+  let ok = band(a_ok, b_ok);
+  if ok {
+    let a_bytes = &document^.text.inner[a_start..a_end];
+    let b_bytes = &document^.text.inner[b_start..b_end];
+    let same = bytes_eq(a: a_bytes, b: b_bytes);
+    return same;
+  }
+  return False();
+}
+
+fn afe_attr_find(state: &State, document: &Document, idx: u64, namespace: AttributeNamespace, name: Atom, value: TextSpan) -> result: Bool reads(state), reads(document) contract {
   requires idx < state^.afe.inner.len;
 } {
-  doc "Tells whether the element named at idx has an attribute with namespace and name, ignoring its value (the caller has already matched value by requiring equal counts and a matching name for every source attribute of both entries in afe_node_eq_attrs, so a name-and-namespace match here is sufficient because both lists were built from the same distinct-name source).";
+  doc "Tells whether the element named at idx has an attribute with namespace, name, and the same value bytes as value: the Noah's Ark clause's per-attribute pairing test (13.2.4.3's \"push onto the list of active formatting elements\": \"identical names, namespaces, and values\").";
   let count = afe_attr_count_at(state: state, idx: idx);
   let i = 0_u64;
   loop @scan (
@@ -278,7 +301,11 @@ fn afe_attr_find(state: &State, idx: u64, namespace: AttributeNamespace, name: A
     let name_eq = atom_eq(left: have.name, right: name);
     let hit = band(ns_eq, name_eq);
     if hit {
-      return True();
+      let value_eq = afe_text_span_eq(document: document, a: have.value, b: value);
+      if value_eq {
+        return True();
+      }
+      return False();
     }
     set i = i +wrap 1_u64;
   }
@@ -402,7 +429,7 @@ fn afe_last_marker_index(state: &State) -> found: Option<u64> reads(state) {
   return None<u64>();
 }
 
-fn afe_push_element(state: &State, node: NodeId, name: Atom, attrs: Box<Slots<Attribute>>) -> result: Result<unit, TreeError> writes(state) {
+fn afe_push_element(state: &State, document: &Document, node: NodeId, name: Atom, attrs: Box<Slots<Attribute>>) -> result: Result<unit, TreeError> reads(document), writes(state) {
   doc "13.2.4.3: pushes an element onto the list of active formatting elements, first applying the Noah's Ark clause (removing the earliest of three or more same-family entries after the last marker).";
   let last_marker = afe_last_marker_index(state: state);
   let scan_from = match last_marker {
@@ -425,7 +452,7 @@ fn afe_push_element(state: &State, node: NodeId, name: Atom, attrs: Box<Slots<At
     } else {
       break @scan;
     }
-    let same = afe_node_eq_attrs(state: state, idx: idx, node: node, name: name, attrs: &attrs);
+    let same = afe_node_eq_attrs(state: state, document: document, idx: idx, node: node, name: name, attrs: &attrs);
     if same {
       let first_hit = bnot(have_earliest);
       if first_hit {
