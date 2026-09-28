@@ -15,19 +15,73 @@ const angle_turn: Array<u8, 4> =[116_u8, 117_u8, 114_u8, 110_u8];
 const radians_to_degrees: f64 = 57.29577951308232_f64;
 
 fn narrow_f32(value: f64) -> result: f32 pure {
-  doc "Narrows value to f32: the ordinary rounded result, or a signed infinity when value overflows f32's finite range.";
-  let in_range = cvt.defined::<f64, f32>(value);
-  if in_range {
-    let narrowed = cvt::<f64, f32>(value);
-    return narrowed;
+  doc "Narrows value to f32 by IEEE 754 round-to-nearest-even, computed from its bits: the bare cvt operation is defined only for a value already exactly representable in f32, which an ordinary computed channel almost never is. A magnitude beyond f32's finite range narrows to a signed infinity; one too small to hold as an f32 normal narrows to a signed zero, since no CSS channel this module produces needs an f32 subnormal; a NaN narrows to a quiet NaN of the same sign.";
+  let bits64 = reinterpret::<f64, u64>(value);
+  let sign64 = ishr(bits64, 63_u32);
+  let sign32 = cvt.wrap::<u64, u32>(sign64);
+  let sign_bit = ishl(sign32, 31_u32);
+  let exp_shifted = ishr(bits64, 52_u32);
+  let exp64 = iand(exp_shifted, 2047_u64);
+  let frac64 = iand(bits64, 4503599627370495_u64);
+  let is_special = exp64 == 2047_u64;
+  if is_special {
+    let is_nan = frac64 != 0_u64;
+    if is_nan {
+      let nan_bits = ior(sign_bit, 2143289344_u32);
+      let result = reinterpret::<u32, f32>(nan_bits);
+      return result;
+    }
+    let inf_bits = ior(sign_bit, 2139095040_u32);
+    let result = reinterpret::<u32, f32>(inf_bits);
+    return result;
   }
-  let negative = flt(value, 0.0_f64);
-  let inf = finf::<f32>();
-  if negative {
-    let neg_inf = fneg(inf);
-    return neg_inf;
+  let too_small = exp64 < 897_u64;
+  if too_small {
+    let result = reinterpret::<u32, f32>(sign_bit);
+    return result;
   }
-  return inf;
+  let new_biased = exp64 -wrap 896_u64;
+  let too_large = new_biased >= 255_u64;
+  if too_large {
+    let inf_bits = ior(sign_bit, 2139095040_u32);
+    let result = reinterpret::<u32, f32>(inf_bits);
+    return result;
+  }
+  let mantissa_high = ishr(frac64, 29_u32);
+  let mantissa32 = cvt.wrap::<u64, u32>(mantissa_high);
+  let remainder_mask = 536870911_u64;
+  let remainder = iand(frac64, remainder_mask);
+  let halfway = 268435456_u64;
+  let above_half = remainder > halfway;
+  let at_half = remainder == halfway;
+  let mantissa_odd_l = iand(mantissa32, 1_u32);
+  let mantissa_odd = mantissa_odd_l == 1_u32;
+  let tie_round_up = band(at_half, mantissa_odd);
+  let round_up = bor(above_half, tie_round_up);
+  let mantissa_rounded = mantissa32;
+  let biased_rounded = new_biased;
+  if round_up {
+    let bumped = mantissa32 +wrap 1_u32;
+    set mantissa_rounded = bumped;
+  }
+  let overflowed = mantissa_rounded == 8388608_u32;
+  if overflowed {
+    set mantissa_rounded = 0_u32;
+    let bumped_exp = biased_rounded +wrap 1_u64;
+    set biased_rounded = bumped_exp;
+  }
+  let final_overflow = biased_rounded >= 255_u64;
+  if final_overflow {
+    let inf_bits = ior(sign_bit, 2139095040_u32);
+    let result = reinterpret::<u32, f32>(inf_bits);
+    return result;
+  }
+  let biased32 = cvt.wrap::<u64, u32>(biased_rounded);
+  let exp_bits = ishl(biased32, 23_u32);
+  let combined_a = ior(sign_bit, exp_bits);
+  let combined = ior(combined_a, mantissa_rounded);
+  let result = reinterpret::<u32, f32>(combined);
+  return result;
 }
 
 enum Lead {
