@@ -14,7 +14,9 @@ href, protocol, username, password, host, hostname, port, pathname, search
 and hash, computed from the record as the URL Standard's getters define.
 
 The host suites run as WPT's IdnaTestV2 and toascii tests do: the input is
-"https://" + host + "/x" with no base, and a non-null output o expects href
+"https://" + host + "/x" with no base, skipping an empty host as WPT's
+IdnaTestV2 harness does (the empty string cannot be tested through the URL
+parser), and a non-null output o expects href
 "https://" + o + "/x", host and hostname o and pathname "/x". Origin and
 searchParams are not compared: pkg::url does not compute them at this
 revision.
@@ -42,7 +44,7 @@ def load_cases(resources):
         with open(os.path.join(resources, name), encoding="utf-8") as file:
             tests = json.load(file)
         for test in tests:
-            if isinstance(test, str):
+            if isinstance(test, str) or test["input"] == "":
                 continue
             output = test["output"]
             want = None
