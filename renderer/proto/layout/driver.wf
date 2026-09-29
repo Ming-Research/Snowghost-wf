@@ -32,6 +32,7 @@ enum Mode {
   ContextsOnly();
   ParagraphsToo();
   CheckBoth();
+  Profile();
 }
 
 const page_ceiling: u64 = 1073741824_u64;
@@ -42,7 +43,13 @@ const l2_word: Array<u8, 2> = "L2";
 
 const check_word: Array<u8, 5> = "check";
 
-const usage_text: Array<u8, 48> = "usage: proto_layout L1|L2|check REPS PAGE SHEET\n";
+const profile_word: Array<u8, 7> = "profile";
+
+const floated_label: Array<u8, 17> = " floated_scalars ";
+
+const top_label: Array<u8, 5> = " top ";
+
+const usage_text: Array<u8, 56> = "usage: proto_layout L1|L2|check|profile REPS PAGE SHEET\n";
 
 const unreadable_text: Array<u8, 27> = "proto_layout: cannot read: ";
 
@@ -123,6 +130,11 @@ fn parse_mode(args: &Args) -> mode: Option<Mode> reads(args) {
   let is_check = same_bytes(text: word, word: &check_word[0_u64..check_word.len]);
   if is_check {
     let found = Mode::CheckBoth();
+    return Some<Mode>(value: found);
+  }
+  let is_profile = same_bytes(text: word, word: &profile_word[0_u64..profile_word.len]);
+  if is_profile {
+    let found = Mode::Profile();
     return Some<Mode>(value: found);
   }
   return None<Mode>();
@@ -343,8 +355,76 @@ fn run_mode(mode: Mode, reps: u64, layout: &Layout, elements: u64, out: &OutputS
       put_result(buffer: report, name: &check_word[0_u64..check_word.len], elements: elements, layout: layout, reps: 1_u64, checksum: one);
       put_text(buffer: report, text: &agree_word[0_u64..agree_word.len]);
     }
+    Profile() => {
+      let first = False();
+      let laid = lay_out(layout: layout, paragraphs_first: first);
+      put_result(buffer: report, name: &profile_word[0_u64..profile_word.len], elements: elements, layout: layout, reps: reps, checksum: laid);
+      let shares = profile_layout(layout: layout);
+      put_profile(buffer: report, shares: &shares, top: reps);
+    }
   }
   put_byte(buffer: report, value: '\n'_u8);
   let written = flush(factory: files, output: out, buffer: report);
   return 0_u8;
+}
+
+fn put_share(buffer: &Box<Slots<u8>>, share: Share) -> result: unit writes(buffer) {
+  doc "Appends one share as scalars/paragraphs/children/floated.";
+  put_byte(buffer: buffer, value: ' '_u8);
+  put_decimal(buffer: buffer, value: share.scalars);
+  put_byte(buffer: buffer, value: '/'_u8);
+  put_decimal(buffer: buffer, value: share.paragraphs);
+  put_byte(buffer: buffer, value: '/'_u8);
+  put_decimal(buffer: buffer, value: share.children);
+  put_byte(buffer: buffer, value: '/'_u8);
+  if share.floated {
+    put_byte(buffer: buffer, value: 'f'_u8);
+  } else {
+    put_byte(buffer: buffer, value: '-'_u8);
+  }
+  return unit;
+}
+
+fn put_profile(buffer: &Box<Slots<u8>>, shares: &Box<Slots<Share>>, top: u64) -> result: unit reads(shares), writes(buffer) {
+  doc "Appends the floated contexts' scalar values and the top largest shares, each chosen by a scan that skips the ones already printed.";
+  let count = shares^.inner.len;
+  let floated = 0_u64;
+  for (at in 0_u64..count) {
+    let share = shares^.inner[at];
+    if share.floated {
+      set floated = floated +wrap share.scalars;
+    }
+  }
+  put_text(buffer: buffer, text: &floated_label[0_u64..floated_label.len]);
+  put_decimal(buffer: buffer, value: floated);
+  put_text(buffer: buffer, text: &top_label[0_u64..top_label.len]);
+  let fits = count <= 1073741824_u64;
+  if fits {
+  } else {
+    return unit;
+  }
+  let unprinted = False();
+  let printed = box_array_filled::<Bool>(count: count, value: unprinted);
+  for (round in 0_u64..top) {
+    let best = count;
+    let most = 0_u64;
+    for (at in 0_u64..count) {
+      let taken = printed.inner[at];
+      let scalars = shares^.inner[at].scalars;
+      let bigger = scalars >= most;
+      let fresh = bnot(taken);
+      let better = band(bigger, fresh);
+      if better {
+        set best = at;
+        set most = scalars;
+      }
+    }
+    let found = best < count;
+    if found {
+      let marked = True();
+      set printed.inner[best] = marked;
+      put_share(buffer: buffer, share: shares^.inner[best]);
+    }
+  }
+  return unit;
 }

@@ -2,9 +2,10 @@
 
 Status: criteria recorded before any prototype runs. The style prototype is
 built, checked and measured: criteria 1 and 2 are answered and criterion 4
-is answered for the style shapes. The layout prototype is designed below and
-not built, so criterion 3 and the L1 half of criterion 4 wait for it. Nothing
-here is decided; the results feed the vocabulary proposal
+is answered for the style shapes. The layout prototype is built and measured;
+criterion 3's reading of "the median real page" awaits the owner's ruling
+(see Layout measurement). Nothing here is decided; the results feed the
+vocabulary proposal
 (`research/investigations/vocabulary/DESIGN.md`) and, where they contradict
 it, an amendment beside the design tree.
 
@@ -71,7 +72,7 @@ After the style pass, a sequential **intern post-pass** interns each group
 into a per-group hash table and replaces it by the table's index. It is
 timed separately.
 
-### Layout (`pkg::proto::layout`, not built)
+### Layout (`pkg::proto::layout`)
 
 From the style prototype's computed `display`, `float`, `position` and
 `overflow`, the driver builds an owned tree:
@@ -229,6 +230,89 @@ of C: 0.0365 on ecma262 (4.6 percent), 0.0296 on html5 (2.9 percent) and
   ledger record is not available; the gap goes to Whitefoot's todo.
 
 
+### Layout measurement
+
+`run.sh layout` at Snowghost commit 7d840e2 with the same pin, machine and
+lock as the style measurement: the layout stage (T(REPS) - T(0)) / REPS from
+the best of seven runs, T(0) holding parsing, styling (shape C) and building
+the context tree. `run.sh check` passes: L1 and L2 agree on all seven pages,
+and the root heights of flat (1,520,016 px) and deep (15,216 px) equal the
+ones computed by hand from the pages' text, width and margins.
+
+The prototype as built, beyond the design above: a context's width is its
+enclosing context's, a third for a float, a quarter for a table cell or a
+flex or grid item and half for an inline-block; `br` adds U+2028 and an
+inline-level context adds U+FFFC; whitespace always collapses, `pre`
+included. The builder's rules are in `renderer/proto/layout/module.wfm`.
+Each paragraph's line count is kept in an array beside the paragraphs,
+because Whitefoot's loop permission [PAR-2] admits a whole-element write
+(`set lines^[i] = n`) and denies a write to one field of element i
+(`set paragraphs^[i].lines = n`); see the Whitefoot finding below.
+
+Layout stage, seconds per repetition, with the speedup of four workers over
+the sequential build:
+
+| Page | Mode | seq | W1 | W2 | W4 | seq / W4 |
+|---|---|---:|---:|---:|---:|---:|
+| ecma262 | L1 | 0.0714 | 0.0739 | 0.0820 | 0.0774 | 0.92 |
+| ecma262 | L2 | 0.0724 | 0.0739 | 0.0425 | 0.0228 | 3.18 |
+| html5 | L1 | 0.0907 | 0.0950 | 0.1080 | 0.1080 | 0.84 |
+| html5 | L2 | 0.0937 | 0.0930 | 0.1080 | 0.1077 | 0.87 |
+| apollo11 | L1 | 0.0049 | 0.0046 | 0.0049 | 0.0051 | 0.96 |
+| apollo11 | L2 | 0.0039 | 0.0043 | 0.0050 | 0.0051 | 0.76 |
+| flat | L1 | 0.1330 | 0.1370 | 0.1700 | 0.1685 | 0.79 |
+| flat | L2 | 0.1345 | 0.1390 | 0.0825 | 0.0415 | 3.24 |
+| unbalanced | L1 | 0.0670 | 0.0690 | 0.0845 | 0.0845 | 0.79 |
+| unbalanced | L2 | 0.0660 | 0.0685 | 0.0415 | 0.0200 | 3.30 |
+
+Deep stays under 2 ms per repetition (L2 0.4 ms at four workers against
+1.3 ms sequentially); the one-paragraph page takes 43 to 54 ms in every
+build and mode, since one paragraph is one task.
+
+**Where layout time sits.** `proto_layout profile` prints each context's own
+scalar values. On every real page one context holds almost all of the text:
+
+| Page | Contexts | Largest context's scalar values | Share | Its paragraphs | A float among its boxes |
+|---|---:|---:|---:|---:|---|
+| ecma262 | 9,931 | 1,724,203 of 2,025,062 | 85 % | 27,979 | no |
+| html5 | 11,794 | 2,526,573 of 2,645,960 | 95 % | 20,919 | yes |
+| apollo11 | 235 | 118,841 of 128,790 | 92 % | 559 | yes |
+
+The next largest context holds 4,234 scalar values on ecma262 and under
+1,300 on the other two. So L1, which splits only runs of contexts, has
+nothing to split: every real page's layout is one context's sequential
+work. L2 breaks that context's paragraphs in parallel on ecma262 (3.18),
+but on html5 and apollo11 the largest context has a float among its boxes,
+and L2 as designed then proceeds as L1.
+
+**The four-worker L1 penalty.** L1 is 5 to 24 percent slower at two and
+four workers than at one on every page. The call grain keeps no call offer
+on its path; the one split loop on it is `pkg::text::line_break`'s
+`write_run_span`, run once per run of a paragraph. With that loop made
+unsplittable in a local build (not committed), flat's L1 took 1.52 s at
+four workers against 1.57 s at one (ten repetitions, best of three), where
+the committed build took 1.80 s against 1.53 s: a split loop whose runtime
+work never reaches the work unit still costs its query once per call when
+workers are idle. The finding goes to Whitefoot.
+
+- **Criterion 3, first branch: not met.** L1 reaches 0.92 over the
+  sequential build at four workers on the median real page (0.84, 0.92 and
+  0.96 on the three), not 2. The design tree's unit does not stand for
+  layout on these pages.
+- **Criterion 3, second branch: depends on a reading the owner rules on.**
+  L2 against L1 at four workers is 3.39 on ecma262, 1.00 on html5 and 1.00
+  on apollo11. Read as the ratio on the page whose ratio is the median, it
+  is 1.00 and the branch fails, so the dossier proposes nothing and records
+  where layout time sits (above). Read as the ratio of the median
+  four-worker times (L1 0.0774 s, L2 0.0228 s, both ecma262's), it is 3.39
+  and the branch holds, which would propose the `design/pipeline.md`
+  amendment.
+- **Criterion 4, L1 half: not met, and uninformative.** On the unbalanced
+  page L1 reaches 0.79 against L2's 3.30, below half, but L1 does not match
+  L2 on the flat page (0.79 against 3.24) either. Both synthetic pages hold
+  one formatting context, so L1 has nothing to split on them; the
+  criterion's premise, sibling contexts of unequal size, is absent.
+
 ### Preview with the call grain
 
 Superseded by the measurement above; kept for how shape B's two obstacles
@@ -310,6 +394,21 @@ locked runs.
 - The prototype's own per-element helpers had the same pattern until commit
   e73f8c0: two independent statements in `inherit_from`, run once per
   element in every shape, and four in the checksum.
+
+### Whitefoot: whole-element writes in a counted loop
+
+L2's paragraph loop first wrote each paragraph's line count into the
+paragraph, `set paragraphs^[i].lines = lines`, and `--par-ledger` reported
+the loop denied: "the body writes storage that is neither introduced by the
+iteration nor the accumulator". [PAR-2]'s element family is exactly a
+direct `Array` or `Slots` subscript, so a write to one field of element i is
+not one, although it writes inside element i's range. Writing the counts to
+an array beside the paragraphs, `set lines^[i] = counted`, is permitted and
+splits. The finding goes to Whitefoot as a language gap: a field of the
+element an affine subscript selects.
+
+`--par-ledger` refused a `--graph` build until mbbill/Whitefoot#186, so
+these decisions were read with that branch's compiler.
 
 ### Whitefoot: an equality requirement over range lengths
 
