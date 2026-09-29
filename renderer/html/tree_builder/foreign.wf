@@ -1,0 +1,521 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias AttributeNamespace = pkg::dom::AttributeNamespace;
+alias Document = pkg::dom::Document;
+alias Namespace = pkg::dom::Namespace;
+alias NodeId = pkg::dom::NodeId;
+alias Span = pkg::html::tokenizer::Span;
+alias Token = pkg::html::tokenizer::Token;
+alias TokenText = pkg::html::tokenizer::TokenText;
+alias Tokenizer = pkg::html::tokenizer::Tokenizer;
+
+fn is_mathml_text_integration_point(namespace: Namespace, local_name: Atom) -> result: Bool pure {
+  doc "A node is a MathML text integration point: MathML mi, mo, mn, ms, mtext.";
+  let mathml = ns_is_mathml(namespace: namespace);
+  if mathml {
+  } else {
+    return False();
+  }
+  let a = a_is(atom: local_name, id: atom_mi);
+  let b = a_is(atom: local_name, id: atom_mo);
+  let c = a_is(atom: local_name, id: atom_mn);
+  let d = a_is(atom: local_name, id: atom_ms);
+  let e = a_is(atom: local_name, id: atom_mtext);
+  let g1 = bor4(a: a, b: b, c: c, d: d);
+  let out = bor(g1, e);
+  return out;
+}
+
+fn element_attr_value_is(document: &Document, node: NodeId, attr_name_id: u32, want: &[u8]) -> result: Bool reads(document), reads(want) {
+  doc "Tells whether node has an unnamespaced attribute named attr_name_id whose value case-insensitively equals want.";
+  let len = document^.nodes.inner.len;
+  let idx64 = cvt::<u32, u64>(node.index);
+  let ok = idx64 < len;
+  if ok {
+  } else {
+    return False();
+  }
+  match &document^.nodes.inner[idx64].data {
+    Element(namespace: ns, local_name: ln, attributes: attrs, template_contents: tc) => {
+      let count = attrs^.inner.len;
+      let i = 0_u64;
+      loop @scan {
+        let more = i < count;
+        if more {
+        } else {
+          break @scan;
+        }
+        let attr = attrs^.inner[i];
+        let no_ns = AttributeNamespace::NoNamespace();
+        let is_no_ns = eeq(attr.namespace, no_ns);
+        let name_hit = a_is(atom: attr.name, id: attr_name_id);
+        let hit = band(is_no_ns, name_hit);
+        if hit {
+          let vstart = cvt::<u32, u64>(attr.value.start);
+          let vend = cvt::<u32, u64>(attr.value.end);
+          let vlen = document^.text.inner.len;
+          let vok1 = vstart <= vend;
+          let vok2 = vend <= vlen;
+          let vok = band(vok1, vok2);
+          if vok {
+            let value_bytes = &document^.text.inner[vstart..vend];
+            let same = bytes_eq_ascii_ci(a: value_bytes, b: want);
+            return same;
+          }
+          return False();
+        }
+        set i = i +wrap 1_u64;
+      }
+      return False();
+    }
+    DocumentRoot(quirks: q) => {
+      return False();
+    }
+    DocumentType(name: n, public_id: p, system_id: s) => {
+      return False();
+    }
+    Text(data: d) => {
+      return False();
+    }
+    Comment(data: d) => {
+      return False();
+    }
+    Fragment() => {
+      return False();
+    }
+  }
+}
+
+const text_html_lit: Array<u8, 9> = "text/html";
+
+const br_lit: Array<u8, 2> = "br";
+
+const p_lit: Array<u8, 1> = "p";
+
+const xhtml_lit: Array<u8, 21> = "application/xhtml+xml";
+
+fn is_html_integration_point(document: &Document, namespace: Namespace, local_name: Atom, node: NodeId) -> result: Bool reads(document) {
+  doc "A node is an HTML integration point: a MathML annotation-xml element whose encoding attribute is text/html or application/xhtml+xml (ASCII case-insensitively), or an SVG foreignObject, desc or title.";
+  let mathml = ns_is_mathml(namespace: namespace);
+  if mathml {
+    let is_axml = a_is(atom: local_name, id: atom_annotation_xml);
+    if is_axml {
+      let hit1 = element_attr_value_is(document: document, node: node, attr_name_id: atom_encoding, want: &text_html_lit[0_u64..text_html_lit.len]);
+      if hit1 {
+        return True();
+      }
+      let hit2 = element_attr_value_is(document: document, node: node, attr_name_id: atom_encoding, want: &xhtml_lit[0_u64..xhtml_lit.len]);
+      return hit2;
+    }
+    return False();
+  }
+  let svg = ns_is_svg(namespace: namespace);
+  if svg {
+    let a = a_is(atom: local_name, id: atom_foreign__object);
+    let b = a_is(atom: local_name, id: atom_desc);
+    let c = a_is(atom: local_name, id: atom_title);
+    let bc = bor(b, c);
+    let out = bor(a, bc);
+    return out;
+  }
+  return False();
+}
+
+fn adjusted_current_node(state: &State) -> found: Option<StackEntry> reads(state) {
+  doc "13.2.4.2: the parser's fragment context element when the stack of open elements has exactly one element in it (fragment case); otherwise the current node.";
+  let len = open_len(state: state);
+  let is_one = len == 1_u64;
+  let is_fragment = state^.is_fragment;
+  let fragment_case = band(is_one, is_fragment);
+  if fragment_case {
+    let ns = state^.fragment_namespace;
+    let name = state^.fragment_name;
+    let zero = NodeId(index: 0_u32);
+    let synth = StackEntry(node: zero, namespace: ns, local_name: name);
+    let made = Some<StackEntry>(value: synth);
+    return made;
+  }
+  let cur = current_entry(state: state);
+  return cur;
+}
+
+fn adjusted_current_node_is_foreign(state: &State) -> result: Bool reads(state) {
+  doc "Tells whether the adjusted current node exists and is not in the HTML namespace: the tree-construction fact tokenizer_set_cdata_allowed needs before each token, since 13.2.5.42's markup declaration open state starts a CDATA section on \"[CDATA[\" only there.";
+  let acn = adjusted_current_node(state: state);
+  match acn {
+    Some(value: e) => {
+      let html = ns_is_html(namespace: e.namespace);
+      let out = bnot(html);
+      return out;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn atom_text_eq_ci(atoms: &AtomTable, atom: Atom, bytes: &[u8]) -> result: Bool reads(atoms), reads(bytes) {
+  doc "Tells whether atom's own interned text equals bytes, comparing ASCII letters case-insensitively.";
+  let span_count = atoms^.spans.inner.len;
+  let idx64 = cvt::<u32, u64>(atom.index);
+  let ok = idx64 < span_count;
+  if ok {
+  } else {
+    return False();
+  }
+  let sp = atoms^.spans.inner[idx64];
+  let text_len = atoms^.text.inner.len;
+  let start64 = cvt::<u32, u64>(sp.start);
+  let end64 = cvt::<u32, u64>(sp.end);
+  let ok1 = start64 <= end64;
+  let ok2 = end64 <= text_len;
+  let ok3 = band(ok1, ok2);
+  if ok3 {
+  } else {
+    return False();
+  }
+  let atom_bytes = &atoms^.text.inner[start64..end64];
+  let same = bytes_eq_ascii_ci(a: atom_bytes, b: bytes);
+  return same;
+}
+
+fn is_foreign_breakout_start_tag(token: Token, text: &TokenText, atoms: &AtomTable, kw: &Keywords) -> result: Result<Bool, TreeError> reads(text), reads(kw), writes(atoms) {
+  doc "13.2.6.5: tells whether token is a start tag on the list that always breaks out of foreign content (b, big, blockquote, body, br, center, code, dd, div, dl, dt, em, embed, h1-h6, head, hr, i, img, li, listing, menu, meta, nobr, ol, p, pre, ruby, s, small, span, strong, strike, sub, sup, table, tt, u, ul, var), or font with a color, face or size attribute.";
+  match token {
+    StartTag(name: n, first_attribute: fa, end_attribute: ea, self_closing: sc) => {
+      let name_atom = propagate intern_span(atoms: atoms, text: text, span: n);
+      let a = a_is(atom: name_atom, id: atom_b);
+      let b = kw^.big.index == name_atom.index;
+      let c = a_is(atom: name_atom, id: atom_blockquote);
+      let d = a_is(atom: name_atom, id: atom_body);
+      let e = a_is(atom: name_atom, id: atom_br);
+      let f = kw^.center.index == name_atom.index;
+      let g = a_is(atom: name_atom, id: atom_code);
+      let h = a_is(atom: name_atom, id: atom_dd);
+      let g1 = bor8(a: a, b: b, c: c, d: d, e: e, f: f, g: g, h: h);
+      let i = a_is(atom: name_atom, id: atom_div);
+      let j = a_is(atom: name_atom, id: atom_dl);
+      let k = a_is(atom: name_atom, id: atom_dt);
+      let l = a_is(atom: name_atom, id: atom_em);
+      let m = a_is(atom: name_atom, id: atom_embed);
+      let n1 = a_is(atom: name_atom, id: atom_h1);
+      let o = a_is(atom: name_atom, id: atom_h2);
+      let p = a_is(atom: name_atom, id: atom_h3);
+      let g2 = bor8(a: i, b: j, c: k, d: l, e: m, f: n1, g: o, h: p);
+      let q = a_is(atom: name_atom, id: atom_h4);
+      let r = a_is(atom: name_atom, id: atom_h5);
+      let s = a_is(atom: name_atom, id: atom_h6);
+      let t = a_is(atom: name_atom, id: atom_head);
+      let u = a_is(atom: name_atom, id: atom_hr);
+      let v = a_is(atom: name_atom, id: atom_i);
+      let w = a_is(atom: name_atom, id: atom_img);
+      let x = a_is(atom: name_atom, id: atom_li);
+      let g3 = bor8(a: q, b: r, c: s, d: t, e: u, f: v, g: w, h: x);
+      let y = a_is(atom: name_atom, id: atom_menu);
+      let z = a_is(atom: name_atom, id: atom_meta);
+      let aa = kw^.nobr.index == name_atom.index;
+      let ab = a_is(atom: name_atom, id: atom_ol);
+      let ac = a_is(atom: name_atom, id: atom_p);
+      let ad = a_is(atom: name_atom, id: atom_pre);
+      let ae = a_is(atom: name_atom, id: atom_ruby);
+      let af = a_is(atom: name_atom, id: atom_s);
+      let g4 = bor8(a: y, b: z, c: aa, d: ab, e: ac, f: ad, g: ae, h: af);
+      let ag = a_is(atom: name_atom, id: atom_small);
+      let ah = a_is(atom: name_atom, id: atom_span);
+      let ai = a_is(atom: name_atom, id: atom_strong);
+      let aj = kw^.strike.index == name_atom.index;
+      let ak = a_is(atom: name_atom, id: atom_sub);
+      let al = a_is(atom: name_atom, id: atom_sup);
+      let am = a_is(atom: name_atom, id: atom_table);
+      let an = kw^.tt.index == name_atom.index;
+      let g5 = bor8(a: ag, b: ah, c: ai, d: aj, e: ak, f: al, g: am, h: an);
+      let ao = a_is(atom: name_atom, id: atom_u);
+      let ap = a_is(atom: name_atom, id: atom_ul);
+      let listing_hit = kw^.listing.index == name_atom.index;
+      let false_pad = False();
+      let g6 = bor4(a: ao, b: ap, c: listing_hit, d: false_pad);
+      let g12 = bor(g1, g2);
+      let g34 = bor(g3, g4);
+      let low = bor(g12, g34);
+      let mid = bor(g5, g6);
+      let out = bor(low, mid);
+      if out {
+        let made_val = True();
+        let made = Ok<Bool, TreeError>(value: made_val);
+        return made;
+      }
+      let is_font = a_is(atom: name_atom, id: atom_font);
+      if is_font {
+        let has_special = propagate token_has_any_attr(atoms: atoms, text: text, first: fa, end: ea, ids3: atom_color, ids4: atom_face, ids5: atom_size);
+        let made2 = Ok<Bool, TreeError>(value: has_special);
+        return made2;
+      }
+      let made3_val = False();
+      let made3 = Ok<Bool, TreeError>(value: made3_val);
+      return made3;
+    }
+    EndTag(name: n2) => {
+      let made4_val = False();
+      let made4 = Ok<Bool, TreeError>(value: made4_val);
+      return made4;
+    }
+    Doctype(name: n3, public_id: pi, system_id: si, force_quirks: fq) => {
+      let made5_val = False();
+      let made5 = Ok<Bool, TreeError>(value: made5_val);
+      return made5;
+    }
+    Comment(data: d) => {
+      let made6_val = False();
+      let made6 = Ok<Bool, TreeError>(value: made6_val);
+      return made6;
+    }
+    Characters(data: d2) => {
+      let made7_val = False();
+      let made7 = Ok<Bool, TreeError>(value: made7_val);
+      return made7;
+    }
+    EndOfFile() => {
+      let made8_val = False();
+      let made8 = Ok<Bool, TreeError>(value: made8_val);
+      return made8;
+    }
+  }
+}
+
+fn token_has_any_attr(atoms: &AtomTable, text: &TokenText, first: u32, end: u32, ids3: u32, ids4: u32, ids5: u32) -> result: Result<Bool, TreeError> reads(text), writes(atoms) {
+  doc "Tells whether the token's attributes (first..end) include one named ids3, ids4, or ids5.";
+  let first64 = cvt::<u32, u64>(first);
+  let end64 = cvt::<u32, u64>(end);
+  let attrs_len = text^.attributes.inner.len;
+  let idx = first64;
+  loop @walk {
+    let more = idx < end64;
+    if more {
+    } else {
+      break @walk;
+    }
+    let in_range = idx < attrs_len;
+    if in_range {
+    } else {
+      break @walk;
+    }
+    let raw = text^.attributes.inner[idx];
+    let name_atom = propagate intern_span(atoms: atoms, text: text, span: raw.name);
+    let hit3 = a_is(atom: name_atom, id: ids3);
+    let hit4 = a_is(atom: name_atom, id: ids4);
+    let hit5 = a_is(atom: name_atom, id: ids5);
+    let hit45 = bor(hit4, hit5);
+    let hit = bor(hit3, hit45);
+    if hit {
+      let made_val = True();
+      let made = Ok<Bool, TreeError>(value: made_val);
+      return made;
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  let made2_val = False();
+  let made2 = Ok<Bool, TreeError>(value: made2_val);
+  return made2;
+}
+
+fn adjusted_foreign_tag_name(atoms: &AtomTable, text: &TokenText, name_span: Span, target_namespace: Namespace) -> result: Result<Atom, TreeError> reads(text), writes(atoms) {
+  doc "Interns a foreign start tag's name, applying the SVG tag-name case fix table when target_namespace is SVG.";
+  let svg = ns_is_svg(namespace: target_namespace);
+  if svg {
+    let len = text^.text.inner.len;
+    let start64 = cvt::<u32, u64>(name_span.start);
+    let end64 = cvt::<u32, u64>(name_span.end);
+    let ok1 = start64 <= end64;
+    let ok2 = end64 <= len;
+    let ok = band(ok1, ok2);
+    if ok {
+      let bytes = &text^.text.inner[start64..end64];
+      let adj = adjust_svg_tag_name(name: bytes);
+      match adj {
+        Some(value: idx) => {
+          let a = Atom(index: idx);
+          return Ok<Atom, TreeError>(value: a);
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  let plain = propagate intern_span(atoms: atoms, text: text, span: name_span);
+  return Ok<Atom, TreeError>(value: plain);
+}
+
+fn insert_foreign_start_tag(state: &State, document: &Document, atoms: &AtomTable, tok_text: &TokenText, name_span: Span, first_attribute: u32, end_attribute: u32, self_closing: Bool, target_namespace: Namespace) -> result: Result<unit, TreeError> reads(tok_text), writes(state), writes(document), writes(atoms) {
+  doc "13.2.6.5 \"any other start tag\": adjusts the tag name (SVG only) and inserts a foreign element, popping it again and acknowledging when self-closing.";
+  let name = propagate adjusted_foreign_tag_name(atoms: atoms, text: tok_text, name_span: name_span, target_namespace: target_namespace);
+  let no_flag = False();
+  let node = propagate insert_foreign_element(state: state, document: document, atoms: atoms, tok_text: tok_text, name: name, first_attribute: first_attribute, end_attribute: end_attribute, namespace: target_namespace, only_add_to_stack: no_flag);
+  if self_closing {
+    pop_open_if_any(state: state);
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn foreign_end_tag_matches_current(state: &State, atoms: &AtomTable, name_bytes: &[u8]) -> result: Bool reads(state), reads(atoms), reads(name_bytes) {
+  doc "13.2.6.5 \"any other end tag\": tells whether the current node's tag name, lowercased, equals name_bytes.";
+  let cur = current_entry(state: state);
+  match cur {
+    None() => {
+      return False();
+    }
+    Some(value: c) => {
+      let out = atom_text_eq_ci(atoms: atoms, atom: c.local_name, bytes: name_bytes);
+      return out;
+    }
+  }
+}
+
+fn foreign_any_other_end_tag(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, kw: &Keywords, tok_text: &TokenText, token: Token, name_bytes: &[u8]) -> result: Result<Bool, TreeError> reads(name_bytes), reads(tok_text), reads(kw), writes(state), writes(document), writes(atoms), writes(tokenizer) {
+  doc "13.2.6.5 \"any other end tag\": searches the stack of open elements from the current node backward, testing only the foreign (non-HTML-namespace) elements for a lowercased tag-name match against name_bytes, without popping anything while searching. A match pops through it. The first HTML-namespace element reached is never itself tested for a match (the spec's node-reassignment step routes straight to its \"otherwise\" clause): reaching it instead processes the token per the current insertion mode's HTML content rules, unmodified stack, so that mode's own scope rules (which may stop at a foreign integration-point ancestor) decide whether anything closes.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    let r0 = False();
+    return Ok<Bool, TreeError>(value: r0);
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < len;
+    let elem = open_at(state: state, index: prev);
+    let html = ns_is_html(namespace: elem.namespace);
+    if html {
+      break @scan;
+    }
+    let same = atom_text_eq_ci(atoms: atoms, atom: elem.local_name, bytes: name_bytes);
+    if same {
+      pop_until_node(state: state, target: elem.node);
+      let r1 = False();
+      return Ok<Bool, TreeError>(value: r1);
+    }
+    set idx = prev;
+  }
+  let handled = propagate dispatch_html_content(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token);
+  return Ok<Bool, TreeError>(value: handled);
+}
+
+fn process_foreign_content(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, tok_text: &TokenText, kw: &Keywords, token: Token, current_namespace: Namespace) -> result: Result<Bool, TreeError> reads(tok_text), reads(kw), writes(state), writes(document), writes(atoms), writes(tokenizer) {
+  doc "13.2.6.5: the rules for parsing tokens in foreign content.";
+  match token {
+    Characters(data: d) => {
+      let (start64, end64) = span_range(text: tok_text, span: d);
+      let bytes = &tok_text^.text.inner[start64..end64];
+      let small = bytes^.len <= 1073741824_u64;
+      if small {
+        let ins = propagate insert_characters_replacing_nul(state: state, document: document, bytes: bytes);
+      }
+      let any_non_ws = bytes_any_non_ws_non_nul(bytes: bytes);
+      if any_non_ws {
+        set state^.frameset_ok = False();
+      }
+      let ok_val = False();
+      return Ok<Bool, TreeError>(value: ok_val);
+    }
+    Comment(data: d2) => {
+      let (start64b, end64b) = span_range(text: tok_text, span: d2);
+      let bytes2 = &tok_text^.text.inner[start64b..end64b];
+      let small2 = bytes2^.len <= 1073741824_u64;
+      if small2 {
+        let ins2 = propagate insert_comment_current(state: state, document: document, bytes: bytes2);
+      }
+      let ok_val = False();
+      return Ok<Bool, TreeError>(value: ok_val);
+    }
+    Doctype(name: n, public_id: pi, system_id: si, force_quirks: fq) => {
+      let ok_val = False();
+      return Ok<Bool, TreeError>(value: ok_val);
+    }
+    StartTag(name: n2, first_attribute: fa, end_attribute: ea, self_closing: sc) => {
+      let breakout_name = propagate is_foreign_breakout_start_tag(token: token, text: tok_text, atoms: atoms, kw: kw);
+      let is_frag = state^.is_fragment;
+      let stack_len_a = open_len(state: state);
+      let stack_is_one_a = stack_len_a == 1_u64;
+      let is_substituted_a = band(is_frag, stack_is_one_a);
+      let fragment_breakout = band(breakout_name, is_substituted_a);
+      if fragment_breakout {
+        let handled = propagate dispatch_html_content(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token);
+        return Ok<Bool, TreeError>(value: handled);
+      }
+      let not_fragment = bnot(is_substituted_a);
+      let breakout = band(breakout_name, not_fragment);
+      if breakout {
+        pop_out_of_foreign_content(state: state, document: document);
+        let ok_val = True();
+        return Ok<Bool, TreeError>(value: ok_val);
+      }
+      let inserted = propagate insert_foreign_start_tag(state: state, document: document, atoms: atoms, tok_text: tok_text, name_span: n2, first_attribute: fa, end_attribute: ea, self_closing: sc, target_namespace: current_namespace);
+      let ok_val = False();
+      return Ok<Bool, TreeError>(value: ok_val);
+    }
+    EndTag(name: n3) => {
+      let (nstart, nend) = span_range(text: tok_text, span: n3);
+      let name_bytes = &tok_text^.text.inner[nstart..nend];
+      let is_br = bytes_eq(a: name_bytes, b: &br_lit[0_u64..br_lit.len]);
+      let is_p = bytes_eq(a: name_bytes, b: &p_lit[0_u64..p_lit.len]);
+      let breakout_name2 = bor(is_br, is_p);
+      let is_frag2 = state^.is_fragment;
+      let stack_len_b = open_len(state: state);
+      let stack_is_one_b = stack_len_b == 1_u64;
+      let is_substituted_b = band(is_frag2, stack_is_one_b);
+      let fragment_breakout2 = band(breakout_name2, is_substituted_b);
+      if fragment_breakout2 {
+        let handled2 = propagate dispatch_html_content(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token);
+        return Ok<Bool, TreeError>(value: handled2);
+      }
+      let not_fragment2 = bnot(is_substituted_b);
+      let breakout2 = band(breakout_name2, not_fragment2);
+      if breakout2 {
+        pop_out_of_foreign_content(state: state, document: document);
+        let ok_val = True();
+        return Ok<Bool, TreeError>(value: ok_val);
+      }
+      let handled3 = propagate foreign_any_other_end_tag(state: state, document: document, atoms: atoms, tokenizer: tokenizer, kw: kw, tok_text: tok_text, token: token, name_bytes: name_bytes);
+      return Ok<Bool, TreeError>(value: handled3);
+    }
+    EndOfFile() => {
+      let ok_val = True();
+      return Ok<Bool, TreeError>(value: ok_val);
+    }
+  }
+}
+
+fn pop_out_of_foreign_content(state: &State, document: &Document) -> result: unit reads(document), writes(state) {
+  doc "13.2.6.5's shared breakout step: while the current node is not a MathML text integration point, an HTML integration point (by name alone, the encoding check being irrelevant once we are about to leave it), or an element in the HTML namespace, pop it.";
+  loop @walk {
+    let cur = current_entry(state: state);
+    match cur {
+      None() => {
+        break @walk;
+      }
+      Some(value: c) => {
+        let html = ns_is_html(namespace: c.namespace);
+        if html {
+          break @walk;
+        }
+        let mtip = is_mathml_text_integration_point(namespace: c.namespace, local_name: c.local_name);
+        if mtip {
+          break @walk;
+        }
+        let hip = is_html_integration_point(document: document, namespace: c.namespace, local_name: c.local_name, node: c.node);
+        if hip {
+          break @walk;
+        }
+        pop_open_if_any(state: state);
+      }
+    }
+  }
+  return unit;
+}

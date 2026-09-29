@@ -1,0 +1,597 @@
+const node_ceiling: u64 = 4294967295_u64;
+
+const text_ceiling: u64 = 4294967295_u64;
+
+const attribute_ceiling: u64 = 65536_u64;
+
+fn document_new(quirks: QuirksMode) -> made: Document pure {
+  doc "Places the DocumentRoot in a node window with room for 16 nodes and starts with empty text storage.";
+  let nodes = box_slots_new::<Node>(capacity: 16_u64);
+  let data = NodeData::DocumentRoot(quirks: quirks);
+  let links = unlinked();
+  let root = Node(data: move data, links: links);
+  place_back(window: &nodes.inner, value: move root);
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  return Document(nodes: move nodes, text: move text);
+}
+
+fn set_quirks_mode(document: &Document, quirks: QuirksMode) -> result: unit writes(document) {
+  doc "Node 0 is the DocumentRoot from document_new until the document is dropped, since no operation removes or replaces a node; its slot is replaced whole, keeping its links.";
+  let count = document^.nodes.inner.len;
+  let has_root = count > 0_u64;
+  if has_root {
+    let links = document^.nodes.inner[0_u64].links;
+    let data = NodeData::DocumentRoot(quirks: quirks);
+    let root = Node(data: move data, links: links);
+    set document^.nodes.inner[0_u64] = move root;
+  }
+  return unit;
+}
+
+fn store_text(document: &Document, text: &[u8]) -> result: Result<TextSpan, DomError> reads(text), writes(document) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Refuses text that would take the storage past text_ceiling, the largest end a span can hold, and otherwise appends it.";
+  let length = document^.text.inner.len;
+  let size = text^.len;
+  let room = text_ceiling - size;
+  if length > room {
+    let refused = DomError::TooLarge();
+    return Err<TextSpan, DomError>(error: refused);
+  }
+  let end = length + size;
+  reserve(text: &document^.text, end: end);
+  append_bytes(storage: &document^.text, bytes: text);
+  let start_offset = cvt::<u64, u32>(length);
+  let end_offset = cvt::<u64, u32>(end);
+  let span = TextSpan(start: start_offset, end: end_offset);
+  return Ok<TextSpan, DomError>(value: span);
+}
+
+fn create_node(document: &Document, data: NodeData) -> result: Result<NodeId, DomError> writes(document) {
+  doc "Refuses a node past node_ceiling and an Element whose template_contents names no node, then appends the node with no links.";
+  let count = document^.nodes.inner.len;
+  if count >= node_ceiling {
+    let refused = DomError::TooLarge();
+    return Err<NodeId, DomError>(error: refused);
+  }
+  let contents = template_of(data: &data);
+  match contents {
+    Some(value: fragment) => {
+      let known = propagate slot(document: document, node: fragment);
+    }
+    None() => {
+    }
+  }
+  let links = unlinked();
+  let node = Node(data: move data, links: links);
+  push_node(nodes: &document^.nodes, node: move node);
+  let index = cvt::<u64, u32>(count);
+  let made = NodeId(index: index);
+  return Ok<NodeId, DomError>(value: made);
+}
+
+fn append_child(document: &Document, parent: NodeId, child: NodeId) -> result: Result<unit, DomError> writes(document) {
+  doc "Checks both identifiers and refuses a cycle with refuse_cycle before any change, then detaches child and links it after parent's last child.";
+  let parent_links = propagate node_links(document: document, node: parent);
+  let child_links = propagate node_links(document: document, node: child);
+  let acyclic = propagate refuse_cycle(document: document, parent: parent, child: child);
+  let detached = propagate unlink(document: document, node: child);
+  let current = propagate node_links(document: document, node: parent);
+  let previous = current.last_child;
+  let placed = Some<NodeId>(value: child);
+  match previous {
+    Some(value: tail) => {
+      let tail_links = propagate node_links(document: document, node: tail);
+      set tail_links.next_sibling = placed;
+      let tail_set = propagate set_links(document: document, node: tail, links: tail_links);
+    }
+    None() => {
+      set current.first_child = placed;
+    }
+  }
+  set current.last_child = placed;
+  let parent_set = propagate set_links(document: document, node: parent, links: current);
+  let moved = propagate node_links(document: document, node: child);
+  set moved.parent = Some<NodeId>(value: parent);
+  set moved.previous_sibling = previous;
+  set moved.next_sibling = None<NodeId>();
+  let child_set = propagate set_links(document: document, node: child, links: moved);
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn insert_before(document: &Document, parent: NodeId, child: NodeId, reference: NodeId) -> result: Result<unit, DomError> writes(document) {
+  doc "Checks the identifiers, that reference is a child of parent and that child is not parent or an ancestor of it before any change. Inserting a node before itself leaves it where it is; otherwise child is detached and linked between reference and its previous sibling.";
+  let parent_links = propagate node_links(document: document, node: parent);
+  let child_links = propagate node_links(document: document, node: child);
+  let reference_links = propagate node_links(document: document, node: reference);
+  let under_parent = propagate child_of(links: reference_links, parent: parent);
+  let acyclic = propagate refuse_cycle(document: document, parent: parent, child: child);
+  if child.index == reference.index {
+    return Ok<unit, DomError>(value: unit);
+  }
+  let detached = propagate unlink(document: document, node: child);
+  let current = propagate node_links(document: document, node: reference);
+  let previous = current.previous_sibling;
+  let placed = Some<NodeId>(value: child);
+  match previous {
+    Some(value: before) => {
+      let before_links = propagate node_links(document: document, node: before);
+      set before_links.next_sibling = placed;
+      let before_set = propagate set_links(document: document, node: before, links: before_links);
+    }
+    None() => {
+      let head = propagate node_links(document: document, node: parent);
+      set head.first_child = placed;
+      let head_set = propagate set_links(document: document, node: parent, links: head);
+    }
+  }
+  set current.previous_sibling = placed;
+  let reference_set = propagate set_links(document: document, node: reference, links: current);
+  let moved = propagate node_links(document: document, node: child);
+  set moved.parent = Some<NodeId>(value: parent);
+  set moved.previous_sibling = previous;
+  set moved.next_sibling = Some<NodeId>(value: reference);
+  let child_set = propagate set_links(document: document, node: child, links: moved);
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn detach(document: &Document, node: NodeId) -> result: Result<unit, DomError> writes(document) {
+  doc "Checks the identifier, then unlinks the node from its parent and siblings.";
+  let links = propagate node_links(document: document, node: node);
+  let detached = propagate unlink(document: document, node: node);
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn insert_text(document: &Document, parent: NodeId, before: Option<NodeId>, text: &[u8]) -> result: Result<unit, DomError> reads(text), writes(document) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Finds the node that would precede the insertion point: before's previous sibling, or parent's last child. A Text node there takes the text by merge_text. Otherwise the node count is checked before the text is stored, and a new Text node is inserted before before or appended to parent.";
+  let parent_links = propagate node_links(document: document, node: parent);
+  let preceding = match before {
+    Some(value: next) => {
+      let next_links = propagate node_links(document: document, node: next);
+      let under_parent = propagate child_of(links: next_links, parent: parent);
+      give next_links.previous_sibling;
+    }
+    None() => {
+      give parent_links.last_child;
+    }
+  }
+  match preceding {
+    Some(value: neighbor) => {
+      let index = propagate slot(document: document, node: neighbor);
+      let existing = text_span_of(data: &document^.nodes.inner[index].data);
+      match existing {
+        Some(value: span) => {
+          let merged = propagate merge_text(document: document, index: index, span: span, text: text);
+          return Ok<unit, DomError>(value: unit);
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  if document^.nodes.inner.len >= node_ceiling {
+    let refused = DomError::TooLarge();
+    return Err<unit, DomError>(error: refused);
+  }
+  let stored = propagate store_text(document: document, text: text);
+  let data = NodeData::Text(data: stored);
+  let made = propagate create_node(document: document, data: move data);
+  match before {
+    Some(value: next) => {
+      let inserted = propagate insert_before(document: document, parent: parent, child: made, reference: next);
+    }
+    None() => {
+      let appended = propagate append_child(document: document, parent: parent, child: made);
+    }
+  }
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn add_attribute(document: &Document, element: NodeId, attribute: Attribute) -> result: Result<unit, DomError> writes(document) {
+  doc "Checks the identifier and the node's kind, then hands the element's attributes to add_to.";
+  let index = propagate slot(document: document, node: element);
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Element(namespace: space, local_name: name, attributes: list, template_contents: contents) => {
+      let added = propagate add_to(cells: list, value: attribute);
+      return Ok<unit, DomError>(value: unit);
+    }
+    DocumentRoot(..) => {
+      let wrong = DomError::WrongKind();
+      return Err<unit, DomError>(error: wrong);
+    }
+    DocumentType(..) => {
+      let wrong = DomError::WrongKind();
+      return Err<unit, DomError>(error: wrong);
+    }
+    Text(..) => {
+      let wrong = DomError::WrongKind();
+      return Err<unit, DomError>(error: wrong);
+    }
+    Comment(..) => {
+      let wrong = DomError::WrongKind();
+      return Err<unit, DomError>(error: wrong);
+    }
+    Fragment() => {
+      let wrong = DomError::WrongKind();
+      return Err<unit, DomError>(error: wrong);
+    }
+  }
+}
+
+fn unlinked() -> links: Links pure {
+  doc "Returns links with no parent, children or siblings.";
+  let none = None<NodeId>();
+  return Links(parent: none, first_child: none, last_child: none, previous_sibling: none, next_sibling: none);
+}
+
+fn slot(document: &Document, node: NodeId) -> result: Result<u64, DomError> reads(document) contract {
+  ensures when Ok(value: index): index < document^.nodes.inner.len;
+} {
+  doc "Returns the node window index of node, or InvalidNode when it names no node.";
+  let index = cvt::<u32, u64>(node.index);
+  if index < document^.nodes.inner.len {
+    return Ok<u64, DomError>(value: index);
+  }
+  let invalid = DomError::InvalidNode();
+  return Err<u64, DomError>(error: invalid);
+}
+
+fn node_links(document: &Document, node: NodeId) -> result: Result<Links, DomError> reads(document) {
+  doc "Returns the links of node, or InvalidNode when it names no node.";
+  let index = propagate slot(document: document, node: node);
+  let links = document^.nodes.inner[index].links;
+  return Ok<Links, DomError>(value: links);
+}
+
+fn set_links(document: &Document, node: NodeId, links: Links) -> result: Result<unit, DomError> writes(document) {
+  doc "Replaces the links of node, or returns InvalidNode when it names no node.";
+  let index = propagate slot(document: document, node: node);
+  set document^.nodes.inner[index].links = links;
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn child_of(links: Links, parent: NodeId) -> result: Result<unit, DomError> pure {
+  doc "Returns InvalidNode unless links name parent as their parent.";
+  match links.parent {
+    Some(value: holder) => {
+      if holder.index == parent.index {
+        return Ok<unit, DomError>(value: unit);
+      }
+    }
+    None() => {
+    }
+  }
+  let invalid = DomError::InvalidNode();
+  return Err<unit, DomError>(error: invalid);
+}
+
+fn refuse_cycle(document: &Document, parent: NodeId, child: NodeId) -> result: Result<unit, DomError> reads(document) {
+  doc "Returns InvalidNode when child is parent or one of its ancestors, so that making child a child of parent would close a cycle. The arena's operations list every node that has a parent among that parent's children, so a child with no first child is the parent of no node and an ancestor of none: it closes a cycle only by being parent itself, which is checked in constant time. A freshly created node, which tree construction appends, takes that path. Otherwise the parent links are walked up from parent in a loop until they meet child or end. The walk takes at most one step per node; links that went on longer, which the arena's own operations never make, are refused as well.";
+  let child_links = propagate node_links(document: document, node: child);
+  match child_links.first_child {
+    Some(value: unused) => {
+    }
+    None() => {
+      if child.index == parent.index {
+        let itself = DomError::InvalidNode();
+        return Err<unit, DomError>(error: itself);
+      }
+      return Ok<unit, DomError>(value: unit);
+    }
+  }
+  let count = document^.nodes.inner.len;
+  let current = parent;
+  for (step in 0_u64..count) {
+    if current.index == child.index {
+      let invalid = DomError::InvalidNode();
+      return Err<unit, DomError>(error: invalid);
+    }
+    let links = propagate node_links(document: document, node: current);
+    match links.parent {
+      Some(value: above) => {
+        set current = above;
+      }
+      None() => {
+        return Ok<unit, DomError>(value: unit);
+      }
+    }
+  }
+  let invalid = DomError::InvalidNode();
+  return Err<unit, DomError>(error: invalid);
+}
+
+fn unlink(document: &Document, node: NodeId) -> result: Result<unit, DomError> writes(document) {
+  doc "Removes node from its parent's child list and clears its parent and sibling links; a node without a parent is unchanged. Every linked node is checked before the first change.";
+  let links = propagate node_links(document: document, node: node);
+  match links.parent {
+    Some(value: holder) => {
+      let holder_links = propagate node_links(document: document, node: holder);
+      let previous_checked = propagate check_link(document: document, link: links.previous_sibling);
+      let next_checked = propagate check_link(document: document, link: links.next_sibling);
+      match links.previous_sibling {
+        Some(value: before) => {
+          let before_links = propagate node_links(document: document, node: before);
+          set before_links.next_sibling = links.next_sibling;
+          let before_set = propagate set_links(document: document, node: before, links: before_links);
+        }
+        None() => {
+          set holder_links.first_child = links.next_sibling;
+        }
+      }
+      match links.next_sibling {
+        Some(value: after) => {
+          let after_links = propagate node_links(document: document, node: after);
+          set after_links.previous_sibling = links.previous_sibling;
+          let after_set = propagate set_links(document: document, node: after, links: after_links);
+        }
+        None() => {
+          set holder_links.last_child = links.previous_sibling;
+        }
+      }
+      let holder_set = propagate set_links(document: document, node: holder, links: holder_links);
+      let none = None<NodeId>();
+      set links.parent = none;
+      set links.previous_sibling = none;
+      set links.next_sibling = none;
+      let node_set = propagate set_links(document: document, node: node, links: links);
+      return Ok<unit, DomError>(value: unit);
+    }
+    None() => {
+      return Ok<unit, DomError>(value: unit);
+    }
+  }
+}
+
+fn check_link(document: &Document, link: Option<NodeId>) -> result: Result<unit, DomError> reads(document) {
+  doc "Returns InvalidNode when link names a node the document does not hold.";
+  match link {
+    Some(value: node) => {
+      let index = propagate slot(document: document, node: node);
+      return Ok<unit, DomError>(value: unit);
+    }
+    None() => {
+      return Ok<unit, DomError>(value: unit);
+    }
+  }
+}
+
+fn template_of(data: &NodeData) -> contents: Option<NodeId> reads(data) {
+  doc "Returns the template contents an Element names, and None for every other node.";
+  match data^ {
+    Element(namespace: space, local_name: name, attributes: list, template_contents: contents) => {
+      return contents^;
+    }
+    DocumentRoot(..) => {
+      return None<NodeId>();
+    }
+    DocumentType(..) => {
+      return None<NodeId>();
+    }
+    Text(..) => {
+      return None<NodeId>();
+    }
+    Comment(..) => {
+      return None<NodeId>();
+    }
+    Fragment() => {
+      return None<NodeId>();
+    }
+  }
+}
+
+fn text_span_of(data: &NodeData) -> span: Option<TextSpan> reads(data) {
+  doc "Returns the span of a Text node, and None for every other node.";
+  match data^ {
+    Text(data: span) => {
+      return Some<TextSpan>(value: span^);
+    }
+    DocumentRoot(..) => {
+      return None<TextSpan>();
+    }
+    DocumentType(..) => {
+      return None<TextSpan>();
+    }
+    Element(..) => {
+      return None<TextSpan>();
+    }
+    Comment(..) => {
+      return None<TextSpan>();
+    }
+    Fragment() => {
+      return None<TextSpan>();
+    }
+  }
+}
+
+fn merge_text(document: &Document, index: u64, span: TextSpan, text: &[u8]) -> result: Result<unit, DomError> reads(text), writes(document) contract {
+  requires index < document^.nodes.inner.len;
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Appends text to the Text node at index, whose span is span. When the span ends where the storage ends, text is appended in place and the span extended, which costs the length of text. Otherwise the node's bytes are first copied to the end of the storage and text appended after them, so a node's text stays contiguous and the old bytes stay behind unused; that costs the node's length once more, and leaves the node at the end so that the merges that follow append in place. Character insertion that keeps adding to the node it last added to, as tree construction does, therefore costs amortized time linear in the text it adds; alternating merges into two nodes would copy each of them every time. A span outside the storage, which only a caller breaking create_node's precondition makes, merges as empty text.";
+  let length = document^.text.inner.len;
+  let size = text^.len;
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let room = text_ceiling - size;
+  if length > room {
+    let refused = DomError::TooLarge();
+    return Err<unit, DomError>(error: refused);
+  }
+  let appended_end = length + size;
+  if start <= end {
+    if end <= length {
+      if end == length {
+        reserve(text: &document^.text, end: appended_end);
+        append_bytes(storage: &document^.text, bytes: text);
+        let kept_start = cvt::<u64, u32>(start);
+        let grown_end = cvt::<u64, u32>(appended_end);
+        let grown = TextSpan(start: kept_start, end: grown_end);
+        set document^.nodes.inner[index].data = NodeData::Text(data: grown);
+        return Ok<unit, DomError>(value: unit);
+      }
+      let kept = end - start;
+      let spare = text_ceiling - appended_end;
+      if kept > spare {
+        let refused = DomError::TooLarge();
+        return Err<unit, DomError>(error: refused);
+      }
+      let moved_end = appended_end + kept;
+      reserve(text: &document^.text, end: moved_end);
+      relocate(storage: &document^.text, start: start, end: end, bytes: text);
+      let moved_start = cvt::<u64, u32>(length);
+      let moved_last = cvt::<u64, u32>(moved_end);
+      let moved = TextSpan(start: moved_start, end: moved_last);
+      set document^.nodes.inner[index].data = NodeData::Text(data: moved);
+      return Ok<unit, DomError>(value: unit);
+    }
+  }
+  reserve(text: &document^.text, end: appended_end);
+  append_bytes(storage: &document^.text, bytes: text);
+  let fresh_start = cvt::<u64, u32>(length);
+  let fresh_end = cvt::<u64, u32>(appended_end);
+  let fresh = TextSpan(start: fresh_start, end: fresh_end);
+  set document^.nodes.inner[index].data = NodeData::Text(data: fresh);
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn relocate(storage: &Box<Slots<u8>>, start: u64, end: u64, bytes: &[u8]) -> result: unit reads(bytes), writes(storage) contract {
+  requires start <= end;
+  requires end <= storage^.inner.len;
+  requires storage^.inner.len + end - start + bytes^.len <= storage^.inner.cap;
+} {
+  doc "Copies the stored bytes from start to end to the end of storage, then appends bytes after them.";
+  let length = storage^.inner.len;
+  let size = bytes^.len;
+  for (
+    at in start..end,
+    invariant filled: storage^.inner.len == length + at - start,
+    invariant room: storage^.inner.cap >= length + end - start + size
+  ) {
+    let byte = storage^.inner[at];
+    invariant space: storage^.inner.len < storage^.inner.cap {
+      use filled;
+      use room;
+      use (at < end);
+    }
+    place_back(window: &storage^.inner, value: byte);
+  }
+  invariant copied: storage^.inner.len == length + end - start;
+  append_bytes(storage: storage, bytes: bytes);
+  return unit;
+}
+
+fn reserve(text: &Box<Slots<u8>>, end: u64) -> result: unit writes(text) contract {
+  requires end <= text_ceiling;
+  ensures text^.inner.cap >= end;
+  ensures text^.inner.len == entry(text)^.inner.len;
+} {
+  doc "Grows storage whose capacity is below end to twice its capacity, or to end when that is more, within text_ceiling.";
+  let capacity = text^.inner.cap;
+  if end <= capacity {
+    return unit;
+  }
+  let spare = text_ceiling - end;
+  if capacity > spare {
+    grow(cell: text, capacity: text_ceiling);
+    return unit;
+  }
+  let doubled = capacity + capacity;
+  if doubled > end {
+    grow(cell: text, capacity: doubled);
+    return unit;
+  }
+  grow(cell: text, capacity: end);
+  return unit;
+}
+
+fn append_bytes(storage: &Box<Slots<u8>>, bytes: &[u8]) -> result: unit reads(bytes), writes(storage) contract {
+  requires storage^.inner.len + bytes^.len <= storage^.inner.cap;
+} {
+  doc "Appends every byte of bytes to storage, which has room for them.";
+  let length = storage^.inner.len;
+  let size = bytes^.len;
+  for (
+    at in 0_u64..size,
+    invariant filled: storage^.inner.len == length + at,
+    invariant room: storage^.inner.cap >= length + size
+  ) {
+    place_back(window: &storage^.inner, value: bytes^[at]);
+  }
+  return unit;
+}
+
+fn push_node(nodes: &Box<Slots<Node>>, node: Node) -> result: unit writes(nodes) contract {
+  requires nodes^.inner.len < node_ceiling;
+} {
+  doc "Appends node, doubling a full window within node_ceiling.";
+  let length = nodes^.inner.len;
+  let capacity = nodes^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < node_ceiling;
+    invariant full: capacity <= length;
+    let room = node_ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow(cell: nodes, capacity: 1_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow(cell: nodes, capacity: doubled);
+      }
+    } else {
+      grow(cell: nodes, capacity: node_ceiling);
+    }
+  }
+  place_back(window: &nodes^.inner, value: move node);
+  return unit;
+}
+
+fn add_to(cells: &Box<Slots<Attribute>>, value: Attribute) -> result: Result<unit, DomError> writes(cells) {
+  doc "Scans cells for an attribute with the namespace and name of value, which leaves them unchanged; otherwise appends value within attribute_ceiling.";
+  let count = cells^.inner.len;
+  for (at in 0_u64..count) {
+    let existing = cells^.inner[at];
+    let same_space = eeq(existing.namespace, value.namespace);
+    let same_name = existing.name.index == value.name.index;
+    let same = band(same_space, same_name);
+    if same {
+      return Ok<unit, DomError>(value: unit);
+    }
+  }
+  if count >= attribute_ceiling {
+    let refused = DomError::TooLarge();
+    return Err<unit, DomError>(error: refused);
+  }
+  push_attribute(cells: cells, value: value);
+  return Ok<unit, DomError>(value: unit);
+}
+
+fn push_attribute(cells: &Box<Slots<Attribute>>, value: Attribute) -> result: unit writes(cells) contract {
+  requires cells^.inner.len < attribute_ceiling;
+} {
+  doc "Appends value, doubling a full window (an empty one takes four slots) within attribute_ceiling.";
+  let length = cells^.inner.len;
+  let capacity = cells^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < attribute_ceiling;
+    invariant full: capacity <= length;
+    let room = attribute_ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow(cell: cells, capacity: 4_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow(cell: cells, capacity: doubled);
+      }
+    } else {
+      grow(cell: cells, capacity: attribute_ceiling);
+    }
+  }
+  place_back(window: &cells^.inner, value: value);
+  return unit;
+}

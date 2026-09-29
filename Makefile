@@ -18,9 +18,10 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
-	oracle-data oracle-line-break oracle-css oracle-png oracle-png-speed
+	static-atoms dom-selftest \
+	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-selectors oracle-html-tokenizer oracle-html-tree oracle-png oracle-png-speed
 
-check: compiler renderer design-lint
+check: compiler renderer dom-selftest design-lint
 
 # Builds the pinned compiler with Whitefoot's own build target, which
 # leaves it at whitefoot/compiler/target/gate/whitefootc.
@@ -42,6 +43,21 @@ RENDERER_MODULES = $(shell sed -n 's/^\(pkg[a-z_:]*\):.*/\1/p' $(ROOT)/renderer/
 renderer: compiler
 	@cd $(ROOT)/renderer && for module in $(RENDERER_MODULES); do \
 		$(WHITEFOOTC) --graph modules.wfg --check-module $$module || exit 1; done
+
+# Regenerates pkg::base::static_atoms from its name list with the
+# static_atoms tool; the record is replaced only when the tool succeeds.
+static-atoms: $(BUILD)/static_atoms
+	@cd $(ROOT)/renderer && $< < tools/static_atoms/names.txt > $(BUILD)/static_atoms.wfm
+	@mv $(BUILD)/static_atoms.wfm $(ROOT)/renderer/base/static_atoms/module.wfm
+
+# Builds the document arena and atom self-test and runs it; it exits with 0
+# only when every check passes.
+dom-selftest: $(BUILD)/dom_selftest
+	@$<
+
+$(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
+	@mkdir -p $(BUILD)
+	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --entry $(notdir $@) -o $@
 
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
@@ -70,6 +86,18 @@ oracle-line-break: $(BUILD)/line_break_oracle
 
 oracle-css: $(BUILD)/css_syntax_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/oracle.py build/oracle/css/component_value_list.json $<
+
+oracle-html-tokenizer: $(BUILD)/html_tokenizer_oracle
+	@cd $(ROOT) && $(PY) -B tests/html/oracle.py build/oracle/html5lib $<
+
+oracle-html-tree: $(BUILD)/html_tree_oracle
+	@cd $(ROOT) && $(PY) -B tests/html/tree_oracle.py build/oracle/wpt-parsing $<
+
+oracle-css-rules: $(BUILD)/css_rules_oracle
+	@cd $(ROOT) && $(PY) -B tests/css/rules_oracle.py build/oracle/css $<
+
+oracle-css-selectors: $(BUILD)/css_selectors_oracle
+	@cd $(ROOT) && $(PY) -B tests/css/selectors_oracle.py build/oracle/wpt-nodes build/oracle/css $<
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite

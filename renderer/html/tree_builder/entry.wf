@@ -1,0 +1,196 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomSpan = pkg::base::atom::AtomSpan;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Attribute = pkg::dom::Attribute;
+alias ContentState = pkg::html::tokenizer::ContentState;
+alias Document = pkg::dom::Document;
+alias Namespace = pkg::dom::Namespace;
+alias NodeData = pkg::dom::NodeData;
+alias NodeId = pkg::dom::NodeId;
+alias QuirksMode = pkg::dom::QuirksMode;
+alias Span = pkg::html::tokenizer::Span;
+alias Token = pkg::html::tokenizer::Token;
+alias TokenText = pkg::html::tokenizer::TokenText;
+alias Tokenizer = pkg::html::tokenizer::Tokenizer;
+alias create_node = pkg::dom::create_node;
+alias document_new = pkg::dom::document_new;
+alias next_token = pkg::html::tokenizer::next_token;
+alias token_text_new = pkg::html::tokenizer::token_text_new;
+alias tokenizer_new = pkg::html::tokenizer::tokenizer_new;
+alias tokenizer_set_cdata_allowed = pkg::html::tokenizer::tokenizer_set_cdata_allowed;
+
+fn drive_tree_construction(document: &Document, state: &State, atoms: &AtomTable, kw: &Keywords, content_state: ContentState, last_start_tag: &[u8], source: &[u8]) -> result: Result<unit, TreeError> reads(kw), reads(last_start_tag), reads(source), writes(document), writes(state), writes(atoms) contract {
+  requires last_start_tag^.len <= 1024_u64;
+  requires source^.len <= 1073741824_u64;
+} {
+  doc "Creates the tokenizer in content_state with last_start_tag, then drives it and the tree construction dispatcher over source to end of file.";
+  let tokenizer = tokenizer_new(state: content_state, last_start_tag: last_start_tag);
+  let tok_text = token_text_new();
+  loop @drive {
+    let cdata_ok = adjusted_current_node_is_foreign(state: state);
+    let set_cdata = tokenizer_set_cdata_allowed(tokenizer: &tokenizer, allowed: cdata_ok);
+    let token = next_token(tokenizer: &tokenizer, source: source, output: &tok_text);
+    let is_eof = token_is_eof(token: token);
+    let processed = propagate process_token(state: state, document: document, atoms: atoms, tokenizer: &tokenizer, kw: kw, tok_text: &tok_text, token: token);
+    if is_eof {
+      break @drive;
+    }
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn parse_document(source: &[u8], scripting: Bool, atoms: &AtomTable) -> result: Result<Document, TreeError> reads(source), writes(atoms) contract {
+  requires source^.len <= 1073741824_u64;
+} {
+  doc "Creates the Document (quirks mode starts as NoQuirks and is set for real by the \"initial\" insertion mode once it sees the DOCTYPE token or decides there is none), then drives the tokenizer and the tree construction dispatcher from \"initial\" through end of file.";
+  let starting_quirks = QuirksMode::NoQuirks();
+  let document = document_new(quirks: starting_quirks);
+  let kw = propagate keywords_new(atoms: atoms);
+  let no_ns = Namespace::Html();
+  let no_atom = Atom(index: 0_u32);
+  let not_fragment = False();
+  let state = state_new(scripting: scripting, is_fragment: not_fragment, fragment_namespace: no_ns, fragment_name: no_atom);
+  let data_state = ContentState::Data();
+  let empty_buf = box_slots_new::<u8>(capacity: 0_u64);
+  let empty_slice = &empty_buf.inner[0_u64..0_u64];
+  let done = propagate drive_tree_construction(document: &document, state: &state, atoms: atoms, kw: &kw, content_state: data_state, last_start_tag: empty_slice, source: source);
+  return Ok<Document, TreeError>(value: move document);
+}
+
+fn create_synthetic_root(document: &Document) -> result: Result<NodeId, TreeError> writes(document) {
+  doc "Creates the HTML fragment parsing algorithm's synthetic html root element, with no attributes; it is never itself attached to the Document, so its final children become the returned Document's own root children.";
+  let html_ns = Namespace::Html();
+  let html_atom = Atom(index: atom_html);
+  let no_contents = None<NodeId>();
+  let empty_attrs = box_slots_new::<Attribute>(capacity: 0_u64);
+  let root_data = NodeData::Element(namespace: html_ns, local_name: html_atom, attributes: move empty_attrs, template_contents: no_contents);
+  match create_node(document: document, data: move root_data) {
+    Ok(value: node) => {
+      return Ok<NodeId, TreeError>(value: node);
+    }
+    Err(error: problem) => {
+      let wrapped = to_tree_error(problem: problem);
+      return Err<NodeId, TreeError>(error: wrapped);
+    }
+  }
+}
+
+fn copy_bytes_owned(bytes: &[u8]) -> result: Result<Box<Slots<u8>>, TreeError> reads(bytes) contract {
+  requires bytes^.len <= 1073741824_u64;
+} {
+  doc "Copies bytes into a fresh owned buffer, so the copy no longer aliases whatever place bytes was borrowed from.";
+  let buf = box_slots_new::<u8>(capacity: 0_u64);
+  let len = bytes^.len;
+  let i = 0_u64;
+  loop @copy {
+    let more = i < len;
+    if more {
+    } else {
+      break @copy;
+    }
+    let b = bytes^[i];
+    let pushed = propagate push_generic::<u8>(cell: &buf, value: b, ceiling: 1073741824_u64);
+    set i = i +wrap 1_u64;
+  }
+  return Ok<Box<Slots<u8>>, TreeError>(value: move buf);
+}
+
+fn atom_text_range(atoms: &AtomTable, atom: Atom) -> (start: u64, end: u64) reads(atoms) contract {
+  ensures start <= end;
+  ensures end <= atoms^.text.inner.len;
+} {
+  doc "Returns the bounds-checked (start, end) u64 range of atom's text in atoms' own text storage, or (0, 0) when atom's index or span is out of range.";
+  let idx64 = cvt::<u32, u64>(atom.index);
+  let spans_len = atoms^.spans.inner.len;
+  let in_range = idx64 < spans_len;
+  if in_range {
+    let sp = atoms^.spans.inner[idx64];
+    let s = cvt::<u32, u64>(sp.start);
+    let e = cvt::<u32, u64>(sp.end);
+    let text_len = atoms^.text.inner.len;
+    let ok1 = s <= e;
+    let ok2 = e <= text_len;
+    let ok = band(ok1, ok2);
+    if ok {
+      return s, e;
+    }
+  }
+  return 0_u64, 0_u64;
+}
+
+fn fragment_content_state(context_namespace: Namespace, context_name: Atom, kw: &Keywords, scripting: Bool) -> result: ContentState reads(kw) {
+  doc "13.5's step that switches the tokenizer to the content model state matching the fragment context element, before parsing its source: RCDATA for title/textarea, RAWTEXT for style/xmp/iframe/noembed/noframes (and noscript when scripting is enabled), script data for script, PLAINTEXT for plaintext, and data otherwise or for any non-HTML context.";
+  let html = ns_is_html(namespace: context_namespace);
+  if html {
+  } else {
+    let data = ContentState::Data();
+    return data;
+  }
+  let is_title = a_is(atom: context_name, id: atom_title);
+  let is_textarea = a_is(atom: context_name, id: atom_textarea);
+  let rcdata_hit = bor(is_title, is_textarea);
+  if rcdata_hit {
+    let rcdata = ContentState::Rcdata();
+    return rcdata;
+  }
+  let is_style = a_is(atom: context_name, id: atom_style);
+  let is_xmp = kw^.xmp.index == context_name.index;
+  let is_iframe = a_is(atom: context_name, id: atom_iframe);
+  let is_noembed = kw^.noembed.index == context_name.index;
+  let is_noframes = kw^.noframes.index == context_name.index;
+  let g1 = bor4(a: is_style, b: is_xmp, c: is_iframe, d: is_noembed);
+  let rawtext_hit1 = bor(g1, is_noframes);
+  if rawtext_hit1 {
+    let rawtext = ContentState::Rawtext();
+    return rawtext;
+  }
+  let is_script = a_is(atom: context_name, id: atom_script);
+  if is_script {
+    let script_data = ContentState::ScriptData();
+    return script_data;
+  }
+  let is_noscript = a_is(atom: context_name, id: atom_noscript);
+  let noscript_raw = band(is_noscript, scripting);
+  if noscript_raw {
+    let rawtext2 = ContentState::Rawtext();
+    return rawtext2;
+  }
+  let is_plaintext = kw^.plaintext.index == context_name.index;
+  if is_plaintext {
+    let plain = ContentState::Plaintext();
+    return plain;
+  }
+  let data2 = ContentState::Data();
+  return data2;
+}
+
+fn parse_fragment(source: &[u8], context_namespace: Namespace, context_name: Atom, scripting: Bool, atoms: &AtomTable) -> result: Result<Document, TreeError> reads(source), writes(atoms) contract {
+  requires source^.len <= 1073741824_u64;
+} {
+  doc "Parses source under the HTML fragment parsing algorithm: creates a synthetic html root, primes the tokenizer's content model state from the context element, resets the insertion mode from the context alone, drives tree construction to end of file, and moves the synthetic root's final children onto the Document's own root.";
+  let no_quirks = QuirksMode::NoQuirks();
+  let document = document_new(quirks: no_quirks);
+  let html_node = propagate create_synthetic_root(document: &document);
+  let kw = propagate keywords_new(atoms: atoms);
+  let is_fragment_flag = True();
+  let state = state_new(scripting: scripting, is_fragment: is_fragment_flag, fragment_namespace: context_namespace, fragment_name: context_name);
+  let html_ns = Namespace::Html();
+  let html_atom = Atom(index: atom_html);
+  let root_entry = StackEntry(node: html_node, namespace: html_ns, local_name: html_atom);
+  let pushed = propagate push_open(state: &state, elem: root_entry);
+  let context_is_html = ns_is_html(namespace: context_namespace);
+  let is_template_ctx_a = a_is(atom: context_name, id: atom_template);
+  let is_template_ctx = band(context_is_html, is_template_ctx_a);
+  if is_template_ctx {
+    let tmpl_mode = InsertionMode::InTemplate();
+    let pushed_t = propagate push_template_mode(state: &state, mode: tmpl_mode);
+  }
+  reset_insertion_mode(state: &state, kw: &kw);
+  let content_state = fragment_content_state(context_namespace: context_namespace, context_name: context_name, kw: &kw, scripting: scripting);
+  let empty_last = box_slots_new::<u8>(capacity: 0_u64);
+  let empty_last_slice = &empty_last.inner[0_u64..0_u64];
+  let done2 = propagate drive_tree_construction(document: &document, state: &state, atoms: atoms, kw: &kw, content_state: content_state, last_start_tag: empty_last_slice, source: source);
+  let root_target = NodeId(index: 0_u32);
+  let moved = propagate move_all_children(document: &document, from_node: html_node, to_node: root_target);
+  return Ok<Document, TreeError>(value: move document);
+}

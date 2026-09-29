@@ -1,0 +1,568 @@
+alias Atom = pkg::base::atom::Atom;
+alias Attribute = pkg::dom::Attribute;
+alias AttributeNamespace = pkg::dom::AttributeNamespace;
+alias Document = pkg::dom::Document;
+alias DomError = pkg::dom::DomError;
+alias Namespace = pkg::dom::Namespace;
+alias NodeData = pkg::dom::NodeData;
+alias NodeId = pkg::dom::NodeId;
+alias TextSpan = pkg::dom::TextSpan;
+alias append_child = pkg::dom::append_child;
+alias create_node = pkg::dom::create_node;
+alias detach = pkg::dom::detach;
+alias insert_before = pkg::dom::insert_before;
+alias insert_text = pkg::dom::insert_text;
+alias store_text = pkg::dom::store_text;
+
+struct Place {
+  parent: NodeId;
+  before: Option<NodeId>;
+}
+
+fn to_tree_error(problem: DomError) -> result: TreeError pure {
+  doc "Wraps a dom operation's refusal as a TreeError.";
+  let wrapped = TreeError::Dom(error: problem);
+  return wrapped;
+}
+
+fn element_template_contents(document: &Document, node: NodeId) -> found: Option<NodeId> reads(document) {
+  doc "Returns node's template_contents when node is a template Element, else None.";
+  let len = document^.nodes.inner.len;
+  let idx64 = cvt::<u32, u64>(node.index);
+  let ok = idx64 < len;
+  if ok {
+  } else {
+    return None<NodeId>();
+  }
+  match &document^.nodes.inner[idx64].data {
+    Element(namespace: ns, local_name: ln, attributes: attrs, template_contents: tc) => {
+      let out = tc^;
+      return out;
+    }
+    DocumentRoot(quirks: q) => {
+      return None<NodeId>();
+    }
+    DocumentType(name: n, public_id: p, system_id: s) => {
+      return None<NodeId>();
+    }
+    Text(data: d) => {
+      return None<NodeId>();
+    }
+    Comment(data: d) => {
+      return None<NodeId>();
+    }
+    Fragment() => {
+      return None<NodeId>();
+    }
+  }
+}
+
+fn node_parent(document: &Document, node: NodeId) -> found: Option<NodeId> reads(document) {
+  doc "Returns node's current parent, or None when node has no parent or names no node.";
+  let len = document^.nodes.inner.len;
+  let idx64 = cvt::<u32, u64>(node.index);
+  let ok = idx64 < len;
+  if ok {
+  } else {
+    return None<NodeId>();
+  }
+  let parent = document^.nodes.inner[idx64].links.parent;
+  return parent;
+}
+
+fn node_first_child(document: &Document, node: NodeId) -> found: Option<NodeId> reads(document) {
+  doc "Returns node's current first child, or None when it has none or node names no node.";
+  let len = document^.nodes.inner.len;
+  let idx64 = cvt::<u32, u64>(node.index);
+  let ok = idx64 < len;
+  if ok {
+  } else {
+    return None<NodeId>();
+  }
+  let child = document^.nodes.inner[idx64].links.first_child;
+  return child;
+}
+
+fn append_child_wrap(document: &Document, parent: NodeId, child: NodeId) -> result: Result<unit, TreeError> writes(document) {
+  doc "append_child, wrapping a refusal as TreeError.";
+  match append_child(document: document, parent: parent, child: child) {
+    Ok(value: ok) => {
+      return Ok<unit, TreeError>(value: unit);
+    }
+    Err(error: problem) => {
+      let wrapped = to_tree_error(problem: problem);
+      return Err<unit, TreeError>(error: wrapped);
+    }
+  }
+}
+
+fn detach_wrap(document: &Document, node: NodeId) -> result: Result<unit, TreeError> writes(document) {
+  doc "detach, wrapping a refusal as TreeError.";
+  match detach(document: document, node: node) {
+    Ok(value: ok) => {
+      return Ok<unit, TreeError>(value: unit);
+    }
+    Err(error: problem) => {
+      let wrapped = to_tree_error(problem: problem);
+      return Err<unit, TreeError>(error: wrapped);
+    }
+  }
+}
+
+fn move_all_children(document: &Document, from_node: NodeId, to_node: NodeId) -> result: Result<unit, TreeError> writes(document) {
+  doc "Takes every child of from_node, in order, and appends each to to_node.";
+  loop @walk {
+    let first = node_first_child(document: document, node: from_node);
+    match first {
+      None() => {
+        break @walk;
+      }
+      Some(value: child) => {
+        let moved = propagate append_child_wrap(document: document, parent: to_node, child: child);
+      }
+    }
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn is_html_or_svg_or_mathml_table_context(namespace: Namespace, local_name: Atom) -> result: Bool pure {
+  doc "Tells whether local_name in the HTML namespace is table, tbody, tfoot, thead, or tr: the elements foster parenting redirects around.";
+  let html = ns_is_html(namespace: namespace);
+  if html {
+  } else {
+    return False();
+  }
+  let a = a_is(atom: local_name, id: atom_table);
+  let b = a_is(atom: local_name, id: atom_tbody);
+  let c = a_is(atom: local_name, id: atom_tfoot);
+  let d = a_is(atom: local_name, id: atom_thead);
+  let e = a_is(atom: local_name, id: atom_tr);
+  let out = bor4(a: a, b: b, c: c, d: d);
+  let out2 = bor(out, e);
+  return out2;
+}
+
+fn appropriate_place(state: &State, document: &Document, override_target: Option<StackEntry>) -> result: Place reads(state), reads(document) {
+  doc "13.2.6.1: the appropriate place for inserting a node, given an optional override target.";
+  let target = match override_target {
+    Some(value: t) => {
+      give t;
+    }
+    None() => {
+      let cur = current_entry(state: state);
+      match cur {
+        Some(value: t2) => {
+          give t2;
+        }
+        None() => {
+          let root = NodeId(index: 0_u32);
+          let html_ns = Namespace::Html();
+          let html_name = Atom(index: atom_html);
+          let fallback = StackEntry(node: root, namespace: html_ns, local_name: html_name);
+          give fallback;
+        }
+      }
+    }
+  }
+  let foster = state^.foster_parenting;
+  let table_ctx = is_html_or_svg_or_mathml_table_context(namespace: target.namespace, local_name: target.local_name);
+  let do_foster = band(foster, table_ctx);
+  if do_foster {
+    let last = last_template_or_table(state: state);
+    match last {
+      None() => {
+        let len0 = open_len(state: state);
+        let has0 = len0 > 0_u64;
+        if has0 {
+          let first = open_at(state: state, index: 0_u64);
+          let no_ref = None<NodeId>();
+          let place = Place(parent: first.node, before: no_ref);
+          return place;
+        }
+        let no_ref0 = None<NodeId>();
+        let place0 = Place(parent: target.node, before: no_ref0);
+        return place0;
+      }
+      Some(value: found) => {
+        let is_template = a_is(atom: found.local_name, id: atom_template);
+        let html_found = ns_is_html(namespace: found.namespace);
+        let is_template_html = band(is_template, html_found);
+        if is_template_html {
+          let contents = element_template_contents(document: document, node: found.node);
+          match contents {
+            Some(value: tc) => {
+              let no_ref2 = None<NodeId>();
+              let place = Place(parent: tc, before: no_ref2);
+              return place;
+            }
+            None() => {
+              let no_ref3 = None<NodeId>();
+              let place = Place(parent: found.node, before: no_ref3);
+              return place;
+            }
+          }
+        }
+        let parent = node_parent(document: document, node: found.node);
+        match parent {
+          Some(value: p) => {
+            let ref_child = Some<NodeId>(value: found.node);
+            let place = Place(parent: p, before: ref_child);
+            return place;
+          }
+          None() => {
+            let above = element_above_in_stack(state: state, target: found.node);
+            match above {
+              Some(value: a) => {
+                let no_ref4 = None<NodeId>();
+                let place = Place(parent: a.node, before: no_ref4);
+                return place;
+              }
+              None() => {
+                let no_ref5 = None<NodeId>();
+                let place = Place(parent: found.node, before: no_ref5);
+                return place;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let is_template2 = a_is(atom: target.local_name, id: atom_template);
+  let html_target = ns_is_html(namespace: target.namespace);
+  let target_is_template = band(is_template2, html_target);
+  if target_is_template {
+    let contents2 = element_template_contents(document: document, node: target.node);
+    match contents2 {
+      Some(value: tc2) => {
+        let no_ref6 = None<NodeId>();
+        let place = Place(parent: tc2, before: no_ref6);
+        return place;
+      }
+      None() => {
+        let no_ref7 = None<NodeId>();
+        let place = Place(parent: target.node, before: no_ref7);
+        return place;
+      }
+    }
+  }
+  let no_ref8 = None<NodeId>();
+  let place = Place(parent: target.node, before: no_ref8);
+  return place;
+}
+
+fn last_template_or_table(state: &State) -> found: Option<StackEntry> reads(state) {
+  doc "Returns the last (closest to the current node) template or table element on the stack of open elements, or None.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    return None<StackEntry>();
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let next_idx = idx -wrap 1_u64;
+    invariant next_bound: next_idx < len;
+    let elem = open_at(state: state, index: next_idx);
+    let html = ns_is_html(namespace: elem.namespace);
+    if html {
+      let is_table = a_is(atom: elem.local_name, id: atom_table);
+      let is_template = a_is(atom: elem.local_name, id: atom_template);
+      let hit = bor(is_table, is_template);
+      if hit {
+        let made = Some<StackEntry>(value: elem);
+        return made;
+      }
+    }
+    set idx = next_idx;
+  }
+  return None<StackEntry>();
+}
+
+fn element_above_in_stack(state: &State, target: NodeId) -> found: Option<StackEntry> reads(state) {
+  doc "Returns the stack entry immediately above (topmost side) target's entry, or None when target is not found or is the topmost entry.";
+  let len = open_len(state: state);
+  let idx = 0_u64;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let elem = open_at(state: state, index: idx);
+    let hit = node_eq(left: elem.node, right: target);
+    if hit {
+      let has_above = idx > 0_u64;
+      if has_above {
+        let above_idx = idx -wrap 1_u64;
+        invariant above_bound: above_idx < len;
+        let above = open_at(state: state, index: above_idx);
+        let made = Some<StackEntry>(value: above);
+        return made;
+      }
+      return None<StackEntry>();
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return None<StackEntry>();
+}
+
+fn insert_comment_at(document: &Document, place: Place, data: &[u8]) -> result: Result<unit, TreeError> reads(data), writes(document) contract {
+  requires data^.len <= 1073741824_u64;
+} {
+  doc "Creates a Comment node holding data and inserts it at place.";
+  match store_text(document: document, text: data) {
+    Ok(value: span) => {
+      let comment_data = NodeData::Comment(data: span);
+      match create_node(document: document, data: move comment_data) {
+        Ok(value: node) => {
+          let placed = propagate insert_at_place(document: document, place: place, node: node);
+          return Ok<unit, TreeError>(value: unit);
+        }
+        Err(error: problem) => {
+          let wrapped = to_tree_error(problem: problem);
+          return Err<unit, TreeError>(error: wrapped);
+        }
+      }
+    }
+    Err(error: problem2) => {
+      let wrapped2 = to_tree_error(problem: problem2);
+      return Err<unit, TreeError>(error: wrapped2);
+    }
+  }
+}
+
+fn insert_at_place(document: &Document, place: Place, node: NodeId) -> result: Result<unit, TreeError> writes(document) {
+  doc "Inserts node into place.parent before place.before (or as the last child when None).";
+  match place.before {
+    Some(value: ref_child) => {
+      match insert_before(document: document, parent: place.parent, child: node, reference: ref_child) {
+        Ok(value: ok) => {
+          return Ok<unit, TreeError>(value: unit);
+        }
+        Err(error: problem) => {
+          let wrapped = to_tree_error(problem: problem);
+          return Err<unit, TreeError>(error: wrapped);
+        }
+      }
+    }
+    None() => {
+      match append_child(document: document, parent: place.parent, child: node) {
+        Ok(value: ok2) => {
+          return Ok<unit, TreeError>(value: unit);
+        }
+        Err(error: problem2) => {
+          let wrapped2 = to_tree_error(problem: problem2);
+          return Err<unit, TreeError>(error: wrapped2);
+        }
+      }
+    }
+  }
+}
+
+fn insert_character_at(document: &Document, place: Place, data: &[u8]) -> result: Result<unit, TreeError> reads(data), writes(document) contract {
+  requires data^.len <= 1073741824_u64;
+} {
+  doc "Inserts data as characters at place, merging into a preceding Text node as insert_text describes.";
+  match insert_text(document: document, parent: place.parent, before: place.before, text: data) {
+    Ok(value: ok) => {
+      return Ok<unit, TreeError>(value: unit);
+    }
+    Err(error: problem) => {
+      let wrapped = to_tree_error(problem: problem);
+      return Err<unit, TreeError>(error: wrapped);
+    }
+  }
+}
+
+fn insert_characters_current(state: &State, document: &Document, bytes: &[u8]) -> result: Result<unit, TreeError> reads(state), reads(bytes), writes(document) contract {
+  requires bytes^.len <= 1073741824_u64;
+} {
+  doc "Inserts bytes as characters at the appropriate place for inserting a node (no override target). A caller that already sliced away everything it needed to skip (e.g. a pre/listing/textarea element's ignored leading LF) may be left with zero bytes; per \"insert a character\", inserting nothing creates no node, so this is a no-op rather than an empty Text node.";
+  let empty = bytes^.len == 0_u64;
+  if empty {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let override_none = None<StackEntry>();
+  let place = appropriate_place(state: state, document: document, override_target: override_none);
+  let ins = propagate insert_character_at(document: document, place: place, data: bytes);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn insert_comment_current(state: &State, document: &Document, bytes: &[u8]) -> result: Result<unit, TreeError> reads(state), reads(bytes), writes(document) contract {
+  requires bytes^.len <= 1073741824_u64;
+} {
+  doc "Inserts a Comment node holding bytes at the appropriate place for inserting a node (no override target).";
+  let override_none = None<StackEntry>();
+  let place = appropriate_place(state: state, document: document, override_target: override_none);
+  let ins = propagate insert_comment_at(document: document, place: place, data: bytes);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+const fffd_utf8_0: u8 = 239_u8;
+
+const fffd_utf8_1: u8 = 191_u8;
+
+const fffd_utf8_2: u8 = 189_u8;
+
+fn insert_characters_replacing_nul(state: &State, document: &Document, bytes: &[u8]) -> result: Result<unit, TreeError> reads(state), reads(bytes), writes(document) contract {
+  requires bytes^.len <= 1073741824_u64;
+} {
+  doc "Inserts bytes as characters at the appropriate place, replacing each U+0000 NULL byte with U+FFFD, as foreign content and RAWTEXT-like contexts require.";
+  let len = bytes^.len;
+  let has_nul = False();
+  let i = 0_u64;
+  loop @scan {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let is_nul = b == 0_u8;
+    if is_nul {
+      set has_nul = True();
+      break @scan;
+    }
+    set i = i +wrap 1_u64;
+  }
+  if has_nul {
+  } else {
+    let ins = propagate insert_characters_current(state: state, document: document, bytes: bytes);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let buf = box_slots_new::<u8>(capacity: 0_u64);
+  let j = 0_u64;
+  loop @copy {
+    let more2 = j < len;
+    if more2 {
+    } else {
+      break @copy;
+    }
+    let b2 = bytes^[j];
+    let is_nul2 = b2 == 0_u8;
+    if is_nul2 {
+      let p0 = propagate push_generic::<u8>(cell: &buf, value: fffd_utf8_0, ceiling: 1073741824_u64);
+      let p1 = propagate push_generic::<u8>(cell: &buf, value: fffd_utf8_1, ceiling: 1073741824_u64);
+      let p2 = propagate push_generic::<u8>(cell: &buf, value: fffd_utf8_2, ceiling: 1073741824_u64);
+    } else {
+      let p3 = propagate push_generic::<u8>(cell: &buf, value: b2, ceiling: 1073741824_u64);
+    }
+    set j = j +wrap 1_u64;
+  }
+  let buf_len = buf.inner.len;
+  let buf_ok = buf_len <= 1073741824_u64;
+  if buf_ok {
+    let buf_ref = &buf.inner[0_u64..buf_len];
+    let ins2 = propagate insert_characters_current(state: state, document: document, bytes: buf_ref);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let too_large = TreeError::TooLarge();
+  return Err<unit, TreeError>(error: too_large);
+}
+
+fn insert_characters_dropping_nul(state: &State, document: &Document, bytes: &[u8]) -> result: Result<unit, TreeError> reads(state), reads(bytes), writes(document) contract {
+  requires bytes^.len <= 1073741824_u64;
+} {
+  doc "Inserts bytes as characters at the appropriate place, dropping each U+0000 NULL byte, as \"in select\" and \"in select in table\" require (NUL is a parse error there, and the token is ignored rather than replaced).";
+  let len = bytes^.len;
+  let has_nul = False();
+  let i = 0_u64;
+  loop @scan {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let is_nul = b == 0_u8;
+    if is_nul {
+      set has_nul = True();
+      break @scan;
+    }
+    set i = i +wrap 1_u64;
+  }
+  if has_nul {
+  } else {
+    let ins = propagate insert_characters_current(state: state, document: document, bytes: bytes);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let buf = box_slots_new::<u8>(capacity: 0_u64);
+  let j = 0_u64;
+  loop @copy {
+    let more2 = j < len;
+    if more2 {
+    } else {
+      break @copy;
+    }
+    let b2 = bytes^[j];
+    let is_nul2 = b2 == 0_u8;
+    if is_nul2 {
+    } else {
+      let p3 = propagate push_generic::<u8>(cell: &buf, value: b2, ceiling: 1073741824_u64);
+    }
+    set j = j +wrap 1_u64;
+  }
+  let buf_len = buf.inner.len;
+  let buf_empty = buf_len == 0_u64;
+  if buf_empty {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let buf_ok = buf_len <= 1073741824_u64;
+  if buf_ok {
+    let buf_ref = &buf.inner[0_u64..buf_len];
+    let ins2 = propagate insert_characters_current(state: state, document: document, bytes: buf_ref);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let too_large2 = TreeError::TooLarge();
+  return Err<unit, TreeError>(error: too_large2);
+}
+
+fn insert_characters_only_ws(state: &State, document: &Document, bytes: &[u8]) -> result: Result<unit, TreeError> reads(state), reads(bytes), writes(document) contract {
+  requires bytes^.len <= 1073741824_u64;
+} {
+  doc "Inserts only the HTML-whitespace bytes of bytes as characters at the appropriate place, dropping every other byte, as \"in frameset\" and \"after frameset\" require (a character token that isn't entirely whitespace has its non-whitespace bytes ignored, one character at a time, while any whitespace bytes among them are still inserted).";
+  let len = bytes^.len;
+  let all_ws = bytes_all_ws(bytes: bytes);
+  if all_ws {
+    let ins = propagate insert_characters_current(state: state, document: document, bytes: bytes);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let buf = box_slots_new::<u8>(capacity: 0_u64);
+  let j = 0_u64;
+  loop @copy {
+    let more2 = j < len;
+    if more2 {
+    } else {
+      break @copy;
+    }
+    let b2 = bytes^[j];
+    let keep = is_html_ws(byte: b2);
+    if keep {
+      let p3 = propagate push_generic::<u8>(cell: &buf, value: b2, ceiling: 1073741824_u64);
+    }
+    set j = j +wrap 1_u64;
+  }
+  let buf_len = buf.inner.len;
+  let buf_empty = buf_len == 0_u64;
+  if buf_empty {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let buf_ok = buf_len <= 1073741824_u64;
+  if buf_ok {
+    let buf_ref = &buf.inner[0_u64..buf_len];
+    let ins2 = propagate insert_characters_current(state: state, document: document, bytes: buf_ref);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let too_large3 = TreeError::TooLarge();
+  return Err<unit, TreeError>(error: too_large3);
+}

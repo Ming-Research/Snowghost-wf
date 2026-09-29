@@ -1,0 +1,1017 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias Namespace = pkg::dom::Namespace;
+alias NodeId = pkg::dom::NodeId;
+alias TextSpan = pkg::dom::TextSpan;
+alias atom_a = pkg::base::static_atoms::atom_a;
+alias atom_area = pkg::base::static_atoms::atom_area;
+alias atom_button = pkg::base::static_atoms::atom_button;
+alias atom_checked = pkg::base::static_atoms::atom_checked;
+alias atom_class = pkg::base::static_atoms::atom_class;
+alias atom_disabled = pkg::base::static_atoms::atom_disabled;
+alias atom_fieldset = pkg::base::static_atoms::atom_fieldset;
+alias atom_href = pkg::base::static_atoms::atom_href;
+alias atom_id = pkg::base::static_atoms::atom_id;
+alias atom_input = pkg::base::static_atoms::atom_input;
+alias atom_lang = pkg::base::static_atoms::atom_lang;
+alias atom_optgroup = pkg::base::static_atoms::atom_optgroup;
+alias atom_option = pkg::base::static_atoms::atom_option;
+alias atom_select = pkg::base::static_atoms::atom_select;
+alias atom_selected = pkg::base::static_atoms::atom_selected;
+alias atom_textarea = pkg::base::static_atoms::atom_textarea;
+alias atom_type = pkg::base::static_atoms::atom_type;
+
+const kw_checkbox: Array<u8, 8> = "checkbox";
+
+const kw_radio: Array<u8, 5> = "radio";
+
+struct Frame {
+  compound_index: u32;
+  last_tried: NodeId;
+  kind: u8;
+}
+
+struct BacktrackState {
+  i: u32;
+  current: NodeId;
+}
+
+const result_restart_later_sibling: u8 = 0_u8;
+
+const result_restart_descendant: u8 = 1_u8;
+
+const result_not_matched_globally: u8 = 2_u8;
+
+fn atom_bounds(atoms: &AtomTable, atom: Atom) -> (start: u64, end: u64) reads(atoms) contract {
+  ensures start <= end;
+  ensures end <= atoms^.text.inner.len;
+} {
+  doc "The bounds-checked (start, end) range atom's text occupies in atoms.text; (0, 0) when atom is out of range or malformed.";
+  let index = cvt::<u32, u64>(atom.index);
+  let count = atoms^.spans.inner.len;
+  let within = index < count;
+  if within {
+  } else {
+    return 0_u64, 0_u64;
+  }
+  let span = atoms^.spans.inner[index];
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  if ordered {
+  } else {
+    return 0_u64, 0_u64;
+  }
+  let text_len = atoms^.text.inner.len;
+  let inside = end <= text_len;
+  if inside {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn span_bounds(document: &Document, span: TextSpan) -> (start: u64, end: u64) reads(document) contract {
+  ensures start <= end;
+  ensures end <= document^.text.inner.len;
+} {
+  doc "The bounds-checked (start, end) range span occupies in document.text; (0, 0) when span is out of range or malformed.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  if ordered {
+  } else {
+    return 0_u64, 0_u64;
+  }
+  let text_len = document^.text.inner.len;
+  let inside = end <= text_len;
+  if inside {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn ns_matches_element(constraint: NsConstraint) -> result: Bool pure {
+  doc "True when constraint admits an ordinary Element, which always has some namespace: AnyNs does, NoNs never does.";
+  match constraint {
+    AnyNs() => {
+      return True();
+    }
+    NoNs() => {
+      return False();
+    }
+  }
+}
+
+fn namespace_is_html(ns: Namespace) -> result: Bool pure {
+  doc "True when ns is the HTML namespace.";
+  match ns {
+    Html() => {
+      return True();
+    }
+    Svg() => {
+      return False();
+    }
+    MathMl() => {
+      return False();
+    }
+  }
+}
+
+fn resolve_case(case: ValueCase, default_ci: Bool) -> result: Bool pure {
+  doc "The effective case-insensitivity flag: the explicit i/s flag when given, else default_ci.";
+  match case {
+    CaseInsensitive() => {
+      return True();
+    }
+    CaseSensitive() => {
+      return False();
+    }
+    CaseDefault() => {
+      return default_ci;
+    }
+  }
+}
+
+fn apply_attr_op(op: AttrOp, hay: &[u8], needle: &[u8], ci: Bool) -> result: Bool reads(hay), reads(needle) {
+  doc "Applies op's comparison between an attribute's value hay and the selector's value needle.";
+  match op {
+    Equals() => {
+      let same = bytes_eq(hay: hay, needle: needle, ci: ci);
+      return same;
+    }
+    Includes() => {
+      let has = bytes_word_contains(hay: hay, needle: needle, ci: ci);
+      return has;
+    }
+    DashMatch() => {
+      let has = bytes_dash_match(hay: hay, needle: needle, ci: ci);
+      return has;
+    }
+    Prefix() => {
+      let has = bytes_prefix(hay: hay, needle: needle, ci: ci);
+      return has;
+    }
+    Suffix() => {
+      let has = bytes_suffix(hay: hay, needle: needle, ci: ci);
+      return has;
+    }
+    Substring() => {
+      let has = bytes_contains(hay: hay, needle: needle, ci: ci);
+      return has;
+    }
+  }
+}
+
+fn is_link_element(document: &Document, node: NodeId) -> result: Bool reads(document) {
+  doc "True when node is an a or area HTML element with an href attribute.";
+  match element_info(document: document, node: node) {
+    Some(value: info) => {
+      let is_html = namespace_is_html(ns: info.namespace);
+      if is_html {
+      } else {
+        return False();
+      }
+      let is_a = info.local_name.index == atom_a;
+      let is_area = info.local_name.index == atom_area;
+      let named = bor(is_a, is_area);
+      if named {
+      } else {
+        return False();
+      }
+      let href = Atom(index: atom_href);
+      let plain = NsConstraint::NoNs();
+      let html_flag = True();
+      match find_attribute(document: document, node: node, ns: plain, exact: href, lower: href, is_html: html_flag) {
+        Some(value: v) => {
+          return True();
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn is_disableable_type(info: ElemInfo) -> result: Bool pure {
+  doc "True when info's element type is one of the HTML form-associated elements that support the disabled attribute.";
+  let is_html = namespace_is_html(ns: info.namespace);
+  if is_html {
+  } else {
+    return False();
+  }
+  let idx = info.local_name.index;
+  let is_button = idx == atom_button;
+  let is_input = idx == atom_input;
+  let is_select = idx == atom_select;
+  let is_textarea = idx == atom_textarea;
+  let is_optgroup = idx == atom_optgroup;
+  let is_option = idx == atom_option;
+  let is_fieldset = idx == atom_fieldset;
+  let g1 = bor(is_button, is_input);
+  let g2 = bor(is_select, is_textarea);
+  let g3 = bor(is_optgroup, is_option);
+  let g4 = bor(g1, g2);
+  let g5 = bor(g3, is_fieldset);
+  let any = bor(g4, g5);
+  return any;
+}
+
+fn has_disabled_attribute(document: &Document, node: NodeId) -> result: Bool reads(document) {
+  doc "True when node has a disabled attribute in no namespace.";
+  let disabled = Atom(index: atom_disabled);
+  let plain = NsConstraint::NoNs();
+  let html_flag = True();
+  match find_attribute(document: document, node: node, ns: plain, exact: disabled, lower: disabled, is_html: html_flag) {
+    Some(value: v) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn is_enabled_element(document: &Document, node: NodeId) -> result: Bool reads(document) {
+  doc "True when node is a disableable HTML form-associated element without a disabled attribute.";
+  match element_info(document: document, node: node) {
+    Some(value: info) => {
+      let disableable = is_disableable_type(info: info);
+      if disableable {
+      } else {
+        return False();
+      }
+      let disabled = has_disabled_attribute(document: document, node: node);
+      let enabled = bnot(disabled);
+      return enabled;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn is_disabled_element(document: &Document, node: NodeId) -> result: Bool reads(document) {
+  doc "True when node is a disableable HTML form-associated element with a disabled attribute.";
+  match element_info(document: document, node: node) {
+    Some(value: info) => {
+      let disableable = is_disableable_type(info: info);
+      if disableable {
+      } else {
+        return False();
+      }
+      let disabled = has_disabled_attribute(document: document, node: node);
+      return disabled;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn is_checked_element(document: &Document, node: NodeId) -> result: Bool reads(document) {
+  doc "True when node is a checkbox or radio input with a checked attribute, or an option with a selected attribute.";
+  match element_info(document: document, node: node) {
+    Some(value: info) => {
+      let is_html = namespace_is_html(ns: info.namespace);
+      if is_html {
+      } else {
+        return False();
+      }
+      let is_input = info.local_name.index == atom_input;
+      if is_input {
+        let type_atom = Atom(index: atom_type);
+        let plain = NsConstraint::NoNs();
+        match find_attribute(document: document, node: node, ns: plain, exact: type_atom, lower: type_atom, is_html: is_html) {
+          Some(value: type_span) => {
+            let (tstart, tend) = span_bounds(document: document, span: type_span);
+            let type_bytes = &document^.text.inner[tstart..tend];
+            let flag_1 = True();
+            let is_checkbox = bytes_eq(hay: type_bytes, needle: &kw_checkbox[0_u64..kw_checkbox.len], ci: flag_1);
+            let flag_2 = True();
+            let is_radio = bytes_eq(hay: type_bytes, needle: &kw_radio[0_u64..kw_radio.len], ci: flag_2);
+            let kind_ok = bor(is_checkbox, is_radio);
+            if kind_ok {
+            } else {
+              return False();
+            }
+            let checked_atom = Atom(index: atom_checked);
+            match find_attribute(document: document, node: node, ns: plain, exact: checked_atom, lower: checked_atom, is_html: is_html) {
+              Some(value: cv) => {
+                return True();
+              }
+              None() => {
+                return False();
+              }
+            }
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+      let is_option = info.local_name.index == atom_option;
+      if is_option {
+        let selected = Atom(index: atom_selected);
+        let plain2 = NsConstraint::NoNs();
+        match find_attribute(document: document, node: node, ns: plain2, exact: selected, lower: selected, is_html: is_html) {
+          Some(value: sv) => {
+            return True();
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+      return False();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn lang_matches(document: &Document, atoms: &AtomTable, node: NodeId, arg: Atom) -> result: Bool reads(document), reads(atoms) {
+  doc "Walks node and its ancestors for the nearest lang attribute in no namespace, comparing its value to arg's ASCII case-insensitively, equal or beginning with it followed by a hyphen; False when none is found.";
+  let count = document^.nodes.inner.len;
+  let cursor = node;
+  let lang = Atom(index: atom_lang);
+  let plain = NsConstraint::NoNs();
+  for (step in 0_u64..count) {
+    let is_elem = is_element_node(document: document, node: cursor);
+    if is_elem {
+      let html_flag = True();
+      match find_attribute(document: document, node: cursor, ns: plain, exact: lang, lower: lang, is_html: html_flag) {
+        Some(value: value_span) => {
+          let (vstart, vend) = span_bounds(document: document, span: value_span);
+          let value_bytes = &document^.text.inner[vstart..vend];
+          let (astart, aend) = atom_bounds(atoms: atoms, atom: arg);
+          let arg_bytes = &atoms^.text.inner[astart..aend];
+          let flag_3 = True();
+          let exact_eq = bytes_eq(hay: value_bytes, needle: arg_bytes, ci: flag_3);
+          if exact_eq {
+            return True();
+          }
+          let flag_4 = True();
+          let starts = bytes_prefix(hay: value_bytes, needle: arg_bytes, ci: flag_4);
+          if starts {
+            let arg_len = aend -wrap astart;
+            let value_len = vend -wrap vstart;
+            let longer = value_len > arg_len;
+            if longer {
+              let dash_at = vstart +wrap arg_len;
+              let within = dash_at < document^.text.inner.len;
+              if within {
+                let dash_byte = document^.text.inner[dash_at];
+                let is_dash = dash_byte == 45_u8;
+                if is_dash {
+                  return True();
+                }
+              }
+            }
+          }
+          return False();
+        }
+        None() => {
+        }
+      }
+    }
+    match parent_of(document: document, node: cursor) {
+      Some(value: p) => {
+        set cursor = p;
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  return False();
+}
+
+fn sentinel_of_start(of_start: u32) -> result: Bool pure {
+  doc "True when of_start is the no-of-clause sentinel.";
+  let none_clause = of_start == no_of_clause;
+  return none_clause;
+}
+
+fn nth_child_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, node: NodeId, a: i32, b: i32, of_start: u32, of_end: u32, from_end: Bool, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "The formula test for :nth-child/:nth-last-child, with or without an of-clause.";
+  let no_of = sentinel_of_start(of_start: of_start);
+  let has_of = bnot(no_of);
+  let dummy_ns = Namespace::Html();
+  let dummy_name = Atom(index: 0_u32);
+  let flag_5 = False();
+  let scan = nth_scan(document: document, atoms: atoms, list: list, node: node, same_type: flag_5, target_ns: dummy_ns, target_name: dummy_name, has_of: has_of, of_alt_start: of_start, of_alt_end: of_end, context: context);
+  if scan.found {
+  } else {
+    return False();
+  }
+  let position = if from_end {
+    let rev = scan.total -wrap scan.position;
+    let rev1 = rev +wrap 1_u64;
+    give rev1;
+  } else {
+    give scan.position;
+  }
+  let matched = anb_matches(a: a, b: b, position: position);
+  return matched;
+}
+
+fn nth_of_type_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, node: NodeId, a: i32, b: i32, from_end: Bool, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "The formula test for :nth-of-type/:nth-last-of-type.";
+  match element_info(document: document, node: node) {
+    Some(value: info) => {
+      let flag_6 = True();
+      let flag_7 = False();
+      let scan = nth_scan(document: document, atoms: atoms, list: list, node: node, same_type: flag_6, target_ns: info.namespace, target_name: info.local_name, has_of: flag_7, of_alt_start: no_of_clause, of_alt_end: no_of_clause, context: context);
+      if scan.found {
+      } else {
+        return False();
+      }
+      let position = if from_end {
+        let rev = scan.total -wrap scan.position;
+        let rev1 = rev +wrap 1_u64;
+        give rev1;
+      } else {
+        give scan.position;
+      }
+      let matched = anb_matches(a: a, b: b, position: position);
+      return matched;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn of_type_edge_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, node: NodeId, want_first: Bool, want_only: Bool, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "Tests :first-of-type, :last-of-type or :only-of-type on node, selected by want_first and want_only.";
+  match element_info(document: document, node: node) {
+    Some(value: info) => {
+      let flag_8 = True();
+      let flag_9 = False();
+      let scan = nth_scan(document: document, atoms: atoms, list: list, node: node, same_type: flag_8, target_ns: info.namespace, target_name: info.local_name, has_of: flag_9, of_alt_start: no_of_clause, of_alt_end: no_of_clause, context: context);
+      if scan.found {
+      } else {
+        return False();
+      }
+      if want_only {
+        let solo = scan.total == 1_u64;
+        return solo;
+      }
+      if want_first {
+        let at_start = scan.position == 1_u64;
+        return at_start;
+      }
+      let at_end = scan.position == scan.total;
+      return at_end;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn of_child_edge_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, node: NodeId, want_first: Bool, want_only: Bool, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "Tests :first-child, :last-child or :only-child on node, selected by want_first and want_only.";
+  let dummy_ns = Namespace::Html();
+  let dummy_name = Atom(index: 0_u32);
+  let flag_10 = False();
+  let flag_11 = False();
+  let scan = nth_scan(document: document, atoms: atoms, list: list, node: node, same_type: flag_10, target_ns: dummy_ns, target_name: dummy_name, has_of: flag_11, of_alt_start: no_of_clause, of_alt_end: no_of_clause, context: context);
+  if scan.found {
+  } else {
+    return False();
+  }
+  if want_only {
+    let solo = scan.total == 1_u64;
+    return solo;
+  }
+  if want_first {
+    let at_start = scan.position == 1_u64;
+    return at_start;
+  }
+  let at_end = scan.position == scan.total;
+  return at_end;
+}
+
+fn instr_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, instr: Instr, node: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "Tests one compiled simple selector against node.";
+  match instr {
+    Universal(ns: constraint) => {
+      let is_elem = is_element_node(document: document, node: node);
+      if is_elem {
+      } else {
+        return False();
+      }
+      let ok = ns_matches_element(constraint: constraint);
+      return ok;
+    }
+    Type(ns: constraint, exact: ex, lower: lo) => {
+      match element_info(document: document, node: node) {
+        Some(value: info) => {
+          let ns_ok = ns_matches_element(constraint: constraint);
+          if ns_ok {
+          } else {
+            return False();
+          }
+          let is_html = namespace_is_html(ns: info.namespace);
+          let want = if is_html {
+            give lo;
+          } else {
+            give ex;
+          }
+          let same = info.local_name.index == want.index;
+          return same;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    Id(exact: ex, lower: lo) => {
+      let id_name = Atom(index: atom_id);
+      let plain = NsConstraint::NoNs();
+      let html_flag = True();
+      match find_attribute(document: document, node: node, ns: plain, exact: id_name, lower: id_name, is_html: html_flag) {
+        Some(value: v) => {
+          let ci = is_quirks(document: document);
+          let (vstart, vend) = span_bounds(document: document, span: v);
+          let value_bytes = &document^.text.inner[vstart..vend];
+          let (astart, aend) = atom_bounds(atoms: atoms, atom: ex);
+          let needle_bytes = &atoms^.text.inner[astart..aend];
+          let same = bytes_eq(hay: value_bytes, needle: needle_bytes, ci: ci);
+          return same;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    Class(exact: ex, lower: lo) => {
+      let class_name = Atom(index: atom_class);
+      let plain = NsConstraint::NoNs();
+      let html_flag = True();
+      match find_attribute(document: document, node: node, ns: plain, exact: class_name, lower: class_name, is_html: html_flag) {
+        Some(value: v) => {
+          let ci = is_quirks(document: document);
+          let (vstart, vend) = span_bounds(document: document, span: v);
+          let value_bytes = &document^.text.inner[vstart..vend];
+          let (astart, aend) = atom_bounds(atoms: atoms, atom: ex);
+          let needle_bytes = &atoms^.text.inner[astart..aend];
+          let has = bytes_word_contains(hay: value_bytes, needle: needle_bytes, ci: ci);
+          return has;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    AttrPresence(ns: constraint, exact: ex, lower: lo) => {
+      match element_info(document: document, node: node) {
+        Some(value: info) => {
+          let is_html = namespace_is_html(ns: info.namespace);
+          match find_attribute(document: document, node: node, ns: constraint, exact: ex, lower: lo, is_html: is_html) {
+            Some(value: v) => {
+              return True();
+            }
+            None() => {
+              return False();
+            }
+          }
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    AttrMatch(ns: constraint, exact: ex, lower: lo, op: match_op, value_exact: vex, value_lower: vlo, case: value_case, default_ci: default_ci_flag) => {
+      match element_info(document: document, node: node) {
+        Some(value: info) => {
+          let is_html = namespace_is_html(ns: info.namespace);
+          match find_attribute(document: document, node: node, ns: constraint, exact: ex, lower: lo, is_html: is_html) {
+            Some(value: v) => {
+              let ci = resolve_case(case: value_case, default_ci: default_ci_flag);
+              let (vstart, vend) = span_bounds(document: document, span: v);
+              let hay = &document^.text.inner[vstart..vend];
+              let (nstart, nend) = atom_bounds(atoms: atoms, atom: vex);
+              let needle = &atoms^.text.inner[nstart..nend];
+              let matched = apply_attr_op(op: match_op, hay: hay, needle: needle, ci: ci);
+              return matched;
+            }
+            None() => {
+              return False();
+            }
+          }
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    Root() => {
+      let root = is_root_element(document: document, node: node);
+      return root;
+    }
+    Empty() => {
+      let empty = is_empty_element(document: document, node: node);
+      return empty;
+    }
+    FirstChild() => {
+      let want_first = True();
+      let want_only = False();
+      let m = of_child_edge_matches(list: list, document: document, atoms: atoms, node: node, want_first: want_first, want_only: want_only, context: context);
+      return m;
+    }
+    LastChild() => {
+      let want_first = False();
+      let want_only = False();
+      let m = of_child_edge_matches(list: list, document: document, atoms: atoms, node: node, want_first: want_first, want_only: want_only, context: context);
+      return m;
+    }
+    OnlyChild() => {
+      let want_first = False();
+      let want_only = True();
+      let m = of_child_edge_matches(list: list, document: document, atoms: atoms, node: node, want_first: want_first, want_only: want_only, context: context);
+      return m;
+    }
+    FirstOfType() => {
+      let want_first = True();
+      let want_only = False();
+      let m = of_type_edge_matches(list: list, document: document, atoms: atoms, node: node, want_first: want_first, want_only: want_only, context: context);
+      return m;
+    }
+    LastOfType() => {
+      let want_first = False();
+      let want_only = False();
+      let m = of_type_edge_matches(list: list, document: document, atoms: atoms, node: node, want_first: want_first, want_only: want_only, context: context);
+      return m;
+    }
+    OnlyOfType() => {
+      let want_first = False();
+      let want_only = True();
+      let m = of_type_edge_matches(list: list, document: document, atoms: atoms, node: node, want_first: want_first, want_only: want_only, context: context);
+      return m;
+    }
+    NthChild(a: av, b: bv, of_start: of_start_v, of_end: of_end_v) => {
+      let from_end = False();
+      let m = nth_child_matches(list: list, document: document, atoms: atoms, node: node, a: av, b: bv, of_start: of_start_v, of_end: of_end_v, from_end: from_end, context: context);
+      return m;
+    }
+    NthLastChild(a: av, b: bv, of_start: of_start_v, of_end: of_end_v) => {
+      let from_end = True();
+      let m = nth_child_matches(list: list, document: document, atoms: atoms, node: node, a: av, b: bv, of_start: of_start_v, of_end: of_end_v, from_end: from_end, context: context);
+      return m;
+    }
+    NthOfType(a: av, b: bv) => {
+      let from_end = False();
+      let m = nth_of_type_matches(list: list, document: document, atoms: atoms, node: node, a: av, b: bv, from_end: from_end, context: context);
+      return m;
+    }
+    NthLastOfType(a: av, b: bv) => {
+      let from_end = True();
+      let m = nth_of_type_matches(list: list, document: document, atoms: atoms, node: node, a: av, b: bv, from_end: from_end, context: context);
+      return m;
+    }
+    Not(alt_start: as_v, alt_end: ae_v) => {
+      let inner = list_matches(list: list, document: document, atoms: atoms, alt_start: as_v, alt_end: ae_v, node: node, context: context);
+      let negated = bnot(inner);
+      return negated;
+    }
+    Is(alt_start: as_v, alt_end: ae_v) => {
+      let m = list_matches(list: list, document: document, atoms: atoms, alt_start: as_v, alt_end: ae_v, node: node, context: context);
+      return m;
+    }
+    Where(alt_start: as_v, alt_end: ae_v) => {
+      let m = list_matches(list: list, document: document, atoms: atoms, alt_start: as_v, alt_end: ae_v, node: node, context: context);
+      return m;
+    }
+    Link() => {
+      let m = is_link_element(document: document, node: node);
+      return m;
+    }
+    AnyLink() => {
+      let m = is_link_element(document: document, node: node);
+      return m;
+    }
+    Visited() => {
+      return False();
+    }
+    Checked() => {
+      let m = is_checked_element(document: document, node: node);
+      return m;
+    }
+    Enabled() => {
+      let m = is_enabled_element(document: document, node: node);
+      return m;
+    }
+    Disabled() => {
+      let m = is_disabled_element(document: document, node: node);
+      return m;
+    }
+    Lang(arg: arg_v) => {
+      let m = lang_matches(document: document, atoms: atoms, node: node, arg: arg_v);
+      return m;
+    }
+    Target() => {
+      match context.target {
+        Some(value: t) => {
+          let same = same_node(first: t, second: node);
+          return same;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    Scope() => {
+      match context.scope {
+        Some(value: s) => {
+          let same = same_node(first: s, second: node);
+          return same;
+        }
+        None() => {
+          let root = is_root_element(document: document, node: node);
+          return root;
+        }
+      }
+    }
+    Defined() => {
+      return True();
+    }
+    Hover() => {
+      return False();
+    }
+    Active() => {
+      return False();
+    }
+    Focus() => {
+      return False();
+    }
+    FocusWithin() => {
+      return False();
+    }
+    FocusVisible() => {
+      return False();
+    }
+  }
+}
+
+fn compound_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, compound: Compound, node: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "True when node satisfies every simple selector of compound. compound.simple_start/simple_end range over instr_order, not instrs directly: a pseudo-class function such as :not() recurses into a nested selector list that pushes its own Instr entries to the shared instrs before this compound's own step finishes, so this compound's own simple selectors are not a contiguous span of instrs and instr_order names exactly the ones that are.";
+  let start = cvt::<u32, u64>(compound.simple_start);
+  let end = cvt::<u32, u64>(compound.simple_end);
+  for (k in start..end) {
+    let order_in_bounds = k < list^.instr_order.inner.len;
+    if order_in_bounds {
+    } else {
+      return False();
+    }
+    let actual_k = list^.instr_order.inner[k];
+    let actual_k_wide = cvt::<u32, u64>(actual_k);
+    let in_bounds = actual_k_wide < list^.instrs.inner.len;
+    if in_bounds {
+    } else {
+      return False();
+    }
+    let instr = list^.instrs.inner[actual_k_wide];
+    let ok = instr_matches(list: list, document: document, atoms: atoms, instr: instr, node: node, context: context);
+    if ok {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn backtrack(document: &Document, stack: &Slots<Frame, 64>, failure: u8) -> result: Option<BacktrackState> reads(document), writes(stack) {
+  doc "Resolves failure (one of the result_* codes above, already folded for any child combinator crossed since the top frame) against stack, following the restart-result policy Servo's selectors crate uses in matches_complex_selector_internal: result_not_matched_globally ends the walk with None regardless of stack; otherwise, against the top frame, a descendant frame (kind 0) always tries its next ancestor, its own exhaustion (no ancestor left) being result_not_matched_globally, so an exhausted descendant frame also ends the walk with None; a subsequent-sibling frame (kind 1) tries its next previous sibling when failure is result_restart_later_sibling, and is otherwise abandoned without retrying, its own exhaustion under a retry also yielding result_restart_descendant, so an abandoned or exhausted subsequent-sibling frame alike is popped and the same result_restart_descendant carried to the frame below. Pushes an updated frame and returns the resume state for a step that retries; None when the stack empties without one.";
+  let result = failure;
+  loop @bt {
+    let is_global = result == result_not_matched_globally;
+    if is_global {
+      return None<BacktrackState>();
+    }
+    let empty = stack^.len == 0_u64;
+    if empty {
+      return None<BacktrackState>();
+    }
+    let frame = take_back(window: stack);
+    let is_descendant = frame.kind == 0_u8;
+    if is_descendant {
+      match parent_of(document: document, node: frame.last_tried) {
+        Some(value: p) => {
+          let room = stack^.len < stack^.cap;
+          if room {
+            let new_frame = Frame(compound_index: frame.compound_index, last_tried: p, kind: frame.kind);
+            place_back(window: stack, value: new_frame);
+            let state = BacktrackState(i: frame.compound_index, current: p);
+            return Some<BacktrackState>(value: state);
+          }
+          return None<BacktrackState>();
+        }
+        None() => {
+          return None<BacktrackState>();
+        }
+      }
+    } else {
+      let should_retry = result == result_restart_later_sibling;
+      if should_retry {
+        match previous_element_sibling(document: document, node: frame.last_tried) {
+          Some(value: p) => {
+            let room = stack^.len < stack^.cap;
+            if room {
+              let new_frame = Frame(compound_index: frame.compound_index, last_tried: p, kind: frame.kind);
+              place_back(window: stack, value: new_frame);
+              let state = BacktrackState(i: frame.compound_index, current: p);
+              return Some<BacktrackState>(value: state);
+            }
+            return None<BacktrackState>();
+          }
+          None() => {
+            set result = result_restart_descendant;
+          }
+        }
+      }
+    }
+  }
+  return None<BacktrackState>();
+}
+
+fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, comp_start: u32, comp_end: u32, target: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector. Compounds are stored in source (left-to-right, ancestor-to-descendant) order, so the walk starts at index comp_end - 1 (the rightmost, target-anchored compound) and decrements; each compound's own combinator field names the combinator connecting it to its predecessor in source order, which is exactly the step to take when moving from it toward comp_start. An explicit stack, sized to max_compounds_per_selector, holds one frame per unresolved descendant or subsequent-sibling combinator. A mismatched compound fails with result_restart_later_sibling, and a combinator with no candidate left fails with result_restart_descendant (the two sibling combinators) or result_not_matched_globally (child and descendant); crossed_child folds a child combinator crossed since the last frame into that result, since child has no frame of its own and its own failure is always result_restart_descendant, while a next-sibling combinator, also frameless, passes its inner result through unchanged. backtrack then resolves the (possibly folded) result against the stack: retrying the top frame, popping a subsequent-sibling frame that a result_restart_descendant does not retry, and stopping the walk on result_not_matched_globally. A candidate further along an axis sees a subset of the ancestors, or preceding siblings, of a nearer one, so a result_not_matched_globally at the nearer one is final and no compound is ever retested against elements an earlier failure already ruled out.";
+  let has_any = comp_start < comp_end;
+  if has_any {
+  } else {
+    return False();
+  }
+  let stack = slots_new::<Frame, 64>();
+  let last = comp_end -wrap 1_u32;
+  let i = last;
+  let current = target;
+  let crossed_child = False();
+  loop @search {
+    let i_wide = cvt::<u32, u64>(i);
+    let i_order_ok = i_wide < list^.compound_order.inner.len;
+    if i_order_ok {
+    } else {
+      return False();
+    }
+    let actual_i = list^.compound_order.inner[i_wide];
+    let actual_i_wide = cvt::<u32, u64>(actual_i);
+    let i_in_bounds = actual_i_wide < list^.compounds.inner.len;
+    if i_in_bounds {
+    } else {
+      return False();
+    }
+    let compound = list^.compounds.inner[actual_i_wide];
+    let ok = compound_matches(list: list, document: document, atoms: atoms, compound: compound, node: current, context: context);
+    if ok {
+      let at_start = i == comp_start;
+      if at_start {
+        return True();
+      }
+      let prev_i = i -wrap 1_u32;
+      match compound.combinator {
+        Start() => {
+          return False();
+        }
+        Child() => {
+          match parent_of(document: document, node: current) {
+            Some(value: p) => {
+              set i = prev_i;
+              set current = p;
+              set crossed_child = True();
+            }
+            None() => {
+              return False();
+            }
+          }
+        }
+        NextSibling() => {
+          match previous_element_sibling(document: document, node: current) {
+            Some(value: p) => {
+              set i = prev_i;
+              set current = p;
+            }
+            None() => {
+              match backtrack(document: document, stack: &stack, failure: result_restart_descendant) {
+                Some(value: st) => {
+                  set i = st.i;
+                  set current = st.current;
+                  set crossed_child = False();
+                }
+                None() => {
+                  return False();
+                }
+              }
+            }
+          }
+        }
+        Descendant() => {
+          match parent_of(document: document, node: current) {
+            Some(value: p) => {
+              let room = stack.len < stack.cap;
+              if room {
+                let frame = Frame(compound_index: prev_i, last_tried: p, kind: 0_u8);
+                place_back(window: &stack, value: frame);
+                set i = prev_i;
+                set current = p;
+                set crossed_child = False();
+              } else {
+                return False();
+              }
+            }
+            None() => {
+              return False();
+            }
+          }
+        }
+        SubsequentSibling() => {
+          match previous_element_sibling(document: document, node: current) {
+            Some(value: p) => {
+              let room = stack.len < stack.cap;
+              if room {
+                let frame = Frame(compound_index: prev_i, last_tried: p, kind: 1_u8);
+                place_back(window: &stack, value: frame);
+                set i = prev_i;
+                set current = p;
+                set crossed_child = False();
+              } else {
+                return False();
+              }
+            }
+            None() => {
+              match backtrack(document: document, stack: &stack, failure: result_restart_descendant) {
+                Some(value: st) => {
+                  set i = st.i;
+                  set current = st.current;
+                  set crossed_child = False();
+                }
+                None() => {
+                  return False();
+                }
+              }
+            }
+          }
+        }
+      }
+    } else {
+      let failure = if crossed_child {
+        give result_restart_descendant;
+      } else {
+        give result_restart_later_sibling;
+      }
+      match backtrack(document: document, stack: &stack, failure: failure) {
+        Some(value: st) => {
+          set i = st.i;
+          set current = st.current;
+          set crossed_child = False();
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn list_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, alt_start: u32, alt_end: u32, node: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "True when node matches some complex selector of the alternatives [alt_start, alt_end); a never_matches alternative (one ending in a pseudo-element) never contributes.";
+  let start_wide = cvt::<u32, u64>(alt_start);
+  let end_wide = cvt::<u32, u64>(alt_end);
+  for (i in start_wide..end_wide) {
+    let order_in_bounds = i < list^.alt_order.inner.len;
+    if order_in_bounds {
+    } else {
+      return False();
+    }
+    let actual_i = list^.alt_order.inner[i];
+    let actual_i_wide = cvt::<u32, u64>(actual_i);
+    let in_bounds = actual_i_wide < list^.alts.inner.len;
+    if in_bounds {
+    } else {
+      return False();
+    }
+    let alt = list^.alts.inner[actual_i_wide];
+    if alt.never_matches {
+    } else {
+      let m = match_complex(list: list, document: document, atoms: atoms, comp_start: alt.compound_start, comp_end: alt.compound_end, target: node, context: context);
+      if m {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn selector_matches(list: &SelectorList, document: &Document, atoms: &AtomTable, element: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms) {
+  doc "True when element matches some complex selector of list.";
+  let m = list_matches(list: list, document: document, atoms: atoms, alt_start: list^.top_start, alt_end: list^.top_end, node: element, context: context);
+  return m;
+}
