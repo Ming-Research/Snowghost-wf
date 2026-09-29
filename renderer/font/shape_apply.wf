@@ -1,0 +1,1115 @@
+struct Context {
+  doc "HarfBuzz's apply context for one table: whether it is GPOS, the mask, lookup properties (the lookup flags with the mark filtering set in the high 16 bits) and joiner handling of the lookup applying, the nesting levels left, and the last base MarkBasePos and MarkLigPos found (no_index for none) with the index it was found from.";
+  positioning: Bool;
+  lookup_mask: u8;
+  lookup_props: u32;
+  auto_zwnj: Bool;
+  auto_zwj: Bool;
+  nesting: u32;
+  last_base: u64;
+  last_base_until: u64;
+}
+
+enum MatchKind {
+  doc "What a sequence's values are matched against: nothing (every glyph the iterator does not skip matches), glyphs, classes of a class definition, or coverages.";
+  Nothing();
+  Glyphs();
+  Classes();
+  Coverages();
+}
+
+struct Sequence {
+  doc "A sequence of values to match: count values from start in LayoutTable's glyphs, classes or coverage_sequences as kind selects, classes being the class definition class values refer to.";
+  kind: MatchKind;
+  start: u64;
+  count: u64;
+  classes: u32;
+}
+
+const not_covered: u32 = 4294967295_u32;
+
+const verdict_match: u8 = 0_u8;
+
+const verdict_mismatch: u8 = 1_u8;
+
+const verdict_skip: u8 = 2_u8;
+
+const skip_no: u8 = 0_u8;
+
+const skip_yes: u8 = 1_u8;
+
+const skip_maybe: u8 = 2_u8;
+
+const lookup_ignore_flags: u32 = 14_u32;
+
+const lookup_ignore_marks: u32 = 8_u32;
+
+const lookup_filtering: u32 = 16_u32;
+
+const lookup_attachment_type: u32 = 65280_u32;
+
+const max_context: u64 = 64_u64;
+
+const max_nesting: u32 = 64_u32;
+
+fn find_coverage(layout: &LayoutTable, glyph: u32, low: u64, high: u64) -> result: u32 reads(layout) contract {
+  requires low <= high;
+  requires high <= layout^.coverage_ranges.inner.len;
+} {
+  doc "Binary-searches the coverage ranges from low up to high, sorted and disjoint, for glyph; its coverage index, or not_covered.";
+  if low >= high {
+    return not_covered;
+  }
+  let span = high - low;
+  let less = span - 1_u64;
+  let half = less / 2_u64;
+  let middle = low + half;
+  let range = layout^.coverage_ranges.inner[middle];
+  let first = cvt::<u16, u32>(range.first);
+  let last = cvt::<u16, u32>(range.last);
+  if glyph < first {
+    return musttail find_coverage(layout: layout, glyph: glyph, low: low, high: middle);
+  }
+  if glyph > last {
+    let next = middle + 1_u64;
+    return musttail find_coverage(layout: layout, glyph: glyph, low: next, high: high);
+  }
+  let distance = glyph - first;
+  let index = range.index +wrap distance;
+  return index;
+}
+
+fn glyph_coverage(layout: &LayoutTable, coverage: u32, glyph: u32) -> result: u32 reads(layout) {
+  doc "HarfBuzz's get_coverage: glyph's index in the compiled coverage coverage, or not_covered.";
+  let at = cvt::<u32, u64>(coverage);
+  if at < layout^.coverages.inner.len {
+  } else {
+    return not_covered;
+  }
+  let extent = layout^.coverages.inner[at];
+  let start = cvt::<u32, u64>(extent.start);
+  let size = cvt::<u32, u64>(extent.count);
+  let end = start + size;
+  if end <= layout^.coverage_ranges.inner.len {
+    let index = find_coverage(layout: layout, glyph: glyph, low: start, high: end);
+    return index;
+  }
+  return not_covered;
+}
+
+fn find_class(layout: &LayoutTable, glyph: u32, low: u64, high: u64) -> result: u32 reads(layout) contract {
+  requires low <= high;
+  requires high <= layout^.class_ranges.inner.len;
+} {
+  doc "Binary-searches the class ranges from low up to high, sorted and disjoint, for glyph; its class, 0 when none lists it.";
+  if low >= high {
+    return 0_u32;
+  }
+  let span = high - low;
+  let less = span - 1_u64;
+  let half = less / 2_u64;
+  let middle = low + half;
+  let range = layout^.class_ranges.inner[middle];
+  let first = cvt::<u16, u32>(range.first);
+  let last = cvt::<u16, u32>(range.last);
+  if glyph < first {
+    return musttail find_class(layout: layout, glyph: glyph, low: low, high: middle);
+  }
+  if glyph > last {
+    let next = middle + 1_u64;
+    return musttail find_class(layout: layout, glyph: glyph, low: next, high: high);
+  }
+  let class = cvt::<u16, u32>(range.class);
+  return class;
+}
+
+fn class_of(layout: &LayoutTable, classes: u32, glyph: u32) -> result: u32 reads(layout) {
+  doc "HarfBuzz's get_class: glyph's class in the compiled class definition classes, 0 when it lists no class for glyph.";
+  let at = cvt::<u32, u64>(classes);
+  if at < layout^.class_definitions.inner.len {
+  } else {
+    return 0_u32;
+  }
+  let extent = layout^.class_definitions.inner[at];
+  let start = cvt::<u32, u64>(extent.start);
+  let size = cvt::<u32, u64>(extent.count);
+  let end = start + size;
+  if end <= layout^.class_ranges.inner.len {
+    let class = find_class(layout: layout, glyph: glyph, low: start, high: end);
+    return class;
+  }
+  return 0_u32;
+}
+
+fn find_mark(face: &Face, glyph: u32, low: u64, high: u64) -> result: Bool reads(face) contract {
+  requires low <= high;
+  requires high <= face^.definitions.mark_glyph_ranges.inner.len;
+} {
+  doc "Binary-searches the mark glyph set ranges from low up to high for glyph.";
+  if low >= high {
+    return False();
+  }
+  let span = high - low;
+  let less = span - 1_u64;
+  let half = less / 2_u64;
+  let middle = low + half;
+  let range = face^.definitions.mark_glyph_ranges.inner[middle];
+  let first = cvt::<u16, u32>(range.first);
+  let last = cvt::<u16, u32>(range.last);
+  if glyph < first {
+    return musttail find_mark(face: face, glyph: glyph, low: low, high: middle);
+  }
+  if glyph > last {
+    let next = middle + 1_u64;
+    return musttail find_mark(face: face, glyph: glyph, low: next, high: high);
+  }
+  return True();
+}
+
+fn mark_set_covers(face: &Face, set_index: u32, glyph: u32) -> result: Bool reads(face) {
+  doc "HarfBuzz's mark_set_covers: whether mark glyph set set_index holds glyph.";
+  let at = cvt::<u32, u64>(set_index);
+  if at < face^.definitions.mark_glyph_sets.inner.len {
+  } else {
+    return False();
+  }
+  let extent = face^.definitions.mark_glyph_sets.inner[at];
+  let start = cvt::<u32, u64>(extent.start);
+  let size = cvt::<u32, u64>(extent.count);
+  let end = start + size;
+  if end <= face^.definitions.mark_glyph_ranges.inner.len {
+    let covered = find_mark(face: face, glyph: glyph, low: start, high: end);
+    return covered;
+  }
+  return False();
+}
+
+fn lookup_props_of(face: &Face, lookup: Lookup) -> result: u32 reads(face) {
+  doc "HarfBuzz's lookup get_props sanitized by the GDEF accelerator: the lookup flags, with the mark filtering set in the high 16 bits when the flags use one, and without the filtering bit when the set index names no mark glyph set.";
+  let flags = cvt::<u16, u32>(lookup.flags);
+  let filtering = iand(flags, lookup_filtering);
+  if filtering == 0_u32 {
+    return flags;
+  }
+  let set_index = cvt::<u16, u64>(lookup.mark_filtering_set);
+  let sets = face^.definitions.mark_glyph_sets.inner.len;
+  if set_index < sets {
+    let wide = cvt::<u16, u32>(lookup.mark_filtering_set);
+    let high = ishl.wrap(wide, 16_u32);
+    let props = ior(flags, high);
+    return props;
+  }
+  let cleared = inot(lookup_filtering);
+  let props = iand(flags, cleared);
+  return props;
+}
+
+fn glyph_allowed(face: &Face, item: Item, props: u32) -> result: Bool reads(face) {
+  doc "HarfBuzz's check_glyph_property: False when a flag of props ignores item's glyph class, and for a mark when props filters marks by a mark glyph set that lacks it or by a mark attachment type it does not have.";
+  let glyph_props = cvt::<u16, u32>(item.glyph_props);
+  let ignoring = iand(glyph_props, props);
+  let ignored = iand(ignoring, lookup_ignore_flags);
+  if ignored != 0_u32 {
+    return False();
+  }
+  let mark = has_glyph_bit(item: item, bit: glyph_mark);
+  if mark {
+  } else {
+    return True();
+  }
+  let filtering = iand(props, lookup_filtering);
+  if filtering != 0_u32 {
+    let set_index = ishr.wrap(props, 16_u32);
+    let covered = mark_set_covers(face: face, set_index: set_index, glyph: item.code);
+    return covered;
+  }
+  let wanted = iand(props, lookup_attachment_type);
+  if wanted != 0_u32 {
+    let own = iand(glyph_props, lookup_attachment_type);
+    let same = wanted == own;
+    return same;
+  }
+  return True();
+}
+
+fn skip_verdict(face: &Face, ctx: &Context, item: Item, props: u32, context_match: Bool) -> result: u8 reads(face), reads(ctx) {
+  doc "HarfBuzz's may_skip: skip_yes when props exclude item, skip_maybe for a default ignorable the iterator may pass over (ZWNJ unless ignored, ZWJ unless ignored and a hidden character unless positioning are not), and skip_no otherwise. Context matching ignores ZWJ, and ZWNJ when the lookup does; positioning ignores both and hidden characters.";
+  let allowed = glyph_allowed(face: face, item: item, props: props);
+  if allowed {
+  } else {
+    return skip_yes;
+  }
+  let ignorable = default_ignorable(item: item);
+  if ignorable {
+  } else {
+    return skip_no;
+  }
+  let positioning = ctx^.positioning;
+  let context_zwnj = band(context_match, ctx^.auto_zwnj);
+  let ignore_zwnj = bor(positioning, context_zwnj);
+  let ignore_zwj = bor(context_match, ctx^.auto_zwj);
+  let zwnj = format_bit(item: item, bit: unicode_zwnj);
+  let zwj = format_bit(item: item, bit: unicode_zwj);
+  let hidden = has_unicode_bit(item: item, bit: unicode_hidden);
+  let not_zwnj = bnot(zwnj);
+  let not_zwj = bnot(zwj);
+  let not_hidden = bnot(hidden);
+  let zwnj_passes = bor(ignore_zwnj, not_zwnj);
+  let zwj_passes = bor(ignore_zwj, not_zwj);
+  let hidden_passes = bor(positioning, not_hidden);
+  let joiners = band(zwnj_passes, zwj_passes);
+  let all = band(joiners, hidden_passes);
+  if all {
+    return skip_maybe;
+  }
+  return skip_no;
+}
+
+fn sequence_value(layout: &LayoutTable, sequence: Sequence, position: u64) -> result: u32 reads(layout) {
+  doc "The value at position of sequence, 0 past its end.";
+  if position >= sequence.count {
+    return 0_u32;
+  }
+  let at = sequence.start +wrap position;
+  match sequence.kind {
+    Nothing() => {
+      return 0_u32;
+    }
+    Glyphs() => {
+      if at < layout^.glyphs.inner.len {
+        let glyph = layout^.glyphs.inner[at];
+        let wide = cvt::<u16, u32>(glyph);
+        return wide;
+      }
+      return 0_u32;
+    }
+    Classes() => {
+      if at < layout^.classes.inner.len {
+        let class = layout^.classes.inner[at];
+        let wide = cvt::<u16, u32>(class);
+        return wide;
+      }
+      return 0_u32;
+    }
+    Coverages() => {
+      if at < layout^.coverage_sequences.inner.len {
+        let coverage = layout^.coverage_sequences.inner[at];
+        return coverage;
+      }
+      return not_covered;
+    }
+  }
+}
+
+fn match_verdict(layout: &LayoutTable, face: &Face, ctx: &Context, item: Item, props: u32, context_match: Bool, sequence: Sequence, value: u32) -> result: u8 reads(layout), reads(face), reads(ctx) {
+  doc "HarfBuzz's skipping-iterator match: verdict_skip for an item the iterator passes over, verdict_match when the item matches value (a masked-in item that is not skippable matches a sequence of kind Nothing), and verdict_mismatch when an item that cannot be skipped does not match. The mask is the lookup's for input matching and every bit for context matching.";
+  let skip = skip_verdict(face: face, ctx: ctx, item: item, props: props, context_match: context_match);
+  if skip == skip_yes {
+    return verdict_skip;
+  }
+  let mask = if context_match {
+    give 255_u8;
+  } else {
+    give ctx^.lookup_mask;
+  }
+  let masked = iand(item.mask, mask);
+  let skippable = skip != skip_no;
+  if masked == 0_u8 {
+    if skippable {
+      return verdict_skip;
+    }
+    return verdict_mismatch;
+  }
+  let glyph = item.code;
+  let matched = match sequence.kind {
+    Nothing() => {
+      if skippable {
+        return verdict_skip;
+      }
+      return verdict_match;
+    }
+    Glyphs() => {
+      let same = glyph == value;
+      give same;
+    }
+    Classes() => {
+      let class = class_of(layout: layout, classes: sequence.classes, glyph: glyph);
+      let same = class == value;
+      give same;
+    }
+    Coverages() => {
+      let index = glyph_coverage(layout: layout, coverage: value, glyph: glyph);
+      let covered = index != not_covered;
+      give covered;
+    }
+  }
+  if matched {
+    return verdict_match;
+  }
+  if skippable {
+    return verdict_skip;
+  }
+  return verdict_mismatch;
+}
+
+fn next_match(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, from: u64, props: u32, context_match: Bool, sequence: Sequence, position: u64) -> (found: Bool, at: u64) reads(layout), reads(face), reads(ctx), reads(buffer) {
+  doc "HarfBuzz's skipping-iterator next: the first item after from that matches value position of sequence, passing over skipped items and stopping at a mismatch or the end of the input.";
+  let value = sequence_value(layout: layout, sequence: sequence, position: position);
+  let length = buffer^.length;
+  let found = False();
+  let at = from;
+  loop {
+    let following = at +wrap 1_u64;
+    if following >= length {
+      break;
+    }
+    set at = following;
+    let item = item_at(buffer: buffer, index: at);
+    let verdict = match_verdict(layout: layout, face: face, ctx: ctx, item: item, props: props, context_match: context_match, sequence: sequence, value: value);
+    if verdict == verdict_match {
+      set found = True();
+      break;
+    }
+    if verdict == verdict_mismatch {
+      break;
+    }
+  }
+  return found, at;
+}
+
+fn previous_match(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, from: u64, props: u32, context_match: Bool, sequence: Sequence, position: u64) -> (found: Bool, at: u64) reads(layout), reads(face), reads(ctx), reads(buffer) {
+  doc "HarfBuzz's skipping-iterator prev: the last output item before from that matches value position of sequence, passing over skipped items and stopping at a mismatch or the start.";
+  let value = sequence_value(layout: layout, sequence: sequence, position: position);
+  let found = False();
+  let at = from;
+  loop {
+    if at == 0_u64 {
+      break;
+    }
+    set at = at - 1_u64;
+    let item = out_at(buffer: buffer, index: at);
+    let verdict = match_verdict(layout: layout, face: face, ctx: ctx, item: item, props: props, context_match: context_match, sequence: sequence, value: value);
+    if verdict == verdict_match {
+      set found = True();
+      break;
+    }
+    if verdict == verdict_mismatch {
+      break;
+    }
+  }
+  return found, at;
+}
+
+fn position_at(positions: &Array<u64, 64>, index: u64) -> result: u64 reads(positions) {
+  doc "Match position index, 0 past the 64 HarfBuzz keeps.";
+  if index < 64_u64 {
+    let position = positions^[index];
+    return position;
+  }
+  return 0_u64;
+}
+
+fn set_position(positions: &Array<u64, 64>, index: u64, value: u64) -> result: unit writes(positions) {
+  doc "Sets match position index when it is one of the 64 HarfBuzz keeps.";
+  if index < 64_u64 {
+    set positions^[index] = value;
+  }
+  return unit;
+}
+
+fn ligature_base_skippable(face: &Face, ctx: &Context, buffer: &Buffer, first_lig_id: u8, props: u32) -> result: Bool reads(face), reads(ctx), reads(buffer) {
+  doc "match_input's ligbase check: whether the ligature the first glyph's marks attach to, found by walking back over the output items of the same ligature id, is one the lookup skips.";
+  let position = buffer^.out_length;
+  let found = False();
+  loop {
+    if position == 0_u64 {
+      break;
+    }
+    let before_index = position - 1_u64;
+    let before = out_at(buffer: buffer, index: before_index);
+    let id = lig_id_of(item: before);
+    if id != first_lig_id {
+      break;
+    }
+    set position = before_index;
+    let component = lig_comp_of(item: before);
+    if component == 0_u8 {
+      set found = True();
+      break;
+    }
+  }
+  if found {
+    let base = out_at(buffer: buffer, index: position);
+    let false_value = False();
+    let skip = skip_verdict(face: face, ctx: ctx, item: base, props: props, context_match: false_value);
+    let skipped = skip == skip_yes;
+    return skipped;
+  }
+  return False();
+}
+
+fn match_input(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, input: Sequence, count: u64, positions: &Array<u64, 64>) -> (matched: Bool, end: u64, components: u64) reads(layout), reads(face), reads(ctx), reads(buffer), writes(positions) {
+  doc "HarfBuzz's match_input: matches the count - 1 values of input after the current glyph with the lookup's iterator, recording the positions matched, refusing components attached to different ligature components than the first glyph, and returning the end of the match and the total component count.";
+  let index = buffer^.index;
+  let first = current(buffer: buffer);
+  if count <= 1_u64 {
+    set_position(positions: positions, index: 0_u64, value: index);
+    let components = lig_num_comps_of(item: first);
+    let wide = cvt::<u8, u64>(components);
+    let end = index +wrap 1_u64;
+    let true_value = True();
+    return true_value, end, wide;
+  }
+  let no = False();
+  if count > max_context {
+    return no, 0_u64, 0_u64;
+  }
+  let props = ctx^.lookup_props;
+  let first_lig_id = lig_id_of(item: first);
+  let first_lig_comp = lig_comp_of(item: first);
+  let attached = first_lig_id != 0_u8;
+  let component = first_lig_comp != 0_u8;
+  let first_attached = band(attached, component);
+  let base_checked = False();
+  let base_skippable = False();
+  let total = 0_u64;
+  let at = index;
+  let input_match = False();
+  for (step in 1_u64..count) {
+    let value_position = step -wrap 1_u64;
+    let (found, found_at) = next_match(layout: layout, face: face, ctx: ctx, buffer: buffer, from: at, props: props, context_match: input_match, sequence: input, position: value_position);
+    if found {
+    } else {
+      return no, 0_u64, 0_u64;
+    }
+    set at = found_at;
+    set_position(positions: positions, index: step, value: at);
+    let item = item_at(buffer: buffer, index: at);
+    let this_lig_id = lig_id_of(item: item);
+    let this_lig_comp = lig_comp_of(item: item);
+    if first_attached {
+      let other_id = first_lig_id != this_lig_id;
+      let other_comp = first_lig_comp != this_lig_comp;
+      let different = bor(other_id, other_comp);
+      if different {
+        if base_checked {
+        } else {
+          set base_skippable = ligature_base_skippable(face: face, ctx: ctx, buffer: buffer, first_lig_id: first_lig_id, props: props);
+          set base_checked = True();
+        }
+        if base_skippable {
+        } else {
+          return no, 0_u64, 0_u64;
+        }
+      }
+    } else {
+      let this_attached = this_lig_id != 0_u8;
+      let this_component = this_lig_comp != 0_u8;
+      let foreign_id = this_lig_id != first_lig_id;
+      let attached_here = band(this_attached, this_component);
+      let foreign = band(attached_here, foreign_id);
+      if foreign {
+        return no, 0_u64, 0_u64;
+      }
+    }
+    let item_components = lig_num_comps_in_ligation(item: item);
+    let wide = cvt::<u8, u64>(item_components);
+    set total = total +wrap wide;
+  }
+  let end = at +wrap 1_u64;
+  let first_components = lig_num_comps_of(item: first);
+  let first_wide = cvt::<u8, u64>(first_components);
+  set total = total +wrap first_wide;
+  set_position(positions: positions, index: 0_u64, value: index);
+  let yes = True();
+  return yes, end, total;
+}
+
+fn match_lookahead(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, lookahead: Sequence, start: u64) -> result: Bool reads(layout), reads(face), reads(ctx), reads(buffer) {
+  doc "HarfBuzz's match_lookahead: matches lookahead after the input ending at start with the context iterator.";
+  let props = ctx^.lookup_props;
+  let context_match = True();
+  let at = start -wrap 1_u64;
+  let count = lookahead.count;
+  for (step in 0_u64..count) {
+    let (found, found_at) = next_match(layout: layout, face: face, ctx: ctx, buffer: buffer, from: at, props: props, context_match: context_match, sequence: lookahead, position: step);
+    if found {
+    } else {
+      return False();
+    }
+    set at = found_at;
+  }
+  return True();
+}
+
+fn match_backtrack(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, backtrack: Sequence) -> result: Bool reads(layout), reads(face), reads(ctx), reads(buffer) {
+  doc "HarfBuzz's match_backtrack: matches backtrack, nearest value first, against the output before the current glyph with the context iterator.";
+  let props = ctx^.lookup_props;
+  let context_match = True();
+  let at = backtrack_length(buffer: buffer);
+  let count = backtrack.count;
+  for (step in 0_u64..count) {
+    let (found, found_at) = previous_match(layout: layout, face: face, ctx: ctx, buffer: buffer, from: at, props: props, context_match: context_match, sequence: backtrack, position: step);
+    if found {
+    } else {
+      return False();
+    }
+    set at = found_at;
+  }
+  return True();
+}
+
+fn set_glyph_class(face: &Face, buffer: &Buffer, glyph: u32, class_guess: u16, ligature: Bool, component: Bool) -> result: unit reads(face), writes(buffer) {
+  doc "HarfBuzz's _set_glyph_class on the current item before it becomes glyph: marks it substituted, ligated or multiplied, and takes glyph's GDEF properties when the face has glyph classes, else class_guess when nonzero.";
+  let item = current(buffer: buffer);
+  let props = ior(item.glyph_props, glyph_substituted);
+  if ligature {
+    set props = ior(props, glyph_ligated);
+    let cleared = inot(glyph_multiplied);
+    set props = iand(props, cleared);
+  }
+  if component {
+    set props = ior(props, glyph_multiplied);
+  }
+  if face^.definitions.has_glyph_classes {
+    let kept = iand(props, glyph_preserve);
+    let own = definition_props(face: face, glyph: glyph);
+    set props = ior(kept, own);
+  } else if class_guess != 0_u16 {
+    let kept = iand(props, glyph_preserve);
+    set props = ior(kept, class_guess);
+  }
+  set item.glyph_props = props;
+  put_current(buffer: buffer, item: item);
+  return unit;
+}
+
+fn substitute_glyph(face: &Face, buffer: &Buffer, glyph: u32) -> result: unit reads(face), writes(buffer) {
+  doc "HarfBuzz's context replace_glyph: sets the glyph class for glyph and replaces the current item with it.";
+  let false_value = False();
+  set_glyph_class(face: face, buffer: buffer, glyph: glyph, class_guess: 0_u16, ligature: false_value, component: false_value);
+  replace_glyph(buffer: buffer, glyph: glyph);
+  return unit;
+}
+
+fn ligate_input(face: &Face, buffer: &Buffer, positions: &Array<u64, 64>, count: u64, match_end: u64, glyph: u32, components: u64) -> result: unit reads(face), reads(positions), writes(buffer) {
+  doc "HarfBuzz's ligate_input: merges the matched clusters, replaces the first glyph with the ligature and drops the other components, giving the marks between them and following them the new ligature id and their component number, except that a base with marks makes a base and marks alone make a mark ligature.";
+  let index = buffer^.index;
+  merge_clusters(buffer: buffer, start: index, end: match_end);
+  let first_position = position_at(positions: positions, index: 0_u64);
+  let first = item_at(buffer: buffer, index: first_position);
+  let base_ligature = has_glyph_bit(item: first, bit: glyph_base);
+  let mark_ligature = has_glyph_bit(item: first, bit: glyph_mark);
+  for (step in 1_u64..count) {
+    let position = position_at(positions: positions, index: step);
+    let item = item_at(buffer: buffer, index: position);
+    let mark = has_glyph_bit(item: item, bit: glyph_mark);
+    if mark {
+    } else {
+      set base_ligature = False();
+      set mark_ligature = False();
+      break;
+    }
+  }
+  let either = bor(base_ligature, mark_ligature);
+  let ligature = bnot(either);
+  let class_guess = if ligature {
+    give glyph_ligature;
+  } else {
+    give 0_u16;
+  }
+  let lig_id = if ligature {
+    let allocated = allocate_lig_id(buffer: buffer);
+    give allocated;
+  } else {
+    give 0_u8;
+  }
+  let head = current(buffer: buffer);
+  let last_lig_id = lig_id_of(item: head);
+  let head_components = lig_num_comps_of(item: head);
+  let last_components = cvt::<u8, u64>(head_components);
+  let so_far = last_components;
+  if ligature {
+    let props = ligature_props(id: lig_id, count: components);
+    set head.lig_props = props;
+    let category = category_of(item: head);
+    if category == category_nonspacing_mark {
+      set head = with_category(item: head, category: category_other_letter);
+    }
+    put_current(buffer: buffer, item: head);
+  }
+  let true_value = True();
+  let false_value = False();
+  set_glyph_class(face: face, buffer: buffer, glyph: glyph, class_guess: class_guess, ligature: true_value, component: false_value);
+  replace_glyph(buffer: buffer, glyph: glyph);
+  for (step in 1_u64..count) {
+    let target = position_at(positions: positions, index: step);
+    loop {
+      if buffer^.index >= target {
+        break;
+      }
+      if buffer^.failed {
+        break;
+      }
+      if ligature {
+        let between = current(buffer: buffer);
+        let own = lig_comp_of(item: between);
+        let this_comp = cvt::<u8, u64>(own);
+        if this_comp == 0_u64 {
+          set this_comp = last_components;
+        }
+        let lowest = imin(this_comp, last_components);
+        let base = so_far -wrap last_components;
+        let new_comp = base +wrap lowest;
+        let props = mark_props(id: lig_id, component: new_comp);
+        set between.lig_props = props;
+        put_current(buffer: buffer, item: between);
+      }
+      next_glyph(buffer: buffer);
+    }
+    let component_item = current(buffer: buffer);
+    set last_lig_id = lig_id_of(item: component_item);
+    let in_ligation = lig_num_comps_in_ligation(item: component_item);
+    set last_components = cvt::<u8, u64>(in_ligation);
+    set so_far = so_far +wrap last_components;
+    skip_glyph(buffer: buffer);
+  }
+  let not_mark = bnot(mark_ligature);
+  let had_id = last_lig_id != 0_u8;
+  let readjust = band(not_mark, had_id);
+  if readjust {
+    let length = buffer^.length;
+    let start = buffer^.index;
+    for (position in start..length) {
+      let item = item_at(buffer: buffer, index: position);
+      let id = lig_id_of(item: item);
+      if id != last_lig_id {
+        break;
+      }
+      let own = lig_comp_of(item: item);
+      if own == 0_u8 {
+        break;
+      }
+      let this_comp = cvt::<u8, u64>(own);
+      let lowest = imin(this_comp, last_components);
+      let base = so_far -wrap last_components;
+      let new_comp = base +wrap lowest;
+      let props = mark_props(id: lig_id, component: new_comp);
+      set item.lig_props = props;
+      put_item(buffer: buffer, index: position, item: item);
+    }
+  }
+  return unit;
+}
+
+fn shift_positions(positions: &Array<u64, 64>, next: u64, count: u64, delta: i64) -> result: unit writes(positions) {
+  doc "The memmove of apply_lookup: moves match positions next up to count by delta places, copying from the far end when moving up.";
+  let moved = count -wrap next;
+  if delta > 0_i64 {
+    let up = cvt::<i64, u64>(delta);
+    for (step in 0_u64..moved) {
+      let back = moved -wrap step;
+      let offset = back -wrap 1_u64;
+      let from = next +wrap offset;
+      let to = from +wrap up;
+      let value = position_at(positions: positions, index: from);
+      set_position(positions: positions, index: to, value: value);
+    }
+  } else {
+    let down = iabs.wrap(delta);
+    let distance = cvt.wrap::<i64, u64>(down);
+    for (step in 0_u64..moved) {
+      let from = next +wrap step;
+      let to = from -wrap distance;
+      let value = position_at(positions: positions, index: from);
+      set_position(positions: positions, index: to, value: value);
+    }
+  }
+  return unit;
+}
+
+fn apply_records(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, positions: &Array<u64, 64>, input_count: u64, records: Extent, match_end: u64) -> result: unit reads(layout), reads(face), writes(ctx), writes(buffer), writes(positions) {
+  doc "HarfBuzz's apply_lookup: converts the match positions to output positions, applies each lookup record's lookup at its position in design order, adjusting the positions after it and the end of the match to the glyphs a nested lookup added or removed, and moves to the end of the match.";
+  let count = input_count;
+  let bl = backtrack_length(buffer: buffer);
+  let index = buffer^.index;
+  let bl_signed = cvt.wrap::<u64, i64>(bl);
+  let index_signed = cvt.wrap::<u64, i64>(index);
+  let end_offset = match_end -wrap index;
+  let end_offset_signed = cvt.wrap::<u64, i64>(end_offset);
+  let end = bl_signed +wrap end_offset_signed;
+  let start_delta = bl_signed -wrap index_signed;
+  let start_shift = cvt.wrap::<i64, u64>(start_delta);
+  for (step in 0_u64..count) {
+    let old = position_at(positions: positions, index: step);
+    let shifted = old +wrap start_shift;
+    set_position(positions: positions, index: step, value: shifted);
+  }
+  let first = cvt::<u32, u64>(records.start);
+  let record_count = cvt::<u32, u64>(records.count);
+  let listed = layout^.sequence_lookups.inner.len;
+  for (step in 0_u64..record_count) {
+    if buffer^.failed {
+      break;
+    }
+    let at = first +wrap step;
+    if at < listed {
+      let record = layout^.sequence_lookups.inner[at];
+      let sequence_index = cvt::<u16, u64>(record.sequence_index);
+      if sequence_index < count {
+        let before_back = backtrack_length(buffer: buffer);
+        let before_ahead = lookahead_length(buffer: buffer);
+        let orig_len = before_back +wrap before_ahead;
+        let target = position_at(positions: positions, index: sequence_index);
+        if target < orig_len {
+          let moved = move_to(buffer: buffer, target: target);
+          if moved {
+          } else {
+            break;
+          }
+          if buffer^.budget <= 0_i64 {
+            break;
+          }
+          let applied = recurse(layout: layout, face: face, ctx: ctx, buffer: buffer, lookup_index: record.lookup_index);
+          if applied {
+            let after_back = backtrack_length(buffer: buffer);
+            let after_ahead = lookahead_length(buffer: buffer);
+            let new_len = after_back +wrap after_ahead;
+            let new_signed = cvt.wrap::<u64, i64>(new_len);
+            let orig_signed = cvt.wrap::<u64, i64>(orig_len);
+            let delta = new_signed -wrap orig_signed;
+            if delta != 0_i64 {
+              set end = end +wrap delta;
+              let target_signed = cvt.wrap::<u64, i64>(target);
+              if end < target_signed {
+                let gap = target_signed -wrap end;
+                set delta = delta +wrap gap;
+                set end = target_signed;
+              }
+              let next = sequence_index +wrap 1_u64;
+              let next_signed = cvt.wrap::<u64, i64>(next);
+              let count_signed = cvt.wrap::<u64, i64>(count);
+              if delta > 0_i64 {
+                let grown = delta +wrap count_signed;
+                if grown > 64_i64 {
+                  break;
+                }
+              } else {
+                let floor = next_signed -wrap count_signed;
+                set delta = imax(delta, floor);
+                let back = iabs.wrap(delta);
+                let distance = cvt.wrap::<i64, u64>(back);
+                set next = next +wrap distance;
+              }
+              shift_positions(positions: positions, next: next, count: count, delta: delta);
+              let delta_bits = cvt.wrap::<i64, u64>(delta);
+              set next = next +wrap delta_bits;
+              set count = count +wrap delta_bits;
+              let fill_start = sequence_index +wrap 1_u64;
+              for (fill in fill_start..next) {
+                let before_index = fill -wrap 1_u64;
+                let before = position_at(positions: positions, index: before_index);
+                let value = before +wrap 1_u64;
+                set_position(positions: positions, index: fill, value: value);
+              }
+              for (rest in next..count) {
+                let old = position_at(positions: positions, index: rest);
+                let value = old +wrap delta_bits;
+                set_position(positions: positions, index: rest, value: value);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let final_end = cvt.wrap::<i64, u64>(end);
+  let finished = move_to(buffer: buffer, target: final_end);
+  return unit;
+}
+
+fn chain_context_apply(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, backtrack: Sequence, input: Sequence, input_count: u64, lookahead: Sequence, records: Extent) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "HarfBuzz's chain_context_apply_lookup: matches the input after the current glyph, then the lookahead, then the backtrack, and applies the records; False when any part does not match.";
+  if input_count > max_context {
+    return False();
+  }
+  let positions = array_filled::<u64, 64>(value: 0_u64);
+  let (matched, match_end, components) = match_input(layout: layout, face: face, ctx: ctx, buffer: buffer, input: input, count: input_count, positions: &positions);
+  if matched {
+  } else {
+    return False();
+  }
+  let ahead = match_lookahead(layout: layout, face: face, ctx: ctx, buffer: buffer, lookahead: lookahead, start: match_end);
+  if ahead {
+  } else {
+    return False();
+  }
+  let behind = match_backtrack(layout: layout, face: face, ctx: ctx, buffer: buffer, backtrack: backtrack);
+  if behind {
+  } else {
+    return False();
+  }
+  apply_records(layout: layout, face: face, ctx: ctx, buffer: buffer, positions: &positions, input_count: input_count, records: records, match_end: match_end);
+  return True();
+}
+
+fn apply_chained(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "Applies chained context subtable index at the current glyph: format 3 when the glyph is in its first input coverage; formats 1 and 2 try the rules of the rule set its coverage index or input class selects in order until one applies.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.chained_contexts.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.chained_contexts.inner[at];
+  let head = current(buffer: buffer);
+  let glyph = head.code;
+  if subtable_record.format == 3_u16 {
+    if subtable_record.input.count == 0_u32 {
+      return False();
+    }
+    let input_start = cvt::<u32, u64>(subtable_record.input.start);
+    let input_total = cvt::<u32, u64>(subtable_record.input.count);
+    let first_coverage = if input_start < layout^.coverage_sequences.inner.len {
+      let coverage = layout^.coverage_sequences.inner[input_start];
+      give coverage;
+    } else {
+      give not_covered;
+    }
+    let first_index = glyph_coverage(layout: layout, coverage: first_coverage, glyph: glyph);
+    if first_index == not_covered {
+      return False();
+    }
+    let coverages = MatchKind::Coverages();
+    let backtrack_start = cvt::<u32, u64>(subtable_record.backtrack.start);
+    let backtrack_count = cvt::<u32, u64>(subtable_record.backtrack.count);
+    let lookahead_start = cvt::<u32, u64>(subtable_record.lookahead.start);
+    let lookahead_count = cvt::<u32, u64>(subtable_record.lookahead.count);
+    let rest_start = input_start +wrap 1_u64;
+    let rest_count = input_total -wrap 1_u64;
+    let backtrack = Sequence(kind: coverages, start: backtrack_start, count: backtrack_count, classes: 0_u32);
+    let input = Sequence(kind: coverages, start: rest_start, count: rest_count, classes: 0_u32);
+    let lookahead = Sequence(kind: coverages, start: lookahead_start, count: lookahead_count, classes: 0_u32);
+    let applied = chain_context_apply(layout: layout, face: face, ctx: ctx, buffer: buffer, backtrack: backtrack, input: input, input_count: input_total, lookahead: lookahead, records: subtable_record.records);
+    return applied;
+  }
+  let covered = glyph_coverage(layout: layout, coverage: subtable_record.coverage, glyph: glyph);
+  if covered == not_covered {
+    return False();
+  }
+  let kind = if subtable_record.format == 1_u16 {
+    give MatchKind::Glyphs();
+  } else {
+    give MatchKind::Classes();
+  }
+  let selector = if subtable_record.format == 1_u16 {
+    give covered;
+  } else {
+    let class = class_of(layout: layout, classes: subtable_record.input_classes, glyph: glyph);
+    give class;
+  }
+  if selector >= subtable_record.rule_sets.count {
+    return False();
+  }
+  let sets_start = cvt::<u32, u64>(subtable_record.rule_sets.start);
+  let selected = cvt::<u32, u64>(selector);
+  let set_at = sets_start +wrap selected;
+  if set_at < layout^.rule_sets.inner.len {
+  } else {
+    return False();
+  }
+  let rules = layout^.rule_sets.inner[set_at];
+  let rules_start = cvt::<u32, u64>(rules.start);
+  let rules_count = cvt::<u32, u64>(rules.count);
+  for (step in 0_u64..rules_count) {
+    let rule_at = rules_start +wrap step;
+    if rule_at < layout^.chain_rules.inner.len {
+      let rule = layout^.chain_rules.inner[rule_at];
+      let backtrack_start = cvt::<u32, u64>(rule.backtrack.start);
+      let backtrack_count = cvt::<u32, u64>(rule.backtrack.count);
+      let input_start = cvt::<u32, u64>(rule.input.start);
+      let input_count = cvt::<u32, u64>(rule.input.count);
+      let lookahead_start = cvt::<u32, u64>(rule.lookahead.start);
+      let lookahead_count = cvt::<u32, u64>(rule.lookahead.count);
+      let backtrack = Sequence(kind: kind, start: backtrack_start, count: backtrack_count, classes: subtable_record.backtrack_classes);
+      let input = Sequence(kind: kind, start: input_start, count: input_count, classes: subtable_record.input_classes);
+      let lookahead = Sequence(kind: kind, start: lookahead_start, count: lookahead_count, classes: subtable_record.lookahead_classes);
+      let total = input_count +wrap 1_u64;
+      let applied = chain_context_apply(layout: layout, face: face, ctx: ctx, buffer: buffer, backtrack: backtrack, input: input, input_count: total, lookahead: lookahead, records: rule.records);
+      if applied {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn apply_subtable(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, subtable: Subtable) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "Applies one subtable at the current glyph; whether it applied.";
+  let index = subtable.index;
+  match subtable.kind {
+    SingleSubstitution() => {
+      let applied = substitute_single(layout: layout, face: face, buffer: buffer, index: index);
+      return applied;
+    }
+    MultipleSubstitution() => {
+      let applied = substitute_multiple(layout: layout, face: face, buffer: buffer, index: index);
+      return applied;
+    }
+    LigatureSubstitution() => {
+      let applied = substitute_ligature(layout: layout, face: face, ctx: ctx, buffer: buffer, index: index);
+      return applied;
+    }
+    ChainedContext() => {
+      let applied = apply_chained(layout: layout, face: face, ctx: ctx, buffer: buffer, index: index);
+      return applied;
+    }
+    SinglePositioning() => {
+      let applied = position_single(layout: layout, buffer: buffer, index: index);
+      return applied;
+    }
+    PairPositioning() => {
+      let applied = position_pair(layout: layout, face: face, ctx: ctx, buffer: buffer, index: index);
+      return applied;
+    }
+    MarkToBase() => {
+      let applied = position_mark_base(layout: layout, face: face, ctx: ctx, buffer: buffer, index: index);
+      return applied;
+    }
+    MarkToLigature() => {
+      let applied = position_mark_ligature(layout: layout, face: face, ctx: ctx, buffer: buffer, index: index);
+      return applied;
+    }
+    MarkToMark() => {
+      let applied = position_mark_mark(layout: layout, face: face, ctx: ctx, buffer: buffer, index: index);
+      return applied;
+    }
+  }
+}
+
+fn apply_subtables(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, lookup: Lookup) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "HarfBuzz's lookup accelerator apply: tries lookup's subtables in order at the current glyph until one applies.";
+  let start = cvt::<u32, u64>(lookup.subtables.start);
+  let size = cvt::<u32, u64>(lookup.subtables.count);
+  let listed = layout^.subtables.inner.len;
+  for (step in 0_u64..size) {
+    let at = start +wrap step;
+    if at < listed {
+      let subtable = layout^.subtables.inner[at];
+      let applied = apply_subtable(layout: layout, face: face, ctx: ctx, buffer: buffer, subtable: subtable);
+      if applied {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn recurse(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, lookup_index: u16) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "HarfBuzz's recurse: applies lookup lookup_index at the current glyph with its own lookup properties, whatever the glyph's mask and class, failing the run past 64 nesting levels or when the operation budget runs out.";
+  let nesting = ctx^.nesting;
+  if nesting == 0_u32 {
+    fail(buffer: buffer);
+    return False();
+  }
+  spend(buffer: buffer, amount: 1_u64);
+  if buffer^.failed {
+    return False();
+  }
+  let at = cvt::<u16, u64>(lookup_index);
+  if at < layout^.lookups.inner.len {
+  } else {
+    return False();
+  }
+  let lookup = layout^.lookups.inner[at];
+  let saved = ctx^.lookup_props;
+  let props = lookup_props_of(face: face, lookup: lookup);
+  set ctx^.lookup_props = props;
+  let deeper = nesting - 1_u32;
+  set ctx^.nesting = deeper;
+  let applied = apply_subtables(layout: layout, face: face, ctx: ctx, buffer: buffer, lookup: lookup);
+  set ctx^.nesting = nesting;
+  set ctx^.lookup_props = saved;
+  return applied;
+}
+
+fn apply_forward(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, lookup: Lookup, lookup_index: u64) -> result: unit reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "HarfBuzz's apply_forward: passes over items outside the lookup's mask, excluded by its flags or outside its filter, and tries the lookup's subtables at every other item, passing it on when none applies.";
+  let mask = ctx^.lookup_mask;
+  let props = ctx^.lookup_props;
+  loop {
+    if buffer^.failed {
+      break;
+    }
+    let length = buffer^.length;
+    let start = buffer^.index;
+    let stop = start;
+    loop {
+      if stop >= length {
+        break;
+      }
+      let item = item_at(buffer: buffer, index: stop);
+      let masked = iand(item.mask, mask);
+      if masked != 0_u8 {
+        let applicable = may_apply(layout: layout, lookup_index: lookup_index, glyph: item.code);
+        if applicable {
+          let allowed = glyph_allowed(face: face, item: item, props: props);
+          if allowed {
+            break;
+          }
+        }
+      }
+      set stop = stop +wrap 1_u64;
+    }
+    if stop > start {
+      let passed = stop - start;
+      next_glyphs(buffer: buffer, count: passed);
+    }
+    if buffer^.index >= buffer^.length {
+      break;
+    }
+    let applied = apply_subtables(layout: layout, face: face, ctx: ctx, buffer: buffer, lookup: lookup);
+    if applied {
+    } else {
+      next_glyph(buffer: buffer);
+    }
+  }
+  return unit;
+}
+
+fn apply_lookups(layout: &LayoutTable, face: &Face, lookups: &Box<Slots<PlannedLookup>>, positioning: Bool, buffer: &Buffer) -> result: unit reads(layout), reads(face), reads(lookups), writes(buffer) {
+  doc "HarfBuzz's hb_ot_map_t::apply for one table: applies each planned lookup over the whole buffer, GSUB lookups through output and a final sync, GPOS lookups in place.";
+  let ctx = Context(positioning: positioning, lookup_mask: 0_u8, lookup_props: 0_u32, auto_zwnj: positioning, auto_zwj: positioning, nesting: max_nesting, last_base: no_index, last_base_until: 0_u64);
+  let count = lookups^.inner.len;
+  let lookup_total = layout^.lookups.inner.len;
+  for (step in 0_u64..count) {
+    if buffer^.failed {
+      break;
+    }
+    let planned = lookups^.inner[step];
+    let at = cvt::<u16, u64>(planned.index);
+    let length = buffer^.length;
+    let has_items = length != 0_u64;
+    let in_table = at < lookup_total;
+    let applicable = band(has_items, in_table);
+    if applicable {
+      let lookup = layout^.lookups.inner[at];
+      let props = lookup_props_of(face: face, lookup: lookup);
+      set ctx.lookup_mask = planned.mask;
+      set ctx.lookup_props = props;
+      set ctx.auto_zwnj = planned.auto_zwnj;
+      set ctx.auto_zwj = planned.auto_zwj;
+      set ctx.nesting = max_nesting;
+      set ctx.last_base = no_index;
+      set ctx.last_base_until = 0_u64;
+      if positioning {
+        set buffer^.index = 0_u64;
+        apply_forward(layout: layout, face: face, ctx: &ctx, buffer: buffer, lookup: lookup, lookup_index: at);
+      } else {
+        clear_output(buffer: buffer);
+        apply_forward(layout: layout, face: face, ctx: &ctx, buffer: buffer, lookup: lookup, lookup_index: at);
+        sync(buffer: buffer);
+      }
+    }
+  }
+  return unit;
+}

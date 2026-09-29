@@ -1,0 +1,156 @@
+enum ClassKind {
+  doc "Which GDEF class definition a per-glyph array holds.";
+  Glyph();
+  MarkAttachment();
+}
+
+const class_range_ceiling: u32 = 65536_u32;
+
+fn no_glyph_definitions(glyph_count: u64) -> result: GlyphDefinitions pure contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "The definitions of a face without GDEF: every glyph below the glyph count has class 0 and mark attachment class 0, and there are no mark glyph sets.";
+  let absent = False();
+  let glyph_classes = box_array_filled::<u8>(count: glyph_count, value: 0_u8);
+  let mark_attachment_classes = box_array_filled::<u8>(count: glyph_count, value: 0_u8);
+  let mark_glyph_sets = box_slots_new::<Extent>(capacity: 0_u64);
+  let mark_glyph_ranges = box_slots_new::<CoverageRange>(capacity: 0_u64);
+  let definitions = GlyphDefinitions(has_glyph_classes: absent, glyph_classes: move glyph_classes, mark_attachment_classes: move mark_attachment_classes, mark_glyph_sets: move mark_glyph_sets, mark_glyph_ranges: move mark_glyph_ranges);
+  return move definitions;
+}
+
+fn compile_definitions(gdef: &[u8], glyph_count: u64) -> result: Result<GlyphDefinitions, FontError> reads(gdef) contract {
+  requires glyph_count <= 65535_u64;
+  requires gdef^.len <= 268435456_u64;
+} {
+  doc "Checks and compiles the structures of GDEF that a face reads: the header (major version 1), the glyph class definition, the mark attachment class definition and, from minor version 2, the mark glyph sets. The attachment point list, ligature caret list and item variation store are not read.";
+  let major = propagate read_u16(bytes: gdef, base: 0_u64, offset: 0_u64);
+  let minor = propagate read_u16(bytes: gdef, base: 0_u64, offset: 2_u64);
+  if major != 1_u16 {
+    let invalid = FontError::Invalid();
+    return Err<GlyphDefinitions, FontError>(error: invalid);
+  }
+  let class_at = propagate follow16(bytes: gdef, base: 0_u64, offset: 4_u64);
+  let attachment_at = propagate follow16(bytes: gdef, base: 0_u64, offset: 10_u64);
+  let sets_at = if minor >= 2_u16 {
+    let found = propagate follow16(bytes: gdef, base: 0_u64, offset: 12_u64);
+    give found;
+  } else {
+    give 0_u64;
+  }
+  let glyph_kind = ClassKind::Glyph();
+  let attachment_kind = ClassKind::MarkAttachment();
+  let glyph_classes = propagate class_array(gdef: gdef, at: class_at, glyph_count: glyph_count, kind: glyph_kind);
+  let mark_attachment_classes = propagate class_array(gdef: gdef, at: attachment_at, glyph_count: glyph_count, kind: attachment_kind);
+  let mark_glyph_sets = box_slots_new::<Extent>(capacity: 0_u64);
+  let mark_glyph_ranges = box_slots_new::<CoverageRange>(capacity: 0_u64);
+  if sets_at != 0_u64 {
+    let compiled = propagate compile_mark_glyph_sets(gdef: gdef, at: sets_at, sets: &mark_glyph_sets, ranges: &mark_glyph_ranges);
+  }
+  let has_glyph_classes = class_at != 0_u64;
+  let definitions = GlyphDefinitions(has_glyph_classes: has_glyph_classes, glyph_classes: move glyph_classes, mark_attachment_classes: move mark_attachment_classes, mark_glyph_sets: move mark_glyph_sets, mark_glyph_ranges: move mark_glyph_ranges);
+  return Ok<GlyphDefinitions, FontError>(value: move definitions);
+}
+
+fn class_array(gdef: &[u8], at: u64, glyph_count: u64, kind: ClassKind) -> result: Result<Box<Array<u8>>, FontError> reads(gdef) contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Expands the class definition at at (none when at is 0) into one entry per glyph, from glyph 0 through the glyph count and the last glyph it lists: a glyph class as 0 to 4, a class above 4 as 0, or a mark attachment class modulo 256.";
+  let ranges = box_slots_new::<ClassRange>(capacity: 0_u64);
+  if at != 0_u64 {
+    let extent = propagate compile_classes(table: gdef, at: at, ranges: &ranges, ceiling: class_range_ceiling);
+  }
+  let count = ranges.inner.len;
+  let size = if count > 0_u64 {
+    let final_index = count - 1_u64;
+    let final_range = ranges.inner[final_index];
+    let final_last = cvt::<u16, u64>(final_range.last);
+    let listed_end = final_last + 1_u64;
+    let widest = imax(glyph_count, listed_end);
+    give widest;
+  } else {
+    give glyph_count;
+  }
+  let classes = box_array_filled::<u8>(count: size, value: 0_u8);
+  for (index in 0_u64..count) {
+    let range = ranges.inner[index];
+    let first = cvt::<u16, u64>(range.first);
+    let last = cvt::<u16, u64>(range.last);
+    let stop = last + 1_u64;
+    let value = class_code(kind: kind, class: range.class);
+    let length = classes.inner.len;
+    if stop > length {
+      let invalid = FontError::Invalid();
+      return Err<Box<Array<u8>>, FontError>(error: invalid);
+    }
+    for (glyph in first..stop) {
+      set classes.inner[glyph] = value;
+    }
+  }
+  return Ok<Box<Array<u8>>, FontError>(value: move classes);
+}
+
+fn class_code(kind: ClassKind, class: u16) -> result: u8 pure {
+  doc "Returns the per-glyph entry for class: for a glyph class, the class when it is at most 4 and 0 otherwise, as HarfBuzz treats a class above 4 as unclassified; for a mark attachment class, the class modulo 256, as HarfBuzz keeps it in a glyph's properties.";
+  match kind {
+    Glyph() => {
+      if class <= 4_u16 {
+        let code = cvt::<u16, u8>(class);
+        return code;
+      }
+      return 0_u8;
+    }
+    MarkAttachment() => {
+      let code = cvt.wrap::<u16, u8>(class);
+      return code;
+    }
+  }
+}
+
+fn compile_mark_glyph_sets(gdef: &[u8], at: u64, sets: &Box<Slots<Extent>>, ranges: &Box<Slots<CoverageRange>>) -> result: Result<unit, FontError> reads(gdef), writes(sets), writes(ranges) contract {
+  requires gdef^.len <= 268435456_u64;
+} {
+  doc "Compiles the MarkGlyphSetsDef table at at (format 1) into one Extent of ranges per set, a null coverage offset giving the empty set. A coverage that several sets share is compiled once.";
+  let format = propagate read_u16(bytes: gdef, base: at, offset: 0_u64);
+  if format != 1_u16 {
+    let invalid = FontError::Invalid();
+    return Err<unit, FontError>(error: invalid);
+  }
+  let total = propagate read_u16(bytes: gdef, base: at, offset: 2_u64);
+  let count = cvt::<u16, u64>(total);
+  let length = gdef^.len;
+  let ceiling = pool_ceiling(length: length);
+  let memo = box_array_filled::<u32>(count: length, value: 0_u32);
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: 4_u64, index: index, size: 4_u64);
+    let coverage_at = propagate follow32(bytes: gdef, base: at, offset: offset_at);
+    let known = if coverage_at < memo.inner.len {
+      let marker = memo.inner[coverage_at];
+      give marker;
+    } else {
+      give 0_u32;
+    }
+    if coverage_at == 0_u64 {
+      let empty = Extent(start: 0_u32, count: 0_u32);
+      let pushed = propagate push::<Extent>(list: sets, value: empty, ceiling: ceiling);
+    } else if known != 0_u32 {
+      let earlier_set = known - 1_u32;
+      let earlier = cvt::<u32, u64>(earlier_set);
+      if earlier >= sets^.inner.len {
+        let invalid = FontError::Invalid();
+        return Err<unit, FontError>(error: invalid);
+      }
+      let shared = sets^.inner[earlier];
+      let pushed = propagate push::<Extent>(list: sets, value: shared, ceiling: ceiling);
+    } else {
+      let set_index = propagate next_index::<Extent>(list: sets);
+      let extent = propagate compile_coverage(table: gdef, at: coverage_at, ranges: ranges, ceiling: ceiling);
+      let pushed = propagate push::<Extent>(list: sets, value: extent, ceiling: ceiling);
+      if coverage_at < memo.inner.len {
+        let marker = set_index + 1_u32;
+        set memo.inner[coverage_at] = marker;
+      }
+    }
+  }
+  return Ok<unit, FontError>(value: unit);
+}

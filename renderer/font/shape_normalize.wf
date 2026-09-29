@@ -1,0 +1,695 @@
+alias normalization = pkg::text::normalization;
+alias properties = pkg::text::properties;
+
+const fraction_slash: u32 = 8260_u32;
+
+const grapheme_joiner: u32 = 847_u32;
+
+const max_combining_marks: u64 = 32_u64;
+
+fn regional_indicator(scalar: u32) -> result: Bool pure {
+  doc "Whether scalar is a regional indicator, U+1F1E6 to U+1F1FF.";
+  let inside = within(value: scalar, low: 127462_u32, high: 127487_u32);
+  return inside;
+}
+
+fn letter_or_space(category: u16) -> result: Bool pure {
+  doc "Whether category is Ll, Lu, Lt, Lo or Zs, the categories hb_set_unicode_props passes over.";
+  if category == 5_u16 {
+    return True();
+  }
+  if category == 9_u16 {
+    return True();
+  }
+  if category == 8_u16 {
+    return True();
+  }
+  if category == category_other_letter {
+    return True();
+  }
+  if category == category_space_separator {
+    return True();
+  }
+  return False();
+}
+
+fn continued(item: Item) -> result: Item pure {
+  doc "item with its continuation bit set.";
+  let props = ior(item.unicode_props, unicode_continuation);
+  let changed = item;
+  set changed.unicode_props = props;
+  return changed;
+}
+
+fn set_unicode_props(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's hb_set_unicode_props: gives every item the global mask and its unicode properties, and marks as grapheme continuations, beside the marks, emoji modifiers, the second of a pair of regional indicators, ZWJ and the Extended_Pictographic character after it, U+FF9E, U+FF9F and the tag characters.";
+  let count = buffer^.length;
+  let position = 0_u64;
+  loop {
+    if position >= count {
+      break;
+    }
+    let item = item_at(buffer: buffer, index: position);
+    let code = item.code;
+    let props = unicode_props_of(scalar: code);
+    set item.mask = mask_global;
+    set item.unicode_props = props;
+    let step = 1_u64;
+    if code >= 128_u32 {
+      let category = category_of(item: item);
+      let passed = letter_or_space(category: category);
+      if passed {
+      } else {
+        let modifier = within(value: code, low: 127995_u32, high: 127999_u32);
+        let symbol = category == category_modifier_symbol;
+        let emoji_modifier = band(symbol, modifier);
+        let indicator = regional_indicator(scalar: code);
+        let later = position > 0_u64;
+        let paired = band(indicator, later);
+        let joiner = format_bit(item: item, bit: unicode_zwj);
+        let katakana = within(value: code, low: 65438_u32, high: 65439_u32);
+        let tag = within(value: code, low: 917536_u32, high: 917631_u32);
+        let extending = bor(katakana, tag);
+        if emoji_modifier {
+          set item = continued(item: item);
+        } else if paired {
+          let before_index = position - 1_u64;
+          let before = item_at(buffer: buffer, index: before_index);
+          let before_indicator = regional_indicator(scalar: before.code);
+          let before_continues = has_unicode_bit(item: before, bit: unicode_continuation);
+          let before_starts = bnot(before_continues);
+          let pair = band(before_indicator, before_starts);
+          if pair {
+            set item = continued(item: item);
+          }
+        } else if joiner {
+          set item = continued(item: item);
+          let following_index = position +wrap 1_u64;
+          if following_index < count {
+            let next = item_at(buffer: buffer, index: following_index);
+            let pictographic = properties::is_extended_pictographic(scalar: next.code);
+            if pictographic {
+              let next_props = unicode_props_of(scalar: next.code);
+              set next.mask = mask_global;
+              set next.unicode_props = next_props;
+              set next = continued(item: next);
+              put_item(buffer: buffer, index: following_index, item: next);
+              set step = 2_u64;
+            }
+          }
+        } else if extending {
+          set item = continued(item: item);
+        }
+      }
+    }
+    put_item(buffer: buffer, index: position, item: item);
+    set position = position +wrap step;
+  }
+  return unit;
+}
+
+fn form_clusters(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's hb_form_clusters: merges the clusters of each grapheme, an item and the continuations after it.";
+  let count = buffer^.length;
+  let start = 0_u64;
+  for (position in 1_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let continues = has_unicode_bit(item: item, bit: unicode_continuation);
+    if continues {
+    } else {
+      merge_clusters(buffer: buffer, start: start, end: position);
+      set start = position;
+    }
+  }
+  merge_clusters(buffer: buffer, start: start, end: count);
+  return unit;
+}
+
+fn glyph_of(face: &Face, scalar: u32) -> result: u32 reads(face) {
+  doc "The face's nominal glyph for scalar, widened; 0 when it has none.";
+  let glyph = nominal_glyph(face: face, scalar: scalar);
+  let wide = cvt::<u16, u32>(glyph);
+  return wide;
+}
+
+fn next_char(buffer: &Buffer, glyph: u32) -> result: unit writes(buffer) {
+  doc "The normalizer's next_char: records glyph for the current character and passes it to the output.";
+  let item = current(buffer: buffer);
+  set item.glyph = glyph;
+  put_current(buffer: buffer, item: item);
+  next_glyph(buffer: buffer);
+  return unit;
+}
+
+fn output_char(buffer: &Buffer, scalar: u32, glyph: u32) -> result: unit writes(buffer) {
+  doc "The normalizer's output_char: outputs a copy of the current character as scalar with glyph and its own unicode properties.";
+  let item = current(buffer: buffer);
+  set item.glyph = glyph;
+  put_current(buffer: buffer, item: item);
+  output_glyph(buffer: buffer, glyph: scalar);
+  let out_length = buffer^.out_length;
+  if out_length > 0_u64 {
+    let last = out_length - 1_u64;
+    let produced = out_at(buffer: buffer, index: last);
+    let props = unicode_props_of(scalar: scalar);
+    set produced.unicode_props = props;
+    put_out(buffer: buffer, index: last, item: produced);
+  }
+  return unit;
+}
+
+fn decompose(face: &Face, buffer: &Buffer, shortest: Bool, scalar: u32) -> result: u64 reads(face), writes(buffer) {
+  doc "The normalizer's decompose: outputs the canonical decomposition of scalar whose parts the face has glyphs for, the shortest such when shortest is True and the longest otherwise, and returns how many characters it output, 0 when it output none.";
+  match normalization::canonical_decomposition(scalar: scalar) {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: parts) => {
+      let first = parts.first;
+      let second = parts.second;
+      let second_glyph = 0_u32;
+      if second != 0_u32 {
+        set second_glyph = glyph_of(face: face, scalar: second);
+        if second_glyph == 0_u32 {
+          return 0_u64;
+        }
+      }
+      let first_glyph = glyph_of(face: face, scalar: first);
+      let has_first = first_glyph != 0_u32;
+      let short_first = band(shortest, has_first);
+      if short_first {
+        output_char(buffer: buffer, scalar: first, glyph: first_glyph);
+        if second != 0_u32 {
+          output_char(buffer: buffer, scalar: second, glyph: second_glyph);
+          return 2_u64;
+        }
+        return 1_u64;
+      }
+      let deeper = decompose(face: face, buffer: buffer, shortest: shortest, scalar: first);
+      if deeper != 0_u64 {
+        if second != 0_u32 {
+          output_char(buffer: buffer, scalar: second, glyph: second_glyph);
+          let total = deeper +wrap 1_u64;
+          return total;
+        }
+        return deeper;
+      }
+      if has_first {
+        output_char(buffer: buffer, scalar: first, glyph: first_glyph);
+        if second != 0_u32 {
+          output_char(buffer: buffer, scalar: second, glyph: second_glyph);
+          return 2_u64;
+        }
+        return 1_u64;
+      }
+      return 0_u64;
+    }
+  }
+}
+
+fn decompose_current(face: &Face, buffer: &Buffer, shortest: Bool) -> result: unit reads(face), writes(buffer) {
+  doc "The normalizer's decompose_current_character: the character's own glyph first when shortest is True, else its decomposition, else its own glyph; a space the face lacks takes the glyph of U+0020 with its fallback type; U+2011 takes the glyph of U+2010; anything else takes glyph 0.";
+  let item = current(buffer: buffer);
+  let scalar = item.code;
+  let glyph = glyph_of(face: face, scalar: scalar);
+  let has_glyph = glyph != 0_u32;
+  let short_own = band(shortest, has_glyph);
+  if short_own {
+    next_char(buffer: buffer, glyph: glyph);
+    return unit;
+  }
+  let produced = decompose(face: face, buffer: buffer, shortest: shortest, scalar: scalar);
+  if produced != 0_u64 {
+    skip_glyph(buffer: buffer);
+    return unit;
+  }
+  if has_glyph {
+    next_char(buffer: buffer, glyph: glyph);
+    return unit;
+  }
+  let category = category_of(item: item);
+  if category == category_space_separator {
+    let space_type = space_fallback_type(scalar: scalar);
+    if space_type != 0_u16 {
+      let space_glyph = glyph_of(face: face, scalar: 32_u32);
+      if space_glyph != 0_u32 {
+        let spaced = current(buffer: buffer);
+        let low = iand(spaced.unicode_props, 255_u16);
+        let high = ishl.wrap(space_type, 8_u32);
+        let props = ior(low, high);
+        set spaced.unicode_props = props;
+        put_current(buffer: buffer, item: spaced);
+        next_char(buffer: buffer, glyph: space_glyph);
+        return unit;
+      }
+    }
+  }
+  if scalar == 8209_u32 {
+    let hyphen = glyph_of(face: face, scalar: 8208_u32);
+    if hyphen != 0_u32 {
+      next_char(buffer: buffer, glyph: hyphen);
+      return unit;
+    }
+  }
+  next_char(buffer: buffer, glyph: 0_u32);
+  return unit;
+}
+
+fn set_glyph(face: &Face, buffer: &Buffer) -> result: unit reads(face), writes(buffer) {
+  doc "The normalizer's set_glyph and next_glyph: records the current character's nominal glyph and passes it to the output.";
+  let item = current(buffer: buffer);
+  let glyph = glyph_of(face: face, scalar: item.code);
+  next_char(buffer: buffer, glyph: glyph);
+  return unit;
+}
+
+fn variation_cluster(face: &Face, buffer: &Buffer, end: u64) -> result: unit reads(face), writes(buffer) {
+  doc "The normalizer's handle_variation_selector_cluster for a face without variation sequences: passes the cluster's characters on with their nominal glyphs, marking each variation selector that follows a character as a format character so that it is hidden.";
+  loop {
+    let index = buffer^.index;
+    let following = index +wrap 1_u64;
+    if following >= end {
+      break;
+    }
+    if buffer^.failed {
+      break;
+    }
+    let next = item_at(buffer: buffer, index: following);
+    let selector = variation_selector_scalar(scalar: next.code);
+    if selector {
+      set_glyph(face: face, buffer: buffer);
+      let marked = current(buffer: buffer);
+      set marked = with_category(item: marked, category: category_format);
+      let props = ior(marked.unicode_props, unicode_variation_selector);
+      set marked.unicode_props = props;
+      put_current(buffer: buffer, item: marked);
+      set_glyph(face: face, buffer: buffer);
+      loop {
+        if buffer^.index >= end {
+          break;
+        }
+        if buffer^.failed {
+          break;
+        }
+        let further = current(buffer: buffer);
+        let another = variation_selector_scalar(scalar: further.code);
+        if another {
+        } else {
+          break;
+        }
+        set_glyph(face: face, buffer: buffer);
+      }
+    } else {
+      set_glyph(face: face, buffer: buffer);
+    }
+  }
+  if buffer^.index < end {
+    set_glyph(face: face, buffer: buffer);
+  }
+  return unit;
+}
+
+fn decompose_cluster(face: &Face, buffer: &Buffer, end: u64) -> result: unit reads(face), writes(buffer) {
+  doc "The normalizer's decompose_multi_char_cluster: a cluster holding a variation selector passes on unchanged; otherwise each character decomposes as far as the face has glyphs.";
+  let start = buffer^.index;
+  for (position in start..end) {
+    let item = item_at(buffer: buffer, index: position);
+    let selector = variation_selector_scalar(scalar: item.code);
+    if selector {
+      variation_cluster(face: face, buffer: buffer, end: end);
+      return unit;
+    }
+  }
+  let longest = False();
+  loop {
+    if buffer^.index >= end {
+      break;
+    }
+    if buffer^.failed {
+      break;
+    }
+    decompose_current(face: face, buffer: buffer, shortest: longest);
+  }
+  return unit;
+}
+
+fn decompose_all(face: &Face, buffer: &Buffer) -> result: Bool reads(face), writes(buffer) {
+  doc "The first round of HarfBuzz's normalization: runs of characters before a base and its marks keep their glyphs or decompose shortest-first, and each base with its marks decomposes as a cluster. Returns whether the text held no marks, all_simple.";
+  clear_output(buffer: buffer);
+  let count = buffer^.length;
+  let simple = True();
+  let shortest = True();
+  loop {
+    if buffer^.index >= count {
+      break;
+    }
+    if buffer^.failed {
+      break;
+    }
+    let first_after = buffer^.index +wrap 1_u64;
+    let end = first_after;
+    loop {
+      if end >= count {
+        break;
+      }
+      let item = item_at(buffer: buffer, index: end);
+      let mark = unicode_mark(item: item);
+      if mark {
+        break;
+      }
+      set end = end +wrap 1_u64;
+    }
+    if end < count {
+      set end = end -wrap 1_u64;
+    }
+    loop {
+      if buffer^.index >= end {
+        break;
+      }
+      if buffer^.failed {
+        break;
+      }
+      decompose_current(face: face, buffer: buffer, shortest: shortest);
+    }
+    if buffer^.index >= count {
+      break;
+    }
+    if buffer^.failed {
+      break;
+    }
+    set simple = False();
+    let cluster_start = buffer^.index +wrap 1_u64;
+    let cluster_end = cluster_start;
+    loop {
+      if cluster_end >= count {
+        break;
+      }
+      let item = item_at(buffer: buffer, index: cluster_end);
+      let mark = unicode_mark(item: item);
+      if mark {
+      } else {
+        break;
+      }
+      set cluster_end = cluster_end +wrap 1_u64;
+    }
+    decompose_cluster(face: face, buffer: buffer, end: cluster_end);
+  }
+  sync(buffer: buffer);
+  return simple;
+}
+
+fn sort_marks(buffer: &Buffer, start: u64, end: u64) -> result: unit writes(buffer) {
+  doc "HarfBuzz's buffer sort by modified combining class: a stable insertion sort of the items from start to end that merges the clusters an item moves across.";
+  let after = start +wrap 1_u64;
+  for (position in after..end) {
+    let moving = item_at(buffer: buffer, index: position);
+    let class = combining_class_of(item: moving);
+    let target = position;
+    loop {
+      if target <= start {
+        break;
+      }
+      let before_index = target - 1_u64;
+      let before = item_at(buffer: buffer, index: before_index);
+      let before_class = combining_class_of(item: before);
+      if before_class <= class {
+        break;
+      }
+      set target = before_index;
+    }
+    if target != position {
+      let merge_end = position +wrap 1_u64;
+      merge_clusters(buffer: buffer, start: target, end: merge_end);
+      let lifted = item_at(buffer: buffer, index: position);
+      let distance = position -wrap target;
+      for (step in 0_u64..distance) {
+        let to = position -wrap step;
+        let from = to -wrap 1_u64;
+        let shifted = item_at(buffer: buffer, index: from);
+        put_item(buffer: buffer, index: to, item: shifted);
+      }
+      put_item(buffer: buffer, index: target, item: lifted);
+    }
+  }
+  return unit;
+}
+
+fn reorder_marks(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "The second round of HarfBuzz's normalization: sorts each run of marks with nonzero modified combining classes, when it has at most 32, by class.";
+  let count = buffer^.length;
+  let position = 0_u64;
+  loop {
+    if position >= count {
+      break;
+    }
+    let item = item_at(buffer: buffer, index: position);
+    let class = combining_class_of(item: item);
+    if class == 0_u16 {
+      set position = position +wrap 1_u64;
+    } else {
+      let end = position +wrap 1_u64;
+      loop {
+        if end >= count {
+          break;
+        }
+        let next = item_at(buffer: buffer, index: end);
+        let next_class = combining_class_of(item: next);
+        if next_class == 0_u16 {
+          break;
+        }
+        set end = end +wrap 1_u64;
+      }
+      let run = end -wrap position;
+      if run <= max_combining_marks {
+        sort_marks(buffer: buffer, start: position, end: end);
+      }
+      set position = end +wrap 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn unhide_joiners(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's CGJ rule: a U+034F COMBINING GRAPHEME JOINER that did not block any reordering, because the mark after it has class 0 or a class no lower than the mark before it, stops being hidden.";
+  let count = buffer^.length;
+  for (position in 1_u64..count) {
+    let following_index = position +wrap 1_u64;
+    if following_index < count {
+      let item = item_at(buffer: buffer, index: position);
+      if item.code == grapheme_joiner {
+        let before_index = position - 1_u64;
+        let before = item_at(buffer: buffer, index: before_index);
+        let next = item_at(buffer: buffer, index: following_index);
+        let next_class = combining_class_of(item: next);
+        let before_class = combining_class_of(item: before);
+        let unblocked = next_class == 0_u16;
+        let ordered = before_class <= next_class;
+        let free = bor(unblocked, ordered);
+        if free {
+          let kept = inot(unicode_hidden);
+          let props = iand(item.unicode_props, kept);
+          set item.unicode_props = props;
+          put_item(buffer: buffer, index: position, item: item);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn recompose(face: &Face, buffer: &Buffer) -> result: unit reads(face), writes(buffer) {
+  doc "The third round of HarfBuzz's normalization, for composed diacritics: composes each mark with the last starter when nothing between them has a class as high as the mark's and the face has a glyph for the primary composite.";
+  clear_output(buffer: buffer);
+  let count = buffer^.length;
+  let starter = 0_u64;
+  next_glyph(buffer: buffer);
+  loop {
+    if buffer^.index >= count {
+      break;
+    }
+    let item = current(buffer: buffer);
+    let composed = False();
+    let mark = unicode_mark(item: item);
+    if mark {
+      let out_length = buffer^.out_length;
+      let last_index = out_length -wrap 1_u64;
+      let adjacent = starter == last_index;
+      let before = previous_item(buffer: buffer);
+      let before_class = combining_class_of(item: before);
+      let class = combining_class_of(item: item);
+      let lower = before_class < class;
+      let unblocked = bor(adjacent, lower);
+      if unblocked {
+        let base = out_at(buffer: buffer, index: starter);
+        let pair_first = base.code;
+        let pair_second = item.code;
+        let nonzero_first = pair_first != 0_u32;
+        let nonzero_second = pair_second != 0_u32;
+        let nonzero = band(nonzero_first, nonzero_second);
+        if nonzero {
+          match normalization::canonical_composition(first: pair_first, second: pair_second) {
+            None() => {
+            }
+            Some(value: composite) => {
+              let glyph = glyph_of(face: face, scalar: composite);
+              if glyph != 0_u32 {
+                next_glyph(buffer: buffer);
+                let merged_end = buffer^.out_length;
+                merge_out_clusters(buffer: buffer, start: starter, end: merged_end);
+                let shortened = buffer^.out_length -wrap 1_u64;
+                set buffer^.out_length = shortened;
+                let starting = out_at(buffer: buffer, index: starter);
+                let props = unicode_props_of(scalar: composite);
+                set starting.code = composite;
+                set starting.glyph = glyph;
+                set starting.unicode_props = props;
+                put_out(buffer: buffer, index: starter, item: starting);
+                set composed = True();
+              }
+            }
+          }
+        }
+      }
+    }
+    if composed {
+    } else {
+      next_glyph(buffer: buffer);
+      let last = previous_item(buffer: buffer);
+      let last_class = combining_class_of(item: last);
+      if last_class == 0_u16 {
+        set starter = buffer^.out_length -wrap 1_u64;
+      }
+    }
+  }
+  sync(buffer: buffer);
+  return unit;
+}
+
+fn normalize(face: &Face, buffer: &Buffer) -> result: unit reads(face), writes(buffer) {
+  doc "HarfBuzz's _hb_ot_shape_normalize in the composed-diacritics mode its default shaper uses: decompose, reorder marks, unhide grapheme joiners that block nothing, and recompose, the last two rounds only when the text held marks.";
+  let length = buffer^.length;
+  if length == 0_u64 {
+    return unit;
+  }
+  let simple = decompose_all(face: face, buffer: buffer);
+  if simple {
+  } else {
+    reorder_marks(buffer: buffer);
+  }
+  unhide_joiners(buffer: buffer);
+  let failed = buffer^.failed;
+  let finished = bor(simple, failed);
+  if finished {
+  } else {
+    recompose(face: face, buffer: buffer);
+  }
+  return unit;
+}
+
+fn fraction_masks(plan: &Plan, buffer: &Buffer) -> result: unit reads(plan), writes(buffer) {
+  doc "HarfBuzz's hb_ot_shape_setup_masks_fraction: around each U+2044 FRACTION SLASH with decimal digits on both sides, the digits before it take the numr and frac bits, the slash frac, and the digits after it frac and dnom; nothing when the face has neither frac nor both numr and dnom.";
+  let numr = plan^.numr_mask;
+  let frac = plan^.frac_mask;
+  let dnom = plan^.dnom_mask;
+  let has_numr = numr != 0_u8;
+  let has_dnom = dnom != 0_u8;
+  let has_frac = frac != 0_u8;
+  let pair = band(has_numr, has_dnom);
+  let enabled = bor(has_frac, pair);
+  if enabled {
+  } else {
+    return unit;
+  }
+  let pre = ior(numr, frac);
+  let post = ior(frac, dnom);
+  let count = buffer^.length;
+  let position = 0_u64;
+  loop {
+    if position >= count {
+      break;
+    }
+    let item = item_at(buffer: buffer, index: position);
+    let next_position = position +wrap 1_u64;
+    if item.code == fraction_slash {
+      let start = position;
+      loop {
+        if start == 0_u64 {
+          break;
+        }
+        let before_index = start - 1_u64;
+        let before = item_at(buffer: buffer, index: before_index);
+        let category = category_of(item: before);
+        if category != category_decimal_number {
+          break;
+        }
+        set start = before_index;
+      }
+      let end = next_position;
+      loop {
+        if end >= count {
+          break;
+        }
+        let after = item_at(buffer: buffer, index: end);
+        let category = category_of(item: after);
+        if category != category_decimal_number {
+          break;
+        }
+        set end = end +wrap 1_u64;
+      }
+      let no_numerator = start == position;
+      let no_denominator = end == next_position;
+      let incomplete = bor(no_numerator, no_denominator);
+      if incomplete {
+      } else {
+        for (digit in start..position) {
+          add_mask(buffer: buffer, index: digit, bits: pre);
+        }
+        add_mask(buffer: buffer, index: position, bits: frac);
+        for (digit in next_position..end) {
+          add_mask(buffer: buffer, index: digit, bits: post);
+        }
+        set next_position = end;
+      }
+    }
+    set position = next_position;
+  }
+  return unit;
+}
+
+fn add_mask(buffer: &Buffer, index: u64, bits: u8) -> result: unit writes(buffer) {
+  doc "Adds bits to the mask of info[index].";
+  let item = item_at(buffer: buffer, index: index);
+  let mask = ior(item.mask, bits);
+  set item.mask = mask;
+  put_item(buffer: buffer, index: index, item: item);
+  return unit;
+}
+
+fn map_glyphs(face: &Face, buffer: &Buffer) -> result: unit reads(face), writes(buffer) {
+  doc "hb_ot_map_glyphs_fast followed by hb_ot_layout_substitute_start: every item's code becomes the glyph normalization chose, with its GDEF glyph properties and no ligature properties; a face without GDEF glyph classes instead takes the mark class for a nonspacing mark that is not default ignorable and the base class for everything else, as hb_synthesize_glyph_classes does.";
+  let count = buffer^.length;
+  let classes = face^.definitions.has_glyph_classes;
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let glyph = item.glyph;
+    set item.code = glyph;
+    let props = definition_props(face: face, glyph: glyph);
+    set item.glyph_props = props;
+    set item.lig_props = 0_u8;
+    if classes {
+    } else {
+      let category = category_of(item: item);
+      let nonspacing = category == category_nonspacing_mark;
+      let ignorable = default_ignorable(item: item);
+      let not_ignorable = bnot(ignorable);
+      let mark = band(nonspacing, not_ignorable);
+      if mark {
+        set item.glyph_props = glyph_mark;
+      } else {
+        set item.glyph_props = glyph_base;
+      }
+    }
+    put_item(buffer: buffer, index: position, item: item);
+  }
+  return unit;
+}

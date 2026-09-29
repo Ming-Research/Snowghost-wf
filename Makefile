@@ -21,7 +21,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
-	oracle-normalization oracle-idna oracle-url
+	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties
 
 check: compiler renderer dom-selftest design-lint
 
@@ -106,6 +106,15 @@ oracle-css-color: $(BUILD)/css_color_oracle
 
 oracle-css-selectors: $(BUILD)/css_selectors_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/selectors_oracle.py build/oracle/wpt-nodes build/oracle/css $<
+
+oracle-font-face: $(BUILD)/font_face_oracle
+	@cd $(ROOT) && $(PY) -B tests/font/face_oracle.py build/oracle/fonts build/oracle/py $<
+
+oracle-font-shape: $(BUILD)/font_shape_oracle
+	@cd $(ROOT) && $(PY) -B tests/font/shape_oracle.py build/oracle/fonts build/oracle/udhr build/oracle/py $<
+
+oracle-text-properties: $(BUILD)/text_properties_oracle
+	@cd $(ROOT) && $(PY) -B tests/text/properties_oracle.py build/oracle/ucd $<
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite

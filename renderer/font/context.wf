@@ -1,0 +1,133 @@
+fn compile_chained_context(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the ChainContextSubst or ChainContextPos subtable at at (format 1, 2 or 3) and returns its index in chained_contexts. A null ChainRuleSet offset gives the empty rule set; a null class definition offset gives the definition of class 0 for every glyph.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let empty = Extent(start: 0_u32, count: 0_u32);
+  let record = if format == 1_u16 {
+    let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+    let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+    let glyphs_kind = SequenceKind::Glyphs();
+    let rule_sets = propagate compile_rule_sets(table: table, at: at, offset: 4_u64, kind: glyphs_kind, builder: builder);
+    let formed = ChainedContext(format: format, coverage: coverage, backtrack_classes: 0_u32, input_classes: 0_u32, lookahead_classes: 0_u32, rule_sets: rule_sets, backtrack: empty, input: empty, lookahead: empty, records: empty);
+    give formed;
+  } else if format == 2_u16 {
+    let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+    let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+    let backtrack_at = propagate follow16(bytes: table, base: at, offset: 4_u64);
+    let input_at = propagate follow16(bytes: table, base: at, offset: 6_u64);
+    let lookahead_at = propagate follow16(bytes: table, base: at, offset: 8_u64);
+    let backtrack_classes = propagate class_index(table: table, at: backtrack_at, builder: builder);
+    let input_classes = propagate class_index(table: table, at: input_at, builder: builder);
+    let lookahead_classes = propagate class_index(table: table, at: lookahead_at, builder: builder);
+    let classes_kind = SequenceKind::Classes();
+    let rule_sets = propagate compile_rule_sets(table: table, at: at, offset: 10_u64, kind: classes_kind, builder: builder);
+    let formed = ChainedContext(format: format, coverage: coverage, backtrack_classes: backtrack_classes, input_classes: input_classes, lookahead_classes: lookahead_classes, rule_sets: rule_sets, backtrack: empty, input: empty, lookahead: empty, records: empty);
+    give formed;
+  } else if format == 3_u16 {
+    let backtrack_total = propagate read_u16(bytes: table, base: at, offset: 2_u64);
+    let backtrack_count = cvt::<u16, u64>(backtrack_total);
+    let backtrack = propagate append_coverages(table: table, at: at, offset: 4_u64, count: backtrack_count, builder: builder);
+    let backtrack_size = backtrack_count * 2_u64;
+    let input_at = 4_u64 + backtrack_size;
+    let input_total = propagate read_u16(bytes: table, base: at, offset: input_at);
+    let input_count = cvt::<u16, u64>(input_total);
+    let inputs_at = input_at + 2_u64;
+    let input = propagate append_coverages(table: table, at: at, offset: inputs_at, count: input_count, builder: builder);
+    let input_size = input_count * 2_u64;
+    let lookahead_at = inputs_at + input_size;
+    let lookahead_total = propagate read_u16(bytes: table, base: at, offset: lookahead_at);
+    let lookahead_count = cvt::<u16, u64>(lookahead_total);
+    let lookaheads_at = lookahead_at + 2_u64;
+    let lookahead = propagate append_coverages(table: table, at: at, offset: lookaheads_at, count: lookahead_count, builder: builder);
+    let lookahead_size = lookahead_count * 2_u64;
+    let records_at = lookaheads_at + lookahead_size;
+    let record_total = propagate read_u16(bytes: table, base: at, offset: records_at);
+    let record_count = cvt::<u16, u64>(record_total);
+    let first_record_at = records_at + 2_u64;
+    let records = propagate append_records(table: table, at: at, offset: first_record_at, count: record_count, builder: builder);
+    let formed = ChainedContext(format: format, coverage: 0_u32, backtrack_classes: 0_u32, input_classes: 0_u32, lookahead_classes: 0_u32, rule_sets: empty, backtrack: backtrack, input: input, lookahead: lookahead, records: records);
+    give formed;
+  } else {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let index = propagate next_index::<ChainedContext>(list: &builder^.layout.chained_contexts);
+  let pushed = propagate push::<ChainedContext>(list: &builder^.layout.chained_contexts, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_rule_sets(table: &[u8], at: u64, offset: u64, kind: SequenceKind, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) contract {
+  requires offset <= 65534_u64;
+} {
+  doc "Appends to rule_sets one entry per rule set offset of the array whose count stands offset bytes past the subtable at at, and returns their Extent; kind says whether the rules' sequences hold glyphs or classes.";
+  let ceiling = builder^.ceiling;
+  let total = propagate read_u16(bytes: table, base: at, offset: offset);
+  let count = cvt::<u16, u64>(total);
+  let first_at = offset + 2_u64;
+  let start = propagate next_index::<Extent>(list: &builder^.layout.rule_sets);
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: first_at, index: index, size: 2_u64);
+    let set_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let rules = propagate compile_rule_set(table: table, at: set_at, kind: kind, builder: builder);
+    let pushed = propagate push::<Extent>(list: &builder^.layout.rule_sets, value: rules, ceiling: ceiling);
+  }
+  let run = propagate extent_since::<Extent>(list: &builder^.layout.rule_sets, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_rule_set(table: &[u8], at: u64, kind: SequenceKind, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) {
+  doc "Appends the rules of the ChainRuleSet at at (none when at is 0) to chain_rules, in font order, and returns their Extent.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<ChainRule>(list: &builder^.layout.chain_rules);
+  if at != 0_u64 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+    let count = cvt::<u16, u64>(total);
+    for (index in 0_u64..count) {
+      let offset_at = record_at(header: 2_u64, index: index, size: 2_u64);
+      let rule_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+      let rule = propagate compile_chain_rule(table: table, at: rule_at, kind: kind, builder: builder);
+      let pushed = propagate push::<ChainRule>(list: &builder^.layout.chain_rules, value: rule, ceiling: ceiling);
+    }
+  }
+  let run = propagate extent_since::<ChainRule>(list: &builder^.layout.chain_rules, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_chain_rule(table: &[u8], at: u64, kind: SequenceKind, builder: &LayoutBuilder) -> result: Result<ChainRule, FontError> reads(table), writes(builder) {
+  doc "Compiles the ChainRule at at: its backtrack, input (after the first glyph) and lookahead sequences and its lookup records. A null offset gives the empty rule and so does, apart from its sequences, an input count of 0: HarfBuzz matches either as a rule of the first glyph alone and applies no lookup record of it.";
+  let empty = Extent(start: 0_u32, count: 0_u32);
+  if at == 0_u64 {
+    let blank = ChainRule(backtrack: empty, input: empty, lookahead: empty, records: empty);
+    return Ok<ChainRule, FontError>(value: blank);
+  }
+  let backtrack_total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let backtrack_count = cvt::<u16, u64>(backtrack_total);
+  let backtrack = propagate append_values(table: table, at: at, offset: 2_u64, count: backtrack_count, kind: kind, builder: builder);
+  let backtrack_size = backtrack_count * 2_u64;
+  let input_at = 2_u64 + backtrack_size;
+  let input_total = propagate read_u16(bytes: table, base: at, offset: input_at);
+  let input_count = cvt::<u16, u64>(input_total);
+  let counted = imax(input_count, 1_u64);
+  let later_count = counted - 1_u64;
+  let inputs_at = input_at + 2_u64;
+  let input = propagate append_values(table: table, at: at, offset: inputs_at, count: later_count, kind: kind, builder: builder);
+  let input_size = later_count * 2_u64;
+  let lookahead_at = inputs_at + input_size;
+  let lookahead_total = propagate read_u16(bytes: table, base: at, offset: lookahead_at);
+  let lookahead_count = cvt::<u16, u64>(lookahead_total);
+  let lookaheads_at = lookahead_at + 2_u64;
+  let lookahead = propagate append_values(table: table, at: at, offset: lookaheads_at, count: lookahead_count, kind: kind, builder: builder);
+  let lookahead_size = lookahead_count * 2_u64;
+  let records_at = lookaheads_at + lookahead_size;
+  let record_total = propagate read_u16(bytes: table, base: at, offset: records_at);
+  let record_count = cvt::<u16, u64>(record_total);
+  let first_record_at = records_at + 2_u64;
+  let records = if input_total != 0_u16 {
+    let applied = propagate append_records(table: table, at: at, offset: first_record_at, count: record_count, builder: builder);
+    give applied;
+  } else {
+    give empty;
+  }
+  let rule = ChainRule(backtrack: backtrack, input: input, lookahead: lookahead, records: records);
+  return Ok<ChainRule, FontError>(value: rule);
+}

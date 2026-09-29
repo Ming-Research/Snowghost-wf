@@ -1,0 +1,115 @@
+fn compile_single_substitution(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the SingleSubst subtable at at (format 1 or 2) and returns its index in single_substitutions.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+  let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+  let glyphs_kind = SequenceKind::Glyphs();
+  let record = if format == 1_u16 {
+    let delta = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+    let none = Extent(start: 0_u32, count: 0_u32);
+    let formed = SingleSubstitution(format: format, coverage: coverage, delta: delta, substitutes: none);
+    give formed;
+  } else if format == 2_u16 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+    let count = cvt::<u16, u64>(total);
+    let substitutes = propagate append_values(table: table, at: at, offset: 6_u64, count: count, kind: glyphs_kind, builder: builder);
+    let formed = SingleSubstitution(format: format, coverage: coverage, delta: 0_u16, substitutes: substitutes);
+    give formed;
+  } else {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let index = propagate next_index::<SingleSubstitution>(list: &builder^.layout.single_substitutions);
+  let pushed = propagate push::<SingleSubstitution>(list: &builder^.layout.single_substitutions, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_multiple_substitution(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the MultipleSubst subtable at at (format 1) and returns its index in multiple_substitutions. A null Sequence offset gives the empty sequence, which deletes the glyph as HarfBuzz's Null sequence does.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  if format != 1_u16 {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+  let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+  let total = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+  let count = cvt::<u16, u64>(total);
+  let glyphs_kind = SequenceKind::Glyphs();
+  let start = propagate next_index::<Extent>(list: &builder^.layout.sequences);
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: 6_u64, index: index, size: 2_u64);
+    let sequence_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let sequence = if sequence_at != 0_u64 {
+      let glyph_total = propagate read_u16(bytes: table, base: sequence_at, offset: 0_u64);
+      let glyph_count = cvt::<u16, u64>(glyph_total);
+      let glyphs = propagate append_values(table: table, at: sequence_at, offset: 2_u64, count: glyph_count, kind: glyphs_kind, builder: builder);
+      give glyphs;
+    } else {
+      let empty = Extent(start: 0_u32, count: 0_u32);
+      give empty;
+    }
+    let pushed = propagate push::<Extent>(list: &builder^.layout.sequences, value: sequence, ceiling: ceiling);
+  }
+  let sequences = propagate extent_since::<Extent>(list: &builder^.layout.sequences, start: start);
+  let record = MultipleSubstitution(coverage: coverage, sequences: sequences);
+  let index = propagate next_index::<MultipleSubstitution>(list: &builder^.layout.multiple_substitutions);
+  let pushed = propagate push::<MultipleSubstitution>(list: &builder^.layout.multiple_substitutions, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_ligature_substitution(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the LigatureSubst subtable at at (format 1) and returns its index in ligature_substitutions. A null LigatureSet offset gives the empty set; a null Ligature offset and a ligature of no components, which never match, are not compiled.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  if format != 1_u16 {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+  let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+  let total = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+  let count = cvt::<u16, u64>(total);
+  let start = propagate next_index::<Extent>(list: &builder^.layout.ligature_sets);
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: 6_u64, index: index, size: 2_u64);
+    let set_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let ligatures = propagate compile_ligature_set(table: table, at: set_at, builder: builder);
+    let pushed = propagate push::<Extent>(list: &builder^.layout.ligature_sets, value: ligatures, ceiling: ceiling);
+  }
+  let ligature_sets = propagate extent_since::<Extent>(list: &builder^.layout.ligature_sets, start: start);
+  let record = LigatureSubstitution(coverage: coverage, ligature_sets: ligature_sets);
+  let index = propagate next_index::<LigatureSubstitution>(list: &builder^.layout.ligature_substitutions);
+  let pushed = propagate push::<LigatureSubstitution>(list: &builder^.layout.ligature_substitutions, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_ligature_set(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) {
+  doc "Appends the ligatures of the LigatureSet at at (none when at is 0) to ligatures, in font order, and returns their Extent.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<Ligature>(list: &builder^.layout.ligatures);
+  if at != 0_u64 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+    let count = cvt::<u16, u64>(total);
+    let glyphs_kind = SequenceKind::Glyphs();
+    for (index in 0_u64..count) {
+      let offset_at = record_at(header: 2_u64, index: index, size: 2_u64);
+      let ligature_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+      if ligature_at != 0_u64 {
+        let glyph = propagate read_u16(bytes: table, base: ligature_at, offset: 0_u64);
+        let component_total = propagate read_u16(bytes: table, base: ligature_at, offset: 2_u64);
+        if component_total != 0_u16 {
+          let later = component_total - 1_u16;
+          let later_count = cvt::<u16, u64>(later);
+          let components = propagate append_values(table: table, at: ligature_at, offset: 4_u64, count: later_count, kind: glyphs_kind, builder: builder);
+          let ligature = Ligature(glyph: glyph, components: components);
+          let pushed = propagate push::<Ligature>(list: &builder^.layout.ligatures, value: ligature, ceiling: ceiling);
+        }
+      }
+    }
+  }
+  let run = propagate extent_since::<Ligature>(list: &builder^.layout.ligatures, start: start);
+  return Ok<Extent, FontError>(value: run);
+}

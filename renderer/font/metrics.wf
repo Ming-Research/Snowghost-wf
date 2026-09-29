@@ -1,0 +1,175 @@
+struct HorizontalHeader {
+  doc "The hhea fields a face keeps: the ascender, descender and line gap, and numberOfHMetrics.";
+  ascender: i16;
+  descender: i16;
+  line_gap: i16;
+  metric_count: u16;
+}
+
+struct WindowsMetrics {
+  doc "The OS/2 fields a face keeps; all zero and False for a face without OS/2.";
+  typo_ascender: i16;
+  typo_descender: i16;
+  typo_line_gap: i16;
+  use_typo_metrics: Bool;
+  win_ascent: u16;
+  win_descent: u16;
+}
+
+const head_magic: u32 = 1594834165_u32;
+
+const head_size: u64 = 54_u64;
+
+const hhea_size: u64 = 36_u64;
+
+const maxp_short_version: u32 = 20480_u32;
+
+const maxp_long_version: u32 = 65536_u32;
+
+const maxp_short_size: u64 = 6_u64;
+
+const maxp_long_size: u64 = 32_u64;
+
+const use_typo_metrics_bit: u16 = 128_u16;
+
+fn read_head(table: &[u8]) -> result: Result<u16, FontError> reads(table) {
+  doc "Checks the head table as OpenType Sanitizer does for the fields a face reads (at least 54 bytes, major version 1, the magic number, and units per em from 16 to 16384) and returns units per em.";
+  let length = table^.len;
+  if length < head_size {
+    let invalid = FontError::Invalid();
+    return Err<u16, FontError>(error: invalid);
+  }
+  let version = propagate read_u32(bytes: table, base: 0_u64, offset: 0_u64);
+  let major = ishr(version, 16_u32);
+  let magic = propagate read_u32(bytes: table, base: 0_u64, offset: 12_u64);
+  let units = propagate read_u16(bytes: table, base: 0_u64, offset: 18_u64);
+  let known = major == 1_u32;
+  let marked = magic == head_magic;
+  let large_enough = units >= 16_u16;
+  let small_enough = units <= 16384_u16;
+  let identified = band(known, marked);
+  let sized = band(large_enough, small_enough);
+  let valid = band(identified, sized);
+  if valid {
+    return Ok<u16, FontError>(value: units);
+  }
+  let invalid = FontError::Invalid();
+  return Err<u16, FontError>(error: invalid);
+}
+
+fn read_maxp(table: &[u8]) -> result: Result<u16, FontError> reads(table) {
+  doc "Checks the maxp table (version 0.5 of at least 6 bytes or version 1.0 of at least 32) and returns its glyph count, which must not be 0.";
+  let length = table^.len;
+  let version = propagate read_u32(bytes: table, base: 0_u64, offset: 0_u64);
+  let count = propagate read_u16(bytes: table, base: 0_u64, offset: 4_u64);
+  let short_version = version == maxp_short_version;
+  let long_version = version == maxp_long_version;
+  let short_fits = length >= maxp_short_size;
+  let long_fits = length >= maxp_long_size;
+  let short_valid = band(short_version, short_fits);
+  let long_valid = band(long_version, long_fits);
+  let versioned = bor(short_valid, long_valid);
+  let glyphs = count > 0_u16;
+  let valid = band(versioned, glyphs);
+  if valid {
+    return Ok<u16, FontError>(value: count);
+  }
+  let invalid = FontError::Invalid();
+  return Err<u16, FontError>(error: invalid);
+}
+
+fn read_hhea(table: &[u8]) -> result: Result<HorizontalHeader, FontError> reads(table) {
+  doc "Checks the hhea table (at least 36 bytes, major version 1, metricDataFormat 0) and returns the fields a face keeps; compile_advances checks numberOfHMetrics against the glyph count.";
+  let length = table^.len;
+  if length < hhea_size {
+    let invalid = FontError::Invalid();
+    return Err<HorizontalHeader, FontError>(error: invalid);
+  }
+  let version = propagate read_u32(bytes: table, base: 0_u64, offset: 0_u64);
+  let major = ishr(version, 16_u32);
+  let data_format = propagate read_u16(bytes: table, base: 0_u64, offset: 32_u64);
+  let known = major == 1_u32;
+  let plain = data_format == 0_u16;
+  let valid = band(known, plain);
+  if valid {
+  } else {
+    let invalid = FontError::Invalid();
+    return Err<HorizontalHeader, FontError>(error: invalid);
+  }
+  let ascender = propagate read_i16(bytes: table, base: 0_u64, offset: 4_u64);
+  let descender = propagate read_i16(bytes: table, base: 0_u64, offset: 6_u64);
+  let line_gap = propagate read_i16(bytes: table, base: 0_u64, offset: 8_u64);
+  let metric_count = propagate read_u16(bytes: table, base: 0_u64, offset: 34_u64);
+  let header = HorizontalHeader(ascender: ascender, descender: descender, line_gap: line_gap, metric_count: metric_count);
+  return Ok<HorizontalHeader, FontError>(value: header);
+}
+
+fn compile_advances(table: &[u8], glyph_count: u64, metric_count: u64) -> result: Result<Box<Array<u16>>, FontError> reads(table) contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Checks the hmtx table against the glyph count and numberOfHMetrics, which must be 1 to the glyph count, and returns every glyph's advance width: a glyph at or past numberOfHMetrics takes the last metric's advance.";
+  let no_metrics = metric_count == 0_u64;
+  let too_many = metric_count > glyph_count;
+  let unusable = bor(no_metrics, too_many);
+  if unusable {
+    let invalid = FontError::Invalid();
+    return Err<Box<Array<u16>>, FontError>(error: invalid);
+  }
+  let metrics_size = metric_count * 4_u64;
+  let bearing_count = glyph_count - metric_count;
+  let bearings_size = bearing_count * 2_u64;
+  let needed = metrics_size + bearings_size;
+  let length = table^.len;
+  if needed > length {
+    let invalid = FontError::Invalid();
+    return Err<Box<Array<u16>>, FontError>(error: invalid);
+  }
+  let advances = box_array_filled::<u16>(count: glyph_count, value: 0_u16);
+  let last = 0_u16;
+  for (glyph in 0_u64..metric_count) {
+    let at = record_at(header: 0_u64, index: glyph, size: 4_u64);
+    let advance = propagate read_u16(bytes: table, base: 0_u64, offset: at);
+    set advances.inner[glyph] = advance;
+    set last = advance;
+  }
+  for (glyph in metric_count..glyph_count) {
+    set advances.inner[glyph] = last;
+  }
+  return Ok<Box<Array<u16>>, FontError>(value: move advances);
+}
+
+fn no_windows_metrics() -> result: WindowsMetrics pure {
+  doc "The OS/2 fields of a face without OS/2: all zero and False.";
+  let unset = False();
+  let metrics = WindowsMetrics(typo_ascender: 0_i16, typo_descender: 0_i16, typo_line_gap: 0_i16, use_typo_metrics: unset, win_ascent: 0_u16, win_descent: 0_u16);
+  return metrics;
+}
+
+fn read_os2(table: &[u8]) -> result: Result<WindowsMetrics, FontError> reads(table) {
+  doc "Checks the OS/2 table's length for its version (78 bytes for version 0, 86 for 1, 96 for 2 to 4 and 100 from 5) and returns the fields a face keeps.";
+  let version = propagate read_u16(bytes: table, base: 0_u64, offset: 0_u64);
+  let needed = if version == 0_u16 {
+    give 78_u64;
+  } else if version == 1_u16 {
+    give 86_u64;
+  } else if version <= 4_u16 {
+    give 96_u64;
+  } else {
+    give 100_u64;
+  }
+  let length = table^.len;
+  if length < needed {
+    let invalid = FontError::Invalid();
+    return Err<WindowsMetrics, FontError>(error: invalid);
+  }
+  let selection = propagate read_u16(bytes: table, base: 0_u64, offset: 62_u64);
+  let typo_ascender = propagate read_i16(bytes: table, base: 0_u64, offset: 68_u64);
+  let typo_descender = propagate read_i16(bytes: table, base: 0_u64, offset: 70_u64);
+  let typo_line_gap = propagate read_i16(bytes: table, base: 0_u64, offset: 72_u64);
+  let win_ascent = propagate read_u16(bytes: table, base: 0_u64, offset: 74_u64);
+  let win_descent = propagate read_u16(bytes: table, base: 0_u64, offset: 76_u64);
+  let typo_bit = iand(selection, use_typo_metrics_bit);
+  let use_typo_metrics = typo_bit != 0_u16;
+  let metrics = WindowsMetrics(typo_ascender: typo_ascender, typo_descender: typo_descender, typo_line_gap: typo_line_gap, use_typo_metrics: use_typo_metrics, win_ascent: win_ascent, win_descent: win_descent);
+  return Ok<WindowsMetrics, FontError>(value: metrics);
+}
