@@ -59,7 +59,8 @@ Three traversal shapes compute the same result, which the driver checks:
 - **B, preorder halving:** results in preorder, so a subtree is a contiguous
   range. A call styles a subtree's root, then splits the children's run into
   two halves by preorder offset. The halves are disjoint subranges of the
-  results.
+  results. The parent's values travel by reference, so a half's call fits a
+  lane.
 - **C, flat match then cascade:** one counted loop over all elements in
   preorder matches rules and writes each element's matched-rule summary to
   its own slot, since matching reads only the document. A sequential
@@ -164,7 +165,41 @@ Recorded before any run; the results section may not change them.
 
 ## Results
 
-The measurement has not run. It waits for the precondition below.
+The measurement has not run. It waits for the precondition below, which
+Whitefoot's call-offer grain (mbbill/Whitefoot#177) now meets, and for the pin
+to move to a compiler that carries it.
+
+### Preview with the call grain
+
+Not the measurement: best of three at one and four workers only, stage time
+(T(2) - T(0)) / 2, with the Whitefoot branch of #177 (call grain) building the
+prototype, on the development machine under the check lock.
+
+| Page | Shape | W1 (s) | W4 (s) | Speedup |
+|---|---|---:|---:|---:|
+| ecma262 | A | 2.877 | 0.814 | 3.53 |
+| ecma262 | C | 2.931 | 0.790 | 3.71 |
+| html5 | A | 3.727 | 1.034 | 3.60 |
+| html5 | C | 3.855 | 1.035 | 3.73 |
+| apollo11 | A | 1.713 | 0.486 | 3.53 |
+| apollo11 | C | 1.776 | 0.463 | 3.84 |
+
+Shape B first showed no speedup (0.96 to 1.00) for two reasons found in turn:
+
+- **Its halving offer did not fit a lane.** `style_run` took `parent:
+  Computed` by value, and `Computed` alone is 256 bytes, the lane slot's
+  whole size, so the permitted pair of recursive calls was never handed out,
+  with no ledger line (a Whitefoot diagnostic gap, now being fixed on #177).
+  `style_subtree` and `style_run` now take `parent: &Computed`, reading it
+  once per element; the check-mode checksums are unchanged.
+- **The recursion budget runs out before the wide runs.** With the frame
+  fixed, B reached 2.57 on html5 but 1.04 on ecma262 and apollo11. Built with
+  `--par-recursive-frontier off` it reaches 3.76 on ecma262 and 3.81 on
+  apollo11. The budget, about eight levels at four workers, is spent by
+  every call in the recursive component, including the one-child descents of
+  a deep document that offer nothing, so the wide sibling runs below are
+  reached sequentially. This is criterion 4's case in a real page; the
+  finding goes to Whitefoot (a budget spent only at hand-outs).
 
 ### Precondition: the grain of `--par` tasks
 
