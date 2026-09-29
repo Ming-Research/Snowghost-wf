@@ -1,9 +1,9 @@
 # Task completion review
 
-The items an independent reviewer checks when a task completes. The
-[completion-review skill](skills/completion-review/SKILL.md) owns when the
-review runs, who runs it, how findings are routed and where the report goes.
-Merge conditions remain in [AGENTS.md](../AGENTS.md#branch-and-main-boundary).
+The items an independent reviewer checks when a task completes.
+[AGENTS.md](../AGENTS.md#review) says when the review runs, who runs it, how
+findings are handled and where the report goes; merge conditions remain in
+its [branch and main boundary](../AGENTS.md#branch-and-main-boundary).
 
 ## How to review
 
@@ -19,8 +19,7 @@ review checks meaning, placement and omitted dependent updates. It does not
 reconstruct an unrecorded reason or certify a design argument: mark such a
 question `unverified` for the implementing agent.
 
-Check every group whose trigger applies; `make review-scope` names them from
-the changed paths, and a group it cannot decide from paths says so. Mark items
+Check every group whose trigger applies. Mark items
 `pass`, `finding`, `unverified` or `not applicable`; missing evidence is not a
 pass. A finding names its item ID, file and line, the offending text or
 missing evidence, and a short reason; quote both sides of a contradiction.
@@ -122,7 +121,9 @@ made a material choice elsewhere.
 - [ ] **V3 — Delivery.** The PR describes the current result and remaining
   limitations. Its *Found along the way* section gives every defect or
   opportunity the work exposed a disposition: fixed, recorded in
-  `docs/todo.md`, or declined with a reason.
+  `docs/todo.md`, or declined with a reason. A PR marked ready has the
+  owner's approval of every design-tree change it carries, recorded in
+  `design/log.md`.
 - [ ] **V4 — Existing PR updated.** The reviewed changes are pushed to the PR
   branch; its remote head is the delivered revision and its description
   reflects the current diff.
