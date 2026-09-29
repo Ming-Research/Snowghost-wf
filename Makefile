@@ -19,7 +19,8 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
 	static-atoms dom-selftest \
-	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-selectors oracle-html-tokenizer oracle-html-tree oracle-png oracle-png-speed
+	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
+	oracle-png oracle-png-speed
 
 check: compiler renderer dom-selftest design-lint
 
@@ -95,6 +96,9 @@ oracle-html-tree: $(BUILD)/html_tree_oracle
 
 oracle-css-rules: $(BUILD)/css_rules_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/rules_oracle.py build/oracle/css $<
+
+oracle-css-color: $(BUILD)/css_color_oracle
+	@cd $(ROOT) && $(PY) -B tests/css/color_oracle.py build/oracle/css $<
 
 oracle-css-selectors: $(BUILD)/css_selectors_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/selectors_oracle.py build/oracle/wpt-nodes build/oracle/css $<

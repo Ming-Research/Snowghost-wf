@@ -26,6 +26,16 @@ example apart from the renderer code that exposed it
   open that follows links. Reopen when oracle runs from such worktrees are
   needed.
 
+- **No rounding conversion between float formats.** [OP-6]'s `cvt`
+  from f64 to f32 is defined only for a value exactly representable in
+  f32, and no operation rounds. `pkg::css::color` therefore narrows its
+  channels by IEEE 754 round-to-nearest-even computed from the bits
+  (`narrow_f32`, flushing results below f32's normal range to zero). A
+  minimal example: `let x = fdiv.strict(136.0_f64, 255.0_f64);` has no
+  total conversion to the nearest f32. Change: a total rounding conversion
+  for float destinations. Reopen when Whitefoot adds one; then replace
+  `narrow_f32`.
+
 ## Snowghost
 
 - **No mechanical check for documents and artifacts.** `make check` does not
@@ -75,3 +85,10 @@ example apart from the renderer code that exposed it
   four `webkit02.dat` cases that observe it. Change: implement the element
   behaviour where DOM insertion steps live. Reopen when form controls are
   rendered.
+- **pkg::css::color covers CSS Color Module Level 4 only.** System colors,
+  `color-mix()`, `light-dark()`, relative color syntax, `calc()` in
+  channels and the Level 5 spaces (`device-cmyk()`, `@color-profile`
+  spaces) parse as Invalid, and `color_functions_5.json` is not in the
+  oracle. Impact: pages using them lose the declaration. Change: extend
+  `ParsedColor` and the parser, and add the suite. Reopen when the style
+  system resolves colors, or a page in the corpus uses one.

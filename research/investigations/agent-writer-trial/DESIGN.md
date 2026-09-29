@@ -43,17 +43,19 @@ tasks stand for three classes of implementer work.
   at `renderer/`. Each task's interface is a module (`pkg::text::line_break`,
   `pkg::css::syntax`, `pkg::image::png`) whose `module.wfm` is written
   before the runs. A driver module per task (`pkg::oracle::line_break`,
-  `pkg::oracle::css_syntax`, `pkg::oracle::css_rules`, `pkg::oracle::png`)
+  `pkg::oracle::css_syntax`, `pkg::oracle::css_rules`,
+  `pkg::oracle::css_color`, `pkg::oracle::png`)
   has a graph entry that runs the oracle through the interface and prints
   the number of cases that pass and fail, or, for the CSS drivers, one JSON
-  line per case, with components written by the shared
+  line per case, with components and numbers written by the shared
   `pkg::oracle::css_json`.
 - **Oracle data.** `make oracle-data` (`tests/oracle-data.sh`) downloads
   each file at its pinned version, checks its SHA-256 and places it under
   `build/oracle/`, which git ignores. `make oracle-line-break`, `oracle-css`,
-  `oracle-css-rules`, `oracle-png` and `oracle-png-speed` build each driver
-  entry and run it; `tests/css/oracle.py` and `tests/css/rules_oracle.py`
-  compare the CSS drivers' JSON lines with the suites.
+  `oracle-css-rules`, `oracle-css-color`, `oracle-png` and `oracle-png-speed`
+  build each driver entry and run it; `tests/css/oracle.py`,
+  `tests/css/rules_oracle.py` and `tests/css/color_oracle.py` compare the CSS
+  drivers' JSON lines with the suites.
 - **PNG reference.** `tests/png/reference.c` decodes each image with
   libpng into raw RGBA for the driver to compare. It also generates the
   speed set: twelve 2048 by 2048 images of gradients, noise, synthetic text
