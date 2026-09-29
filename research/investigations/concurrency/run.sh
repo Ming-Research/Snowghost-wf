@@ -83,17 +83,18 @@ sheets_of() {
 
 # Repetitions per page and stage, chosen so the stage is at least two thirds
 # of T(REPS) with the --par build at four workers, the configuration with the
-# shortest stage and, because the HTML tree builder hands out statement-sized
-# tasks under --par, the longest T(0): up to 17.5 s on ecma262 and 10 s on
-# html5 against 0.3 s at one worker, and up to 0.65 s on unbalanced against
-# 0.03 s, measured on the development machine. One count serves the shapes A, B and
-# C, and one the intern post-pass, which costs far less than a shape while
-# its T(0) holds one run of C.
+# shortest stage. With Whitefoot's call-offer grain T(0) no longer grows with
+# workers: 0.29 s on ecma262, 0.23 s on html5 and 0.06 s on apollo11 at four
+# workers, against a four-worker stage of about 0.9, 1.1 and 0.5 s per
+# repetition, measured on the development machine. One count serves the shapes
+# A, B and C, and one the intern post-pass, which costs far less than a shape
+# (about 0.04, 0.03 and 0.0006 s per repetition) while its T(0) holds one run
+# of C.
 reps_of() {
 	case $1 in
-	ecma262) shapes=20 intern=800 ;;
-	html5) shapes=15 intern=800 ;;
-	apollo11) shapes=6 intern=2000 ;;
+	ecma262) shapes=3 intern=80 ;;
+	html5) shapes=3 intern=100 ;;
+	apollo11) shapes=4 intern=2000 ;;
 	flat) shapes=100 intern=1000 ;;
 	deep) shapes=1000 intern=2000 ;;
 	unbalanced) shapes=150 intern=1000 ;;
