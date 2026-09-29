@@ -1,0 +1,177 @@
+const filter_word_ceiling: u64 = 4194304_u64;
+
+fn leading_coverage(layout: &LayoutTable, subtable: Subtable) -> result: u32 reads(layout) {
+  doc "The coverage every application of subtable first tests the current glyph against: the coverage of a substitution, chained context of format 1 or 2, or pair or single positioning, the first input coverage of a format 3 chained context, and the mark coverage of a mark attachment; not_covered for a format 3 chained context without input, which never applies.";
+  let at = cvt::<u32, u64>(subtable.index);
+  match subtable.kind {
+    SingleSubstitution() => {
+      if at < layout^.single_substitutions.inner.len {
+        let found = layout^.single_substitutions.inner[at];
+        return found.coverage;
+      }
+      return not_covered;
+    }
+    MultipleSubstitution() => {
+      if at < layout^.multiple_substitutions.inner.len {
+        let found = layout^.multiple_substitutions.inner[at];
+        return found.coverage;
+      }
+      return not_covered;
+    }
+    LigatureSubstitution() => {
+      if at < layout^.ligature_substitutions.inner.len {
+        let found = layout^.ligature_substitutions.inner[at];
+        return found.coverage;
+      }
+      return not_covered;
+    }
+    ChainedContext() => {
+      if at < layout^.chained_contexts.inner.len {
+        let found = layout^.chained_contexts.inner[at];
+        if found.format != 3_u16 {
+          return found.coverage;
+        }
+        if found.input.count == 0_u32 {
+          return not_covered;
+        }
+        let first = cvt::<u32, u64>(found.input.start);
+        if first < layout^.coverage_sequences.inner.len {
+          let coverage = layout^.coverage_sequences.inner[first];
+          return coverage;
+        }
+      }
+      return not_covered;
+    }
+    SinglePositioning() => {
+      if at < layout^.single_positionings.inner.len {
+        let found = layout^.single_positionings.inner[at];
+        return found.coverage;
+      }
+      return not_covered;
+    }
+    PairPositioning() => {
+      if at < layout^.pair_positionings.inner.len {
+        let found = layout^.pair_positionings.inner[at];
+        return found.coverage;
+      }
+      return not_covered;
+    }
+    MarkToBase() => {
+      let coverage = mark_coverage_of(layout: layout, at: at);
+      return coverage;
+    }
+    MarkToLigature() => {
+      let coverage = mark_coverage_of(layout: layout, at: at);
+      return coverage;
+    }
+    MarkToMark() => {
+      let coverage = mark_coverage_of(layout: layout, at: at);
+      return coverage;
+    }
+  }
+}
+
+fn mark_coverage_of(layout: &LayoutTable, at: u64) -> result: u32 reads(layout) {
+  doc "The mark coverage of mark attachment at, not_covered past the attachments.";
+  if at < layout^.mark_attachments.inner.len {
+    let found = layout^.mark_attachments.inner[at];
+    return found.mark_coverage;
+  }
+  return not_covered;
+}
+
+fn set_coverage_bits(layout: &LayoutTable, filters: &Box<Array<u64>>, row: u64, width: u64, coverage: u32) -> result: unit reads(layout), writes(filters) {
+  doc "Sets, in the row of width words from word row times width, the bit of every glyph below 64 times width that coverage holds.";
+  let at = cvt::<u32, u64>(coverage);
+  if at < layout^.coverages.inner.len {
+  } else {
+    return unit;
+  }
+  let extent = layout^.coverages.inner[at];
+  let start = cvt::<u32, u64>(extent.start);
+  let size = cvt::<u32, u64>(extent.count);
+  let base = row *wrap width;
+  let limit = width *wrap 64_u64;
+  for (step in 0_u64..size) {
+    let position = start +wrap step;
+    if position < layout^.coverage_ranges.inner.len {
+      let range = layout^.coverage_ranges.inner[position];
+      let first = cvt::<u16, u64>(range.first);
+      let last = cvt::<u16, u64>(range.last);
+      let stop = last +wrap 1_u64;
+      let bounded = imin(stop, limit);
+      for (glyph in first..bounded) {
+        let word = ishr.wrap(glyph, 6_u32);
+        let bit_index = iand(glyph, 63_u64);
+        let shift = cvt::<u64, u32>(bit_index);
+        let bit = ishl.wrap(1_u64, shift);
+        let slot = base +wrap word;
+        if slot < filters^.inner.len {
+          let old = filters^.inner[slot];
+          let marked = ior(old, bit);
+          set filters^.inner[slot] = marked;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn build_filters(layout: &LayoutTable, glyph_count: u64) -> result: unit writes(layout) contract {
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Builds the lookup filters of layout: per lookup a row of one bit per glyph below the glyph count, set when the first coverage of one of the lookup's subtables holds the glyph. Left unbuilt, with width 0, when the rows would pass filter_word_ceiling words.";
+  let words = glyph_count +wrap 63_u64;
+  let width = ishr.wrap(words, 6_u32);
+  let lookups = layout^.lookups.inner.len;
+  let bounded_lookups = imin(lookups, 65536_u64);
+  let total = bounded_lookups * width;
+  if total > filter_word_ceiling {
+    return unit;
+  }
+  let filters = box_array_filled::<u64>(count: total, value: 0_u64);
+  let listed = layout^.subtables.inner.len;
+  for (row in 0_u64..bounded_lookups) {
+    if row < layout^.lookups.inner.len {
+      let lookup = layout^.lookups.inner[row];
+      let start = cvt::<u32, u64>(lookup.subtables.start);
+      let size = cvt::<u32, u64>(lookup.subtables.count);
+      for (step in 0_u64..size) {
+        let position = start +wrap step;
+        if position < listed {
+          let subtable = layout^.subtables.inner[position];
+          let coverage = leading_coverage(layout: layout, subtable: subtable);
+          set_coverage_bits(layout: layout, filters: &filters, row: row, width: width, coverage: coverage);
+        }
+      }
+    }
+  }
+  set layout^.filters = move filters;
+  set layout^.filter_width = width;
+  return unit;
+}
+
+fn may_apply(layout: &LayoutTable, lookup_index: u64, glyph: u32) -> result: Bool reads(layout) {
+  doc "Whether a subtable of lookup lookup_index may apply at glyph, as HarfBuzz's lookup digest answers exactly: False only when the lookup's filter row lacks glyph's bit; True without filters and for a glyph past the row.";
+  let width = layout^.filter_width;
+  if width == 0_u64 {
+    return True();
+  }
+  let wide = cvt::<u32, u64>(glyph);
+  let word = ishr.wrap(wide, 6_u32);
+  if word >= width {
+    return True();
+  }
+  let base = lookup_index *wrap width;
+  let slot = base +wrap word;
+  if slot < layout^.filters.inner.len {
+    let bits = layout^.filters.inner[slot];
+    let bit_index = iand(wide, 63_u64);
+    let shift = cvt::<u64, u32>(bit_index);
+    let bit = ishl.wrap(1_u64, shift);
+    let masked = iand(bits, bit);
+    let present = masked != 0_u64;
+    return present;
+  }
+  return True();
+}
