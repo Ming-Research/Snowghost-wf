@@ -410,7 +410,46 @@ splits. The finding goes to Whitefoot as a language gap: a field of the
 element an affine subscript selects.
 
 `--par-ledger` refused a `--graph` build until mbbill/Whitefoot#186, so
-these decisions were read with that branch's compiler.
+these decisions were read with that branch's compiler. Whitefoot v0.81
+admits the field write; see below.
+
+### Field writes after Whitefoot v0.81
+
+Whitefoot v0.81 (mbbill/Whitefoot#186, pinned at `290b575b`) admits a
+counted loop's writes at or below one mapped element, so L2's paragraph loop
+can write each paragraph's line count into the paragraph itself again,
+`set paragraphs^[i].lines = counted`, instead of into the array kept beside
+the paragraphs.
+
+Criterion, written before measuring: with that pin, the field-write loop is
+permitted and split (`--par-ledger`), and its L2 layout stage on ecma262 and
+flat is within 5 percent of the array build, compiled with the same pin, at
+one and four workers. A larger gap means the field form costs something the
+array form does not, and the finding goes to Whitefoot.
+
+`--par-ledger` reports `PAR split proto.layout.break_all loop ... split
+independent map`, and both builds give the same checksums on ecma262 and
+flat, where L1 and L2 agree. `run.sh layout "ecma262 flat"` with RUNS=3 and
+WORKERS "1 4" (the array build first, then the field build, each best of
+three), L2 stage in seconds:
+
+| Page | Workers | Array | Field |
+|---|---|---:|---:|
+| ecma262 | 1 | 0.0718 | 0.0742 |
+| ecma262 | 4 | 0.0222 | 0.0227 |
+| flat | 1 | 0.1305 | 0.1390 |
+| flat | 4 | 0.0390 | 0.0410 |
+
+flat's 6.5 and 5.1 percent passed the bound, but its L1 rows, which do not
+run the loop, moved 3 percent between the two runs too. An alternating
+comparison separated drift from cost: both builds on flat in L2, 20
+repetitions, five rounds alternating array and field. The best totals in
+seconds: at four workers 0.93 and 0.93, the order varying by round; at one
+worker 2.77 and 2.83, and sequential 2.73 and 2.83, the field build slower
+in every round. The field form costs about 2 percent of the stage at one
+worker and 4 percent sequentially, and nothing measurable at four: within
+the criterion. The likely cause is the paragraph record growing from one
+word to two; it is left as is.
 
 ### Whitefoot: an equality requirement over range lengths
 
