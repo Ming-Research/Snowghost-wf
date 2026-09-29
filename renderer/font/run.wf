@@ -1,0 +1,101 @@
+const run_limit_factor: u64 = 256_u64;
+
+const run_limit_minimum: u64 = 65536_u64;
+
+const run_budget_factor: u64 = 4096_u64;
+
+const run_budget_minimum: u64 = 65536_u64;
+
+fn start_buffer(text: &[u32]) -> result: Buffer reads(text) contract {
+  requires text^.len <= 16777216_u64;
+} {
+  doc "A buffer holding one item per value of text, its cluster its index, with HarfBuzz's limits for a run of that length: at most 256 glyphs per value and 4096 operations per value, and at least 65536 of each.";
+  let count = text^.len;
+  let items = box_slots_new::<Item>(capacity: count);
+  let spare = box_slots_new::<Item>(capacity: count);
+  let blank = blank_item();
+  let failed = False();
+  for (position in 0_u64..count) {
+    let item = blank;
+    set item.code = text^[position];
+    let cluster = cvt::<u64, u32>(position);
+    set item.cluster = cluster;
+    let stored = write_item(list: &items, index: position, item: item);
+    if stored {
+    } else {
+      set failed = True();
+    }
+  }
+  let scaled_limit = count * run_limit_factor;
+  let limit = imax(scaled_limit, run_limit_minimum);
+  let scaled_budget = count * run_budget_factor;
+  let budget_units = imax(scaled_budget, run_budget_minimum);
+  let budget = cvt::<u64, i64>(budget_units);
+  let no = False();
+  let buffer = Buffer(items: move items, spare: move spare, length: count, index: 0_u64, out_length: 0_u64, output: no, separate: no, limit: limit, budget: budget, failed: failed, serial: 0_u8, attached: no);
+  return move buffer;
+}
+
+fn finish_run(buffer: &Buffer) -> result: Result<GlyphRun, ShapeError> reads(buffer) {
+  doc "The shaped glyphs of buffer in order, each with its glyph, cluster, advances and offsets.";
+  let length = buffer^.length;
+  let capacity = imin(length, glyph_ceiling);
+  let glyphs = box_slots_new::<ShapedGlyph>(capacity: capacity);
+  for (position in 0_u64..capacity) {
+    let item = item_at(buffer: buffer, index: position);
+    let glyph = if item.code <= 65535_u32 {
+      let narrow = cvt::<u32, u16>(item.code);
+      give narrow;
+    } else {
+      give 0_u16;
+    }
+    let shaped = ShapedGlyph(glyph: glyph, cluster: item.cluster, x_advance: item.x_advance, y_advance: item.y_advance, x_offset: item.x_offset, y_offset: item.y_offset);
+    let size = glyphs.inner.len;
+    let room = glyphs.inner.cap;
+    if size < room {
+      place_back(window: &glyphs.inner, value: shaped);
+    } else {
+      let refusal = ShapeError::TooLarge();
+      return Err<GlyphRun, ShapeError>(error: refusal);
+    }
+  }
+  let run = GlyphRun(glyphs: move glyphs);
+  return Ok<GlyphRun, ShapeError>(value: move run);
+}
+
+fn shape_run(face: &Face, text: &[u32], script: Script) -> result: Result<GlyphRun, ShapeError> reads(face), reads(text) contract {
+  requires text^.len <= 16777216_u64;
+} {
+  doc "Runs HarfBuzz's OpenType shaping pipeline for the default shaper: unicode properties and grapheme clusters, normalization, fraction masks, glyph mapping and GDEF classes, GSUB, default advances with fallback spaces, GPOS, late zeroing of mark advances, zero-width default ignorables, attachment offsets, and hiding default ignorables. TooLarge when the run passes the glyph limit, the operation budget or the nesting limit.";
+  let count = text^.len;
+  if count == 0_u64 {
+    let glyphs = box_slots_new::<ShapedGlyph>(capacity: 0_u64);
+    let run = GlyphRun(glyphs: move glyphs);
+    return Ok<GlyphRun, ShapeError>(value: move run);
+  }
+  let plan = propagate make_plan(face: face, script: script);
+  let buffer = start_buffer(text: text);
+  set_unicode_props(buffer: &buffer);
+  form_clusters(buffer: &buffer);
+  normalize(face: face, buffer: &buffer);
+  fraction_masks(plan: &plan, buffer: &buffer);
+  map_glyphs(face: face, buffer: &buffer);
+  let substituting = False();
+  apply_lookups(layout: &face^.substitutions, face: face, lookups: &plan.substitutions, positioning: substituting, buffer: &buffer);
+  set_positions(face: face, buffer: &buffer);
+  if plan.positioning {
+    let positioning = True();
+    apply_lookups(layout: &face^.positions, face: face, lookups: &plan.positions, positioning: positioning, buffer: &buffer);
+  }
+  let adjust = bnot(plan.positioning);
+  zero_marks(buffer: &buffer, adjust: adjust);
+  zero_ignorables(buffer: &buffer);
+  propagate_attachments(buffer: &buffer);
+  hide_ignorables(face: face, buffer: &buffer);
+  if buffer.failed {
+    let refusal = ShapeError::TooLarge();
+    return Err<GlyphRun, ShapeError>(error: refusal);
+  }
+  let run = propagate finish_run(buffer: &buffer);
+  return Ok<GlyphRun, ShapeError>(value: move run);
+}

@@ -1,0 +1,161 @@
+fn substitute_single(layout: &LayoutTable, face: &Face, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), writes(buffer) {
+  doc "Applies SingleSubst subtable index to the current glyph: format 1 adds its delta modulo 65536, format 2 takes the substitute of the glyph's coverage index when there is one.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.single_substitutions.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.single_substitutions.inner[at];
+  let head = current(buffer: buffer);
+  let glyph = head.code;
+  let covered = glyph_coverage(layout: layout, coverage: subtable_record.coverage, glyph: glyph);
+  if covered == not_covered {
+    return False();
+  }
+  if subtable_record.format == 1_u16 {
+    let delta = cvt::<u16, u32>(subtable_record.delta);
+    let sum = glyph +wrap delta;
+    let substitute = iand(sum, 65535_u32);
+    substitute_glyph(face: face, buffer: buffer, glyph: substitute);
+    return True();
+  }
+  if covered >= subtable_record.substitutes.count {
+    return False();
+  }
+  let start = cvt::<u32, u64>(subtable_record.substitutes.start);
+  let offset = cvt::<u32, u64>(covered);
+  let position = start +wrap offset;
+  if position < layout^.glyphs.inner.len {
+    let replacement = layout^.glyphs.inner[position];
+    let substitute = cvt::<u16, u32>(replacement);
+    substitute_glyph(face: face, buffer: buffer, glyph: substitute);
+    return True();
+  }
+  return False();
+}
+
+fn sequence_glyph(layout: &LayoutTable, start: u64, offset: u64) -> result: u32 reads(layout) {
+  doc "The glyph offset places after start in LayoutTable's glyphs, 0 past its end.";
+  let position = start +wrap offset;
+  if position < layout^.glyphs.inner.len {
+    let glyph = layout^.glyphs.inner[position];
+    let wide = cvt::<u16, u32>(glyph);
+    return wide;
+  }
+  return 0_u32;
+}
+
+fn substitute_multiple(layout: &LayoutTable, face: &Face, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), writes(buffer) {
+  doc "Applies MultipleSubst subtable index to the current glyph, as HarfBuzz's Sequence apply does: one glyph replaces it, none deletes it, and several are output as components numbered from 0, a glyph attached to a ligature keeping its ligature properties.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.multiple_substitutions.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.multiple_substitutions.inner[at];
+  let head = current(buffer: buffer);
+  let covered = glyph_coverage(layout: layout, coverage: subtable_record.coverage, glyph: head.code);
+  if covered == not_covered {
+    return False();
+  }
+  let empty = Extent(start: 0_u32, count: 0_u32);
+  let sequence = if covered < subtable_record.sequences.count {
+    let first = cvt::<u32, u64>(subtable_record.sequences.start);
+    let offset = cvt::<u32, u64>(covered);
+    let position = first +wrap offset;
+    if position < layout^.sequences.inner.len {
+      let found = layout^.sequences.inner[position];
+      give found;
+    } else {
+      give empty;
+    }
+  } else {
+    give empty;
+  }
+  let start = cvt::<u32, u64>(sequence.start);
+  let count = cvt::<u32, u64>(sequence.count);
+  if count == 1_u64 {
+    let glyph = sequence_glyph(layout: layout, start: start, offset: 0_u64);
+    substitute_glyph(face: face, buffer: buffer, glyph: glyph);
+    return True();
+  }
+  if count == 0_u64 {
+    delete_glyph(buffer: buffer);
+    return True();
+  }
+  let is_ligature = has_glyph_bit(item: head, bit: glyph_ligature);
+  let class_guess = if is_ligature {
+    give glyph_base;
+  } else {
+    give 0_u16;
+  }
+  let lig_id = lig_id_of(item: head);
+  let false_value = False();
+  let true_value = True();
+  for (step in 0_u64..count) {
+    let glyph = sequence_glyph(layout: layout, start: start, offset: step);
+    if lig_id == 0_u8 {
+      let piece = current(buffer: buffer);
+      let props = mark_props(id: 0_u8, component: step);
+      set piece.lig_props = props;
+      put_current(buffer: buffer, item: piece);
+    }
+    set_glyph_class(face: face, buffer: buffer, glyph: glyph, class_guess: class_guess, ligature: false_value, component: true_value);
+    output_glyph(buffer: buffer, glyph: glyph);
+  }
+  skip_glyph(buffer: buffer);
+  return True();
+}
+
+fn substitute_ligature(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), reads(ctx), writes(buffer) {
+  doc "Applies LigatureSubst subtable index at the current glyph: the first ligature of its set whose components follow forms, as HarfBuzz's LigatureSet and Ligature apply do.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.ligature_substitutions.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.ligature_substitutions.inner[at];
+  let head = current(buffer: buffer);
+  let covered = glyph_coverage(layout: layout, coverage: subtable_record.coverage, glyph: head.code);
+  if covered == not_covered {
+    return False();
+  }
+  if covered >= subtable_record.ligature_sets.count {
+    return False();
+  }
+  let sets_start = cvt::<u32, u64>(subtable_record.ligature_sets.start);
+  let offset = cvt::<u32, u64>(covered);
+  let set_at = sets_start +wrap offset;
+  if set_at < layout^.ligature_sets.inner.len {
+  } else {
+    return False();
+  }
+  let ligature_set = layout^.ligature_sets.inner[set_at];
+  let first = cvt::<u32, u64>(ligature_set.start);
+  let size = cvt::<u32, u64>(ligature_set.count);
+  let positions = array_filled::<u64, 64>(value: 0_u64);
+  let glyphs_kind = MatchKind::Glyphs();
+  for (step in 0_u64..size) {
+    let ligature_at = first +wrap step;
+    if ligature_at < layout^.ligatures.inner.len {
+      let ligature = layout^.ligatures.inner[ligature_at];
+      let glyph = cvt::<u16, u32>(ligature.glyph);
+      let component_start = cvt::<u32, u64>(ligature.components.start);
+      let component_count = cvt::<u32, u64>(ligature.components.count);
+      let count = component_count +wrap 1_u64;
+      if count == 1_u64 {
+        substitute_glyph(face: face, buffer: buffer, glyph: glyph);
+        return True();
+      }
+      if count <= max_context {
+        let components = Sequence(kind: glyphs_kind, start: component_start, count: component_count, classes: 0_u32);
+        let (matched, end, total) = match_input(layout: layout, face: face, ctx: ctx, buffer: buffer, input: components, count: count, positions: &positions);
+        if matched {
+          ligate_input(face: face, buffer: buffer, positions: &positions, count: count, match_end: end, glyph: glyph, components: total);
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
