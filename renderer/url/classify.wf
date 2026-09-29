@@ -1,0 +1,317 @@
+enum EncodeSet {
+  C0();
+  Fragment();
+  Query();
+  SpecialQuery();
+  Path();
+  Userinfo();
+}
+
+fn is_c0_control_or_space(byte: u8) -> result: Bool pure {
+  doc "True for a C0 control (0x00 to 0x1F) or U+0020 SPACE.";
+  let le = byte <= 32_u8;
+  return le;
+}
+
+fn is_ascii_tab_or_newline(byte: u8) -> result: Bool pure {
+  doc "True for U+0009 TAB, U+000A LF, or U+000D CR.";
+  let tab = byte == 9_u8;
+  let lf = byte == 10_u8;
+  let cr = byte == 13_u8;
+  let a = bor(tab, lf);
+  let result = bor(a, cr);
+  return result;
+}
+
+fn is_ascii_digit(byte: u8) -> result: Bool pure {
+  doc "True for U+0030 (0) to U+0039 (9).";
+  let lo = byte >= 48_u8;
+  let hi = byte <= 57_u8;
+  return band(lo, hi);
+}
+
+fn is_ascii_alpha(byte: u8) -> result: Bool pure {
+  doc "True for an ASCII upper or lower case letter.";
+  let upper_lo = byte >= 65_u8;
+  let upper_hi = byte <= 90_u8;
+  let upper = band(upper_lo, upper_hi);
+  let lower_lo = byte >= 97_u8;
+  let lower_hi = byte <= 122_u8;
+  let lower = band(lower_lo, lower_hi);
+  return bor(upper, lower);
+}
+
+fn is_ascii_alphanumeric(byte: u8) -> result: Bool pure {
+  doc "True for an ASCII alpha or digit byte.";
+  let alpha = is_ascii_alpha(byte: byte);
+  let digit = is_ascii_digit(byte: byte);
+  return bor(alpha, digit);
+}
+
+fn is_ascii_hex_digit(byte: u8) -> result: Bool pure {
+  doc "True for an ASCII hex digit: 0-9, A-F, or a-f.";
+  let digit = is_ascii_digit(byte: byte);
+  let upper_lo = byte >= 65_u8;
+  let upper_hi = byte <= 70_u8;
+  let upper = band(upper_lo, upper_hi);
+  let lower_lo = byte >= 97_u8;
+  let lower_hi = byte <= 102_u8;
+  let lower = band(lower_lo, lower_hi);
+  let hexalpha = bor(upper, lower);
+  return bor(digit, hexalpha);
+}
+
+fn ascii_lower_byte(byte: u8) -> result: u8 pure {
+  doc "Lowercases byte when it is an ASCII upper case letter, and returns it unchanged otherwise.";
+  let upper_lo = byte >= 65_u8;
+  let upper_hi = byte <= 90_u8;
+  let upper = band(upper_lo, upper_hi);
+  if upper {
+    let lowered = byte +wrap 32_u8;
+    return lowered;
+  }
+  return byte;
+}
+
+fn hex_digit_value(byte: u8) -> result: u8 pure {
+  doc "The value 0 to 15 that the ASCII hex digit byte represents. The caller has already checked is_ascii_hex_digit(byte).";
+  let is_digit = is_ascii_digit(byte: byte);
+  if is_digit {
+    let value = byte -wrap 48_u8;
+    return value;
+  }
+  let upper_lo = byte >= 65_u8;
+  let upper_hi = byte <= 70_u8;
+  let upper = band(upper_lo, upper_hi);
+  if upper {
+    let value = byte -wrap 55_u8;
+    return value;
+  }
+  let value = byte -wrap 87_u8;
+  return value;
+}
+
+fn hex_upper_digit(nibble: u8) -> result: u8 pure contract {
+  requires nibble <= 15_u8;
+} {
+  doc "The uppercase ASCII hex digit byte for nibble, a value 0 to 15.";
+  let small = nibble <= 9_u8;
+  if small {
+    let byte = nibble +wrap 48_u8;
+    return byte;
+  }
+  let byte = nibble +wrap 55_u8;
+  return byte;
+}
+
+fn in_c0_set(cp: u32) -> result: Bool pure {
+  doc "The C0 control percent-encode set: C0 controls and every code point greater than U+007E.";
+  let control = cp < 32_u32;
+  let high = cp > 126_u32;
+  return bor(control, high);
+}
+
+fn in_fragment_set(cp: u32) -> result: Bool pure {
+  doc "The fragment percent-encode set: the C0 control set plus space, U+0022, U+003C, U+003E and U+0060.";
+  let base = in_c0_set(cp: cp);
+  let space = cp == 32_u32;
+  let quote = cp == 34_u32;
+  let lt = cp == 60_u32;
+  let gt = cp == 62_u32;
+  let backtick = cp == 96_u32;
+  let a = bor(base, space);
+  let b = bor(a, quote);
+  let c = bor(b, lt);
+  let d = bor(c, gt);
+  return bor(d, backtick);
+}
+
+fn in_query_set(cp: u32) -> result: Bool pure {
+  doc "The query percent-encode set: the C0 control set plus space, U+0022, U+0023, U+003C and U+003E.";
+  let base = in_c0_set(cp: cp);
+  let space = cp == 32_u32;
+  let quote = cp == 34_u32;
+  let hash = cp == 35_u32;
+  let lt = cp == 60_u32;
+  let gt = cp == 62_u32;
+  let a = bor(base, space);
+  let b = bor(a, quote);
+  let c = bor(b, hash);
+  let d = bor(c, lt);
+  return bor(d, gt);
+}
+
+fn in_special_query_set(cp: u32) -> result: Bool pure {
+  doc "The special-query percent-encode set: the query set plus U+0027.";
+  let base = in_query_set(cp: cp);
+  let apos = cp == 39_u32;
+  return bor(base, apos);
+}
+
+fn in_path_set(cp: u32) -> result: Bool pure {
+  doc "The path percent-encode set: the query set plus U+003F, U+005E, U+0060, U+007B and U+007D.";
+  let base = in_query_set(cp: cp);
+  let question = cp == 63_u32;
+  let caret = cp == 94_u32;
+  let backtick = cp == 96_u32;
+  let lbrace = cp == 123_u32;
+  let rbrace = cp == 125_u32;
+  let a = bor(base, question);
+  let b = bor(a, caret);
+  let c = bor(b, backtick);
+  let d = bor(c, lbrace);
+  return bor(d, rbrace);
+}
+
+fn in_userinfo_set(cp: u32) -> result: Bool pure {
+  doc "The userinfo percent-encode set: the path set plus U+002F, U+003A, U+003B, U+003D, U+0040, U+005B to U+005D, and U+007C.";
+  let base = in_path_set(cp: cp);
+  let slash = cp == 47_u32;
+  let colon = cp == 58_u32;
+  let semicolon = cp == 59_u32;
+  let equals = cp == 61_u32;
+  let at = cp == 64_u32;
+  let bracket_lo = cp >= 91_u32;
+  let bracket_hi = cp <= 93_u32;
+  let bracket = band(bracket_lo, bracket_hi);
+  let pipe = cp == 124_u32;
+  let a = bor(base, slash);
+  let b = bor(a, colon);
+  let c = bor(b, semicolon);
+  let d = bor(c, equals);
+  let e = bor(d, at);
+  let f = bor(e, bracket);
+  return bor(f, pipe);
+}
+
+fn in_encode_set(cp: u32, kind: EncodeSet) -> result: Bool pure {
+  doc "Dispatches to the membership test of set.";
+  match kind {
+    C0() => {
+      let member = in_c0_set(cp: cp);
+      return member;
+    }
+    Fragment() => {
+      let member = in_fragment_set(cp: cp);
+      return member;
+    }
+    Query() => {
+      let member = in_query_set(cp: cp);
+      return member;
+    }
+    SpecialQuery() => {
+      let member = in_special_query_set(cp: cp);
+      return member;
+    }
+    Path() => {
+      let member = in_path_set(cp: cp);
+      return member;
+    }
+    Userinfo() => {
+      let member = in_userinfo_set(cp: cp);
+      return member;
+    }
+  }
+}
+
+fn forbidden_host_code_point(cp: u32) -> result: Bool pure {
+  doc "True for a forbidden host code point: NUL, TAB, LF, CR, SPACE, and U+0023, U+002F, U+003A, U+003C, U+003E, U+003F, U+0040, U+005B, U+005C, U+005D, U+005E, or U+007C.";
+  let nul = cp == 0_u32;
+  let tab = cp == 9_u32;
+  let lf = cp == 10_u32;
+  let cr = cp == 13_u32;
+  let space = cp == 32_u32;
+  let hash = cp == 35_u32;
+  let slash = cp == 47_u32;
+  let colon = cp == 58_u32;
+  let lt = cp == 60_u32;
+  let gt = cp == 62_u32;
+  let question = cp == 63_u32;
+  let at = cp == 64_u32;
+  let lbracket = cp == 91_u32;
+  let backslash = cp == 92_u32;
+  let rbracket = cp == 93_u32;
+  let caret = cp == 94_u32;
+  let pipe = cp == 124_u32;
+  let a = bor(nul, tab);
+  let b = bor(a, lf);
+  let c = bor(b, cr);
+  let d = bor(c, space);
+  let e = bor(d, hash);
+  let f = bor(e, slash);
+  let g = bor(f, colon);
+  let h = bor(g, lt);
+  let i = bor(h, gt);
+  let j = bor(i, question);
+  let k = bor(j, at);
+  let l = bor(k, lbracket);
+  let m = bor(l, backslash);
+  let n = bor(m, rbracket);
+  let o = bor(n, caret);
+  return bor(o, pipe);
+}
+
+fn forbidden_domain_code_point(cp: u32) -> result: Bool pure {
+  doc "True for a forbidden domain code point: a forbidden host code point, a C0 control, U+0025, or U+007F.";
+  let host_forbidden = forbidden_host_code_point(cp: cp);
+  let c0 = cp < 32_u32;
+  let percent = cp == 37_u32;
+  let del = cp == 127_u32;
+  let a = bor(host_forbidden, c0);
+  let b = bor(a, percent);
+  return bor(b, del);
+}
+
+fn percent_encode_byte(buffer: &Box<Slots<u8>>, byte: u8) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "Appends the percent-encoding of byte: U+0025 followed by its two uppercase ASCII hex digits.";
+  let high = ishr.wrap(byte, 4_u32);
+  let low = iand(byte, 15_u8);
+  let high_digit = hex_upper_digit(nibble: high);
+  let low_digit = hex_upper_digit(nibble: low);
+  let mark_pushed = propagate push_byte(buffer: buffer, value: 37_u8);
+  let high_pushed = propagate push_byte(buffer: buffer, value: high_digit);
+  let low_pushed = propagate push_byte(buffer: buffer, value: low_digit);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn percent_encode_code_point(buffer: &Box<Slots<u8>>, cp: u32, kind: EncodeSet) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "UTF-8 percent-encodes cp using set and appends the result to buffer. Every byte of a multi-byte encoding is always in every set this module uses, since each is built from the C0 control set, whose greater-than-U+007E clause covers every such byte.";
+  let ascii = cp < 128_u32;
+  if ascii {
+    let byte = cvt.wrap::<u32, u8>(cp);
+    let member = in_encode_set(cp: cp, kind: kind);
+    if member {
+      let encoded = propagate percent_encode_byte(buffer: buffer, byte: byte);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let two_bytes = cp < 2048_u32;
+  let three_bytes = cp < 65536_u32;
+  if two_bytes {
+    let lead = utf8_lead_byte(code_point: cp, shift: 6_u32, marker: 192_u32);
+    let last = utf8_continuation_byte(code_point: cp, shift: 0_u32);
+    let lead_pushed = propagate percent_encode_byte(buffer: buffer, byte: lead);
+    let last_pushed = propagate percent_encode_byte(buffer: buffer, byte: last);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  if three_bytes {
+    let lead = utf8_lead_byte(code_point: cp, shift: 12_u32, marker: 224_u32);
+    let middle = utf8_continuation_byte(code_point: cp, shift: 6_u32);
+    let last = utf8_continuation_byte(code_point: cp, shift: 0_u32);
+    let lead_pushed = propagate percent_encode_byte(buffer: buffer, byte: lead);
+    let middle_pushed = propagate percent_encode_byte(buffer: buffer, byte: middle);
+    let last_pushed = propagate percent_encode_byte(buffer: buffer, byte: last);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let lead = utf8_lead_byte(code_point: cp, shift: 18_u32, marker: 240_u32);
+  let upper = utf8_continuation_byte(code_point: cp, shift: 12_u32);
+  let middle = utf8_continuation_byte(code_point: cp, shift: 6_u32);
+  let last = utf8_continuation_byte(code_point: cp, shift: 0_u32);
+  let lead_pushed = propagate percent_encode_byte(buffer: buffer, byte: lead);
+  let upper_pushed = propagate percent_encode_byte(buffer: buffer, byte: upper);
+  let middle_pushed = propagate percent_encode_byte(buffer: buffer, byte: middle);
+  let last_pushed = propagate percent_encode_byte(buffer: buffer, byte: last);
+  return Ok<unit, UrlError>(value: unit);
+}

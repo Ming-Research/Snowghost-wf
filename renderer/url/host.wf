@@ -1,0 +1,413 @@
+alias domain_to_ascii = pkg::text::idna::domain_to_ascii;
+
+enum HostValue {
+  Absent();
+  Empty();
+  Domain(bytes: Box<Slots<u8>>);
+  Ipv4(address: u32);
+  Ipv6(pieces: Array<u32, 8>);
+  Opaque(bytes: Box<Slots<u8>>);
+}
+
+fn percent_decode_bytes(input: &[u8], output: &Box<Slots<u8>>) -> result: Result<unit, UrlError> reads(input), writes(output) {
+  doc "Percent-decodes input into output: a valid %XX triplet becomes its byte, and every other byte passes through unchanged.";
+  let length = input^.len;
+  let pos = 0_u64;
+  loop @decode (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @decode;
+    }
+    let byte = input^[pos];
+    let is_percent = byte == 37_u8;
+    let out_byte = byte;
+    let advance = 1_u64;
+    if is_percent {
+      let hi_pos = pos +wrap 1_u64;
+      let lo_pos = pos +wrap 2_u64;
+      let hi_within = hi_pos < length;
+      let lo_within = lo_pos < length;
+      let both_within = band(hi_within, lo_within);
+      if both_within {
+        let hi = input^[hi_pos];
+        let lo = input^[lo_pos];
+        let hi_hex = is_ascii_hex_digit(byte: hi);
+        let lo_hex = is_ascii_hex_digit(byte: lo);
+        let both_hex = band(hi_hex, lo_hex);
+        if both_hex {
+          let hi_v = hex_digit_value(byte: hi);
+          let lo_v = hex_digit_value(byte: lo);
+          let hi_v32 = cvt::<u8, u32>(hi_v);
+          let lo_v32 = cvt::<u8, u32>(lo_v);
+          let shifted = ishl.wrap(hi_v32, 4_u32);
+          let combined = ior(shifted, lo_v32);
+          let decoded_byte = cvt.wrap::<u32, u8>(combined);
+          set out_byte = decoded_byte;
+          set advance = 3_u64;
+        }
+      }
+    }
+    let pushed = propagate push_byte(buffer: output, value: out_byte);
+    let next = pos +wrap advance;
+    let clamped = next;
+    let too_far = clamped > length;
+    if too_far {
+      set clamped = length;
+    }
+    invariant next_bounded: clamped <= length;
+    set pos = clamped;
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn decode_all_scalars(input: &[u8], output: &Box<Slots<u32>>) -> result: Result<unit, UrlError> reads(input), writes(output) {
+  doc "Decodes every code point of input under the WHATWG UTF-8 decoder into output, in order.";
+  let length = input^.len;
+  let pos = 0_u64;
+  loop @decode (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @decode;
+    }
+    let (cp, next) = decode_scalar(source: input, length: length, pos: pos);
+    let pushed = propagate push_codepoint_raw(buffer: output, value: cp);
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn all_codepoints_ascii(input: &[u32]) -> result: Bool reads(input) {
+  doc "True when every code point of input is below 0x80.";
+  let length = input^.len;
+  for (at in 0_u64..length) {
+    let cp = input^[at];
+    let ascii = cp < 128_u32;
+    if ascii {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn ascii_lower_codepoints(input: &[u32], output: &Box<Slots<u8>>) -> result: Result<unit, UrlError> reads(input), writes(output) {
+  doc "Appends every code point of input, an ASCII string, to output as a lowercased byte.";
+  let length = input^.len;
+  for (at in 0_u64..length) {
+    let cp = input^[at];
+    let byte = cvt.wrap::<u32, u8>(cp);
+    let lowered = ascii_lower_byte(byte: byte);
+    let pushed = propagate push_byte(buffer: output, value: lowered);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn contains_forbidden_domain_code_point(input: &[u8]) -> result: Bool reads(input) {
+  doc "True when a byte of input (an ASCII string, one byte per code point) is a forbidden domain code point.";
+  let length = input^.len;
+  for (at in 0_u64..length) {
+    let byte = input^[at];
+    let cp = cvt::<u8, u32>(byte);
+    let forbidden = forbidden_domain_code_point(cp: cp);
+    if forbidden {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn domain_parse(codepoints: &[u32], output: &Box<Slots<u8>>) -> result: Result<unit, UrlError> reads(codepoints), writes(output) {
+  doc "The domain parser with beStrict false: an ASCII domain lowercased regardless of ToASCII's outcome, otherwise pkg::text::idna::domain_to_ascii, then the empty-result and forbidden-domain-code-point checks.";
+  let entry_len = output^.inner.len;
+  let ascii = all_codepoints_ascii(input: codepoints);
+  if ascii {
+    let lowered = ascii_lower_codepoints(input: codepoints, output: output);
+    match lowered {
+      Ok(value: done) => {
+      }
+      Err(error: problem) => {
+        return Err<unit, UrlError>(error: problem);
+      }
+    }
+  } else {
+    let long_enough = codepoints^.len <= 16777216_u64;
+    if long_enough {
+    } else {
+      truncate_bytes_to(buffer: output, length: entry_len);
+      let refusal = UrlError::TooLarge();
+      return Err<unit, UrlError>(error: refusal);
+    }
+    match domain_to_ascii(domain: codepoints, output: output) {
+      Ok(value: done) => {
+      }
+      Err(error: problem) => {
+        truncate_bytes_to(buffer: output, length: entry_len);
+        match problem {
+          Invalid() => {
+            let failure = UrlError::Failure();
+            return Err<unit, UrlError>(error: failure);
+          }
+          TooLarge() => {
+            let too_large = UrlError::TooLarge();
+            return Err<unit, UrlError>(error: too_large);
+          }
+        }
+      }
+    }
+  }
+  let produced_len = output^.inner.len;
+  let empty = produced_len == entry_len;
+  if empty {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let grew = produced_len >= entry_len;
+  if grew {
+  } else {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let produced = &output^.inner[entry_len..produced_len];
+  let forbidden = contains_forbidden_domain_code_point(input: produced);
+  if forbidden {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn opaque_host_parse(input: &[u8], output: &Box<Slots<u8>>) -> result: Result<unit, UrlError> reads(input), writes(output) {
+  doc "The opaque-host parser: Failure for a forbidden host code point, else input UTF-8 percent-encoded with the C0 control percent-encode set, appended to output.";
+  let length = input^.len;
+  let pos = 0_u64;
+  let entry_len = output^.inner.len;
+  loop @scan (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let (cp, next) = decode_scalar(source: input, length: length, pos: pos);
+    let forbidden = forbidden_host_code_point(cp: cp);
+    if forbidden {
+      truncate_bytes_to(buffer: output, length: entry_len);
+      let failure = UrlError::Failure();
+      return Err<unit, UrlError>(error: failure);
+    }
+    let c0 = EncodeSet::C0();
+    let encoded = propagate percent_encode_code_point(buffer: output, cp: cp, kind: c0);
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn host_starts_and_ends_with_brackets(input: &[u8]) -> (starts: Bool, ends: Bool) reads(input) {
+  doc "Tells whether input starts with U+005B and whether it ends with U+005D.";
+  let length = input^.len;
+  let has_any = length > 0_u64;
+  if has_any {
+  } else {
+    return False(), False();
+  }
+  let first = input^[0_u64];
+  let last_index = length -wrap 1_u64;
+  let last = input^[last_index];
+  let starts = first == 91_u8;
+  let ends = last == 93_u8;
+  return starts, ends;
+}
+
+fn parse_host(input: &[u8], is_special: Bool) -> result: Result<HostValue, UrlError> reads(input) {
+  doc "The host parser (non-opaque callers pass a nonempty input): brackets select the IPv6 parser; a non-special scheme selects the opaque-host parser; otherwise percent-decoding, UTF-8 decoding, the domain parser, the ends-in-a-number checker and the IPv4 parser.";
+  let (starts, ends) = host_starts_and_ends_with_brackets(input: input);
+  if starts {
+    if ends {
+    } else {
+      let failure = UrlError::Failure();
+      return Err<HostValue, UrlError>(error: failure);
+    }
+    let length = input^.len;
+    let last_index = length -wrap 1_u64;
+    let two_or_more = last_index >= 1_u64;
+    let within = last_index <= length;
+    let ok = band(two_or_more, within);
+    if ok {
+    } else {
+      let failure = UrlError::Failure();
+      return Err<HostValue, UrlError>(error: failure);
+    }
+    let inner = &input^[1_u64..last_index];
+    match parse_ipv6_address(input: inner) {
+      Some(value: pieces) => {
+        let host = HostValue::Ipv6(pieces: pieces);
+        return Ok<HostValue, UrlError>(value: move host);
+      }
+      None() => {
+        let failure = UrlError::Failure();
+        return Err<HostValue, UrlError>(error: failure);
+      }
+    }
+  }
+  if is_special {
+  } else {
+    let output = box_slots_new::<u8>(capacity: 64_u64);
+    let parsed = propagate opaque_host_parse(input: input, output: &output);
+    let produced_len = output.inner.len;
+    let empty = produced_len == 0_u64;
+    if empty {
+      let host = HostValue::Empty();
+      return Ok<HostValue, UrlError>(value: move host);
+    }
+    let host = HostValue::Opaque(bytes: move output);
+    return Ok<HostValue, UrlError>(value: move host);
+  }
+  let decoded = box_slots_new::<u8>(capacity: 64_u64);
+  let decode_result = percent_decode_bytes(input: input, output: &decoded);
+  match decode_result {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return Err<HostValue, UrlError>(error: problem);
+    }
+  }
+  let decoded_len = decoded.inner.len;
+  let decoded_ref = &decoded.inner[0_u64..decoded_len];
+  let codepoints = box_slots_new::<u32>(capacity: 64_u64);
+  let scalars = decode_all_scalars(input: decoded_ref, output: &codepoints);
+  match scalars {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return Err<HostValue, UrlError>(error: problem);
+    }
+  }
+  let codepoints_len = codepoints.inner.len;
+  let codepoints_ref = &codepoints.inner[0_u64..codepoints_len];
+  let ascii_domain = box_slots_new::<u8>(capacity: 64_u64);
+  let domain_result = domain_parse(codepoints: codepoints_ref, output: &ascii_domain);
+  match domain_result {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      return Err<HostValue, UrlError>(error: problem);
+    }
+  }
+  let ascii_len = ascii_domain.inner.len;
+  let ascii_nonempty = ascii_len > 0_u64;
+  if ascii_nonempty {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<HostValue, UrlError>(error: failure);
+  }
+  let ascii_ref = &ascii_domain.inner[0_u64..ascii_len];
+  let ends_number = ends_in_a_number(input: ascii_ref);
+  if ends_number {
+    match parse_ipv4_address(input: ascii_ref) {
+      Some(value: address) => {
+        let host = HostValue::Ipv4(address: address);
+        return Ok<HostValue, UrlError>(value: move host);
+      }
+      None() => {
+        let failure = UrlError::Failure();
+        return Err<HostValue, UrlError>(error: failure);
+      }
+    }
+  }
+  let host = HostValue::Domain(bytes: move ascii_domain);
+  return Ok<HostValue, UrlError>(value: move host);
+}
+
+fn serialize_host(buffer: &Box<Slots<u8>>, host: &HostValue) -> result: Result<unit, UrlError> reads(host), writes(buffer) {
+  doc "The host serializer: the IPv4 or IPv6 serializer (bracketed) for those kinds, and the stored bytes as-is for a domain or opaque host; nothing for an absent or empty host.";
+  match host^ {
+    Absent() => {
+      return Ok<unit, UrlError>(value: unit);
+    }
+    Empty() => {
+      return Ok<unit, UrlError>(value: unit);
+    }
+    Domain(bytes: text) => {
+      let length = text^.inner.len;
+      let content = &text^.inner[0_u64..length];
+      let pushed = propagate push_bytes(buffer: buffer, bytes: content);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    Opaque(bytes: text) => {
+      let length = text^.inner.len;
+      let content = &text^.inner[0_u64..length];
+      let pushed = propagate push_bytes(buffer: buffer, bytes: content);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    Ipv4(address: value) => {
+      let written = propagate serialize_ipv4(buffer: buffer, address: value^);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    Ipv6(pieces: values) => {
+      let open = propagate push_byte(buffer: buffer, value: 91_u8);
+      let written = propagate serialize_ipv6(buffer: buffer, pieces: values);
+      let close = propagate push_byte(buffer: buffer, value: 93_u8);
+      return Ok<unit, UrlError>(value: unit);
+    }
+  }
+}
+
+fn host_kind_of(host: &HostValue) -> result: HostKind reads(host) {
+  doc "The public HostKind that corresponds to host.";
+  match host^ {
+    Absent() => {
+      return HostKind::Absent();
+    }
+    Empty() => {
+      return HostKind::Empty();
+    }
+    Domain(bytes: text) => {
+      return HostKind::Domain();
+    }
+    Opaque(bytes: text) => {
+      return HostKind::Opaque();
+    }
+    Ipv4(address: value) => {
+      return HostKind::Ipv4();
+    }
+    Ipv6(pieces: values) => {
+      return HostKind::Ipv6();
+    }
+  }
+}
+
+fn host_is_absent(host: &HostValue) -> result: Bool reads(host) {
+  doc "True when host is Absent, the null host.";
+  match host^ {
+    Absent() => {
+      return True();
+    }
+    Empty() => {
+      return False();
+    }
+    Domain(bytes: text) => {
+      return False();
+    }
+    Opaque(bytes: text) => {
+      return False();
+    }
+    Ipv4(address: value) => {
+      return False();
+    }
+    Ipv6(pieces: values) => {
+      return False();
+    }
+  }
+}

@@ -1,0 +1,125 @@
+const expand_stack_capacity: u64 = 64_u64;
+
+const expand_out_capacity: u64 = 16_u64;
+
+const decomposition_entry_capacity: u64 = 4096_u64;
+
+const decomposition_value_capacity: u64 = 16384_u64;
+
+struct DecompositionTables {
+  decomposition_id_by_cp: Box<Array<u16>>;
+  offsets: Box<Slots<u32>>;
+  lengths: Box<Slots<u8>>;
+  values: Box<Slots<u32>>;
+}
+
+fn expand_cp(cp: u32, raw_decomp_id_by_cp: &Box<Array<u16>>, raw_val1: &Box<Slots<u32>>, raw_val2: &Box<Slots<u32>>, raw_len: &Box<Slots<u8>>, out: &Box<Slots<u32>>) -> result: unit reads(raw_decomp_id_by_cp), reads(raw_val1), reads(raw_val2), reads(raw_len), writes(out) {
+  doc "Expands cp to its full canonical decomposition, appending code points to out in left-to-right order, using an explicit work stack (capacity expand_stack_capacity, far past the real maximum recursion depth of a Unicode 17.0.0 canonical decomposition) instead of self-recursion: popping a code point with a raw one-step mapping pushes that mapping's code points back (the second one first, so the first pops and expands next), and popping one without a mapping appends it to out.";
+  let stack = box_slots_new::<u32>(capacity: expand_stack_capacity);
+  let room0 = stack.inner.len < stack.inner.cap;
+  if room0 {
+    place_back(window: &stack.inner, value: cp);
+  }
+  loop @expand {
+    let has = stack.inner.len > 0_u64;
+    if has {
+    } else {
+      break @expand;
+    }
+    let top = take_back(window: &stack.inner);
+    let top64 = cvt::<u32, u64>(top);
+    let in_space = top64 < raw_decomp_id_by_cp^.inner.len;
+    let raw_id = if in_space {
+      give raw_decomp_id_by_cp^.inner[top64];
+    } else {
+      give 0_u16;
+    }
+    let has_mapping = raw_id > 0_u16;
+    if has_mapping {
+      let raw_id64 = cvt::<u16, u64>(raw_id);
+      let idx = raw_id64 -wrap 1_u64;
+      let idx_ok = idx < raw_len^.inner.len;
+      let val1_ok = idx < raw_val1^.inner.len;
+      let val2_ok = idx < raw_val2^.inner.len;
+      let idx_ok_all_1 = band(idx_ok, val1_ok);
+      let idx_ok_all = band(idx_ok_all_1, val2_ok);
+      if idx_ok_all {
+        let klen = raw_len^.inner[idx];
+        let pair = klen == 2_u8;
+        if pair {
+          let v2 = raw_val2^.inner[idx];
+          let v1 = raw_val1^.inner[idx];
+          let room_a = stack.inner.len < stack.inner.cap;
+          if room_a {
+            place_back(window: &stack.inner, value: v2);
+          }
+          let room_b = stack.inner.len < stack.inner.cap;
+          if room_b {
+            place_back(window: &stack.inner, value: v1);
+          }
+        } else {
+          let v1 = raw_val1^.inner[idx];
+          let room_c = stack.inner.len < stack.inner.cap;
+          if room_c {
+            place_back(window: &stack.inner, value: v1);
+          }
+        }
+      } else {
+        let room_d = out^.inner.len < out^.inner.cap;
+        if room_d {
+          place_back(window: &out^.inner, value: top);
+        }
+      }
+    } else {
+      let room_e = out^.inner.len < out^.inner.cap;
+      if room_e {
+        place_back(window: &out^.inner, value: top);
+      }
+    }
+  }
+  return unit;
+}
+
+fn build_decomposition_tables(data: &UnicodeDataTables) -> result: DecompositionTables reads(data) {
+  doc "Walks every code point 0 through 0x10FFFF; each one with a raw canonical decomposition (Hangul syllables never carry one) is fully expanded by expand_cp, its expansion appended once to values, and its 1-based id recorded in decomposition_id_by_cp (default 0, meaning no decomposition).";
+  let decomposition_id_by_cp = box_array_filled::<u16>(count: code_space, value: 0_u16);
+  let offsets = box_slots_new::<u32>(capacity: decomposition_entry_capacity);
+  let lengths = box_slots_new::<u8>(capacity: decomposition_entry_capacity);
+  let values = box_slots_new::<u32>(capacity: decomposition_value_capacity);
+  for (cp in 0_u64..code_space) {
+    let cp32 = cvt.wrap::<u64, u32>(cp);
+    let cp_in_space = cp < data^.raw_decomp_id_by_cp.inner.len;
+    if cp_in_space {
+      let raw_id = data^.raw_decomp_id_by_cp.inner[cp];
+      let has = raw_id > 0_u16;
+      if has {
+        let out = box_slots_new::<u32>(capacity: expand_out_capacity);
+        expand_cp(cp: cp32, raw_decomp_id_by_cp: &data^.raw_decomp_id_by_cp, raw_val1: &data^.raw_val1, raw_val2: &data^.raw_val2, raw_len: &data^.raw_len, out: &out);
+        let out_len = out.inner.len;
+        let offset = values.inner.len;
+        let offset32 = cvt.wrap::<u64, u32>(offset);
+        let len8 = cvt.wrap::<u64, u8>(out_len);
+        for (k in 0_u64..out_len) {
+          let v = out.inner[k];
+          let room = values.inner.len < values.inner.cap;
+          if room {
+            place_back(window: &values.inner, value: v);
+          }
+        }
+        let room_o = offsets.inner.len < offsets.inner.cap;
+        if room_o {
+          place_back(window: &offsets.inner, value: offset32);
+        }
+        let room_l = lengths.inner.len < lengths.inner.cap;
+        if room_l {
+          place_back(window: &lengths.inner, value: len8);
+        }
+        let id64 = offsets.inner.len;
+        let id16 = cvt.wrap::<u64, u16>(id64);
+        set decomposition_id_by_cp.inner[cp] = id16;
+      }
+    }
+  }
+  let made = DecompositionTables(decomposition_id_by_cp: move decomposition_id_by_cp, offsets: move offsets, lengths: move lengths, values: move values);
+  return move made;
+}

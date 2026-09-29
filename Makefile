@@ -20,7 +20,8 @@ DESIGN_REVIEW_BASE ?= origin/main
 .PHONY: check compiler renderer design-lint design-ready review-scope \
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
-	oracle-png oracle-png-speed
+	oracle-png oracle-png-speed \
+	oracle-normalization oracle-idna oracle-url
 
 check: compiler renderer dom-selftest design-lint
 
@@ -85,6 +86,9 @@ $(BUILD)/%_oracle: compiler FORCE
 oracle-line-break: $(BUILD)/line_break_oracle
 	@cd $(ROOT) && $< build/oracle/ucd/LineBreakTest.txt
 
+oracle-normalization: $(BUILD)/normalization_oracle
+	@cd $(ROOT) && $< build/oracle/ucd/NormalizationTest.txt
+
 oracle-css: $(BUILD)/css_syntax_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/oracle.py build/oracle/css/component_value_list.json $<
 
@@ -105,6 +109,12 @@ oracle-css-selectors: $(BUILD)/css_selectors_oracle
 
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
+
+oracle-idna: $(BUILD)/idna_oracle
+	@cd $(ROOT) && $(PY) -B tests/text/idna_oracle.py build/oracle/idna/IdnaTestV2.txt $<
+
+oracle-url: $(BUILD)/url_oracle
+	@cd $(ROOT) && $(PY) -B tests/url/oracle.py build/oracle/wpt-url $<
 
 # Decodes the speed set three times with each decoder, single-threaded.
 SPEED_SET = $(sort $(wildcard $(ORACLE)/png-speed/*.png))

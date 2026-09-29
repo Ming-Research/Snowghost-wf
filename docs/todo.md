@@ -92,3 +92,24 @@ example apart from the renderer code that exposed it
   oracle. Impact: pages using them lose the declaration. Change: extend
   `ParsedColor` and the parser, and add the suite. Reopen when the style
   system resolves colors, or a page in the corpus uses one.
+- **pkg::text::normalization has NFC and NFD only.** NFKC and NFKD, and
+  their NormalizationTest.txt invariants, are not implemented: IDNA needs
+  NFC only. Change: add the compatibility decompositions to the generated
+  tables and two NormalizationForm variants. Reopen when a consumer needs a
+  compatibility form.
+- **pkg::url computes no origin or search parameters and encodes queries
+  as UTF-8 only.** The record has no origin (blob: URLs and opaque origins
+  need modelling) and no application/x-www-form-urlencoded parsing, and a
+  document's non-UTF-8 encoding does not reach the query's
+  percent-encoding; WPT's origin and searchParams fields are not compared.
+  Change: add an origin function and a search-parameter parser, and an
+  encoding argument once text decoding exists. Reopen when fetch or
+  same-origin checks need an origin, or a legacy-encoded page is loaded.
+- **Punycode encoding is quadratic in the worst case.**
+  `pkg::text::idna`'s encoder follows RFC 3492's reference structure: it
+  scans the whole label once per distinct non-ASCII code point, so a label
+  of n strictly ascending distinct code points costs O(n^2). With
+  VerifyDnsLength false a label has no length limit, so a hostile URL can
+  reach it. Change: sort the label's non-ASCII code points once and walk
+  them in order. Reopen when URL parsing runs on untrusted input at scale,
+  or a profile shows it.
