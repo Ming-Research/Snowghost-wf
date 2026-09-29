@@ -1,7 +1,8 @@
 # Concurrency of the style and layout shapes
 
-Status: criteria recorded before any prototype runs. Nothing here is decided;
-the results feed the vocabulary proposal
+Status: criteria recorded before any prototype runs. The style prototype is
+built and checked; the measurement waits for the precondition recorded under
+Results. Nothing here is decided; the results feed the vocabulary proposal
 (`research/investigations/vocabulary/DESIGN.md`) and, where they contradict
 it, an amendment beside the design tree.
 
@@ -162,4 +163,64 @@ Recorded before any run; the results section may not change them.
 
 ## Results
 
-None yet.
+The measurement has not run. It waits for the precondition below.
+
+### Precondition: the grain of `--par` tasks
+
+Under `--par` the compiler hands each overlap of two statements that it
+permits to another lane as a task; it omits only overlaps with calls of
+small straight-line scalar functions. The finished modules the prototypes
+reuse hold many such overlaps whose work is a few instructions, so a
+4-worker figure would mostly measure that task overhead in tree building
+and selector matching rather than the traversal shapes, and criterion 1
+could not tell the shapes apart. The measurement runs after a Whitefoot
+investigation into `--par` task granularity.
+
+T(0), the setup every run pays (reading and parsing the page, the traversal
+arrays and the rule store; shape C with REPS 0), the best of three runs
+with the scheduler's steal count of that run:
+
+| Page | Sequential build | `--par`, 1 worker | 2 workers | 4 workers |
+|---|---|---|---|---|
+| ecma262 (179,471 elements) | 0.31 s | 0.30 s | 9.00 s (11.2 M steals) | 16.42 s (17.0 M steals) |
+| html5 (117,179 elements) | 0.25 s | 0.26 s | 1.62 s (0.77 M steals) | 1.56 s (0.62 M steals) |
+| apollo11 (11,844 elements) | 0.07 s | 0.10 s | 0.14 s (4,144 steals) | 0.11 s (29 steals) |
+
+The overhead also varies from run to run: html5's three runs at two workers
+took 1.62 to 4.06 s, and a single run at four workers in an earlier locked
+session took 9.98 s with 9.6 million steals.
+
+The runs held the check lock on the development machine (four Intel Xeon
+cores at 2.1 GHz, Linux 6.18), which other agents' jobs share between
+locked runs.
+
+- Of the 420 sites where the `--par` build of `proto_style` publishes a
+  task, 389 are in `pkg::html::tree_builder` (13 of them in its
+  budget-carrying clones), 8 in `pkg::html::tokenizer`, 5 in
+  `pkg::css::rules`, one each in `pkg::css::selectors` and `pkg::dom`, 4
+  in the prototype's split loops and 12 in its driver, check and table
+  setup, none of them per element. The 5,001st and the 25,001st task
+  published during the flat page's setup came from the tree builder's
+  per-token predicates `is_addr_block_end` and
+  `is_html_or_svg_or_mathml_table_context`.
+- One example inside selector matching: `byte_eq` in
+  `renderer/css/selectors/text_cmp.wf` lowers both bytes with two
+  independent calls of `ascii_lower_byte`, so the `--par` build publishes
+  one task for each byte it compares case-insensitively. Matching compares
+  that way attribute values under the `i` flag or on the HTML Standard's
+  case-insensitive attributes, `:lang()` arguments, `input` types for
+  `:checked`, and ids and classes in quirks mode.
+- The prototype's own per-element helpers had the same pattern until commit
+  e73f8c0: two independent statements in `inherit_from`, run once per
+  element in every shape, and four in the checksum.
+
+### Whitefoot: an equality requirement over range lengths
+
+`range-length-probe.wf` in this directory passes two ranges with the same
+non-constant bounds, `&a.inner[low..high]` and `&b.inner[low..high]`, to a
+function that `requires first^.len == second^.len`. `whitefootc` rejects
+the call with FN-8 UndischargedCallRequirement, disposition Unproved, also
+after a proved `invariant equal: first^.len == second^.len;`. It accepts
+the call when both ranges start at `0_u64`, and when the requirement is
+written as `first^.len <= second^.len` and `first^.len >= second^.len`,
+the form the style prototype's `style_level` uses.

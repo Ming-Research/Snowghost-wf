@@ -84,9 +84,9 @@ sheets_of() {
 # Repetitions per page and stage, chosen so the stage is at least two thirds
 # of T(REPS) with the --par build at four workers, the configuration with the
 # shortest stage and, because the HTML tree builder hands out statement-sized
-# tasks under --par, the longest T(0): 17.5 s on ecma262 and 10 s on html5
-# against 0.3 s at one worker, and up to 0.65 s on unbalanced against 0.03 s,
-# measured on the development machine. One count serves the shapes A, B and
+# tasks under --par, the longest T(0): up to 17.5 s on ecma262 and 10 s on
+# html5 against 0.3 s at one worker, and up to 0.65 s on unbalanced against
+# 0.03 s, measured on the development machine. One count serves the shapes A, B and
 # C, and one the intern post-pass, which costs far less than a shape while
 # its T(0) holds one run of C.
 reps_of() {
