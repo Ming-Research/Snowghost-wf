@@ -1,0 +1,149 @@
+const block_size: u64 = 256_u64;
+
+const block_count: u64 = 4352_u64;
+
+struct PackedU8Tables {
+  block_index: Box<Slots<u16>>;
+  block_bytes: Box<Slots<u8>>;
+}
+
+struct PackedU16Tables {
+  block_index: Box<Slots<u16>>;
+  block_values: Box<Slots<u16>>;
+}
+
+fn block_matches_u8(block_bytes: &Box<Slots<u8>>, dedup_index: u64, candidate: &Array<u8, 256>) -> result: Bool reads(block_bytes), reads(candidate) {
+  doc "Tells whether the 256-byte deduplicated block at dedup_index equals candidate.";
+  let base = dedup_index *wrap block_size;
+  for (k in 0_u64..block_size) {
+    let pos = base +wrap k;
+    let in_range = pos < block_bytes^.inner.len;
+    if in_range {
+      let existing = block_bytes^.inner[pos];
+      let value = candidate^[k];
+      let same = existing == value;
+      if same {
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn find_or_append_block_u8(block_bytes: &Box<Slots<u8>>, dedup_count: u64, candidate: &Array<u8, 256>) -> result: u64 reads(candidate), writes(block_bytes) {
+  doc "Returns the index of the existing deduplicated block equal to candidate, or appends candidate as a new one and returns its index.";
+  for (k in 0_u64..dedup_count) {
+    let matched = block_matches_u8(block_bytes: block_bytes, dedup_index: k, candidate: candidate);
+    if matched {
+      return k;
+    }
+  }
+  for (k in 0_u64..block_size) {
+    let value = candidate^[k];
+    let room = block_bytes^.inner.len < block_bytes^.inner.cap;
+    if room {
+      place_back(window: &block_bytes^.inner, value: value);
+    }
+  }
+  return dedup_count;
+}
+
+fn sweep_ccc(ccc_by_cp: &Box<Array<u8>>) -> result: PackedU8Tables reads(ccc_by_cp) {
+  doc "Groups every 256 consecutive code points into a deduplicated combining-class block table.";
+  let block_index = box_slots_new::<u16>(capacity: block_count);
+  let block_bytes = box_slots_new::<u8>(capacity: code_space);
+  for (block in 0_u64..block_count) {
+    let current_block = array_filled::<u8, 256>(value: 0_u8);
+    for (offset in 0_u64..block_size) {
+      let block_base = block *wrap block_size;
+      let cp = block_base +wrap offset;
+      let in_space = cp < ccc_by_cp^.inner.len;
+      let value = if in_space {
+        give ccc_by_cp^.inner[cp];
+      } else {
+        give 0_u8;
+      }
+      set current_block[offset] = value;
+    }
+    let dedup_count = block_bytes.inner.len / block_size;
+    let found = find_or_append_block_u8(block_bytes: &block_bytes, dedup_count: dedup_count, candidate: &current_block);
+    let found16 = cvt.wrap::<u64, u16>(found);
+    let room = block_index.inner.len < block_index.inner.cap;
+    if room {
+      place_back(window: &block_index.inner, value: found16);
+    }
+  }
+  let made = PackedU8Tables(block_index: move block_index, block_bytes: move block_bytes);
+  return move made;
+}
+
+fn block_matches_u16(block_values: &Box<Slots<u16>>, dedup_index: u64, candidate: &Array<u16, 256>) -> result: Bool reads(block_values), reads(candidate) {
+  doc "Tells whether the 256-entry deduplicated block at dedup_index equals candidate.";
+  let base = dedup_index *wrap block_size;
+  for (k in 0_u64..block_size) {
+    let pos = base +wrap k;
+    let in_range = pos < block_values^.inner.len;
+    if in_range {
+      let existing = block_values^.inner[pos];
+      let value = candidate^[k];
+      let same = existing == value;
+      if same {
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn find_or_append_block_u16(block_values: &Box<Slots<u16>>, dedup_count: u64, candidate: &Array<u16, 256>) -> result: u64 reads(candidate), writes(block_values) {
+  doc "Returns the index of the existing deduplicated block equal to candidate, or appends candidate as a new one and returns its index.";
+  for (k in 0_u64..dedup_count) {
+    let matched = block_matches_u16(block_values: block_values, dedup_index: k, candidate: candidate);
+    if matched {
+      return k;
+    }
+  }
+  for (k in 0_u64..block_size) {
+    let value = candidate^[k];
+    let room = block_values^.inner.len < block_values^.inner.cap;
+    if room {
+      place_back(window: &block_values^.inner, value: value);
+    }
+  }
+  return dedup_count;
+}
+
+fn sweep_ids(id_by_cp: &Box<Array<u16>>) -> result: PackedU16Tables reads(id_by_cp) {
+  doc "Groups every 256 consecutive code points into a deduplicated id block table (used for both the decomposition and the composition id tables). Its dense (pre-dedup) size is exactly the code space, block_count * block_size.";
+  let block_index = box_slots_new::<u16>(capacity: block_count);
+  let block_values = box_slots_new::<u16>(capacity: code_space);
+  for (block in 0_u64..block_count) {
+    let current_block = array_filled::<u16, 256>(value: 0_u16);
+    for (offset in 0_u64..block_size) {
+      let block_base = block *wrap block_size;
+      let cp = block_base +wrap offset;
+      let in_space = cp < id_by_cp^.inner.len;
+      let value = if in_space {
+        give id_by_cp^.inner[cp];
+      } else {
+        give 0_u16;
+      }
+      set current_block[offset] = value;
+    }
+    let dedup_count = block_values.inner.len / block_size;
+    let found = find_or_append_block_u16(block_values: &block_values, dedup_count: dedup_count, candidate: &current_block);
+    let found16 = cvt.wrap::<u64, u16>(found);
+    let room = block_index.inner.len < block_index.inner.cap;
+    if room {
+      place_back(window: &block_index.inner, value: found16);
+    }
+  }
+  let made = PackedU16Tables(block_index: move block_index, block_values: move block_values);
+  return move made;
+}

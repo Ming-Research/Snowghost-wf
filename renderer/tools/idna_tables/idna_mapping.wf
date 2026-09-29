@@ -1,0 +1,221 @@
+const valid_word: Array<u8, 5> =[118_u8, 97_u8, 108_u8, 105_u8, 100_u8];
+
+const mapped_word: Array<u8, 6> =[109_u8, 97_u8, 112_u8, 112_u8, 101_u8, 100_u8];
+
+const ignored_word: Array<u8, 7> =[105_u8, 103_u8, 110_u8, 111_u8, 114_u8, 101_u8, 100_u8];
+
+const disallowed_word: Array<u8, 10> =[100_u8, 105_u8, 115_u8, 97_u8, 108_u8, 108_u8, 111_u8, 119_u8, 101_u8, 100_u8];
+
+const deviation_word: Array<u8, 9> =[100_u8, 101_u8, 118_u8, 105_u8, 97_u8, 116_u8, 105_u8, 111_u8, 110_u8];
+
+const status_valid: u8 = 0_u8;
+
+const status_mapped: u8 = 1_u8;
+
+const status_disallowed: u8 = 2_u8;
+
+const mapping_capacity: u64 = 32768_u64;
+
+const mapping_values_capacity: u64 = 65536_u64;
+
+struct IdnaMappingTables {
+  status_by_cp: Box<Array<u8>>;
+  mapping_id_by_cp: Box<Array<u16>>;
+  mapping_offsets: Box<Slots<u32>>;
+  mapping_lengths: Box<Slots<u8>>;
+  mapping_values: Box<Slots<u32>>;
+}
+
+fn parse_mapping_field(text: &[u8], start: u64, stop: u64, mapping_values: &Box<Slots<u32>>) -> count: u64 reads(text), writes(mapping_values) contract {
+  requires start <= stop;
+  requires stop <= text^.len;
+} {
+  doc "Appends the whitespace-separated hexadecimal code points of text[start..stop) to mapping_values, in order, and returns how many were appended. A field with no code points (the empty mapping of an ignored entry) appends none.";
+  let length = text^.len;
+  let at = skip_ws(text: text, from: start, stop: stop);
+  let appended = 0_u64;
+  loop @tokens {
+    let inside = at < stop;
+    let readable = at < length;
+    let more = band(inside, readable);
+    if more {
+    } else {
+      return appended;
+    }
+    let token_end = find_byte(text: text, from: at, stop: stop, target: space);
+    match parse_hex_u32(text: text, from: at, stop: token_end) {
+      Some(value: cp) => {
+        let room = mapping_values^.inner.len < mapping_values^.inner.cap;
+        if room {
+          place_back(window: &mapping_values^.inner, value: cp);
+        }
+        set appended = appended +wrap 1_u64;
+      }
+      None() => {
+      }
+    }
+    let next = skip_ws(text: text, from: token_end, stop: stop);
+    set at = next;
+  }
+  return appended;
+}
+
+fn record_mapping(status_by_cp: &Box<Array<u8>>, mapping_id_by_cp: &Box<Array<u16>>, mapping_offsets: &Box<Slots<u32>>, mapping_lengths: &Box<Slots<u8>>, mapping_values: &Box<Slots<u32>>, text: &[u8], mapping_start: u64, mapping_end: u64, range_start: u64, range_stop: u64) -> result: unit reads(text), writes(status_by_cp), writes(mapping_id_by_cp), writes(mapping_offsets), writes(mapping_lengths), writes(mapping_values) contract {
+  requires mapping_start <= mapping_end;
+  requires mapping_end <= text^.len;
+} {
+  doc "Appends one mapped or ignored entry's target sequence (possibly empty) to mapping_values and records its (offset, length) once, then applies the resulting 1-based mapping id and mapped status to every code point in range_start..range_stop.";
+  let offset = mapping_values^.inner.len;
+  let appended = parse_mapping_field(text: text, start: mapping_start, stop: mapping_end, mapping_values: mapping_values);
+  let fits = appended <= 255_u64;
+  let length8 = if fits {
+    let narrowed = cvt.wrap::<u64, u8>(appended);
+    give narrowed;
+  } else {
+    give 255_u8;
+  }
+  let offset32 = cvt.wrap::<u64, u32>(offset);
+  let room_off = mapping_offsets^.inner.len < mapping_offsets^.inner.cap;
+  if room_off {
+    place_back(window: &mapping_offsets^.inner, value: offset32);
+  }
+  let room_len = mapping_lengths^.inner.len < mapping_lengths^.inner.cap;
+  if room_len {
+    place_back(window: &mapping_lengths^.inner, value: length8);
+  }
+  let id64 = mapping_offsets^.inner.len;
+  let id16 = cvt.wrap::<u64, u16>(id64);
+  for (cp in range_start..range_stop) {
+    let cp_ok_status = cp < status_by_cp^.inner.len;
+    let cp_ok_id = cp < mapping_id_by_cp^.inner.len;
+    if cp_ok_status {
+      set status_by_cp^.inner[cp] = status_mapped;
+    }
+    if cp_ok_id {
+      set mapping_id_by_cp^.inner[cp] = id16;
+    }
+  }
+  return unit;
+}
+
+fn record_status(status_by_cp: &Box<Array<u8>>, value: u8, range_start: u64, range_stop: u64) -> result: unit writes(status_by_cp) {
+  doc "Sets status_by_cp[cp] to value for every cp in range_start..range_stop.";
+  for (cp in range_start..range_stop) {
+    let cp_ok = cp < status_by_cp^.inner.len;
+    if cp_ok {
+      set status_by_cp^.inner[cp] = value;
+    }
+  }
+  return unit;
+}
+
+fn parse_idna_mapping_line(text: &[u8], line_start: u64, line_stop: u64, status_by_cp: &Box<Array<u8>>, mapping_id_by_cp: &Box<Array<u16>>, mapping_offsets: &Box<Slots<u32>>, mapping_lengths: &Box<Slots<u8>>, mapping_values: &Box<Slots<u32>>) -> result: unit reads(text), writes(status_by_cp), writes(mapping_id_by_cp), writes(mapping_offsets), writes(mapping_lengths), writes(mapping_values) contract {
+  requires line_stop <= text^.len;
+} {
+  doc "Parses one line of IdnaMappingTable.txt: a blank or comment line, or one whose first byte is not a hex digit, does nothing.";
+  let empty = line_start >= line_stop;
+  if empty {
+    return unit;
+  }
+  let readable = line_start < text^.len;
+  if readable {
+  } else {
+    return unit;
+  }
+  let first = text^[line_start];
+  let comment = first == number_sign;
+  if comment {
+    return unit;
+  }
+  let semi = find_byte(text: text, from: line_start, stop: line_stop, target: semicolon);
+  let has_semi = semi < line_stop;
+  if has_semi {
+  } else {
+    return unit;
+  }
+  let range_field_end = trim_ws_end(text: text, from: line_start, stop: semi);
+  match parse_range(text: text, from: line_start, stop: range_field_end) {
+    Some(value: found) => {
+      let status_start_raw = semi +wrap 1_u64;
+      let status_start = skip_ws(text: text, from: status_start_raw, stop: line_stop);
+      let status_field_end = line_field_end(text: text, from: status_start, stop: line_stop);
+      let status_end = trim_ws_end(text: text, from: status_start, stop: status_field_end);
+      let ok_bounds = status_end <= line_stop;
+      if ok_bounds {
+      } else {
+        return unit;
+      }
+      let status_field = &text^[status_start..status_end];
+      let valid_ref = &valid_word[0_u64..valid_word.len];
+      let mapped_ref = &mapped_word[0_u64..mapped_word.len];
+      let ignored_ref = &ignored_word[0_u64..ignored_word.len];
+      let disallowed_ref = &disallowed_word[0_u64..disallowed_word.len];
+      let deviation_ref = &deviation_word[0_u64..deviation_word.len];
+      let is_valid = field_equals(field: status_field, want: valid_ref);
+      let is_deviation = field_equals(field: status_field, want: deviation_ref);
+      let is_mapped = field_equals(field: status_field, want: mapped_ref);
+      let is_ignored = field_equals(field: status_field, want: ignored_ref);
+      let is_disallowed = field_equals(field: status_field, want: disallowed_ref);
+      let start64 = cvt::<u32, u64>(found.start);
+      let end64 = cvt::<u32, u64>(found.end);
+      let range_stop = end64 +wrap 1_u64;
+      let recognized_simple = bor(is_valid, is_deviation);
+      if recognized_simple {
+        record_status(status_by_cp: status_by_cp, value: status_valid, range_start: start64, range_stop: range_stop);
+        return unit;
+      }
+      if is_disallowed {
+        record_status(status_by_cp: status_by_cp, value: status_disallowed, range_start: start64, range_stop: range_stop);
+        return unit;
+      }
+      if is_ignored {
+        record_mapping(status_by_cp: status_by_cp, mapping_id_by_cp: mapping_id_by_cp, mapping_offsets: mapping_offsets, mapping_lengths: mapping_lengths, mapping_values: mapping_values, text: text, mapping_start: status_end, mapping_end: status_end, range_start: start64, range_stop: range_stop);
+        return unit;
+      }
+      if is_mapped {
+        let has_field3 = status_field_end < line_stop;
+        if has_field3 {
+          let byte = text^[status_field_end];
+          let is_semi = byte == semicolon;
+          if is_semi {
+            let mapping_start_raw = status_field_end +wrap 1_u64;
+            let mapping_start = skip_ws(text: text, from: mapping_start_raw, stop: line_stop);
+            let mapping_field_end = line_field_end(text: text, from: mapping_start, stop: line_stop);
+            let mapping_end = trim_ws_end(text: text, from: mapping_start, stop: mapping_field_end);
+            record_mapping(status_by_cp: status_by_cp, mapping_id_by_cp: mapping_id_by_cp, mapping_offsets: mapping_offsets, mapping_lengths: mapping_lengths, mapping_values: mapping_values, text: text, mapping_start: mapping_start, mapping_end: mapping_end, range_start: start64, range_stop: range_stop);
+          }
+        }
+        return unit;
+      }
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
+  }
+}
+
+fn parse_idna_mapping(text: &[u8]) -> result: IdnaMappingTables reads(text) {
+  doc "Parses every line of IdnaMappingTable.txt into status_by_cp (0 valid/deviation, 1 mapped/ignored, 2 disallowed, defaulted to disallowed for any code point the file omits) and, for every mapped or ignored code point, mapping_id_by_cp (1-based, 0 for none) locating its target sequence (possibly empty) in mapping_values via mapping_offsets/mapping_lengths.";
+  let status_by_cp = box_array_filled::<u8>(count: code_space, value: status_disallowed);
+  let mapping_id_by_cp = box_array_filled::<u16>(count: code_space, value: 0_u16);
+  let mapping_offsets = box_slots_new::<u32>(capacity: mapping_capacity);
+  let mapping_lengths = box_slots_new::<u8>(capacity: mapping_capacity);
+  let mapping_values = box_slots_new::<u32>(capacity: mapping_values_capacity);
+  let length = text^.len;
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      let made = IdnaMappingTables(status_by_cp: move status_by_cp, mapping_id_by_cp: move mapping_id_by_cp, mapping_offsets: move mapping_offsets, mapping_lengths: move mapping_lengths, mapping_values: move mapping_values);
+      return move made;
+    }
+    let found_stop = line_end(text: text, start: at);
+    let stop = imin(found_stop, length);
+    parse_idna_mapping_line(text: text, line_start: at, line_stop: stop, status_by_cp: &status_by_cp, mapping_id_by_cp: &mapping_id_by_cp, mapping_offsets: &mapping_offsets, mapping_lengths: &mapping_lengths, mapping_values: &mapping_values);
+    set at = stop +wrap 1_u64;
+  }
+  let made = IdnaMappingTables(status_by_cp: move status_by_cp, mapping_id_by_cp: move mapping_id_by_cp, mapping_offsets: move mapping_offsets, mapping_lengths: move mapping_lengths, mapping_values: move mapping_values);
+  return move made;
+}

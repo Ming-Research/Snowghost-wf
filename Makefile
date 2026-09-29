@@ -19,7 +19,9 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready review-scope \
 	static-atoms dom-selftest \
-	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-selectors oracle-html-tokenizer oracle-html-tree oracle-png oracle-png-speed
+	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
+	oracle-png oracle-png-speed \
+	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties
 
 check: compiler renderer dom-selftest design-lint
 
@@ -84,6 +86,9 @@ $(BUILD)/%_oracle: compiler FORCE
 oracle-line-break: $(BUILD)/line_break_oracle
 	@cd $(ROOT) && $< build/oracle/ucd/LineBreakTest.txt
 
+oracle-normalization: $(BUILD)/normalization_oracle
+	@cd $(ROOT) && $< build/oracle/ucd/NormalizationTest.txt
+
 oracle-css: $(BUILD)/css_syntax_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/oracle.py build/oracle/css/component_value_list.json $<
 
@@ -96,11 +101,29 @@ oracle-html-tree: $(BUILD)/html_tree_oracle
 oracle-css-rules: $(BUILD)/css_rules_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/rules_oracle.py build/oracle/css $<
 
+oracle-css-color: $(BUILD)/css_color_oracle
+	@cd $(ROOT) && $(PY) -B tests/css/color_oracle.py build/oracle/css $<
+
 oracle-css-selectors: $(BUILD)/css_selectors_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/selectors_oracle.py build/oracle/wpt-nodes build/oracle/css $<
 
+oracle-font-face: $(BUILD)/font_face_oracle
+	@cd $(ROOT) && $(PY) -B tests/font/face_oracle.py build/oracle/fonts build/oracle/py $<
+
+oracle-font-shape: $(BUILD)/font_shape_oracle
+	@cd $(ROOT) && $(PY) -B tests/font/shape_oracle.py build/oracle/fonts build/oracle/udhr build/oracle/py $<
+
+oracle-text-properties: $(BUILD)/text_properties_oracle
+	@cd $(ROOT) && $(PY) -B tests/text/properties_oracle.py build/oracle/ucd $<
+
 oracle-png: $(BUILD)/png_oracle
 	@cd $(ROOT) && $< check build/oracle/pngsuite/cases.txt build/oracle/pngsuite
+
+oracle-idna: $(BUILD)/idna_oracle
+	@cd $(ROOT) && $(PY) -B tests/text/idna_oracle.py build/oracle/idna/IdnaTestV2.txt $<
+
+oracle-url: $(BUILD)/url_oracle
+	@cd $(ROOT) && $(PY) -B tests/url/oracle.py build/oracle/wpt-url $<
 
 # Decodes the speed set three times with each decoder, single-threaded.
 SPEED_SET = $(sort $(wildcard $(ORACLE)/png-speed/*.png))

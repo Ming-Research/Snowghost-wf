@@ -1,0 +1,782 @@
+const attach_mark: u8 = 1_u8;
+
+fn add_value(item: Item, record: ValueRecord) -> result: Item pure {
+  doc "HarfBuzz's apply_value for a horizontal run: adds the placements to the offsets and the x advance to the advance, saturating; a value record's y advance does not apply horizontally.";
+  let x_placement = cvt::<i16, i32>(record.x_placement);
+  let y_placement = cvt::<i16, i32>(record.y_placement);
+  let x_advance = cvt::<i16, i32>(record.x_advance);
+  let changed = item;
+  set changed.x_offset = item.x_offset +sat x_placement;
+  set changed.y_offset = item.y_offset +sat y_placement;
+  set changed.x_advance = item.x_advance +sat x_advance;
+  return changed;
+}
+
+fn value_record_at(layout: &LayoutTable, start: u64, offset: u64) -> result: ValueRecord reads(layout) {
+  doc "The value record offset places after start in value_records, all zero past its end.";
+  let position = start +wrap offset;
+  if position < layout^.value_records.inner.len {
+    let record = layout^.value_records.inner[position];
+    return record;
+  }
+  let zero = ValueRecord(x_placement: 0_i16, y_placement: 0_i16, x_advance: 0_i16, y_advance: 0_i16);
+  return zero;
+}
+
+fn position_single(layout: &LayoutTable, buffer: &Buffer, index: u32) -> result: Bool reads(layout), writes(buffer) {
+  doc "Applies SinglePos subtable index to the current glyph and moves past it: format 1 applies its one value to every covered glyph, format 2 the value of the glyph's coverage index when that is below its value count.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.single_positionings.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.single_positionings.inner[at];
+  let head = current(buffer: buffer);
+  let covered = glyph_coverage(layout: layout, coverage: subtable_record.coverage, glyph: head.code);
+  if covered == not_covered {
+    return False();
+  }
+  let start = cvt::<u32, u64>(subtable_record.values.start);
+  let values = cvt::<u32, u64>(subtable_record.values.count);
+  let chosen = if subtable_record.format == 1_u16 {
+    give 0_u64;
+  } else {
+    let count = cvt::<u16, u32>(subtable_record.value_count);
+    if covered >= count {
+      return False();
+    }
+    let wide = cvt::<u32, u64>(covered);
+    give wide;
+  }
+  if chosen < values {
+    let record = value_record_at(layout: layout, start: start, offset: chosen);
+    let moved = add_value(item: head, record: record);
+    put_current(buffer: buffer, item: moved);
+  }
+  skip_glyph(buffer: buffer);
+  return True();
+}
+
+fn find_pair(layout: &LayoutTable, glyph: u32, low: u64, high: u64) -> result: u64 reads(layout) contract {
+  requires low <= high;
+  requires high <= layout^.pair_values.inner.len;
+} {
+  doc "Binary-searches the pair values from low up to high, sorted by second glyph, for glyph; the index found, or no_index.";
+  if low >= high {
+    return no_index;
+  }
+  let span = high - low;
+  let less = span - 1_u64;
+  let half = less / 2_u64;
+  let middle = low + half;
+  let pair = layout^.pair_values.inner[middle];
+  let second = cvt::<u16, u32>(pair.second_glyph);
+  if glyph < second {
+    return musttail find_pair(layout: layout, glyph: glyph, low: low, high: middle);
+  }
+  if glyph > second {
+    let next = middle + 1_u64;
+    return musttail find_pair(layout: layout, glyph: glyph, low: next, high: high);
+  }
+  return middle;
+}
+
+fn position_pair(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), reads(ctx), writes(buffer) {
+  doc "Applies PairPos subtable index to the current glyph and the next one the lookup does not skip: format 1 through the pair set of the first glyph's coverage index, format 2 through the classes of both glyphs. After a pair it moves to the second glyph, or past it when the second value format is not 0.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.pair_positionings.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.pair_positionings.inner[at];
+  let head = current(buffer: buffer);
+  let covered = glyph_coverage(layout: layout, coverage: subtable_record.coverage, glyph: head.code);
+  if covered == not_covered {
+    return False();
+  }
+  let props = ctx^.lookup_props;
+  let context_match = False();
+  let nothing = MatchKind::Nothing();
+  let anything = Sequence(kind: nothing, start: 0_u64, count: 0_u64, classes: 0_u32);
+  let index_now = buffer^.index;
+  let (found, second_at) = next_match(layout: layout, face: face, ctx: ctx, buffer: buffer, from: index_now, props: props, context_match: context_match, sequence: anything, position: 0_u64);
+  if found {
+  } else {
+    return False();
+  }
+  let second_item = item_at(buffer: buffer, index: second_at);
+  let second_glyph = second_item.code;
+  let zero = ValueRecord(x_placement: 0_i16, y_placement: 0_i16, x_advance: 0_i16, y_advance: 0_i16);
+  let first_value = zero;
+  let second_value = zero;
+  if subtable_record.format == 1_u16 {
+    if covered >= subtable_record.pair_sets.count {
+      return False();
+    }
+    let sets_start = cvt::<u32, u64>(subtable_record.pair_sets.start);
+    let offset = cvt::<u32, u64>(covered);
+    let set_at = sets_start +wrap offset;
+    if set_at < layout^.pair_sets.inner.len {
+    } else {
+      return False();
+    }
+    let pair_set = layout^.pair_sets.inner[set_at];
+    let low = cvt::<u32, u64>(pair_set.start);
+    let size = cvt::<u32, u64>(pair_set.count);
+    let high = low + size;
+    if high <= layout^.pair_values.inner.len {
+    } else {
+      return False();
+    }
+    let hit = find_pair(layout: layout, glyph: second_glyph, low: low, high: high);
+    if hit == no_index {
+      return False();
+    }
+    if hit < layout^.pair_values.inner.len {
+      let pair = layout^.pair_values.inner[hit];
+      set first_value = pair.first;
+      set second_value = pair.second;
+    }
+  } else {
+    let first_class = class_of(layout: layout, classes: subtable_record.first_classes, glyph: head.code);
+    let second_class = class_of(layout: layout, classes: subtable_record.second_classes, glyph: second_glyph);
+    let first_count = cvt::<u16, u32>(subtable_record.first_class_count);
+    let second_count = cvt::<u16, u32>(subtable_record.second_class_count);
+    let first_outside = first_class >= first_count;
+    let second_outside = second_class >= second_count;
+    let outside = bor(first_outside, second_outside);
+    if outside {
+      return False();
+    }
+    let row = cvt::<u32, u64>(first_class);
+    let column = cvt::<u32, u64>(second_class);
+    let columns = cvt::<u32, u64>(second_count);
+    let row_start = row *wrap columns;
+    let cell = row_start +wrap column;
+    let values_start = cvt::<u32, u64>(subtable_record.class_values.start);
+    let values_count = cvt::<u32, u64>(subtable_record.class_values.count);
+    if cell < values_count {
+      let value_at_cell = values_start +wrap cell;
+      if value_at_cell < layout^.value_pairs.inner.len {
+        let pair = layout^.value_pairs.inner[value_at_cell];
+        set first_value = pair.first;
+        set second_value = pair.second;
+      }
+    }
+  }
+  if subtable_record.first_format != 0_u16 {
+    let moved = add_value(item: head, record: first_value);
+    put_current(buffer: buffer, item: moved);
+  }
+  let resume = second_at;
+  if subtable_record.second_format != 0_u16 {
+    let second_now = item_at(buffer: buffer, index: second_at);
+    let moved = add_value(item: second_now, record: second_value);
+    put_item(buffer: buffer, index: second_at, item: moved);
+    set resume = second_at +wrap 1_u64;
+  }
+  set buffer^.index = resume;
+  return True();
+}
+
+fn matrix_anchor(layout: &LayoutTable, anchors: Extent, rows: u64, row: u64, column: u64, columns: u64) -> (found: Bool, anchor: Anchor) reads(layout) {
+  doc "HarfBuzz's AnchorMatrix get_anchor: the anchor at row and column of a matrix of rows rows of columns anchors, not found outside it or for a null anchor.";
+  let origin = Anchor(x: 0_i16, y: 0_i16);
+  let no = False();
+  let row_outside = row >= rows;
+  let column_outside = column >= columns;
+  let outside = bor(row_outside, column_outside);
+  if outside {
+    return no, origin;
+  }
+  let row_start = row *wrap columns;
+  let cell = row_start +wrap column;
+  let count = cvt::<u32, u64>(anchors.count);
+  if cell >= count {
+    return no, origin;
+  }
+  let start = cvt::<u32, u64>(anchors.start);
+  let position = start +wrap cell;
+  if position < layout^.anchors.inner.len {
+  } else {
+    return no, origin;
+  }
+  let cell_value = layout^.anchors.inner[position];
+  match cell_value {
+    None() => {
+      return no, origin;
+    }
+    Some(value: anchor) => {
+      let yes = True();
+      return yes, anchor;
+    }
+  }
+}
+
+fn attach_mark_to(layout: &LayoutTable, buffer: &Buffer, attachment: MarkAttachment, mark_index: u32, anchors: Extent, rows: u64, row: u64, glyph_position: u64) -> result: Bool reads(layout), writes(buffer) {
+  doc "HarfBuzz's MarkArray apply: attaches the current mark, of mark coverage index mark_index, to the glyph at glyph_position by that glyph's anchor at row and the mark's class, offsetting the mark by the anchors' difference plus the glyph's y offset, and moves past it; False, so that later subtables may try, when that anchor is missing.";
+  let marks_start = cvt::<u32, u64>(attachment.marks.start);
+  let marks_count = cvt::<u32, u64>(attachment.marks.count);
+  let mark_offset = cvt::<u32, u64>(mark_index);
+  let origin = Anchor(x: 0_i16, y: 0_i16);
+  let blank_record = MarkRecord(class: 0_u16, anchor: origin);
+  let record = if mark_offset < marks_count {
+    let position = marks_start +wrap mark_offset;
+    if position < layout^.mark_records.inner.len {
+      let found = layout^.mark_records.inner[position];
+      give found;
+    } else {
+      give blank_record;
+    }
+  } else {
+    give blank_record;
+  }
+  let class = cvt::<u16, u64>(record.class);
+  let columns = cvt::<u16, u64>(attachment.class_count);
+  let (found, base_anchor) = matrix_anchor(layout: layout, anchors: anchors, rows: rows, row: row, column: class, columns: columns);
+  if found {
+  } else {
+    return False();
+  }
+  let index = buffer^.index;
+  let base = item_at(buffer: buffer, index: glyph_position);
+  let mark = current(buffer: buffer);
+  let position_signed = cvt.wrap::<u64, i64>(glyph_position);
+  let index_signed = cvt.wrap::<u64, i64>(index);
+  let chain = position_signed -wrap index_signed;
+  let below = chain < -32768_i64;
+  let above = chain > 32767_i64;
+  let overflow = bor(below, above);
+  if overflow {
+    set mark.attach_chain = 0_i32;
+    put_current(buffer: buffer, item: mark);
+    skip_glyph(buffer: buffer);
+    return True();
+  }
+  let narrow_chain = cvt.wrap::<i64, i32>(chain);
+  let base_x = cvt::<i16, i32>(base_anchor.x);
+  let base_y = cvt::<i16, i32>(base_anchor.y);
+  let mark_x = cvt::<i16, i32>(record.anchor.x);
+  let mark_y = cvt::<i16, i32>(record.anchor.y);
+  let x_offset = base_x - mark_x;
+  let y_difference = base_y - mark_y;
+  let y_offset = y_difference +sat base.y_offset;
+  set mark.attach_chain = narrow_chain;
+  set mark.attach_type = attach_mark;
+  set mark.x_offset = x_offset;
+  set mark.y_offset = y_offset;
+  put_current(buffer: buffer, item: mark);
+  set buffer^.attached = True();
+  skip_glyph(buffer: buffer);
+  return True();
+}
+
+fn accept_base(buffer: &Buffer, position: u64) -> result: Bool reads(buffer) {
+  doc "MarkBasePos's accept: a glyph a mark may attach to, which excludes the pieces of a multiple substitution after its first unless a mark or another sequence precedes them.";
+  let item = item_at(buffer: buffer, index: position);
+  let multiplied = has_glyph_bit(item: item, bit: glyph_multiplied);
+  if multiplied {
+  } else {
+    return True();
+  }
+  let component = lig_comp_of(item: item);
+  if component == 0_u8 {
+    return True();
+  }
+  if position == 0_u64 {
+    return True();
+  }
+  let before_index = position - 1_u64;
+  let before = item_at(buffer: buffer, index: before_index);
+  let before_mark = has_glyph_bit(item: before, bit: glyph_mark);
+  if before_mark {
+    return True();
+  }
+  let before_multiplied = has_glyph_bit(item: before, bit: glyph_multiplied);
+  if before_multiplied {
+  } else {
+    return True();
+  }
+  let own_id = lig_id_of(item: item);
+  let before_id = lig_id_of(item: before);
+  if own_id != before_id {
+    return True();
+  }
+  let before_component = lig_comp_of(item: before);
+  let following = before_component +wrap 1_u8;
+  if component != following {
+    return True();
+  }
+  return False();
+}
+
+fn accept_ligature(buffer: &Buffer, position: u64) -> result: Bool reads(buffer) {
+  doc "MarkLigPos's accept: not a piece of a multiple substitution after its first.";
+  let item = item_at(buffer: buffer, index: position);
+  let multiplied = has_glyph_bit(item: item, bit: glyph_multiplied);
+  if multiplied {
+  } else {
+    return True();
+  }
+  let component = lig_comp_of(item: item);
+  let first_piece = component == 0_u8;
+  return first_piece;
+}
+
+fn find_base(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, coverage: u32, ligature: Bool) -> result: u64 reads(layout), reads(face), reads(buffer), writes(ctx) {
+  doc "The base search MarkBasePos and MarkLigPos share: walking back from the current mark to where the previous search in this lookup started, the nearest glyph the IgnoreMarks iterator matches that its accept admits or that coverage holds; keeps the last base found when none is nearer, and returns it or no_index.";
+  let index = buffer^.index;
+  if ctx^.last_base_until > index {
+    set ctx^.last_base_until = 0_u64;
+    set ctx^.last_base = no_index;
+  }
+  let until = ctx^.last_base_until;
+  let nothing = MatchKind::Nothing();
+  let anything = Sequence(kind: nothing, start: 0_u64, count: 0_u64, classes: 0_u32);
+  let context_match = False();
+  let position = index;
+  loop {
+    if position <= until {
+      break;
+    }
+    let candidate_index = position - 1_u64;
+    let candidate = item_at(buffer: buffer, index: candidate_index);
+    let verdict = match_verdict(layout: layout, face: face, ctx: ctx, item: candidate, props: lookup_ignore_marks, context_match: context_match, sequence: anything, value: 0_u32);
+    if verdict == verdict_match {
+      let accepted = if ligature {
+        let admitted = accept_ligature(buffer: buffer, position: candidate_index);
+        give admitted;
+      } else {
+        let admitted = accept_base(buffer: buffer, position: candidate_index);
+        give admitted;
+      }
+      let covered = glyph_coverage(layout: layout, coverage: coverage, glyph: candidate.code);
+      let listed = covered != not_covered;
+      let usable = bor(accepted, listed);
+      if usable {
+        set ctx^.last_base = candidate_index;
+        break;
+      }
+    }
+    set position = candidate_index;
+  }
+  set ctx^.last_base_until = index;
+  let base = ctx^.last_base;
+  return base;
+}
+
+fn position_mark_base(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "Applies MarkBasePos subtable index to the current glyph: attaches a covered mark to the base find_base finds when the base coverage holds it.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.mark_attachments.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.mark_attachments.inner[at];
+  let head = current(buffer: buffer);
+  let mark_index = glyph_coverage(layout: layout, coverage: subtable_record.mark_coverage, glyph: head.code);
+  if mark_index == not_covered {
+    return False();
+  }
+  let ligature = False();
+  let base = find_base(layout: layout, face: face, ctx: ctx, buffer: buffer, coverage: subtable_record.base_coverage, ligature: ligature);
+  if base == no_index {
+    return False();
+  }
+  let base_item = item_at(buffer: buffer, index: base);
+  let base_index = glyph_coverage(layout: layout, coverage: subtable_record.base_coverage, glyph: base_item.code);
+  if base_index == not_covered {
+    return False();
+  }
+  let columns = cvt::<u16, u64>(subtable_record.class_count);
+  let cells = cvt::<u32, u64>(subtable_record.bases.count);
+  let rows = if columns == 0_u64 {
+    give 0_u64;
+  } else {
+    let whole = cells / columns;
+    give whole;
+  }
+  let row = cvt::<u32, u64>(base_index);
+  let applied = attach_mark_to(layout: layout, buffer: buffer, attachment: subtable_record, mark_index: mark_index, anchors: subtable_record.bases, rows: rows, row: row, glyph_position: base);
+  return applied;
+}
+
+fn position_mark_ligature(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), writes(ctx), writes(buffer) {
+  doc "Applies MarkLigPos subtable index to the current glyph: attaches a covered mark to the ligature find_base finds, to the component its ligature id and component name when they match the ligature's and to the last component otherwise.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.mark_attachments.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.mark_attachments.inner[at];
+  let head = current(buffer: buffer);
+  let mark_index = glyph_coverage(layout: layout, coverage: subtable_record.mark_coverage, glyph: head.code);
+  if mark_index == not_covered {
+    return False();
+  }
+  let ligature = True();
+  let base = find_base(layout: layout, face: face, ctx: ctx, buffer: buffer, coverage: subtable_record.base_coverage, ligature: ligature);
+  if base == no_index {
+    return False();
+  }
+  let base_item = item_at(buffer: buffer, index: base);
+  let lig_index = glyph_coverage(layout: layout, coverage: subtable_record.base_coverage, glyph: base_item.code);
+  if lig_index == not_covered {
+    return False();
+  }
+  let attachments_start = cvt::<u32, u64>(subtable_record.bases.start);
+  let attachments_count = cvt::<u32, u64>(subtable_record.bases.count);
+  let offset = cvt::<u32, u64>(lig_index);
+  let empty = Extent(start: 0_u32, count: 0_u32);
+  let blank = LigatureAttachment(component_count: 0_u16, anchors: empty);
+  let attachment = if offset < attachments_count {
+    let position = attachments_start +wrap offset;
+    if position < layout^.ligature_attachments.inner.len {
+      let found = layout^.ligature_attachments.inner[position];
+      give found;
+    } else {
+      give blank;
+    }
+  } else {
+    give blank;
+  }
+  let components = cvt::<u16, u64>(attachment.component_count);
+  if components == 0_u64 {
+    return False();
+  }
+  let lig_id = lig_id_of(item: base_item);
+  let mark_id = lig_id_of(item: head);
+  let mark_comp = lig_comp_of(item: head);
+  let has_id = lig_id != 0_u8;
+  let same_id = lig_id == mark_id;
+  let on_component = mark_comp > 0_u8;
+  let tied = band(has_id, same_id);
+  let own_component = band(tied, on_component);
+  let last_component = components - 1_u64;
+  let component = if own_component {
+    let wide = cvt::<u8, u64>(mark_comp);
+    let lowest = imin(components, wide);
+    let chosen = lowest -wrap 1_u64;
+    give chosen;
+  } else {
+    give last_component;
+  }
+  let applied = attach_mark_to(layout: layout, buffer: buffer, attachment: subtable_record, mark_index: mark_index, anchors: attachment.anchors, rows: components, row: component, glyph_position: base);
+  return applied;
+}
+
+fn position_mark_mark(layout: &LayoutTable, face: &Face, ctx: &Context, buffer: &Buffer, index: u32) -> result: Bool reads(layout), reads(face), reads(ctx), writes(buffer) {
+  doc "Applies MarkMarkPos subtable index to the current glyph: attaches a covered mark to the previous mark the lookup's filters admit, when both belong to the same base or ligature component or one of them is itself a ligature.";
+  let at = cvt::<u32, u64>(index);
+  if at < layout^.mark_attachments.inner.len {
+  } else {
+    return False();
+  }
+  let subtable_record = layout^.mark_attachments.inner[at];
+  let head = current(buffer: buffer);
+  let mark_index = glyph_coverage(layout: layout, coverage: subtable_record.mark_coverage, glyph: head.code);
+  if mark_index == not_covered {
+    return False();
+  }
+  let flags_cleared = inot(lookup_ignore_flags);
+  let props = iand(ctx^.lookup_props, flags_cleared);
+  let context_match = False();
+  let nothing = MatchKind::Nothing();
+  let anything = Sequence(kind: nothing, start: 0_u64, count: 0_u64, classes: 0_u32);
+  let index_now = buffer^.index;
+  let (found, previous_at) = previous_match(layout: layout, face: face, ctx: ctx, buffer: buffer, from: index_now, props: props, context_match: context_match, sequence: anything, position: 0_u64);
+  if found {
+  } else {
+    return False();
+  }
+  let other = item_at(buffer: buffer, index: previous_at);
+  let other_mark = has_glyph_bit(item: other, bit: glyph_mark);
+  if other_mark {
+  } else {
+    return False();
+  }
+  let id1 = lig_id_of(item: head);
+  let id2 = lig_id_of(item: other);
+  let comp1 = lig_comp_of(item: head);
+  let comp2 = lig_comp_of(item: other);
+  let good = if id1 == id2 {
+    let unattached = id1 == 0_u8;
+    let same_component = comp1 == comp2;
+    let either = bor(unattached, same_component);
+    give either;
+  } else {
+    let first_id = id1 > 0_u8;
+    let first_whole = comp1 == 0_u8;
+    let second_id = id2 > 0_u8;
+    let second_whole = comp2 == 0_u8;
+    let first_ligature = band(first_id, first_whole);
+    let second_ligature = band(second_id, second_whole);
+    let either = bor(first_ligature, second_ligature);
+    give either;
+  }
+  if good {
+  } else {
+    return False();
+  }
+  let mark2_index = glyph_coverage(layout: layout, coverage: subtable_record.base_coverage, glyph: other.code);
+  if mark2_index == not_covered {
+    return False();
+  }
+  let columns = cvt::<u16, u64>(subtable_record.class_count);
+  let cells = cvt::<u32, u64>(subtable_record.bases.count);
+  let rows = if columns == 0_u64 {
+    give 0_u64;
+  } else {
+    let whole = cells / columns;
+    give whole;
+  }
+  let row = cvt::<u32, u64>(mark2_index);
+  let applied = attach_mark_to(layout: layout, buffer: buffer, attachment: subtable_record, mark_index: mark_index, anchors: subtable_record.bases, rows: rows, row: row, glyph_position: previous_at);
+  return applied;
+}
+
+fn advance_of(face: &Face, glyph: u32) -> result: i32 reads(face) {
+  doc "glyph's horizontal advance in font units, 0 for a glyph past 65535.";
+  if glyph > 65535_u32 {
+    return 0_i32;
+  }
+  let narrow = cvt::<u32, u16>(glyph);
+  let advance = glyph_advance(face: face, glyph: narrow);
+  let wide = cvt::<u16, i32>(advance);
+  return wide;
+}
+
+fn set_positions(face: &Face, buffer: &Buffer) -> result: unit reads(face), writes(buffer) {
+  doc "HarfBuzz's clear_positions and hb_ot_position_default: every item gets its glyph's advance and zero offsets and attachment, and a space that fell back to U+0020 gets the advance of its fallback type, as _hb_ot_shape_fallback_spaces gives it.";
+  let count = buffer^.length;
+  let units = face^.metrics.units_per_em;
+  let em = cvt::<u16, i64>(units);
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let advance = advance_of(face: face, glyph: item.code);
+    set item.x_advance = advance;
+    set item.y_advance = 0_i32;
+    set item.x_offset = 0_i32;
+    set item.y_offset = 0_i32;
+    set item.attach_chain = 0_i32;
+    set item.attach_type = 0_u8;
+    let category = category_of(item: item);
+    let space = category == category_space_separator;
+    let ligated = has_glyph_bit(item: item, bit: glyph_ligated);
+    let unligated = bnot(ligated);
+    let fallback = band(space, unligated);
+    if fallback {
+      let space_type = ishr.wrap(item.unicode_props, 8_u32);
+      let fraction = space_type <= 16_u16;
+      let some = space_type != 0_u16;
+      let even = band(fraction, some);
+      if even {
+        let divisor = cvt::<u16, i64>(space_type);
+        let half = divisor / 2_i64;
+        let numerator = em + half;
+        let quotient = numerator / divisor;
+        let narrow = cvt.wrap::<i64, i32>(quotient);
+        set item.x_advance = narrow;
+      } else if space_type == 17_u16 {
+        let four = em * 4_i64;
+        let quotient = four / 18_i64;
+        let narrow = cvt.wrap::<i64, i32>(quotient);
+        set item.x_advance = narrow;
+      } else if space_type == 19_u16 {
+        for (digit in 48_u64..58_u64) {
+          let scalar = cvt::<u64, u32>(digit);
+          let glyph = glyph_of(face: face, scalar: scalar);
+          if glyph != 0_u32 {
+            let figure = advance_of(face: face, glyph: glyph);
+            set item.x_advance = figure;
+            break;
+          }
+        }
+      } else if space_type == 20_u16 {
+        let period = glyph_of(face: face, scalar: 46_u32);
+        let glyph = if period != 0_u32 {
+          give period;
+        } else {
+          let comma = glyph_of(face: face, scalar: 44_u32);
+          give comma;
+        }
+        if glyph != 0_u32 {
+          let punctuation = advance_of(face: face, glyph: glyph);
+          set item.x_advance = punctuation;
+        }
+      } else if space_type == 21_u16 {
+        let halved = item.x_advance / 2_i32;
+        set item.x_advance = halved;
+      }
+    }
+    put_item(buffer: buffer, index: position, item: item);
+  }
+  return unit;
+}
+
+fn zero_marks(buffer: &Buffer, adjust: Bool) -> result: unit writes(buffer) {
+  doc "HarfBuzz's zero_mark_widths_by_gdef: every mark by its glyph properties gets zero advances, having its advance subtracted from its offset first when adjust is True, as it is without GPOS.";
+  let count = buffer^.length;
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let mark = has_glyph_bit(item: item, bit: glyph_mark);
+    if mark {
+      if adjust {
+        set item.x_offset = item.x_offset -sat item.x_advance;
+        set item.y_offset = item.y_offset -sat item.y_advance;
+      }
+      set item.x_advance = 0_i32;
+      set item.y_advance = 0_i32;
+      put_item(buffer: buffer, index: position, item: item);
+    }
+  }
+  return unit;
+}
+
+fn zero_ignorables(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's hb_ot_zero_width_default_ignorables: every default ignorable gets zero advances and a zero x offset.";
+  let count = buffer^.length;
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let ignorable = default_ignorable(item: item);
+    if ignorable {
+      set item.x_advance = 0_i32;
+      set item.y_advance = 0_i32;
+      set item.x_offset = 0_i32;
+      put_item(buffer: buffer, index: position, item: item);
+    }
+  }
+  return unit;
+}
+
+fn propagate_attachment(buffer: &Buffer, position: u64, nesting: u32) -> result: unit writes(buffer) {
+  doc "HarfBuzz's propagate_attachment_offsets for a mark attachment: clears the chain, finishes the glyph attached to first, adds its x offset and subtracts the advances from it up to the mark.";
+  let item = item_at(buffer: buffer, index: position);
+  let chain = item.attach_chain;
+  set item.attach_chain = 0_i32;
+  put_item(buffer: buffer, index: position, item: item);
+  let length = buffer^.length;
+  let chain_wide = cvt::<i32, i64>(chain);
+  let chain_bits = cvt.wrap::<i64, u64>(chain_wide);
+  let target = position +wrap chain_bits;
+  if target >= length {
+    return unit;
+  }
+  if nesting == 0_u32 {
+    return unit;
+  }
+  let base = item_at(buffer: buffer, index: target);
+  if base.attach_chain != 0_i32 {
+    let deeper = nesting - 1_u32;
+    propagate_attachment(buffer: buffer, position: target, nesting: deeper);
+  }
+  let finished = item_at(buffer: buffer, index: target);
+  let mark = item_at(buffer: buffer, index: position);
+  set mark.x_offset = mark.x_offset +sat finished.x_offset;
+  if target < position {
+    for (between in target..position) {
+      let passed = item_at(buffer: buffer, index: between);
+      set mark.x_offset = mark.x_offset -sat passed.x_advance;
+      set mark.y_offset = mark.y_offset -sat passed.y_advance;
+    }
+  } else {
+    for (between in position..target) {
+      let passed = item_at(buffer: buffer, index: between);
+      set mark.x_offset = mark.x_offset +sat passed.x_advance;
+      set mark.y_offset = mark.y_offset +sat passed.y_advance;
+    }
+  }
+  put_item(buffer: buffer, index: position, item: mark);
+  return unit;
+}
+
+fn propagate_attachments(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's GPOS position_finish_offsets for a forward run: propagates every attachment in order.";
+  if buffer^.attached {
+  } else {
+    return unit;
+  }
+  let count = buffer^.length;
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    if item.attach_chain != 0_i32 {
+      propagate_attachment(buffer: buffer, position: position, nesting: max_nesting);
+    }
+  }
+  return unit;
+}
+
+fn hide_ignorables(face: &Face, buffer: &Buffer) -> result: unit reads(face), writes(buffer) {
+  doc "HarfBuzz's hb_ot_hide_default_ignorables: every default ignorable becomes the glyph of U+0020 when the face has one, and is deleted with its cluster merged otherwise, as delete_glyphs_inplace does.";
+  let count = buffer^.length;
+  let any = False();
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let ignorable = default_ignorable(item: item);
+    if ignorable {
+      set any = True();
+      break;
+    }
+  }
+  if any {
+  } else {
+    return unit;
+  }
+  let space = glyph_of(face: face, scalar: 32_u32);
+  if space != 0_u32 {
+    for (position in 0_u64..count) {
+      let item = item_at(buffer: buffer, index: position);
+      let ignorable = default_ignorable(item: item);
+      if ignorable {
+        set item.code = space;
+        put_item(buffer: buffer, index: position, item: item);
+      }
+    }
+    return unit;
+  }
+  let kept = 0_u64;
+  for (position in 0_u64..count) {
+    let item = item_at(buffer: buffer, index: position);
+    let ignorable = default_ignorable(item: item);
+    if ignorable {
+      let cluster = item.cluster;
+      let following_index = position +wrap 1_u64;
+      let has_next = following_index < count;
+      let next = item_at(buffer: buffer, index: following_index);
+      let shares = next.cluster == cluster;
+      let survives = band(has_next, shares);
+      if survives {
+      } else if kept > 0_u64 {
+        let last_index = kept - 1_u64;
+        let last = item_at(buffer: buffer, index: last_index);
+        if cluster < last.cluster {
+          let old = last.cluster;
+          let back = kept;
+          loop {
+            if back == 0_u64 {
+              break;
+            }
+            let before_index = back - 1_u64;
+            let before = item_at(buffer: buffer, index: before_index);
+            if before.cluster != old {
+              break;
+            }
+            set_cluster_at(buffer: buffer, index: before_index, cluster: cluster);
+            set back = before_index;
+          }
+        }
+      } else if has_next {
+        let merge_end = position +wrap 2_u64;
+        merge_clusters(buffer: buffer, start: position, end: merge_end);
+      }
+    } else {
+      if kept != position {
+        let moving = item_at(buffer: buffer, index: position);
+        put_item(buffer: buffer, index: kept, item: moving);
+      }
+      set kept = kept +wrap 1_u64;
+    }
+  }
+  set buffer^.length = kept;
+  return unit;
+}

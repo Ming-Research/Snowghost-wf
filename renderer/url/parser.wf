@@ -1,0 +1,1186 @@
+const input_ceiling: u64 = 268435456_u64;
+
+fn clean_input(input: &[u8]) -> result: Result<Box<Slots<u8>>, UrlError> reads(input) {
+  doc "Removes any leading or trailing C0 control or space from input, then removes every ASCII tab or newline from what remains, per the basic URL parser's entry steps.";
+  let length = input^.len;
+  let lo = 0_u64;
+  loop @trim_lead (
+    invariant lo_bounded: lo <= length
+  ) {
+    let more = lo < length;
+    if more {
+    } else {
+      break @trim_lead;
+    }
+    let byte = input^[lo];
+    let trims = is_c0_control_or_space(byte: byte);
+    if trims {
+    } else {
+      break @trim_lead;
+    }
+    let next = lo +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set lo = next;
+  }
+  let hi = length;
+  loop @trim_tail (
+    invariant hi_bounded: hi <= length
+  ) {
+    let more = hi > lo;
+    if more {
+    } else {
+      break @trim_tail;
+    }
+    let at = hi -wrap 1_u64;
+    let in_range = at < length;
+    if in_range {
+    } else {
+      break @trim_tail;
+    }
+    let byte = input^[at];
+    let trims = is_c0_control_or_space(byte: byte);
+    if trims {
+    } else {
+      break @trim_tail;
+    }
+    set hi = at;
+  }
+  let cleaned = box_slots_new::<u8>(capacity: 64_u64);
+  let ordered = lo <= hi;
+  if ordered {
+  } else {
+    return Ok<Box<Slots<u8>>, UrlError>(value: move cleaned);
+  }
+  let within = hi <= length;
+  if within {
+  } else {
+    return Ok<Box<Slots<u8>>, UrlError>(value: move cleaned);
+  }
+  for (at in lo..hi) {
+    let byte = input^[at];
+    let strip = is_ascii_tab_or_newline(byte: byte);
+    if strip {
+    } else {
+      let pushed = propagate push_byte(buffer: &cleaned, value: byte);
+    }
+  }
+  return Ok<Box<Slots<u8>>, UrlError>(value: move cleaned);
+}
+
+fn run_parser(input: &[u8], has_base: Bool, base: &Url) -> result: Result<Url, UrlError> reads(input), reads(base) contract {
+  requires input^.len <= 268435456_u64;
+} {
+  doc "The basic URL parser: cleans input, then dispatches on whether it starts with a URL-scheme string.";
+  let cleaned = propagate clean_input(input: input);
+  let cleaned_len = cleaned.inner.len;
+  let text = &cleaned.inner[0_u64..cleaned_len];
+  let b = new_builder();
+  match scan_scheme(input: text) {
+    Some(value: colon_pos) => {
+      let colon_in_bounds = colon_pos < cleaned_len;
+      if colon_in_bounds {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<Url, UrlError>(error: failure);
+      }
+      for (at in 0_u64..colon_pos) {
+        let byte = text^[at];
+        let lowered = ascii_lower_byte(byte: byte);
+        let pushed = propagate push_byte(buffer: &b.scheme, value: lowered);
+      }
+      let finished = finish_scheme(b: &b);
+      let after_colon = colon_pos +wrap 1_u64;
+      let is_file = scheme_is_file(kind: b.kind);
+      if is_file {
+        let ran = propagate run_file_state(input: text, pos: after_colon, b: &b, has_base: has_base, base: base);
+      } else {
+        let scheme_len = b.scheme.inner.len;
+        let scheme_ref = &b.scheme.inner[0_u64..scheme_len];
+        let base_matches = if has_base {
+          give base_scheme_matches(base: base, scheme: scheme_ref);
+        } else {
+          give False();
+        }
+        if b.is_special {
+          if base_matches {
+            let ran = propagate run_special_relative_or_authority_state(input: text, pos: after_colon, b: &b, base: base);
+          } else {
+            let ran = propagate run_special_authority_slashes_state(input: text, pos: after_colon, b: &b);
+          }
+        } else {
+          let length = text^.len;
+          let has_slash = after_colon < length;
+          if has_slash {
+            let c = text^[after_colon];
+            let starts_slash = c == 47_u8;
+            if starts_slash {
+              let second = after_colon +wrap 1_u64;
+              let has_second = second < length;
+              if has_second {
+                let c2 = text^[second];
+                let second_slash = c2 == 47_u8;
+                if second_slash {
+                  let third = second +wrap 1_u64;
+                  let ran = propagate run_authority_and_host_state(input: text, pos: third, b: &b);
+                } else {
+                  let ran = propagate run_path_state(input: text, pos: second, b: &b);
+                }
+              } else {
+                let ran = propagate run_path_state(input: text, pos: second, b: &b);
+              }
+            } else {
+              opaque_path_set(b: &b);
+              let ran = propagate run_opaque_path_state(input: text, pos: after_colon, b: &b);
+            }
+          } else {
+            opaque_path_set(b: &b);
+            let ran = propagate run_opaque_path_state(input: text, pos: after_colon, b: &b);
+          }
+        }
+      }
+    }
+    None() => {
+      if has_base {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<Url, UrlError>(error: failure);
+      }
+      if base^.opaque_path {
+        let length = text^.len;
+        let starts_hash = if length > 0_u64 {
+          let c0 = text^[0_u64];
+          give c0 == 35_u8;
+        } else {
+          give True();
+        }
+        if starts_hash {
+        } else {
+          let failure = UrlError::Failure();
+          return Err<Url, UrlError>(error: failure);
+        }
+        let copied = propagate copy_scheme_from_base(b: &b, base: base);
+        let cloned = propagate clone_opaque_path_from_base(b: &b, base: base);
+        let carried = propagate copy_query_from_base(b: &b, base: base);
+        set b.has_fragment = True();
+        let start_pos = 0_u64;
+        if length > 0_u64 {
+          set start_pos = 1_u64;
+        }
+        let ran = propagate run_fragment_state(input: text, pos: start_pos, b: &b);
+      } else {
+        let base_file = base_scheme_is_file(base: base);
+        if base_file {
+          let ran = propagate run_file_state(input: text, pos: 0_u64, b: &b, has_base: has_base, base: base);
+        } else {
+          let scheme_copied = propagate copy_scheme_from_base(b: &b, base: base);
+          let ran = propagate run_relative_state(input: text, pos: 0_u64, b: &b, base: base);
+        }
+      }
+    }
+  }
+  let built = propagate finalize_url(b: &b);
+  return Ok<Url, UrlError>(value: move built);
+}
+
+fn parse_url(input: &[u8]) -> result: Result<Url, UrlError> reads(input) contract {
+  requires input^.len <= 268435456_u64;
+} {
+  doc "Runs the basic URL parser of the WHATWG URL Living Standard on input with no base.";
+  let placeholder = dummy_url();
+  let false_flag = False();
+  let result = propagate run_parser(input: input, has_base: false_flag, base: &placeholder);
+  return Ok<Url, UrlError>(value: move result);
+}
+
+fn parse_url_with_base(input: &[u8], base: &Url) -> result: Result<Url, UrlError> reads(input), reads(base) contract {
+  requires input^.len <= 268435456_u64;
+} {
+  doc "Runs the basic URL parser on input with base as its base URL.";
+  let true_flag = True();
+  let result = propagate run_parser(input: input, has_base: true_flag, base: base);
+  return Ok<Url, UrlError>(value: move result);
+}
+
+fn run_file_state(input: &[u8], pos: u64, b: &Builder, has_base: Bool, base: &Url) -> result: Result<unit, UrlError> reads(input), reads(base), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The file state: sets b's scheme to \"file\", hosts default to the empty string, and, absent a leading solidus, a file base URL contributes its host, path and query.";
+  let scheme_set = propagate set_scheme_to_file(b: b);
+  let empty_host = HostValue::Empty();
+  builder_set_host(b: b, host: move empty_host);
+  let length = input^.len;
+  let more = pos < length;
+  let base_file = False();
+  if has_base {
+    let bf = base_scheme_is_file(base: base);
+    set base_file = bf;
+  }
+  if more {
+    let c = input^[pos];
+    let is_slash = c == 47_u8;
+    let is_backslash = c == 92_u8;
+    let is_sep = bor(is_slash, is_backslash);
+    if is_sep {
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_file_slash_state(input: input, pos: next, b: b, has_base: has_base, base: base);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    if base_file {
+      let copied = propagate copy_host_port_from_base(b: b, base: base);
+      let cloned = propagate clone_list_path_from_base(b: b, base: base);
+      let carried = propagate copy_query_from_base(b: b, base: base);
+      let is_question = c == 63_u8;
+      if is_question {
+        set b^.has_query = True();
+        truncate_bytes_to(buffer: &b^.query_buf, length: 0_u64);
+        let next = pos +wrap 1_u64;
+        let ran = propagate run_query_state(input: input, pos: next, b: b);
+        return Ok<unit, UrlError>(value: unit);
+      }
+      let is_hash = c == 35_u8;
+      if is_hash {
+        set b^.has_fragment = True();
+        let next = pos +wrap 1_u64;
+        let ran = propagate run_fragment_state(input: input, pos: next, b: b);
+        return Ok<unit, UrlError>(value: unit);
+      }
+      let no_query_flag = False();
+      set b^.has_query = no_query_flag;
+      let remaining = &input^[pos..length];
+      let drive_ahead = starts_with_windows_drive_letter(input: remaining);
+      if drive_ahead {
+        path_reset(b: b);
+      } else {
+        path_shorten(b: b);
+      }
+      let ran = propagate run_path_state(input: input, pos: pos, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let ran = propagate run_path_state(input: input, pos: pos, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  if base_file {
+    let copied = propagate copy_host_port_from_base(b: b, base: base);
+    let cloned = propagate clone_list_path_from_base(b: b, base: base);
+    let carried = propagate copy_query_from_base(b: b, base: base);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let ran = propagate run_path_state(input: input, pos: pos, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_file_slash_state(input: &[u8], pos: u64, b: &Builder, has_base: Bool, base: &Url) -> result: Result<unit, UrlError> reads(input), reads(base), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The file slash state: a further solidus enters file host state; otherwise a file base URL contributes its host, with the Windows drive letter quirk carrying its path's first segment forward.";
+  let length = input^.len;
+  let more = pos < length;
+  if more {
+    let c = input^[pos];
+    let is_slash = c == 47_u8;
+    let is_backslash = c == 92_u8;
+    let is_sep = bor(is_slash, is_backslash);
+    if is_sep {
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_file_host_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+  }
+  let base_file = if has_base {
+    give base_scheme_is_file(base: base);
+  } else {
+    give False();
+  }
+  if base_file {
+    let copied = propagate copy_host_port_from_base(b: b, base: base);
+    let pos_ok = pos <= length;
+    let drive_ahead = if pos_ok {
+      let remaining = &input^[pos..length];
+      give starts_with_windows_drive_letter(input: remaining);
+    } else {
+      give False();
+    }
+    if drive_ahead {
+    } else {
+      let first_is_drive = base_path_first_segment_is_normalized_drive_letter(base: base);
+      if first_is_drive {
+        let pushed = propagate path_push_base_first_segment(b: b, base: base);
+      }
+    }
+  }
+  let ran = propagate run_path_state(input: input, pos: pos, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_file_host_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The file host state: scans a bracket-unaware host candidate, honoring the Windows drive letter quirk, and turns \"localhost\" into the empty host.";
+  let length = input^.len;
+  let special_true = True();
+  let pos_ok = pos <= length;
+  if pos_ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let host_end = scan_authority_terminator(input: input, start: pos, length: length, is_special: special_true);
+  let ok = pos <= host_end;
+  if ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let candidate = &input^[pos..host_end];
+  let drive = is_windows_drive_letter(input: candidate);
+  if drive {
+    let ran = propagate run_path_state(input: input, pos: pos, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let candidate_empty = pos == host_end;
+  if candidate_empty {
+    let empty_host = HostValue::Empty();
+    builder_set_host(b: b, host: move empty_host);
+    let ran = propagate run_path_start_state(input: input, pos: host_end, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let special_true2 = True();
+  match parse_host(input: candidate, is_special: special_true2) {
+    Ok(value: host) => {
+      let resolved = resolve_localhost(host: move host);
+      builder_set_host(b: b, host: move resolved);
+      let ran = propagate run_path_start_state(input: input, pos: host_end, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    Err(error: problem) => {
+      return Err<unit, UrlError>(error: problem);
+    }
+  }
+}
+
+fn resolve_localhost(host: HostValue) -> result: HostValue pure {
+  doc "Replaces host with the empty host when it is a Domain equal to \"localhost\", per the file host state's quirk; returns host unchanged otherwise.";
+  match move host {
+    Domain(bytes: text) => {
+      let length = text.inner.len;
+      let bytes = &text.inner[0_u64..length];
+      let local = is_localhost(input: bytes);
+      if local {
+        let empty = HostValue::Empty();
+        return move empty;
+      }
+      let rebuilt = HostValue::Domain(bytes: move text);
+      return move rebuilt;
+    }
+    Absent() => {
+      let rebuilt = HostValue::Absent();
+      return move rebuilt;
+    }
+    Empty() => {
+      let rebuilt = HostValue::Empty();
+      return move rebuilt;
+    }
+    Opaque(bytes: text) => {
+      let rebuilt = HostValue::Opaque(bytes: move text);
+      return move rebuilt;
+    }
+    Ipv4(address: value) => {
+      let rebuilt = HostValue::Ipv4(address: value);
+      return move rebuilt;
+    }
+    Ipv6(pieces: values) => {
+      let rebuilt = HostValue::Ipv6(pieces: values);
+      return move rebuilt;
+    }
+  }
+}
+
+fn run_relative_state(input: &[u8], pos: u64, b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(input), reads(base), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The relative state: base's scheme is not file, and b's scheme is already set (either copied by the caller, or, when reached from special relative or authority state, already the input's own matching scheme). Carries base's credentials, host, port, path and query forward, adjusted by what follows.";
+  let length = input^.len;
+  let more = pos < length;
+  let c = if more {
+    give input^[pos];
+  } else {
+    give 0_u8;
+  }
+  let c_is_slash = c == 47_u8;
+  let is_slash = band(more, c_is_slash);
+  if is_slash {
+    let next = pos +wrap 1_u64;
+    let ran = propagate run_relative_slash_state(input: input, pos: next, b: b, base: base);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let c_is_backslash2 = c == 92_u8;
+  let special_and_backslash = band(b^.is_special, c_is_backslash2);
+  let is_backslash_special = band(more, special_and_backslash);
+  if is_backslash_special {
+    let next = pos +wrap 1_u64;
+    let ran = propagate run_relative_slash_state(input: input, pos: next, b: b, base: base);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let carried = propagate copy_userinfo_host_port_from_base(b: b, base: base);
+  let cloned = propagate clone_list_path_from_base(b: b, base: base);
+  let query_carried = propagate copy_query_from_base(b: b, base: base);
+  let c_is_question = c == 63_u8;
+  let hit_question = band(more, c_is_question);
+  if hit_question {
+    set b^.has_query = True();
+    truncate_bytes_to(buffer: &b^.query_buf, length: 0_u64);
+    let next = pos +wrap 1_u64;
+    let ran = propagate run_query_state(input: input, pos: next, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let c_is_hash = c == 35_u8;
+  let hit_hash = band(more, c_is_hash);
+  if hit_hash {
+    set b^.has_fragment = True();
+    let next = pos +wrap 1_u64;
+    let ran = propagate run_fragment_state(input: input, pos: next, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  if more {
+    let no_query_flag = False();
+    set b^.has_query = no_query_flag;
+    path_shorten(b: b);
+    let ran = propagate run_path_state(input: input, pos: pos, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_relative_slash_state(input: &[u8], pos: u64, b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(input), reads(base), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The relative slash state.";
+  let length = input^.len;
+  let more = pos < length;
+  if more {
+    let c = input^[pos];
+    let is_slash = c == 47_u8;
+    let is_backslash = c == 92_u8;
+    let either_sep = bor(is_slash, is_backslash);
+    let special_pair = band(b^.is_special, either_sep);
+    if special_pair {
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_special_authority_ignore_slashes_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    if is_slash {
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_authority_and_host_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+  }
+  let carried = propagate copy_userinfo_host_port_from_base(b: b, base: base);
+  let ran = propagate run_path_state(input: input, pos: pos, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_special_relative_or_authority_state(input: &[u8], pos: u64, b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(input), reads(base), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The special relative or authority state.";
+  let length = input^.len;
+  let has1 = pos < length;
+  let c1 = if has1 {
+    give input^[pos];
+  } else {
+    give 0_u8;
+  }
+  let second = pos +wrap 1_u64;
+  let has2 = second < length;
+  let c2 = if has2 {
+    give input^[second];
+  } else {
+    give 0_u8;
+  }
+  let c1_slash = c1 == 47_u8;
+  let first_ok = band(has1, c1_slash);
+  let c2_slash = c2 == 47_u8;
+  let second_ok = band(has2, c2_slash);
+  let both_slash = band(first_ok, second_ok);
+  if both_slash {
+    let third = second +wrap 1_u64;
+    let ran = propagate run_special_authority_ignore_slashes_state(input: input, pos: third, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let ran = propagate run_relative_state(input: input, pos: pos, b: b, base: base);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_special_authority_slashes_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The special authority slashes state.";
+  let length = input^.len;
+  let has1 = pos < length;
+  let c1 = if has1 {
+    give input^[pos];
+  } else {
+    give 0_u8;
+  }
+  let second = pos +wrap 1_u64;
+  let has2 = second < length;
+  let c2 = if has2 {
+    give input^[second];
+  } else {
+    give 0_u8;
+  }
+  let c1_slash = c1 == 47_u8;
+  let first_ok = band(has1, c1_slash);
+  let c2_slash = c2 == 47_u8;
+  let second_ok = band(has2, c2_slash);
+  let both_slash = band(first_ok, second_ok);
+  if both_slash {
+    let third = second +wrap 1_u64;
+    let ran = propagate run_special_authority_ignore_slashes_state(input: input, pos: third, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let ran = propagate run_special_authority_ignore_slashes_state(input: input, pos: pos, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_special_authority_ignore_slashes_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The special authority ignore slashes state: skips every further leading solidus or reverse solidus.";
+  let length = input^.len;
+  let p = pos;
+  loop @skip (
+    invariant p_bounded: p <= length
+  ) {
+    let more = p < length;
+    if more {
+    } else {
+      break @skip;
+    }
+    let c = input^[p];
+    let is_slash = c == 47_u8;
+    let is_backslash = c == 92_u8;
+    let is_sep = bor(is_slash, is_backslash);
+    if is_sep {
+    } else {
+      break @skip;
+    }
+    let next = p +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set p = next;
+  }
+  let clamped_p = p;
+  let too_far = clamped_p > length;
+  if too_far {
+    set clamped_p = length;
+  }
+  let ran = propagate run_authority_and_host_state(input: input, pos: clamped_p, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn scan_authority_terminator(input: &[u8], start: u64, length: u64, is_special: Bool) -> result: u64 reads(input) contract {
+  requires start <= length;
+  requires length == input^.len;
+  ensures result >= start;
+  ensures result <= length;
+} {
+  doc "Scans forward from start for the first EOF, U+002F, U+003F, U+0023, or, when is_special, U+005C.";
+  let pos = start;
+  loop @scan (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let c = input^[pos];
+    let slash = c == 47_u8;
+    let question = c == 63_u8;
+    let hash = c == 35_u8;
+    let c_is_backslash = c == 92_u8;
+    let backslash = band(is_special, c_is_backslash);
+    let a = bor(slash, question);
+    let b2 = bor(a, hash);
+    let stop = bor(b2, backslash);
+    if stop {
+      break @scan;
+    }
+    let next = pos +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  let result = pos;
+  let too_far = result > length;
+  if too_far {
+    set result = length;
+  }
+  let too_near = result < start;
+  if too_near {
+    set result = start;
+  }
+  return result;
+}
+
+fn process_userinfo_segment(input: &[u8], seg_start: u64, seg_end: u64, b: &Builder, password_seen_in: Bool, prepend_at_marker: Bool) -> result: Result<Bool, UrlError> reads(input), writes(b) contract {
+  requires seg_start <= seg_end;
+  requires seg_end <= input^.len;
+} {
+  doc "Splits input[seg_start..seg_end) on its first U+003A into a username and password contribution, UTF-8 percent-encoding each with the userinfo percent-encode set and appending it to b's username or password depending on password_seen_in and each colon crossed. When prepend_at_marker, \"%40\" is processed first, standing for an earlier U+0040 credential separator.";
+  let password_seen = password_seen_in;
+  if prepend_at_marker {
+    let target_password = password_seen;
+    if target_password {
+      let percent_pushed = propagate push_byte(buffer: &b^.password, value: 37_u8);
+      let four_pushed = propagate push_byte(buffer: &b^.password, value: 52_u8);
+      let zero_pushed = propagate push_byte(buffer: &b^.password, value: 48_u8);
+    } else {
+      let percent_pushed = propagate push_byte(buffer: &b^.username, value: 37_u8);
+      let four_pushed = propagate push_byte(buffer: &b^.username, value: 52_u8);
+      let zero_pushed = propagate push_byte(buffer: &b^.username, value: 48_u8);
+    }
+  }
+  let length = input^.len;
+  let pos = seg_start;
+  loop @scan (
+    invariant pos_bounded: pos <= seg_end
+  ) {
+    let more = pos < seg_end;
+    if more {
+    } else {
+      break @scan;
+    }
+    let within = pos < length;
+    if within {
+    } else {
+      break @scan;
+    }
+    let (cp, next) = decode_scalar(source: input, length: length, pos: pos);
+    let cp_is_colon = cp == 58_u32;
+    let not_seen = bnot(password_seen);
+    let is_colon = band(cp_is_colon, not_seen);
+    if is_colon {
+      set password_seen = True();
+    } else {
+      let userinfo_set = EncodeSet::Userinfo();
+      if password_seen {
+        let encoded = propagate percent_encode_code_point(buffer: &b^.password, cp: cp, kind: userinfo_set);
+      } else {
+        let encoded = propagate percent_encode_code_point(buffer: &b^.username, cp: cp, kind: userinfo_set);
+      }
+    }
+    let clamped = next;
+    let too_far = clamped > seg_end;
+    if too_far {
+      set clamped = seg_end;
+    }
+    invariant next_bounded: clamped <= seg_end;
+    set pos = clamped;
+  }
+  return Ok<Bool, UrlError>(value: password_seen);
+}
+
+fn run_authority_and_host_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The authority state and the host and hostname states: scans for U+0040-delimited userinfo, then parses the host up to an explicit port or a path/query/fragment boundary.";
+  let length = input^.len;
+  let scan_pos = pos;
+  let host_start = pos;
+  let at_seen = False();
+  let password_seen = False();
+  loop @authority (
+    invariant scan_bounded: scan_pos <= length
+  ) {
+    let more = scan_pos < length;
+    if more {
+    } else {
+      break @authority;
+    }
+    let c = input^[scan_pos];
+    let is_at = c == 64_u8;
+    if is_at {
+      let ok1 = host_start <= scan_pos;
+      if ok1 {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<unit, UrlError>(error: failure);
+      }
+      let ok2 = scan_pos <= length;
+      if ok2 {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<unit, UrlError>(error: failure);
+      }
+      let new_password_seen = propagate process_userinfo_segment(input: input, seg_start: host_start, seg_end: scan_pos, b: b, password_seen_in: password_seen, prepend_at_marker: at_seen);
+      set password_seen = new_password_seen;
+      set at_seen = True();
+      let next = scan_pos +wrap 1_u64;
+      invariant next_host_bounded: next <= length;
+      set host_start = next;
+      set scan_pos = next;
+    } else {
+      let is_slash = c == 47_u8;
+      let is_question = c == 63_u8;
+      let is_hash = c == 35_u8;
+      let c_is_backslash_695 = c == 92_u8;
+      let is_backslash = band(b^.is_special, c_is_backslash_695);
+      let a = bor(is_slash, is_question);
+      let a2 = bor(a, is_hash);
+      let stop = bor(a2, is_backslash);
+      if stop {
+        break @authority;
+      }
+      let next = scan_pos +wrap 1_u64;
+      invariant next_scan_bounded: next <= length;
+      set scan_pos = next;
+    }
+  }
+  let scan_pos_clamped = scan_pos;
+  let scan_too_far = scan_pos_clamped > length;
+  if scan_too_far {
+    set scan_pos_clamped = length;
+  }
+  set scan_pos = scan_pos_clamped;
+  let host_start_clamped = host_start;
+  let host_start_too_far = host_start_clamped > scan_pos;
+  if host_start_too_far {
+    set host_start_clamped = scan_pos;
+  }
+  set host_start = host_start_clamped;
+  let host_start_eq_scan = host_start == scan_pos;
+  let host_missing = band(at_seen, host_start_eq_scan);
+  if host_missing {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let host_end = scan_host(input: input, host_start: host_start, terminator: scan_pos, is_special: b^.is_special);
+  let colon_ok = host_end <= scan_pos;
+  if colon_ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let ordered = host_start <= host_end;
+  if ordered {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let found_colon = host_end < scan_pos;
+  if found_colon {
+    let host_empty = host_start == host_end;
+    if host_empty {
+      let failure = UrlError::Failure();
+      return Err<unit, UrlError>(error: failure);
+    }
+    let candidate = &input^[host_start..host_end];
+    match parse_host(input: candidate, is_special: b^.is_special) {
+      Ok(value: host) => {
+        builder_set_host(b: b, host: move host);
+      }
+      Err(error: problem) => {
+        return Err<unit, UrlError>(error: problem);
+      }
+    }
+    let port_pos = host_end +wrap 1_u64;
+    let ran = propagate run_port_state(input: input, pos: port_pos, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let host_start_eq_end = host_start == host_end;
+  let special_empty = band(b^.is_special, host_start_eq_end);
+  if special_empty {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let candidate2 = &input^[host_start..host_end];
+  match parse_host(input: candidate2, is_special: b^.is_special) {
+    Ok(value: host) => {
+      builder_set_host(b: b, host: move host);
+    }
+    Err(error: problem) => {
+      return Err<unit, UrlError>(error: problem);
+    }
+  }
+  let ran = propagate run_path_start_state(input: input, pos: host_end, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn scan_host(input: &[u8], host_start: u64, terminator: u64, is_special: Bool) -> result: u64 reads(input) contract {
+  requires host_start <= terminator;
+  requires terminator <= input^.len;
+  ensures result >= host_start;
+  ensures result <= terminator;
+} {
+  doc "Scans input from host_start for the host buffer: the first U+003A outside U+005B..U+005D brackets, or terminator when there is none.";
+  let pos = host_start;
+  let inside_brackets = False();
+  loop @scan (
+    invariant pos_bounded: pos <= terminator
+  ) {
+    let more = pos < terminator;
+    if more {
+    } else {
+      break @scan;
+    }
+    let c = input^[pos];
+    let is_colon = c == 58_u8;
+    let not_inside = bnot(inside_brackets);
+    let stop = band(is_colon, not_inside);
+    if stop {
+      break @scan;
+    }
+    let is_open = c == 91_u8;
+    let is_close = c == 93_u8;
+    if is_open {
+      set inside_brackets = True();
+    }
+    if is_close {
+      set inside_brackets = False();
+    }
+    let next = pos +wrap 1_u64;
+    invariant next_bounded: next <= terminator;
+    set pos = next;
+  }
+  let result = pos;
+  let too_far = result > terminator;
+  if too_far {
+    set result = terminator;
+  }
+  let too_near = result < host_start;
+  if too_near {
+    set result = host_start;
+  }
+  return result;
+}
+
+fn run_port_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The port state: a run of ASCII digits, terminated by EOF, U+002F, U+003F, U+0023, or, when special, U+005C, and Failure for anything else.";
+  let length = input^.len;
+  let digit_end = pos;
+  loop @digits (
+    invariant digit_bounded: digit_end <= length
+  ) {
+    let more = digit_end < length;
+    if more {
+    } else {
+      break @digits;
+    }
+    let c = input^[digit_end];
+    let is_digit = is_ascii_digit(byte: c);
+    if is_digit {
+    } else {
+      break @digits;
+    }
+    let next = digit_end +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set digit_end = next;
+  }
+  let digit_end_clamped = digit_end;
+  let digit_too_far = digit_end_clamped > length;
+  if digit_too_far {
+    set digit_end_clamped = length;
+  }
+  set digit_end = digit_end_clamped;
+  let more2 = digit_end < length;
+  if more2 {
+    let c = input^[digit_end];
+    let is_slash = c == 47_u8;
+    let is_question = c == 63_u8;
+    let is_hash = c == 35_u8;
+    let c_is_backslash_840 = c == 92_u8;
+    let is_backslash = band(b^.is_special, c_is_backslash_840);
+    let a = bor(is_slash, is_question);
+    let a2 = bor(a, is_hash);
+    let terminator = bor(a2, is_backslash);
+    if terminator {
+    } else {
+      let failure = UrlError::Failure();
+      return Err<unit, UrlError>(error: failure);
+    }
+  }
+  let ordered = pos <= digit_end;
+  if ordered {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let nonempty = digit_end > pos;
+  if nonempty {
+    let value = 0_u64;
+    let overflowed = False();
+    for (at in pos..digit_end) {
+      let c = input^[at];
+      let digit8 = c -wrap 48_u8;
+      let digit64 = cvt::<u8, u64>(digit8);
+      let already_big = value > 70000_u64;
+      if already_big {
+        set overflowed = True();
+      } else {
+        let scaled = value *wrap 10_u64;
+        let candidate = scaled +wrap digit64;
+        set value = candidate;
+      }
+    }
+    let too_big1 = overflowed;
+    let too_big2 = value > 65535_u64;
+    let too_big = bor(too_big1, too_big2);
+    if too_big {
+      let failure = UrlError::Failure();
+      return Err<unit, UrlError>(error: failure);
+    }
+    let narrowed = cvt.wrap::<u64, u16>(value);
+    let set_port = builder_set_port(b: b, port: narrowed);
+  }
+  let ran = propagate run_path_start_state(input: input, pos: digit_end, b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_path_start_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The path start state.";
+  let length = input^.len;
+  let more = pos < length;
+  if b^.is_special {
+    if more {
+      let c = input^[pos];
+      let is_slash = c == 47_u8;
+      let is_backslash = c == 92_u8;
+      let is_sep = bor(is_slash, is_backslash);
+      if is_sep {
+        let next = pos +wrap 1_u64;
+        let ran = propagate run_path_state(input: input, pos: next, b: b);
+        return Ok<unit, UrlError>(value: unit);
+      }
+      let ran = propagate run_path_state(input: input, pos: pos, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let ran = propagate run_path_state(input: input, pos: pos, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  if more {
+    let c = input^[pos];
+    let is_question = c == 63_u8;
+    if is_question {
+      set b^.has_query = True();
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_query_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let is_hash = c == 35_u8;
+    if is_hash {
+      set b^.has_fragment = True();
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_fragment_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let is_slash = c == 47_u8;
+    if is_slash {
+      let next = pos +wrap 1_u64;
+      let ran = propagate run_path_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let ran = propagate run_path_state(input: input, pos: pos, b: b);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_path_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The path state: scans one segment at a time, applying single- and double-dot handling at each U+002F, U+005C (when special), U+003F, U+0023 or EOF.";
+  let length = input^.len;
+  let seg_start = path_begin_segment(b: b);
+  let scan_pos = pos;
+  loop @path (
+    invariant scan_bounded: scan_pos <= length
+  ) {
+    let more = scan_pos < length;
+    if more {
+      let c = input^[scan_pos];
+      let is_slash = c == 47_u8;
+      let c_is_backslash = c == 92_u8;
+      let is_backslash = band(b^.is_special, c_is_backslash);
+      let is_question = c == 63_u8;
+      let is_hash = c == 35_u8;
+      let t1 = bor(is_slash, is_backslash);
+      let t2 = bor(t1, is_question);
+      let is_terminator = bor(t2, is_hash);
+      if is_terminator {
+        let next_is_slashlike = bor(is_slash, is_backslash);
+        let finished = propagate path_finish_segment(b: b, seg_start: seg_start, next_is_slashlike: next_is_slashlike);
+        let next = scan_pos +wrap 1_u64;
+        if is_question {
+          set b^.has_query = True();
+          let ran = propagate run_query_state(input: input, pos: next, b: b);
+          return Ok<unit, UrlError>(value: unit);
+        }
+        if is_hash {
+          set b^.has_fragment = True();
+          let ran = propagate run_fragment_state(input: input, pos: next, b: b);
+          return Ok<unit, UrlError>(value: unit);
+        }
+        invariant next_scan_bounded: next <= length;
+        set scan_pos = next;
+        set seg_start = path_begin_segment(b: b);
+      } else {
+        let (cp, next) = decode_scalar(source: input, length: length, pos: scan_pos);
+        let pushed = propagate path_push_char(b: b, cp: cp);
+        let clamped2 = next;
+        let too_far2 = clamped2 > length;
+        if too_far2 {
+          set clamped2 = length;
+        }
+        invariant next_scan_bounded2: clamped2 <= length;
+        set scan_pos = clamped2;
+      }
+    } else {
+      let next_is_slashlike = False();
+      let finished = propagate path_finish_segment(b: b, seg_start: seg_start, next_is_slashlike: next_is_slashlike);
+      return Ok<unit, UrlError>(value: unit);
+    }
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_opaque_path_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The opaque path state: scans directly into b's opaque path text, escaping U+0020 to %20 only immediately before a query or fragment.";
+  let length = input^.len;
+  let scan_pos = pos;
+  loop @opaque (
+    invariant scan_bounded: scan_pos <= length
+  ) {
+    let more = scan_pos < length;
+    if more {
+    } else {
+      break @opaque;
+    }
+    let c = input^[scan_pos];
+    let is_question = c == 63_u8;
+    if is_question {
+      set b^.has_query = True();
+      let next = scan_pos +wrap 1_u64;
+      let ran = propagate run_query_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let is_hash = c == 35_u8;
+    if is_hash {
+      set b^.has_fragment = True();
+      let next = scan_pos +wrap 1_u64;
+      let ran = propagate run_fragment_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let is_space = c == 32_u8;
+    if is_space {
+      let next = scan_pos +wrap 1_u64;
+      let ahead = next < length;
+      let ahead_mark = if ahead {
+        let cn = input^[next];
+        let qm = cn == 63_u8;
+        let hm = cn == 35_u8;
+        give bor(qm, hm);
+      } else {
+        give False();
+      }
+      if ahead_mark {
+        let p1 = propagate opaque_path_push_literal_byte(b: b, byte: 37_u8);
+        let p2 = propagate opaque_path_push_literal_byte(b: b, byte: 50_u8);
+        let p3 = propagate opaque_path_push_literal_byte(b: b, byte: 48_u8);
+      } else {
+        let p1 = propagate opaque_path_push_literal_byte(b: b, byte: 32_u8);
+      }
+      let clamped = next;
+      let too_far = clamped > length;
+      if too_far {
+        set clamped = length;
+      }
+      invariant next_scan_bounded: clamped <= length;
+      set scan_pos = clamped;
+    } else {
+      let (cp, next) = decode_scalar(source: input, length: length, pos: scan_pos);
+      let pushed = propagate opaque_path_push_char(b: b, cp: cp);
+      let clamped2 = next;
+      let too_far2 = clamped2 > length;
+      if too_far2 {
+        set clamped2 = length;
+      }
+      invariant next_scan_bounded2: clamped2 <= length;
+      set scan_pos = clamped2;
+    }
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_query_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The query state: scans directly into b's query buffer with the special-query or query percent-encode set.";
+  let length = input^.len;
+  let scan_pos = pos;
+  let query_set = if b^.is_special {
+    give EncodeSet::SpecialQuery();
+  } else {
+    give EncodeSet::Query();
+  }
+  loop @query (
+    invariant scan_bounded: scan_pos <= length
+  ) {
+    let more = scan_pos < length;
+    if more {
+    } else {
+      break @query;
+    }
+    let c = input^[scan_pos];
+    let is_hash = c == 35_u8;
+    if is_hash {
+      set b^.has_fragment = True();
+      let next = scan_pos +wrap 1_u64;
+      let ran = propagate run_fragment_state(input: input, pos: next, b: b);
+      return Ok<unit, UrlError>(value: unit);
+    }
+    let (cp, next) = decode_scalar(source: input, length: length, pos: scan_pos);
+    let pushed = propagate percent_encode_code_point(buffer: &b^.query_buf, cp: cp, kind: query_set);
+    let clamped = next;
+    let too_far = clamped > length;
+    if too_far {
+      set clamped = length;
+    }
+    invariant next_scan_bounded: clamped <= length;
+    set scan_pos = clamped;
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn run_fragment_state(input: &[u8], pos: u64, b: &Builder) -> result: Result<unit, UrlError> reads(input), writes(b) contract {
+  requires pos <= input^.len;
+} {
+  doc "The fragment state: scans to the end of input into b's fragment buffer with the fragment percent-encode set.";
+  let length = input^.len;
+  let scan_pos = pos;
+  let fragment_set = EncodeSet::Fragment();
+  loop @fragment (
+    invariant scan_bounded: scan_pos <= length
+  ) {
+    let more = scan_pos < length;
+    if more {
+    } else {
+      break @fragment;
+    }
+    let (cp, next) = decode_scalar(source: input, length: length, pos: scan_pos);
+    let pushed = propagate percent_encode_code_point(buffer: &b^.fragment_buf, cp: cp, kind: fragment_set);
+    let clamped = next;
+    let too_far = clamped > length;
+    if too_far {
+      set clamped = length;
+    }
+    invariant next_scan_bounded: clamped <= length;
+    set scan_pos = clamped;
+  }
+  return Ok<unit, UrlError>(value: unit);
+}

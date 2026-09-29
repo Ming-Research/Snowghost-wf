@@ -1,0 +1,212 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+fn hex_digit(b: u8) -> result: Option<u32> pure {
+  doc "The value of b as an ASCII hex digit, or None.";
+  let is_digit_l = b >= 48_u8;
+  let is_digit_r = b <= 57_u8;
+  let is_digit = band(is_digit_l, is_digit_r);
+  if is_digit {
+    let wide = cvt::<u8, u32>(b);
+    let v = wide -wrap 48_u32;
+    return Some<u32>(value: v);
+  }
+  let is_lower_l = b >= 97_u8;
+  let is_lower_r = b <= 102_u8;
+  let is_lower = band(is_lower_l, is_lower_r);
+  if is_lower {
+    let wide = cvt::<u8, u32>(b);
+    let base = wide -wrap 97_u32;
+    let v = base +wrap 10_u32;
+    return Some<u32>(value: v);
+  }
+  let is_upper_l = b >= 65_u8;
+  let is_upper_r = b <= 70_u8;
+  let is_upper = band(is_upper_l, is_upper_r);
+  if is_upper {
+    let wide = cvt::<u8, u32>(b);
+    let base = wide -wrap 65_u32;
+    let v = base +wrap 10_u32;
+    return Some<u32>(value: v);
+  }
+  return None<u32>();
+}
+
+fn hex_at(values: &ComponentList, start: u64, offset: u64) -> result: Option<u32> reads(values.text.inner) {
+  doc "The hex value of the byte at start + offset in values.text, or None when it is out of bounds or not a hex digit.";
+  let idx = start +wrap offset;
+  let indexable = idx < values^.text.inner.len;
+  if indexable {
+  } else {
+    return None<u32>();
+  }
+  let b = values^.text.inner[idx];
+  let digit = hex_digit(b: b);
+  return digit;
+}
+
+fn hex_pair(values: &ComponentList, start: u64, offset: u64) -> result: Option<f64> reads(values.text.inner) {
+  doc "The two hex digits at start + offset and start + offset + 1, combined high then low, as a channel from 0 to 255.";
+  let hi = hex_at(values: values, start: start, offset: offset);
+  match hi {
+    None() => {
+      return None<f64>();
+    }
+    Some(value: h) => {
+      let next_offset = offset +wrap 1_u64;
+      let lo = hex_at(values: values, start: start, offset: next_offset);
+      match lo {
+        None() => {
+          return None<f64>();
+        }
+        Some(value: l) => {
+          let scaled = h *wrap 16_u32;
+          let combined = scaled +wrap l;
+          let as_f64 = cvt::<u32, f64>(combined);
+          return Some<f64>(value: as_f64);
+        }
+      }
+    }
+  }
+}
+
+fn hex_single(values: &ComponentList, start: u64, offset: u64) -> result: Option<f64> reads(values.text.inner) {
+  doc "The one hex digit at start + offset, duplicated into both nibbles of a channel from 0 to 255.";
+  let digit = hex_at(values: values, start: start, offset: offset);
+  match digit {
+    None() => {
+      return None<f64>();
+    }
+    Some(value: h) => {
+      let scaled = h *wrap 16_u32;
+      let combined = scaled +wrap h;
+      let as_f64 = cvt::<u32, f64>(combined);
+      return Some<f64>(value: as_f64);
+    }
+  }
+}
+
+fn hex_rgba(values: &ComponentList, r: f64, g: f64, b: f64, a: f64) -> result: ParsedColor pure {
+  doc "Builds the Rgb ParsedColor value from four channels already on their final 0-255 (0-1 for a) scale.";
+  let rf = narrow_f32(value: r);
+  let gf = narrow_f32(value: g);
+  let bf = narrow_f32(value: b);
+  let af = narrow_f32(value: a);
+  let space = ColorSpace::Rgb();
+  let color = Color(space: space, first: rf, second: gf, third: bf, alpha: af, missing: 0_u8);
+  let parsed = ParsedColor::Value(color: color);
+  return parsed;
+}
+
+fn parse_hex_color(values: &ComponentList, name: Span) -> result: Result<ParsedColor, ColorError> reads(values.text.inner) {
+  doc "Parses name, the digits of a hex color after '#', per CSS Color 4: 3, 4, 6 or 8 hex digits, RRGGBB[AA] or the nibble-doubled RGB[A] short form; anything else is Invalid.";
+  let start64 = cvt::<u32, u64>(name.start);
+  let end64 = cvt::<u32, u64>(name.end);
+  let ordered = start64 <= end64;
+  if ordered {
+  } else {
+    let invalid = ColorError::Invalid();
+    return Err<ParsedColor, ColorError>(error: invalid);
+  }
+  let length = end64 -wrap start64;
+  let is3 = length == 3_u64;
+  let is4 = length == 4_u64;
+  let is6 = length == 6_u64;
+  let is8 = length == 8_u64;
+  let short_a = bor(is3, is4);
+  let long_a = bor(is6, is8);
+  let recognized = bor(short_a, long_a);
+  if recognized {
+  } else {
+    let invalid = ColorError::Invalid();
+    return Err<ParsedColor, ColorError>(error: invalid);
+  }
+  if short_a {
+    let red = hex_single(values: values, start: start64, offset: 0_u64);
+    let green = hex_single(values: values, start: start64, offset: 1_u64);
+    let blue = hex_single(values: values, start: start64, offset: 2_u64);
+    match red {
+      None() => {
+        let invalid = ColorError::Invalid();
+        return Err<ParsedColor, ColorError>(error: invalid);
+      }
+      Some(value: r) => {
+        match green {
+          None() => {
+            let invalid = ColorError::Invalid();
+            return Err<ParsedColor, ColorError>(error: invalid);
+          }
+          Some(value: g) => {
+            match blue {
+              None() => {
+                let invalid = ColorError::Invalid();
+                return Err<ParsedColor, ColorError>(error: invalid);
+              }
+              Some(value: b) => {
+                if is4 {
+                  let alpha_hex = hex_single(values: values, start: start64, offset: 3_u64);
+                  match alpha_hex {
+                    None() => {
+                      let invalid = ColorError::Invalid();
+                      return Err<ParsedColor, ColorError>(error: invalid);
+                    }
+                    Some(value: a255) => {
+                      let a = fdiv.strict(a255, 255.0_f64);
+                      let parsed = hex_rgba(values: values, r: r, g: g, b: b, a: a);
+                      return Ok<ParsedColor, ColorError>(value: parsed);
+                    }
+                  }
+                }
+                let parsed = hex_rgba(values: values, r: r, g: g, b: b, a: 1.0_f64);
+                return Ok<ParsedColor, ColorError>(value: parsed);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  let red = hex_pair(values: values, start: start64, offset: 0_u64);
+  let green = hex_pair(values: values, start: start64, offset: 2_u64);
+  let blue = hex_pair(values: values, start: start64, offset: 4_u64);
+  match red {
+    None() => {
+      let invalid = ColorError::Invalid();
+      return Err<ParsedColor, ColorError>(error: invalid);
+    }
+    Some(value: r) => {
+      match green {
+        None() => {
+          let invalid = ColorError::Invalid();
+          return Err<ParsedColor, ColorError>(error: invalid);
+        }
+        Some(value: g) => {
+          match blue {
+            None() => {
+              let invalid = ColorError::Invalid();
+              return Err<ParsedColor, ColorError>(error: invalid);
+            }
+            Some(value: b) => {
+              if is8 {
+                let alpha_hex = hex_pair(values: values, start: start64, offset: 6_u64);
+                match alpha_hex {
+                  None() => {
+                    let invalid = ColorError::Invalid();
+                    return Err<ParsedColor, ColorError>(error: invalid);
+                  }
+                  Some(value: a255) => {
+                    let a = fdiv.strict(a255, 255.0_f64);
+                    let parsed = hex_rgba(values: values, r: r, g: g, b: b, a: a);
+                    return Ok<ParsedColor, ColorError>(value: parsed);
+                  }
+                }
+              }
+              let parsed = hex_rgba(values: values, r: r, g: g, b: b, a: 1.0_f64);
+              return Ok<ParsedColor, ColorError>(value: parsed);
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,147 @@
+fn compile_coverage(table: &[u8], at: u64, ranges: &Box<Slots<CoverageRange>>, ceiling: u32) -> result: Result<Extent, FontError> reads(table), writes(ranges) {
+  doc "Appends the coverage table at at to ranges and returns its Extent. Format 1's glyphs must ascend strictly and are merged into ranges of consecutive glyphs; format 2's ranges must each have start at most end and follow one another without overlap, and keep their start coverage indices. Invalid for any other format.";
+  let start = propagate next_index::<CoverageRange>(list: ranges);
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let total = propagate read_u16(bytes: table, base: at, offset: 2_u64);
+  let count = cvt::<u16, u64>(total);
+  if format == 1_u16 {
+    let first = 0_u16;
+    let last = 0_u16;
+    let first_index = 0_u32;
+    for (index in 0_u64..count) {
+      let glyph_at = record_at(header: 4_u64, index: index, size: 2_u64);
+      let glyph = propagate read_u16(bytes: table, base: at, offset: glyph_at);
+      if index == 0_u64 {
+        set first = glyph;
+        set last = glyph;
+      } else {
+        if glyph <= last {
+          let invalid = FontError::Invalid();
+          return Err<Extent, FontError>(error: invalid);
+        }
+        let following = last + 1_u16;
+        if glyph == following {
+          set last = glyph;
+        } else {
+          let run = CoverageRange(first: first, last: last, index: first_index);
+          let pushed = propagate push::<CoverageRange>(list: ranges, value: run, ceiling: ceiling);
+          set first = glyph;
+          set last = glyph;
+          set first_index = cvt::<u64, u32>(index);
+        }
+      }
+    }
+    if count > 0_u64 {
+      let run = CoverageRange(first: first, last: last, index: first_index);
+      let pushed = propagate push::<CoverageRange>(list: ranges, value: run, ceiling: ceiling);
+    }
+    let extent = propagate extent_since::<CoverageRange>(list: ranges, start: start);
+    return Ok<Extent, FontError>(value: extent);
+  }
+  if format == 2_u16 {
+    let previous_last = 0_u16;
+    for (index in 0_u64..count) {
+      let record = record_at(header: 4_u64, index: index, size: 6_u64);
+      let last_at = record + 2_u64;
+      let index_at = record + 4_u64;
+      let first = propagate read_u16(bytes: table, base: at, offset: record);
+      let last = propagate read_u16(bytes: table, base: at, offset: last_at);
+      let start_index = propagate read_u16(bytes: table, base: at, offset: index_at);
+      let reversed = first > last;
+      let later = index > 0_u64;
+      let behind = first <= previous_last;
+      let overlapping = band(later, behind);
+      let disordered = bor(reversed, overlapping);
+      if disordered {
+        let invalid = FontError::Invalid();
+        return Err<Extent, FontError>(error: invalid);
+      }
+      set previous_last = last;
+      let wide_index = cvt::<u16, u32>(start_index);
+      let run = CoverageRange(first: first, last: last, index: wide_index);
+      let pushed = propagate push::<CoverageRange>(list: ranges, value: run, ceiling: ceiling);
+    }
+    let extent = propagate extent_since::<CoverageRange>(list: ranges, start: start);
+    return Ok<Extent, FontError>(value: extent);
+  }
+  let invalid = FontError::Invalid();
+  return Err<Extent, FontError>(error: invalid);
+}
+
+fn compile_classes(table: &[u8], at: u64, ranges: &Box<Slots<ClassRange>>, ceiling: u32) -> result: Result<Extent, FontError> reads(table), writes(ranges) {
+  doc "Appends the class definition at at to ranges, as the ranges of its glyphs of a nonzero class, and returns their Extent. Format 1's glyph array must end by glyph 65535; format 2's ranges must each have start at most end and follow one another without overlap. Invalid for any other format.";
+  let start = propagate next_index::<ClassRange>(list: ranges);
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  if format == 1_u16 {
+    let start_glyph = propagate read_u16(bytes: table, base: at, offset: 2_u64);
+    let total = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+    let origin = cvt::<u16, u64>(start_glyph);
+    let count = cvt::<u16, u64>(total);
+    let end = origin + count;
+    if end > 65536_u64 {
+      let invalid = FontError::Invalid();
+      return Err<Extent, FontError>(error: invalid);
+    }
+    let open = False();
+    let first = 0_u16;
+    let last = 0_u16;
+    let open_class = 0_u16;
+    for (index in 0_u64..count) {
+      let class_at = record_at(header: 6_u64, index: index, size: 2_u64);
+      let class = propagate read_u16(bytes: table, base: at, offset: class_at);
+      let wide_glyph = origin + index;
+      let glyph = cvt::<u64, u16>(wide_glyph);
+      let same_class = class == open_class;
+      let extends = band(open, same_class);
+      if extends {
+        set last = glyph;
+      } else {
+        if open {
+          let run = ClassRange(first: first, last: last, class: open_class);
+          let pushed = propagate push::<ClassRange>(list: ranges, value: run, ceiling: ceiling);
+        }
+        set open = class != 0_u16;
+        set first = glyph;
+        set last = glyph;
+        set open_class = class;
+      }
+    }
+    if open {
+      let run = ClassRange(first: first, last: last, class: open_class);
+      let pushed = propagate push::<ClassRange>(list: ranges, value: run, ceiling: ceiling);
+    }
+    let extent = propagate extent_since::<ClassRange>(list: ranges, start: start);
+    return Ok<Extent, FontError>(value: extent);
+  }
+  if format == 2_u16 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 2_u64);
+    let count = cvt::<u16, u64>(total);
+    let previous_last = 0_u16;
+    for (index in 0_u64..count) {
+      let record = record_at(header: 4_u64, index: index, size: 6_u64);
+      let last_at = record + 2_u64;
+      let class_at = record + 4_u64;
+      let first = propagate read_u16(bytes: table, base: at, offset: record);
+      let last = propagate read_u16(bytes: table, base: at, offset: last_at);
+      let class = propagate read_u16(bytes: table, base: at, offset: class_at);
+      let reversed = first > last;
+      let later = index > 0_u64;
+      let behind = first <= previous_last;
+      let overlapping = band(later, behind);
+      let disordered = bor(reversed, overlapping);
+      if disordered {
+        let invalid = FontError::Invalid();
+        return Err<Extent, FontError>(error: invalid);
+      }
+      set previous_last = last;
+      if class != 0_u16 {
+        let run = ClassRange(first: first, last: last, class: class);
+        let pushed = propagate push::<ClassRange>(list: ranges, value: run, ceiling: ceiling);
+      }
+    }
+    let extent = propagate extent_since::<ClassRange>(list: ranges, start: start);
+    return Ok<Extent, FontError>(value: extent);
+  }
+  let invalid = FontError::Invalid();
+  return Err<Extent, FontError>(error: invalid);
+}

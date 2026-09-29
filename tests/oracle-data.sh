@@ -9,7 +9,9 @@ set -eu
 dir=$1
 reference=$2
 ucd=https://www.unicode.org/Public/17.0.0/ucd
+idna=https://www.unicode.org/Public/17.0.0/idna
 css=https://raw.githubusercontent.com/SimonSapin/css-parsing-tests/203ce36bffd617db7f118c551e32794561fb273d
+wpt_url=https://raw.githubusercontent.com/web-platform-tests/wpt/b48a5c3fb57854fd217421e247a4f4a0149951a7/url/resources
 # PngSuite is served over plain HTTP only; the pinned hash carries its integrity.
 pngsuite=http://www.schaik.com/pngsuite/PngSuite-2017jul19.tgz
 # html5lib's tree-construction tests now live in WPT.
@@ -19,6 +21,9 @@ html5lib=https://raw.githubusercontent.com/html5lib/html5lib-tests/224991ec10db0
 # The HTML standard's named character references; the file is unversioned,
 # so its hash pins the copy the tokenizer was written against.
 entities=https://html.spec.whatwg.org/entities.json
+noto=https://raw.githubusercontent.com/notofonts/notofonts.github.io/f145d86c53996717bc4c25d4602eb9294e43dccc/fonts
+udhr=https://raw.githubusercontent.com/eric-muller/udhr/588b3f4b2d0467aff54842a4b926551b69d5a66a/data/udhr
+pypi=https://files.pythonhosted.org/packages
 
 fetch() { # URL FILE SHA256
     if [ -f "$dir/$2" ] && echo "$3  $dir/$2" | sha256sum -c --status; then
@@ -38,6 +43,16 @@ fetch $ucd/EastAsianWidth.txt ucd/EastAsianWidth.txt ea7ce50f3444a050333448dffef
 fetch $ucd/extracted/DerivedGeneralCategory.txt ucd/DerivedGeneralCategory.txt d62e5bab70ca74f099343f71224fa051cb1fdd61a1ab45c0488c44cfc0b6102e
 fetch $ucd/emoji/emoji-data.txt ucd/emoji-data.txt 2cb2bb9455cda83e8481541ecf5b6dfda66a3bb89efa3fa7c5297eccf607b72b
 fetch $ucd/auxiliary/LineBreakTest.txt ucd/LineBreakTest.txt e69884e0dde6a8724873f885d68c52dc14518abf9ae4ca9e2283b8773db3b752
+fetch $ucd/NormalizationTest.txt ucd/NormalizationTest.txt 5019ffd530751a741900c849c0e010332f142a3612234639bd200b82138a87db
+fetch $ucd/UnicodeData.txt ucd/UnicodeData.txt 2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c
+fetch $ucd/DerivedNormalizationProps.txt ucd/DerivedNormalizationProps.txt 71fd6a206a2c0cdd41feb6b7f656aa31091db45e9cedc926985d718397f9e488
+fetch $ucd/extracted/DerivedBidiClass.txt ucd/DerivedBidiClass.txt 4867b4b7f0731ed1bfcd34cc6251211ff1542541fce0734b6fbda139ee80b3a4
+fetch $ucd/extracted/DerivedJoiningType.txt ucd/DerivedJoiningType.txt f39ebe974825d6736aee15582250307aa532b2cfab3caf3f86bd23fddc9c5c4d
+fetch $idna/IdnaMappingTable.txt idna/IdnaMappingTable.txt 87f05505dc026fdb2bff16132bdc68a8014675836882a9a2b1844540ad3be382
+fetch $idna/IdnaTestV2.txt idna/IdnaTestV2.txt beb5d0be20e896189b03209a82fdc34f06351502bbd4b8e2523583fc2954d9cf
+fetch $wpt_url/urltestdata.json wpt-url/urltestdata.json 81e85fd3c199c08ef9c34cf651b3580eeedd080316493bfaf277a6b5ff8cf652
+fetch $wpt_url/IdnaTestV2.json wpt-url/IdnaTestV2.json 338192b9815dbdace6c035cb1acd50cd737070cd67d6e3f620d2543f63eb0cbb
+fetch $wpt_url/toascii.json wpt-url/toascii.json 644eba9d5b593df8095cfa307222f3014542ff9cc02d555f8e5660059d80470f
 fetch $css/component_value_list.json css/component_value_list.json a8d7a5252373b892cfcac359360930ad9a57ed918a84331bcf0c872b80f83200
 fetch $wpt_parsing/adoption01.dat wpt-parsing/adoption01.dat b2aba05bd1d832f73a0c6103b3c8b151b283bab7c56887274d81f3a062c4963e
 fetch $wpt_parsing/adoption02.dat wpt-parsing/adoption02.dat e091e6976f861ae616fe56c527a78e7247ee7562bcafec996d4e4bda657bd9b7
@@ -124,7 +139,35 @@ fetch $css/one_declaration.json css/one_declaration.json 5360083bfba780c54c2f129
 fetch $css/An+B.json css/An+B.json 0deb798e84ecf7f08de3c89b3ecdc65caceb8f31a45b03fcf3622e6ba69dfd2b
 fetch $wpt_nodes/selectors.js wpt-nodes/selectors.js cffc3f46deb933d63d4cb2cfd811d3ec21ec7804faab4826c8aba1868459e8d1
 fetch $wpt_nodes/ParentNode-querySelector-All-content.html wpt-nodes/ParentNode-querySelector-All-content.html 40eff9f6df0986178d2e138c256369fd22f09a8d15ba03fd1bef2ac2c104f9e2
+fetch $css/color_function_4.json css/color_function_4.json a28086c67350ddbad70ba432fbdbf603d7c5bd63dce15e06ef0ba5c9e0ffb7c8
+fetch $css/color_hexadecimal_3.json css/color_hexadecimal_3.json 0ed46e6f0b465aa50917dcefbafd09bcb89c9f1746f86fba360ee79141bf8e23
+fetch $css/color_hexadecimal_4.json css/color_hexadecimal_4.json 8789531747bb83d2b339e79b920b07d3d9bc937b3142fae83f657a00f2b386d9
+fetch $css/color_hsl_3.json css/color_hsl_3.json f3967564ee5fe5903126e415240d4b2b5ba90e760e29c3760bbb076a9af4f78b
+fetch $css/color_hsl_4.json css/color_hsl_4.json ae13f3b222e2e4c6872163a0a249edff642bb0876aa1a236fa7f1e2774c14a21
+fetch $css/color_hwb_4.json css/color_hwb_4.json 7a5b6c531686d1eb678345c2a37306a616eab06d4d60925887ce62e69c1b825a
+fetch $css/color_keywords_3.json css/color_keywords_3.json b3a92cdfc563e2bc5cfa5118bd0591672b054eb624a2a30ad27bf1e5e5f27e0d
+fetch $css/color_keywords_4.json css/color_keywords_4.json 177b74080543a7b71e46db2038c88069deec7b29f36c56627d71d475723e18e0
+fetch $css/color_lab_4.json css/color_lab_4.json f72dc2342f2247b6f8506c601ee65f0754de2e084bfd9ad62fbde2d5f31d8dc1
+fetch $css/color_lch_4.json css/color_lch_4.json 568490fdbd7d4d67cf8c075cbb58aca167ee0e0b3365c6ffe2d8c7e4225d9df6
+fetch $css/color_oklab_4.json css/color_oklab_4.json beaaa188a8189ec0adffb9ed4959e6910762532b9b2c7998558ede5f37a2eacd
+fetch $css/color_oklch_4.json css/color_oklch_4.json 2e575635c6d8fd517430e1e8e84cf20ffb475a4fb095039c9edce8770ee99cd3
 fetch $pngsuite PngSuite-2017jul19.tgz 0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
+
+# Fonts, texts and the pinned tools that compute the font oracles' expectations
+fetch $noto/NotoSans/unhinted/ttf/NotoSans-Regular.ttf fonts/NotoSans-Regular.ttf f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8
+fetch $noto/NotoSerif/unhinted/ttf/NotoSerif-Regular.ttf fonts/NotoSerif-Regular.ttf a15cfbbc1539d707115111d672d590a3d70d4f74b4c0a315956da20ae19a14e1
+fetch $udhr/udhr_eng.xml udhr/udhr_eng.xml df73275821449df4db2b164e59bda812c834d80cacc8792a6f41d6fc331ce204
+fetch $udhr/udhr_rus.xml udhr/udhr_rus.xml 4d91ee6b21c4f2fd26bae1a62b6f2922b2a33335b1559ccfaea29bdaf2ec2972
+fetch $udhr/udhr_ell_monotonic.xml udhr/udhr_ell_monotonic.xml 961f32b7aca8371e4709352c9c096b28c6876867aa45e233736547c46fe35748
+fetch $udhr/udhr_ell_polytonic.xml udhr/udhr_ell_polytonic.xml 60242b91f737fbfb4b8026453c8a507d3cd33626ee043929a1725c26d25b70e3
+fetch $pypi/09/5c/761168440df6bc2caafa6341b77dd3ee41949ffaaa5da610da2ce1fd74f9/uharfbuzz-0.56.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl wheels/uharfbuzz-0.56.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl f058d70848312366e82068ebef54ead53269bdf34e893c25a3174ea1f5c6d2d3
+fetch $pypi/83/65/826290863c9df6041f2e36a5ae5d604cd8247fffc8ec7b45581fd2473e4d/fonttools-4.66.0-py3-none-any.whl wheels/fonttools-4.66.0-py3-none-any.whl bc7b7ddc1a1f46c363354304e9a8dd93722e4a6a24f785015650898dacf40df9
+if [ ! -f "$dir/py/.installed-uharfbuzz-0.56.2-fonttools-4.66.0" ]; then
+    rm -rf "$dir/py"
+    python3 -m pip install --quiet --disable-pip-version-check --root-user-action=ignore --no-deps --no-index \
+        --target "$dir/py" "$dir"/wheels/*.whl
+    touch "$dir/py/.installed-uharfbuzz-0.56.2-fonttools-4.66.0"
+fi
 
 # PngSuite: every image with its libpng reference, and the case list
 # ("valid NAME" or "invalid NAME") the driver reads. Names starting with x

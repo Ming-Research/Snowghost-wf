@@ -1,0 +1,327 @@
+fn value_size(format: u16) -> result: u64 pure contract {
+  ensures result <= 32_u64;
+} {
+  doc "Returns the size in bytes of a value record of format: two bytes per set bit, as HarfBuzz sizes it, counting the reserved bits too.";
+  let bits = ipopcount(format);
+  let count = cvt::<u32, u64>(bits);
+  let size = count * 2_u64;
+  return size;
+}
+
+fn value_field(table: &[u8], at: u64, offset: u64, format: u16, field: u32) -> result: Result<i16, FontError> reads(table) contract {
+  requires offset <= 1099511627776_u64;
+  requires field <= 3_u32;
+} {
+  doc "Reads positioning field field (0 x placement, 1 y placement, 2 x advance, 3 y advance) of the value record of format that starts offset bytes past at: 0 when format omits it, and otherwise the i16 after the fields of the lower bits that format has.";
+  let bit = ishl(1_u16, field);
+  let present = iand(format, bit);
+  if present == 0_u16 {
+    return Ok<i16, FontError>(value: 0_i16);
+  }
+  let lower = bit - 1_u16;
+  let preceding = iand(format, lower);
+  let preceding_count = ipopcount(preceding);
+  let skipped = cvt::<u32, u64>(preceding_count);
+  let skipped_size = skipped * 2_u64;
+  let field_at = offset + skipped_size;
+  let value = propagate read_i16(bytes: table, base: at, offset: field_at);
+  return Ok<i16, FontError>(value: value);
+}
+
+fn read_value_record(table: &[u8], at: u64, offset: u64, format: u16) -> result: Result<ValueRecord, FontError> reads(table) contract {
+  requires offset <= 1099511627776_u64;
+} {
+  doc "Reads the four positioning fields of the value record of format that starts offset bytes past at; its device and variation offsets are not followed.";
+  let x_placement = propagate value_field(table: table, at: at, offset: offset, format: format, field: 0_u32);
+  let y_placement = propagate value_field(table: table, at: at, offset: offset, format: format, field: 1_u32);
+  let x_advance = propagate value_field(table: table, at: at, offset: offset, format: format, field: 2_u32);
+  let y_advance = propagate value_field(table: table, at: at, offset: offset, format: format, field: 3_u32);
+  let record = ValueRecord(x_placement: x_placement, y_placement: y_placement, x_advance: x_advance, y_advance: y_advance);
+  return Ok<ValueRecord, FontError>(value: record);
+}
+
+fn read_anchor(table: &[u8], at: u64) -> result: Result<Anchor, FontError> reads(table) {
+  doc "Reads the coordinates of the Anchor table at at, which is format 1, 2 or 3; an anchor of any other format is (0, 0), as HarfBuzz reads it.";
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let low = format >= 1_u16;
+  let high = format <= 3_u16;
+  let known = band(low, high);
+  if known {
+    let x = propagate read_i16(bytes: table, base: at, offset: 2_u64);
+    let y = propagate read_i16(bytes: table, base: at, offset: 4_u64);
+    let anchor = Anchor(x: x, y: y);
+    return Ok<Anchor, FontError>(value: anchor);
+  }
+  let origin = Anchor(x: 0_i16, y: 0_i16);
+  return Ok<Anchor, FontError>(value: origin);
+}
+
+fn compile_single_positioning(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the SinglePos subtable at at (format 1 or 2) and returns its index in single_positionings.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+  let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+  let value_format = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+  let start = propagate next_index::<ValueRecord>(list: &builder^.layout.value_records);
+  let has_values = value_format != 0_u16;
+  let value_count = if format == 1_u16 {
+    if has_values {
+      let value = propagate read_value_record(table: table, at: at, offset: 6_u64, format: value_format);
+      let pushed = propagate push::<ValueRecord>(list: &builder^.layout.value_records, value: value, ceiling: ceiling);
+    }
+    give 0_u16;
+  } else if format == 2_u16 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 6_u64);
+    let count = cvt::<u16, u64>(total);
+    let size = value_size(format: value_format);
+    if has_values {
+      for (index in 0_u64..count) {
+        let record = record_at(header: 8_u64, index: index, size: size);
+        let value = propagate read_value_record(table: table, at: at, offset: record, format: value_format);
+        let pushed = propagate push::<ValueRecord>(list: &builder^.layout.value_records, value: value, ceiling: ceiling);
+      }
+    }
+    give total;
+  } else {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let values = propagate extent_since::<ValueRecord>(list: &builder^.layout.value_records, start: start);
+  let record = SinglePositioning(format: format, coverage: coverage, value_format: value_format, value_count: value_count, values: values);
+  let index = propagate next_index::<SinglePositioning>(list: &builder^.layout.single_positionings);
+  let pushed = propagate push::<SinglePositioning>(list: &builder^.layout.single_positionings, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_pair_positioning(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the PairPos subtable at at (format 1 or 2) and returns its index in pair_positionings.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+  let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+  let first_format = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+  let second_format = propagate read_u16(bytes: table, base: at, offset: 6_u64);
+  let empty = Extent(start: 0_u32, count: 0_u32);
+  let record = if format == 1_u16 {
+    let pair_sets = propagate compile_pair_sets(table: table, at: at, first_format: first_format, second_format: second_format, builder: builder);
+    let formed = PairPositioning(format: format, coverage: coverage, first_format: first_format, second_format: second_format, pair_sets: pair_sets, first_classes: 0_u32, second_classes: 0_u32, first_class_count: 0_u16, second_class_count: 0_u16, class_values: empty);
+    give formed;
+  } else if format == 2_u16 {
+    let first_classes_at = propagate follow16(bytes: table, base: at, offset: 8_u64);
+    let second_classes_at = propagate follow16(bytes: table, base: at, offset: 10_u64);
+    let first_classes = propagate class_index(table: table, at: first_classes_at, builder: builder);
+    let second_classes = propagate class_index(table: table, at: second_classes_at, builder: builder);
+    let first_class_count = propagate read_u16(bytes: table, base: at, offset: 12_u64);
+    let second_class_count = propagate read_u16(bytes: table, base: at, offset: 14_u64);
+    let class_values = propagate compile_class_values(table: table, at: at, first_class_count: first_class_count, second_class_count: second_class_count, first_format: first_format, second_format: second_format, builder: builder);
+    let formed = PairPositioning(format: format, coverage: coverage, first_format: first_format, second_format: second_format, pair_sets: empty, first_classes: first_classes, second_classes: second_classes, first_class_count: first_class_count, second_class_count: second_class_count, class_values: class_values);
+    give formed;
+  } else {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let index = propagate next_index::<PairPositioning>(list: &builder^.layout.pair_positionings);
+  let pushed = propagate push::<PairPositioning>(list: &builder^.layout.pair_positionings, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_pair_sets(table: &[u8], at: u64, first_format: u16, second_format: u16, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) {
+  doc "Appends to pair_sets one entry per PairSet offset of the format 1 PairPos subtable at at, a null offset giving the empty set, and returns their Extent.";
+  let ceiling = builder^.ceiling;
+  let total = propagate read_u16(bytes: table, base: at, offset: 8_u64);
+  let count = cvt::<u16, u64>(total);
+  let start = propagate next_index::<Extent>(list: &builder^.layout.pair_sets);
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: 10_u64, index: index, size: 2_u64);
+    let set_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let pairs = propagate compile_pair_set(table: table, at: set_at, first_format: first_format, second_format: second_format, builder: builder);
+    let pushed = propagate push::<Extent>(list: &builder^.layout.pair_sets, value: pairs, ceiling: ceiling);
+  }
+  let run = propagate extent_since::<Extent>(list: &builder^.layout.pair_sets, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_pair_set(table: &[u8], at: u64, first_format: u16, second_format: u16, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) {
+  doc "Appends the PairValueRecords of the PairSet at at (none when at is 0) to pair_values and returns their Extent. Their second glyphs must ascend strictly, since a pair is found by binary search.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<PairValue>(list: &builder^.layout.pair_values);
+  if at != 0_u64 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+    let count = cvt::<u16, u64>(total);
+    let first_size = value_size(format: first_format);
+    let second_size = value_size(format: second_format);
+    let values_size = first_size + second_size;
+    let record_size = values_size + 2_u64;
+    let previous = 0_u16;
+    for (index in 0_u64..count) {
+      let record = record_at(header: 2_u64, index: index, size: record_size);
+      let second_glyph = propagate read_u16(bytes: table, base: at, offset: record);
+      let later = index > 0_u64;
+      let behind = second_glyph <= previous;
+      let unordered = band(later, behind);
+      if unordered {
+        let invalid = FontError::Invalid();
+        return Err<Extent, FontError>(error: invalid);
+      }
+      set previous = second_glyph;
+      let first_at = record + 2_u64;
+      let second_at = first_at + first_size;
+      let first = propagate read_value_record(table: table, at: at, offset: first_at, format: first_format);
+      let second = propagate read_value_record(table: table, at: at, offset: second_at, format: second_format);
+      let pair = PairValue(second_glyph: second_glyph, first: first, second: second);
+      let pushed = propagate push::<PairValue>(list: &builder^.layout.pair_values, value: pair, ceiling: ceiling);
+    }
+  }
+  let run = propagate extent_since::<PairValue>(list: &builder^.layout.pair_values, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_class_values(table: &[u8], at: u64, first_class_count: u16, second_class_count: u16, first_format: u16, second_format: u16, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) {
+  doc "Appends the Class1Records of the format 2 PairPos subtable at at to value_pairs, row by row, and returns their Extent; none when both value formats are 0, which makes every value zero.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<ValuePair>(list: &builder^.layout.value_pairs);
+  let first_size = value_size(format: first_format);
+  let second_size = value_size(format: second_format);
+  let pair_size = first_size + second_size;
+  if pair_size != 0_u64 {
+    let rows = cvt::<u16, u64>(first_class_count);
+    let columns = cvt::<u16, u64>(second_class_count);
+    for (row in 0_u64..rows) {
+      let row_start = row * columns;
+      for (column in 0_u64..columns) {
+        let cell = row_start + column;
+        let cell_offset = cell * pair_size;
+        let first_at = 16_u64 + cell_offset;
+        let second_at = first_at + first_size;
+        let first = propagate read_value_record(table: table, at: at, offset: first_at, format: first_format);
+        let second = propagate read_value_record(table: table, at: at, offset: second_at, format: second_format);
+        let values = ValuePair(first: first, second: second);
+        let pushed = propagate push::<ValuePair>(list: &builder^.layout.value_pairs, value: values, ceiling: ceiling);
+      }
+    }
+  }
+  let run = propagate extent_since::<ValuePair>(list: &builder^.layout.value_pairs, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_mark_attachment(table: &[u8], at: u64, ligatures: Bool, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Compiles the MarkBasePos, MarkLigPos (when ligatures is True) or MarkMarkPos subtable at at (format 1), which share one layout, and returns its index in mark_attachments. A null MarkArray, BaseArray, Mark2Array or LigatureArray offset gives an empty array.";
+  let ceiling = builder^.ceiling;
+  let format = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  if format != 1_u16 {
+    let invalid = FontError::Invalid();
+    return Err<u32, FontError>(error: invalid);
+  }
+  let mark_coverage_at = propagate follow16(bytes: table, base: at, offset: 2_u64);
+  let base_coverage_at = propagate follow16(bytes: table, base: at, offset: 4_u64);
+  let mark_coverage = propagate coverage_index(table: table, at: mark_coverage_at, builder: builder);
+  let base_coverage = propagate coverage_index(table: table, at: base_coverage_at, builder: builder);
+  let class_count = propagate read_u16(bytes: table, base: at, offset: 6_u64);
+  let columns = cvt::<u16, u64>(class_count);
+  let marks_at = propagate follow16(bytes: table, base: at, offset: 8_u64);
+  let bases_at = propagate follow16(bytes: table, base: at, offset: 10_u64);
+  let marks = propagate compile_mark_array(table: table, at: marks_at, builder: builder);
+  let bases = if ligatures {
+    let attached = propagate compile_ligature_array(table: table, at: bases_at, columns: columns, builder: builder);
+    give attached;
+  } else {
+    let base_total = if bases_at != 0_u64 {
+      let listed = propagate read_u16(bytes: table, base: bases_at, offset: 0_u64);
+      give listed;
+    } else {
+      give 0_u16;
+    }
+    let rows = cvt::<u16, u64>(base_total);
+    let anchored = propagate compile_anchor_matrix(table: table, at: bases_at, rows: rows, columns: columns, builder: builder);
+    give anchored;
+  }
+  let record = MarkAttachment(mark_coverage: mark_coverage, base_coverage: base_coverage, class_count: class_count, marks: marks, bases: bases);
+  let index = propagate next_index::<MarkAttachment>(list: &builder^.layout.mark_attachments);
+  let pushed = propagate push::<MarkAttachment>(list: &builder^.layout.mark_attachments, value: record, ceiling: ceiling);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn compile_mark_array(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) {
+  doc "Appends the MarkRecords of the MarkArray at at (none when at is 0) to mark_records and returns their Extent; a null mark anchor offset gives the anchor (0, 0), as HarfBuzz's Null anchor reads.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<MarkRecord>(list: &builder^.layout.mark_records);
+  if at != 0_u64 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+    let count = cvt::<u16, u64>(total);
+    for (index in 0_u64..count) {
+      let record = record_at(header: 2_u64, index: index, size: 4_u64);
+      let anchor_offset_at = record + 2_u64;
+      let class = propagate read_u16(bytes: table, base: at, offset: record);
+      let anchor_at = propagate follow16(bytes: table, base: at, offset: anchor_offset_at);
+      let anchor = if anchor_at != 0_u64 {
+        let read = propagate read_anchor(table: table, at: anchor_at);
+        give read;
+      } else {
+        let origin = Anchor(x: 0_i16, y: 0_i16);
+        give origin;
+      }
+      let mark = MarkRecord(class: class, anchor: anchor);
+      let pushed = propagate push::<MarkRecord>(list: &builder^.layout.mark_records, value: mark, ceiling: ceiling);
+    }
+  }
+  let run = propagate extent_since::<MarkRecord>(list: &builder^.layout.mark_records, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_anchor_matrix(table: &[u8], at: u64, rows: u64, columns: u64, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) contract {
+  requires rows <= 65535_u64;
+  requires columns <= 65535_u64;
+} {
+  doc "Appends to anchors the rows of columns anchors whose offsets, relative to at, follow the row count at at (a BaseArray, Mark2Array or LigatureAttach), row by row, and returns their Extent; a null anchor offset gives None. None when at is 0.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<Option<Anchor>>(list: &builder^.layout.anchors);
+  if at != 0_u64 {
+    for (row in 0_u64..rows) {
+      let row_start = row * columns;
+      for (column in 0_u64..columns) {
+        let cell = row_start + column;
+        let cell_offset = cell * 2_u64;
+        let offset_at = 2_u64 + cell_offset;
+        let anchor_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+        let slot = if anchor_at != 0_u64 {
+          let read = propagate read_anchor(table: table, at: anchor_at);
+          give Some<Anchor>(value: read);
+        } else {
+          give None<Anchor>();
+        }
+        let pushed = propagate push::<Option<Anchor>>(list: &builder^.layout.anchors, value: slot, ceiling: ceiling);
+      }
+    }
+  }
+  let run = propagate extent_since::<Option<Anchor>>(list: &builder^.layout.anchors, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn compile_ligature_array(table: &[u8], at: u64, columns: u64, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) contract {
+  requires columns <= 65535_u64;
+} {
+  doc "Appends one LigatureAttachment per LigatureAttach offset of the LigatureArray at at (none when at is 0) to ligature_attachments and returns their Extent; a null offset gives a ligature of no components.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<LigatureAttachment>(list: &builder^.layout.ligature_attachments);
+  if at != 0_u64 {
+    let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+    let count = cvt::<u16, u64>(total);
+    for (index in 0_u64..count) {
+      let offset_at = record_at(header: 2_u64, index: index, size: 2_u64);
+      let attach_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+      let component_count = if attach_at != 0_u64 {
+        let components = propagate read_u16(bytes: table, base: attach_at, offset: 0_u64);
+        give components;
+      } else {
+        give 0_u16;
+      }
+      let rows = cvt::<u16, u64>(component_count);
+      let anchors = propagate compile_anchor_matrix(table: table, at: attach_at, rows: rows, columns: columns, builder: builder);
+      let attachment = LigatureAttachment(component_count: component_count, anchors: anchors);
+      let pushed = propagate push::<LigatureAttachment>(list: &builder^.layout.ligature_attachments, value: attachment, ceiling: ceiling);
+    }
+  }
+  let run = propagate extent_since::<LigatureAttachment>(list: &builder^.layout.ligature_attachments, start: start);
+  return Ok<Extent, FontError>(value: run);
+}

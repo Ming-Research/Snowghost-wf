@@ -1,0 +1,383 @@
+fn empty_layout() -> result: LayoutTable pure {
+  doc "The compiled form of an absent GSUB or GPOS table: not present, every array empty and no filters.";
+  let scripts = box_slots_new::<ScriptRecord>(capacity: 0_u64);
+  let language_systems = box_slots_new::<LanguageSystem>(capacity: 0_u64);
+  let language_features = box_slots_new::<u16>(capacity: 0_u64);
+  let features = box_slots_new::<FeatureRecord>(capacity: 0_u64);
+  let feature_lookups = box_slots_new::<u16>(capacity: 0_u64);
+  let lookups = box_slots_new::<Lookup>(capacity: 0_u64);
+  let subtables = box_slots_new::<Subtable>(capacity: 0_u64);
+  let coverages = box_slots_new::<Extent>(capacity: 0_u64);
+  let coverage_ranges = box_slots_new::<CoverageRange>(capacity: 0_u64);
+  let class_definitions = box_slots_new::<Extent>(capacity: 0_u64);
+  let class_ranges = box_slots_new::<ClassRange>(capacity: 0_u64);
+  let glyphs = box_slots_new::<u16>(capacity: 0_u64);
+  let classes = box_slots_new::<u16>(capacity: 0_u64);
+  let single_substitutions = box_slots_new::<SingleSubstitution>(capacity: 0_u64);
+  let multiple_substitutions = box_slots_new::<MultipleSubstitution>(capacity: 0_u64);
+  let sequences = box_slots_new::<Extent>(capacity: 0_u64);
+  let ligature_substitutions = box_slots_new::<LigatureSubstitution>(capacity: 0_u64);
+  let ligature_sets = box_slots_new::<Extent>(capacity: 0_u64);
+  let ligatures = box_slots_new::<Ligature>(capacity: 0_u64);
+  let chained_contexts = box_slots_new::<ChainedContext>(capacity: 0_u64);
+  let rule_sets = box_slots_new::<Extent>(capacity: 0_u64);
+  let chain_rules = box_slots_new::<ChainRule>(capacity: 0_u64);
+  let coverage_sequences = box_slots_new::<u32>(capacity: 0_u64);
+  let sequence_lookups = box_slots_new::<SequenceLookup>(capacity: 0_u64);
+  let single_positionings = box_slots_new::<SinglePositioning>(capacity: 0_u64);
+  let value_records = box_slots_new::<ValueRecord>(capacity: 0_u64);
+  let pair_positionings = box_slots_new::<PairPositioning>(capacity: 0_u64);
+  let pair_sets = box_slots_new::<Extent>(capacity: 0_u64);
+  let pair_values = box_slots_new::<PairValue>(capacity: 0_u64);
+  let value_pairs = box_slots_new::<ValuePair>(capacity: 0_u64);
+  let mark_attachments = box_slots_new::<MarkAttachment>(capacity: 0_u64);
+  let mark_records = box_slots_new::<MarkRecord>(capacity: 0_u64);
+  let anchors = box_slots_new::<Option<Anchor>>(capacity: 0_u64);
+  let ligature_attachments = box_slots_new::<LigatureAttachment>(capacity: 0_u64);
+  let filters = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
+  let absent = False();
+  let layout = LayoutTable(present: absent, scripts: move scripts, language_systems: move language_systems, language_features: move language_features, features: move features, feature_lookups: move feature_lookups, lookups: move lookups, subtables: move subtables, coverages: move coverages, coverage_ranges: move coverage_ranges, class_definitions: move class_definitions, class_ranges: move class_ranges, glyphs: move glyphs, classes: move classes, single_substitutions: move single_substitutions, multiple_substitutions: move multiple_substitutions, sequences: move sequences, ligature_substitutions: move ligature_substitutions, ligature_sets: move ligature_sets, ligatures: move ligatures, chained_contexts: move chained_contexts, rule_sets: move rule_sets, chain_rules: move chain_rules, coverage_sequences: move coverage_sequences, sequence_lookups: move sequence_lookups, single_positionings: move single_positionings, value_records: move value_records, pair_positionings: move pair_positionings, pair_sets: move pair_sets, pair_values: move pair_values, value_pairs: move value_pairs, mark_attachments: move mark_attachments, mark_records: move mark_records, anchors: move anchors, ligature_attachments: move ligature_attachments, filters: move filters, filter_width: 0_u64);
+  return move layout;
+}
+
+enum TableKind {
+  doc "Which layout table a builder compiles.";
+  Substitution();
+  Positioning();
+}
+
+struct LayoutBuilder {
+  doc "The state of compiling one GSUB or GPOS table: the table so far, which table it is, the most entries any of its arrays may hold, the lookup and feature counts its indices are checked against, and memo, which records per byte position of the source table the first coverage, class definition or subtable compiled there (see memo_find), so that a structure several others share compiles once.";
+  layout: LayoutTable;
+  kind: TableKind;
+  ceiling: u32;
+  lookup_count: u16;
+  feature_count: u16;
+  memo: Box<Array<u32>>;
+}
+
+const no_feature: u16 = 65535_u16;
+
+const use_mark_filtering_set: u16 = 16_u16;
+
+const substitution_extension: u16 = 7_u16;
+
+const positioning_extension: u16 = 9_u16;
+
+fn compile_layout(table: &[u8], kind: TableKind) -> result: Result<LayoutTable, FontError> reads(table) contract {
+  requires table^.len <= 268435456_u64;
+} {
+  doc "Checks and compiles a GSUB or GPOS table: its header (major version 1), its script list with every language system, its feature list and its lookup list with the subtables of every lookup type shape_run applies. A feature index at or past the feature count, and a lookup index at or past the lookup count, are Invalid. FeatureVariations, which only a variable font uses, is not read.";
+  let major = propagate read_u16(bytes: table, base: 0_u64, offset: 0_u64);
+  if major != 1_u16 {
+    let invalid = FontError::Invalid();
+    return Err<LayoutTable, FontError>(error: invalid);
+  }
+  let scripts_at = propagate follow16(bytes: table, base: 0_u64, offset: 4_u64);
+  let features_at = propagate follow16(bytes: table, base: 0_u64, offset: 6_u64);
+  let lookups_at = propagate follow16(bytes: table, base: 0_u64, offset: 8_u64);
+  let lookup_count = if lookups_at != 0_u64 {
+    let count = propagate read_u16(bytes: table, base: lookups_at, offset: 0_u64);
+    give count;
+  } else {
+    give 0_u16;
+  }
+  let feature_count = if features_at != 0_u64 {
+    let count = propagate read_u16(bytes: table, base: features_at, offset: 0_u64);
+    give count;
+  } else {
+    give 0_u16;
+  }
+  let length = table^.len;
+  let ceiling = pool_ceiling(length: length);
+  let memo = box_array_filled::<u32>(count: length, value: 0_u32);
+  let layout = empty_layout();
+  let empty = Extent(start: 0_u32, count: 0_u32);
+  let first_coverage = propagate push::<Extent>(list: &layout.coverages, value: empty, ceiling: ceiling);
+  let first_classes = propagate push::<Extent>(list: &layout.class_definitions, value: empty, ceiling: ceiling);
+  let builder = LayoutBuilder(layout: move layout, kind: kind, ceiling: ceiling, lookup_count: lookup_count, feature_count: feature_count, memo: move memo);
+  let scripts = propagate compile_scripts(table: table, at: scripts_at, builder: &builder);
+  let features = propagate compile_features(table: table, at: features_at, builder: &builder);
+  let lookups = propagate compile_lookups(table: table, at: lookups_at, builder: &builder);
+  let LayoutBuilder(layout: compiled, ..) = move builder;
+  set compiled.present = True();
+  return Ok<LayoutTable, FontError>(value: move compiled);
+}
+
+fn compile_scripts(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<unit, FontError> reads(table), writes(builder) {
+  doc "Compiles the ScriptList at at (none when at is 0): each script's tag, its default language system and its tagged language systems, in font order. A null Script offset gives a script with no language systems.";
+  if at == 0_u64 {
+    return Ok<unit, FontError>(value: unit);
+  }
+  let ceiling = builder^.ceiling;
+  let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let count = cvt::<u16, u64>(total);
+  for (index in 0_u64..count) {
+    let record = record_at(header: 2_u64, index: index, size: 6_u64);
+    let offset_at = record + 4_u64;
+    let tag = propagate read_u32(bytes: table, base: at, offset: record);
+    let script_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let default_at = if script_at != 0_u64 {
+      let found = propagate follow16(bytes: table, base: script_at, offset: 0_u64);
+      give found;
+    } else {
+      give 0_u64;
+    }
+    let default_system = propagate compile_language_system(table: table, at: default_at, tag: 0_u32, builder: builder);
+    let start = propagate next_index::<LanguageSystem>(list: &builder^.layout.language_systems);
+    if script_at != 0_u64 {
+      let system_total = propagate read_u16(bytes: table, base: script_at, offset: 2_u64);
+      let system_count = cvt::<u16, u64>(system_total);
+      for (system_index in 0_u64..system_count) {
+        let system_record = record_at(header: 4_u64, index: system_index, size: 6_u64);
+        let system_offset_at = system_record + 4_u64;
+        let system_tag = propagate read_u32(bytes: table, base: script_at, offset: system_record);
+        let system_at = propagate follow16(bytes: table, base: script_at, offset: system_offset_at);
+        let system = propagate compile_language_system(table: table, at: system_at, tag: system_tag, builder: builder);
+        let pushed = propagate push::<LanguageSystem>(list: &builder^.layout.language_systems, value: system, ceiling: ceiling);
+      }
+    }
+    let systems = propagate extent_since::<LanguageSystem>(list: &builder^.layout.language_systems, start: start);
+    let script = ScriptRecord(tag: tag, default_system: default_system, systems: systems);
+    let pushed = propagate push::<ScriptRecord>(list: &builder^.layout.scripts, value: script, ceiling: ceiling);
+  }
+  return Ok<unit, FontError>(value: unit);
+}
+
+fn compile_language_system(table: &[u8], at: u64, tag: u32, builder: &LayoutBuilder) -> result: Result<LanguageSystem, FontError> reads(table), writes(builder) {
+  doc "Compiles the LangSys table at at under tag: its required feature index (65535 for none) and its feature indices, each of which must be below the feature count. A null offset gives a language system with no features.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<u16>(list: &builder^.layout.language_features);
+  if at == 0_u64 {
+    let none = Extent(start: start, count: 0_u32);
+    let absent = LanguageSystem(tag: tag, required_feature: no_feature, features: none);
+    return Ok<LanguageSystem, FontError>(value: absent);
+  }
+  let feature_count = builder^.feature_count;
+  let required = propagate read_u16(bytes: table, base: at, offset: 2_u64);
+  let has_required = required != no_feature;
+  let beyond = required >= feature_count;
+  let unknown = band(has_required, beyond);
+  if unknown {
+    let invalid = FontError::Invalid();
+    return Err<LanguageSystem, FontError>(error: invalid);
+  }
+  let total = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+  let count = cvt::<u16, u64>(total);
+  for (index in 0_u64..count) {
+    let index_at = record_at(header: 6_u64, index: index, size: 2_u64);
+    let feature = propagate read_u16(bytes: table, base: at, offset: index_at);
+    if feature >= feature_count {
+      let invalid = FontError::Invalid();
+      return Err<LanguageSystem, FontError>(error: invalid);
+    }
+    let pushed = propagate push::<u16>(list: &builder^.layout.language_features, value: feature, ceiling: ceiling);
+  }
+  let features = propagate extent_since::<u16>(list: &builder^.layout.language_features, start: start);
+  let system = LanguageSystem(tag: tag, required_feature: required, features: features);
+  return Ok<LanguageSystem, FontError>(value: system);
+}
+
+fn compile_features(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<unit, FontError> reads(table), writes(builder) {
+  doc "Compiles the FeatureList at at (none when at is 0): each feature's tag and lookup indices, each of which must be below the lookup count. A null Feature offset gives a feature with no lookups; feature parameters are not read.";
+  if at == 0_u64 {
+    return Ok<unit, FontError>(value: unit);
+  }
+  let ceiling = builder^.ceiling;
+  let lookup_count = builder^.lookup_count;
+  let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let count = cvt::<u16, u64>(total);
+  for (index in 0_u64..count) {
+    let record = record_at(header: 2_u64, index: index, size: 6_u64);
+    let offset_at = record + 4_u64;
+    let tag = propagate read_u32(bytes: table, base: at, offset: record);
+    let feature_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let start = propagate next_index::<u16>(list: &builder^.layout.feature_lookups);
+    if feature_at != 0_u64 {
+      let lookup_total = propagate read_u16(bytes: table, base: feature_at, offset: 2_u64);
+      let lookups = cvt::<u16, u64>(lookup_total);
+      for (lookup_index in 0_u64..lookups) {
+        let index_at = record_at(header: 4_u64, index: lookup_index, size: 2_u64);
+        let lookup = propagate read_u16(bytes: table, base: feature_at, offset: index_at);
+        if lookup >= lookup_count {
+          let invalid = FontError::Invalid();
+          return Err<unit, FontError>(error: invalid);
+        }
+        let pushed = propagate push::<u16>(list: &builder^.layout.feature_lookups, value: lookup, ceiling: ceiling);
+      }
+    }
+    let lookups_run = propagate extent_since::<u16>(list: &builder^.layout.feature_lookups, start: start);
+    let feature = FeatureRecord(tag: tag, lookups: lookups_run);
+    let pushed = propagate push::<FeatureRecord>(list: &builder^.layout.features, value: feature, ceiling: ceiling);
+  }
+  return Ok<unit, FontError>(value: unit);
+}
+
+fn compile_lookups(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<unit, FontError> reads(table), writes(builder) {
+  doc "Compiles every lookup of the LookupList at at (none when at is 0), in order, so that a lookup's index in the font is its index in lookups.";
+  if at == 0_u64 {
+    return Ok<unit, FontError>(value: unit);
+  }
+  let ceiling = builder^.ceiling;
+  let total = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let count = cvt::<u16, u64>(total);
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: 2_u64, index: index, size: 2_u64);
+    let lookup_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let lookup = propagate compile_lookup(table: table, at: lookup_at, builder: builder);
+    let pushed = propagate push::<Lookup>(list: &builder^.layout.lookups, value: lookup, ceiling: ceiling);
+  }
+  return Ok<unit, FontError>(value: unit);
+}
+
+fn compile_lookup(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<Lookup, FontError> reads(table), writes(builder) {
+  doc "Compiles the Lookup table at at. An extension lookup takes the type its subtables wrap, which must be the same for all of them and is read from each ExtensionFormat1 subtable (format 1), following its Offset32. Only the subtables of the types shape_run applies are compiled; a null subtable offset, which never applies, is skipped, and a null Lookup offset gives a lookup of type 0 with no subtables.";
+  let start = propagate next_index::<Subtable>(list: &builder^.layout.subtables);
+  let none = Extent(start: start, count: 0_u32);
+  if at == 0_u64 {
+    let absent = Lookup(lookup_type: 0_u16, flags: 0_u16, mark_filtering_set: 0_u16, subtables: none);
+    return Ok<Lookup, FontError>(value: absent);
+  }
+  let declared_type = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  let flags = propagate read_u16(bytes: table, base: at, offset: 2_u64);
+  let total = propagate read_u16(bytes: table, base: at, offset: 4_u64);
+  let count = cvt::<u16, u64>(total);
+  let filtering = iand(flags, use_mark_filtering_set);
+  let mark_filtering_set = if filtering != 0_u16 {
+    let set_at = record_at(header: 6_u64, index: count, size: 2_u64);
+    let filter_set = propagate read_u16(bytes: table, base: at, offset: set_at);
+    give filter_set;
+  } else {
+    give 0_u16;
+  }
+  let extension_type = match builder^.kind {
+    Substitution() => {
+      give substitution_extension;
+    }
+    Positioning() => {
+      give positioning_extension;
+    }
+  }
+  let extended = declared_type == extension_type;
+  let lookup_type = if extended {
+    let wrapped = propagate extension_lookup_type(table: table, at: at, count: count);
+    give wrapped;
+  } else {
+    give declared_type;
+  }
+  let table_kind = builder^.kind;
+  match subtable_kind(kind: table_kind, lookup_type: lookup_type) {
+    Some(value: compiled_kind) => {
+      for (index in 0_u64..count) {
+        let offset_at = record_at(header: 6_u64, index: index, size: 2_u64);
+        let subtable_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+        let target = if extended {
+          let wrapped_at = propagate extension_target(table: table, at: subtable_at);
+          give wrapped_at;
+        } else {
+          give subtable_at;
+        }
+        if target != 0_u64 {
+          let entered = propagate compile_subtable(table: table, at: target, kind: compiled_kind, builder: builder);
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let subtables = propagate extent_since::<Subtable>(list: &builder^.layout.subtables, start: start);
+  let lookup = Lookup(lookup_type: lookup_type, flags: flags, mark_filtering_set: mark_filtering_set, subtables: subtables);
+  return Ok<Lookup, FontError>(value: lookup);
+}
+
+fn extension_lookup_type(table: &[u8], at: u64, count: u64) -> result: Result<u16, FontError> reads(table) contract {
+  requires count <= 65535_u64;
+} {
+  doc "Returns the type the extension subtables of the lookup at at wrap, which must be the same for all count of them; the extension type itself for a lookup with no non-null subtable. Each subtable must be ExtensionFormat1.";
+  let wrapped = 0_u16;
+  let seen = False();
+  for (index in 0_u64..count) {
+    let offset_at = record_at(header: 6_u64, index: index, size: 2_u64);
+    let subtable_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    if subtable_at != 0_u64 {
+      let format = propagate read_u16(bytes: table, base: subtable_at, offset: 0_u64);
+      let inner = propagate read_u16(bytes: table, base: subtable_at, offset: 2_u64);
+      let unknown = format != 1_u16;
+      let different = inner != wrapped;
+      let mixed = band(seen, different);
+      let malformed = bor(unknown, mixed);
+      if malformed {
+        let invalid = FontError::Invalid();
+        return Err<u16, FontError>(error: invalid);
+      }
+      set wrapped = inner;
+      set seen = True();
+    }
+  }
+  if seen {
+    return Ok<u16, FontError>(value: wrapped);
+  }
+  let declared = propagate read_u16(bytes: table, base: at, offset: 0_u64);
+  return Ok<u16, FontError>(value: declared);
+}
+
+fn extension_target(table: &[u8], at: u64) -> result: Result<u64, FontError> reads(table) {
+  doc "Returns the position of the subtable the extension subtable at at wraps, or 0 when at or its Offset32 is null; extension_lookup_type has checked its format and type.";
+  if at == 0_u64 {
+    return Ok<u64, FontError>(value: 0_u64);
+  }
+  let target = propagate follow32(bytes: table, base: at, offset: 4_u64);
+  return Ok<u64, FontError>(value: target);
+}
+
+fn subtable_kind(kind: TableKind, lookup_type: u16) -> result: Option<SubtableKind> pure {
+  doc "Returns the compiled subtable kind of a lookup type shape_run applies: GSUB types 1, 2, 4 and 6, and GPOS types 1, 2, 4, 5, 6 and 8; None for every other type.";
+  match kind {
+    Substitution() => {
+      if lookup_type == 1_u16 {
+        let found = SubtableKind::SingleSubstitution();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 2_u16 {
+        let found = SubtableKind::MultipleSubstitution();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 4_u16 {
+        let found = SubtableKind::LigatureSubstitution();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 6_u16 {
+        let found = SubtableKind::ChainedContext();
+        return Some<SubtableKind>(value: found);
+      }
+      return None<SubtableKind>();
+    }
+    Positioning() => {
+      if lookup_type == 1_u16 {
+        let found = SubtableKind::SinglePositioning();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 2_u16 {
+        let found = SubtableKind::PairPositioning();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 4_u16 {
+        let found = SubtableKind::MarkToBase();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 5_u16 {
+        let found = SubtableKind::MarkToLigature();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 6_u16 {
+        let found = SubtableKind::MarkToMark();
+        return Some<SubtableKind>(value: found);
+      }
+      if lookup_type == 8_u16 {
+        let found = SubtableKind::ChainedContext();
+        return Some<SubtableKind>(value: found);
+      }
+      return None<SubtableKind>();
+    }
+  }
+}

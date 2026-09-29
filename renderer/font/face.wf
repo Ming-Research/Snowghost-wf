@@ -1,0 +1,188 @@
+const head_name: Array<u8, 4> = "head";
+
+const hhea_name: Array<u8, 4> = "hhea";
+
+const maxp_name: Array<u8, 4> = "maxp";
+
+const hmtx_name: Array<u8, 4> = "hmtx";
+
+const cmap_name: Array<u8, 4> = "cmap";
+
+const os2_name: Array<u8, 4> = "OS/2";
+
+const gdef_name: Array<u8, 4> = "GDEF";
+
+const gsub_name: Array<u8, 4> = "GSUB";
+
+const gpos_name: Array<u8, 4> = "GPOS";
+
+const fvar_name: Array<u8, 4> = "fvar";
+
+const cff2_name: Array<u8, 4> = "CFF2";
+
+fn load_face(data: &[u8]) -> result: Result<Face, FontError> reads(data) contract {
+  requires data^.len <= 268435456_u64;
+} {
+  doc "Checks the table directory, refuses what the interface leaves unsupported, checks and compiles the core tables, whose failure refuses the font, and compiles GDEF, GSUB and GPOS, each of which is dropped when it fails its checks.";
+  let directory = propagate check_directory(data: data);
+  let fvar = propagate find_table(data: data, name: &fvar_name);
+  let cff2 = propagate find_table(data: data, name: &cff2_name);
+  let variable = bor(fvar.present, cff2.present);
+  if variable {
+    let refusal = FontError::Unsupported();
+    return Err<Face, FontError>(error: refusal);
+  }
+  let length = data^.len;
+  let head_span = propagate required_table(data: data, name: &head_name);
+  let (head_start, head_end) = checked_range(start: head_span.start, end: head_span.end, length: length);
+  let head = &data^[head_start..head_end];
+  let units_per_em = propagate read_head(table: head);
+  let maxp_span = propagate required_table(data: data, name: &maxp_name);
+  let (maxp_start, maxp_end) = checked_range(start: maxp_span.start, end: maxp_span.end, length: length);
+  let maxp = &data^[maxp_start..maxp_end];
+  let glyph_total = propagate read_maxp(table: maxp);
+  let glyph_count = cvt::<u16, u64>(glyph_total);
+  let hhea_span = propagate required_table(data: data, name: &hhea_name);
+  let (hhea_start, hhea_end) = checked_range(start: hhea_span.start, end: hhea_span.end, length: length);
+  let hhea = &data^[hhea_start..hhea_end];
+  let horizontal = propagate read_hhea(table: hhea);
+  let hmtx_span = propagate required_table(data: data, name: &hmtx_name);
+  let (hmtx_start, hmtx_end) = checked_range(start: hmtx_span.start, end: hmtx_span.end, length: length);
+  let hmtx = &data^[hmtx_start..hmtx_end];
+  let metric_count = cvt::<u16, u64>(horizontal.metric_count);
+  let advances = propagate compile_advances(table: hmtx, glyph_count: glyph_count, metric_count: metric_count);
+  let os2_span = propagate find_table(data: data, name: &os2_name);
+  let windows = if os2_span.present {
+    let (os2_start, os2_end) = checked_range(start: os2_span.start, end: os2_span.end, length: length);
+    let os2 = &data^[os2_start..os2_end];
+    let read = propagate read_os2(table: os2);
+    give read;
+  } else {
+    let absent = no_windows_metrics();
+    give absent;
+  }
+  let cmap_span = propagate required_table(data: data, name: &cmap_name);
+  let (cmap_start, cmap_end) = checked_range(start: cmap_span.start, end: cmap_span.end, length: length);
+  let cmap = &data^[cmap_start..cmap_end];
+  let characters = propagate compile_character_map(cmap: cmap, glyph_count: glyph_count);
+  let definitions = propagate optional_definitions(data: data, glyph_count: glyph_count);
+  let substitution_kind = TableKind::Substitution();
+  let positioning_kind = TableKind::Positioning();
+  let substitutions = propagate optional_layout(data: data, name: &gsub_name, kind: substitution_kind, glyph_count: glyph_count);
+  let positions = propagate optional_layout(data: data, name: &gpos_name, kind: positioning_kind, glyph_count: glyph_count);
+  let metrics = FaceMetrics(units_per_em: units_per_em, glyph_count: glyph_total, hhea_ascender: horizontal.ascender, hhea_descender: horizontal.descender, hhea_line_gap: horizontal.line_gap, typo_ascender: windows.typo_ascender, typo_descender: windows.typo_descender, typo_line_gap: windows.typo_line_gap, use_typo_metrics: windows.use_typo_metrics, win_ascent: windows.win_ascent, win_descent: windows.win_descent);
+  let face = Face(metrics: metrics, advances: move advances, characters: move characters, definitions: move definitions, substitutions: move substitutions, positions: move positions);
+  return Ok<Face, FontError>(value: move face);
+}
+
+fn optional_definitions(data: &[u8], glyph_count: u64) -> result: Result<GlyphDefinitions, FontError> reads(data) contract {
+  requires glyph_count <= 65535_u64;
+  requires data^.len <= 268435456_u64;
+} {
+  doc "Compiles GDEF when the font has it and it passes its checks, and otherwise returns the definitions of a face without GDEF. TooLarge from compiling it refuses the font.";
+  let span = propagate find_table(data: data, name: &gdef_name);
+  if span.present {
+    let (start, end) = checked_range(start: span.start, end: span.end, length: data^.len);
+    let gdef = &data^[start..end];
+    match compile_definitions(gdef: gdef, glyph_count: glyph_count) {
+      Ok(value: compiled) => {
+        return Ok<GlyphDefinitions, FontError>(value: move compiled);
+      }
+      Err(error: problem) => {
+        let dropped = propagate droppable(problem: problem);
+      }
+    }
+  }
+  let absent = no_glyph_definitions(glyph_count: glyph_count);
+  return Ok<GlyphDefinitions, FontError>(value: move absent);
+}
+
+fn optional_layout(data: &[u8], name: &Array<u8, 4>, kind: TableKind, glyph_count: u64) -> result: Result<LayoutTable, FontError> reads(data), reads(name) contract {
+  requires data^.len <= 268435456_u64;
+  requires glyph_count <= 65535_u64;
+} {
+  doc "Compiles the GSUB or GPOS table name when the font has it and it passes its checks, with the lookup filters for glyph_count glyphs, and otherwise returns the empty table of a face without it. TooLarge from compiling it refuses the font.";
+  let span = propagate find_table(data: data, name: name);
+  if span.present {
+    let (start, end) = checked_range(start: span.start, end: span.end, length: data^.len);
+    let table = &data^[start..end];
+    match compile_layout(table: table, kind: kind) {
+      Ok(value: compiled) => {
+        build_filters(layout: &compiled, glyph_count: glyph_count);
+        return Ok<LayoutTable, FontError>(value: move compiled);
+      }
+      Err(error: problem) => {
+        let dropped = propagate droppable(problem: problem);
+      }
+    }
+  }
+  let absent = empty_layout();
+  return Ok<LayoutTable, FontError>(value: move absent);
+}
+
+fn droppable(problem: FontError) -> result: Result<unit, FontError> pure {
+  doc "Tells what a failure to compile GDEF, GSUB or GPOS does: Ok for Invalid (and Unsupported, which those checks never return), so the table is dropped, and TooLarge passed on, so the font is refused.";
+  match problem {
+    Invalid() => {
+      return Ok<unit, FontError>(value: unit);
+    }
+    Unsupported() => {
+      return Ok<unit, FontError>(value: unit);
+    }
+    TooLarge() => {
+      let refusal = FontError::TooLarge();
+      return Err<unit, FontError>(error: refusal);
+    }
+  }
+}
+
+fn required_table(data: &[u8], name: &Array<u8, 4>) -> result: Result<TableSpan, FontError> reads(data), reads(name) {
+  doc "Returns where the table name lies; Invalid when the directory does not list it.";
+  let span = propagate find_table(data: data, name: name);
+  if span.present {
+    return Ok<TableSpan, FontError>(value: span);
+  }
+  let invalid = FontError::Invalid();
+  return Err<TableSpan, FontError>(error: invalid);
+}
+
+fn face_metrics(face: &Face) -> result: FaceMetrics reads(face) {
+  doc "Returns the metrics load_face read.";
+  let metrics = face^.metrics;
+  return metrics;
+}
+
+fn glyph_advance(face: &Face, glyph: u16) -> result: u16 reads(face) {
+  doc "Returns glyph's compiled advance, 0 past the glyph count.";
+  let index = cvt::<u16, u64>(glyph);
+  let count = face^.advances.inner.len;
+  if index < count {
+    let advance = face^.advances.inner[index];
+    return advance;
+  }
+  return 0_u16;
+}
+
+fn glyph_class(face: &Face, glyph: u16) -> result: GlyphClass reads(face) {
+  doc "Returns glyph's compiled GDEF class, Unclassified past the compiled classes.";
+  let index = cvt::<u16, u64>(glyph);
+  let count = face^.definitions.glyph_classes.inner.len;
+  if index < count {
+  } else {
+    return GlyphClass::Unclassified();
+  }
+  let class = face^.definitions.glyph_classes.inner[index];
+  if class == 1_u8 {
+    return GlyphClass::Base();
+  }
+  if class == 2_u8 {
+    return GlyphClass::Ligature();
+  }
+  if class == 3_u8 {
+    return GlyphClass::Mark();
+  }
+  if class == 4_u8 {
+    return GlyphClass::Component();
+  }
+  return GlyphClass::Unclassified();
+}

@@ -1,0 +1,296 @@
+fn dummy_url() -> result: Url pure {
+  doc "A placeholder Url for parse_url's call into the shared parser core, which never reads it since has_base is False there.";
+  let href = box_slots_new::<u8>(capacity: 0_u64);
+  let zero_span = UrlSpan(start: 0_u32, end: 0_u32);
+  let absent = HostKind::Absent();
+  let none_port = None<u16>();
+  let none_q = None<UrlSpan>();
+  let none_f = None<UrlSpan>();
+  let opaque_flag = False();
+  let url = Url(href: move href, scheme: zero_span, username: zero_span, password: zero_span, host: zero_span, host_kind: absent, port: none_port, path: zero_span, opaque_path: opaque_flag, query: none_q, fragment: none_f);
+  return move url;
+}
+
+fn span_bounds_checked(href_len: u64, span: UrlSpan) -> (ok: Bool, start: u64, end: u64) pure contract {
+  ensures start <= end;
+  ensures end <= href_len;
+} {
+  doc "Widens span to u64 and checks it lies within an href of href_len bytes. Start and end are always within [0, href_len] with start <= end, clamped when the span itself is not (ok then False and the clamped bounds carry no meaning callers should use).";
+  let s = cvt::<u32, u64>(span.start);
+  let e = cvt::<u32, u64>(span.end);
+  let ordered = s <= e;
+  let within = e <= href_len;
+  let ok = band(ordered, within);
+  let clamped_e = e;
+  let e_too_far = clamped_e > href_len;
+  if e_too_far {
+    set clamped_e = href_len;
+  }
+  let clamped_s = s;
+  let s_too_far = clamped_s > clamped_e;
+  if s_too_far {
+    set clamped_s = clamped_e;
+  }
+  return ok, clamped_s, clamped_e;
+}
+
+fn base_scheme_is_file(base: &Url) -> result: Bool reads(base) {
+  doc "True when base's scheme is \"file\".";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.scheme);
+  if ok {
+  } else {
+    return False();
+  }
+  let bytes = &base^.href.inner[s..e];
+  let kind = classify_scheme(scheme: bytes);
+  let file = scheme_is_file(kind: kind);
+  return file;
+}
+
+fn base_scheme_matches(base: &Url, scheme: &[u8]) -> result: Bool reads(base), reads(scheme) {
+  doc "True when base's scheme bytes equal scheme.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.scheme);
+  if ok {
+  } else {
+    return False();
+  }
+  let bytes = &base^.href.inner[s..e];
+  let eq = bytes_equal(a: bytes, b: scheme);
+  return eq;
+}
+
+fn copy_scheme_from_base(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Copies base's (already-lowercase) scheme bytes into b's scheme and classifies it.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.scheme);
+  if ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let bytes = &base^.href.inner[s..e];
+  let pushed = propagate push_bytes(buffer: &b^.scheme, bytes: bytes);
+  let finished = finish_scheme(b: b);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn base_host_value(base: &Url) -> result: Result<HostValue, UrlError> reads(base) {
+  doc "Reconstructs base's host as a HostValue by re-deriving it from the serialized host text the host serializer wrote.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.host);
+  if ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<HostValue, UrlError>(error: failure);
+  }
+  let bytes = &base^.href.inner[s..e];
+  match base^.host_kind {
+    Absent() => {
+      let host = HostValue::Absent();
+      return Ok<HostValue, UrlError>(value: move host);
+    }
+    Empty() => {
+      let host = HostValue::Empty();
+      return Ok<HostValue, UrlError>(value: move host);
+    }
+    Domain() => {
+      let copied = box_slots_new::<u8>(capacity: 64_u64);
+      let pushed = propagate push_bytes(buffer: &copied, bytes: bytes);
+      let host = HostValue::Domain(bytes: move copied);
+      return Ok<HostValue, UrlError>(value: move host);
+    }
+    Opaque() => {
+      let copied = box_slots_new::<u8>(capacity: 64_u64);
+      let pushed = propagate push_bytes(buffer: &copied, bytes: bytes);
+      let host = HostValue::Opaque(bytes: move copied);
+      return Ok<HostValue, UrlError>(value: move host);
+    }
+    Ipv4() => {
+      match parse_ipv4_address(input: bytes) {
+        Some(value: address) => {
+          let host = HostValue::Ipv4(address: address);
+          return Ok<HostValue, UrlError>(value: move host);
+        }
+        None() => {
+          let failure = UrlError::Failure();
+          return Err<HostValue, UrlError>(error: failure);
+        }
+      }
+    }
+    Ipv6() => {
+      let length = bytes^.len;
+      let has_two = length >= 2_u64;
+      if has_two {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<HostValue, UrlError>(error: failure);
+      }
+      let inner_end = length -wrap 1_u64;
+      let ok2 = inner_end <= length;
+      if ok2 {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<HostValue, UrlError>(error: failure);
+      }
+      let inner = &bytes^[1_u64..inner_end];
+      match parse_ipv6_address(input: inner) {
+        Some(value: pieces) => {
+          let host = HostValue::Ipv6(pieces: pieces);
+          return Ok<HostValue, UrlError>(value: move host);
+        }
+        None() => {
+          let failure = UrlError::Failure();
+          return Err<HostValue, UrlError>(error: failure);
+        }
+      }
+    }
+  }
+}
+
+fn copy_host_port_from_base(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Copies base's host and port into b.";
+  let host = propagate base_host_value(base: base);
+  builder_set_host(b: b, host: move host);
+  set b^.port = base^.port;
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn copy_userinfo_host_port_from_base(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Copies base's username, password, host and port into b.";
+  let href_len = base^.href.inner.len;
+  let (uok, us, ue) = span_bounds_checked(href_len: href_len, span: base^.username);
+  if uok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let ubytes = &base^.href.inner[us..ue];
+  let upushed = propagate push_bytes(buffer: &b^.username, bytes: ubytes);
+  let (pok, ps, pe) = span_bounds_checked(href_len: href_len, span: base^.password);
+  if pok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let pbytes = &base^.href.inner[ps..pe];
+  let ppushed = propagate push_bytes(buffer: &b^.password, bytes: pbytes);
+  let done = propagate copy_host_port_from_base(b: b, base: base);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn copy_query_from_base(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Copies base's query, if any, into b.";
+  match base^.query {
+    Some(value: span) => {
+      let href_len = base^.href.inner.len;
+      let (ok, s, e) = span_bounds_checked(href_len: href_len, span: span^);
+      if ok {
+      } else {
+        let failure = UrlError::Failure();
+        return Err<unit, UrlError>(error: failure);
+      }
+      let bytes = &base^.href.inner[s..e];
+      let pushed = propagate push_bytes(buffer: &b^.query_buf, bytes: bytes);
+      set b^.has_query = True();
+    }
+    None() => {
+    }
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn clone_list_path_from_base(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Clones base's list path into b's path.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.path);
+  if ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let bytes = &base^.href.inner[s..e];
+  let cloned = propagate path_clone_list_from_base(b: b, base_path: bytes);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn clone_opaque_path_from_base(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Clones base's opaque path into b's path, verbatim.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.path);
+  if ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let bytes = &base^.href.inner[s..e];
+  let cloned = propagate opaque_path_clone_from_base(b: b, base_path: bytes);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn base_path_first_segment_is_normalized_drive_letter(base: &Url) -> result: Bool reads(base) {
+  doc "True when base's list path's first segment is a normalized Windows drive letter.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.path);
+  if ok {
+  } else {
+    return False();
+  }
+  let bytes = &base^.href.inner[s..e];
+  let length = bytes^.len;
+  let has_content = length > 1_u64;
+  if has_content {
+  } else {
+    return False();
+  }
+  let seg_end = find_byte_or_end(input: bytes, start: 1_u64, length: length, target: 47_u8);
+  let ok2 = seg_end <= length;
+  if ok2 {
+  } else {
+    return False();
+  }
+  let piece = &bytes^[1_u64..seg_end];
+  let drive = is_windows_drive_letter(input: piece);
+  if drive {
+  } else {
+    return False();
+  }
+  let piece_len = piece^.len;
+  let has_two = piece_len >= 2_u64;
+  if has_two {
+  } else {
+    return False();
+  }
+  let second = piece^[1_u64];
+  let colon = second == 58_u8;
+  return colon;
+}
+
+fn path_push_base_first_segment(b: &Builder, base: &Url) -> result: Result<unit, UrlError> reads(base), writes(b) {
+  doc "Appends base's list path's first segment verbatim as one more segment of b's path.";
+  let href_len = base^.href.inner.len;
+  let (ok, s, e) = span_bounds_checked(href_len: href_len, span: base^.path);
+  if ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let bytes = &base^.href.inner[s..e];
+  let length = bytes^.len;
+  let has_content = length > 1_u64;
+  if has_content {
+  } else {
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let seg_end = find_byte_or_end(input: bytes, start: 1_u64, length: length, target: 47_u8);
+  let ok2 = seg_end <= length;
+  if ok2 {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let piece = &bytes^[1_u64..seg_end];
+  let pushed = propagate path_push_segment_raw(b: b, bytes: piece);
+  return Ok<unit, UrlError>(value: unit);
+}

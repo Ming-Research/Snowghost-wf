@@ -26,6 +26,16 @@ example apart from the renderer code that exposed it
   open that follows links. Reopen when oracle runs from such worktrees are
   needed.
 
+- **No rounding conversion between float formats.** [OP-6]'s `cvt`
+  from f64 to f32 is defined only for a value exactly representable in
+  f32, and no operation rounds. `pkg::css::color` therefore narrows its
+  channels by IEEE 754 round-to-nearest-even computed from the bits
+  (`narrow_f32`, flushing results below f32's normal range to zero). A
+  minimal example: `let x = fdiv.strict(136.0_f64, 255.0_f64);` has no
+  total conversion to the nearest f32. Change: a total rounding conversion
+  for float destinations. Reopen when Whitefoot adds one; then replace
+  `narrow_f32`.
+
 ## Snowghost
 
 - **No mechanical check for documents and artifacts.** `make check` does not
@@ -75,3 +85,61 @@ example apart from the renderer code that exposed it
   four `webkit02.dat` cases that observe it. Change: implement the element
   behaviour where DOM insertion steps live. Reopen when form controls are
   rendered.
+- **pkg::css::color covers CSS Color Module Level 4 only.** System colors,
+  `color-mix()`, `light-dark()`, relative color syntax, `calc()` in
+  channels and the Level 5 spaces (`device-cmyk()`, `@color-profile`
+  spaces) parse as Invalid, and `color_functions_5.json` is not in the
+  oracle. Impact: pages using them lose the declaration. Change: extend
+  `ParsedColor` and the parser, and add the suite. Reopen when the style
+  system resolves colors, or a page in the corpus uses one.
+- **pkg::text::normalization has NFC and NFD only.** NFKC and NFKD, and
+  their NormalizationTest.txt invariants, are not implemented: IDNA needs
+  NFC only. Change: add the compatibility decompositions to the generated
+  tables and two NormalizationForm variants. Reopen when a consumer needs a
+  compatibility form.
+- **pkg::url computes no origin or search parameters and encodes queries
+  as UTF-8 only.** The record has no origin (blob: URLs and opaque origins
+  need modelling) and no application/x-www-form-urlencoded parsing, and a
+  document's non-UTF-8 encoding does not reach the query's
+  percent-encoding; WPT's origin and searchParams fields are not compared.
+  Change: add an origin function and a search-parameter parser, and an
+  encoding argument once text decoding exists. Reopen when fetch or
+  same-origin checks need an origin, or a legacy-encoded page is loaded.
+- **Punycode encoding is quadratic in the worst case.**
+  `pkg::text::idna`'s encoder follows RFC 3492's reference structure: it
+  scans the whole label once per distinct non-ASCII code point, so a label
+  of n strictly ascending distinct code points costs O(n^2). With
+  VerifyDnsLength false a label has no length limit, so a hostile URL can
+  reach it. Change: sort the label's non-ASCII code points once and walk
+  them in order. Reopen when URL parsing runs on untrusted input at scale,
+  or a profile shows it.
+- **pkg::oracle::support has no signed decimal writer.** The font drivers
+  print negative metrics, advances and offsets, so `pkg::oracle::font_face`
+  (`put_signed_field`) and `pkg::oracle::font_shape` (`put_signed_item`)
+  each carry the same sign-and-magnitude step beside support's unsigned
+  `put_decimal`. Change: add a signed writer to support's interface and use
+  it in both drivers. Reopen when a third driver prints signed numbers or
+  support's interface next changes.
+- **pkg::font reads only raw sfnt fonts for simple scripts.** WOFF and
+  WOFF2 (which needs a Brotli decoder), font collections, variable fonts
+  and CFF2 are refused as Unsupported; shaping covers horizontal
+  left-to-right Latin, Greek and Cyrillic with HarfBuzz's default
+  features, not the complex-script shapers (Arabic, Indic, Khmer,
+  Myanmar, Hangul, Thai), vertical text, cmap format 14 variation
+  selectors or the GSUB and GPOS lookup types outside the listed ones;
+  and load_face validates only the tables shaping reads, not the outline
+  tables (glyf, loca, CFF) the shell's rasterizer will read. Impact: web
+  fonts, which are mostly WOFF2, and pages in other scripts cannot use
+  their fonts yet. Change: a WOFF2 and Brotli leaf, outline validation
+  before any font reaches the shell, and one shaper leaf per script
+  family. Reopen when the first page needs a web font, a non-Latin script
+  beyond Greek and Cyrillic, or the shell rasterizes.
+- **load_face ignores a whole malformed GDEF, GSUB or GPOS table.** Chrome
+  passes these tables to HarfBuzz unsanitized, and HarfBuzz's sanitizer
+  neuters each offset it cannot follow, so the lookups that parse still
+  apply. pkg::font drops the whole table instead. The two agree when the
+  table is unreadable as a whole or when the neutered offset is the only
+  structure a feature uses; otherwise a font with one broken lookup loses
+  its other lookups here. Change: validate per lookup and ignore only the
+  failing lookup, matching HarfBuzz's neutering. Reopen when a real web
+  font with a partly broken layout table renders differently from Chrome.

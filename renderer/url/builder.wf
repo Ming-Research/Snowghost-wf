@@ -1,0 +1,306 @@
+struct PathSpan {
+  start: u64;
+  end: u64;
+}
+
+struct Builder {
+  scheme: Box<Slots<u8>>;
+  kind: SpecialScheme;
+  is_special: Bool;
+  host: HostValue;
+  has_host: Bool;
+  username: Box<Slots<u8>>;
+  password: Box<Slots<u8>>;
+  port: Option<u16>;
+  opaque_path: Bool;
+  path_text: Box<Slots<u8>>;
+  path_spans: Box<Slots<PathSpan>>;
+  query_buf: Box<Slots<u8>>;
+  has_query: Bool;
+  fragment_buf: Box<Slots<u8>>;
+  has_fragment: Bool;
+}
+
+fn new_builder() -> result: Builder pure {
+  doc "A fresh Builder for a new URL record: empty scheme, no host, no credentials, no port, an empty list path, and no query or fragment.";
+  let scheme = box_slots_new::<u8>(capacity: 0_u64);
+  let username = box_slots_new::<u8>(capacity: 0_u64);
+  let password = box_slots_new::<u8>(capacity: 0_u64);
+  let path_text = box_slots_new::<u8>(capacity: 0_u64);
+  let path_spans = box_slots_new::<PathSpan>(capacity: 0_u64);
+  let query_buf = box_slots_new::<u8>(capacity: 0_u64);
+  let fragment_buf = box_slots_new::<u8>(capacity: 0_u64);
+  let not_special = SpecialScheme::NotSpecial();
+  let absent_host = HostValue::Absent();
+  let no_port = None<u16>();
+  let not_special_flag = False();
+  let no_host_flag = False();
+  let no_opaque = False();
+  let no_query_flag = False();
+  let no_fragment_flag = False();
+  let built = Builder(scheme: move scheme, kind: not_special, is_special: not_special_flag, host: move absent_host, has_host: no_host_flag, username: move username, password: move password, port: no_port, opaque_path: no_opaque, path_text: move path_text, path_spans: move path_spans, query_buf: move query_buf, has_query: no_query_flag, fragment_buf: move fragment_buf, has_fragment: no_fragment_flag);
+  return move built;
+}
+
+fn finish_scheme(b: &Builder) -> result: unit writes(b) {
+  doc "Classifies the scheme bytes already pushed to b's scheme buffer and records its SpecialScheme kind and speciality.";
+  let length = b^.scheme.inner.len;
+  let bytes = &b^.scheme.inner[0_u64..length];
+  let kind = classify_scheme(scheme: bytes);
+  let special = scheme_is_special(kind: kind);
+  set b^.kind = kind;
+  set b^.is_special = special;
+  return unit;
+}
+
+fn builder_set_host(b: &Builder, host: HostValue) -> result: unit writes(b) {
+  doc "Records host as b's host, present (non-null).";
+  set b^.host = move host;
+  set b^.has_host = True();
+  return unit;
+}
+
+fn builder_set_port(b: &Builder, port: u16) -> result: unit writes(b) {
+  doc "Records port as b's port, unless it equals the current scheme's default port, in which case the port is left null.";
+  let default_port = scheme_default_port(kind: b^.kind);
+  let matches_default = match default_port {
+    Some(value: dp) => {
+      give dp == port;
+    }
+    None() => {
+      give False();
+    }
+  }
+  if matches_default {
+    let cleared = None<u16>();
+    set b^.port = cleared;
+  } else {
+    let some_port = Some<u16>(value: port);
+    set b^.port = some_port;
+  }
+  return unit;
+}
+
+fn find_byte_or_end(input: &[u8], start: u64, length: u64, target: u8) -> result: u64 reads(input) contract {
+  requires start <= length;
+  requires length == input^.len;
+  ensures result >= start;
+  ensures result <= length;
+} {
+  doc "Returns the index of the first byte equal to target at or after start, or length when there is none.";
+  let pos = start;
+  loop @scan (
+    invariant pos_bounded: pos <= length
+  ) {
+    let more = pos < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = input^[pos];
+    let found = byte == target;
+    if found {
+      break @scan;
+    }
+    let next = pos +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  let result = pos;
+  let too_far = result > length;
+  if too_far {
+    set result = length;
+  }
+  let too_near = result < start;
+  if too_near {
+    set result = start;
+  }
+  return result;
+}
+
+fn count_decimal_digits(value: u64) -> result: u64 pure {
+  doc "The number of decimal digits needed to write value, at least one.";
+  let v = value;
+  let count = 1_u64;
+  loop @count {
+    let more = v >= 10_u64;
+    if more {
+    } else {
+      break @count;
+    }
+    set v = v / 10_u64;
+    set count = count +wrap 1_u64;
+  }
+  return count;
+}
+
+fn pow10(exp: u64) -> result: u64 pure contract {
+  requires exp <= 19_u64;
+} {
+  doc "10 to the exp power, for exp up to 19 (within u64).";
+  let v = 1_u64;
+  for (i in 0_u64..exp) {
+    set v = v *wrap 10_u64;
+  }
+  return v;
+}
+
+fn push_decimal(buffer: &Box<Slots<u8>>, value: u64) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "Appends the decimal digits of value, at least one digit, most significant first.";
+  let count = count_decimal_digits(value: value);
+  let bounded_count = count;
+  let too_many = bounded_count > 20_u64;
+  if too_many {
+    set bounded_count = 20_u64;
+  }
+  for (i in 0_u64..bounded_count) {
+    let last = bounded_count -wrap 1_u64;
+    let remaining = last -wrap i;
+    let bounded_remaining = remaining;
+    let over = bounded_remaining > 19_u64;
+    if over {
+      set bounded_remaining = 19_u64;
+    }
+    let divisor = pow10(exp: bounded_remaining);
+    let safe_divisor = divisor;
+    let zero_divisor = safe_divisor == 0_u64;
+    if zero_divisor {
+      set safe_divisor = 1_u64;
+    }
+    let quotient = value / safe_divisor;
+    let digit64 = quotient % 10_u64;
+    let digit8 = cvt.wrap::<u64, u8>(digit64);
+    let byte = digit8 +wrap 48_u8;
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn finalize_url(b: &Builder) -> result: Result<Url, UrlError> reads(b) {
+  doc "Assembles href and every span from b's components, in the order the URL serializer writes them, and builds the public Url record.";
+  let href = box_slots_new::<u8>(capacity: 256_u64);
+  let scheme_len = b^.scheme.inner.len;
+  let scheme_bytes = &b^.scheme.inner[0_u64..scheme_len];
+  let scheme_written = propagate push_bytes(buffer: &href, bytes: scheme_bytes);
+  let scheme_start = 0_u64;
+  let scheme_end = href.inner.len;
+  let colon_written = propagate push_byte(buffer: &href, value: 58_u8);
+  let absent = host_is_absent(host: &b^.host);
+  let username_start = 0_u64;
+  let username_end = 0_u64;
+  let password_start = 0_u64;
+  let password_end = 0_u64;
+  let host_start = 0_u64;
+  let host_end = 0_u64;
+  let port_value = b^.port;
+  if absent {
+    let cur = href.inner.len;
+    set username_start = cur;
+    set username_end = cur;
+    set password_start = cur;
+    set password_end = cur;
+    set host_start = cur;
+    set host_end = cur;
+    let is_opaque = b^.opaque_path;
+    if is_opaque {
+    } else {
+      let doubled = path_starts_with_two_solidi(b: b);
+      if doubled {
+        let slash_written = propagate push_byte(buffer: &href, value: 47_u8);
+        let dot_written = propagate push_byte(buffer: &href, value: 46_u8);
+      }
+    }
+  } else {
+    let slash1 = propagate push_byte(buffer: &href, value: 47_u8);
+    let slash2 = propagate push_byte(buffer: &href, value: 47_u8);
+    let user_len = b^.username.inner.len;
+    let user_bytes = &b^.username.inner[0_u64..user_len];
+    set username_start = href.inner.len;
+    let user_written = propagate push_bytes(buffer: &href, bytes: user_bytes);
+    set username_end = href.inner.len;
+    let pass_len = b^.password.inner.len;
+    let pass_nonempty = pass_len > 0_u64;
+    if pass_nonempty {
+      let colon2 = propagate push_byte(buffer: &href, value: 58_u8);
+      let pass_bytes = &b^.password.inner[0_u64..pass_len];
+      set password_start = href.inner.len;
+      let pass_written = propagate push_bytes(buffer: &href, bytes: pass_bytes);
+      set password_end = href.inner.len;
+    } else {
+      set password_start = username_end;
+      set password_end = username_end;
+    }
+    let user_nonempty = user_len > 0_u64;
+    let has_credentials = bor(user_nonempty, pass_nonempty);
+    if has_credentials {
+      let at_written = propagate push_byte(buffer: &href, value: 64_u8);
+    }
+    set host_start = href.inner.len;
+    let host_written = propagate serialize_host(buffer: &href, host: &b^.host);
+    set host_end = href.inner.len;
+    match port_value {
+      Some(value: number) => {
+        let colon3 = propagate push_byte(buffer: &href, value: 58_u8);
+        let widened = cvt::<u16, u64>(number);
+        let port_written = propagate push_decimal(buffer: &href, value: widened);
+      }
+      None() => {
+      }
+    }
+  }
+  let path_start = href.inner.len;
+  let path_written = propagate write_path(b: b, buffer: &href);
+  let path_end = href.inner.len;
+  let query_span = None<UrlSpan>();
+  let has_query = b^.has_query;
+  if has_query {
+    let question_written = propagate push_byte(buffer: &href, value: 63_u8);
+    let q_len = b^.query_buf.inner.len;
+    let q_bytes = &b^.query_buf.inner[0_u64..q_len];
+    let q_start = href.inner.len;
+    let q_written = propagate push_bytes(buffer: &href, bytes: q_bytes);
+    let q_end = href.inner.len;
+    let q_start32 = cvt.wrap::<u64, u32>(q_start);
+    let q_end32 = cvt.wrap::<u64, u32>(q_end);
+    let q_span = UrlSpan(start: q_start32, end: q_end32);
+    set query_span = Some<UrlSpan>(value: q_span);
+  }
+  let fragment_span = None<UrlSpan>();
+  let has_fragment = b^.has_fragment;
+  if has_fragment {
+    let hash_written = propagate push_byte(buffer: &href, value: 35_u8);
+    let f_len = b^.fragment_buf.inner.len;
+    let f_bytes = &b^.fragment_buf.inner[0_u64..f_len];
+    let f_start = href.inner.len;
+    let f_written = propagate push_bytes(buffer: &href, bytes: f_bytes);
+    let f_end = href.inner.len;
+    let f_start32 = cvt.wrap::<u64, u32>(f_start);
+    let f_end32 = cvt.wrap::<u64, u32>(f_end);
+    let f_span = UrlSpan(start: f_start32, end: f_end32);
+    set fragment_span = Some<UrlSpan>(value: f_span);
+  }
+  let too_large = href.inner.len > 268435456_u64;
+  if too_large {
+    let refusal = UrlError::TooLarge();
+    return Err<Url, UrlError>(error: refusal);
+  }
+  let scheme_start32 = cvt.wrap::<u64, u32>(scheme_start);
+  let scheme_end32 = cvt.wrap::<u64, u32>(scheme_end);
+  let username_start32 = cvt.wrap::<u64, u32>(username_start);
+  let username_end32 = cvt.wrap::<u64, u32>(username_end);
+  let password_start32 = cvt.wrap::<u64, u32>(password_start);
+  let password_end32 = cvt.wrap::<u64, u32>(password_end);
+  let host_start32 = cvt.wrap::<u64, u32>(host_start);
+  let host_end32 = cvt.wrap::<u64, u32>(host_end);
+  let path_start32 = cvt.wrap::<u64, u32>(path_start);
+  let path_end32 = cvt.wrap::<u64, u32>(path_end);
+  let scheme_span = UrlSpan(start: scheme_start32, end: scheme_end32);
+  let username_span = UrlSpan(start: username_start32, end: username_end32);
+  let password_span = UrlSpan(start: password_start32, end: password_end32);
+  let host_span = UrlSpan(start: host_start32, end: host_end32);
+  let path_span = UrlSpan(start: path_start32, end: path_end32);
+  let host_kind = host_kind_of(host: &b^.host);
+  let opaque_path = b^.opaque_path;
+  let url = Url(href: move href, scheme: scheme_span, username: username_span, password: password_span, host: host_span, host_kind: host_kind, port: port_value, path: path_span, opaque_path: opaque_path, query: query_span, fragment: fragment_span);
+  return Ok<Url, UrlError>(value: move url);
+}

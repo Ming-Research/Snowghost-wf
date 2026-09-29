@@ -1,0 +1,255 @@
+const buffer_ceiling: u64 = 1073741824_u64;
+
+const byte_capacity_seed: u64 = 4096_u64;
+
+const codepoint_capacity_seed: u64 = 1024_u64;
+
+const replacement_character: u32 = 65533_u32;
+
+fn push_within_bytes(cell: &Box<Slots<u8>>, value: u8, seed: u64, limit: u64) -> result: Result<unit, UrlError> writes(cell) contract {
+  requires seed > 0_u64;
+  requires seed <= limit;
+  requires limit <= 1073741824_u64;
+} {
+  doc "Appends value to cell. A full cell grows to seed, or doubles while its capacity is at most limit, so its capacity never passes the larger of seed and twice limit; a push past that refuses with TooLarge.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let small = capacity < seed;
+    if small {
+      grow(cell: cell, capacity: seed);
+    } else {
+      let within = capacity <= limit;
+      if within {
+      } else {
+        let refusal = UrlError::TooLarge();
+        return Err<unit, UrlError>(error: refusal);
+      }
+      let doubled = capacity + capacity;
+      grow(cell: cell, capacity: doubled);
+    }
+  }
+  place_back(window: &cell^.inner, value: value);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn push_within_codepoints(cell: &Box<Slots<u32>>, value: u32, seed: u64, limit: u64) -> result: Result<unit, UrlError> writes(cell) contract {
+  requires seed > 0_u64;
+  requires seed <= limit;
+  requires limit <= 1073741824_u64;
+} {
+  doc "Appends value to cell as push_within_bytes does, for a code point window.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let small = capacity < seed;
+    if small {
+      grow(cell: cell, capacity: seed);
+    } else {
+      let within = capacity <= limit;
+      if within {
+      } else {
+        let refusal = UrlError::TooLarge();
+        return Err<unit, UrlError>(error: refusal);
+      }
+      let doubled = capacity + capacity;
+      grow(cell: cell, capacity: doubled);
+    }
+  }
+  place_back(window: &cell^.inner, value: value);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn push_byte(buffer: &Box<Slots<u8>>, value: u8) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "Appends one byte to buffer, whose capacity stops at buffer_ceiling.";
+  let pushed = propagate push_within_bytes(cell: buffer, value: value, seed: byte_capacity_seed, limit: buffer_ceiling);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn push_codepoint_raw(buffer: &Box<Slots<u32>>, value: u32) -> result: Result<unit, UrlError> writes(buffer) {
+  doc "Appends one code point to buffer, whose capacity stops at buffer_ceiling.";
+  let pushed = propagate push_within_codepoints(cell: buffer, value: value, seed: codepoint_capacity_seed, limit: buffer_ceiling);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn truncate_bytes_to(buffer: &Box<Slots<u8>>, length: u64) -> result: unit writes(buffer) {
+  doc "Takes bytes off the back of buffer until its len is at most length.";
+  loop @shrink {
+    let current = buffer^.inner.len;
+    let over = current > length;
+    if over {
+      let dropped = take_back(window: &buffer^.inner);
+    } else {
+      break @shrink;
+    }
+  }
+  return unit;
+}
+
+fn push_bytes(buffer: &Box<Slots<u8>>, bytes: &[u8]) -> result: Result<unit, UrlError> reads(bytes), writes(buffer) {
+  doc "Appends every byte of bytes to buffer in order.";
+  let length = bytes^.len;
+  for (at in 0_u64..length) {
+    let byte = bytes^[at];
+    let pushed = propagate push_byte(buffer: buffer, value: byte);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn utf8_lead_byte(code_point: u32, shift: u32, marker: u32) -> result: u8 pure {
+  doc "Returns the lead byte of a UTF-8 sequence: the bits of code_point from shift upward, joined with marker.";
+  let high = ishr.wrap(code_point, shift);
+  let joined = ior(high, marker);
+  let byte = cvt.wrap::<u32, u8>(joined);
+  return byte;
+}
+
+fn utf8_continuation_byte(code_point: u32, shift: u32) -> result: u8 pure {
+  doc "Returns the UTF-8 continuation byte that carries the six bits of code_point starting at shift.";
+  let moved = ishr.wrap(code_point, shift);
+  let bits = iand(moved, 63_u32);
+  let joined = ior(bits, 128_u32);
+  let byte = cvt.wrap::<u32, u8>(joined);
+  return byte;
+}
+
+fn decode_scalar(source: &[u8], length: u64, pos: u64) -> (cp: u32, next: u64) reads(source) contract {
+  requires length == source^.len;
+  requires pos < length;
+  ensures next > pos;
+  ensures next <= length;
+} {
+  doc "Decodes one code point of source at pos under the WHATWG UTF-8 decoder: a maximal ill-formed subsequence, including a WTF-8 lone surrogate's three-byte encoding, decodes to U+FFFD and next is the position after that subsequence.";
+  let (cp, raw_next) = decode_scalar_inner(source: source, length: length, pos: pos);
+  let next = raw_next;
+  let too_far = next > length;
+  if too_far {
+    set next = length;
+  }
+  let too_near = next <= pos;
+  if too_near {
+    set next = pos +wrap 1_u64;
+  }
+  return cp, next;
+}
+
+fn decode_scalar_inner(source: &[u8], length: u64, pos: u64) -> (cp: u32, next: u64) reads(source) contract {
+  requires length == source^.len;
+  requires pos < length;
+} {
+  doc "The body of decode_scalar, before its result is clamped into (pos, length].";
+  let lead = source^[pos];
+  let ascii = lead <= 127_u8;
+  if ascii {
+    let value = cvt::<u8, u32>(lead);
+    let next = pos +wrap 1_u64;
+    return value, next;
+  }
+  let need = 0_u64;
+  let payload = 0_u32;
+  let low = 128_u8;
+  let high = 191_u8;
+  let valid_lead = True();
+  let two_l = lead >= 194_u8;
+  let two_r = lead <= 223_u8;
+  let two = band(two_l, two_r);
+  let e0 = lead == 224_u8;
+  let ed = lead == 237_u8;
+  let three_hi_l = lead >= 225_u8;
+  let three_hi_r = lead <= 239_u8;
+  let three_hi = band(three_hi_l, three_hi_r);
+  let not_ed = bnot(ed);
+  let three_regular = band(three_hi, not_ed);
+  let f0 = lead == 240_u8;
+  let f4 = lead == 244_u8;
+  let four_regular_l = lead >= 241_u8;
+  let four_regular_r = lead <= 243_u8;
+  let four_regular = band(four_regular_l, four_regular_r);
+  if two {
+    set need = 1_u64;
+    let base = lead -wrap 192_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if e0 {
+    set need = 2_u64;
+    set low = 160_u8;
+  } else if three_regular {
+    set need = 2_u64;
+    let base = lead -wrap 224_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if ed {
+    set need = 2_u64;
+    set high = 159_u8;
+    let base = lead -wrap 224_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if f0 {
+    set need = 3_u64;
+    set low = 144_u8;
+  } else if four_regular {
+    set need = 3_u64;
+    let base = lead -wrap 240_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else if f4 {
+    set need = 3_u64;
+    set high = 143_u8;
+    let base = lead -wrap 240_u8;
+    set payload = cvt::<u8, u32>(base);
+  } else {
+    set valid_lead = False();
+  }
+  if valid_lead {
+  } else {
+    let next = pos +wrap 1_u64;
+    return replacement_character, next;
+  }
+  let value = payload;
+  let index = 0_u64;
+  let ok = True();
+  loop @cont {
+    let more = index < need;
+    if more {
+    } else {
+      break @cont;
+    }
+    let base = pos +wrap 1_u64;
+    let at = base +wrap index;
+    let available = at < length;
+    if available {
+    } else {
+      set ok = False();
+      break @cont;
+    }
+    let byte = source^[at];
+    let first = index == 0_u64;
+    let lo = if first {
+      give low;
+    } else {
+      give 128_u8;
+    }
+    let hi = if first {
+      give high;
+    } else {
+      give 191_u8;
+    }
+    let above = byte >= lo;
+    let below = byte <= hi;
+    let within = band(above, below);
+    if within {
+    } else {
+      set ok = False();
+      break @cont;
+    }
+    let contrib = byte -wrap 128_u8;
+    let contrib32 = cvt::<u8, u32>(contrib);
+    let shifted = ishl.wrap(value, 6_u32);
+    set value = ior(shifted, contrib32);
+    set index = index +wrap 1_u64;
+  }
+  let base_next = pos +wrap 1_u64;
+  let next = base_next +wrap index;
+  if ok {
+    return value, next;
+  }
+  return replacement_character, next;
+}

@@ -1,0 +1,303 @@
+const no_hex_digit: u8 = 16_u8;
+
+struct Range32 {
+  start: u32;
+  end: u32;
+}
+
+fn is_blank(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is a space or a tab.";
+  let spaced = byte == ' '_u8;
+  let tabbed = byte == '\t'_u8;
+  let blank = bor(spaced, tabbed);
+  return blank;
+}
+
+fn find_byte(text: &[u8], from: u64, stop: u64, target: u8) -> result: u64 reads(text) contract {
+  requires from <= stop;
+  requires stop <= text^.len;
+  ensures result >= from;
+  ensures result <= stop;
+} {
+  doc "Returns the index of the first occurrence of target from from to stop, or stop.";
+  let length = text^.len;
+  let ordered = from <= stop;
+  let within = stop <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return stop;
+  }
+  for (at in from..stop) {
+    let byte = text^[at];
+    let found = byte == target;
+    if found {
+      return at;
+    }
+  }
+  return stop;
+}
+
+fn skip_ws(text: &[u8], from: u64, stop: u64) -> result: u64 reads(text) contract {
+  requires from <= stop;
+  requires stop <= text^.len;
+  ensures result >= from;
+  ensures result <= stop;
+} {
+  doc "Returns the index of the first byte from from to stop that is not blank, or stop.";
+  let length = text^.len;
+  let at = from;
+  loop @skip (
+    invariant lower: at >= from
+  ) {
+    let before_stop = at < stop;
+    let inside = at < length;
+    let readable = band(before_stop, inside);
+    if readable {
+    } else {
+      return stop;
+    }
+    let byte = text^[at];
+    let blank = is_blank(byte: byte);
+    if blank {
+    } else {
+      return at;
+    }
+    let next = at +wrap 1_u64;
+    invariant next_lower: next >= from;
+    set at = next;
+  }
+  return stop;
+}
+
+fn trim_ws_end(text: &[u8], from: u64, stop: u64) -> result: u64 reads(text) contract {
+  requires from <= stop;
+  requires stop <= text^.len;
+  ensures result >= from;
+  ensures result <= stop;
+} {
+  doc "Returns the smallest end in from..stop past which every byte to stop is blank.";
+  let length = text^.len;
+  let ordered = from <= stop;
+  let within = stop <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return stop;
+  }
+  let at = stop;
+  loop @trim (
+    invariant bounded: at <= stop,
+    invariant lower: at >= from
+  ) {
+    let above = at > from;
+    if above {
+    } else {
+      return at;
+    }
+    let previous = at -wrap 1_u64;
+    invariant step: previous <= stop;
+    let byte = text^[previous];
+    let blank = is_blank(byte: byte);
+    if blank {
+      set at = previous;
+    } else {
+      return at;
+    }
+  }
+  return at;
+}
+
+fn hex_digit(byte: u8) -> result: u8 pure {
+  doc "Returns the value of one uppercase ASCII hexadecimal digit, or no_hex_digit for any other byte; these files spell hex digits in uppercase alone.";
+  let decimal_low = byte >= '0'_u8;
+  let decimal_high = byte <= '9'_u8;
+  let decimal = band(decimal_low, decimal_high);
+  if decimal {
+    return byte -wrap '0'_u8;
+  }
+  let upper_low = byte >= 'A'_u8;
+  let upper_high = byte <= 'F'_u8;
+  let upper = band(upper_low, upper_high);
+  if upper {
+    let offset = byte -wrap 'A'_u8;
+    return offset +wrap 10_u8;
+  }
+  return no_hex_digit;
+}
+
+fn parse_hex_u32(text: &[u8], from: u64, stop: u64) -> result: Option<u32> reads(text) {
+  doc "Parses text from from to stop as 1 to 6 uppercase hexadecimal digits.";
+  let length = text^.len;
+  let ordered = from < stop;
+  let within = stop <= length;
+  let located = band(ordered, within);
+  let size = stop -wrap from;
+  let short = size <= 6_u64;
+  let usable = band(located, short);
+  if usable {
+  } else {
+    return None<u32>();
+  }
+  let value = 0_u32;
+  for (at in from..stop) {
+    let byte = text^[at];
+    let digit = hex_digit(byte: byte);
+    let valid = digit < no_hex_digit;
+    if valid {
+    } else {
+      return None<u32>();
+    }
+    let widened = cvt::<u8, u32>(digit);
+    let shifted = ishl.wrap(value, 4_u32);
+    set value = ior(shifted, widened);
+  }
+  return Some<u32>(value: value);
+}
+
+fn parse_range(text: &[u8], from: u64, stop: u64) -> result: Option<Range32> reads(text) {
+  doc "Parses text from from to stop as a UCD code point range: a single 'XXXX', or 'XXXX..YYYY'.";
+  let length = text^.len;
+  let ordered = from <= stop;
+  let within = stop <= length;
+  let usable = band(ordered, within);
+  if usable {
+  } else {
+    return None<Range32>();
+  }
+  let dot_at = find_byte(text: text, from: from, stop: stop, target: '.'_u8);
+  let has_dot = dot_at < stop;
+  if has_dot {
+    let after_dot = dot_at +wrap 1_u64;
+    let second_dot = after_dot < stop;
+    let byte_ok = if second_dot {
+      let byte = text^[after_dot];
+      give byte == '.'_u8;
+    } else {
+      give False();
+    }
+    if byte_ok {
+    } else {
+      return None<Range32>();
+    }
+    let tail = after_dot +wrap 1_u64;
+    match parse_hex_u32(text: text, from: from, stop: dot_at) {
+      Some(value: first) => {
+        match parse_hex_u32(text: text, from: tail, stop: stop) {
+          Some(value: second) => {
+            let made = Range32(start: first, end: second);
+            return Some<Range32>(value: made);
+          }
+          None() => {
+            return None<Range32>();
+          }
+        }
+      }
+      None() => {
+        return None<Range32>();
+      }
+    }
+  }
+  match parse_hex_u32(text: text, from: from, stop: stop) {
+    Some(value: single) => {
+      let made = Range32(start: single, end: single);
+      return Some<Range32>(value: made);
+    }
+    None() => {
+      return None<Range32>();
+    }
+  }
+}
+
+fn field_is2(field: &[u8], a: u8, b: u8) -> result: Bool reads(field) {
+  doc "Tells whether field is exactly the two bytes a, b.";
+  let length = field^.len;
+  let right_len = length == 2_u64;
+  if right_len {
+  } else {
+    return False();
+  }
+  let byte0 = field^[0_u64];
+  let byte1 = field^[1_u64];
+  let first_ok = byte0 == a;
+  let second_ok = byte1 == b;
+  let ok = band(first_ok, second_ok);
+  return ok;
+}
+
+fn field_equals(field: &[u8], word: &[u8]) -> result: Bool reads(field), reads(word) {
+  doc "Tells whether field equals word byte for byte.";
+  let length = field^.len;
+  let want = word^.len;
+  let same_len = length == want;
+  if same_len {
+  } else {
+    return False();
+  }
+  for (at in 0_u64..length) {
+    let a = field^[at];
+    let b = word^[at];
+    let same = a == b;
+    if same {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+struct UcdLine {
+  ranged: Bool;
+  found: Range32;
+  field_start: u64;
+  field_end: u64;
+  next_line: u64;
+}
+
+fn parse_ucd_line(text: &[u8], start: u64) -> result: UcdLine reads(text) {
+  doc "Parses one line of a UCD property file starting at start: a code point range, a semicolon, the property field up to the first number sign or line feed, and the position of the next line. A blank or comment line, or one that fails to parse a range, reports ranged False; every line reports next_line. A start at or past the end of text reports an empty field clamped to text's length. field_start <= field_end <= text^.len always, though a caller that slices the field independently re-establishes that bound itself, since a struct result cannot publish it as a checked postcondition.";
+  let length = text^.len;
+  let zero_zero = Range32(start: 0_u32, end: 0_u32);
+  let no = False();
+  let yes = True();
+  let past_length = length +wrap 1_u64;
+  let out_of_range = UcdLine(ranged: no, found: zero_zero, field_start: length, field_end: length, next_line: past_length);
+  let start_inside = start < length;
+  if start_inside {
+  } else {
+    return out_of_range;
+  }
+  let found_stop = line_end(text: text, start: start);
+  let line_stop = imin(found_stop, length);
+  let next_line = line_stop +wrap 1_u64;
+  let empty = start >= line_stop;
+  let blank_line = UcdLine(ranged: no, found: zero_zero, field_start: start, field_end: start, next_line: next_line);
+  if empty {
+    return blank_line;
+  }
+  let first = text^[start];
+  let comment = first == '#'_u8;
+  if comment {
+    return blank_line;
+  }
+  let semi = find_byte(text: text, from: start, stop: line_stop, target: ';'_u8);
+  let has_semi = semi < line_stop;
+  if has_semi {
+  } else {
+    return blank_line;
+  }
+  let range_end = trim_ws_end(text: text, from: start, stop: semi);
+  match parse_range(text: text, from: start, stop: range_end) {
+    Some(value: found) => {
+      let field_from = semi +wrap 1_u64;
+      let field_start = skip_ws(text: text, from: field_from, stop: line_stop);
+      let hash_at = find_byte(text: text, from: field_start, stop: line_stop, target: '#'_u8);
+      let field_end = trim_ws_end(text: text, from: field_start, stop: hash_at);
+      let ranged_line = UcdLine(ranged: yes, found: found, field_start: field_start, field_end: field_end, next_line: next_line);
+      return ranged_line;
+    }
+    None() => {
+      return blank_line;
+    }
+  }
+}
