@@ -36,6 +36,17 @@ example apart from the renderer code that exposed it
   for float destinations. Reopen when Whitefoot adds one; then replace
   `narrow_f32`.
 
+- **A counted loop cannot write one field of its own element.** Whitefoot's
+  loop permission [PAR-2] admits `set a^[i] = v` and denies `set a^[i].f = v`
+  ("writes storage that is neither introduced by the iteration nor the
+  accumulator"), although both write inside element i. Minimal example: a
+  loop over `&[P]` with `struct P { n: u64; }` that sets `a^[i].n = i`. The
+  layout prototype keeps paragraph line counts in an array beside the
+  paragraphs to get its paragraph loop split
+  (research/investigations/concurrency/DESIGN.md). Recorded in Whitefoot's
+  `docs/todo.md` (mbbill/Whitefoot#186); resolving it is a specification
+  change.
+
 ## Snowghost
 
 - **No mechanical check for documents and artifacts.** `make check` does not
