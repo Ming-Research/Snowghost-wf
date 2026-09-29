@@ -26,6 +26,13 @@ When priorities conflict, use this order:
 5. defer robustness, infrastructure and polish that no current milestone
    needs.
 
+Parallelism is maximal, not chosen: every stage keeps only its algorithm's
+true data dependencies and writes all other work in forms Whitefoot proves
+independent, leaving which work runs in parallel, and at what grain, to the
+compiler and runtime (the `pipeline` decision in `design/`). Do not pick a
+coarse unit of parallel work or add an order the computation does not need;
+a sequential step names the dependency that forces it.
+
 ## Authority and reading
 
 `design/` holds the decisions Snowghost is built on, each with its reason and

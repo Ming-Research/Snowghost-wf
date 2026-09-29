@@ -5,6 +5,14 @@ refused amendment: a dated title, `Nodes:` naming every node changed or ruled
 on, `Owner-approved:` for an approved live-tree change, and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-09-29 Parallelize every stage by its true data dependencies
+
+Nodes: pipeline
+
+Owner-approved: 2026-09-29, the owner approved the pipeline-parallel-principle amendment of PR #14 as shown, applied unchanged apart from its replacement note, writing in Chinese that it was acceptable, after agreeing that the pipeline's second decision must change and that the maximal-parallelism principle belongs in the design tree.
+
+Summary: The pipeline tree replaces the independent formatting context as the unit of storage, parallel work, invalidation and caching with a principle: every renderer stage keeps only its algorithm's true data dependencies, writes all other work in forms the Whitefoot compiler proves independent, takes extra or speculative work where it shortens the critical path, and leaves which independent work runs in parallel, and at what grain, to the compiler and runtime, because a stage's time on P cores is about its work over P plus its critical path. Two alternatives are refused on the concurrency investigation's layout measurement: the context as the unit of parallel work, since one block formatting context holds 85 to 95 percent of the text on each measured real page and context-only layout ran at 0.84 to 0.96 times the sequential build at four workers, and paragraph parallelism only in float-free contexts, since the dominant context holds a float on two of the three pages. Whether the context remains the unit of storage, invalidation or caching is left open in research/investigations/concurrency/DESIGN.md, not decided. The owner also ruled that speculative computation is acceptable and that floats may be approximated where the deviation is small, which the scope tree's existing decision already covers.
+
 ## 2026-09-28 Adopt the scope, pipeline, script and processes decisions
 
 Nodes: scope, pipeline, script, processes

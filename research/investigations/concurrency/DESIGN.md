@@ -3,9 +3,10 @@
 Status: criteria recorded before any prototype runs. The style prototype is
 built, checked and measured: criteria 1 and 2 are answered and criterion 4
 is answered for the style shapes. The layout prototype is built and measured;
-criterion 3's reading of "the median real page" awaits the owner's ruling
-(see Layout measurement). Nothing here is decided; the results feed the
-vocabulary proposal
+its result retired the independent formatting context as the unit of
+parallel work (the `pipeline` tree's principle, approved 2026-09-29), which
+makes criterion 3's second branch moot. The rest here decides nothing; the
+results feed the vocabulary proposal
 (`research/investigations/vocabulary/DESIGN.md`) and, where they contradict
 it, an amendment beside the design tree.
 
@@ -299,14 +300,15 @@ workers are idle. The finding goes to Whitefoot.
   sequential build at four workers on the median real page (0.84, 0.92 and
   0.96 on the three), not 2. The design tree's unit does not stand for
   layout on these pages.
-- **Criterion 3, second branch: depends on a reading the owner rules on.**
-  L2 against L1 at four workers is 3.39 on ecma262, 1.00 on html5 and 1.00
-  on apollo11. Read as the ratio on the page whose ratio is the median, it
-  is 1.00 and the branch fails, so the dossier proposes nothing and records
-  where layout time sits (above). Read as the ratio of the median
-  four-worker times (L1 0.0774 s, L2 0.0228 s, both ecma262's), it is 3.39
-  and the branch holds, which would propose the `design/pipeline.md`
-  amendment.
+- **Criterion 3, second branch: moot.** The owner ruled on the first
+  branch's finding instead: the `pipeline` tree now has no unit of parallel
+  work, every stage keeping only its algorithm's true data dependencies, and
+  refuses the float-free paragraph rule this branch would have proposed.
+  For the record, L2 against L1 at four workers is 3.39 on ecma262, 1.00 on
+  html5 and 1.00 on apollo11: 1.00 read as the ratio on the page whose ratio
+  is the median, 3.39 read as the ratio of the median four-worker times
+  (L1 0.0774 s, L2 0.0228 s, both ecma262's). The criterion did not say
+  which.
 - **Criterion 4, L1 half: not met, and uninformative.** On the unbalanced
   page L1 reaches 0.79 against L2's 3.30, below half, but L1 does not match
   L2 on the flat page (0.79 against 3.24) either. Both synthetic pages hold
