@@ -40,7 +40,7 @@ example apart from the renderer code that exposed it
 
 - **No mechanical check for documents and artifacts.** `make check` does not
   refuse non-English text, personal filesystem paths or broken Markdown links
-  and anchors; completion reviewers check them by hand (checklist A4 and D2).
+  and anchors; reviewers check them by hand (checklist A4 and D2).
   Whitefoot's `make static` stages `repository-invariants` and `guidance` are
   the models. Add the equivalent when the documents grow enough that a missed
   link or leaked path costs review time, or when one first reaches a pull
