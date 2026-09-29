@@ -1,0 +1,241 @@
+alias BreakOpportunity = pkg::text::line_break::BreakOpportunity;
+alias find_line_breaks = pkg::text::line_break::find_line_breaks;
+
+const line_height: u64 = 20_u64;
+
+const advance: u64 = 8_u64;
+
+const breakable_ceiling: u64 = 1073741824_u64;
+
+const fold_prime: u64 = 1099511628211_u64;
+
+const fold_basis: u64 = 14695981039346656037_u64;
+
+fn within(value: u32, low: u32, high: u32) -> inside: Bool pure {
+  doc "Tells whether value lies in low to high, both included.";
+  let above = value >= low;
+  let below = value <= high;
+  let inside = band(above, below);
+  return inside;
+}
+
+fn advance_of(value: u32) -> width: u64 pure {
+  doc "Returns the fixed advance of value: 0 px for the combining diacritical mark blocks, 8 px otherwise.";
+  let marks = within(value: value, low: 768_u32, high: 879_u32);
+  let extended = within(value: value, low: 6832_u32, high: 6911_u32);
+  let supplement = within(value: value, low: 7616_u32, high: 7679_u32);
+  let symbols = within(value: value, low: 8400_u32, high: 8447_u32);
+  let halves = within(value: value, low: 65056_u32, high: 65071_u32);
+  let first = bor(marks, extended);
+  let second = bor(supplement, symbols);
+  let some = bor(first, second);
+  let combining = bor(some, halves);
+  if combining {
+    return 0_u64;
+  }
+  return advance;
+}
+
+fn count_lines(text: &[u32], width: u64) -> lines: u64 reads(text) {
+  doc "Returns the number of lines text fills at width by greedy filling at its break opportunities: a segment, the text up to and including an opportunity, goes on the current line when it fits or the line is empty, and on a new line otherwise; a mandatory opportunity before the end starts a new line. 0 for empty text.";
+  let count = text^.len;
+  if count == 0_u64 {
+    return 0_u64;
+  }
+  let breakable = count <= breakable_ceiling;
+  if breakable {
+  } else {
+    return 0_u64;
+  }
+  let prohibited = BreakOpportunity::Prohibited();
+  let breaks = box_array_filled::<BreakOpportunity>(count: count, value: prohibited);
+  find_line_breaks(text: text, opportunities: &breaks.inner[0_u64..count]);
+  let lines = 1_u64;
+  let used = 0_u64;
+  let segment = 0_u64;
+  let last = count - 1_u64;
+  for (at in 0_u64..count) {
+    let step = advance_of(value: text^[at]);
+    set segment = segment +wrap step;
+    let opportunity = breaks.inner[at];
+    let ends = match opportunity {
+      Prohibited() => {
+        give False();
+      }
+      Allowed() => {
+        give True();
+      }
+      Mandatory() => {
+        give True();
+      }
+    }
+    if ends {
+      let filled = used +wrap segment;
+      let started = used > 0_u64;
+      let over = filled > width;
+      let wraps = band(started, over);
+      if wraps {
+        set lines = lines +wrap 1_u64;
+        set used = segment;
+      } else {
+        set used = filled;
+      }
+      set segment = 0_u64;
+      let mandatory = BreakOpportunity::Mandatory();
+      let forced = eeq(opportunity, mandatory);
+      let before_end = at < last;
+      let breaks_here = band(forced, before_end);
+      if breaks_here {
+        set lines = lines +wrap 1_u64;
+        set used = 0_u64;
+      }
+    }
+  }
+  return lines;
+}
+
+fn paragraph_lines(paragraph: &Paragraph, width: u64) -> lines: u64 reads(paragraph) {
+  doc "Returns the number of lines paragraph fills at width.";
+  let length = paragraph^.text.inner.len;
+  let lines = count_lines(text: &paragraph^.text.inner[0_u64..length], width: width);
+  return lines;
+}
+
+fn break_all(paragraphs: &[Paragraph], lines: &[u64], width: u64) -> result: unit reads(paragraphs), writes(lines) contract {
+  requires lines^.len >= paragraphs^.len;
+} {
+  doc "L2's paragraph loop: iteration i breaks paragraph i into lines and writes only its line count, element i of lines.";
+  let count = paragraphs^.len;
+  for (i in 0_u64..count) {
+    let counted = paragraph_lines(paragraph: &paragraphs^[i], width: width);
+    set lines^[i] = counted;
+  }
+  return unit;
+}
+
+fn larger(first: u64, second: u64) -> result: u64 pure {
+  doc "Returns the larger of first and second.";
+  if first < second {
+    return second;
+  }
+  return first;
+}
+
+fn stack_flow(context: &Context, known: Bool) -> height: u64 writes(context) {
+  doc "Stacks context's flow in order and returns its height. With known False each paragraph is broken into lines where the flow reaches it; with known True the line counts written before are read.";
+  let items = context^.flow.inner.len;
+  let paragraphs = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  let width = context^.width;
+  let height = 0_u64;
+  let pending = 0_u64;
+  for (at in 0_u64..items) {
+    let item = context^.flow.inner[at];
+    match item {
+      Open(margin: top) => {
+        set pending = larger(first: pending, second: top);
+      }
+      Close(margin: bottom) => {
+        set pending = larger(first: pending, second: bottom);
+      }
+      Text(index: which) => {
+        let listed = which < paragraphs;
+        if listed {
+          let recorded = which < context^.lines.inner.len;
+          let lines = if known {
+            if recorded {
+              give context^.lines.inner[which];
+            } else {
+              give 0_u64;
+            }
+          } else {
+            let counted = paragraph_lines(paragraph: &context^.paragraphs.inner[which], width: width);
+            if recorded {
+              set context^.lines.inner[which] = counted;
+            }
+            give counted;
+          }
+          let tall = lines *wrap line_height;
+          let placed = height +wrap pending;
+          set height = placed +wrap tall;
+          set pending = 0_u64;
+        }
+      }
+      Nested(index: which) => {
+        let listed = which < children;
+        if listed {
+          let tall = context^.children.inner[which].height;
+          let placed = height +wrap pending;
+          set height = placed +wrap tall;
+          set pending = 0_u64;
+        }
+      }
+    }
+  }
+  let total = height +wrap pending;
+  return total;
+}
+
+fn lay_run(siblings: &[Context], paragraphs_first: Bool) -> result: unit writes(siblings) {
+  doc "Lays out a run of sibling contexts: one context directly, a longer run as its two halves, which are independent.";
+  let count = siblings^.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  if count == 1_u64 {
+    lay_context(context: &siblings^[0_u64], paragraphs_first: paragraphs_first);
+    return unit;
+  }
+  let half = count / 2_u64;
+  lay_run(siblings: &siblings^[0_u64..half], paragraphs_first: paragraphs_first);
+  lay_run(siblings: &siblings^[half..count], paragraphs_first: paragraphs_first);
+  return unit;
+}
+
+fn lay_context(context: &Context, paragraphs_first: Bool) -> result: unit writes(context) {
+  doc "Lays out context's child contexts, then its paragraphs in one loop when paragraphs_first holds and no float is among its boxes, then its flow.";
+  let kids = context^.children.inner.len;
+  lay_run(siblings: &context^.children.inner[0_u64..kids], paragraphs_first: paragraphs_first);
+  let unfloated = bnot(context^.floated);
+  let ahead = band(paragraphs_first, unfloated);
+  if ahead {
+    let count = context^.paragraphs.inner.len;
+    let recorded = context^.lines.inner.len;
+    let width = context^.width;
+    let aligned = count <= recorded;
+    if aligned {
+      break_all(paragraphs: &context^.paragraphs.inner[0_u64..count], lines: &context^.lines.inner[0_u64..count], width: width);
+    }
+  }
+  let height = stack_flow(context: context, known: ahead);
+  set context^.height = height;
+  return unit;
+}
+
+fn fold(sum: u64, value: u64) -> result: u64 pure {
+  doc "Folds value into sum, FNV-1a style over whole words.";
+  let mixed = ixor(sum, value);
+  let folded = mixed *wrap fold_prime;
+  return folded;
+}
+
+fn fold_tree(sum: u64, context: &Context) -> result: u64 reads(context) {
+  doc "Folds context's height, its paragraphs' line counts and then its child contexts' trees into sum.";
+  let total = fold(sum: sum, value: context^.height);
+  let recorded = context^.lines.inner.len;
+  for (at in 0_u64..recorded) {
+    set total = fold(sum: total, value: context^.lines.inner[at]);
+  }
+  let children = context^.children.inner.len;
+  for (at in 0_u64..children) {
+    set total = fold_tree(sum: total, context: &context^.children.inner[at]);
+  }
+  return total;
+}
+
+fn lay_out(layout: &Layout, paragraphs_first: Bool) -> checksum: u64 writes(layout) {
+  doc "Lays out the root context and folds the result.";
+  lay_context(context: &layout^.root, paragraphs_first: paragraphs_first);
+  let checksum = fold_tree(sum: fold_basis, context: &layout^.root);
+  return checksum;
+}

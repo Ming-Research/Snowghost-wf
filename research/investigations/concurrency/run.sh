@@ -9,6 +9,9 @@
 #                                (A, B and C agree, the intern pass is sound)
 #   run.sh style [PAGE [REPS]]   builds the style driver and times the style
 #                                stage on every page, or on PAGE
+#   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
+#                                stage in modes L1 and L2 on every page, or on
+#                                PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
 # ecma262, html5, apollo11, flat, deep, unbalanced and paragraph.
@@ -22,7 +25,11 @@
 # default the pinned checkout's .github/run-check.pl), so no other heavy job
 # shares the machine.
 #
-# The driver is built with WHITEFOOTC (by default the pinned compiler's gate
+# layout prints the same columns with the mode (L1 or L2) in place of the
+# shape; its T(0) also holds styling and building the context tree, and its
+# check compares L1 with L2.
+#
+# The drivers are built with WHITEFOOTC (by default the pinned compiler's gate
 # build, as the Makefile builds it).
 #
 # POSIX sh plus curl and sha256sum.
@@ -104,6 +111,24 @@ reps_of() {
 	case $2 in
 	intern) echo "$intern" ;;
 	*) echo "$shapes" ;;
+	esac
+}
+
+# Repetitions of the layout stage per page, chosen as for the style stage:
+# at least two thirds of T(REPS) with the --par build at four workers in L2,
+# where T(0) holds styling at four workers (1.2 s on ecma262, 1.4 s on html5,
+# 0.5 s on apollo11) and a repetition took 0.028, 0.10 and 0.0075 s,
+# measured on the development machine.
+layout_reps_of() {
+	case $1 in
+	ecma262) echo 100 ;;
+	html5) echo 30 ;;
+	apollo11) echo 150 ;;
+	flat) echo 20 ;;
+	deep) echo 200 ;;
+	unbalanced) echo 20 ;;
+	paragraph) echo 10 ;;
+	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
 }
 
@@ -209,6 +234,16 @@ build() {
 	(cd renderer && "$compiler" --graph modules.wfg --entry proto_style -o ../build/proto_style_seq)
 }
 
+build_layout() {
+	if [ ! -x "$compiler" ]; then
+		echo "run.sh: no compiler at $compiler; set WHITEFOOTC" >&2
+		exit 2
+	fi
+	mkdir -p build
+	(cd renderer && "$compiler" --par --graph modules.wfg --entry proto_layout -o ../build/proto_layout)
+	(cd renderer && "$compiler" --graph modules.wfg --entry proto_layout -o ../build/proto_layout_seq)
+}
+
 page_file() {
 	file=$data/$1.html
 	if [ ! -f "$file" ]; then
@@ -220,10 +255,13 @@ page_file() {
 
 check() {
 	build
+	build_layout
 	for page in ${*:-$real_pages $synthetic_pages}; do
 		file=$(page_file "$page")
 		printf '%s: ' "$page"
 		build/proto_style check 1 "$file" "$ua" $(sheets_of "$page")
+		printf '%s: ' "$page"
+		build/proto_layout check 1 "$file" "$ua" $(sheets_of "$page")
 	done
 }
 
@@ -235,10 +273,10 @@ elapsed() {
 	mode=$1
 	shift
 	if [ "$mode" = seq ]; then
-		binary=build/proto_style_seq
+		binary=build/${driver}_seq
 		lanes=1
 	else
-		binary=build/proto_style
+		binary=build/$driver
 		lanes=$mode
 	fi
 	if ! WF_WORKERS=$lanes command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>"$data/time.txt"; then
@@ -261,6 +299,7 @@ best() {
 }
 
 style() {
+	driver=proto_style
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh "$here/run.sh" style "$@"
 	fi
@@ -289,6 +328,36 @@ style() {
 	done
 }
 
+layout() {
+	driver=proto_layout
+	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh "$here/run.sh" layout "$@"
+	fi
+	build_layout
+	pages=${1:-$real_pages $synthetic_pages}
+	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
+	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "page mode build reps T(0) T(REPS) stage"
+	for page in $pages; do
+		file=$(page_file "$page")
+		sheets=$(sheets_of "$page")
+		counts=$(build/proto_layout check 1 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5, $6, $7, $8, $9, $12, $13 }')
+		echo "# $page: $counts"
+		reps=${2:-$(layout_reps_of "$page")}
+		for layout_mode in L1 L2; do
+			for mode in $workers seq; do
+				zero=$(best "$mode" "$layout_mode" 0 "$file" "$ua" $sheets)
+				full=$(best "$mode" "$layout_mode" "$reps" "$file" "$ua" $sheets)
+				case $mode in
+				seq) label=seq ;;
+				*) label=par-$mode ;;
+				esac
+				echo "$page $layout_mode $label $reps $zero $full" | awk '{ printf "%s %s %s %s %s %s %.4f\n", $1, $2, $3, $4, $5, $6, ($6 - $5) / $4 }'
+			done
+		done
+	done
+}
+
 case ${1:-} in
 fetch) fetch ;;
 synth) synth ;;
@@ -300,8 +369,12 @@ style)
 	shift
 	style "$@"
 	;;
+layout)
+	shift
+	layout "$@"
+	;;
 *)
-	echo "usage: run.sh fetch | synth | check [PAGE...] | style [PAGE [REPS]]" >&2
+	echo "usage: run.sh fetch | synth | check [PAGE...] | style [PAGE [REPS]] | layout [PAGE [REPS]]" >&2
 	exit 2
 	;;
 esac
