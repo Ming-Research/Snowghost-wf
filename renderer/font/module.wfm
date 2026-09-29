@@ -1,0 +1,338 @@
+public enum FontError {
+  Invalid();
+  Unsupported();
+  TooLarge();
+}
+
+public struct Face {
+  metrics: FaceMetrics;
+  advances: Box<Array<u16>>;
+  characters: CharacterMap;
+  definitions: GlyphDefinitions;
+  substitutions: LayoutTable;
+  positions: LayoutTable;
+}
+
+public struct FaceMetrics {
+  public units_per_em: u16;
+  public glyph_count: u16;
+  public hhea_ascender: i16;
+  public hhea_descender: i16;
+  public hhea_line_gap: i16;
+  public typo_ascender: i16;
+  public typo_descender: i16;
+  public typo_line_gap: i16;
+  public use_typo_metrics: Bool;
+  public win_ascent: u16;
+  public win_descent: u16;
+}
+
+public enum GlyphClass {
+  Unclassified();
+  Base();
+  Ligature();
+  Mark();
+  Component();
+}
+
+public enum Script {
+  Common();
+  Latin();
+  Greek();
+  Cyrillic();
+}
+
+public struct ShapedGlyph {
+  public glyph: u16;
+  public cluster: u32;
+  public x_advance: i32;
+  public y_advance: i32;
+  public x_offset: i32;
+  public y_offset: i32;
+}
+
+public struct GlyphRun {
+  public readonly glyphs: Box<Slots<ShapedGlyph>>;
+}
+
+public enum ShapeError {
+  TooLarge();
+}
+
+public fn load_face(data: &[u8]) -> result: Result<Face, FontError> reads(data) contract {
+  requires data^.len <= 268435456_u64;
+} doc "Parses and validates data as one OpenType font with TrueType or CFF outlines (an sfnt, not a collection, WOFF or WOFF2), and returns a face that the other functions read. It validates the table directory, whose every record must lie within data, and every table the other functions read, head, hhea, maxp, hmtx, cmap and, when present, OS/2, down to every offset, count and array it follows, and refuses the whole font with Invalid when any of them fails, as Chrome's OpenType Sanitizer refuses a web font, rather than repairing a broken part. It validates GDEF, GSUB and GPOS, when present, the same way down to every structure the other functions follow, and ignores one that fails as if the font lacked it, since Chrome passes these three tables to HarfBuzz unsanitized and HarfBuzz disables what it cannot read. Unsupported for a font collection, a variable font (an fvar table), CFF2 outlines, or a font with no Unicode cmap subtable of format 4 or 12. The Unicode subtable is the first present of platform and encoding (3, 10), (0, 6), (0, 4), (3, 1), (0, 3), (0, 2), (0, 1) and (0, 0) whose format is 4 or 12. TooLarge when a compiled structure would pass a storage limit. The non-public fields of Face and every non-public declaration of this interface are the implementation's to choose; a face never changes after load_face returns, so any number of calls may read it at once.";
+
+public fn face_metrics(face: &Face) -> result: FaceMetrics reads(face) doc "Returns the face's units per em (head), glyph count (maxp), the hhea ascender, descender and line gap, and from OS/2, when present, the typographic ascender, descender and line gap, whether fsSelection's USE_TYPO_METRICS bit is set, and usWinAscent and usWinDescent; the OS/2 fields are zero and False without OS/2.";
+
+public fn nominal_glyph(face: &Face, scalar: u32) -> result: u16 reads(face) doc "Returns the glyph the face's Unicode cmap subtable maps scalar to, or 0 (.notdef) when it maps none or scalar is not a Unicode scalar value.";
+
+public fn glyph_advance(face: &Face, glyph: u16) -> result: u16 reads(face) doc "Returns glyph's advance width in font units from hmtx, where a glyph at or past numberOfHMetrics takes the last advance; 0 for a glyph at or past the glyph count.";
+
+public fn glyph_class(face: &Face, glyph: u16) -> result: GlyphClass reads(face) doc "Returns glyph's class from the GDEF glyph class definition: Base, Ligature, Mark or Component for classes 1 to 4, and Unclassified for class 0, a glyph the definition does not list, or a face without GDEF or without a glyph class definition.";
+
+public fn shape_run(face: &Face, text: &[u32], script: Script) -> result: Result<GlyphRun, ShapeError> reads(face), reads(text) contract {
+  requires text^.len <= 16777216_u64;
+} doc "Shapes text as one horizontal left-to-right run in script, with no language set, as HarfBuzz 14.5.0's OpenType shaper does with its default features for that script: it maps text to glyphs through the Unicode cmap subtable, a value that is not a Unicode scalar value mapping to .notdef; decomposes, reorders and recomposes marks as HarfBuzz's default normalization mode does, choosing between composed and decomposed forms by which glyphs the face has, with the Unicode data of pkg::text::normalization; hides default ignorables as HarfBuzz does; applies, in lookup order, the GSUB and then the GPOS lookups of the features HarfBuzz enables by default for a horizontal run, selected through the script's language system (latn, grek, cyrl, or DFLT for Common and when the script's is absent), honouring lookup flags, mark filtering sets and GDEF classes, for GSUB lookup types 1, 2, 4 and 6 and GPOS lookup types 1, 2, 4, 5, 6 and 8, including lookups that a contextual lookup applies, and skipping a lookup of any other type, with HarfBuzz's automatic fractions: around a U+2044 FRACTION SLASH with decimal digits on both sides, numr and frac on the digits before it, frac on it, and frac and dnom on the digits after it; and zeroes marks' advances by their GDEF class as HarfBuzz's default shaper does. It returns one ShapedGlyph per output glyph in order: the glyph, its cluster (the index in text of the first scalar it came from, clusters merged as HarfBuzz's default cluster level merges them), and its advances and offsets in font units. It reads only face and text, so distinct runs may be shaped at once. TooLarge when the run would pass a storage limit.";
+
+struct Extent {
+  doc "A run of count consecutive entries of one compiled array, from index start.";
+  start: u32;
+  count: u32;
+}
+
+enum CmapMapping {
+  doc "How a compiled cmap range maps its code points to glyphs.";
+  Sequential();
+  Listed();
+}
+
+struct CmapRange {
+  doc "The code points first to last of the Unicode cmap subtable. A Sequential range maps first to glyph base and each later code point to the glyph after its predecessor's; a Listed range maps first to CharacterMap's glyphs at index base and each later code point to the entry after its predecessor's, 0 meaning no glyph.";
+  first: u32;
+  last: u32;
+  base: u32;
+  mapping: CmapMapping;
+}
+
+struct CharacterMap {
+  doc "The Unicode cmap subtable load_face selects, compiled: its format 4 segments or format 12 groups as ranges in ascending, disjoint code point order, and the glyphs its Listed ranges read, each already offset by its segment's idDelta.";
+  ranges: Box<Slots<CmapRange>>;
+  glyphs: Box<Slots<u16>>;
+}
+
+struct CoverageRange {
+  doc "The glyphs first to last of a coverage table, which have the consecutive coverage indices from index. A compiled coverage is an Extent of ranges in ascending, disjoint glyph order.";
+  first: u16;
+  last: u16;
+  index: u32;
+}
+
+struct ClassRange {
+  doc "The glyphs first to last of a class definition, which all have class class. A compiled class definition is an Extent of ranges in ascending, disjoint glyph order; a glyph it does not list has class 0.";
+  first: u16;
+  last: u16;
+  class: u16;
+}
+
+struct GlyphDefinitions {
+  doc "The GDEF table, compiled; a face without GDEF, or whose GDEF failed validation, has every class 0 and no mark glyph sets. has_glyph_classes is True when GDEF has a glyph class definition, without which HarfBuzz synthesizes glyph classes. glyph_classes and mark_attachment_classes hold one entry for every glyph below the glyph count or up to the last glyph their class definition lists: the glyph class 0 to 4 (a class above 4 is stored as 0) and the mark attachment class modulo 256, as HarfBuzz keeps it in a glyph's properties. Each mark glyph set is an Extent of mark_glyph_ranges.";
+  has_glyph_classes: Bool;
+  glyph_classes: Box<Array<u8>>;
+  mark_attachment_classes: Box<Array<u8>>;
+  mark_glyph_sets: Box<Slots<Extent>>;
+  mark_glyph_ranges: Box<Slots<CoverageRange>>;
+}
+
+struct LanguageSystem {
+  doc "A LangSys table: its tag (0 for a script's default), its required feature index or 65535 for none, and an Extent of LayoutTable's language_features holding its feature indices in font order.";
+  tag: u32;
+  required_feature: u16;
+  features: Extent;
+}
+
+struct ScriptRecord {
+  doc "A ScriptList record: its tag, its default LangSys (with no features and no required feature when the script has none), and an Extent of LayoutTable's language_systems holding its LangSysRecords in font order.";
+  tag: u32;
+  default_system: LanguageSystem;
+  systems: Extent;
+}
+
+struct FeatureRecord {
+  doc "A FeatureList record: its tag and an Extent of LayoutTable's feature_lookups holding its lookup indices in font order.";
+  tag: u32;
+  lookups: Extent;
+}
+
+struct Lookup {
+  doc "A lookup of the LookupList: its type (an extension lookup takes the type its subtables wrap), its lookup flags, its mark filtering set (0 unless the flags use one), and an Extent of LayoutTable's subtables. Only the types shape_run applies have compiled subtables, GSUB types 1, 2, 4 and 6 and GPOS types 1, 2, 4, 5, 6 and 8; a lookup of any other type has none.";
+  lookup_type: u16;
+  flags: u16;
+  mark_filtering_set: u16;
+  subtables: Extent;
+}
+
+enum SubtableKind {
+  doc "Which array of LayoutTable a compiled subtable lives in.";
+  SingleSubstitution();
+  MultipleSubstitution();
+  LigatureSubstitution();
+  ChainedContext();
+  SinglePositioning();
+  PairPositioning();
+  MarkToBase();
+  MarkToLigature();
+  MarkToMark();
+}
+
+struct Subtable {
+  doc "One compiled lookup subtable: the entry index of the array kind names.";
+  kind: SubtableKind;
+  index: u32;
+}
+
+struct SingleSubstitution {
+  doc "GSUB type 1. Format 1 adds delta to a covered glyph, modulo 65536; format 2 replaces the glyph of coverage index i with entry i of substitutes, an Extent of glyphs. Coverage indexes LayoutTable's coverages.";
+  format: u16;
+  coverage: u32;
+  delta: u16;
+  substitutes: Extent;
+}
+
+struct MultipleSubstitution {
+  doc "GSUB type 2: the glyph of coverage index i becomes the glyphs of entry i of sequences, an Extent of LayoutTable's sequences, each itself an Extent of glyphs; an empty sequence, which a null Sequence offset also gives, deletes the glyph, as HarfBuzz does.";
+  coverage: u32;
+  sequences: Extent;
+}
+
+struct LigatureSubstitution {
+  doc "GSUB type 4: the glyph of coverage index i starts the ligatures of entry i of ligature_sets, an Extent of LayoutTable's ligature_sets, each an Extent of ligatures in font order.";
+  coverage: u32;
+  ligature_sets: Extent;
+}
+
+struct Ligature {
+  doc "One ligature: the glyph it forms and its components after the first, an Extent of glyphs. A ligature of no components, which never matches, is not compiled.";
+  glyph: u16;
+  components: Extent;
+}
+
+struct ChainedContext {
+  doc "GSUB type 6 or GPOS type 8. Format 1 and 2 have a coverage and rule_sets, an Extent of LayoutTable's rule_sets indexed by coverage index (format 1) or by the input class of the first glyph (format 2), each an Extent of chain_rules; format 2 also has its three class definitions, indices of class_definitions. Format 3 has its backtrack, input and lookahead coverages, Extents of coverage_sequences, and its records, an Extent of sequence_lookups. Fields a format does not use are 0 and empty.";
+  format: u16;
+  coverage: u32;
+  backtrack_classes: u32;
+  input_classes: u32;
+  lookahead_classes: u32;
+  rule_sets: Extent;
+  backtrack: Extent;
+  input: Extent;
+  lookahead: Extent;
+  records: Extent;
+}
+
+struct ChainRule {
+  doc "One chained rule of a format 1 or 2 chained context: its backtrack sequence (in font order, nearest glyph first), its input sequence after the first glyph and its lookahead sequence, Extents of glyphs for format 1 and of classes for format 2, and its records, an Extent of sequence_lookups. A null rule offset gives the empty rule, and a rule whose input count is 0 has no records: HarfBuzz matches either on the first glyph alone and applies no lookup for it.";
+  backtrack: Extent;
+  input: Extent;
+  lookahead: Extent;
+  records: Extent;
+}
+
+struct SequenceLookup {
+  doc "A SequenceLookupRecord: the lookup of lookup_index applies at input position sequence_index.";
+  sequence_index: u16;
+  lookup_index: u16;
+}
+
+struct ValueRecord {
+  doc "A GPOS value record's four positioning fields, 0 for each field its value format omits; device and variation offsets are not compiled.";
+  x_placement: i16;
+  y_placement: i16;
+  x_advance: i16;
+  y_advance: i16;
+}
+
+struct SinglePositioning {
+  doc "GPOS type 1. Format 1 applies entry 0 of values to every covered glyph; format 2 applies entry i to the glyph of coverage index i when i is below value_count. values is an Extent of value_records, empty when value_format is 0, whose records are then all zero.";
+  format: u16;
+  coverage: u32;
+  value_format: u16;
+  value_count: u16;
+  values: Extent;
+}
+
+struct PairPositioning {
+  doc "GPOS type 2, with the value formats of its first and second glyph. Format 1: the first glyph of coverage index i selects entry i of pair_sets, an Extent of LayoutTable's pair_sets, each an Extent of pair_values sorted by second glyph. Format 2: first_classes and second_classes index class_definitions, and class_values is an Extent of value_pairs holding first_class_count rows of second_class_count entries, empty when both value formats are 0. Fields a format does not use are 0 and empty.";
+  format: u16;
+  coverage: u32;
+  first_format: u16;
+  second_format: u16;
+  pair_sets: Extent;
+  first_classes: u32;
+  second_classes: u32;
+  first_class_count: u16;
+  second_class_count: u16;
+  class_values: Extent;
+}
+
+struct PairValue {
+  doc "A PairValueRecord: the second glyph and the values of both glyphs.";
+  second_glyph: u16;
+  first: ValueRecord;
+  second: ValueRecord;
+}
+
+struct ValuePair {
+  doc "The values of the first and second glyph of a class pair.";
+  first: ValueRecord;
+  second: ValueRecord;
+}
+
+struct Anchor {
+  doc "An anchor point in font units; a format 2 contour point and format 3 device offsets are not compiled.";
+  x: i16;
+  y: i16;
+}
+
+struct MarkRecord {
+  doc "A MarkRecord: the mark's class and its anchor, (0, 0) when its offset is null.";
+  class: u16;
+  anchor: Anchor;
+}
+
+struct MarkAttachment {
+  doc "GPOS type 4, 5 or 6: the mark coverage, the coverage of the base, ligature or preceding mark, the class count, marks, an Extent of mark_records by mark coverage index, and bases: for types 4 and 6 an Extent of anchors holding one row of class_count anchors per base coverage index, for type 5 an Extent of ligature_attachments by ligature coverage index. A null anchor offset is None.";
+  mark_coverage: u32;
+  base_coverage: u32;
+  class_count: u16;
+  marks: Extent;
+  bases: Extent;
+}
+
+struct LigatureAttachment {
+  doc "A LigatureAttach table: its component count and an Extent of anchors holding one row of class_count anchors per component.";
+  component_count: u16;
+  anchors: Extent;
+}
+
+struct LayoutTable {
+  doc "A GSUB or GPOS table, compiled into flat typed arrays that refer to one another by index and Extent; a face without the table, or whose table failed validation, has present False and every array empty. coverages and class_definitions start with an empty entry at index 0, which a null offset selects. filters holds, per lookup, filter_width words of one bit per glyph, set when the first coverage of one of the lookup's subtables holds the glyph, so that shape_run passes over glyphs no subtable can apply at; filter_width is 0 when the filters are not built.";
+  present: Bool;
+  scripts: Box<Slots<ScriptRecord>>;
+  language_systems: Box<Slots<LanguageSystem>>;
+  language_features: Box<Slots<u16>>;
+  features: Box<Slots<FeatureRecord>>;
+  feature_lookups: Box<Slots<u16>>;
+  lookups: Box<Slots<Lookup>>;
+  subtables: Box<Slots<Subtable>>;
+  coverages: Box<Slots<Extent>>;
+  coverage_ranges: Box<Slots<CoverageRange>>;
+  class_definitions: Box<Slots<Extent>>;
+  class_ranges: Box<Slots<ClassRange>>;
+  glyphs: Box<Slots<u16>>;
+  classes: Box<Slots<u16>>;
+  single_substitutions: Box<Slots<SingleSubstitution>>;
+  multiple_substitutions: Box<Slots<MultipleSubstitution>>;
+  sequences: Box<Slots<Extent>>;
+  ligature_substitutions: Box<Slots<LigatureSubstitution>>;
+  ligature_sets: Box<Slots<Extent>>;
+  ligatures: Box<Slots<Ligature>>;
+  chained_contexts: Box<Slots<ChainedContext>>;
+  rule_sets: Box<Slots<Extent>>;
+  chain_rules: Box<Slots<ChainRule>>;
+  coverage_sequences: Box<Slots<u32>>;
+  sequence_lookups: Box<Slots<SequenceLookup>>;
+  single_positionings: Box<Slots<SinglePositioning>>;
+  value_records: Box<Slots<ValueRecord>>;
+  pair_positionings: Box<Slots<PairPositioning>>;
+  pair_sets: Box<Slots<Extent>>;
+  pair_values: Box<Slots<PairValue>>;
+  value_pairs: Box<Slots<ValuePair>>;
+  mark_attachments: Box<Slots<MarkAttachment>>;
+  mark_records: Box<Slots<MarkRecord>>;
+  anchors: Box<Slots<Option<Anchor>>>;
+  ligature_attachments: Box<Slots<LigatureAttachment>>;
+  filters: Box<Array<u64>>;
+  filter_width: u64;
+}

@@ -1,0 +1,199 @@
+alias HandleFactory = std::io::HandleFactory;
+alias OutputStream = std::io::OutputStream;
+
+const block_size: u64 = 256_u64;
+
+const block_count: u64 = 4352_u64;
+
+const code_space: u64 = 1114112_u64;
+
+const cn_index: u8 = 29_u8;
+
+const pict_bit: u8 = 128_u8;
+
+const gc_block_index_name: Array<u8, 14> = "gc_block_index";
+
+const gc_block_bytes_name: Array<u8, 14> = "gc_block_bytes";
+
+struct PackedTables {
+  block_index: Box<Slots<u16>>;
+  block_bytes: Box<Slots<u8>>;
+}
+
+fn fill_categories(text: &[u8], categories: &Box<Array<u8>>) -> result: unit reads(text), writes(categories) {
+  doc "Walks every data line of DerivedGeneralCategory.txt and sets categories[cp] to the line's General_Category index (gc_index_from_field) for every cp in its range, clamped to categories' length. The file's own explicit Cn ranges set that index like any other category; a code point no line covers at all keeps categories' cn_index default, so out-of-range values read as Unassigned exactly as a code point the file lists as Cn does.";
+  let length = text^.len;
+  let cats_len = categories^.inner.len;
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      return unit;
+    }
+    let parsed = parse_ucd_line(text: text, start: at);
+    if parsed.ranged {
+      let ordered = parsed.field_start <= parsed.field_end;
+      let within = parsed.field_end <= length;
+      if ordered {
+        if within {
+          let field = &text^[parsed.field_start..parsed.field_end];
+          let index = gc_index_from_field(field: field);
+          let start64 = cvt::<u32, u64>(parsed.found.start);
+          let end64 = cvt::<u32, u64>(parsed.found.end);
+          let in_bounds = start64 < cats_len;
+          if in_bounds {
+            let clamped_end = if end64 < cats_len {
+              give end64;
+            } else {
+              let last = cats_len -wrap 1_u64;
+              give last;
+            }
+            let clamped_end_next = clamped_end +wrap 1_u64;
+            for (cp in start64..clamped_end_next) {
+              let cp_ok = cp < categories^.inner.len;
+              if cp_ok {
+                set categories^.inner[cp] = index;
+              }
+            }
+          }
+        }
+      }
+    }
+    set at = parsed.next_line;
+  }
+  return unit;
+}
+
+fn fill_pictographic(text: &[u8], packed: &Box<Array<u8>>) -> result: unit reads(text), writes(packed) {
+  doc "Walks every data line of emoji-data.txt and sets bit 7 of packed[cp], added to its existing General_Category index, for every cp in a range whose property is exactly Extended_Pictographic, clamped to packed's length. Every line for a different emoji-data.txt property (Emoji, Emoji_Presentation, Emoji_Modifier, Emoji_Modifier_Base or Emoji_Component) is left alone.";
+  let length = text^.len;
+  let cats_len = packed^.inner.len;
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      return unit;
+    }
+    let parsed = parse_ucd_line(text: text, start: at);
+    if parsed.ranged {
+      let ordered = parsed.field_start <= parsed.field_end;
+      let within = parsed.field_end <= length;
+      if ordered {
+        if within {
+          let field = &text^[parsed.field_start..parsed.field_end];
+          let wanted = field_is_extended_pictographic(field: field);
+          if wanted {
+            let start64 = cvt::<u32, u64>(parsed.found.start);
+            let end64 = cvt::<u32, u64>(parsed.found.end);
+            let in_bounds = start64 < cats_len;
+            if in_bounds {
+              let clamped_end = if end64 < cats_len {
+                give end64;
+              } else {
+                let last = cats_len -wrap 1_u64;
+                give last;
+              }
+              let clamped_end_next = clamped_end +wrap 1_u64;
+              for (cp in start64..clamped_end_next) {
+                let cp_ok = cp < packed^.inner.len;
+                if cp_ok {
+                  let current = packed^.inner[cp];
+                  let updated = current +wrap pict_bit;
+                  set packed^.inner[cp] = updated;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    set at = parsed.next_line;
+  }
+  return unit;
+}
+
+fn block_matches(block_bytes: &Box<Slots<u8>>, dedup_index: u64, candidate: &Array<u8, 256>) -> result: Bool reads(block_bytes), reads(candidate) {
+  doc "Tells whether the 256-byte deduplicated block at dedup_index equals candidate, byte for byte.";
+  let base = dedup_index *wrap block_size;
+  for (k in 0_u64..block_size) {
+    let pos = base +wrap k;
+    let in_range = pos < block_bytes^.inner.len;
+    if in_range {
+      let existing = block_bytes^.inner[pos];
+      let value = candidate^[k];
+      let same = existing == value;
+      if same {
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn find_or_append_block(block_bytes: &Box<Slots<u8>>, dedup_count: u64, candidate: &Array<u8, 256>) -> result: u64 reads(candidate), writes(block_bytes) {
+  doc "Returns the index of the existing deduplicated block equal to candidate, or appends candidate as a new one and returns its index.";
+  for (k in 0_u64..dedup_count) {
+    let matched = block_matches(block_bytes: block_bytes, dedup_index: k, candidate: candidate);
+    if matched {
+      return k;
+    }
+  }
+  for (k in 0_u64..block_size) {
+    let value = candidate^[k];
+    let room = block_bytes^.inner.len < block_bytes^.inner.cap;
+    if room {
+      place_back(window: &block_bytes^.inner, value: value);
+    }
+  }
+  return dedup_count;
+}
+
+fn sweep_packed(packed: &Box<Array<u8>>) -> result: PackedTables reads(packed) {
+  doc "Groups every 256 consecutive code points of packed (General_Category index in the low 5 bits, Extended_Pictographic in bit 7) into a deduplicated two-stage block table: block_index names, per block, which deduplicated 256-byte block holds its bytes, and block_bytes holds each distinct block's bytes once.";
+  let block_index = box_slots_new::<u16>(capacity: block_count);
+  let block_bytes = box_slots_new::<u8>(capacity: code_space);
+  for (block in 0_u64..block_count) {
+    let current_block = array_filled::<u8, 256>(value: cn_index);
+    for (offset in 0_u64..block_size) {
+      let block_base = block *wrap block_size;
+      let cp = block_base +wrap offset;
+      let in_space = cp < packed^.inner.len;
+      let value = if in_space {
+        give packed^.inner[cp];
+      } else {
+        give cn_index;
+      }
+      set current_block[offset] = value;
+    }
+    let dedup_count = block_bytes.inner.len / block_size;
+    let found = find_or_append_block(block_bytes: &block_bytes, dedup_count: dedup_count, candidate: &current_block);
+    let found16 = cvt.wrap::<u64, u16>(found);
+    let room = block_index.inner.len < block_index.inner.cap;
+    if room {
+      place_back(window: &block_index.inner, value: found16);
+    }
+  }
+  let made = PackedTables(block_index: move block_index, block_bytes: move block_bytes);
+  return move made;
+}
+
+fn build_and_emit(factory: &HandleFactory, gc_text: &[u8], emoji_text: &[u8], out: &OutputStream, report: &Box<Slots<u8>>) -> result: unit reads(gc_text), reads(emoji_text), writes(factory), writes(out), writes(report) waits {
+  doc "Parses both input files into one packed byte per code point and prints the two-stage table in order to out.";
+  let categories = box_array_filled::<u8>(count: code_space, value: cn_index);
+  fill_categories(text: gc_text, categories: &categories);
+  fill_pictographic(text: emoji_text, packed: &categories);
+  let tables = sweep_packed(packed: &categories);
+  let block_index_len = gc_block_index_name.len;
+  let block_index_label = &gc_block_index_name[0_u64..block_index_len];
+  emit_u16_array(factory: factory, out: out, report: report, name: block_index_label, values: &tables.block_index);
+  emit_blank(factory: factory, out: out, report: report);
+  let block_bytes_len = gc_block_bytes_name.len;
+  let block_bytes_label = &gc_block_bytes_name[0_u64..block_bytes_len];
+  emit_u8_array(factory: factory, out: out, report: report, name: block_bytes_label, values: &tables.block_bytes);
+  return unit;
+}

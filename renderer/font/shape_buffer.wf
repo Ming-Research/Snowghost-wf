@@ -1,0 +1,665 @@
+struct Item {
+  doc "One entry of the shaping buffer, HarfBuzz's glyph info and glyph position together. code is the character until glyphs are mapped and the glyph after; glyph is the glyph normalization chose for the character; cluster, mask, unicode_props, glyph_props and lig_props are kept as HarfBuzz keeps them, mask with bit 0 for every global feature and the numr, frac and dnom bits of plan_masks; then the advances and offsets, and the attachment GPOS mark positioning records, attach_chain the distance to the glyph attached to (0 for none) within an i16's range.";
+  code: u32;
+  glyph: u32;
+  cluster: u32;
+  mask: u8;
+  unicode_props: u16;
+  glyph_props: u16;
+  lig_props: u8;
+  x_advance: i32;
+  y_advance: i32;
+  x_offset: i32;
+  y_offset: i32;
+  attach_chain: i32;
+  attach_type: u8;
+}
+
+struct Buffer {
+  doc "HarfBuzz's buffer: items holds its info from index 0 to length, and while output is True the glyphs before index have been consumed and the output from 0 to out_length lies in spare when separate is True and at the front of items otherwise, out_length never passing index then. limit is the most glyphs either side may hold and budget the operations left, HarfBuzz's max_len and max_ops; failed records that a limit was passed, which makes the run TooLarge. serial allocates ligature ids, and attached records a mark attachment.";
+  items: Box<Slots<Item>>;
+  spare: Box<Slots<Item>>;
+  length: u64;
+  index: u64;
+  out_length: u64;
+  output: Bool;
+  separate: Bool;
+  limit: u64;
+  budget: i64;
+  failed: Bool;
+  serial: u8;
+  attached: Bool;
+}
+
+const glyph_ceiling: u64 = 4294967296_u64;
+
+const budget_ceiling: u64 = 1099511627776_u64;
+
+fn blank_item() -> result: Item pure {
+  doc "An item of all zeros.";
+  let item = Item(code: 0_u32, glyph: 0_u32, cluster: 0_u32, mask: 0_u8, unicode_props: 0_u16, glyph_props: 0_u16, lig_props: 0_u8, x_advance: 0_i32, y_advance: 0_i32, x_offset: 0_i32, y_offset: 0_i32, attach_chain: 0_i32, attach_type: 0_u8);
+  return item;
+}
+
+fn read_item(list: &Box<Slots<Item>>, index: u64) -> result: Item reads(list) {
+  doc "Returns entry index of list, or a blank item past its end, which the buffer's lengths keep every read from reaching.";
+  if index < list^.inner.len {
+    let item = list^.inner[index];
+    return item;
+  }
+  let blank = blank_item();
+  return blank;
+}
+
+fn write_item(list: &Box<Slots<Item>>, index: u64, item: Item) -> result: Bool writes(list) {
+  doc "Stores item at index of list, appending it when index is the length of list and doubling the capacity of list when it is full; False, storing nothing, when index is past the length or list already holds glyph_ceiling entries.";
+  let length = list^.inner.len;
+  if index < length {
+    set list^.inner[index] = item;
+    return True();
+  }
+  if index != length {
+    return False();
+  }
+  let capacity = list^.inner.cap;
+  if length < capacity {
+    place_back(window: &list^.inner, value: item);
+    return True();
+  }
+  if length >= glyph_ceiling {
+    return False();
+  }
+  let doubled = imax(capacity, 8_u64);
+  let wanted = doubled + doubled;
+  if wanted <= glyph_ceiling {
+    grow(cell: list, capacity: wanted);
+  } else {
+    grow(cell: list, capacity: glyph_ceiling);
+  }
+  place_back(window: &list^.inner, value: item);
+  return True();
+}
+
+fn fail(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "Records that the run passed a limit.";
+  set buffer^.failed = True();
+  return unit;
+}
+
+fn spend(buffer: &Buffer, amount: u64) -> result: unit writes(buffer) {
+  doc "Takes amount operations from the budget, failing the run when it goes negative, as HarfBuzz's max_ops does.";
+  let bounded = imin(amount, budget_ceiling);
+  let cost = cvt::<u64, i64>(bounded);
+  let left = buffer^.budget -sat cost;
+  set buffer^.budget = left;
+  if left < 0_i64 {
+    fail(buffer: buffer);
+  }
+  return unit;
+}
+
+fn item_at(buffer: &Buffer, index: u64) -> result: Item reads(buffer) {
+  doc "HarfBuzz's info[index].";
+  let item = read_item(list: &buffer^.items, index: index);
+  return item;
+}
+
+fn put_item(buffer: &Buffer, index: u64, item: Item) -> result: unit writes(buffer) {
+  doc "Stores item as info[index].";
+  let stored = write_item(list: &buffer^.items, index: index, item: item);
+  if stored {
+  } else {
+    fail(buffer: buffer);
+  }
+  return unit;
+}
+
+fn current(buffer: &Buffer) -> result: Item reads(buffer) {
+  doc "HarfBuzz's cur(): the item at index.";
+  let index = buffer^.index;
+  let item = read_item(list: &buffer^.items, index: index);
+  return item;
+}
+
+fn put_current(buffer: &Buffer, item: Item) -> result: unit writes(buffer) {
+  doc "Replaces the item at index.";
+  let index = buffer^.index;
+  put_item(buffer: buffer, index: index, item: item);
+  return unit;
+}
+
+fn out_at(buffer: &Buffer, index: u64) -> result: Item reads(buffer) {
+  doc "HarfBuzz's out_info[index], which is info[index] unless the output is separate.";
+  if buffer^.separate {
+    let item = read_item(list: &buffer^.spare, index: index);
+    return item;
+  }
+  let item = read_item(list: &buffer^.items, index: index);
+  return item;
+}
+
+fn put_out(buffer: &Buffer, index: u64, item: Item) -> result: unit writes(buffer) {
+  doc "Stores item as out_info[index].";
+  if buffer^.separate {
+    let stored = write_item(list: &buffer^.spare, index: index, item: item);
+    if stored {
+    } else {
+      fail(buffer: buffer);
+    }
+    return unit;
+  }
+  put_item(buffer: buffer, index: index, item: item);
+  return unit;
+}
+
+fn previous_item(buffer: &Buffer) -> result: Item reads(buffer) {
+  doc "HarfBuzz's prev(): the last output item, or out_info[0] when there is none.";
+  let out_length = buffer^.out_length;
+  if out_length > 0_u64 {
+    let last = out_length - 1_u64;
+    let item = out_at(buffer: buffer, index: last);
+    return item;
+  }
+  let item = out_at(buffer: buffer, index: 0_u64);
+  return item;
+}
+
+fn backtrack_length(buffer: &Buffer) -> result: u64 reads(buffer) {
+  doc "HarfBuzz's backtrack_len(): the output length while there is output, and the index otherwise.";
+  if buffer^.output {
+    let length = buffer^.out_length;
+    return length;
+  }
+  let index = buffer^.index;
+  return index;
+}
+
+fn lookahead_length(buffer: &Buffer) -> result: u64 reads(buffer) {
+  doc "HarfBuzz's lookahead_len(): the items from index to the end.";
+  let length = buffer^.length;
+  let index = buffer^.index;
+  let remaining = length -wrap index;
+  return remaining;
+}
+
+fn clear_output(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "Starts output at index 0, as HarfBuzz's clear_output does.";
+  set buffer^.output = True();
+  set buffer^.separate = False();
+  set buffer^.index = 0_u64;
+  set buffer^.out_length = 0_u64;
+  return unit;
+}
+
+fn make_room(buffer: &Buffer, taken: u64, given: u64) -> result: Bool writes(buffer) {
+  doc "HarfBuzz's make_room_for: False, failing the run, when the output would pass the limit; otherwise True, making the output separate first when writing given items for taken ones would overtake the input.";
+  let out_length = buffer^.out_length;
+  let wanted = out_length +wrap given;
+  if wanted > buffer^.limit {
+    fail(buffer: buffer);
+    return False();
+  }
+  if buffer^.separate {
+    return True();
+  }
+  let index = buffer^.index;
+  let reached = index +wrap taken;
+  if wanted > reached {
+    for (position in 0_u64..out_length) {
+      let item = read_item(list: &buffer^.items, index: position);
+      let stored = write_item(list: &buffer^.spare, index: position, item: item);
+      if stored {
+      } else {
+        fail(buffer: buffer);
+        return False();
+      }
+    }
+    set buffer^.separate = True();
+  }
+  return True();
+}
+
+fn next_glyphs(buffer: &Buffer, count: u64) -> result: unit writes(buffer) {
+  doc "HarfBuzz's next_glyphs: passes count items from the input to the output, copying them unless they already stand in place.";
+  let index = buffer^.index;
+  if buffer^.output {
+    let out_length = buffer^.out_length;
+    let in_place = out_length == index;
+    let separate = buffer^.separate;
+    let displaced = bnot(in_place);
+    let copying = bor(separate, displaced);
+    if copying {
+      for (step in 0_u64..count) {
+        let from = index +wrap step;
+        let to = out_length +wrap step;
+        let item = read_item(list: &buffer^.items, index: from);
+        put_out(buffer: buffer, index: to, item: item);
+      }
+    }
+    let grown = out_length +wrap count;
+    set buffer^.out_length = grown;
+  }
+  let advanced = index +wrap count;
+  set buffer^.index = advanced;
+  return unit;
+}
+
+fn next_glyph(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's next_glyph.";
+  next_glyphs(buffer: buffer, count: 1_u64);
+  return unit;
+}
+
+fn skip_glyph(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's skip_glyph: advances past the current item without output.";
+  let index = buffer^.index;
+  let advanced = index +wrap 1_u64;
+  set buffer^.index = advanced;
+  return unit;
+}
+
+fn replace_glyphs(buffer: &Buffer, taken: u64, glyph: u32) -> result: unit writes(buffer) {
+  doc "HarfBuzz's replace_glyphs with one output glyph: merges the clusters of the taken items, outputs a copy of the current item (the previous output one past the end) with code glyph, and advances past the taken items.";
+  let room = make_room(buffer: buffer, taken: taken, given: 1_u64);
+  if room {
+  } else {
+    return unit;
+  }
+  let index = buffer^.index;
+  let end = index +wrap taken;
+  merge_clusters(buffer: buffer, start: index, end: end);
+  let item = if index < buffer^.length {
+    let found = current(buffer: buffer);
+    give found;
+  } else {
+    let found = previous_item(buffer: buffer);
+    give found;
+  }
+  set item.code = glyph;
+  let out_length = buffer^.out_length;
+  put_out(buffer: buffer, index: out_length, item: item);
+  let grown = out_length +wrap 1_u64;
+  set buffer^.out_length = grown;
+  let advanced = buffer^.index +wrap taken;
+  set buffer^.index = advanced;
+  return unit;
+}
+
+fn replace_glyph(buffer: &Buffer, glyph: u32) -> result: unit writes(buffer) {
+  doc "HarfBuzz's buffer replace_glyph.";
+  replace_glyphs(buffer: buffer, taken: 1_u64, glyph: glyph);
+  return unit;
+}
+
+fn output_glyph(buffer: &Buffer, glyph: u32) -> result: unit writes(buffer) {
+  doc "HarfBuzz's output_glyph: outputs a copy of the current item with code glyph without advancing.";
+  replace_glyphs(buffer: buffer, taken: 0_u64, glyph: glyph);
+  return unit;
+}
+
+fn output_item(buffer: &Buffer, item: Item) -> result: unit writes(buffer) {
+  doc "HarfBuzz's output_info.";
+  let room = make_room(buffer: buffer, taken: 0_u64, given: 1_u64);
+  if room {
+    let out_length = buffer^.out_length;
+    put_out(buffer: buffer, index: out_length, item: item);
+    let grown = out_length +wrap 1_u64;
+    set buffer^.out_length = grown;
+  }
+  return unit;
+}
+
+fn shift_forward(buffer: &Buffer, count: u64) -> result: Bool writes(buffer) {
+  doc "HarfBuzz's shift_forward: moves the input from index count items later, making room before it.";
+  let length = buffer^.length;
+  let index = buffer^.index;
+  let grown = length +wrap count;
+  if grown > buffer^.limit {
+    fail(buffer: buffer);
+    return False();
+  }
+  let moved = length -wrap index;
+  spend(buffer: buffer, amount: moved);
+  if buffer^.failed {
+    return False();
+  }
+  let blank = blank_item();
+  let physical = buffer^.items.inner.len;
+  let missing = if grown > physical {
+    let gap = grown - physical;
+    give gap;
+  } else {
+    give 0_u64;
+  }
+  for (step in 0_u64..missing) {
+    let at = physical +wrap step;
+    put_item(buffer: buffer, index: at, item: blank);
+  }
+  for (step in 0_u64..moved) {
+    let back = moved -wrap step;
+    let offset = back -wrap 1_u64;
+    let from = index +wrap offset;
+    let to = from +wrap count;
+    let item = read_item(list: &buffer^.items, index: from);
+    put_item(buffer: buffer, index: to, item: item);
+  }
+  set buffer^.length = grown;
+  let advanced = index +wrap count;
+  set buffer^.index = advanced;
+  return True();
+}
+
+fn move_to(buffer: &Buffer, target: u64) -> result: Bool writes(buffer) {
+  doc "HarfBuzz's move_to: without output sets the index; with output moves items between the input and the output until the output holds target items.";
+  if buffer^.output {
+  } else {
+    if target > buffer^.length {
+      return False();
+    }
+    set buffer^.index = target;
+    return True();
+  }
+  if buffer^.failed {
+    return False();
+  }
+  let out_length = buffer^.out_length;
+  let index = buffer^.index;
+  let remaining = lookahead_length(buffer: buffer);
+  let reachable = out_length +wrap remaining;
+  if target > reachable {
+    return False();
+  }
+  if out_length < target {
+    let count = target - out_length;
+    let room = make_room(buffer: buffer, taken: count, given: count);
+    if room {
+    } else {
+      return False();
+    }
+    spend(buffer: buffer, amount: count);
+    if buffer^.failed {
+      return False();
+    }
+    for (step in 0_u64..count) {
+      let from = index +wrap step;
+      let to = out_length +wrap step;
+      let item = read_item(list: &buffer^.items, index: from);
+      put_out(buffer: buffer, index: to, item: item);
+    }
+    let advanced = index +wrap count;
+    set buffer^.index = advanced;
+    set buffer^.out_length = target;
+    return True();
+  }
+  if out_length > target {
+    let count = out_length - target;
+    if index < count {
+      let shortfall = count - index;
+      let shifted = shift_forward(buffer: buffer, count: shortfall);
+      if shifted {
+      } else {
+        return False();
+      }
+    }
+    spend(buffer: buffer, amount: count);
+    if buffer^.failed {
+      return False();
+    }
+    let shifted_index = buffer^.index;
+    let start = shifted_index -wrap count;
+    for (step in 0_u64..count) {
+      let back = count -wrap step;
+      let offset = back -wrap 1_u64;
+      let from = target +wrap offset;
+      let to = start +wrap offset;
+      let item = out_at(buffer: buffer, index: from);
+      put_item(buffer: buffer, index: to, item: item);
+    }
+    set buffer^.index = start;
+    set buffer^.out_length = target;
+  }
+  return True();
+}
+
+fn sync(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's sync: passes the rest of the input to the output, which then becomes the input, and ends output.";
+  if buffer^.failed {
+  } else {
+    let rest = lookahead_length(buffer: buffer);
+    next_glyphs(buffer: buffer, count: rest);
+    if buffer^.separate {
+      swap(first: &buffer^.items, second: &buffer^.spare);
+    }
+    let out_length = buffer^.out_length;
+    set buffer^.length = out_length;
+  }
+  set buffer^.output = False();
+  set buffer^.separate = False();
+  set buffer^.out_length = 0_u64;
+  set buffer^.index = 0_u64;
+  return unit;
+}
+
+fn set_cluster_at(buffer: &Buffer, index: u64, cluster: u32) -> result: unit writes(buffer) {
+  doc "Sets the cluster of info[index].";
+  let item = item_at(buffer: buffer, index: index);
+  set item.cluster = cluster;
+  put_item(buffer: buffer, index: index, item: item);
+  return unit;
+}
+
+fn set_out_cluster_at(buffer: &Buffer, index: u64, cluster: u32) -> result: unit writes(buffer) {
+  doc "Sets the cluster of out_info[index].";
+  let item = out_at(buffer: buffer, index: index);
+  set item.cluster = cluster;
+  put_out(buffer: buffer, index: index, item: item);
+  return unit;
+}
+
+fn merge_clusters(buffer: &Buffer, start: u64, end: u64) -> result: unit writes(buffer) {
+  doc "HarfBuzz's merge_clusters at its default, monotone cluster level: gives the items from start to end, extended over neighbours sharing a cluster with an end and continuing into the output when start is the index, the least cluster among them.";
+  let span = end -wrap start;
+  let short = end <= start;
+  let single = span < 2_u64;
+  let trivial = bor(short, single);
+  if trivial {
+    return unit;
+  }
+  spend(buffer: buffer, amount: span);
+  let first = item_at(buffer: buffer, index: start);
+  let cluster = first.cluster;
+  let after = start +wrap 1_u64;
+  for (position in after..end) {
+    let item = item_at(buffer: buffer, index: position);
+    let lower = imin(cluster, item.cluster);
+    set cluster = lower;
+  }
+  let length = buffer^.length;
+  let index = buffer^.index;
+  let stop = end;
+  let last_index = end -wrap 1_u64;
+  let last = item_at(buffer: buffer, index: last_index);
+  if cluster != last.cluster {
+    loop {
+      if stop >= length {
+        break;
+      }
+      let before_index = stop -wrap 1_u64;
+      let before = item_at(buffer: buffer, index: before_index);
+      let at = item_at(buffer: buffer, index: stop);
+      if before.cluster != at.cluster {
+        break;
+      }
+      set stop = stop +wrap 1_u64;
+    }
+  }
+  let begin = start;
+  if cluster != first.cluster {
+    loop {
+      if index >= begin {
+        break;
+      }
+      let before_index = begin -wrap 1_u64;
+      let before = item_at(buffer: buffer, index: before_index);
+      let at = item_at(buffer: buffer, index: begin);
+      if before.cluster != at.cluster {
+        break;
+      }
+      set begin = before_index;
+    }
+  }
+  let opening = item_at(buffer: buffer, index: begin);
+  let at_index = index == begin;
+  let differs = opening.cluster != cluster;
+  let into_output = band(at_index, differs);
+  if into_output {
+    let old = opening.cluster;
+    let position = buffer^.out_length;
+    loop {
+      if position == 0_u64 {
+        break;
+      }
+      let before_index = position - 1_u64;
+      let before = out_at(buffer: buffer, index: before_index);
+      if before.cluster != old {
+        break;
+      }
+      set_out_cluster_at(buffer: buffer, index: before_index, cluster: cluster);
+      set position = before_index;
+    }
+  }
+  for (position in begin..stop) {
+    set_cluster_at(buffer: buffer, index: position, cluster: cluster);
+  }
+  return unit;
+}
+
+fn merge_out_clusters(buffer: &Buffer, start: u64, end: u64) -> result: unit writes(buffer) {
+  doc "HarfBuzz's merge_out_clusters at the default cluster level: gives the output items from start to end, extended over neighbours sharing a cluster with an end and continuing into the input when end is the output length, the least cluster among them.";
+  let span = end -wrap start;
+  let short = end <= start;
+  let single = span < 2_u64;
+  let trivial = bor(short, single);
+  if trivial {
+    return unit;
+  }
+  spend(buffer: buffer, amount: span);
+  let first = out_at(buffer: buffer, index: start);
+  let cluster = first.cluster;
+  let after = start +wrap 1_u64;
+  for (position in after..end) {
+    let item = out_at(buffer: buffer, index: position);
+    let lower = imin(cluster, item.cluster);
+    set cluster = lower;
+  }
+  let begin = start;
+  loop {
+    if begin == 0_u64 {
+      break;
+    }
+    let before_index = begin - 1_u64;
+    let before = out_at(buffer: buffer, index: before_index);
+    let at = out_at(buffer: buffer, index: begin);
+    if before.cluster != at.cluster {
+      break;
+    }
+    set begin = before_index;
+  }
+  let out_length = buffer^.out_length;
+  let stop = end;
+  loop {
+    if stop >= out_length {
+      break;
+    }
+    let before_index = stop -wrap 1_u64;
+    let before = out_at(buffer: buffer, index: before_index);
+    let at = out_at(buffer: buffer, index: stop);
+    if before.cluster != at.cluster {
+      break;
+    }
+    set stop = stop +wrap 1_u64;
+  }
+  if stop == out_length {
+    let final_index = stop -wrap 1_u64;
+    let final_item = out_at(buffer: buffer, index: final_index);
+    let old = final_item.cluster;
+    let length = buffer^.length;
+    let position = buffer^.index;
+    loop {
+      if position >= length {
+        break;
+      }
+      let item = item_at(buffer: buffer, index: position);
+      if item.cluster != old {
+        break;
+      }
+      set_cluster_at(buffer: buffer, index: position, cluster: cluster);
+      set position = position +wrap 1_u64;
+    }
+  }
+  for (position in begin..stop) {
+    set_out_cluster_at(buffer: buffer, index: position, cluster: cluster);
+  }
+  return unit;
+}
+
+fn delete_glyph(buffer: &Buffer) -> result: unit writes(buffer) {
+  doc "HarfBuzz's delete_glyph: drops the current item, handing its cluster to the previous output item or, with no output, to the next item, unless a neighbour shares it.";
+  let index = buffer^.index;
+  let length = buffer^.length;
+  let out_length = buffer^.out_length;
+  let item = current(buffer: buffer);
+  let cluster = item.cluster;
+  let following_index = index +wrap 1_u64;
+  let has_next = following_index < length;
+  let next_item = item_at(buffer: buffer, index: following_index);
+  let next_shares = next_item.cluster == cluster;
+  let survives_next = band(has_next, next_shares);
+  let has_out = out_length > 0_u64;
+  let last = previous_item(buffer: buffer);
+  let out_shares = last.cluster == cluster;
+  let survives_out = band(has_out, out_shares);
+  let survives = bor(survives_next, survives_out);
+  if survives {
+  } else if has_out {
+    if cluster < last.cluster {
+      let old = last.cluster;
+      let position = out_length;
+      loop {
+        if position == 0_u64 {
+          break;
+        }
+        let before_index = position - 1_u64;
+        let before = out_at(buffer: buffer, index: before_index);
+        if before.cluster != old {
+          break;
+        }
+        set_out_cluster_at(buffer: buffer, index: before_index, cluster: cluster);
+        set position = before_index;
+      }
+    }
+  } else if has_next {
+    let end = index +wrap 2_u64;
+    merge_clusters(buffer: buffer, start: index, end: end);
+  }
+  skip_glyph(buffer: buffer);
+  return unit;
+}
+
+fn allocate_lig_id(buffer: &Buffer) -> result: u8 writes(buffer) {
+  doc "HarfBuzz's _hb_allocate_lig_id: advances the u8 serial, skipping 0, and returns its low three bits, advancing once more when they are all zero.";
+  let serial = buffer^.serial +wrap 1_u8;
+  if serial == 0_u8 {
+    set serial = 1_u8;
+  }
+  let id = iand(serial, 7_u8);
+  if id == 0_u8 {
+    set serial = serial +wrap 1_u8;
+    if serial == 0_u8 {
+      set serial = 1_u8;
+    }
+    set id = iand(serial, 7_u8);
+  }
+  set buffer^.serial = serial;
+  return id;
+}

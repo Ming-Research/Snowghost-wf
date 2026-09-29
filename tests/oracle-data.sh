@@ -21,6 +21,9 @@ html5lib=https://raw.githubusercontent.com/html5lib/html5lib-tests/224991ec10db0
 # The HTML standard's named character references; the file is unversioned,
 # so its hash pins the copy the tokenizer was written against.
 entities=https://html.spec.whatwg.org/entities.json
+noto=https://raw.githubusercontent.com/notofonts/notofonts.github.io/f145d86c53996717bc4c25d4602eb9294e43dccc/fonts
+udhr=https://raw.githubusercontent.com/eric-muller/udhr/588b3f4b2d0467aff54842a4b926551b69d5a66a/data/udhr
+pypi=https://files.pythonhosted.org/packages
 
 fetch() { # URL FILE SHA256
     if [ -f "$dir/$2" ] && echo "$3  $dir/$2" | sha256sum -c --status; then
@@ -149,6 +152,22 @@ fetch $css/color_lch_4.json css/color_lch_4.json 568490fdbd7d4d67cf8c075cbb58aca
 fetch $css/color_oklab_4.json css/color_oklab_4.json beaaa188a8189ec0adffb9ed4959e6910762532b9b2c7998558ede5f37a2eacd
 fetch $css/color_oklch_4.json css/color_oklch_4.json 2e575635c6d8fd517430e1e8e84cf20ffb475a4fb095039c9edce8770ee99cd3
 fetch $pngsuite PngSuite-2017jul19.tgz 0294b244c95a8342c01b00010cf34abdcabc7c6a34fd0fe1bd963917537bfdc8
+
+# Fonts, texts and the pinned tools that compute the font oracles' expectations
+fetch $noto/NotoSans/unhinted/ttf/NotoSans-Regular.ttf fonts/NotoSans-Regular.ttf f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8
+fetch $noto/NotoSerif/unhinted/ttf/NotoSerif-Regular.ttf fonts/NotoSerif-Regular.ttf a15cfbbc1539d707115111d672d590a3d70d4f74b4c0a315956da20ae19a14e1
+fetch $udhr/udhr_eng.xml udhr/udhr_eng.xml df73275821449df4db2b164e59bda812c834d80cacc8792a6f41d6fc331ce204
+fetch $udhr/udhr_rus.xml udhr/udhr_rus.xml 4d91ee6b21c4f2fd26bae1a62b6f2922b2a33335b1559ccfaea29bdaf2ec2972
+fetch $udhr/udhr_ell_monotonic.xml udhr/udhr_ell_monotonic.xml 961f32b7aca8371e4709352c9c096b28c6876867aa45e233736547c46fe35748
+fetch $udhr/udhr_ell_polytonic.xml udhr/udhr_ell_polytonic.xml 60242b91f737fbfb4b8026453c8a507d3cd33626ee043929a1725c26d25b70e3
+fetch $pypi/09/5c/761168440df6bc2caafa6341b77dd3ee41949ffaaa5da610da2ce1fd74f9/uharfbuzz-0.56.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl wheels/uharfbuzz-0.56.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl f058d70848312366e82068ebef54ead53269bdf34e893c25a3174ea1f5c6d2d3
+fetch $pypi/83/65/826290863c9df6041f2e36a5ae5d604cd8247fffc8ec7b45581fd2473e4d/fonttools-4.66.0-py3-none-any.whl wheels/fonttools-4.66.0-py3-none-any.whl bc7b7ddc1a1f46c363354304e9a8dd93722e4a6a24f785015650898dacf40df9
+if [ ! -f "$dir/py/.installed-uharfbuzz-0.56.2-fonttools-4.66.0" ]; then
+    rm -rf "$dir/py"
+    python3 -m pip install --quiet --disable-pip-version-check --root-user-action=ignore --no-deps --no-index \
+        --target "$dir/py" "$dir"/wheels/*.whl
+    touch "$dir/py/.installed-uharfbuzz-0.56.2-fonttools-4.66.0"
+fi
 
 # PngSuite: every image with its libpng reference, and the case list
 # ("valid NAME" or "invalid NAME") the driver reads. Names starting with x

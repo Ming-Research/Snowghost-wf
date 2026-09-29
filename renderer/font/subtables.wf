@@ -1,0 +1,220 @@
+enum SequenceKind {
+  doc "Which array of LayoutTable a sequence of u16 values goes to.";
+  Glyphs();
+  Classes();
+}
+
+const memo_coverage: u32 = 1_u32;
+
+const memo_classes: u32 = 2_u32;
+
+const memo_subtable: u32 = 3_u32;
+
+const memo_index_mask: u32 = 1073741823_u32;
+
+fn memo_find(builder: &LayoutBuilder, at: u64, kind: u32) -> result: u32 reads(builder) {
+  doc "Returns one plus the index memo_record recorded for a structure of kind (memo_coverage, memo_classes or memo_subtable) at position at, or 0 when it recorded none there, or one of another kind. An entry holds its kind in its top two bits and one plus the index below them.";
+  if at < builder^.memo.inner.len {
+    let entry_value = builder^.memo.inner[at];
+    let tag = ishr(entry_value, 30_u32);
+    if tag == kind {
+      let marker = iand(entry_value, memo_index_mask);
+      return marker;
+    }
+  }
+  return 0_u32;
+}
+
+fn memo_record(builder: &LayoutBuilder, at: u64, kind: u32, index: u32) -> result: unit writes(builder) contract {
+  requires kind <= 3_u32;
+} {
+  doc "Records that the structure of kind at position at compiled to index, unless a structure was already recorded there or index is too large to record, which only costs a recompilation.";
+  if at < builder^.memo.inner.len {
+    let entry_value = builder^.memo.inner[at];
+    let unrecorded = entry_value == 0_u32;
+    let fits = index < memo_index_mask;
+    let recordable = band(unrecorded, fits);
+    if recordable {
+      let marker = index + 1_u32;
+      let tag = ishl(kind, 30_u32);
+      let tagged = ior(tag, marker);
+      set builder^.memo.inner[at] = tagged;
+    }
+  }
+  return unit;
+}
+
+fn compile_subtable(table: &[u8], at: u64, kind: SubtableKind, builder: &LayoutBuilder) -> result: Result<unit, FontError> reads(table), writes(builder) {
+  doc "Appends to subtables the entry for the subtable of kind at at, compiling the subtable unless one of the same kind at the same position already has been, in which case the entry refers to that one.";
+  let ceiling = builder^.ceiling;
+  let known = memo_find(builder: builder, at: at, kind: memo_subtable);
+  if known != 0_u32 {
+    let earlier_entry = known - 1_u32;
+    let earlier = cvt::<u32, u64>(earlier_entry);
+    if earlier < builder^.layout.subtables.inner.len {
+      let existing = builder^.layout.subtables.inner[earlier];
+      let same_kind = eeq(existing.kind, kind);
+      if same_kind {
+        let shared = propagate push::<Subtable>(list: &builder^.layout.subtables, value: existing, ceiling: ceiling);
+        return Ok<unit, FontError>(value: unit);
+      }
+    }
+  }
+  let index = match kind {
+    SingleSubstitution() => {
+      let compiled = propagate compile_single_substitution(table: table, at: at, builder: builder);
+      give compiled;
+    }
+    MultipleSubstitution() => {
+      let compiled = propagate compile_multiple_substitution(table: table, at: at, builder: builder);
+      give compiled;
+    }
+    LigatureSubstitution() => {
+      let compiled = propagate compile_ligature_substitution(table: table, at: at, builder: builder);
+      give compiled;
+    }
+    ChainedContext() => {
+      let compiled = propagate compile_chained_context(table: table, at: at, builder: builder);
+      give compiled;
+    }
+    SinglePositioning() => {
+      let compiled = propagate compile_single_positioning(table: table, at: at, builder: builder);
+      give compiled;
+    }
+    PairPositioning() => {
+      let compiled = propagate compile_pair_positioning(table: table, at: at, builder: builder);
+      give compiled;
+    }
+    MarkToBase() => {
+      let ligatures = False();
+      let compiled = propagate compile_mark_attachment(table: table, at: at, ligatures: ligatures, builder: builder);
+      give compiled;
+    }
+    MarkToLigature() => {
+      let ligatures = True();
+      let compiled = propagate compile_mark_attachment(table: table, at: at, ligatures: ligatures, builder: builder);
+      give compiled;
+    }
+    MarkToMark() => {
+      let ligatures = False();
+      let compiled = propagate compile_mark_attachment(table: table, at: at, ligatures: ligatures, builder: builder);
+      give compiled;
+    }
+  }
+  let slot = propagate next_index::<Subtable>(list: &builder^.layout.subtables);
+  let entry_value = Subtable(kind: kind, index: index);
+  let pushed = propagate push::<Subtable>(list: &builder^.layout.subtables, value: entry_value, ceiling: ceiling);
+  memo_record(builder: builder, at: at, kind: memo_subtable, index: slot);
+  return Ok<unit, FontError>(value: unit);
+}
+
+fn coverage_index(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Returns the index in coverages of the coverage table at at, compiling it when no earlier reference has; 0, the empty coverage, for a null offset.";
+  if at == 0_u64 {
+    return Ok<u32, FontError>(value: 0_u32);
+  }
+  let known = memo_find(builder: builder, at: at, kind: memo_coverage);
+  if known != 0_u32 {
+    let index = known - 1_u32;
+    return Ok<u32, FontError>(value: index);
+  }
+  let ceiling = builder^.ceiling;
+  let extent = propagate compile_coverage(table: table, at: at, ranges: &builder^.layout.coverage_ranges, ceiling: ceiling);
+  let index = propagate next_index::<Extent>(list: &builder^.layout.coverages);
+  let pushed = propagate push::<Extent>(list: &builder^.layout.coverages, value: extent, ceiling: ceiling);
+  memo_record(builder: builder, at: at, kind: memo_coverage, index: index);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn class_index(table: &[u8], at: u64, builder: &LayoutBuilder) -> result: Result<u32, FontError> reads(table), writes(builder) {
+  doc "Returns the index in class_definitions of the class definition at at, compiling it when no earlier reference has; 0, the definition giving every glyph class 0, for a null offset.";
+  if at == 0_u64 {
+    return Ok<u32, FontError>(value: 0_u32);
+  }
+  let known = memo_find(builder: builder, at: at, kind: memo_classes);
+  if known != 0_u32 {
+    let index = known - 1_u32;
+    return Ok<u32, FontError>(value: index);
+  }
+  let ceiling = builder^.ceiling;
+  let extent = propagate compile_classes(table: table, at: at, ranges: &builder^.layout.class_ranges, ceiling: ceiling);
+  let index = propagate next_index::<Extent>(list: &builder^.layout.class_definitions);
+  let pushed = propagate push::<Extent>(list: &builder^.layout.class_definitions, value: extent, ceiling: ceiling);
+  memo_record(builder: builder, at: at, kind: memo_classes, index: index);
+  return Ok<u32, FontError>(value: index);
+}
+
+fn append_values(table: &[u8], at: u64, offset: u64, count: u64, kind: SequenceKind, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) contract {
+  requires offset <= 16842496_u64;
+  requires count <= 65535_u64;
+} {
+  doc "Appends the count u16 values that start offset bytes past at to glyphs or classes, as kind selects, and returns their Extent.";
+  let ceiling = builder^.ceiling;
+  match kind {
+    Glyphs() => {
+      let start = propagate next_index::<u16>(list: &builder^.layout.glyphs);
+      for (index in 0_u64..count) {
+        let scaled = index * 2_u64;
+        let value_at = offset + scaled;
+        let value = propagate read_u16(bytes: table, base: at, offset: value_at);
+        let pushed = propagate push::<u16>(list: &builder^.layout.glyphs, value: value, ceiling: ceiling);
+      }
+      let run = propagate extent_since::<u16>(list: &builder^.layout.glyphs, start: start);
+      return Ok<Extent, FontError>(value: run);
+    }
+    Classes() => {
+      let start = propagate next_index::<u16>(list: &builder^.layout.classes);
+      for (index in 0_u64..count) {
+        let scaled = index * 2_u64;
+        let value_at = offset + scaled;
+        let value = propagate read_u16(bytes: table, base: at, offset: value_at);
+        let pushed = propagate push::<u16>(list: &builder^.layout.classes, value: value, ceiling: ceiling);
+      }
+      let run = propagate extent_since::<u16>(list: &builder^.layout.classes, start: start);
+      return Ok<Extent, FontError>(value: run);
+    }
+  }
+}
+
+fn append_records(table: &[u8], at: u64, offset: u64, count: u64, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) contract {
+  requires offset <= 16842496_u64;
+  requires count <= 65535_u64;
+} {
+  doc "Appends the count SequenceLookupRecords that start offset bytes past at to sequence_lookups and returns their Extent; each lookup index must be below the lookup count.";
+  let ceiling = builder^.ceiling;
+  let lookup_count = builder^.lookup_count;
+  let start = propagate next_index::<SequenceLookup>(list: &builder^.layout.sequence_lookups);
+  for (index in 0_u64..count) {
+    let scaled = index * 4_u64;
+    let record = offset + scaled;
+    let lookup_at = record + 2_u64;
+    let sequence_index = propagate read_u16(bytes: table, base: at, offset: record);
+    let lookup_index = propagate read_u16(bytes: table, base: at, offset: lookup_at);
+    if lookup_index >= lookup_count {
+      let invalid = FontError::Invalid();
+      return Err<Extent, FontError>(error: invalid);
+    }
+    let applied = SequenceLookup(sequence_index: sequence_index, lookup_index: lookup_index);
+    let pushed = propagate push::<SequenceLookup>(list: &builder^.layout.sequence_lookups, value: applied, ceiling: ceiling);
+  }
+  let run = propagate extent_since::<SequenceLookup>(list: &builder^.layout.sequence_lookups, start: start);
+  return Ok<Extent, FontError>(value: run);
+}
+
+fn append_coverages(table: &[u8], at: u64, offset: u64, count: u64, builder: &LayoutBuilder) -> result: Result<Extent, FontError> reads(table), writes(builder) contract {
+  requires offset <= 16842496_u64;
+  requires count <= 65535_u64;
+} {
+  doc "Appends to coverage_sequences the coverage indices of the count coverage offsets, relative to at, that start offset bytes past at, and returns their Extent.";
+  let ceiling = builder^.ceiling;
+  let start = propagate next_index::<u32>(list: &builder^.layout.coverage_sequences);
+  for (index in 0_u64..count) {
+    let scaled = index * 2_u64;
+    let offset_at = offset + scaled;
+    let coverage_at = propagate follow16(bytes: table, base: at, offset: offset_at);
+    let coverage = propagate coverage_index(table: table, at: coverage_at, builder: builder);
+    let pushed = propagate push::<u32>(list: &builder^.layout.coverage_sequences, value: coverage, ceiling: ceiling);
+  }
+  let run = propagate extent_since::<u32>(list: &builder^.layout.coverage_sequences, start: start);
+  return Ok<Extent, FontError>(value: run);
+}

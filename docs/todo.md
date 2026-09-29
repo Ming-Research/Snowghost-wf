@@ -113,3 +113,33 @@ example apart from the renderer code that exposed it
   reach it. Change: sort the label's non-ASCII code points once and walk
   them in order. Reopen when URL parsing runs on untrusted input at scale,
   or a profile shows it.
+- **pkg::oracle::support has no signed decimal writer.** The font drivers
+  print negative metrics, advances and offsets, so `pkg::oracle::font_face`
+  (`put_signed_field`) and `pkg::oracle::font_shape` (`put_signed_item`)
+  each carry the same sign-and-magnitude step beside support's unsigned
+  `put_decimal`. Change: add a signed writer to support's interface and use
+  it in both drivers. Reopen when a third driver prints signed numbers or
+  support's interface next changes.
+- **pkg::font reads only raw sfnt fonts for simple scripts.** WOFF and
+  WOFF2 (which needs a Brotli decoder), font collections, variable fonts
+  and CFF2 are refused as Unsupported; shaping covers horizontal
+  left-to-right Latin, Greek and Cyrillic with HarfBuzz's default
+  features, not the complex-script shapers (Arabic, Indic, Khmer,
+  Myanmar, Hangul, Thai), vertical text, cmap format 14 variation
+  selectors or the GSUB and GPOS lookup types outside the listed ones;
+  and load_face validates only the tables shaping reads, not the outline
+  tables (glyf, loca, CFF) the shell's rasterizer will read. Impact: web
+  fonts, which are mostly WOFF2, and pages in other scripts cannot use
+  their fonts yet. Change: a WOFF2 and Brotli leaf, outline validation
+  before any font reaches the shell, and one shaper leaf per script
+  family. Reopen when the first page needs a web font, a non-Latin script
+  beyond Greek and Cyrillic, or the shell rasterizes.
+- **load_face ignores a whole malformed GDEF, GSUB or GPOS table.** Chrome
+  passes these tables to HarfBuzz unsanitized, and HarfBuzz's sanitizer
+  neuters each offset it cannot follow, so the lookups that parse still
+  apply. pkg::font drops the whole table instead. The two agree when the
+  table is unreadable as a whole or when the neutered offset is the only
+  structure a feature uses; otherwise a font with one broken lookup loses
+  its other lookups here. Change: validate per lookup and ignore only the
+  failing lookup, matching HarfBuzz's neutering. Reopen when a real web
+  font with a partly broken layout table renders differently from Chrome.
