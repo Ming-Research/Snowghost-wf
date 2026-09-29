@@ -1,8 +1,9 @@
 # Concurrency of the style and layout shapes
 
 Status: criteria recorded before any prototype runs. The style prototype is
-built and checked; the measurement waits for the precondition recorded under
-Results. Nothing here is decided; the results feed the vocabulary proposal
+built and checked. The layout prototype is designed below and not built. The
+measurement waits for the precondition recorded under Results. Nothing here
+is decided; the results feed the vocabulary proposal
 (`research/investigations/vocabulary/DESIGN.md`) and, where they contradict
 it, an amendment beside the design tree.
 
@@ -68,7 +69,7 @@ After the style pass, a sequential **intern post-pass** interns each group
 into a per-group hash table and replaces it by the table's index. It is
 timed separately.
 
-### Layout (`pkg::proto::layout`)
+### Layout (`pkg::proto::layout`, not built)
 
 From the style prototype's computed `display`, `float`, `position` and
 `overflow`, the driver builds an owned tree:
