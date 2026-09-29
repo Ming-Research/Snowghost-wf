@@ -286,6 +286,48 @@ set. Follow this by judgment and keep moving.
 - Repository artifacts, identifiers, comments, diagnostics, fixtures, test
   names and file names use English.
 
+### Document roles
+
+Each document holds what serves its reader; a brief summary or relevant
+technical explanation is useful, duplicating another document's changing
+inventory or mixing in the editing conversation is not. A file needs no new
+status banner or self-description merely to satisfy this list.
+
+- `README.md`: introduction, getting started and navigation, not a renderer
+  inventory, a design record or task history.
+- `AGENTS.md`: goal and priorities, authority, how work proceeds, the approval
+  and merge rules, the Whitefoot boundary, code, hygiene, checks and review;
+  not research narration or a design procedure the `design-tree` skill holds.
+- `design/skill/`: the project-independent design-tree procedure, copied from
+  Whitefoot; nothing specific to Snowghost.
+- `design/`: live decisions with their reasons and refused alternatives and
+  the approval log; not inventories, transcripts or progress.
+- `docs/review-checklist.md`: the items a reviewer answers from the diff; not
+  renderer behavior, task outcomes or a procedure stated in full elsewhere.
+- `docs/todo.md`: defects, costs, improvement opportunities, Whitefoot
+  requirements and their validation, removed when resolved; not settled
+  decisions, claims of implemented capability or progress logs.
+- `research/investigations/`: questions, alternatives, designs, experiments,
+  results and limitations; not task completion presented as evidence, a
+  proposal presented as a decided design, or daily tests and their inputs,
+  which belong in `tests/`.
+- The PR description: this change's problem, behavior, grounds, validation,
+  limitations and what it found along the way, kept current with the diff;
+  not a source of project rules.
+
+### Citation boundaries
+
+- Definitions point to their current owner; claims point to the evidence
+  [Authority and reading](#authority-and-reading) names, and the linked
+  passage supports the claim.
+- Whitefoot's language is cited from the pinned `whitefoot/` revision's
+  specification or maintained programs, never from Snowghost's own code.
+- Research records and PRs may cite design decisions as rationale, not as
+  proof of an empirical claim. A tree node may cite investigations and
+  evidence in its reason.
+- Historical references may name their historical versions and keep their
+  historical content.
+
 ## Communication
 
 Describe renderer and language work with precise, neutral technical wording:

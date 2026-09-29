@@ -43,10 +43,13 @@ Source: [repository hygiene](../AGENTS.md#repository-structure-and-hygiene).
 
 ## D. Documentation — changed Markdown, comments or examples
 
-- [ ] **D1 — Purpose.** Each changed passage serves its document's reader;
-  no editorial history or process instructions inside substantive documents.
+- [ ] **D1 — Purpose.** Each changed passage serves its document's reader
+  under the [document roles](../AGENTS.md#document-roles); no editorial
+  history or process instructions inside substantive documents.
 - [ ] **D2 — References.** Changed references resolve to the intended file,
-  heading or symbol and support their claim.
+  heading or symbol, obey the
+  [citation boundaries](../AGENTS.md#citation-boundaries), and support their
+  claim.
 - [ ] **D3 — Current meaning.** Changed claims agree with their owning source
   and affected guidance. A goal, a proposal, a decision, an implemented
   capability and a dated measurement are kept distinct.
