@@ -1,9 +1,10 @@
 # Concurrency of the style and layout shapes
 
 Status: criteria recorded before any prototype runs. The style prototype is
-built and checked. The layout prototype is designed below and not built. The
-measurement waits for the precondition recorded under Results. Nothing here
-is decided; the results feed the vocabulary proposal
+built, checked and measured: criteria 1 and 2 are answered and criterion 4
+is answered for the style shapes. The layout prototype is designed below and
+not built, so criterion 3 and the L1 half of criterion 4 wait for it. Nothing
+here is decided; the results feed the vocabulary proposal
 (`research/investigations/vocabulary/DESIGN.md`) and, where they contradict
 it, an amendment beside the design tree.
 
@@ -165,13 +166,73 @@ Recorded before any run; the results section may not change them.
 
 ## Results
 
-The measurement has not run. It waits for the precondition below, which
-Whitefoot's call-offer grain (mbbill/Whitefoot#177) now meets, and for the pin
-to move to a compiler that carries it.
+### Style measurement
+
+`run.sh style` at Snowghost commit 5f9f994, whose Whitefoot pin 13556101
+carries the call-offer grain and the recursion budget spent only at group
+calls (mbbill/Whitefoot#177), on the development machine (four Intel Xeon
+cores at 2.1 GHz, Linux 6.18) under the check lock. Each figure is the stage
+time (T(REPS) - T(0)) / REPS from the best of seven runs; the repetition
+counts are `run.sh`'s. T(0) no longer grows with workers: 0.27 to 0.29 s on
+ecma262, 0.22 to 0.23 s on html5 and 0.05 to 0.06 s on apollo11 in every
+build. `run.sh check` passes on all seven pages.
+
+Style stage, seconds, with the speedup of four workers over the sequential
+build:
+
+| Page | Shape | seq | W1 | W2 | W4 | seq / W4 |
+|---|---|---:|---:|---:|---:|---:|
+| ecma262 | A | 2.850 | 2.877 | 1.757 | 0.810 | 3.52 |
+| ecma262 | B | 3.063 | 2.983 | 1.700 | 0.887 | 3.45 |
+| ecma262 | C | 2.840 | 2.953 | 1.507 | 0.790 | 3.59 |
+| html5 | A | 3.707 | 3.737 | 2.073 | 1.040 | 3.56 |
+| html5 | B | 3.947 | 3.950 | 2.007 | 1.107 | 3.57 |
+| html5 | C | 3.800 | 3.893 | 1.973 | 1.023 | 3.71 |
+| apollo11 | A | 1.683 | 1.723 | 0.955 | 0.483 | 3.49 |
+| apollo11 | B | 1.775 | 1.723 | 1.613 | 1.600 | 1.11 |
+| apollo11 | C | 1.685 | 1.773 | 0.900 | 0.465 | 3.62 |
+| flat | A | 0.0309 | 0.0316 | 0.0191 | 0.0088 | 3.51 |
+| flat | B | 0.0355 | 0.0338 | 0.0175 | 0.0084 | 4.23 |
+| flat | C | 0.0299 | 0.0319 | 0.0165 | 0.0091 | 3.29 |
+| unbalanced | A | 0.0150 | 0.0153 | 0.0097 | 0.0045 | 3.33 |
+| unbalanced | B | 0.0187 | 0.0167 | 0.0083 | 0.0044 | 4.25 |
+| unbalanced | C | 0.0149 | 0.0157 | 0.0081 | 0.0045 | 3.31 |
+
+The deep page (405 elements) stays under a millisecond per repetition in
+every build (C 0.3 ms at two workers and 0.2 ms at four, the others 0.6 to
+0.8 ms), and the paragraph page (6 elements) under the timer's resolution;
+neither separates the shapes.
+
+Intern post-pass, seconds per repetition, against the four-worker style time
+of C: 0.0365 on ecma262 (4.6 percent), 0.0296 on html5 (2.9 percent) and
+0.0021 on apollo11 (0.5 percent), the same in every build.
+
+- **Criterion 1: C.** The median four-worker time over the three real pages
+  is 0.790 s for C, 0.810 s for A and 1.107 s for B. A is within 5 percent
+  of C, and the simpler-storage order C, A, B then chooses C. A, the
+  vocabulary's level order, is not rejected by the criterion, since C is
+  2.5 percent faster, but it is not the adopted shape.
+- **Criterion 2: the sequential post-pass.** It costs at most 4.6 percent of
+  C's four-worker style time on every real page, under the 15 percent bound.
+- **Criterion 4, style half: not met.** On the unbalanced page B's speedup,
+  4.25, is above C's 3.31, and on the flat page 4.23 against 3.29; B does not
+  fall below half of C. The unbalanced page's chain is five levels deep,
+  within the budget. Apollo11, a real page, shows the case the criterion
+  describes: B reaches 1.11 against C's 3.62, because its work sits under
+  a few children of wide sibling runs whose halvings are real splits and
+  spend the fixed-depth budget. That finding already went to Whitefoot
+  (mbbill/Whitefoot#177, its todo item "A fixed recursion budget cannot
+  follow an unbalanced tree"). The L1 half waits for the layout prototype.
+- **Not recorded: the `--par-ledger` decisions.** `whitefootc` refuses
+  `--par-ledger` with `--graph` ("reports a source bundle build"), and the
+  prototype builds only from the module graph, so the Timing section's
+  ledger record is not available; the gap goes to Whitefoot's todo.
+
 
 ### Preview with the call grain
 
-Not the measurement: best of three at one and four workers only, stage time
+Superseded by the measurement above; kept for how shape B's two obstacles
+were found. Best of three at one and four workers only, stage time
 (T(2) - T(0)) / 2, with the Whitefoot branch of #177 (call grain) building the
 prototype, on the development machine under the check lock.
 
