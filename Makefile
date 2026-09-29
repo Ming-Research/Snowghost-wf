@@ -9,15 +9,14 @@ ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 WHITEFOOT := $(ROOT)/whitefoot
 
 # The live design trees: every root node file directly under design/ except
-# the log, so a tree is linted in the same change that adds it. With none,
-# the lint still checks amendments and the log.
+# the log, so a tree is linted in the same change that adds it.
 DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*.md))))
 
 # The revision a design-tree change is reviewed against. CI selects it per
 # event with .github/design-review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
-.PHONY: check compiler renderer design-lint design-ready review-scope \
+.PHONY: check compiler renderer design-lint design-ready \
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
@@ -66,10 +65,7 @@ design-lint:
 	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)"
 
 design-ready:
-	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)" --require-no-amendments
-
-review-scope:
-	@cd $(ROOT) && sh docs/skills/completion-review/scripts/review-scope.sh
+	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)" --require-approval
 
 # The agent writer trial's oracles (research/investigations/agent-writer-trial).
 # They need network access, libpng and a C compiler, and stay out of `check`.
