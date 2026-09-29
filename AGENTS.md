@@ -55,34 +55,23 @@ rules below.
 
 A *material choice* changes rendered behavior, a safety or trust condition, a
 shared interface or representation, a significant performance commitment or a
-standing project rule. Restoring decided behavior or editing prose without
-changing its meaning is routine; task size and file count do not decide which
-a change is. Only a material choice between viable alternatives is a design
-decision; this is the project's threshold for the `design-tree` skill's
-decisions.
+standing project rule; only a material choice between viable alternatives is
+a design decision. Restoring decided behavior or editing prose without
+changing its meaning is routine.
 
 1. **Before starting,** read the affected design-tree nodes and their
-   ancestors. On resumption, verify the actual worktree and PR state. Settle
-   the direction with the owner first, as the `design-tree` skill describes.
-2. **While working,** state why each material choice fits its requirements
-   and evidence, and record a discriminating experiment's criterion before
-   using it to choose ([Investigations](#investigations)). Change the code
-   and the design tree together on a Draft PR; when a conclusion or its
-   grounds change, update current guidance and material dependents in the
-   same work. Work through to completion, as the skill describes.
-3. **At completion,** run the [checks](#checks), run the [review](#review)
-   when the change calls for one, fix what it finds, and hand the work back
-   as the `design-tree` skill describes. After the skill's parts, the handoff
-   gives the validation actually run, its revision and what remains
-   unverified; the review's scope and the findings it fixed, when one ran;
-   any `whitefoot/` pin moved or Whitefoot gap filed, and why; and what the
-   work found along the way.
-4. **After the owner approves** every decision the work needs, including every
-   design-tree change, write the log entry and mark the PR ready (rule 1
-   below).
-
-Routine fixes under unchanged design need no decision record. Record reasons
-when choices settle, not by reconstructing them at task completion.
+   ancestors, verify the worktree and PR state on resumption, and settle the
+   direction with the owner as the `design-tree` skill describes.
+2. **While working,** state why each material choice fits its evidence and
+   record an experiment's criterion before using it to choose. Change the
+   code and the design tree together on a Draft PR, and update what a changed
+   conclusion affects in the same work.
+3. **At completion,** run the [checks](#checks) and, when it applies, the
+   [review](#review), then hand the work back as the skill describes, adding
+   the validation run and its revision, what remains unverified, any
+   `whitefoot/` pin moved or gap filed, and what the work found along the way.
+4. **After the owner approves** every decision, write the log entry and mark
+   the PR ready (rule 1 below).
 
 **Fix or record what you notice.** When work exposes a defect elsewhere, such
 as a bug, an awkward interface, duplicated logic or a stale document, fix it
@@ -105,47 +94,22 @@ its description and actual validation results current. A series of dependent
 PRs is stacked, each on the branch of the one before it. Updating a
 work-branch PR never authorizes a merge into `main`.
 
-**The design tree in this project.** The `design-tree` skill is the one
-recurring procedure kept as a skill. It is written for any project and lives
-in `design/skill/`; `.agents/skills/` (Codex) and `.claude/skills/` (Claude
-Code) hold only links to it, and its body loads when its description matches
-the task. Here its roles are:
+**The design tree.** The `design-tree` skill (`design/skill/`, linked from
+`.claude/skills/` and `.agents/skills/`) is the one recurring procedure. Its
+live trees are the root node files under `design/` other than `log.md`, each
+with its subdirectory, which the Makefile finds and lints; its log is
+`design/log.md`, its research record `research/investigations/`, its TODO
+`docs/todo.md`, and its checks `make design-lint` and `make design-ready`.
 
-- live trees: every root node file directly under `design/` except `log.md`,
-  with its subdirectory. The Makefile derives the list from those files, so a
-  new tree is linted in the change that adds it; removing a tree's root node
-  also removes it from that list, so a whole tree's retirement still needs
-  the owner's ruling and a log entry naming the retired nodes;
-- change log: `design/log.md`;
-- research record: `research/investigations/`;
-- maintained TODO: `docs/todo.md`;
-- form check: `make design-lint`, part of `make check`;
-- readiness check: `make design-ready`, run by
-  `.github/workflows/design-readiness.yml` on ready PRs and on main.
-
-### Investigations
-
-An investigation exists to decide something. Its design, measurements and
-rejected alternatives live in `research/investigations/<name>/`, and the
-decision that survives goes to the design tree.
-
-1. **Criterion first.** Write the question, the comparison that could answer
-   it either way and the result that would reject the proposal before running
-   the measurement.
-2. **Engine comparisons.** Measure Snowghost, Chromium and Servo on the same
-   machine, content, viewport, device pixel ratio, fonts and output path, and
-   record each engine's version and settings. Compare pipeline stages only
-   where each engine exposes them, and name what each number includes.
-3. **Performance attribution.** Attribute a gain or loss with a same-source
-   causal comparison, before and after the change, and a falsifier.
-4. **Agent writer trials.** Keep four observations apart: whether the program
-   and its proofs can be expressed in Whitefoot; whether the tested agent
-   writes them with the supplied interfaces, context, tools and repair help;
-   whether separately written modules meet independent expectations when
-   composed; and whether the result meets its runtime cost goal, and why.
-   Record the model, prompt, supplied context, turns and time for each run.
-   Model identity and assistance are experimental conditions, not ceilings on
-   the language.
+**Investigations.** An investigation decides something. Before measuring,
+write in `research/investigations/<name>/` the question, the comparison that
+could answer it either way and the result that would reject the proposal;
+the surviving decision goes to the tree. Attribute a performance change with
+a same-source before-and-after comparison and a falsifier. An agent writer
+trial keeps apart whether the program can be expressed in Whitefoot, whether
+the tested agent writes it with the supplied help, whether separately written
+modules compose, and whether it meets its cost goal, and records the model,
+prompt, context, turns and time of each run.
 
 ## Agent roles
 
@@ -161,7 +125,7 @@ decision that survives goes to the design tree.
   the [review](#review) calls for one.
 - The primary agent dispatches and supervises implementer and reviewer agents
   and chooses the model for each kind of task from measured agent writer
-  trials ([Investigations](#investigations)).
+  trials.
 
 ## Branch and main boundary
 
@@ -188,55 +152,26 @@ approval or merge precondition.
 
 ## Checks
 
-- `make check`, the gate, on every push in CI and on the revision to merge.
+- `make check`, the gate, in CI on every push and on the revision to merge.
   It needs git, Rust stable at least at the `rust-version` in
-  `whitefoot/compiler/Cargo.toml`, Python 3, and a clone with its submodule:
-  `git clone --recurse-submodules`, or `git submodule update --init` in an
-  existing clone. It builds the pinned compiler with Whitefoot's own build
-  target, leaving it at `whitefoot/compiler/target/gate/whitefootc`, builds
-  the renderer, and runs the design lint.
-- `make design-ready`, before marking ready and in `design-readiness.yml` on
-  ready PRs and main: approved design-tree changes.
+  `whitefoot/compiler/Cargo.toml`, Python 3 and the submodule
+  (`git clone --recurse-submodules` or `git submodule update --init`). It
+  builds the pinned compiler to `whitefoot/compiler/target/gate/whitefootc`,
+  builds the renderer and runs the design lint.
+- `make design-ready`, before marking ready and in CI on ready PRs and main:
+  every design-tree change is approved in the log.
 
 ## Review
 
-One review per substantial task, when the work is complete and before the
-handoff, and whenever the owner asks for one. A change is substantial when it
-edits `design/` or the renderer-shell format, adds or changes a module
-interface, or changes more code than a small fix. A small fix, a
-documentation change or a process change needs only the checks, which keeps
-review cost in step with a young project.
-
-Start a separate, read-only agent that did not implement the change:
-
-- for a change to code, tests, gate wiring, the pin, the design tree or agent
-  guidance, a mid-sized model and every applicable group of
-  [the review checklist](docs/review-checklist.md), whose M group is the
-  `design-tree` skill's design correspondence review;
-- when only research records or other prose changed, a small model and
-  groups A, D, M and V, plus R for a material choice.
-
-Give it this prompt, filled in:
-
-```text
-You are reviewing a Snowghost change you did not write. Do not edit files.
-Task outcome and constraints: <...>
-Base and head: <...>; validation already run: <commands, results, revision>.
-Read the diff from the base (git diff <base>, plus untracked files), the
-changed sections in context, and "How to review" in docs/review-checklist.md.
-Check each group whose trigger applies. For M1, apply the design checks and
-correspondence checks of design/skill/SKILL.md to the relevant tree nodes and
-ancestors. Do not rerun green suites. Report Scope (your model, base..head,
-groups checked and skipped), Checks (what you ran) and Findings (item ID,
-file:line, quoted text or missing evidence, reason; quote both sides of a
-contradiction), or "none within scope".
-```
-
-Fix every finding and review again as the `design-tree` skill's workflow
-describes. Merging main without conflicts in reviewed content needs no new
-review; a resolved conflict is reviewed as changed content, those hunks only.
-Then commit and push, verify that the remote head is the reviewed revision,
-and fill the PR's review section.
+A substantial task gets one review at completion, and any task gets one when
+the owner asks. A change is substantial when it edits `design/` or the
+renderer-shell format, adds or changes a module interface, or changes more
+code than a small fix; a small fix, a documentation change or a process
+change needs only the checks. Start a separate, read-only agent that did not
+implement the change, with the prompt in
+[the review checklist](docs/review-checklist.md#how-to-review), then fix every
+finding as the `design-tree` skill's workflow describes, push, verify that
+the remote head is the reviewed revision, and fill the PR's review section.
 
 ## The Whitefoot boundary
 
@@ -285,48 +220,16 @@ set. Follow this by judgment and keep moving.
   the old in the same change.
 - Repository artifacts, identifiers, comments, diagnostics, fixtures, test
   names and file names use English.
-
-### Document roles
-
-Each document holds what serves its reader; a brief summary or relevant
-technical explanation is useful, duplicating another document's changing
-inventory or mixing in the editing conversation is not. A file needs no new
-status banner or self-description merely to satisfy this list.
-
-- `README.md`: introduction, getting started and navigation, not a renderer
-  inventory, a design record or task history.
-- `AGENTS.md`: goal and priorities, authority, how work proceeds, the approval
-  and merge rules, the Whitefoot boundary, code, hygiene, checks and review;
-  not research narration or a design procedure the `design-tree` skill holds.
-- `design/skill/`: the project-independent design-tree procedure, copied from
-  Whitefoot; nothing specific to Snowghost.
-- `design/`: live decisions with their reasons and refused alternatives and
-  the approval log; not inventories, transcripts or progress.
-- `docs/review-checklist.md`: the items a reviewer answers from the diff; not
-  renderer behavior, task outcomes or a procedure stated in full elsewhere.
-- `docs/todo.md`: defects, costs, improvement opportunities, Whitefoot
-  requirements and their validation, removed when resolved; not settled
-  decisions, claims of implemented capability or progress logs.
-- `research/investigations/`: questions, alternatives, designs, experiments,
-  results and limitations; not task completion presented as evidence, a
-  proposal presented as a decided design, or daily tests and their inputs,
-  which belong in `tests/`.
-- The PR description: this change's problem, behavior, grounds, validation,
-  limitations and what it found along the way, kept current with the diff;
-  not a source of project rules.
-
-### Citation boundaries
-
-- Definitions point to their current owner; claims point to the evidence
-  [Authority and reading](#authority-and-reading) names, and the linked
-  passage supports the claim.
-- Whitefoot's language is cited from the pinned `whitefoot/` revision's
-  specification or maintained programs, never from Snowghost's own code.
-- Research records and PRs may cite design decisions as rationale, not as
-  proof of an empirical claim. A tree node may cite investigations and
-  evidence in its reason.
-- Historical references may name their historical versions and keep their
-  historical content.
+- Each document keeps its role: `README.md` introduces and navigates, this
+  file holds the goal, authority, process and rules, `design/` the decisions
+  and their log, `docs/review-checklist.md` the review items, `docs/todo.md`
+  open defects and Whitefoot requirements until resolved,
+  `research/investigations/` questions, experiments and results, and the PR
+  description the current change. None narrates editing history.
+- A claim cites the evidence [Authority and reading](#authority-and-reading)
+  names; Whitefoot's language is cited from the pinned revision, never from
+  Snowghost's code. Research and PRs may cite a decision as rationale, not as
+  proof of an empirical claim.
 
 ## Communication
 

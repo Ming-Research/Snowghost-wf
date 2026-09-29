@@ -13,6 +13,26 @@ actual validation results. Read changed sections in context and the directly
 affected definitions, interfaces, callers or cases. Do not load the whole
 repository or require a separate review packet.
 
+The implementing agent starts the reviewer with this prompt, filled in, and a
+mid-sized model and every applicable group for a change to code, tests, gate
+wiring, the pin, the design tree or guidance; for research records or other
+prose only, a small model and groups A, D, M and V, plus R for a material
+choice:
+
+```text
+You are reviewing a Snowghost change you did not write. Do not edit files.
+Task outcome and constraints: <...>
+Base and head: <...>; validation already run: <commands, results, revision>.
+Read the diff from the base (git diff <base>, plus untracked files), the
+changed sections in context, and "How to review" in docs/review-checklist.md.
+Check each group whose trigger applies. For M1, apply the design checks and
+correspondence checks of design/skill/SKILL.md to the relevant tree nodes and
+ancestors. Do not rerun green suites. Report Scope (your model, base..head,
+groups checked and skipped), Checks (what you ran) and Findings (item ID,
+file:line, quoted text or missing evidence, reason; quote both sides of a
+contradiction), or "none within scope".
+```
+
 Judge the artifacts against the task and their current owners, not just the
 author's summary. Mechanical checks cover their encoded properties; this
 review checks meaning, placement and omitted dependent updates. It does not
@@ -44,12 +64,12 @@ Source: [repository hygiene](../AGENTS.md#repository-structure-and-hygiene).
 ## D. Documentation — changed Markdown, comments or examples
 
 - [ ] **D1 — Purpose.** Each changed passage serves its document's reader
-  under the [document roles](../AGENTS.md#document-roles); no editorial
+  under its [role](../AGENTS.md#repository-structure-and-hygiene); no editorial
   history or process instructions inside substantive documents.
 - [ ] **D2 — References.** Changed references resolve to the intended file,
-  heading or symbol, obey the
-  [citation boundaries](../AGENTS.md#citation-boundaries), and support their
-  claim.
+  heading or symbol, cite evidence as
+  [AGENTS.md](../AGENTS.md#repository-structure-and-hygiene) allows, and
+  support their claim.
 - [ ] **D3 — Current meaning.** Changed claims agree with their owning source
   and affected guidance. A goal, a proposal, a decision, an implemented
   capability and a dated measurement are kept distinct.
