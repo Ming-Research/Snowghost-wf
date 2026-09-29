@@ -1,0 +1,947 @@
+alias Args = std::text::Args;
+alias ArgError = std::text::ArgError;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias OutputStream = std::io::OutputStream;
+alias PathError = std::fs::PathError;
+alias ReadFile = std::fs::ReadFile;
+alias ReadStop = std::io::ReadStop;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_read = std::fs::close_read;
+alias exit_status = std::process::exit_status;
+alias open_read = std::fs::open_read;
+alias read_at = std::fs::read_at;
+alias relative_path = std::fs::relative_path;
+alias write_once = std::io::write_once;
+
+const name_capacity: u64 = 32_u64;
+
+const codepoints_key: Array<u8, 11> = "\"codepoints";
+
+const quote_amp: Array<u8, 2> = "\"&";
+
+const header_text: Array<u8, 127> = "struct EntityEntry {\n  name: Array<u8, 32>;\n  name_len: u64;\n  cp1: u32;\n  cp2: u32;\n}\n\nconst entity_table: Array<EntityEntry, ";
+
+const table_open: Array<u8, 4> = "> =[";
+
+const entry_head: Array<u8, 12> = "EntityEntry(";
+
+const field_name: Array<u8, 6> = "name:[";
+
+const field_name_len: Array<u8, 13> = "], name_len: ";
+
+const field_cp1: Array<u8, 11> = "_u64, cp1: ";
+
+const field_cp2: Array<u8, 11> = "_u32, cp2: ";
+
+const entry_tail: Array<u8, 5> = "_u32)";
+
+const table_close: Array<u8, 3> = "];\n";
+
+const usage_text: Array<u8, 26> = "usage: html_entities PATH\n";
+
+const unreadable_text: Array<u8, 27> = "html_entities: cannot read ";
+
+const malformed_text: Array<u8, 37> = "html_entities: malformed entity table";
+
+const newline: Array<u8, 1> = "\n";
+
+const quote: u8 = 34_u8;
+
+const comma: u8 = 44_u8;
+
+const space: u8 = 32_u8;
+
+const left_bracket: u8 = 91_u8;
+
+const right_bracket: u8 = 93_u8;
+
+const digit_zero: u8 = 48_u8;
+
+const digit_nine: u8 = 57_u8;
+
+fn run(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Destructures the inputs, prints the entity table and closes the working directory.";
+  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let code = generate(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn zeroed_bytes(count: u64) -> made: Box<Slots<u8>> pure contract {
+  requires count <= 1073741824_u64;
+  ensures made.inner.len >= count;
+} {
+  doc "Returns one window of count bytes, every one zero, so a range reference can cover all of them.";
+  let built = box_slots_new::<u8>(capacity: count);
+  for @fill (
+    at in 0_u64..count,
+    invariant grown: built.inner.len == at
+  ) {
+    place_back(window: &built.inner, value: 0_u8);
+  }
+  return move built;
+}
+
+fn widen(cell: &Box<Slots<u8>>, total: u64) -> widened: Bool writes(cell) {
+  doc "Raises the capacity and len of cell to total, zero-filling the new bytes. Returns False, leaving cell unchanged, when total is below its current capacity or past file_ceiling.";
+  let capacity = cell^.inner.cap;
+  let bounded = total <= file_ceiling;
+  let larger = total >= capacity;
+  if bounded {
+    if larger {
+      grow(cell: cell, capacity: total);
+    } else {
+      return False();
+    }
+  } else {
+    return False();
+  }
+  loop @fill {
+    let length = cell^.inner.len;
+    let done = length >= total;
+    if done {
+      break @fill;
+    }
+    let room = cell^.inner.len < cell^.inner.cap;
+    if room {
+      place_back(window: &cell^.inner, value: 0_u8);
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn truncate(buffer: &Box<Slots<u8>>, length: u64) -> result: unit writes(buffer) {
+  doc "Takes bytes off the back of buffer until its len is at most length.";
+  loop @shrink {
+    let current = buffer^.inner.len;
+    let over = current > length;
+    if over {
+      let dropped = take_back(window: &buffer^.inner);
+    } else {
+      break @shrink;
+    }
+  }
+  return unit;
+}
+
+fn read_open_file(factory: &HandleFactory, file: &ReadFile) -> result: Result<Box<Slots<u8>>, IoError> writes(factory), writes(file) waits {
+  doc "Reads one open file from offset zero to its end into one window, doubling the window whenever the file fills it, then cuts the window's len to the bytes read.";
+  let cell = zeroed_bytes(count: first_read_window);
+  let filled = 0_u64;
+  loop @read {
+    let window = cell.inner.len;
+    let full = filled >= window;
+    if full {
+      let doubled = window +wrap window;
+      let widened = widen(cell: &cell, total: doubled);
+      if widened {
+      } else {
+        let too_large = IoError::FileTooLarge(code: 0_u32, origin: 0_u8);
+        return Err<Box<Slots<u8>>, IoError>(error: too_large);
+      }
+    }
+    let room = cell.inner.len;
+    let ordered = filled < room;
+    if ordered {
+    } else {
+      let too_large = IoError::FileTooLarge(code: 0_u32, origin: 0_u8);
+      return Err<Box<Slots<u8>>, IoError>(error: too_large);
+    }
+    let destination = &cell.inner[0_u64..room];
+    match read_at(factory: factory, file: file, destination: destination, file_offset: filled, start: filled, end: room) {
+      Ok(value: next) => {
+        let stalled = next == filled;
+        if stalled {
+          break @read;
+        }
+        set filled = next;
+      }
+      Err(error: stop) => {
+        match stop {
+          ReadEnd() => {
+            break @read;
+          }
+          ReadFailed(error: problem) => {
+            return Err<Box<Slots<u8>>, IoError>(error: problem);
+          }
+        }
+      }
+    }
+  }
+  truncate(buffer: &cell, length: filled);
+  return Ok<Box<Slots<u8>>, IoError>(value: move cell);
+}
+
+fn read_argument_file(factory: &HandleFactory, cwd: &DirectoryRead, args: &Args, position: u64) -> result: Result<Box<Slots<u8>>, IoError> reads(cwd), reads(args), writes(factory) waits {
+  doc "Opens the argument's path with open_read, reads it whole and closes it.";
+  let invalid = IoError::InvalidInput(code: 0_u32, origin: 0_u8);
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match relative_path(value: move text) {
+        Ok(value: path) => {
+          match open_read(factory: factory, root: cwd, path: &path) {
+            Ok(value: file) => {
+              let content = read_open_file(factory: factory, file: &file);
+              close_read(factory: factory, file: move file);
+              return move content;
+            }
+            Err(error: problem) => {
+              return Err<Box<Slots<u8>>, IoError>(error: problem);
+            }
+          }
+        }
+        Err(error: rejected) => {
+          return Err<Box<Slots<u8>>, IoError>(error: invalid);
+        }
+      }
+    }
+    Err(error: missing) => {
+      return Err<Box<Slots<u8>>, IoError>(error: invalid);
+    }
+  }
+}
+
+fn flush(factory: &HandleFactory, output: &OutputStream, buffer: &Box<Slots<u8>>) -> result: Bool writes(factory), writes(output), writes(buffer) waits {
+  doc "Repeats write_once until every byte is accepted or one write is refused, then empties buffer.";
+  let length = buffer^.inner.len;
+  let content = &buffer^.inner[0_u64..length];
+  let sent = 0_u64;
+  let accepted = True();
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    match write_once(factory: factory, output: output, source: content, start: sent, end: length) {
+      Ok(value: next) => {
+        let stalled = next == sent;
+        if stalled {
+          set accepted = False();
+          break @publish;
+        }
+        set sent = next;
+      }
+      Err(error: problem) => {
+        set accepted = False();
+        break @publish;
+      }
+    }
+  }
+  truncate(buffer: buffer, length: 0_u64);
+  return accepted;
+}
+
+fn put_byte(buffer: &Box<Slots<u8>>, value: u8) -> result: unit writes(buffer) {
+  doc "Doubles a full buffer, or gives an empty one an initial capacity, within a fixed ceiling.";
+  let length = buffer^.inner.len;
+  let capacity = buffer^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    let doubled = if empty {
+      give empty_buffer_capacity;
+    } else {
+      give capacity +wrap capacity;
+    }
+    let bounded = doubled <= buffer_ceiling;
+    let larger = doubled >= capacity;
+    if bounded {
+      if larger {
+        grow(cell: buffer, capacity: doubled);
+      }
+    }
+  }
+  let room = buffer^.inner.len < buffer^.inner.cap;
+  if room {
+    place_back(window: &buffer^.inner, value: value);
+  }
+  return unit;
+}
+
+fn put_text(buffer: &Box<Slots<u8>>, text: &[u8]) -> result: unit reads(text), writes(buffer) {
+  doc "Appends the bytes of text one at a time.";
+  let count = text^.len;
+  for (at in 0_u64..count) {
+    let byte = text^[at];
+    put_byte(buffer: buffer, value: byte);
+  }
+  return unit;
+}
+
+fn put_decimal(buffer: &Box<Slots<u8>>, value: u64) -> result: unit writes(buffer) {
+  doc "Collects the digits least significant first in a 20-byte scratch array, then appends them in reverse.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = value;
+  loop @collect {
+    let digit = rest % 10_u64;
+    let inside = count < 20_u64;
+    if inside {
+      let glyph = decimal_glyphs[digit];
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    let done = rest == 0_u64;
+    if done {
+      break @collect;
+    }
+  }
+  loop @emit {
+    let finished = count == 0_u64;
+    if finished {
+      break @emit;
+    }
+    set count = count -wrap 1_u64;
+    let inside = count < 20_u64;
+    if inside {
+      let glyph = digits[count];
+      put_byte(buffer: buffer, value: glyph);
+    }
+  }
+  return unit;
+}
+
+fn parse_decimal(text: &[u8], start: u64, end: u64) -> result: Option<u64> reads(text) {
+  doc "Parses text from start to end as an unsigned decimal number of 1 to 18 ASCII digits; returns None for any other bytes, including an empty range and a range outside text.";
+  let length = text^.len;
+  let ordered = start <= end;
+  let within = end <= length;
+  let bounded_ok = band(ordered, within);
+  if bounded_ok {
+  } else {
+    return None<u64>();
+  }
+  let span = end - start;
+  let nonempty = span > 0_u64;
+  let short = span <= 18_u64;
+  let sized = band(nonempty, short);
+  if sized {
+  } else {
+    return None<u64>();
+  }
+  let value = 0_u64;
+  for (at in start..end) {
+    let byte = text^[at];
+    let low = byte >= digit_zero;
+    let high = byte <= digit_nine;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return None<u64>();
+    }
+    let widened = cvt::<u8, u64>(byte);
+    let widened_low = widened >= 48_u64;
+    if widened_low {
+    } else {
+      return None<u64>();
+    }
+    let numeral = widened - 48_u64;
+    let scaled = value *wrap 10_u64;
+    set value = scaled +wrap numeral;
+  }
+  return Some<u64>(value: value);
+}
+
+const file_ceiling: u64 = 1073741824_u64;
+
+const first_read_window: u64 = 65536_u64;
+
+const empty_buffer_capacity: u64 = 4096_u64;
+
+const buffer_ceiling: u64 = 4294967296_u64;
+
+const decimal_glyphs: Array<u8, 10> = "0123456789";
+
+fn generate(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+  doc "Reads the entity table named by the one argument and prints its Whitefoot source; returns 0 on success and 2 on any failure.";
+  let buffer = box_slots_new::<u8>(capacity: 1048576_u64);
+  let count = args_count(args: args);
+  let usable = count == 2_u64;
+  if usable {
+  } else {
+    let usage = &usage_text[0_u64..usage_text.len];
+    put_text(buffer: &buffer, text: usage);
+    let written = flush(factory: files, output: err, buffer: &buffer);
+    return 2_u8;
+  }
+  match read_argument_file(factory: files, cwd: cwd, args: args, position: 1_u64) {
+    Ok(value: content) => {
+      let length = content.inner.len;
+      let text = &content.inner[0_u64..length];
+      let complete = print_table(text: text, buffer: &buffer);
+      if complete {
+        let written = flush(factory: files, output: out, buffer: &buffer);
+        return 0_u8;
+      }
+      let message = &malformed_text[0_u64..malformed_text.len];
+      put_text(buffer: &buffer, text: message);
+      let tail = &newline[0_u64..newline.len];
+      put_text(buffer: &buffer, text: tail);
+      let written = flush(factory: files, output: err, buffer: &buffer);
+      return 2_u8;
+    }
+    Err(error: problem) => {
+      let message = &unreadable_text[0_u64..unreadable_text.len];
+      put_text(buffer: &buffer, text: message);
+      let tail = &newline[0_u64..newline.len];
+      put_text(buffer: &buffer, text: tail);
+      let written = flush(factory: files, output: err, buffer: &buffer);
+      return 2_u8;
+    }
+  }
+}
+
+fn find_byte(text: &[u8], from: u64, target: u8) -> result: Option<u64> reads(text) {
+  doc "Returns the index of the first byte equal to target at or after from, or None when there is none. Its Some payload is always in [from, text^.len).";
+  let length = text^.len;
+  let at = from;
+  loop @scan {
+    let more = at < length;
+    if more {
+    } else {
+      return None<u64>();
+    }
+    let byte = text^[at];
+    let found = byte == target;
+    if found {
+      return Some<u64>(value: at);
+    }
+    set at = at +wrap 1_u64;
+  }
+  return None<u64>();
+}
+
+fn matches_at(text: &[u8], at: u64, pattern: &[u8]) -> result: Bool reads(text), reads(pattern) {
+  doc "Tells whether text holds pattern's bytes starting exactly at index at.";
+  let length = text^.len;
+  let plen = pattern^.len;
+  let within = plen <= length;
+  if within {
+  } else {
+    return False();
+  }
+  let bound = length - plen;
+  let fits = at <= bound;
+  if fits {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @compare {
+    let more = i < plen;
+    if more {
+    } else {
+      break @compare;
+    }
+    let idx = at +wrap i;
+    let in_range = idx < length;
+    if in_range {
+    } else {
+      return False();
+    }
+    let left = text^[idx];
+    let right = pattern^[i];
+    let differs = left != right;
+    if differs {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn find_pattern(text: &[u8], from: u64, pattern: &[u8]) -> result: Option<u64> reads(text), reads(pattern) {
+  doc "Returns the index of the first occurrence of pattern at or after from, or None when there is none.";
+  let length = text^.len;
+  let plen = pattern^.len;
+  let long_enough = plen <= length;
+  if long_enough {
+  } else {
+    return None<u64>();
+  }
+  let stop = length - plen;
+  let at = from;
+  loop @scan {
+    let more = at <= stop;
+    if more {
+    } else {
+      return None<u64>();
+    }
+    let hit = matches_at(text: text, at: at, pattern: pattern);
+    if hit {
+      return Some<u64>(value: at);
+    }
+    set at = at +wrap 1_u64;
+  }
+  return None<u64>();
+}
+
+fn digits_end(text: &[u8], start: u64) -> result: u64 reads(text) {
+  doc "Returns the index of the first byte at or after start that is not an ASCII digit, or the length of text when every remaining byte is a digit.";
+  let length = text^.len;
+  let at = start;
+  loop @scan {
+    let more = at < length;
+    if more {
+    } else {
+      return at;
+    }
+    let byte = text^[at];
+    let low = byte >= digit_zero;
+    let high = byte <= digit_nine;
+    let digit = band(low, high);
+    if digit {
+    } else {
+      return at;
+    }
+    set at = at +wrap 1_u64;
+  }
+  return at;
+}
+
+fn count_entries(text: &[u8]) -> result: u64 reads(text) {
+  doc "Counts the JSON objects in text by counting occurrences of the codepoints key.";
+  let length = text^.len;
+  let pattern = &codepoints_key[0_u64..codepoints_key.len];
+  let pos = 0_u64;
+  let count = 0_u64;
+  loop @scan {
+    let more = pos <= length;
+    if more {
+    } else {
+      break @scan;
+    }
+    match find_pattern(text: text, from: pos, pattern: pattern) {
+      Some(value: at) => {
+        set count = count +wrap 1_u64;
+        set pos = at +wrap codepoints_key.len;
+      }
+      None() => {
+        break @scan;
+      }
+    }
+  }
+  return count;
+}
+
+fn put_name_bytes(buffer: &Box<Slots<u8>>, text: &[u8], start: u64, name_len: u64) -> result: unit reads(text), writes(buffer) {
+  doc "Appends name_capacity comma-separated u8 literals: the name's own bytes from start, then zero padding.";
+  for (i in 0_u64..name_capacity) {
+    let later = i > 0_u64;
+    if later {
+      put_byte(buffer: buffer, value: comma);
+      put_byte(buffer: buffer, value: space);
+    }
+    let index = start +wrap i;
+    let has_byte = i < name_len;
+    let in_bounds = index < text^.len;
+    let usable = band(has_byte, in_bounds);
+    let value = if usable {
+      give text^[index];
+    } else {
+      give 0_u8;
+    }
+    let widened = cvt::<u8, u64>(value);
+    put_decimal(buffer: buffer, value: widened);
+    let suffix = &field_u8_suffix[0_u64..field_u8_suffix.len];
+    put_text(buffer: buffer, text: suffix);
+  }
+  return unit;
+}
+
+const field_u8_suffix: Array<u8, 3> = "_u8";
+
+const u64_suffix: Array<u8, 4> = "_u64";
+
+const index_start_header: Array<u8, 45> = "\nconst entity_index_start: Array<u64, 256> =[";
+
+const index_count_header: Array<u8, 45> = "\nconst entity_index_count: Array<u64, 256> =[";
+
+struct ParsedEntity {
+  name: Array<u8, 32>;
+  name_len: u64;
+  cp1: u64;
+  cp2: u64;
+}
+
+fn build_name_array(text: &[u8], start: u64, name_len: u64) -> result: Array<u8, 32> reads(text) {
+  doc "Builds a 32-byte, zero-padded name array from text's name_len bytes at start.";
+  let name = array_filled::<u8, 32>(value: 0_u8);
+  let i = 0_u64;
+  loop @copy {
+    let more = i < name_len;
+    if more {
+    } else {
+      break @copy;
+    }
+    let cap_ok = i < 32_u64;
+    if cap_ok {
+      let index = start +wrap i;
+      let in_range = index < text^.len;
+      if in_range {
+        let byte = text^[index];
+        set name[i] = byte;
+      }
+    }
+    set i = i +wrap 1_u64;
+  }
+  return name;
+}
+
+fn append_entity(entries: &Box<Slots<ParsedEntity>>, value: ParsedEntity) -> result: unit writes(entries) {
+  doc "Appends value to entries when room remains; entries is pre-sized to the file's own counted entry total, so room is expected always to remain, and collect_entries' own final count check catches it if it ever does not.";
+  let room = entries^.inner.len < entries^.inner.cap;
+  if room {
+    place_back(window: &entries^.inner, value: value);
+  }
+  return unit;
+}
+
+fn collect_entries(text: &[u8], entries: &Box<Slots<ParsedEntity>>) -> complete: Bool reads(text), writes(entries) {
+  doc "Parses one ParsedEntity per JSON key in text, in file order, into entries. Returns False when the file does not hold the expected shape.";
+  let length = text^.len;
+  let name_pattern = &quote_amp[0_u64..quote_amp.len];
+  let codepoints_pattern = &codepoints_key[0_u64..codepoints_key.len];
+  let pos = 0_u64;
+  loop @entries {
+    let more = pos <= length;
+    if more {
+    } else {
+      break @entries;
+    }
+    match find_pattern(text: text, from: pos, pattern: name_pattern) {
+      Some(value: quote_at) => {
+        let name_start = quote_at +wrap 2_u64;
+        match find_byte(text: text, from: name_start, target: quote) {
+          Some(value: name_end) => {
+            let name_after = name_end >= name_start;
+            if name_after {
+            } else {
+              return False();
+            }
+            let name_len = name_end - name_start;
+            let name_ok = name_len <= name_capacity;
+            if name_ok {
+            } else {
+              return False();
+            }
+            match find_pattern(text: text, from: name_end, pattern: codepoints_pattern) {
+              Some(value: key_at) => {
+                match find_byte(text: text, from: key_at, target: left_bracket) {
+                  Some(value: bracket_at) => {
+                    let first_start = bracket_at +wrap 1_u64;
+                    let first_end = digits_end(text: text, start: first_start);
+                    let has_first = first_end > first_start;
+                    if has_first {
+                    } else {
+                      return False();
+                    }
+                    let first_value = parse_decimal(text: text, start: first_start, end: first_end);
+                    match first_value {
+                      Some(value: cp1) => {
+                        let cp1_ok = cp1 <= 1114111_u64;
+                        if cp1_ok {
+                        } else {
+                          return False();
+                        }
+                        let has_after = first_end < length;
+                        if has_after {
+                        } else {
+                          return False();
+                        }
+                        let after_first = text^[first_end];
+                        let has_second = after_first == comma;
+                        let cp2 = if has_second {
+                          let second_start = first_end +wrap 1_u64;
+                          let second_start_ok = second_start < length;
+                          if second_start_ok {
+                          } else {
+                            return False();
+                          }
+                          let gap = text^[second_start];
+                          let real_start = second_start +wrap 1_u64;
+                          let second_end = digits_end(text: text, start: real_start);
+                          let has_second_digits = second_end > real_start;
+                          if has_second_digits {
+                          } else {
+                            return False();
+                          }
+                          let second_value = parse_decimal(text: text, start: real_start, end: second_end);
+                          match second_value {
+                            Some(value: found) => {
+                              give found;
+                            }
+                            None() => {
+                              return False();
+                            }
+                          }
+                        } else {
+                          give 0_u64;
+                        }
+                        let name_array = build_name_array(text: text, start: name_start, name_len: name_len);
+                        let record = ParsedEntity(name: name_array, name_len: name_len, cp1: cp1, cp2: cp2);
+                        append_entity(entries: entries, value: record);
+                        set pos = key_at +wrap codepoints_key.len;
+                      }
+                      None() => {
+                        return False();
+                      }
+                    }
+                  }
+                  None() => {
+                    return False();
+                  }
+                }
+              }
+              None() => {
+                return False();
+              }
+            }
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+      None() => {
+        break @entries;
+      }
+    }
+  }
+  return True();
+}
+
+fn entity_before(a: ParsedEntity, b: ParsedEntity) -> result: Bool pure {
+  doc "Tells whether a should sort before b: ascending by the name's first byte (so a lookup can go straight to the bucket sharing that byte), then descending by name length (so a linear bucket scan meets the longest match first and can stop there), then ascending by the name's own remaining bytes, for one deterministic total order.";
+  let a0 = a.name[0_u64];
+  let b0 = b.name[0_u64];
+  let first_differs = a0 != b0;
+  if first_differs {
+    return a0 < b0;
+  }
+  let len_differs = a.name_len != b.name_len;
+  if len_differs {
+    return a.name_len > b.name_len;
+  }
+  let bound = if a.name_len <= 32_u64 {
+    give a.name_len;
+  } else {
+    give 32_u64;
+  }
+  let i = 0_u64;
+  loop @cmp {
+    let more = i < bound;
+    if more {
+    } else {
+      break @cmp;
+    }
+    let cap_ok = i < 32_u64;
+    if cap_ok {
+      let ab = a.name[i];
+      let bb = b.name[i];
+      let differs = ab != bb;
+      if differs {
+        return ab < bb;
+      }
+    }
+    set i = i +wrap 1_u64;
+  }
+  return False();
+}
+
+fn sort_entries(unsorted: Box<Slots<ParsedEntity>>, total: u64) -> result: Box<Slots<ParsedEntity>> pure contract {
+  requires total <= 1000000_u64;
+} {
+  doc "Selection-sorts unsorted (consuming it) into a freshly allocated, entity_before-ordered collection of capacity total: repeatedly removes the entry that sorts first among what remains and appends it to the result, so the result is exactly unsorted's multiset in entity_before order.";
+  let sorted = box_slots_new::<ParsedEntity>(capacity: total);
+  let remaining_box = move unsorted;
+  loop @sort {
+    let remaining = remaining_box.inner.len;
+    let done = remaining == 0_u64;
+    if done {
+      break @sort;
+    }
+    let best_index = 0_u64;
+    let best_entry = remaining_box.inner[0_u64];
+    let i = 1_u64;
+    loop @findmin {
+      let more = i < remaining;
+      if more {
+      } else {
+        break @findmin;
+      }
+      let candidate = remaining_box.inner[i];
+      let better = entity_before(a: candidate, b: best_entry);
+      if better {
+        set best_index = i;
+        set best_entry = candidate;
+      }
+      set i = i +wrap 1_u64;
+    }
+    let in_range = best_index < remaining_box.inner.len;
+    if in_range {
+      let removed = remove_at(window: &remaining_box.inner, index: best_index);
+      let room = sorted.inner.len < sorted.inner.cap;
+      if room {
+        place_back(window: &sorted.inner, value: removed);
+      }
+    }
+  }
+  return move sorted;
+}
+
+fn build_index(sorted: &Box<Slots<ParsedEntity>>) -> (starts: Array<u64, 256>, counts: Array<u64, 256>) reads(sorted) {
+  doc "Scans sorted once and returns, for each possible first byte, the index of its first entry (starts) and how many entries share it (counts); a byte no name starts with keeps count 0 and an unused start of 0. Relies on sorted being ordered by entity_before, so every byte's entries are contiguous.";
+  let starts = array_filled::<u64, 256>(value: 0_u64);
+  let counts = array_filled::<u64, 256>(value: 0_u64);
+  let total = sorted^.inner.len;
+  let i = 0_u64;
+  loop @scan {
+    let more = i < total;
+    if more {
+    } else {
+      break @scan;
+    }
+    let record = sorted^.inner[i];
+    let byte = record.name[0_u64];
+    let bucket = cvt::<u8, u64>(byte);
+    let prior = counts[bucket];
+    let first = prior == 0_u64;
+    if first {
+      set starts[bucket] = i;
+    }
+    set counts[bucket] = prior +wrap 1_u64;
+    set i = i +wrap 1_u64;
+  }
+  return starts, counts;
+}
+
+fn put_name_array_bytes(buffer: &Box<Slots<u8>>, name: Array<u8, 32>) -> result: unit writes(buffer) {
+  doc "Appends name_capacity comma-separated u8 literals for name's own bytes.";
+  for (i in 0_u64..name_capacity) {
+    let later = i > 0_u64;
+    if later {
+      put_byte(buffer: buffer, value: comma);
+      put_byte(buffer: buffer, value: space);
+    }
+    let value = name[i];
+    let widened = cvt::<u8, u64>(value);
+    put_decimal(buffer: buffer, value: widened);
+    let suffix = &field_u8_suffix[0_u64..field_u8_suffix.len];
+    put_text(buffer: buffer, text: suffix);
+  }
+  return unit;
+}
+
+fn print_entity_table(sorted: &Box<Slots<ParsedEntity>>, buffer: &Box<Slots<u8>>, total: u64) -> result: unit reads(sorted), writes(buffer) {
+  doc "Prints the struct declaration and one EntityEntry per entry of sorted, in its order.";
+  let header = &header_text[0_u64..header_text.len];
+  put_text(buffer: buffer, text: header);
+  put_decimal(buffer: buffer, value: total);
+  let opener = &table_open[0_u64..table_open.len];
+  put_text(buffer: buffer, text: opener);
+  let i = 0_u64;
+  loop @print {
+    let more = i < total;
+    if more {
+    } else {
+      break @print;
+    }
+    let in_range = i < sorted^.inner.len;
+    if in_range {
+      let record = sorted^.inner[i];
+      let head = &entry_head[0_u64..entry_head.len];
+      put_text(buffer: buffer, text: head);
+      let name_field = &field_name[0_u64..field_name.len];
+      put_text(buffer: buffer, text: name_field);
+      put_name_array_bytes(buffer: buffer, name: record.name);
+      let len_field = &field_name_len[0_u64..field_name_len.len];
+      put_text(buffer: buffer, text: len_field);
+      put_decimal(buffer: buffer, value: record.name_len);
+      let cp1_field = &field_cp1[0_u64..field_cp1.len];
+      put_text(buffer: buffer, text: cp1_field);
+      put_decimal(buffer: buffer, value: record.cp1);
+      let cp2_field = &field_cp2[0_u64..field_cp2.len];
+      put_text(buffer: buffer, text: cp2_field);
+      put_decimal(buffer: buffer, value: record.cp2);
+      let tail = &entry_tail[0_u64..entry_tail.len];
+      put_text(buffer: buffer, text: tail);
+      let next_count = i +wrap 1_u64;
+      let is_last = next_count == total;
+      if is_last {
+      } else {
+        put_byte(buffer: buffer, value: comma);
+        put_byte(buffer: buffer, value: space);
+      }
+    }
+    set i = i +wrap 1_u64;
+  }
+  let closer = &table_close[0_u64..table_close.len];
+  put_text(buffer: buffer, text: closer);
+  return unit;
+}
+
+fn print_index_array(buffer: &Box<Slots<u8>>, header: &[u8], values: Array<u64, 256>) -> result: unit reads(header), writes(buffer) {
+  doc "Prints one 256-entry u64 array declaration: header, then one comma-separated u64 literal per entry of values, then the table closer.";
+  put_text(buffer: buffer, text: header);
+  for (i in 0_u64..256_u64) {
+    let later = i > 0_u64;
+    if later {
+      put_byte(buffer: buffer, value: comma);
+      put_byte(buffer: buffer, value: space);
+    }
+    let value = values[i];
+    put_decimal(buffer: buffer, value: value);
+    let suffix = &u64_suffix[0_u64..u64_suffix.len];
+    put_text(buffer: buffer, text: suffix);
+  }
+  let closer = &table_close[0_u64..table_close.len];
+  put_text(buffer: buffer, text: closer);
+  return unit;
+}
+
+fn print_table(text: &[u8], buffer: &Box<Slots<u8>>) -> complete: Bool reads(text), writes(buffer) {
+  doc "Parses the entity table, sorts it by entity_before (first byte ascending, then name length descending, then name bytes ascending), and prints the struct declaration, the sorted EntityEntry table, and the entity_index_start/entity_index_count first-byte index built from that order. Returns False when the file does not hold the expected shape or its parsed entry count does not match its own counted total.";
+  let total = count_entries(text: text);
+  let sized = total <= 1000000_u64;
+  if sized {
+  } else {
+    return False();
+  }
+  let unsorted = box_slots_new::<ParsedEntity>(capacity: total);
+  let collected = collect_entries(text: text, entries: &unsorted);
+  if collected {
+  } else {
+    return False();
+  }
+  let collected_count = unsorted.inner.len;
+  let collected_ok = collected_count == total;
+  if collected_ok {
+  } else {
+    return False();
+  }
+  let sorted = sort_entries(unsorted: move unsorted, total: total);
+  let sorted_count = sorted.inner.len;
+  let sorted_ok = sorted_count == total;
+  if sorted_ok {
+  } else {
+    return False();
+  }
+  print_entity_table(sorted: &sorted, buffer: buffer, total: total);
+  let (starts, counts) = build_index(sorted: &sorted);
+  let start_header = &index_start_header[0_u64..index_start_header.len];
+  print_index_array(buffer: buffer, header: start_header, values: starts);
+  let count_header = &index_count_header[0_u64..index_count_header.len];
+  print_index_array(buffer: buffer, header: count_header, values: counts);
+  return True();
+}

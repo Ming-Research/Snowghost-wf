@@ -1,0 +1,592 @@
+struct AttributeLink {
+  next: u64;
+  hash: u64;
+}
+
+struct AttributeIndex {
+  heads: Box<Slots<u64>>;
+  links: Box<Slots<AttributeLink>>;
+}
+
+const attribute_index_initial_buckets: u64 = 8_u64;
+
+const attribute_index_doubling_limit: u64 = 536870912_u64;
+
+fn consume_attribute_name(source: &[u8], output: &TokenText, start: u64) -> (next: u64, hit_eof: Bool, ended_eq: Bool) reads(source), writes(output) {
+  doc "Consumes an attribute name from start, lowercasing ASCII and replacing NUL, per the attribute name state. On a terminating whitespace, solidus or greater-than byte, next names that byte, unconsumed. On '=', next names the byte after it.";
+  let position = start;
+  loop @aname {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      return position, True(), False();
+    }
+    let ws = is_char_whitespace(ch: ch);
+    let slash = ch == '/'_u32;
+    let gt = ch == '>'_u32;
+    let ws_or_slash = bor(ws, slash);
+    let stop = bor(ws_or_slash, gt);
+    if stop {
+      return position, False(), False();
+    }
+    let eq = ch == '='_u32;
+    if eq {
+      return after, False(), True();
+    }
+    let cleared = replace_nul(ch: ch);
+    let lowered = ascii_lower_char(ch: cleared);
+    push_codepoint(text: &output^.text, cp: lowered);
+    set position = after;
+  }
+  return position, False(), False();
+}
+
+fn consume_attribute_value(source: &[u8], output: &TokenText, start: u64) -> (value_start: u64, value_end: u64, next: u64, hit_eof: Bool, ended_gt: Bool) reads(source), writes(output) {
+  doc "Consumes the before-attribute-value state and either quoted attribute value state from start.";
+  let position = start;
+  loop @skip_ws {
+    let (ch, after) = next_char(source: source, pos: position);
+    let ws = is_char_whitespace(ch: ch);
+    if ws {
+      set position = after;
+    } else {
+      break @skip_ws;
+    }
+  }
+  let (ch, after) = next_char(source: source, pos: position);
+  let is_eof = ch == eof_char;
+  if is_eof {
+    let empty_at = output^.text.inner.len;
+    return empty_at, empty_at, position, True(), False();
+  }
+  let is_gt = ch == '>'_u32;
+  if is_gt {
+    let empty_at = output^.text.inner.len;
+    return empty_at, empty_at, after, False(), True();
+  }
+  let is_dquote = ch == '"'_u32;
+  let is_squote = ch == '\''_u32;
+  let quoted = bor(is_dquote, is_squote);
+  if quoted {
+    let quote = if is_dquote {
+      give '"'_u32;
+    } else {
+      give '\''_u32;
+    }
+    let value_start = output^.text.inner.len;
+    let inner = after;
+    loop @quoted_value {
+      let (qc, qafter) = next_char(source: source, pos: inner);
+      let q_eof = qc == eof_char;
+      if q_eof {
+        return value_start, output^.text.inner.len, inner, True(), False();
+      }
+      let closing = qc == quote;
+      if closing {
+        let value_end = output^.text.inner.len;
+        return value_start, value_end, qafter, False(), False();
+      }
+      let is_ref = qc == '&'_u32;
+      if is_ref {
+        let in_attr = True();
+        let (matched, ref_next, cp1, cp2, has_cp2) = resolve_character_reference(source: source, pos: inner, in_attribute: in_attr);
+        if matched {
+          push_codepoint(text: &output^.text, cp: cp1);
+          if has_cp2 {
+            push_codepoint(text: &output^.text, cp: cp2);
+          }
+          set inner = ref_next;
+        } else {
+          push_codepoint(text: &output^.text, cp: '&'_u32);
+          set inner = qafter;
+        }
+      } else {
+        let cleared = replace_nul(ch: qc);
+        push_codepoint(text: &output^.text, cp: cleared);
+        set inner = qafter;
+      }
+    }
+    let value_end = output^.text.inner.len;
+    return value_start, value_end, inner, False(), False();
+  }
+  let value_start = output^.text.inner.len;
+  let inner = position;
+  loop @unquoted_value {
+    let (uc, uafter) = next_char(source: source, pos: inner);
+    let u_eof = uc == eof_char;
+    if u_eof {
+      return value_start, output^.text.inner.len, inner, True(), False();
+    }
+    let u_ws = is_char_whitespace(ch: uc);
+    if u_ws {
+      let value_end = output^.text.inner.len;
+      return value_start, value_end, uafter, False(), False();
+    }
+    let u_gt = uc == '>'_u32;
+    if u_gt {
+      let value_end = output^.text.inner.len;
+      return value_start, value_end, uafter, False(), True();
+    }
+    let is_ref = uc == '&'_u32;
+    if is_ref {
+      let in_attr = True();
+      let (matched, ref_next, cp1, cp2, has_cp2) = resolve_character_reference(source: source, pos: inner, in_attribute: in_attr);
+      if matched {
+        push_codepoint(text: &output^.text, cp: cp1);
+        if has_cp2 {
+          push_codepoint(text: &output^.text, cp: cp2);
+        }
+        set inner = ref_next;
+      } else {
+        push_codepoint(text: &output^.text, cp: '&'_u32);
+        set inner = uafter;
+      }
+    } else {
+      let cleared = replace_nul(ch: uc);
+      push_codepoint(text: &output^.text, cp: cleared);
+      set inner = uafter;
+    }
+  }
+  let value_end = output^.text.inner.len;
+  return value_start, value_end, inner, False(), False();
+}
+
+fn attribute_name_matches(output: &TokenText, left_start: u64, left_end: u64, right_start: u64, right_end: u64) -> result: Bool reads(output) {
+  doc "Tells whether output's text holds equal bytes over the two spans.";
+  let left_ok = left_start <= left_end;
+  let right_ok = right_start <= right_end;
+  let ok = band(left_ok, right_ok);
+  if ok {
+  } else {
+    return False();
+  }
+  let left_len = left_end - left_start;
+  let right_len = right_end - right_start;
+  let same_len = left_len == right_len;
+  if same_len {
+  } else {
+    return False();
+  }
+  let length = output^.text.inner.len;
+  let left_within = left_end <= length;
+  let right_within = right_end <= length;
+  let within = band(left_within, right_within);
+  if within {
+  } else {
+    return False();
+  }
+  let i = 0_u64;
+  loop @cmp {
+    let more = i < left_len;
+    if more {
+    } else {
+      break @cmp;
+    }
+    let li = left_start +wrap i;
+    let ri = right_start +wrap i;
+    let li_ok = li < output^.text.inner.len;
+    let ri_ok = ri < output^.text.inner.len;
+    let both_ok = band(li_ok, ri_ok);
+    if both_ok {
+    } else {
+      return False();
+    }
+    let lb = output^.text.inner[li];
+    let rb = output^.text.inner[ri];
+    let differs = lb != rb;
+    if differs {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn attribute_name_hash(output: &TokenText, name_start: u64, name_end: u64) -> result: u64 reads(output) {
+  doc "Returns a DJB2-style hash of output's text over [name_start, name_end), used only to route attribute_is_duplicate's search to one bucket of an AttributeIndex; two different names may share a hash, so a shared bucket still confirms equality with attribute_name_matches before treating it as a match.";
+  let h = 5381_u64;
+  let i = name_start;
+  loop @hash {
+    let more = i < name_end;
+    if more {
+    } else {
+      break @hash;
+    }
+    let in_range = i < output^.text.inner.len;
+    if in_range {
+      let byte = output^.text.inner[i];
+      let widened = cvt::<u8, u64>(byte);
+      let scaled = h *wrap 33_u64;
+      set h = scaled +wrap widened;
+    }
+    set i = i +wrap 1_u64;
+  }
+  return h;
+}
+
+fn attribute_index_new() -> made: AttributeIndex pure {
+  doc "Returns an index with no attributes and no buckets; attribute_index_reserve gives it attribute_index_initial_buckets before the first lookup.";
+  let heads = box_slots_new::<u64>(capacity: 0_u64);
+  let links = box_slots_new::<AttributeLink>(capacity: attribute_initial_capacity);
+  return AttributeIndex(heads: move heads, links: move links);
+}
+
+fn attribute_buckets(size: u64) -> buckets: Box<Slots<u64>> pure contract {
+  requires size <= attribute_ceiling;
+  ensures buckets.inner.len == size;
+} {
+  doc "Returns size empty buckets.";
+  let fresh = box_slots_new::<u64>(capacity: size);
+  for @fill (
+    at in 0_u64..size,
+    invariant filled: fresh.inner.len == at
+  ) {
+    place_back(window: &fresh.inner, value: 0_u64);
+  }
+  return move fresh;
+}
+
+fn attribute_index_reserve(index: &AttributeIndex) -> result: unit writes(index) contract {
+  ensures index^.heads.inner.len > 0_u64;
+} {
+  doc "Keeps more buckets than attributes, so that the chains stay short on average: when the attribute count has reached the bucket count, the buckets double (attribute_index_initial_buckets when there are none) and every attribute is linked again from its stored hash. Each doubling costs the attribute count, so a tag's lookups and insertions cost amortized constant time each apart from comparing names. The doubling stops at attribute_ceiling buckets, as many attributes as bytes_push lets index hold, so the load never passes one; attribute_index_doubling_limit, half of attribute_ceiling, is the largest bucket count that still doubles.";
+  let size = index^.heads.inner.len;
+  let total = index^.links.inner.len;
+  if total < size {
+    return unit;
+  }
+  if size > attribute_index_doubling_limit {
+    return unit;
+  }
+  if size == 0_u64 {
+    attribute_index_relink(index: index, target: attribute_index_initial_buckets);
+    return unit;
+  }
+  let doubled = size + size;
+  attribute_index_relink(index: index, target: doubled);
+  return unit;
+}
+
+fn attribute_index_relink(index: &AttributeIndex, target: u64) -> result: unit writes(index) contract {
+  requires target > 0_u64;
+  requires target <= attribute_ceiling;
+  ensures index^.heads.inner.len > 0_u64;
+} {
+  doc "Replaces index's buckets with target empty ones and links every attribute again into the bucket of its stored hash.";
+  let total = index^.links.inner.len;
+  let fresh = attribute_buckets(size: target);
+  for @relink (
+    rel in 0_u64..total,
+    invariant kept: index^.links.inner.len == total,
+    invariant sized: fresh.inner.len == target
+  ) {
+    let link = index^.links.inner[rel];
+    let chosen = link.hash % target;
+    let head = fresh.inner[chosen];
+    let relinked = AttributeLink(next: head, hash: link.hash);
+    set index^.links.inner[rel] = relinked;
+    set fresh.inner[chosen] = rel + 1_u64;
+  }
+  set index^.heads = move fresh;
+  return unit;
+}
+
+fn attribute_is_duplicate(output: &TokenText, first: u64, index: &AttributeIndex, hash: u64, name_start: u64, name_end: u64) -> result: Bool reads(output), reads(index) contract {
+  requires index^.heads.inner.len > 0_u64;
+} {
+  doc "Tells whether an attribute already pushed at or after first has the same name span as [name_start, name_end), whose attribute_name_hash is hash. index holds every already-pushed attribute of the current tag in hash chains, so this walks only the chain of hash's bucket, which attribute_index_reserve keeps short on average, rather than every earlier attribute.";
+  let size = index^.heads.inner.len;
+  let chosen = hash % size;
+  let cursor = index^.heads.inner[chosen];
+  loop @scan {
+    let empty = cursor == 0_u64;
+    if empty {
+      break @scan;
+    }
+    let rel = cursor -wrap 1_u64;
+    let idx = first +wrap rel;
+    let within = idx < output^.attributes.inner.len;
+    if within {
+      let earlier = output^.attributes.inner[idx];
+      let earlier_start = cvt::<u32, u64>(earlier.name.start);
+      let earlier_end = cvt::<u32, u64>(earlier.name.end);
+      let same = attribute_name_matches(output: output, left_start: name_start, left_end: name_end, right_start: earlier_start, right_end: earlier_end);
+      if same {
+        return True();
+      }
+    }
+    let has_link = rel < index^.links.inner.len;
+    if has_link {
+      set cursor = index^.links.inner[rel].next;
+    } else {
+      break @scan;
+    }
+  }
+  return False();
+}
+
+fn attribute_index_insert(index: &AttributeIndex, hash: u64) -> result: unit writes(index) contract {
+  requires index^.heads.inner.len > 0_u64;
+} {
+  doc "Records the attribute just pushed, whose name hashes to hash, at the next relative position (0-based, counted from the current tag's first attribute), which is the number of attributes index already holds, for later attribute_is_duplicate lookups against this tag.";
+  let size = index^.heads.inner.len;
+  let chosen = hash % size;
+  let head = index^.heads.inner[chosen];
+  let rel = index^.links.inner.len;
+  set index^.heads.inner[chosen] = rel +wrap 1_u64;
+  let link = AttributeLink(next: head, hash: hash);
+  bytes_push::<AttributeLink>(cell: &index^.links, value: link, ceiling: attribute_ceiling, initial: attribute_initial_capacity);
+  return unit;
+}
+
+fn push_attribute_dedup(output: &TokenText, first: u64, index: &AttributeIndex, name_start: u64, name_end: u64, value_start: u64, value_end: u64) -> result: unit writes(output), writes(index) {
+  doc "Pushes one attribute unless an earlier attribute of the current tag, from first onward, already has this name, then records it in index for later lookups.";
+  attribute_index_reserve(index: index);
+  let hash = attribute_name_hash(output: output, name_start: name_start, name_end: name_end);
+  let duplicate = attribute_is_duplicate(output: output, first: first, index: index, hash: hash, name_start: name_start, name_end: name_end);
+  if duplicate {
+    return unit;
+  }
+  let name_start32 = cvt.wrap::<u64, u32>(name_start);
+  let name_end32 = cvt.wrap::<u64, u32>(name_end);
+  let value_start32 = cvt.wrap::<u64, u32>(value_start);
+  let value_end32 = cvt.wrap::<u64, u32>(value_end);
+  let name = Span(start: name_start32, end: name_end32);
+  let value = Span(start: value_start32, end: value_end32);
+  let attribute = Attribute(name: name, value: value);
+  push_attribute(attributes: &output^.attributes, value: attribute);
+  attribute_index_insert(index: index, hash: hash);
+  return unit;
+}
+
+fn handle_new_attribute_name(source: &[u8], output: &TokenText, first: u64, index: &AttributeIndex, name_start: u64, next1: u64, eof1: Bool, eq1: Bool) -> (done: Bool, self_closing: Bool, hit_eof: Bool, next: u64, has_pending: Bool, pending_start: u64, pending_end: u64) reads(source), writes(output), writes(index) {
+  doc "Finishes handling one freshly consumed attribute name: attaches a value when one follows, or reports it pending for the caller to finish when a value may still follow later, or reports the tag closed or the source exhausted.";
+  if eof1 {
+    return True(), False(), True(), next1, False(), 0_u64, 0_u64;
+  }
+  let name_end = output^.text.inner.len;
+  if eq1 {
+    let (vs, ve, next2, eof2, gt2) = consume_attribute_value(source: source, output: output, start: next1);
+    if eof2 {
+      return True(), False(), True(), next2, False(), 0_u64, 0_u64;
+    }
+    push_attribute_dedup(output: output, first: first, index: index, name_start: name_start, name_end: name_end, value_start: vs, value_end: ve);
+    if gt2 {
+      return True(), False(), False(), next2, False(), 0_u64, 0_u64;
+    }
+    return False(), False(), False(), next2, False(), 0_u64, 0_u64;
+  }
+  return False(), False(), False(), next1, True(), name_start, name_end;
+}
+
+fn parse_attributes(source: &[u8], output: &TokenText, first: u64, start: u64) -> (self_closing: Bool, hit_eof: Bool, next: u64) reads(source), writes(output) {
+  doc "Parses attributes from the before-attribute-name state at start through self-closing-start-tag-state or the tag's closing greater-than, per 13.2.5.32-13.2.5.40. index is this tag's attribute-name hash index (attribute_is_duplicate), fresh for each call.";
+  let position = start;
+  let quirky = True();
+  let has_pending = False();
+  let pending_start = 0_u64;
+  let pending_end = 0_u64;
+  let index = attribute_index_new();
+  loop @attrs {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      return False(), True(), position;
+    }
+    let ws = is_char_whitespace(ch: ch);
+    if ws {
+      set position = after;
+    } else {
+      let slash = ch == '/'_u32;
+      if slash {
+        if has_pending {
+          push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
+          set has_pending = False();
+        }
+        let (ch2, after2) = next_char(source: source, pos: after);
+        let is_eof2 = ch2 == eof_char;
+        if is_eof2 {
+          return False(), True(), after;
+        }
+        let is_gt2 = ch2 == '>'_u32;
+        if is_gt2 {
+          return True(), False(), after2;
+        }
+        set position = after;
+        set quirky = True();
+      } else {
+        let gt = ch == '>'_u32;
+        if gt {
+          if has_pending {
+            push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
+          }
+          return False(), False(), after;
+        } else {
+          let eq = ch == '='_u32;
+          let quirky_eq = band(eq, quirky);
+          if quirky_eq {
+            let name_start = output^.text.inner.len;
+            push_codepoint(text: &output^.text, cp: '='_u32);
+            let (next1, eof1, eq1) = consume_attribute_name(source: source, output: output, start: after);
+            let (done, self_closing, hit_eof, next_pos, has_pending2, pend_s, pend_e) = handle_new_attribute_name(source: source, output: output, first: first, index: &index, name_start: name_start, next1: next1, eof1: eof1, eq1: eq1);
+            if done {
+              return self_closing, hit_eof, next_pos;
+            }
+            set position = next_pos;
+            set has_pending = has_pending2;
+            set pending_start = pend_s;
+            set pending_end = pend_e;
+            set quirky = bnot(has_pending2);
+          } else {
+            let eq_after_pending = band(eq, has_pending);
+            if eq_after_pending {
+              let (vs, ve, next2, eof2, gt2) = consume_attribute_value(source: source, output: output, start: after);
+              if eof2 {
+                return False(), True(), next2;
+              }
+              push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: vs, value_end: ve);
+              set has_pending = False();
+              if gt2 {
+                return False(), False(), next2;
+              }
+              set position = next2;
+              set quirky = True();
+            } else {
+              if has_pending {
+                push_attribute_dedup(output: output, first: first, index: &index, name_start: pending_start, name_end: pending_end, value_start: pending_end, value_end: pending_end);
+                set has_pending = False();
+              }
+              let name_start = output^.text.inner.len;
+              let (next1, eof1, eq1) = consume_attribute_name(source: source, output: output, start: position);
+              let (done, self_closing, hit_eof, next_pos, has_pending2, pend_s, pend_e) = handle_new_attribute_name(source: source, output: output, first: first, index: &index, name_start: name_start, next1: next1, eof1: eof1, eq1: eq1);
+              if done {
+                return self_closing, hit_eof, next_pos;
+              }
+              set position = next_pos;
+              set has_pending = has_pending2;
+              set pending_start = pend_s;
+              set pending_end = pend_e;
+              set quirky = bnot(has_pending2);
+            }
+          }
+        }
+      }
+    }
+  }
+  return False(), True(), position;
+}
+
+fn parse_tag(tokenizer: &Tokenizer, source: &[u8], output: &TokenText, pos: u64, is_end: Bool) -> (token: Token, next: u64) reads(source), writes(tokenizer), writes(output) {
+  doc "Parses a start or end tag's name, attributes and self-closing flag from pos, which names the tag name's first byte, per 13.2.5.8, 13.2.5.32-13.2.5.40.";
+  let name_start = output^.text.inner.len;
+  let position = pos;
+  let ended_gt = False();
+  let ended_slash = False();
+  loop @name {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let eof_token = Token::EndOfFile();
+      return eof_token, position;
+    }
+    let ws = is_char_whitespace(ch: ch);
+    if ws {
+      set position = after;
+      break @name;
+    }
+    let slash = ch == '/'_u32;
+    if slash {
+      set position = after;
+      set ended_slash = True();
+      break @name;
+    }
+    let gt = ch == '>'_u32;
+    if gt {
+      set position = after;
+      set ended_gt = True();
+      break @name;
+    }
+    let cleared = replace_nul(ch: ch);
+    let lowered = ascii_lower_char(ch: cleared);
+    push_codepoint(text: &output^.text, cp: lowered);
+    set position = after;
+  }
+  let name_end = output^.text.inner.len;
+  let name_start32 = cvt.wrap::<u64, u32>(name_start);
+  let name_end32 = cvt.wrap::<u64, u32>(name_end);
+  let name = Span(start: name_start32, end: name_end32);
+  let first_attr = output^.attributes.inner.len;
+  let self_closing = False();
+  let hit_eof = False();
+  if ended_slash {
+    let (ch2, after2) = next_char(source: source, pos: position);
+    let is_eof2 = ch2 == eof_char;
+    if is_eof2 {
+      set hit_eof = True();
+    } else {
+      let is_gt2 = ch2 == '>'_u32;
+      if is_gt2 {
+        set self_closing = True();
+        set position = after2;
+        set ended_gt = True();
+      }
+    }
+  }
+  if hit_eof {
+  } else if ended_gt {
+  } else {
+    let (closing, eof3, next3) = parse_attributes(source: source, output: output, first: first_attr, start: position);
+    set self_closing = closing;
+    set hit_eof = eof3;
+    set position = next3;
+  }
+  if hit_eof {
+    let eof_token = Token::EndOfFile();
+    return eof_token, position;
+  }
+  let end_attr = output^.attributes.inner.len;
+  let data_state = ContentState::Data();
+  set tokenizer^.state = data_state;
+  if is_end {
+    let tag = Token::EndTag(name: name);
+    return tag, position;
+  }
+  record_last_start_tag(tokenizer: tokenizer, output: output, name_start: name_start, name_end: name_end);
+  let first_attr32 = cvt.wrap::<u64, u32>(first_attr);
+  let end_attr32 = cvt.wrap::<u64, u32>(end_attr);
+  let tag = Token::StartTag(name: name, first_attribute: first_attr32, end_attribute: end_attr32, self_closing: self_closing);
+  return tag, position;
+}
+
+fn record_last_start_tag(tokenizer: &Tokenizer, output: &TokenText, name_start: u64, name_end: u64) -> result: unit reads(output), writes(tokenizer) {
+  doc "Replaces the tokenizer's last start tag with output's text from name_start to name_end. A name past the 1024-byte ceiling tokenizer_new requires instead leaves last_start_tag empty, so last_start_tag_matches's length check can never call any later end tag appropriate for it: an appropriate end tag's name is never empty.";
+  let ordered = name_start <= name_end;
+  if ordered {
+  } else {
+    return unit;
+  }
+  let length = name_end - name_start;
+  let fits = length <= 1024_u64;
+  let copy_len = if fits {
+    give length;
+  } else {
+    give 0_u64;
+  }
+  truncate_bytes(cell: &tokenizer^.last_start_tag, length: 0_u64);
+  let i = 0_u64;
+  loop @copy {
+    let more = i < copy_len;
+    if more {
+    } else {
+      break @copy;
+    }
+    let src_index = name_start +wrap i;
+    let in_range = src_index < output^.text.inner.len;
+    if in_range {
+      let byte = output^.text.inner[src_index];
+      push_byte(text: &tokenizer^.last_start_tag, value: byte);
+    }
+    set i = i +wrap 1_u64;
+  }
+  return unit;
+}

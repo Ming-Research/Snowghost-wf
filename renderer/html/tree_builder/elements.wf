@@ -1,0 +1,309 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Attribute = pkg::dom::Attribute;
+alias AttributeNamespace = pkg::dom::AttributeNamespace;
+alias Document = pkg::dom::Document;
+alias Namespace = pkg::dom::Namespace;
+alias NodeData = pkg::dom::NodeData;
+alias NodeId = pkg::dom::NodeId;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias create_node = pkg::dom::create_node;
+alias add_attribute = pkg::dom::add_attribute;
+alias store_text = pkg::dom::store_text;
+alias TokAttribute = pkg::html::tokenizer::Attribute;
+alias ContentState = pkg::html::tokenizer::ContentState;
+alias Tokenizer = pkg::html::tokenizer::Tokenizer;
+alias tokenizer_set_state = pkg::html::tokenizer::tokenizer_set_state;
+alias TokenText = pkg::html::tokenizer::TokenText;
+alias token_text_new = pkg::html::tokenizer::token_text_new;
+
+fn resolve_attr_name(atoms: &AtomTable, name_bytes: &[u8], target_namespace: Namespace) -> result: Result<AdjustedAttr, TreeError> reads(name_bytes), writes(atoms) contract {
+  requires name_bytes^.len <= 65536_u64;
+} {
+  doc "Resolves one attribute's namespace and name atom for an element being created in target_namespace: no adjustment in the HTML namespace; foreign (xlink/xml/xmlns), then SVG or MathML case fixes, otherwise the plain interned name.";
+  let html = ns_is_html(namespace: target_namespace);
+  if html {
+    match atom_intern(table: atoms, name: name_bytes) {
+      Ok(value: a) => {
+        let no_ns = AttributeNamespace::NoNamespace();
+        let made = AdjustedAttr(namespace: no_ns, local_name: a.index);
+        return Ok<AdjustedAttr, TreeError>(value: made);
+      }
+      Err(error: problem) => {
+        let too_large = TreeError::TooLarge();
+        return Err<AdjustedAttr, TreeError>(error: too_large);
+      }
+    }
+  }
+  let foreign = adjust_foreign_attr(name: name_bytes);
+  match foreign {
+    Some(value: fa) => {
+      return Ok<AdjustedAttr, TreeError>(value: fa);
+    }
+    None() => {
+    }
+  }
+  let svg = ns_is_svg(namespace: target_namespace);
+  if svg {
+    let svg_adj = adjust_svg_attr_name(name: name_bytes);
+    match svg_adj {
+      Some(value: idx) => {
+        let no_ns2 = AttributeNamespace::NoNamespace();
+        let made2 = AdjustedAttr(namespace: no_ns2, local_name: idx);
+        return Ok<AdjustedAttr, TreeError>(value: made2);
+      }
+      None() => {
+      }
+    }
+  } else {
+    let math_adj = adjust_mathml_attr_name(name: name_bytes);
+    match math_adj {
+      Some(value: idx2) => {
+        let no_ns3 = AttributeNamespace::NoNamespace();
+        let made3 = AdjustedAttr(namespace: no_ns3, local_name: idx2);
+        return Ok<AdjustedAttr, TreeError>(value: made3);
+      }
+      None() => {
+      }
+    }
+  }
+  match atom_intern(table: atoms, name: name_bytes) {
+    Ok(value: a2) => {
+      let no_ns4 = AttributeNamespace::NoNamespace();
+      let made4 = AdjustedAttr(namespace: no_ns4, local_name: a2.index);
+      return Ok<AdjustedAttr, TreeError>(value: made4);
+    }
+    Err(error: problem2) => {
+      let too_large2 = TreeError::TooLarge();
+      return Err<AdjustedAttr, TreeError>(error: too_large2);
+    }
+  }
+}
+
+const attr_ceiling: u64 = 1048576_u64;
+
+fn build_attributes(document: &Document, atoms: &AtomTable, tok_text: &TokenText, first: u32, end: u32, target_namespace: Namespace) -> result: Result<Box<Slots<Attribute>>, TreeError> reads(tok_text), writes(document), writes(atoms) {
+  doc "Builds the attribute list for an element being created in target_namespace from tok_text.attributes[first..end), interning each (possibly namespace- or case-adjusted) name and copying its value into document's text storage.";
+  let out = box_slots_new::<Attribute>(capacity: 0_u64);
+  let first64 = cvt::<u32, u64>(first);
+  let end64 = cvt::<u32, u64>(end);
+  let text_len = tok_text^.text.inner.len;
+  let attrs_len = tok_text^.attributes.inner.len;
+  let idx = first64;
+  loop @walk {
+    let more = idx < end64;
+    if more {
+    } else {
+      break @walk;
+    }
+    let in_range = idx < attrs_len;
+    if in_range {
+    } else {
+      break @walk;
+    }
+    let raw = tok_text^.attributes.inner[idx];
+    let name_start = cvt::<u32, u64>(raw.name.start);
+    let name_end = cvt::<u32, u64>(raw.name.end);
+    let value_start = cvt::<u32, u64>(raw.value.start);
+    let value_end = cvt::<u32, u64>(raw.value.end);
+    let name_ok1 = name_start <= name_end;
+    let name_ok2 = name_end <= text_len;
+    let value_ok1 = value_start <= value_end;
+    let value_ok2 = value_end <= text_len;
+    let ok_a = band(name_ok1, name_ok2);
+    let ok_b = band(value_ok1, value_ok2);
+    let spans_ok = band(ok_a, ok_b);
+    if spans_ok {
+      let name_bytes = &tok_text^.text.inner[name_start..name_end];
+      let value_bytes = &tok_text^.text.inner[value_start..value_end];
+      let short = name_bytes^.len <= 65536_u64;
+      let value_short = value_bytes^.len <= 1073741824_u64;
+      let sizes_ok = band(short, value_short);
+      if sizes_ok {
+        let resolved = propagate resolve_attr_name(atoms: atoms, name_bytes: name_bytes, target_namespace: target_namespace);
+        match store_text(document: document, text: value_bytes) {
+          Ok(value: value_span) => {
+            let name_atom = Atom(index: resolved.local_name);
+            let one = Attribute(namespace: resolved.namespace, name: name_atom, value: value_span);
+            let pushed = propagate push_generic::<Attribute>(cell: &out, value: one, ceiling: attr_ceiling);
+          }
+          Err(error: problem) => {
+            let wrapped = to_tree_error(problem: problem);
+            return Err<Box<Slots<Attribute>>, TreeError>(error: wrapped);
+          }
+        }
+      }
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return Ok<Box<Slots<Attribute>>, TreeError>(value: move out);
+}
+
+fn create_element_with_attrs(document: &Document, name: Atom, attrs: Box<Slots<Attribute>>, namespace: Namespace) -> result: Result<NodeId, TreeError> writes(document) {
+  doc "13.2.6.1: creates an element named name in namespace with the given attributes already built; an HTML template element also gets a fresh Fragment node as its template contents.";
+  let html = ns_is_html(namespace: namespace);
+  let is_template = a_is(atom: name, id: atom_template);
+  let make_contents = band(html, is_template);
+  let template_contents = if make_contents {
+    let frag_data = NodeData::Fragment();
+    match create_node(document: document, data: move frag_data) {
+      Ok(value: frag_node) => {
+        let some_frag = Some<NodeId>(value: frag_node);
+        give some_frag;
+      }
+      Err(error: problem0) => {
+        let none_frag = None<NodeId>();
+        give none_frag;
+      }
+    }
+  } else {
+    let none_frag2 = None<NodeId>();
+    give none_frag2;
+  }
+  let data = NodeData::Element(namespace: namespace, local_name: name, attributes: move attrs, template_contents: template_contents);
+  match create_node(document: document, data: move data) {
+    Ok(value: node) => {
+      return Ok<NodeId, TreeError>(value: node);
+    }
+    Err(error: problem) => {
+      let wrapped = to_tree_error(problem: problem);
+      return Err<NodeId, TreeError>(error: wrapped);
+    }
+  }
+}
+
+fn create_element_for_token(document: &Document, atoms: &AtomTable, tok_text: &TokenText, name: Atom, first_attribute: u32, end_attribute: u32, namespace: Namespace) -> result: Result<NodeId, TreeError> reads(tok_text), writes(document), writes(atoms) {
+  doc "13.2.6.1: creates an element for a start tag token in namespace, with its attributes copied from tok_text.";
+  let attrs = propagate build_attributes(document: document, atoms: atoms, tok_text: tok_text, first: first_attribute, end: end_attribute, target_namespace: namespace);
+  let node = propagate create_element_with_attrs(document: document, name: name, attrs: move attrs, namespace: namespace);
+  return Ok<NodeId, TreeError>(value: node);
+}
+
+fn insert_foreign_element(state: &State, document: &Document, atoms: &AtomTable, tok_text: &TokenText, name: Atom, first_attribute: u32, end_attribute: u32, namespace: Namespace, only_add_to_stack: Bool) -> result: Result<NodeId, TreeError> reads(tok_text), writes(state), writes(document), writes(atoms) {
+  doc "13.2.6.1: inserts a foreign element for a start tag token: creates it, places it at the adjusted insertion location (unless only_add_to_stack), and pushes it onto the stack of open elements.";
+  let override_none = None<StackEntry>();
+  let place = appropriate_place(state: state, document: document, override_target: override_none);
+  let node = propagate create_element_for_token(document: document, atoms: atoms, tok_text: tok_text, name: name, first_attribute: first_attribute, end_attribute: end_attribute, namespace: namespace);
+  if only_add_to_stack {
+  } else {
+    let placed = propagate insert_at_place(document: document, place: place, node: node);
+  }
+  let elem = StackEntry(node: node, namespace: namespace, local_name: name);
+  let pushed = propagate push_open(state: state, elem: elem);
+  return Ok<NodeId, TreeError>(value: node);
+}
+
+fn insert_html_element(state: &State, document: &Document, atoms: &AtomTable, tok_text: &TokenText, name: Atom, first_attribute: u32, end_attribute: u32) -> result: Result<NodeId, TreeError> reads(tok_text), writes(state), writes(document), writes(atoms) {
+  doc "13.2.6.1: insert an HTML element given a token: insert a foreign element given the token, the HTML namespace, and false.";
+  let html_ns = Namespace::Html();
+  let no_flag = False();
+  let node = propagate insert_foreign_element(state: state, document: document, atoms: atoms, tok_text: tok_text, name: name, first_attribute: first_attribute, end_attribute: end_attribute, namespace: html_ns, only_add_to_stack: no_flag);
+  return Ok<NodeId, TreeError>(value: node);
+}
+
+fn insert_html_element_no_attrs(state: &State, document: &Document, atoms: &AtomTable, name: Atom) -> result: Result<NodeId, TreeError> writes(state), writes(document), writes(atoms) {
+  doc "Inserts an HTML element for a synthetic start tag token with no attributes, as the algorithm does for an implied \"head\", \"body\", \"tbody\", \"colgroup\", or \"tr\" tag, or the fake context token of the fragment parsing algorithm.";
+  let empty = token_text_new();
+  let node = propagate insert_html_element(state: state, document: document, atoms: atoms, tok_text: &empty, name: name, first_attribute: 0_u32, end_attribute: 0_u32);
+  return Ok<NodeId, TreeError>(value: node);
+}
+
+fn insert_html_element_with_attrs(state: &State, document: &Document, name: Atom, attrs: Box<Slots<Attribute>>) -> result: Result<NodeId, TreeError> writes(state), writes(document) {
+  doc "Inserts an HTML element named name with the given already-built attributes, as reconstructing an active formatting element or re-creating one in the adoption agency algorithm does.";
+  let html_ns = Namespace::Html();
+  let override_none = None<StackEntry>();
+  let place = appropriate_place(state: state, document: document, override_target: override_none);
+  let node = propagate create_element_with_attrs(document: document, name: name, attrs: move attrs, namespace: html_ns);
+  let placed = propagate insert_at_place(document: document, place: place, node: node);
+  let elem = StackEntry(node: node, namespace: html_ns, local_name: name);
+  let pushed = propagate push_open(state: state, elem: elem);
+  return Ok<NodeId, TreeError>(value: node);
+}
+
+fn stack_contains_html_tag(state: &State, id: u32) -> result: Bool reads(state) {
+  doc "Tells whether the stack of open elements has an HTML element named id anywhere on it.";
+  let len = open_len(state: state);
+  let idx = 0_u64;
+  loop @scan {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let elem = open_at(state: state, index: idx);
+    let html = ns_is_html(namespace: elem.namespace);
+    if html {
+      let hit = a_is(atom: elem.local_name, id: id);
+      if hit {
+        return True();
+      }
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return False();
+}
+
+fn in_body_process_html_start_tag(state: &State, document: &Document, atoms: &AtomTable, tok_text: &TokenText, first_attribute: u32, end_attribute: u32) -> result: Result<unit, TreeError> reads(state), reads(tok_text), writes(document), writes(atoms) {
+  doc "In body's \"start tag html\": if there is a template element on the stack of open elements, ignore; otherwise add every attribute of the token that is not already present to the first element on the stack of open elements (the html element).";
+  let has_template = stack_contains_html_tag(state: state, id: atom_template);
+  if has_template {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let len = open_len(state: state);
+  let has_root = len > 0_u64;
+  if has_root {
+  } else {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let root_entry = open_at(state: state, index: 0_u64);
+  let html_ns = Namespace::Html();
+  let attrs = propagate build_attributes(document: document, atoms: atoms, tok_text: tok_text, first: first_attribute, end: end_attribute, target_namespace: html_ns);
+  let count = attrs.inner.len;
+  let i = 0_u64;
+  loop @walk {
+    let more = i < count;
+    if more {
+    } else {
+      break @walk;
+    }
+    let one = attrs.inner[i];
+    match add_attribute(document: document, element: root_entry.node, attribute: one) {
+      Ok(value: ok) => {
+      }
+      Err(error: problem) => {
+      }
+    }
+    set i = i +wrap 1_u64;
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn generic_rcdata(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, tok_text: &TokenText, name: Atom, first_attribute: u32, end_attribute: u32) -> result: Result<unit, TreeError> reads(tok_text), writes(state), writes(document), writes(atoms), writes(tokenizer) {
+  doc "13.2.6.2: the generic RCDATA element parsing algorithm.";
+  let node = propagate insert_html_element(state: state, document: document, atoms: atoms, tok_text: tok_text, name: name, first_attribute: first_attribute, end_attribute: end_attribute);
+  let rcdata_state = ContentState::Rcdata();
+  let switched = tokenizer_set_state(tokenizer: tokenizer, state: rcdata_state);
+  save_original_mode(state: state);
+  set_mode_text(state: state);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn generic_rawtext(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, tok_text: &TokenText, name: Atom, first_attribute: u32, end_attribute: u32) -> result: Result<unit, TreeError> reads(tok_text), writes(state), writes(document), writes(atoms), writes(tokenizer) {
+  doc "13.2.6.2: the generic raw text element parsing algorithm.";
+  let node = propagate insert_html_element(state: state, document: document, atoms: atoms, tok_text: tok_text, name: name, first_attribute: first_attribute, end_attribute: end_attribute);
+  let rawtext_state = ContentState::Rawtext();
+  let switched = tokenizer_set_state(tokenizer: tokenizer, state: rawtext_state);
+  save_original_mode(state: state);
+  set_mode_text(state: state);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn generic_scriptdata(state: &State, document: &Document, atoms: &AtomTable, tokenizer: &Tokenizer, tok_text: &TokenText, name: Atom, first_attribute: u32, end_attribute: u32) -> result: Result<unit, TreeError> reads(tok_text), writes(state), writes(document), writes(atoms), writes(tokenizer) {
+  doc "13.2.6.4.4's \"script\" start tag steps, simplified for a parser that never executes scripts: inserts the script element and switches the tokenizer to the script data state (distinct from RAWTEXT, since script data's escaped/double-escaped states give \"<!--\" and \"-->\" inside script content different tokenization than RAWTEXT would).";
+  let node = propagate insert_html_element(state: state, document: document, atoms: atoms, tok_text: tok_text, name: name, first_attribute: first_attribute, end_attribute: end_attribute);
+  let script_state = ContentState::ScriptData();
+  let switched = tokenizer_set_state(tokenizer: tokenizer, state: script_state);
+  save_original_mode(state: state);
+  set_mode_text(state: state);
+  return Ok<unit, TreeError>(value: unit);
+}

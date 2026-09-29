@@ -1,0 +1,314 @@
+alias NormalizationForm = pkg::text::normalization::NormalizationForm;
+alias normalize = pkg::text::normalization::normalize;
+
+const dot_byte: u8 = 46_u8;
+
+const xn_prefix_bytes: Array<u8, 4> =[120_u8, 110_u8, 45_u8, 45_u8];
+
+fn map_domain(domain: &[u32], mapped: &Box<Slots<u32>>) -> (too_large: Bool, has_error: Bool) reads(domain), writes(mapped) {
+  doc "Applies the Map step of Section 4 Processing to domain, appending to mapped: valid and deviation code points unchanged, mapped and ignored code points replaced by their (possibly empty) target sequence, and disallowed code points, including every value that is not a Unicode scalar value, left unchanged while recording has_error. too_large is True, with mapped's content past its entry length unreliable, as soon as mapped's storage limit is passed.";
+  let length = domain^.len;
+  let has_error = False();
+  for (at in 0_u64..length) {
+    let cp = domain^[at];
+    let st = status_of(cp: cp);
+    if st == status_valid {
+      let ok = append_codepoint(buffer: mapped, value: cp);
+      if ok {
+      } else {
+        let yes = True();
+        return yes, has_error;
+      }
+    } else if st == status_mapped {
+      let (found, offset, span) = mapping_of(cp: cp);
+      if found {
+        let stop = offset +wrap span;
+        for (k in offset..stop) {
+          match mapping_value_at(k: k) {
+            Some(value: piece) => {
+              let ok = append_codepoint(buffer: mapped, value: piece);
+              if ok {
+              } else {
+                let yes = True();
+                return yes, has_error;
+              }
+            }
+            None() => {
+            }
+          }
+        }
+      }
+    } else {
+      set has_error = True();
+      let ok = append_codepoint(buffer: mapped, value: cp);
+      if ok {
+      } else {
+        let yes = True();
+        return yes, has_error;
+      }
+    }
+  }
+  let no = False();
+  return no, has_error;
+}
+
+fn label_content_of(nfc: &Box<Slots<u32>>, start: u64, end: u64, decoded: &Box<Slots<u32>>) -> (ok: Bool, is_xn: Bool) reads(nfc), writes(decoded) contract {
+  requires start <= end;
+  requires end <= nfc^.inner.len;
+} {
+  doc "Computes the validation content of one label nfc[start..end): for an xn-- label whose remainder is all ASCII, its Punycode decode into decoded (truncated to empty first), with ok False on a non-ASCII remainder, a decode failure, or (Convert/Validate step 3) a decoded result that is empty or holds only ASCII code points; for any other label, ok is always True and decoded is left empty (the caller reads the label directly from nfc). is_xn tells the caller which content to use.";
+  truncate_codepoints_to(buffer: decoded, length: 0_u64);
+  let label = &nfc^.inner[start..end];
+  let label_len = end -wrap start;
+  let long_enough = label_len >= xn_prefix_len;
+  if long_enough {
+    let prefix_match = begins_with_xn(content: label);
+    if prefix_match {
+      let is_xn = True();
+      let remainder_start = start +wrap xn_prefix_len;
+      let range_ok = remainder_start <= end;
+      if range_ok {
+      } else {
+        let no = False();
+        return no, is_xn;
+      }
+      let remainder = &nfc^.inner[remainder_start..end];
+      let ascii = all_ascii(content: remainder);
+      if ascii {
+      } else {
+        let no = False();
+        return no, is_xn;
+      }
+      let decoded_ok = punycode_decode(digits: remainder, output: decoded);
+      if decoded_ok {
+      } else {
+        let no = False();
+        return no, is_xn;
+      }
+      let decoded_len = decoded^.inner.len;
+      let decoded_ref = &decoded^.inner[0_u64..decoded_len];
+      let decoded_empty = decoded_len == 0_u64;
+      let decoded_ascii_only = all_ascii(content: decoded_ref);
+      let step3_error = bor(decoded_empty, decoded_ascii_only);
+      if step3_error {
+        let no = False();
+        return no, is_xn;
+      }
+      let yes = True();
+      return yes, is_xn;
+    }
+  }
+  let yes = True();
+  let no_xn = False();
+  return yes, no_xn;
+}
+
+fn scan_labels_pass1(nfc: &Box<Slots<u32>>, decoded: &Box<Slots<u32>>, nfc_scratch: &Box<Slots<u32>>) -> (has_error: Bool, is_bidi_domain: Bool) reads(nfc), writes(decoded), writes(nfc_scratch) {
+  doc "Walks every label of nfc once, decoding an xn-- label's remainder and validating each non-empty label's content against Section 4.1's validity criteria other than CheckBidi (skipped for an empty label), and ORs every label's RTL-ness into is_bidi_domain. Stops at the first error, since the overall result is then already settled.";
+  let total = nfc^.inner.len;
+  let pos = 0_u64;
+  let is_bidi_domain = False();
+  loop @labels (
+    invariant pos_bounded: pos <= total
+  ) {
+    let slice = &nfc^.inner[0_u64..total];
+    let start = pos;
+    let end = label_end(text: slice, from: start);
+    let (content_ok, is_xn) = label_content_of(nfc: nfc, start: start, end: end, decoded: decoded);
+    if content_ok {
+    } else {
+      let yes = True();
+      return yes, is_bidi_domain;
+    }
+    let content = if is_xn {
+      let decoded_len = decoded^.inner.len;
+      give &decoded^.inner[0_u64..decoded_len];
+    } else {
+      give &nfc^.inner[start..end];
+    }
+    let nonempty = content^.len > 0_u64;
+    if nonempty {
+      let valid = validate_label(content: content, is_xn: is_xn, nfc_scratch: nfc_scratch);
+      if valid {
+      } else {
+        let yes = True();
+        return yes, is_bidi_domain;
+      }
+      let rtl = label_has_rtl(content: content);
+      if rtl {
+        set is_bidi_domain = True();
+      }
+    }
+    let done = end >= total;
+    if done {
+      let no = False();
+      return no, is_bidi_domain;
+    }
+    let next = end +wrap 1_u64;
+    invariant next_bounded: next <= total;
+    set pos = next;
+  }
+  let no = False();
+  return no, is_bidi_domain;
+}
+
+fn scan_labels_pass2_bidi(nfc: &Box<Slots<u32>>, decoded: &Box<Slots<u32>>) -> result: Bool reads(nfc), writes(decoded) {
+  doc "Walks every label of nfc again and applies RFC 5893 section 2's six conditions to each non-empty label's content, once the domain is known to be a Bidi domain name. Returns False (an error) as soon as one label fails.";
+  let total = nfc^.inner.len;
+  let pos = 0_u64;
+  loop @labels (
+    invariant pos_bounded: pos <= total
+  ) {
+    let slice = &nfc^.inner[0_u64..total];
+    let start = pos;
+    let end = label_end(text: slice, from: start);
+    let (content_ok, is_xn) = label_content_of(nfc: nfc, start: start, end: end, decoded: decoded);
+    if content_ok {
+    } else {
+      return False();
+    }
+    let content = if is_xn {
+      let decoded_len = decoded^.inner.len;
+      give &decoded^.inner[0_u64..decoded_len];
+    } else {
+      give &nfc^.inner[start..end];
+    }
+    let nonempty = content^.len > 0_u64;
+    if nonempty {
+      let ok = check_bidi_label(content: content);
+      if ok {
+      } else {
+        return False();
+      }
+    }
+    let done = end >= total;
+    if done {
+      return True();
+    }
+    let next = end +wrap 1_u64;
+    invariant next_bounded: next <= total;
+    set pos = next;
+  }
+  return True();
+}
+
+fn assemble_labels(nfc: &Box<Slots<u32>>, output: &Box<Slots<u8>>) -> result: Bool reads(nfc), writes(output) {
+  doc "Walks every label of nfc a final time and appends ToASCII's assembled result to output: each already-ASCII label unchanged, each other label Punycode-encoded and prefixed by xn--, and labels joined by U+002E. Returns False, output's length past its entry length then unreliable, as soon as output's storage limit is passed.";
+  let total = nfc^.inner.len;
+  let pos = 0_u64;
+  let first = True();
+  loop @labels (
+    invariant pos_bounded: pos <= total
+  ) {
+    if first {
+      set first = False();
+    } else {
+      let ok = append_byte(buffer: output, value: dot_byte);
+      if ok {
+      } else {
+        return False();
+      }
+    }
+    let slice = &nfc^.inner[0_u64..total];
+    let start = pos;
+    let end = label_end(text: slice, from: start);
+    let label = &nfc^.inner[start..end];
+    let ascii = all_ascii(content: label);
+    if ascii {
+      let label_len = label^.len;
+      for (k in 0_u64..label_len) {
+        let value = label^[k];
+        let narrowed = cvt.wrap::<u32, u8>(value);
+        let ok = append_byte(buffer: output, value: narrowed);
+        if ok {
+        } else {
+          return False();
+        }
+      }
+    } else {
+      for (k in 0_u64..xn_prefix_bytes.len) {
+        let byte = xn_prefix_bytes[k];
+        let ok = append_byte(buffer: output, value: byte);
+        if ok {
+        } else {
+          return False();
+        }
+      }
+      let ok = punycode_encode(label: label, output: output);
+      if ok {
+      } else {
+        return False();
+      }
+    }
+    let done = end >= total;
+    if done {
+      return True();
+    }
+    let next = end +wrap 1_u64;
+    invariant next_bounded: next <= total;
+    set pos = next;
+  }
+  return True();
+}
+
+fn domain_to_ascii(domain: &[u32], output: &Box<Slots<u8>>) -> result: Result<unit, IdnaError> reads(domain), writes(output) contract {
+  requires domain^.len <= 16777216_u64;
+} {
+  doc "Implements ToASCII of UTS #46 for the fixed flags module.wfm documents: Map, Normalize to NFC, break into labels, decode and validate each label (short-circuiting to Invalid at the first recorded error, since CheckBidi's is_bidi_domain flag is then moot), apply CheckBidi's six conditions per label when the domain is a Bidi domain name, and, once every label is known valid, Punycode-encode every label with non-ASCII code points, prefix it by xn--, and join the labels with U+002E.";
+  let entry_len = output^.inner.len;
+  let mapped = box_slots_new::<u32>(capacity: 0_u64);
+  let (map_too_large, map_has_error) = map_domain(domain: domain, mapped: &mapped);
+  if map_too_large {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let too_large = IdnaError::TooLarge();
+    return Err<unit, IdnaError>(error: too_large);
+  }
+  if map_has_error {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let invalid = IdnaError::Invalid();
+    return Err<unit, IdnaError>(error: invalid);
+  }
+  let mapped_len = mapped.inner.len;
+  let within = mapped_len <= 268435456_u64;
+  if within {
+  } else {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let too_large = IdnaError::TooLarge();
+    return Err<unit, IdnaError>(error: too_large);
+  }
+  let mapped_ref = &mapped.inner[0_u64..mapped_len];
+  let nfc = box_slots_new::<u32>(capacity: 0_u64);
+  let composed = NormalizationForm::Composed();
+  match normalize(form: composed, text: mapped_ref, output: &nfc) {
+    Ok(value: done) => {
+    }
+    Err(error: problem) => {
+      truncate_bytes_to(buffer: output, length: entry_len);
+      let too_large = IdnaError::TooLarge();
+      return Err<unit, IdnaError>(error: too_large);
+    }
+  }
+  let decoded = box_slots_new::<u32>(capacity: 0_u64);
+  let nfc_scratch = box_slots_new::<u32>(capacity: 0_u64);
+  let (has_error, is_bidi_domain) = scan_labels_pass1(nfc: &nfc, decoded: &decoded, nfc_scratch: &nfc_scratch);
+  let final_error = if has_error {
+    give True();
+  } else if is_bidi_domain {
+    let bidi_ok = scan_labels_pass2_bidi(nfc: &nfc, decoded: &decoded);
+    give bnot(bidi_ok);
+  } else {
+    give False();
+  }
+  if final_error {
+    truncate_bytes_to(buffer: output, length: entry_len);
+    let invalid = IdnaError::Invalid();
+    return Err<unit, IdnaError>(error: invalid);
+  }
+  let assembled = assemble_labels(nfc: &nfc, output: output);
+  if assembled {
+    return Ok<unit, IdnaError>(value: unit);
+  }
+  truncate_bytes_to(buffer: output, length: entry_len);
+  let too_large = IdnaError::TooLarge();
+  return Err<unit, IdnaError>(error: too_large);
+}

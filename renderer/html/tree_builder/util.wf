@@ -1,0 +1,223 @@
+fn bytes_eq(a: &[u8], b: &[u8]) -> result: Bool reads(a), reads(b) {
+  doc "Tells whether a and b hold the same bytes in the same order.";
+  let la = a^.len;
+  let lb = b^.len;
+  let same_len = la == lb;
+  if same_len {
+  } else {
+    return False();
+  }
+  let idx = 0_u64;
+  loop @scan (
+    invariant bound: idx <= la
+  ) {
+    let more = idx < la;
+    if more {
+    } else {
+      break @scan;
+    }
+    let ca = a^[idx];
+    let cb = b^[idx];
+    let differ = ca != cb;
+    if differ {
+      return False();
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return True();
+}
+
+fn ascii_lower(byte: u8) -> result: u8 pure {
+  doc "Returns byte with an ASCII upper-case letter folded to lower case.";
+  let low = byte >= 65_u8;
+  let high = byte <= 90_u8;
+  let upper = band(low, high);
+  if upper {
+    let widened = cvt::<u8, u32>(byte);
+    let shifted = widened +wrap 32_u32;
+    let narrowed = cvt.wrap::<u32, u8>(shifted);
+    return narrowed;
+  }
+  return byte;
+}
+
+fn bytes_eq_ascii_ci(a: &[u8], b: &[u8]) -> result: Bool reads(a), reads(b) {
+  doc "Tells whether a and b hold the same bytes in the same order, comparing ASCII letters case-insensitively.";
+  let la = a^.len;
+  let lb = b^.len;
+  let same_len = la == lb;
+  if same_len {
+  } else {
+    return False();
+  }
+  let idx = 0_u64;
+  loop @scan (
+    invariant bound: idx <= la
+  ) {
+    let more = idx < la;
+    if more {
+    } else {
+      break @scan;
+    }
+    let ca = a^[idx];
+    let cb = b^[idx];
+    let la_byte = ascii_lower(byte: ca);
+    let lb_byte = ascii_lower(byte: cb);
+    let differ = la_byte != lb_byte;
+    if differ {
+      return False();
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return True();
+}
+
+fn bytes_starts_with_ci(text: &[u8], prefix: &[u8]) -> result: Bool reads(text), reads(prefix) {
+  doc "Tells whether text begins with prefix, comparing ASCII letters case-insensitively.";
+  let lt = text^.len;
+  let lp = prefix^.len;
+  let long_enough = lp <= lt;
+  if long_enough {
+  } else {
+    return False();
+  }
+  let head = &text^[0_u64..lp];
+  let same = bytes_eq_ascii_ci(a: head, b: prefix);
+  return same;
+}
+
+fn is_html_ws(byte: u8) -> result: Bool pure {
+  doc "Tells whether byte is tab, LF, FF, or space: the whitespace set 13.2.6.4's rules test character tokens against (CR never appears; input preprocessing already folds it into LF).";
+  let a = byte == 9_u8;
+  let b = byte == 10_u8;
+  let c = byte == 12_u8;
+  let d = byte == 32_u8;
+  let ab = bor(a, b);
+  let cd = bor(c, d);
+  return bor(ab, cd);
+}
+
+fn bytes_all_ws(bytes: &[u8]) -> result: Bool reads(bytes) {
+  doc "Tells whether every byte of bytes is HTML whitespace.";
+  let len = bytes^.len;
+  let i = 0_u64;
+  loop @scan {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let ws = is_html_ws(byte: b);
+    if ws {
+    } else {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn bytes_any_non_ws(bytes: &[u8]) -> result: Bool reads(bytes) {
+  doc "Tells whether bytes holds at least one non-whitespace byte.";
+  let all_ws = bytes_all_ws(bytes: bytes);
+  return bnot(all_ws);
+}
+
+fn bytes_all_ws_or_nul(bytes: &[u8]) -> result: Bool reads(bytes) {
+  doc "Tells whether every byte of bytes is HTML whitespace or U+0000 NULL, as the early insertion modes (before head, in head, after head, ...) need to decide whether a character run is incidental enough to leave the mode's \"anything else\" fallback unreached, since a NUL character token is a parse error to be ignored there too.";
+  let len = bytes^.len;
+  let i = 0_u64;
+  loop @scan {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let ws = is_html_ws(byte: b);
+    let nul = b == 0_u8;
+    let ok = bor(ws, nul);
+    if ok {
+    } else {
+      return False();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return True();
+}
+
+fn bytes_any_non_ws_non_nul(bytes: &[u8]) -> result: Bool reads(bytes) {
+  doc "Tells whether bytes holds at least one byte that is neither HTML whitespace nor U+0000 NULL, as \"in body\"'s frameset-ok determination needs once NUL character tokens are dropped rather than inserted.";
+  let len = bytes^.len;
+  let i = 0_u64;
+  loop @scan {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let ws = is_html_ws(byte: b);
+    let nul = b == 0_u8;
+    let ignorable = bor(ws, nul);
+    if ignorable {
+    } else {
+      return True();
+    }
+    set i = i +wrap 1_u64;
+  }
+  return False();
+}
+
+fn first_non_ws_or_nul(bytes: &[u8]) -> result: u64 reads(bytes) contract {
+  ensures result <= bytes^.len;
+} {
+  doc "Returns the index of the first byte of bytes that is neither HTML whitespace nor U+0000 NULL, or bytes^.len when every byte is one or the other, as before head/in head/after head/in head noscript's leading-whitespace-or-NUL prefix needs.";
+  let len = bytes^.len;
+  let i = 0_u64;
+  loop @scan (
+    invariant bound: i <= len
+  ) {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let ws = is_html_ws(byte: b);
+    let nul = b == 0_u8;
+    let ignorable = bor(ws, nul);
+    if ignorable {
+    } else {
+      return i;
+    }
+    set i = i +wrap 1_u64;
+  }
+  return len;
+}
+
+fn first_non_ws(bytes: &[u8]) -> result: u64 reads(bytes) contract {
+  ensures result <= bytes^.len;
+} {
+  doc "Returns the index of the first non-whitespace byte of bytes, or bytes^.len when every byte is whitespace.";
+  let len = bytes^.len;
+  let i = 0_u64;
+  loop @scan (
+    invariant bound: i <= len
+  ) {
+    let more = i < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let b = bytes^[i];
+    let ws = is_html_ws(byte: b);
+    if ws {
+    } else {
+      return i;
+    }
+    set i = i +wrap 1_u64;
+  }
+  return len;
+}

@@ -1,0 +1,189 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias Namespace = pkg::dom::Namespace;
+alias NodeId = pkg::dom::NodeId;
+
+struct NthScan {
+  position: u64;
+  total: u64;
+  found: Bool;
+}
+
+fn anb_matches(a: i32, b: i32, position: u64) -> result: Bool pure {
+  doc "True when there is a nonnegative integer k with position == a*k + b, position being the 1-based count <an+b> compares.";
+  let too_big = position > 2147483647_u64;
+  if too_big {
+    return False();
+  }
+  let pos = cvt.wrap::<u64, i32>(position);
+  let a_zero = a == 0_i32;
+  if a_zero {
+    let same = pos == b;
+    return same;
+  }
+  match pos -checked b {
+    Ok(value: diff) => {
+      match diff %checked a {
+        Ok(value: rem) => {
+          let rem_zero = rem == 0_i32;
+          if rem_zero {
+          } else {
+            return False();
+          }
+          match diff /checked a {
+            Ok(value: k) => {
+              let nonneg = k >= 0_i32;
+              return nonneg;
+            }
+            Err(error: problem) => {
+              return False();
+            }
+          }
+        }
+        Err(error: problem) => {
+          return False();
+        }
+      }
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn nth_scan(document: &Document, atoms: &AtomTable, list: &SelectorList, node: NodeId, same_type: Bool, target_ns: Namespace, target_name: Atom, has_of: Bool, of_alt_start: u32, of_alt_end: u32, context: MatchContext) -> result: NthScan reads(document), reads(atoms), reads(list) {
+  doc "Scans node's element siblings (through its parent's children), counting those that qualify (every element when neither same_type nor has_of, else same namespace and local name as target, else any alternative of the of-clause range) and locating node's 1-based position among them.";
+  match parent_of(document: document, node: node) {
+    Some(value: parent) => {
+      match node_links(document: document, node: parent) {
+        Some(value: parent_links) => {
+          let node_count = document^.nodes.inner.len;
+          let cursor = parent_links.first_child;
+          let count = 0_u64;
+          let found_pos = 0_u64;
+          let found = False();
+          let step = 0_u64;
+          loop @scan {
+            let within_bound = step < node_count;
+            if within_bound {
+            } else {
+              break @scan;
+            }
+            match cursor {
+              Some(value: c) => {
+                let is_elem = is_element_node(document: document, node: c);
+                if is_elem {
+                  let qualifies = nth_qualifies(document: document, atoms: atoms, list: list, c: c, same_type: same_type, target_ns: target_ns, target_name: target_name, has_of: has_of, of_alt_start: of_alt_start, of_alt_end: of_alt_end, context: context);
+                  if qualifies {
+                    let advanced = count +wrap 1_u64;
+                    set count = advanced;
+                    let is_node = same_node(first: c, second: node);
+                    if is_node {
+                      set found_pos = count;
+                      set found = True();
+                    }
+                  }
+                }
+                match node_links(document: document, node: c) {
+                  Some(value: cl) => {
+                    set cursor = cl.next_sibling;
+                  }
+                  None() => {
+                    set cursor = None<NodeId>();
+                  }
+                }
+              }
+              None() => {
+                break @scan;
+              }
+            }
+            set step = step +wrap 1_u64;
+          }
+          let result = NthScan(position: found_pos, total: count, found: found);
+          return result;
+        }
+        None() => {
+          let not_found1 = False();
+          let result = NthScan(position: 0_u64, total: 0_u64, found: not_found1);
+          return result;
+        }
+      }
+    }
+    None() => {
+      let not_found2 = False();
+      let result = NthScan(position: 0_u64, total: 0_u64, found: not_found2);
+      return result;
+    }
+  }
+}
+
+fn nth_qualifies(document: &Document, atoms: &AtomTable, list: &SelectorList, c: NodeId, same_type: Bool, target_ns: Namespace, target_name: Atom, has_of: Bool, of_alt_start: u32, of_alt_end: u32, context: MatchContext) -> result: Bool reads(document), reads(atoms), reads(list) {
+  doc "True when c qualifies for the count: matching target's namespace and local name when same_type, else matching some alternative of the of-clause range when has_of, else every element.";
+  if same_type {
+    match element_info(document: document, node: c) {
+      Some(value: info) => {
+        let ns_eq = namespace_eq(a: info.namespace, b: target_ns);
+        if ns_eq {
+        } else {
+          return False();
+        }
+        let name_eq = info.local_name.index == target_name.index;
+        return name_eq;
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  if has_of {
+    let matched = list_matches(list: list, document: document, atoms: atoms, alt_start: of_alt_start, alt_end: of_alt_end, node: c, context: context);
+    return matched;
+  }
+  return True();
+}
+
+fn namespace_eq(a: Namespace, b: Namespace) -> result: Bool pure {
+  doc "True when a and b are the same namespace.";
+  match a {
+    Html() => {
+      match b {
+        Html() => {
+          return True();
+        }
+        Svg() => {
+          return False();
+        }
+        MathMl() => {
+          return False();
+        }
+      }
+    }
+    Svg() => {
+      match b {
+        Html() => {
+          return False();
+        }
+        Svg() => {
+          return True();
+        }
+        MathMl() => {
+          return False();
+        }
+      }
+    }
+    MathMl() => {
+      match b {
+        Html() => {
+          return False();
+        }
+        Svg() => {
+          return False();
+        }
+        MathMl() => {
+          return True();
+        }
+      }
+    }
+  }
+}

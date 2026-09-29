@@ -1,0 +1,449 @@
+alias Atom = pkg::base::atom::Atom;
+alias Namespace = pkg::dom::Namespace;
+alias NodeId = pkg::dom::NodeId;
+
+enum ScopeKind {
+  Ordinary();
+  ListItem();
+  Button();
+  Table();
+}
+
+fn open_len(state: &State) -> result: u64 reads(state) contract {
+  ensures result == state^.open_elements.inner.len;
+} {
+  doc "Returns the number of elements on the stack of open elements.";
+  return state^.open_elements.inner.len;
+}
+
+fn open_at(state: &State, index: u64) -> result: StackEntry reads(state) contract {
+  requires index < state^.open_elements.inner.len;
+} {
+  doc "Returns a copy of the stack elem at index, 0 being the topmost (the html element).";
+  let elem = state^.open_elements.inner[index];
+  return elem;
+}
+
+fn current_entry(state: &State) -> found: Option<StackEntry> reads(state) {
+  doc "Returns the current node (the bottommost/most recent elem), or None when the stack is empty.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+    let idx = len -wrap 1_u64;
+    invariant idx_bound: idx < len;
+    let elem = open_at(state: state, index: idx);
+    let made = Some<StackEntry>(value: elem);
+    return made;
+  }
+  return None<StackEntry>();
+}
+
+fn is_html_p(elem: StackEntry) -> result: Bool pure {
+  doc "Tells whether elem is an HTML p element, the elements open_p_count counts.";
+  let html = ns_is_html(namespace: elem.namespace);
+  let p = a_is(atom: elem.local_name, id: atom_p);
+  return band(html, p);
+}
+
+fn count_p_added(state: &State, elem: StackEntry) -> result: unit writes(state) {
+  doc "Counts elem in open_p_count when it is an HTML p element, after it has been put on the stack of open elements. push_open, pop_open, set_open_at, remove_open_at and insert_open_at are the only functions that change the stack, and each calls this or count_p_removed for every entry it puts on or takes off, so open_p_count is the number of HTML p elements on the stack.";
+  let p = is_html_p(elem: elem);
+  if p {
+    set state^.open_p_count = state^.open_p_count +sat 1_u64;
+  }
+  return unit;
+}
+
+fn count_p_removed(state: &State, elem: StackEntry) -> result: unit writes(state) {
+  doc "Uncounts elem from open_p_count when it is an HTML p element, after it has been taken off the stack of open elements (count_p_added).";
+  let p = is_html_p(elem: elem);
+  if p {
+    let count = state^.open_p_count;
+    if count > 0_u64 {
+      set state^.open_p_count = count - 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn has_p_in_button_scope(state: &State, kw: &Keywords) -> result: Bool reads(state), reads(kw) {
+  doc "13.2.4.2: tells whether the stack of open elements has an HTML p element in button scope. With no HTML p element on the stack (open_p_count is 0) the answer is no without a scan, which keeps the block-level start tags that close a p linear in the stack's depth rather than scanning the whole stack each time.";
+  if state^.open_p_count == 0_u64 {
+    return False();
+  }
+  let button_kind = ScopeKind::Button();
+  let out = has_html_tag_in_scope(state: state, kw: kw, target_name: atom_p, kind: button_kind);
+  return out;
+}
+
+fn push_open(state: &State, elem: StackEntry) -> result: Result<unit, TreeError> writes(state) {
+  doc "Pushes elem onto the stack of open elements, growing its backing within stack_ceiling, and counts it in open_p_count.";
+  let pushed = propagate push_generic::<StackEntry>(cell: &state^.open_elements, value: elem, ceiling: stack_ceiling);
+  count_p_added(state: state, elem: elem);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn pop_open(state: &State) -> result: unit writes(state) contract {
+  requires state^.open_elements.inner.len > 0_u64;
+} {
+  doc "Pops the current node off the stack of open elements and uncounts it from open_p_count.";
+  let dropped = take_back(window: &state^.open_elements.inner);
+  count_p_removed(state: state, elem: dropped);
+  return unit;
+}
+
+fn pop_open_if_any(state: &State) -> result: unit writes(state) {
+  doc "Pops the current node off the stack of open elements when it is non-empty; a no-op otherwise.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+    pop_open(state: state);
+  }
+  return unit;
+}
+
+fn stack_contains_node(state: &State, target: NodeId) -> result: Bool reads(state) {
+  doc "Tells whether target is on the stack of open elements anywhere.";
+  let len = open_len(state: state);
+  let idx = 0_u64;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let elem = open_at(state: state, index: idx);
+    let hit = node_eq(left: elem.node, right: target);
+    if hit {
+      return True();
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return False();
+}
+
+fn stack_index_of_node(state: &State, target: NodeId) -> found: Option<u64> reads(state) {
+  doc "Returns the index (0 topmost) of target on the stack of open elements, or None.";
+  let len = open_len(state: state);
+  let idx = 0_u64;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let elem = open_at(state: state, index: idx);
+    let hit = node_eq(left: elem.node, right: target);
+    if hit {
+      let made = Some<u64>(value: idx);
+      return made;
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return None<u64>();
+}
+
+fn set_open_at(state: &State, index: u64, elem: StackEntry) -> result: unit writes(state) contract {
+  requires index < state^.open_elements.inner.len;
+} {
+  doc "Replaces the stack elem at index with elem, keeping every other elem in place, and moves open_p_count from the old elem to the new.";
+  let old = state^.open_elements.inner[index];
+  set state^.open_elements.inner[index] = elem;
+  count_p_removed(state: state, elem: old);
+  count_p_added(state: state, elem: elem);
+  return unit;
+}
+
+fn remove_open_at(state: &State, index: u64) -> result: StackEntry writes(state) contract {
+  requires index < state^.open_elements.inner.len;
+} {
+  doc "Removes and returns the stack elem at index, shifting every later elem down by one, and uncounts it from open_p_count.";
+  let removed = remove_at(window: &state^.open_elements.inner, index: index);
+  count_p_removed(state: state, elem: removed);
+  return removed;
+}
+
+fn insert_open_at(state: &State, index: u64, elem: StackEntry) -> result: Result<unit, TreeError> writes(state) contract {
+  requires index <= state^.open_elements.inner.len;
+} {
+  doc "Inserts elem at index, shifting elem and every later one up by one (immediately below the element that was at index), and counts it in open_p_count.";
+  let length = state^.open_elements.inner.len;
+  let capacity = state^.open_elements.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    if empty {
+      grow(cell: &state^.open_elements, capacity: 8_u64);
+    } else {
+      let doubled = capacity +sat capacity;
+      let over = doubled > stack_ceiling;
+      if over {
+        let room = capacity < stack_ceiling;
+        if room {
+          grow(cell: &state^.open_elements, capacity: stack_ceiling);
+        } else {
+          let too_large = TreeError::TooLarge();
+          return Err<unit, TreeError>(error: too_large);
+        }
+      } else {
+        let grew = doubled > capacity;
+        if grew {
+          grow(cell: &state^.open_elements, capacity: doubled);
+        } else {
+          let too_large2 = TreeError::TooLarge();
+          return Err<unit, TreeError>(error: too_large2);
+        }
+      }
+    }
+  }
+  let length2 = state^.open_elements.inner.len;
+  let capacity2 = state^.open_elements.inner.cap;
+  let index_ok = index <= length2;
+  let cap_ok = length2 < capacity2;
+  let ok = band(index_ok, cap_ok);
+  if ok {
+    insert_at(window: &state^.open_elements.inner, index: index, value: elem);
+    count_p_added(state: state, elem: elem);
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let too_large2 = TreeError::TooLarge();
+  return Err<unit, TreeError>(error: too_large2);
+}
+
+fn pop_until_node(state: &State, target: NodeId) -> result: unit writes(state) {
+  doc "Pops elements from the stack of open elements until target has been popped, or the stack runs out.";
+  loop @pop {
+    let len = open_len(state: state);
+    let has = len > 0_u64;
+    if has {
+    } else {
+      break @pop;
+    }
+    let idx = len -wrap 1_u64;
+    invariant idx_bound: idx < len;
+    let elem = open_at(state: state, index: idx);
+    pop_open(state: state);
+    let hit = node_eq(left: elem.node, right: target);
+    if hit {
+      break @pop;
+    }
+  }
+  return unit;
+}
+
+fn pop_to_root(state: &State) -> result: unit writes(state) {
+  doc "Pops every element from the stack of open elements down to, but not including, the root (index 0) element, as \"in body\"'s frameset start tag handling requires: \"pop all the nodes from the bottom of the stack of open elements, from the current node up to, but not including, the root html element.\"";
+  loop @pop {
+    let len = open_len(state: state);
+    let more = len > 1_u64;
+    if more {
+    } else {
+      break @pop;
+    }
+    pop_open(state: state);
+  }
+  return unit;
+}
+
+fn pop_until_html_tag(state: &State, id: u32) -> result: unit writes(state) {
+  doc "Pops elements from the stack of open elements until an HTML element named id has been popped, or the stack runs out.";
+  loop @pop {
+    let len = open_len(state: state);
+    let has = len > 0_u64;
+    if has {
+    } else {
+      break @pop;
+    }
+    let idx = len -wrap 1_u64;
+    invariant idx_bound: idx < len;
+    let elem = open_at(state: state, index: idx);
+    pop_open(state: state);
+    let html = ns_is_html(namespace: elem.namespace);
+    if html {
+      let hit = a_is(atom: elem.local_name, id: id);
+      if hit {
+        break @pop;
+      }
+    }
+  }
+  return unit;
+}
+
+fn is_ordinary_scope_boundary(namespace: Namespace, local_name: Atom, kw: &Keywords) -> result: Bool reads(kw) {
+  doc "13.2.4.2: the specific scope boundary element set for \"has an element in scope\": applet, caption, html, table, td, th, marquee, object, select, template (HTML), every MathML text-integration/annotation-xml element, and SVG foreignObject/desc/title.";
+  let html = ns_is_html(namespace: namespace);
+  if html {
+    let a = a_is(atom: local_name, id: atom_caption);
+    let b = a_is(atom: local_name, id: atom_html);
+    let c = a_is(atom: local_name, id: atom_table);
+    let d = a_is(atom: local_name, id: atom_td);
+    let e = a_is(atom: local_name, id: atom_th);
+    let f = a_is(atom: local_name, id: atom_object);
+    let g = a_is(atom: local_name, id: atom_select);
+    let h = a_is(atom: local_name, id: atom_template);
+    let g1 = bor8(a: a, b: b, c: c, d: d, e: e, f: f, g: g, h: h);
+    let i = kw^.applet.index == local_name.index;
+    let j = kw^.marquee.index == local_name.index;
+    let g2 = bor(i, j);
+    let out = bor(g1, g2);
+    return out;
+  }
+  let mathml = ns_is_mathml(namespace: namespace);
+  if mathml {
+    let out2 = is_special_mathml(local_name: local_name);
+    return out2;
+  }
+  let svg = ns_is_svg(namespace: namespace);
+  if svg {
+    let out3 = is_special_svg(local_name: local_name);
+    return out3;
+  }
+  return False();
+}
+
+fn is_list_item_scope_boundary(namespace: Namespace, local_name: Atom, kw: &Keywords) -> result: Bool reads(kw) {
+  doc "The list item scope boundary: the ordinary scope boundary plus HTML ol and ul.";
+  let base = is_ordinary_scope_boundary(namespace: namespace, local_name: local_name, kw: kw);
+  if base {
+    return True();
+  }
+  let html = ns_is_html(namespace: namespace);
+  if html {
+    let ol = a_is(atom: local_name, id: atom_ol);
+    let ul = a_is(atom: local_name, id: atom_ul);
+    let out = bor(ol, ul);
+    return out;
+  }
+  return False();
+}
+
+fn is_button_scope_boundary(namespace: Namespace, local_name: Atom, kw: &Keywords) -> result: Bool reads(kw) {
+  doc "The button scope boundary: the ordinary scope boundary plus HTML button.";
+  let base = is_ordinary_scope_boundary(namespace: namespace, local_name: local_name, kw: kw);
+  if base {
+    return True();
+  }
+  let html = ns_is_html(namespace: namespace);
+  if html {
+    let out = a_is(atom: local_name, id: atom_button);
+    return out;
+  }
+  return False();
+}
+
+fn is_table_scope_boundary(namespace: Namespace, local_name: Atom) -> result: Bool pure {
+  doc "The table scope boundary: HTML html, table, template.";
+  let html = ns_is_html(namespace: namespace);
+  if html {
+  } else {
+    return False();
+  }
+  let a = a_is(atom: local_name, id: atom_html);
+  let b = a_is(atom: local_name, id: atom_table);
+  let c = a_is(atom: local_name, id: atom_template);
+  let bc = bor(b, c);
+  let out = bor(a, bc);
+  return out;
+}
+
+fn scope_boundary(namespace: Namespace, local_name: Atom, kind: ScopeKind, kw: &Keywords) -> result: Bool reads(kw) {
+  doc "Dispatches to the boundary-element predicate for kind.";
+  match kind {
+    Ordinary() => {
+      let out = is_ordinary_scope_boundary(namespace: namespace, local_name: local_name, kw: kw);
+      return out;
+    }
+    ListItem() => {
+      let out = is_list_item_scope_boundary(namespace: namespace, local_name: local_name, kw: kw);
+      return out;
+    }
+    Button() => {
+      let out = is_button_scope_boundary(namespace: namespace, local_name: local_name, kw: kw);
+      return out;
+    }
+    Table() => {
+      let out = is_table_scope_boundary(namespace: namespace, local_name: local_name);
+      return out;
+    }
+  }
+}
+
+fn has_in_scope(state: &State, kw: &Keywords, target: NodeId, kind: ScopeKind) -> result: Bool reads(state), reads(kw) {
+  doc "13.2.4.2: tells whether the stack of open elements has target in the specific scope named by kind.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    return False();
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < len;
+    let elem = open_at(state: state, index: prev);
+    let hit = node_eq(left: elem.node, right: target);
+    if hit {
+      return True();
+    }
+    let boundary = scope_boundary(namespace: elem.namespace, local_name: elem.local_name, kind: kind, kw: kw);
+    if boundary {
+      return False();
+    }
+    set idx = prev;
+  }
+  return False();
+}
+
+fn has_tag_in_scope(state: &State, kw: &Keywords, target_namespace: Namespace, target_name: Atom, kind: ScopeKind) -> result: Bool reads(state), reads(kw) {
+  doc "13.2.4.2: tells whether the stack of open elements has an HTML element named target_name in target_namespace, in the specific scope named by kind.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    return False();
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < len;
+    let elem = open_at(state: state, index: prev);
+    let same_ns = namespace_eq(left: elem.namespace, right: target_namespace);
+    let same_name = a_is(atom: elem.local_name, id: target_name.index);
+    let hit = band(same_ns, same_name);
+    if hit {
+      return True();
+    }
+    let boundary = scope_boundary(namespace: elem.namespace, local_name: elem.local_name, kind: kind, kw: kw);
+    if boundary {
+      return False();
+    }
+    set idx = prev;
+  }
+  return False();
+}
+
+fn has_html_tag_in_scope(state: &State, kw: &Keywords, target_name: u32, kind: ScopeKind) -> result: Bool reads(state), reads(kw) {
+  doc "13.2.4.2: tells whether the stack of open elements has an HTML element named target_name in the specific scope named by kind.";
+  let html_ns = Namespace::Html();
+  let target_atom = Atom(index: target_name);
+  let out = has_tag_in_scope(state: state, kw: kw, target_namespace: html_ns, target_name: target_atom, kind: kind);
+  return out;
+}

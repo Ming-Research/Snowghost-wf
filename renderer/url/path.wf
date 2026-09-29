@@ -1,0 +1,363 @@
+fn is_percent_2e_at(text: &[u8], at: u64) -> result: Bool reads(text) contract {
+  requires at + 2_u64 < text^.len;
+} {
+  doc "True when text at at is %2e or %2E.";
+  let p = text^[at];
+  let at1 = at +wrap 1_u64;
+  let d = text^[at1];
+  let at2 = at +wrap 2_u64;
+  let e = text^[at2];
+  let is_percent = p == 37_u8;
+  let is_two = d == 50_u8;
+  let lower_e = e == 101_u8;
+  let upper_e = e == 69_u8;
+  let is_e = bor(lower_e, upper_e);
+  let a = band(is_percent, is_two);
+  return band(a, is_e);
+}
+
+fn is_single_dot_segment(text: &[u8]) -> result: Bool reads(text) {
+  doc "A URL path segment that is \".\" or an ASCII case-insensitive match for \"%2e\".";
+  let length = text^.len;
+  let one = length == 1_u64;
+  if one {
+    let byte = text^[0_u64];
+    let dot = byte == 46_u8;
+    return dot;
+  }
+  let three = length == 3_u64;
+  if three {
+    let m = is_percent_2e_at(text: text, at: 0_u64);
+    return m;
+  }
+  return False();
+}
+
+fn is_double_dot_segment(text: &[u8]) -> result: Bool reads(text) {
+  doc "A URL path segment that is \"..\" or an ASCII case-insensitive match for \".%2e\", \"%2e.\", or \"%2e%2e\".";
+  let length = text^.len;
+  let two = length == 2_u64;
+  if two {
+    let b0 = text^[0_u64];
+    let b1 = text^[1_u64];
+    let d0 = b0 == 46_u8;
+    let d1 = b1 == 46_u8;
+    return band(d0, d1);
+  }
+  let four = length == 4_u64;
+  if four {
+    let b0 = text^[0_u64];
+    let leading_dot = b0 == 46_u8;
+    let form1 = if leading_dot {
+      give is_percent_2e_at(text: text, at: 1_u64);
+    } else {
+      give False();
+    }
+    let form2 = is_percent_2e_at(text: text, at: 0_u64);
+    let b3 = text^[3_u64];
+    let trailing_dot = b3 == 46_u8;
+    let form2b = band(form2, trailing_dot);
+    return bor(form1, form2b);
+  }
+  let six = length == 6_u64;
+  if six {
+    let m1 = is_percent_2e_at(text: text, at: 0_u64);
+    let m2 = is_percent_2e_at(text: text, at: 3_u64);
+    return band(m1, m2);
+  }
+  return False();
+}
+
+fn path_begin_segment(b: &Builder) -> result: u64 reads(b) {
+  doc "The offset in b's path text where a new segment starts.";
+  let start = b^.path_text.inner.len;
+  return start;
+}
+
+fn path_push_char(b: &Builder, cp: u32) -> result: Result<unit, UrlError> writes(b) {
+  doc "UTF-8 percent-encodes cp with the path percent-encode set and appends it to b's in-progress path text.";
+  let path_set = EncodeSet::Path();
+  let pushed = propagate percent_encode_code_point(buffer: &b^.path_text, cp: cp, kind: path_set);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn path_push_span(b: &Builder, start: u64, end: u64) -> result: Result<unit, UrlError> writes(b) {
+  doc "Records b's path text from start to end as one more segment.";
+  let span = PathSpan(start: start, end: end);
+  let pushed = propagate push_within_pathspan(cell: &b^.path_spans, value: span);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn push_within_pathspan(cell: &Box<Slots<PathSpan>>, value: PathSpan) -> result: Result<unit, UrlError> writes(cell) {
+  doc "Appends value to cell, whose capacity stops at 16777216: one segment per 16 bytes of the largest admitted href.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let seed = 64_u64;
+    let limit = 16777216_u64;
+    let small = capacity < seed;
+    if small {
+      grow(cell: cell, capacity: seed);
+    } else {
+      let within = capacity <= limit;
+      if within {
+      } else {
+        let refusal = UrlError::TooLarge();
+        return Err<unit, UrlError>(error: refusal);
+      }
+      let doubled = capacity + capacity;
+      grow(cell: cell, capacity: doubled);
+    }
+  }
+  place_back(window: &cell^.inner, value: value);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn path_pop_segment(b: &Builder) -> result: unit writes(b) {
+  doc "Removes the last segment of b's list path, if any, and truncates the path text back to its start.";
+  let count = b^.path_spans.inner.len;
+  let any = count > 0_u64;
+  if any {
+    let popped = take_back(window: &b^.path_spans.inner);
+    truncate_bytes_to(buffer: &b^.path_text, length: popped.start);
+  }
+  return unit;
+}
+
+fn path_last_segment_is_normalized_drive_letter(b: &Builder) -> result: Bool reads(b) {
+  doc "True when b's path has exactly one segment and it is a normalized Windows drive letter.";
+  let count = b^.path_spans.inner.len;
+  let one = count == 1_u64;
+  if one {
+  } else {
+    return False();
+  }
+  let span = b^.path_spans.inner[0_u64];
+  let text_len = b^.path_text.inner.len;
+  let ordered = span.start <= span.end;
+  let within = span.end <= text_len;
+  let sane = band(ordered, within);
+  if sane {
+  } else {
+    return False();
+  }
+  let content = &b^.path_text.inner[span.start..span.end];
+  let drive = is_windows_drive_letter(input: content);
+  if drive {
+  } else {
+    return False();
+  }
+  let length = content^.len;
+  let has_two = length >= 2_u64;
+  if has_two {
+  } else {
+    return False();
+  }
+  let second = content^[1_u64];
+  let colon = second == 58_u8;
+  return colon;
+}
+
+fn path_shorten(b: &Builder) -> result: unit writes(b) {
+  doc "Shortens b's list path: a no-op when b's scheme is file and the path is exactly one normalized Windows drive letter, and otherwise removes the last segment, if any.";
+  let file = scheme_is_file(kind: b^.kind);
+  if file {
+    let drive_only = path_last_segment_is_normalized_drive_letter(b: b);
+    if drive_only {
+      return unit;
+    }
+  }
+  path_pop_segment(b: b);
+  return unit;
+}
+
+fn path_finish_segment(b: &Builder, seg_start: u64, next_is_slashlike: Bool) -> result: Result<unit, UrlError> writes(b) {
+  doc "Finishes the in-progress segment of b's path text from seg_start to its current end: single- and double-dot segments per the URL path segment string grammar, and the file-scheme Windows drive letter quirk on the first segment of an otherwise-empty path.";
+  let end = b^.path_text.inner.len;
+  let end_ok = end >= seg_start;
+  if end_ok {
+  } else {
+    let failure = UrlError::Failure();
+    return Err<unit, UrlError>(error: failure);
+  }
+  let content = &b^.path_text.inner[seg_start..end];
+  let double_dot = is_double_dot_segment(text: content);
+  if double_dot {
+    truncate_bytes_to(buffer: &b^.path_text, length: seg_start);
+    path_shorten(b: b);
+    if next_is_slashlike {
+    } else {
+      let here = b^.path_text.inner.len;
+      let pushed = propagate path_push_span(b: b, start: here, end: here);
+    }
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let single_dot = is_single_dot_segment(text: content);
+  if single_dot {
+    truncate_bytes_to(buffer: &b^.path_text, length: seg_start);
+    if next_is_slashlike {
+    } else {
+      let here = b^.path_text.inner.len;
+      let pushed = propagate path_push_span(b: b, start: here, end: here);
+    }
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let file = scheme_is_file(kind: b^.kind);
+  if file {
+    let count = b^.path_spans.inner.len;
+    let empty_so_far = count == 0_u64;
+    if empty_so_far {
+      let seg_len = end -wrap seg_start;
+      let two = seg_len == 2_u64;
+      if two {
+        let content2 = &b^.path_text.inner[seg_start..end];
+        let drive = is_windows_drive_letter(input: content2);
+        if drive {
+          let second_index = seg_start +wrap 1_u64;
+          let text_len = b^.path_text.inner.len;
+          let in_bounds = second_index < text_len;
+          if in_bounds {
+            set b^.path_text.inner[second_index] = 58_u8;
+          }
+        }
+      }
+    }
+  }
+  let pushed = propagate path_push_span(b: b, start: seg_start, end: end);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn path_push_segment_raw(b: &Builder, bytes: &[u8]) -> result: Result<unit, UrlError> reads(bytes), writes(b) {
+  doc "Appends bytes verbatim as one more segment of b's list path, without percent-encoding or dot handling.";
+  let start = b^.path_text.inner.len;
+  let pushed = propagate push_bytes(buffer: &b^.path_text, bytes: bytes);
+  let end = b^.path_text.inner.len;
+  let spanned = propagate path_push_span(b: b, start: start, end: end);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn path_reset(b: &Builder) -> result: unit writes(b) {
+  doc "Empties b's list path back to zero segments.";
+  truncate_bytes_to(buffer: &b^.path_text, length: 0_u64);
+  truncate_pathspans_to(buffer: &b^.path_spans, length: 0_u64);
+  return unit;
+}
+
+fn truncate_pathspans_to(buffer: &Box<Slots<PathSpan>>, length: u64) -> result: unit writes(buffer) {
+  doc "Takes segments off the back of buffer until its len is at most length.";
+  loop @shrink {
+    let current = buffer^.inner.len;
+    let over = current > length;
+    if over {
+      let dropped = take_back(window: &buffer^.inner);
+    } else {
+      break @shrink;
+    }
+  }
+  return unit;
+}
+
+fn path_clone_list_from_base(b: &Builder, base_path: &[u8]) -> result: Result<unit, UrlError> reads(base_path), writes(b) {
+  doc "Clones a base URL's serialized list path into b's path: each segment, in order, copied verbatim. An empty base_path clones to zero segments; otherwise base_path always starts with U+002F, which is not itself a segment.";
+  let length = base_path^.len;
+  let empty = length == 0_u64;
+  if empty {
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let pos = 1_u64;
+  loop @segments (
+    invariant pos_bounded: pos <= length
+  ) {
+    let seg_end = find_byte_or_end(input: base_path, start: pos, length: length, target: 47_u8);
+    let ok = pos <= seg_end;
+    if ok {
+    } else {
+      let failure = UrlError::Failure();
+      return Err<unit, UrlError>(error: failure);
+    }
+    let piece = &base_path^[pos..seg_end];
+    let pushed = propagate path_push_segment_raw(b: b, bytes: piece);
+    let done = seg_end >= length;
+    if done {
+      break @segments;
+    }
+    let next = seg_end +wrap 1_u64;
+    invariant next_bounded: next <= length;
+    set pos = next;
+  }
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn opaque_path_set(b: &Builder) -> result: unit writes(b) {
+  doc "Marks b's path opaque and empties its text.";
+  set b^.opaque_path = True();
+  truncate_bytes_to(buffer: &b^.path_text, length: 0_u64);
+  truncate_pathspans_to(buffer: &b^.path_spans, length: 0_u64);
+  return unit;
+}
+
+fn opaque_path_clone_from_base(b: &Builder, base_path: &[u8]) -> result: Result<unit, UrlError> reads(base_path), writes(b) {
+  doc "Marks b's path opaque and copies base_path verbatim as its text.";
+  opaque_path_set(b: b);
+  let pushed = propagate push_bytes(buffer: &b^.path_text, bytes: base_path);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn opaque_path_push_literal_byte(b: &Builder, byte: u8) -> result: Result<unit, UrlError> writes(b) {
+  doc "Appends one raw byte to b's opaque path text without percent-encoding.";
+  let pushed = propagate push_byte(buffer: &b^.path_text, value: byte);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn opaque_path_push_char(b: &Builder, cp: u32) -> result: Result<unit, UrlError> writes(b) {
+  doc "UTF-8 percent-encodes cp with the C0 control percent-encode set and appends it to b's opaque path text.";
+  let c0 = EncodeSet::C0();
+  let pushed = propagate percent_encode_code_point(buffer: &b^.path_text, cp: cp, kind: c0);
+  return Ok<unit, UrlError>(value: unit);
+}
+
+fn path_starts_with_two_solidi(b: &Builder) -> result: Bool reads(b) {
+  doc "True when b's list path is not opaque and its serialized form would start with two U+002F: two or more segments whose first is the empty string.";
+  let is_opaque = b^.opaque_path;
+  if is_opaque {
+    return False();
+  }
+  let count = b^.path_spans.inner.len;
+  let at_least_two = count >= 2_u64;
+  if at_least_two {
+  } else {
+    return False();
+  }
+  let first = b^.path_spans.inner[0_u64];
+  let empty = first.start == first.end;
+  return empty;
+}
+
+fn write_path(b: &Builder, buffer: &Box<Slots<u8>>) -> result: Result<unit, UrlError> reads(b), writes(buffer) {
+  doc "The URL path serializer: b's opaque path text as-is, or, for a list path, U+002F followed by each segment in order.";
+  let is_opaque = b^.opaque_path;
+  if is_opaque {
+    let length = b^.path_text.inner.len;
+    let content = &b^.path_text.inner[0_u64..length];
+    let pushed = propagate push_bytes(buffer: buffer, bytes: content);
+    return Ok<unit, UrlError>(value: unit);
+  }
+  let count = b^.path_spans.inner.len;
+  for (at in 0_u64..count) {
+    let slash = propagate push_byte(buffer: buffer, value: 47_u8);
+    let span = b^.path_spans.inner[at];
+    let text_len = b^.path_text.inner.len;
+    let ordered = span.start <= span.end;
+    let within = span.end <= text_len;
+    let sane = band(ordered, within);
+    if sane {
+    } else {
+      let failure = UrlError::Failure();
+      return Err<unit, UrlError>(error: failure);
+    }
+    let content = &b^.path_text.inner[span.start..span.end];
+    let pushed = propagate push_bytes(buffer: buffer, bytes: content);
+  }
+  return Ok<unit, UrlError>(value: unit);
+}

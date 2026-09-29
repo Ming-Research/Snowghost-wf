@@ -1,0 +1,584 @@
+const punycode_base: u32 = 36_u32;
+
+const punycode_tmin: u32 = 1_u32;
+
+const punycode_tmax: u32 = 26_u32;
+
+const punycode_skew: u32 = 38_u32;
+
+const punycode_damp: u32 = 700_u32;
+
+const punycode_initial_bias: u32 = 72_u32;
+
+const punycode_initial_n: u32 = 128_u32;
+
+const punycode_hyphen: u32 = 45_u32;
+
+const punycode_no_digit: u8 = 36_u8;
+
+const ascii_lower_a: u32 = 97_u32;
+
+const ascii_lower_z: u32 = 122_u32;
+
+const ascii_upper_a: u32 = 65_u32;
+
+const ascii_upper_z: u32 = 90_u32;
+
+const ascii_digit_0: u32 = 48_u32;
+
+const ascii_digit_9: u32 = 57_u32;
+
+fn checked_div_u32(n: u32, d: u32) -> result: Option<u32> pure {
+  doc "Returns n/d, or None for d == 0, without a bare division proof obligation.";
+  match n /checked d {
+    Ok(value: quotient) => {
+      return Some<u32>(value: quotient);
+    }
+    Err(error: problem) => {
+      return None<u32>();
+    }
+  }
+}
+
+fn punycode_digit_value(cp: u32) -> result: u8 pure {
+  doc "Returns the Bootstring digit value (0..35) of one ASCII basic code point: a-z or A-Z is 0..25, 0..9 is 26..35, and every other value is punycode_no_digit.";
+  let lower_low = cp >= ascii_lower_a;
+  let lower_high = cp <= ascii_lower_z;
+  let is_lower = band(lower_low, lower_high);
+  if is_lower {
+    let offset = cp -wrap ascii_lower_a;
+    return cvt.wrap::<u32, u8>(offset);
+  }
+  let upper_low = cp >= ascii_upper_a;
+  let upper_high = cp <= ascii_upper_z;
+  let is_upper = band(upper_low, upper_high);
+  if is_upper {
+    let offset = cp -wrap ascii_upper_a;
+    return cvt.wrap::<u32, u8>(offset);
+  }
+  let digit_low = cp >= ascii_digit_0;
+  let digit_high = cp <= ascii_digit_9;
+  let is_digit = band(digit_low, digit_high);
+  if is_digit {
+    let offset = cp -wrap ascii_digit_0;
+    let offset8 = cvt.wrap::<u32, u8>(offset);
+    return offset8 +wrap 26_u8;
+  }
+  return punycode_no_digit;
+}
+
+fn punycode_digit_glyph(digit: u32) -> result: u32 pure {
+  doc "Returns the lowercase ASCII basic code point for Bootstring digit value digit (0..25 as a-z, 26..35 as 0..9); digit must be below punycode_base.";
+  let is_letter = digit < 26_u32;
+  if is_letter {
+    return ascii_lower_a +wrap digit;
+  }
+  let offset = digit -wrap 26_u32;
+  return ascii_digit_0 +wrap offset;
+}
+
+fn punycode_threshold(k: u32, bias: u32) -> result: u32 pure {
+  doc "Returns the Bootstring threshold t for digit position k against bias: punycode_tmin when k <= bias, punycode_tmax when k >= bias + punycode_tmax, and k - bias otherwise.";
+  let low = k <= bias;
+  if low {
+    return punycode_tmin;
+  }
+  let ceiling = bias +wrap punycode_tmax;
+  let high = k >= ceiling;
+  if high {
+    return punycode_tmax;
+  }
+  return k -wrap bias;
+}
+
+fn punycode_adapt(delta: u32, numpoints: u32, firsttime: Bool) -> result: u32 pure {
+  doc "RFC 3492's bias adaptation function.";
+  let started = if firsttime {
+    give checked_div_u32(n: delta, d: punycode_damp);
+  } else {
+    give checked_div_u32(n: delta, d: 2_u32);
+  }
+  let d0 = match started {
+    Some(value: quotient) => {
+      give quotient;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  let step = match checked_div_u32(n: d0, d: numpoints) {
+    Some(value: quotient) => {
+      give quotient;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  let d1 = d0 +wrap step;
+  let k = 0_u32;
+  let d = d1;
+  loop @scale {
+    let base_minus_tmin_a = punycode_base -wrap punycode_tmin;
+    let threshold_num = base_minus_tmin_a *wrap punycode_tmax;
+    let threshold = match checked_div_u32(n: threshold_num, d: 2_u32) {
+      Some(value: quotient) => {
+        give quotient;
+      }
+      None() => {
+        give 0_u32;
+      }
+    }
+    let over = d > threshold;
+    if over {
+    } else {
+      break @scale;
+    }
+    let divisor = punycode_base -wrap punycode_tmin;
+    let divided = match checked_div_u32(n: d, d: divisor) {
+      Some(value: quotient) => {
+        give quotient;
+      }
+      None() => {
+        give 0_u32;
+      }
+    }
+    set d = divided;
+    set k = k +wrap punycode_base;
+  }
+  let base_minus_tmin_b = punycode_base -wrap punycode_tmin;
+  let base_minus_tmin_plus1 = base_minus_tmin_b +wrap 1_u32;
+  let numerator = base_minus_tmin_plus1 *wrap d;
+  let denom = d +wrap punycode_skew;
+  let final_term = match checked_div_u32(n: numerator, d: denom) {
+    Some(value: quotient) => {
+      give quotient;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  return k +wrap final_term;
+}
+
+fn insert_codepoint(buffer: &Box<Slots<u32>>, index: u64, value: u32) -> result: Bool writes(buffer) contract {
+  requires index <= buffer^.inner.len;
+} {
+  doc "Inserts value into buffer at index, doubling its capacity (or taking initial_codepoint_capacity from empty) first when it is full, within codepoint_ceiling. Returns False, leaving buffer unchanged, when inserting would need buffer's capacity to pass codepoint_ceiling.";
+  let length = buffer^.inner.len;
+  let capacity = buffer^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    let doubled = if empty {
+      give initial_codepoint_capacity;
+    } else {
+      let value2 = capacity +wrap capacity;
+      give value2;
+    }
+    let at_least = length +wrap 1_u64;
+    let target = if doubled >= at_least {
+      give doubled;
+    } else {
+      give at_least;
+    }
+    let fits = target <= codepoint_ceiling;
+    if fits {
+    } else {
+      return False();
+    }
+    let grows = target > capacity;
+    if grows {
+      grow(cell: buffer, capacity: target);
+    }
+  }
+  let room = buffer^.inner.len < buffer^.inner.cap;
+  let index_ok = index <= buffer^.inner.len;
+  let ok = band(room, index_ok);
+  if ok {
+    insert_at(window: &buffer^.inner, index: index, value: value);
+    return True();
+  }
+  return False();
+}
+
+fn last_hyphen_index(digits: &[u32]) -> result: Result<u64, unit> reads(digits) contract {
+  ensures when Ok(value: idx): idx < digits^.len;
+} {
+  doc "Returns Ok of the index of the last punycode_hyphen in digits, or Err when digits has none.";
+  let length = digits^.len;
+  let at = length;
+  loop @scan (
+    invariant bounded: at <= length
+  ) {
+    let has_more = at > 0_u64;
+    if has_more {
+    } else {
+      break @scan;
+    }
+    let prev = at -wrap 1_u64;
+    invariant prev_bounded: prev <= length;
+    let value = digits^[prev];
+    let hyphen = value == punycode_hyphen;
+    if hyphen {
+      return Ok<u64, unit>(value: prev);
+    }
+    set at = prev;
+  }
+  return Err<u64, unit>(error: unit);
+}
+
+fn punycode_decode(digits: &[u32], output: &Box<Slots<u32>>) -> result: Bool reads(digits), writes(output) {
+  doc "Decodes the Bootstring-encoded digits (the part of an xn-- label after its prefix) per RFC 3492 and appends the decoded code points to output. Returns False on any decode failure (an invalid digit, a missing digit, or an arithmetic overflow) or when output's storage limit is passed; output's length past its entry length is then unreliable and the caller truncates it back.";
+  let length = digits^.len;
+  let basic_length = match last_hyphen_index(digits: digits) {
+    Ok(value: at) => {
+      give at;
+    }
+    Err(error: problem) => {
+      give 0_u64;
+    }
+  }
+  let basic_length_ok = basic_length <= length;
+  if basic_length_ok {
+  } else {
+    return False();
+  }
+  for (at in 0_u64..basic_length) {
+    let in_range = at < length;
+    if in_range {
+    } else {
+      return False();
+    }
+    let value = digits^[at];
+    let ascii = value < 128_u32;
+    if ascii {
+    } else {
+      return False();
+    }
+    let ok = append_codepoint(buffer: output, value: value);
+    if ok {
+    } else {
+      return False();
+    }
+  }
+  let start = if basic_length > 0_u64 {
+    give basic_length +wrap 1_u64;
+  } else {
+    give 0_u64;
+  }
+  let pos = start;
+  let n = punycode_initial_n;
+  let i = 0_u32;
+  let bias = punycode_initial_bias;
+  loop @extended {
+    let exhausted = pos >= length;
+    if exhausted {
+      break @extended;
+    }
+    let oldi = i;
+    let w = 1_u32;
+    let cursor = pos;
+    let k = punycode_base;
+    loop @digits (
+      invariant cursor_bounded: cursor <= length
+    ) {
+      let has_digit = cursor < length;
+      if has_digit {
+      } else {
+        return False();
+      }
+      let cp = digits^[cursor];
+      let digit = punycode_digit_value(cp: cp);
+      let valid_digit = digit < punycode_no_digit;
+      if valid_digit {
+      } else {
+        return False();
+      }
+      let digit32 = cvt::<u8, u32>(digit);
+      let next_cursor = cursor +wrap 1_u64;
+      invariant next_bounded: next_cursor <= length + 1_u64;
+      set cursor = next_cursor;
+      let scaled = match digit32 *checked w {
+        Ok(value: product) => {
+          give Some<u32>(value: product);
+        }
+        Err(error: problem) => {
+          give None<u32>();
+        }
+      }
+      let added = match scaled {
+        Some(value: product) => {
+          match i +checked product {
+            Ok(value: sum) => {
+              give Some<u32>(value: sum);
+            }
+            Err(error: problem) => {
+              give None<u32>();
+            }
+          }
+        }
+        None() => {
+          give None<u32>();
+        }
+      }
+      match added {
+        Some(value: sum) => {
+          set i = sum;
+        }
+        None() => {
+          return False();
+        }
+      }
+      let t = punycode_threshold(k: k, bias: bias);
+      let stop = digit32 < t;
+      if stop {
+        break @digits;
+      }
+      let base_minus_t = punycode_base -wrap t;
+      match w *checked base_minus_t {
+        Ok(value: product) => {
+          set w = product;
+        }
+        Err(error: problem) => {
+          return False();
+        }
+      }
+      let next_k = k +wrap punycode_base;
+      set k = next_k;
+    }
+    let out_len = output^.inner.len;
+    let out_len32 = cvt.wrap::<u64, u32>(out_len);
+    let denom = out_len32 +wrap 1_u32;
+    let delta = i -wrap oldi;
+    let first_time = oldi == 0_u32;
+    let new_bias = punycode_adapt(delta: delta, numpoints: denom, firsttime: first_time);
+    set bias = new_bias;
+    let quotient = match checked_div_u32(n: i, d: denom) {
+      Some(value: q) => {
+        give q;
+      }
+      None() => {
+        give 0_u32;
+      }
+    }
+    match n +checked quotient {
+      Ok(value: sum) => {
+        set n = sum;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+    let remainder = match i %checked denom {
+      Ok(value: r) => {
+        give r;
+      }
+      Err(error: problem) => {
+        give 0_u32;
+      }
+    }
+    let insert_pos = cvt::<u32, u64>(remainder);
+    let insert_ok_bound = insert_pos <= output^.inner.len;
+    if insert_ok_bound {
+    } else {
+      return False();
+    }
+    let inserted = insert_codepoint(buffer: output, index: insert_pos, value: n);
+    if inserted {
+    } else {
+      return False();
+    }
+    let next_i = remainder +wrap 1_u32;
+    set i = next_i;
+    set pos = cursor;
+  }
+  return True();
+}
+
+fn punycode_encode(label: &[u32], output: &Box<Slots<u8>>) -> result: Bool reads(label), writes(output) {
+  doc "Encodes label (its code points, already mapped and normalized) per RFC 3492's Bootstring encode procedure and appends the ASCII digits to output, without the xn-- prefix. Returns False on an arithmetic overflow, an internal count past u32 range, or when output's storage limit is passed; output's length past its entry length is then unreliable and the caller truncates it back.";
+  let length = label^.len;
+  let basic_count = 0_u64;
+  for (at in 0_u64..length) {
+    let value = label^[at];
+    let basic = value < 128_u32;
+    if basic {
+      let byte = cvt.wrap::<u32, u8>(value);
+      let ok = append_byte(buffer: output, value: byte);
+      if ok {
+      } else {
+        return False();
+      }
+      set basic_count = basic_count +wrap 1_u64;
+    }
+  }
+  let has_basic = basic_count > 0_u64;
+  if has_basic {
+    let hyphen_byte = cvt.wrap::<u32, u8>(punycode_hyphen);
+    let ok = append_byte(buffer: output, value: hyphen_byte);
+    if ok {
+    } else {
+      return False();
+    }
+  }
+  let length_fits = length <= 4294967295_u64;
+  if length_fits {
+  } else {
+    return False();
+  }
+  let basic_count_fits = basic_count <= 4294967295_u64;
+  if basic_count_fits {
+  } else {
+    return False();
+  }
+  let n = punycode_initial_n;
+  let delta = 0_u32;
+  let bias = punycode_initial_bias;
+  let h = cvt.wrap::<u64, u32>(basic_count);
+  let total = cvt.wrap::<u64, u32>(length);
+  loop @extended {
+    let done = h >= total;
+    if done {
+      break @extended;
+    }
+    let m = match find_min_codepoint_at_least(label: label, floor: n) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return False();
+      }
+    }
+    let h_plus_1 = h +wrap 1_u32;
+    let gap = m -wrap n;
+    match gap *checked h_plus_1 {
+      Ok(value: contribution) => {
+        match delta +checked contribution {
+          Ok(value: sum) => {
+            set delta = sum;
+          }
+          Err(error: problem) => {
+            return False();
+          }
+        }
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+    set n = m;
+    for (at in 0_u64..length) {
+      let value = label^[at];
+      let below = value < n;
+      if below {
+        match delta +checked 1_u32 {
+          Ok(value: sum) => {
+            set delta = sum;
+          }
+          Err(error: problem) => {
+            return False();
+          }
+        }
+      }
+      let same = value == n;
+      if same {
+        let q_start = delta;
+        let q = q_start;
+        let k = punycode_base;
+        loop @digits {
+          let t = punycode_threshold(k: k, bias: bias);
+          let stop = q < t;
+          if stop {
+            break @digits;
+          }
+          let base_minus_t = punycode_base -wrap t;
+          let q_minus_t = q -wrap t;
+          let digit_val = match q_minus_t %checked base_minus_t {
+            Ok(value: r) => {
+              give r;
+            }
+            Err(error: problem) => {
+              give 0_u32;
+            }
+          }
+          let digit_value = t +wrap digit_val;
+          let glyph = punycode_digit_glyph(digit: digit_value);
+          let byte = cvt.wrap::<u32, u8>(glyph);
+          let ok = append_byte(buffer: output, value: byte);
+          if ok {
+          } else {
+            return False();
+          }
+          let next_q = match checked_div_u32(n: q_minus_t, d: base_minus_t) {
+            Some(value: nq) => {
+              give nq;
+            }
+            None() => {
+              give 0_u32;
+            }
+          }
+          set q = next_q;
+          let next_k = k +wrap punycode_base;
+          set k = next_k;
+        }
+        let final_glyph = punycode_digit_glyph(digit: q);
+        let final_byte = cvt.wrap::<u32, u8>(final_glyph);
+        let ok = append_byte(buffer: output, value: final_byte);
+        if ok {
+        } else {
+          return False();
+        }
+        let basic_count32 = cvt.wrap::<u64, u32>(basic_count);
+        let is_first_iteration = h == basic_count32;
+        let h_plus_1_now = h +wrap 1_u32;
+        let new_bias = punycode_adapt(delta: delta, numpoints: h_plus_1_now, firsttime: is_first_iteration);
+        set bias = new_bias;
+        set delta = 0_u32;
+        set h = h_plus_1_now;
+      }
+    }
+    match delta +checked 1_u32 {
+      Ok(value: sum) => {
+        set delta = sum;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+    match n +checked 1_u32 {
+      Ok(value: sum) => {
+        set n = sum;
+      }
+      Err(error: problem) => {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn find_min_codepoint_at_least(label: &[u32], floor: u32) -> result: Option<u32> reads(label) {
+  doc "Returns the smallest code point of label that is >= floor, or None when label has none.";
+  let length = label^.len;
+  let found = False();
+  let best = 0_u32;
+  for (at in 0_u64..length) {
+    let value = label^[at];
+    let ge = value >= floor;
+    if ge {
+      let better = if found {
+        give value < best;
+      } else {
+        give True();
+      }
+      if better {
+        set best = value;
+        set found = True();
+      }
+    }
+  }
+  if found {
+    return Some<u32>(value: best);
+  }
+  return None<u32>();
+}

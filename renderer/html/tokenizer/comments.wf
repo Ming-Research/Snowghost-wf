@@ -1,0 +1,157 @@
+enum CommentPhase {
+  Start();
+  StartDash();
+  Body();
+  EndDash();
+  End();
+  EndBang();
+}
+
+fn parse_comment(source: &[u8], output: &TokenText, start: u64) -> (token: Token, next: u64) reads(source), writes(output) {
+  doc "Parses a comment's data from start, which follows the consumed \"<!--\", per 13.2.5.43-13.2.5.52. The comment-less-than-sign family of states is not modeled separately: every character it would examine still lands in the comment's data exactly as the plain comment state leaves it, so its extra parse-error detection makes no difference to the emitted data.";
+  let data_start = output^.text.inner.len;
+  let position = start;
+  let phase = CommentPhase::Start();
+  loop @comment {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      let data_end = output^.text.inner.len;
+      let span = span_of(start: data_start, end: data_end);
+      let token = Token::Comment(data: span);
+      return token, position;
+    }
+    match phase {
+      Start() => {
+        let dash = ch == '-'_u32;
+        if dash {
+          set phase = CommentPhase::StartDash();
+          set position = after;
+        } else {
+          let gt = ch == '>'_u32;
+          if gt {
+            let data_end = output^.text.inner.len;
+            let span = span_of(start: data_start, end: data_end);
+            let token = Token::Comment(data: span);
+            return token, after;
+          }
+          set phase = CommentPhase::Body();
+        }
+      }
+      StartDash() => {
+        let dash = ch == '-'_u32;
+        if dash {
+          set phase = CommentPhase::End();
+          set position = after;
+        } else {
+          let gt = ch == '>'_u32;
+          if gt {
+            let data_end = output^.text.inner.len;
+            let span = span_of(start: data_start, end: data_end);
+            let token = Token::Comment(data: span);
+            return token, after;
+          }
+          push_codepoint(text: &output^.text, cp: '-'_u32);
+          set phase = CommentPhase::Body();
+        }
+      }
+      Body() => {
+        let dash = ch == '-'_u32;
+        if dash {
+          set phase = CommentPhase::EndDash();
+          set position = after;
+        } else {
+          let cleared = replace_nul(ch: ch);
+          push_codepoint(text: &output^.text, cp: cleared);
+          set position = after;
+        }
+      }
+      EndDash() => {
+        let dash = ch == '-'_u32;
+        if dash {
+          set phase = CommentPhase::End();
+          set position = after;
+        } else {
+          push_codepoint(text: &output^.text, cp: '-'_u32);
+          set phase = CommentPhase::Body();
+        }
+      }
+      End() => {
+        let gt = ch == '>'_u32;
+        if gt {
+          let data_end = output^.text.inner.len;
+          let span = span_of(start: data_start, end: data_end);
+          let token = Token::Comment(data: span);
+          return token, after;
+        }
+        let bang = ch == '!'_u32;
+        if bang {
+          set phase = CommentPhase::EndBang();
+          set position = after;
+        } else {
+          let dash = ch == '-'_u32;
+          if dash {
+            push_codepoint(text: &output^.text, cp: '-'_u32);
+            set position = after;
+          } else {
+            push_codepoint(text: &output^.text, cp: '-'_u32);
+            push_codepoint(text: &output^.text, cp: '-'_u32);
+            set phase = CommentPhase::Body();
+          }
+        }
+      }
+      EndBang() => {
+        let gt = ch == '>'_u32;
+        if gt {
+          let data_end = output^.text.inner.len;
+          let span = span_of(start: data_start, end: data_end);
+          let token = Token::Comment(data: span);
+          return token, after;
+        }
+        let dash = ch == '-'_u32;
+        if dash {
+          push_codepoint(text: &output^.text, cp: '-'_u32);
+          push_codepoint(text: &output^.text, cp: '-'_u32);
+          push_codepoint(text: &output^.text, cp: '!'_u32);
+          set phase = CommentPhase::EndDash();
+          set position = after;
+        } else {
+          push_codepoint(text: &output^.text, cp: '-'_u32);
+          push_codepoint(text: &output^.text, cp: '-'_u32);
+          push_codepoint(text: &output^.text, cp: '!'_u32);
+          set phase = CommentPhase::Body();
+        }
+      }
+    }
+  }
+  let data_end = output^.text.inner.len;
+  let span = span_of(start: data_start, end: data_end);
+  let token = Token::Comment(data: span);
+  return token, position;
+}
+
+fn parse_bogus_comment(source: &[u8], output: &TokenText, data_start: u64, start: u64) -> (token: Token, next: u64) reads(source), writes(output) {
+  doc "Parses a bogus comment's data, already begun at data_start in output's text, consuming further bytes from start through the next greater-than or the source's end, per 13.2.5.41.";
+  let position = start;
+  loop @bogus {
+    let (ch, after) = next_char(source: source, pos: position);
+    let is_eof = ch == eof_char;
+    if is_eof {
+      break @bogus;
+    }
+    let gt = ch == '>'_u32;
+    if gt {
+      let data_end = output^.text.inner.len;
+      let span = span_of(start: data_start, end: data_end);
+      let token = Token::Comment(data: span);
+      return token, after;
+    }
+    let cleared = replace_nul(ch: ch);
+    push_codepoint(text: &output^.text, cp: cleared);
+    set position = after;
+  }
+  let data_end = output^.text.inner.len;
+  let span = span_of(start: data_start, end: data_end);
+  let token = Token::Comment(data: span);
+  return token, position;
+}

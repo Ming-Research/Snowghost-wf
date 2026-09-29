@@ -43,15 +43,21 @@ tasks stand for three classes of implementer work.
   at `renderer/`. Each task's interface is a module (`pkg::text::line_break`,
   `pkg::css::syntax`, `pkg::image::png`) whose `module.wfm` is written
   before the runs. A driver module per task (`pkg::oracle::line_break`,
-  `pkg::oracle::css_syntax`, `pkg::oracle::png`) has a graph entry that runs
-  the oracle through the interface and prints the number of cases that pass
-  and fail.
+  `pkg::oracle::css_syntax`, `pkg::oracle::css_rules`,
+  `pkg::oracle::css_color`, `pkg::oracle::png`,
+  `pkg::oracle::normalization`, `pkg::oracle::idna`, `pkg::oracle::url`)
+  has a graph entry that runs the oracle through the interface and prints
+  the number of cases that pass and fail, or, for the CSS, IDNA and URL
+  drivers, one JSON line per case; the CSS drivers write components and
+  numbers with the shared `pkg::oracle::css_json`.
 - **Oracle data.** `make oracle-data` (`tests/oracle-data.sh`) downloads
   each file at its pinned version, checks its SHA-256 and places it under
   `build/oracle/`, which git ignores. `make oracle-line-break`, `oracle-css`,
-  `oracle-png` and `oracle-png-speed` build each driver entry and run it; the
-  CSS driver prints its results as JSON, which `tests/css/oracle.py` compares
-  with the suite.
+  `oracle-css-rules`, `oracle-css-color`, `oracle-png`, `oracle-png-speed`,
+  `oracle-normalization`, `oracle-idna` and `oracle-url` build each driver
+  entry and run it; `tests/css/oracle.py`, `tests/css/rules_oracle.py`,
+  `tests/css/color_oracle.py`, `tests/text/idna_oracle.py` and
+  `tests/url/oracle.py` compare the JSON lines with their suites.
 - **PNG reference.** `tests/png/reference.c` decodes each image with
   libpng into raw RGBA for the driver to compare. It also generates the
   speed set: twelve 2048 by 2048 images of gradients, noise, synthetic text

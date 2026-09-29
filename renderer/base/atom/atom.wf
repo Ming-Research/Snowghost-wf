@@ -1,0 +1,335 @@
+alias static_atom_ends = pkg::base::static_atoms::static_atom_ends;
+alias static_atom_text = pkg::base::static_atoms::static_atom_text;
+
+const text_ceiling: u64 = 4294967295_u64;
+
+const atom_ceiling: u64 = 4294967295_u64;
+
+const head_ceiling: u64 = 4294967296_u64;
+
+const link_ceiling: u64 = 8589934592_u64;
+
+const smallest_heads: u64 = 16_u64;
+
+const hash_offset: u64 = 14695981039346656037_u64;
+
+const hash_prime: u64 = 1099511628211_u64;
+
+fn atom_table_new() -> made: AtomTable pure {
+  doc "Copies the generated static text and turns its end offsets into spans, so the atom at index i is the i-th generated name, then builds the hash index with twice as many buckets as atoms.";
+  let text_length = static_atom_text.len;
+  let text = box_slots_new::<u8>(capacity: text_length);
+  for (
+    at in 0_u64..text_length,
+    invariant filled: text.inner.len == at,
+    invariant room: text.inner.cap == text_length
+  ) {
+    place_back(window: &text.inner, value: static_atom_text[at]);
+  }
+  let count = static_atom_ends.len;
+  let spans = box_slots_new::<AtomSpan>(capacity: count);
+  let start = 0_u32;
+  for (
+    index in 0_u64..count,
+    invariant listed: spans.inner.len == index,
+    invariant space: spans.inner.cap == count
+  ) {
+    let end = static_atom_ends[index];
+    let span = AtomSpan(start: start, end: end);
+    place_back(window: &spans.inner, value: span);
+    set start = end;
+  }
+  let heads = count + count;
+  let index = box_slots_new::<u32>(capacity: 0_u64);
+  rebuild_index(index: &index, text: &text, spans: &spans, heads: heads);
+  return AtomTable(text: move text, spans: move spans, index: move index);
+}
+
+fn atom_intern(table: &AtomTable, name: &[u8]) -> result: Result<Atom, AtomError> reads(name), writes(table) contract {
+  requires name^.len <= 65536_u64;
+} {
+  doc "Looks name up; a new name is refused before any change when the text would pass text_ceiling or the atoms atom_ceiling. The index is rebuilt with twice the buckets when the new atom would outnumber them, which keeps chains at one atom per bucket on average and the cost amortized O(1); then the name's bytes, its span and its chain link are appended and its bucket points at it.";
+  let hash = name_hash(name: name);
+  match lookup(table: table, name: name, hash: hash) {
+    Some(value: known) => {
+      return Ok<Atom, AtomError>(value: known);
+    }
+    None() => {
+    }
+  }
+  let count = table^.spans.inner.len;
+  if count >= atom_ceiling {
+    let refused = AtomError::TooLarge();
+    return Err<Atom, AtomError>(error: refused);
+  }
+  let length = table^.text.inner.len;
+  let size = name^.len;
+  let room = text_ceiling - size;
+  if length > room {
+    let refused = AtomError::TooLarge();
+    return Err<Atom, AtomError>(error: refused);
+  }
+  let heads = bucket_count(table: table);
+  if heads <= count {
+    let target = grown_heads(heads: heads);
+    rebuild_index(index: &table^.index, text: &table^.text, spans: &table^.spans, heads: target);
+    link_atom(index: &table^.index, heads: target, hash: hash, atom: count);
+  } else {
+    if table^.index.inner.len >= link_ceiling {
+      let refused = AtomError::TooLarge();
+      return Err<Atom, AtomError>(error: refused);
+    }
+    link_atom(index: &table^.index, heads: heads, hash: hash, atom: count);
+  }
+  let start = cvt::<u64, u32>(length);
+  append_name(text: &table^.text, name: name);
+  let end_offset = length + size;
+  let end = cvt::<u64, u32>(end_offset);
+  let span = AtomSpan(start: start, end: end);
+  push::<AtomSpan, atom_ceiling>(cells: &table^.spans, value: span);
+  let position = cvt::<u64, u32>(count);
+  let made = Atom(index: position);
+  return Ok<Atom, AtomError>(value: made);
+}
+
+fn atom_find(table: &AtomTable, name: &[u8]) -> found: Option<Atom> reads(table), reads(name) {
+  doc "Hashes name and walks its bucket's chain.";
+  let hash = name_hash(name: name);
+  let found = lookup(table: table, name: name, hash: hash);
+  return found;
+}
+
+fn name_hash(name: &[u8]) -> hash: u64 reads(name) {
+  doc "Returns the 64-bit FNV-1a hash of the bytes of name.";
+  let hash = hash_offset;
+  let length = name^.len;
+  for (at in 0_u64..length) {
+    let byte = cvt::<u8, u64>(name^[at]);
+    let mixed = ixor(hash, byte);
+    set hash = mixed *wrap hash_prime;
+  }
+  return hash;
+}
+
+fn span_hash(text: &Box<Slots<u8>>, span: AtomSpan) -> hash: u64 reads(text) {
+  doc "Returns the hash of the text span names. The table's own writes keep every span within its text; a span that was not would hash as the empty name.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = text^.inner.len;
+  if start <= end {
+    if end <= length {
+      let hash = name_hash(name: &text^.inner[start..end]);
+      return hash;
+    }
+  }
+  return hash_offset;
+}
+
+fn span_equals(text: &Box<Slots<u8>>, span: AtomSpan, name: &[u8]) -> equal: Bool reads(text), reads(name) {
+  doc "Tells whether the text span names holds the bytes of name. A span outside the text, which the table's own writes never make, equals nothing.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = text^.inner.len;
+  if start > end {
+    return False();
+  }
+  if end > length {
+    return False();
+  }
+  let size = end - start;
+  if size == name^.len {
+  } else {
+    return False();
+  }
+  for (at in 0_u64..size) {
+    let position = start + at;
+    if text^.inner[position] == name^[at] {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn bucket_count(table: &AtomTable) -> heads: u64 reads(table) contract {
+  ensures heads <= table^.index.inner.len;
+} {
+  doc "Returns the number of buckets: the index holds one head per bucket followed by one chain link per atom. A table whose index is not longer than its atom list has no bucket.";
+  let size = table^.index.inner.len;
+  let count = table^.spans.inner.len;
+  if size > count {
+    let heads = size - count;
+    return heads;
+  }
+  return 0_u64;
+}
+
+fn lookup(table: &AtomTable, name: &[u8], hash: u64) -> found: Option<Atom> reads(table), reads(name) {
+  doc "Walks the chain of the bucket hash selects: a head or link holds an atom's index plus one, and 0 ends the chain. A chain is at most as long as the atom list, and a link that names no atom ends it.";
+  let size = table^.index.inner.len;
+  let count = table^.spans.inner.len;
+  if size <= count {
+    return None<Atom>();
+  }
+  let heads = size - count;
+  let bucket = hash % heads;
+  let link = table^.index.inner[bucket];
+  for (step in 0_u64..count) {
+    if link == 0_u32 {
+      return None<Atom>();
+    }
+    let wide = cvt::<u32, u64>(link);
+    let atom = wide - 1_u64;
+    if atom >= count {
+      return None<Atom>();
+    }
+    let span = table^.spans.inner[atom];
+    let equal = span_equals(text: &table^.text, span: span, name: name);
+    if equal {
+      let position = link - 1_u32;
+      let made = Atom(index: position);
+      return Some<Atom>(value: made);
+    }
+    let next = heads + atom;
+    set link = table^.index.inner[next];
+  }
+  return None<Atom>();
+}
+
+fn grown_heads(heads: u64) -> target: u64 pure contract {
+  ensures target >= 1_u64;
+  ensures target <= head_ceiling;
+} {
+  doc "Returns the bucket count that replaces heads buckets: twice as many, at least smallest_heads and at most head_ceiling.";
+  if heads < 8_u64 {
+    return smallest_heads;
+  }
+  if heads >= 2147483648_u64 {
+    return head_ceiling;
+  }
+  let doubled = heads + heads;
+  return doubled;
+}
+
+fn rebuild_index(index: &Box<Slots<u32>>, text: &Box<Slots<u8>>, spans: &Box<Slots<AtomSpan>>, heads: u64) -> result: unit reads(text), reads(spans), writes(index) contract {
+  requires heads >= 1_u64;
+  requires heads <= head_ceiling;
+  requires spans^.inner.len <= atom_ceiling;
+  ensures index^.inner.len >= heads;
+  ensures index^.inner.len <= heads + 4294967295_u64;
+} {
+  doc "Refills index with heads buckets over every atom in spans, reusing its storage: all heads and links start at 0, and each atom in turn is linked in front of its bucket's chain.";
+  loop @clear {
+    if index^.inner.len == 0_u64 {
+      break @clear;
+    }
+    let dropped = take_back(window: &index^.inner);
+  }
+  let count = spans^.inner.len;
+  let size = heads + count;
+  if index^.inner.cap < size {
+    grow(cell: index, capacity: size);
+  }
+  for (
+    at in 0_u64..size,
+    invariant filled: index^.inner.len == at,
+    invariant room: index^.inner.cap >= size
+  ) {
+    place_back(window: &index^.inner, value: 0_u32);
+  }
+  for (atom in 0_u64..count) {
+    let span = spans^.inner[atom];
+    let hash = span_hash(text: text, span: span);
+    let bucket = hash % heads;
+    let next = heads + atom;
+    set index^.inner[next] = index^.inner[bucket];
+    let link_value = atom + 1_u64;
+    let link = cvt::<u64, u32>(link_value);
+    set index^.inner[bucket] = link;
+  }
+  return unit;
+}
+
+fn link_atom(index: &Box<Slots<u32>>, heads: u64, hash: u64, atom: u64) -> result: unit writes(index) contract {
+  requires heads >= 1_u64;
+  requires heads <= index^.inner.len;
+  requires index^.inner.len < link_ceiling;
+  requires atom < atom_ceiling;
+} {
+  doc "Appends the chain link of atom, which takes over its bucket's chain, and points the bucket at atom. The link lands at index heads + atom when the index already covers the atoms before it.";
+  let bucket = hash % heads;
+  let first = index^.inner[bucket];
+  push::<u32, link_ceiling>(cells: index, value: first);
+  let link_value = atom + 1_u64;
+  let link = cvt::<u64, u32>(link_value);
+  set index^.inner[bucket] = link;
+  return unit;
+}
+
+fn append_name(text: &Box<Slots<u8>>, name: &[u8]) -> result: unit reads(name), writes(text) contract {
+  requires text^.inner.len + name^.len <= text_ceiling;
+} {
+  doc "Reserves room for the bytes of name, then appends them.";
+  let length = text^.inner.len;
+  let size = name^.len;
+  let end = length + size;
+  reserve(text: text, end: end);
+  for (
+    at in 0_u64..size,
+    invariant filled: text^.inner.len == length + at,
+    invariant room: text^.inner.cap >= end
+  ) {
+    place_back(window: &text^.inner, value: name^[at]);
+  }
+  return unit;
+}
+
+fn reserve(text: &Box<Slots<u8>>, end: u64) -> result: unit writes(text) contract {
+  requires end <= text_ceiling;
+  ensures text^.inner.cap >= end;
+  ensures text^.inner.len == entry(text)^.inner.len;
+} {
+  doc "Grows a text whose capacity is below end to twice its capacity, or to end when that is more, within text_ceiling.";
+  let capacity = text^.inner.cap;
+  if end <= capacity {
+    return unit;
+  }
+  let spare = text_ceiling - end;
+  if capacity > spare {
+    grow(cell: text, capacity: text_ceiling);
+    return unit;
+  }
+  let doubled = capacity + capacity;
+  if doubled > end {
+    grow(cell: text, capacity: doubled);
+    return unit;
+  }
+  grow(cell: text, capacity: end);
+  return unit;
+}
+
+fn push<T: copy, const ceiling: u64>(cells: &Box<Slots<T>>, value: T) -> result: unit writes(cells) contract {
+  requires cells^.inner.len < ceiling;
+  ensures cells^.inner.len == entry(cells)^.inner.len + 1_u64;
+} {
+  doc "Appends value, doubling a full window (an empty one takes one slot) within ceiling.";
+  let length = cells^.inner.len;
+  let capacity = cells^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < ceiling;
+    invariant full: capacity <= length;
+    let room = ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow(cell: cells, capacity: 1_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow(cell: cells, capacity: doubled);
+      }
+    } else {
+      grow(cell: cells, capacity: ceiling);
+    }
+  }
+  place_back(window: &cells^.inner, value: value);
+  return unit;
+}

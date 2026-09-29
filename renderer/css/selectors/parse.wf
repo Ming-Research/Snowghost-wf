@@ -1,0 +1,476 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Component = pkg::css::syntax::Component;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+
+struct CompoundParsed {
+  simple_start: u32;
+  simple_end: u32;
+  is_pseudo_element: Bool;
+  pos: u64;
+}
+
+struct ComplexResult {
+  compound_start: u32;
+  compound_end: u32;
+  never_matches: Bool;
+  pos: u64;
+}
+
+struct AltRangeResult {
+  alt_start: u32;
+  alt_end: u32;
+  pos: u64;
+}
+
+fn component_combinator(c: Component) -> result: Option<Combinator> pure {
+  doc "The combinator a '>', '+' or '~' Delim component spells, and None otherwise.";
+  match as_delim(c: c) {
+    Some(value: cp) => {
+      let is_child = cp == 62_u32;
+      if is_child {
+        let comb = Combinator::Child();
+        return Some<Combinator>(value: comb);
+      }
+      let is_next = cp == 43_u32;
+      if is_next {
+        let comb = Combinator::NextSibling();
+        return Some<Combinator>(value: comb);
+      }
+      let is_sub = cp == 126_u32;
+      if is_sub {
+        let comb = Combinator::SubsequentSibling();
+        return Some<Combinator>(value: comb);
+      }
+      return None<Combinator>();
+    }
+    None() => {
+      return None<Combinator>();
+    }
+  }
+}
+
+fn try_any_simple(atoms: &AtomTable, values: &ComponentList, instrs: &Box<Slots<Instr>>, compounds: &Box<Slots<Compound>>, alts: &Box<Slots<AltEntry>>, compound_order: &Box<Slots<u32>>, alt_order: &Box<Slots<u32>>, instr_order: &Box<Slots<u32>>, pos: u64, limit: u64, depth: u64, is_first: Bool) -> result: Result<Option<SimpleStep>, SelectorError> reads(values), writes(atoms), writes(instrs), writes(compounds), writes(alts), writes(compound_order), writes(alt_order), writes(instr_order) contract {
+  requires pos <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Tries, in order, a type/universal selector (only when is_first), an id, a class, an attribute selector and a pseudo-class or pseudo-element at pos; None when none of these begins there.";
+  if is_first {
+    match try_type_or_universal(atoms: atoms, values: values, instrs: instrs, pos: pos, limit: limit) {
+      Ok(value: outcome) => {
+        match outcome {
+          Some(value: next) => {
+            let no_pe = False();
+            let step = SimpleStep(pos: next, is_pseudo_element: no_pe);
+            let some_step = Some<SimpleStep>(value: step);
+            return Ok<Option<SimpleStep>, SelectorError>(value: some_step);
+          }
+          None() => {
+          }
+        }
+      }
+      Err(error: refusal) => {
+        return Err<Option<SimpleStep>, SelectorError>(error: refusal);
+      }
+    }
+  }
+  match try_id(atoms: atoms, values: values, instrs: instrs, pos: pos, limit: limit) {
+    Ok(value: outcome) => {
+      match outcome {
+        Some(value: next) => {
+          let no_pe = False();
+          let step = SimpleStep(pos: next, is_pseudo_element: no_pe);
+          let some_step = Some<SimpleStep>(value: step);
+          return Ok<Option<SimpleStep>, SelectorError>(value: some_step);
+        }
+        None() => {
+        }
+      }
+    }
+    Err(error: refusal) => {
+      return Err<Option<SimpleStep>, SelectorError>(error: refusal);
+    }
+  }
+  match try_class(atoms: atoms, values: values, instrs: instrs, pos: pos, limit: limit) {
+    Ok(value: outcome) => {
+      match outcome {
+        Some(value: next) => {
+          let no_pe = False();
+          let step = SimpleStep(pos: next, is_pseudo_element: no_pe);
+          let some_step = Some<SimpleStep>(value: step);
+          return Ok<Option<SimpleStep>, SelectorError>(value: some_step);
+        }
+        None() => {
+        }
+      }
+    }
+    Err(error: refusal) => {
+      return Err<Option<SimpleStep>, SelectorError>(error: refusal);
+    }
+  }
+  match try_attribute(atoms: atoms, values: values, instrs: instrs, pos: pos, limit: limit) {
+    Ok(value: outcome) => {
+      match outcome {
+        Some(value: next) => {
+          let no_pe = False();
+          let step = SimpleStep(pos: next, is_pseudo_element: no_pe);
+          let some_step = Some<SimpleStep>(value: step);
+          return Ok<Option<SimpleStep>, SelectorError>(value: some_step);
+        }
+        None() => {
+        }
+      }
+    }
+    Err(error: refusal) => {
+      return Err<Option<SimpleStep>, SelectorError>(error: refusal);
+    }
+  }
+  match try_pseudo(atoms: atoms, values: values, instrs: instrs, compounds: compounds, alts: alts, compound_order: compound_order, alt_order: alt_order, instr_order: instr_order, pos: pos, limit: limit, depth: depth) {
+    Ok(value: outcome) => {
+      match outcome {
+        Some(value: step) => {
+          let some_step = Some<SimpleStep>(value: step);
+          return Ok<Option<SimpleStep>, SelectorError>(value: some_step);
+        }
+        None() => {
+          let none_step = None<SimpleStep>();
+          return Ok<Option<SimpleStep>, SelectorError>(value: none_step);
+        }
+      }
+    }
+    Err(error: refusal) => {
+      return Err<Option<SimpleStep>, SelectorError>(error: refusal);
+    }
+  }
+}
+
+fn parse_one_compound(atoms: &AtomTable, values: &ComponentList, instrs: &Box<Slots<Instr>>, compounds: &Box<Slots<Compound>>, alts: &Box<Slots<AltEntry>>, compound_order: &Box<Slots<u32>>, alt_order: &Box<Slots<u32>>, instr_order: &Box<Slots<u32>>, pos: u64, limit: u64, depth: u64) -> result: Result<Option<CompoundParsed>, SelectorError> reads(values), writes(atoms), writes(instrs), writes(compounds), writes(alts), writes(compound_order), writes(alt_order), writes(instr_order) contract {
+  requires pos <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes one compound selector's simple selectors, with no whitespace between them, starting at pos; None when pos begins none at all. A pseudo-class function such as :not() recurses into a nested selector list that pushes its own Instr entries to instrs before this compound's own step finishes, so this compound's own contribution is not a contiguous range of instrs: each step's own instruction is always the last one instrs holds when that step returns (any nested selector list has already flushed all of its own Instrs by then), and those per-step indices, not a raw span, are what gets collected and flushed to instr_order.";
+  let collected = box_slots_new::<u32>(capacity: 0_u64);
+  let count = 0_u64;
+  let saw_pseudo_element = False();
+  let cur = pos;
+  loop @compound {
+    if saw_pseudo_element {
+      break @compound;
+    }
+    let more = cur < limit;
+    if more {
+    } else {
+      break @compound;
+    }
+    let is_first = count == 0_u64;
+    let before_step = instrs^.inner.len;
+    match try_any_simple(atoms: atoms, values: values, instrs: instrs, compounds: compounds, alts: alts, compound_order: compound_order, alt_order: alt_order, instr_order: instr_order, pos: cur, limit: limit, depth: depth, is_first: is_first) {
+      Ok(value: outcome) => {
+        match outcome {
+          Some(value: step) => {
+            set cur = step.pos;
+            set count = count +wrap 1_u64;
+            if step.is_pseudo_element {
+              set saw_pseudo_element = True();
+            }
+            let after_step = instrs^.inner.len;
+            let pushed_own = after_step > before_step;
+            if pushed_own {
+              let own_index_wide = after_step -wrap 1_u64;
+              let own_index = cvt.wrap::<u64, u32>(own_index_wide);
+              match push_order(order: &collected, value: own_index) {
+                Ok(value: oidx) => {
+                }
+                Err(error: refusal) => {
+                  return Err<Option<CompoundParsed>, SelectorError>(error: refusal);
+                }
+              }
+            }
+          }
+          None() => {
+            break @compound;
+          }
+        }
+      }
+      Err(error: refusal) => {
+        return Err<Option<CompoundParsed>, SelectorError>(error: refusal);
+      }
+    }
+  }
+  let none_check = count == 0_u64;
+  if none_check {
+    let none_cp = None<CompoundParsed>();
+    return Ok<Option<CompoundParsed>, SelectorError>(value: none_cp);
+  }
+  match flush_order(order: instr_order, collected: &collected) {
+    Ok(value: range) => {
+      let made = CompoundParsed(simple_start: range.start, simple_end: range.end, is_pseudo_element: saw_pseudo_element, pos: cur);
+      let some_cp = Some<CompoundParsed>(value: made);
+      return Ok<Option<CompoundParsed>, SelectorError>(value: some_cp);
+    }
+    Err(error: refusal) => {
+      return Err<Option<CompoundParsed>, SelectorError>(error: refusal);
+    }
+  }
+}
+
+fn finish_complex_result(compound_order: &Box<Slots<u32>>, collected: &Box<Slots<u32>>, never_matches: Bool, pos: u64) -> result: Result<Option<ComplexResult>, SelectorError> reads(collected), writes(compound_order) {
+  doc "Flushes collected's compound indices contiguously into compound_order and builds the ComplexResult over the range they land at.";
+  match flush_order(order: compound_order, collected: collected) {
+    Ok(value: range) => {
+      let made = ComplexResult(compound_start: range.start, compound_end: range.end, never_matches: never_matches, pos: pos);
+      let some_cr = Some<ComplexResult>(value: made);
+      return Ok<Option<ComplexResult>, SelectorError>(value: some_cr);
+    }
+    Err(error: refusal) => {
+      return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+    }
+  }
+}
+
+fn parse_complex_selector(atoms: &AtomTable, values: &ComponentList, instrs: &Box<Slots<Instr>>, compounds: &Box<Slots<Compound>>, alts: &Box<Slots<AltEntry>>, compound_order: &Box<Slots<u32>>, alt_order: &Box<Slots<u32>>, instr_order: &Box<Slots<u32>>, pos: u64, limit: u64, depth: u64) -> result: Result<Option<ComplexResult>, SelectorError> reads(values), writes(atoms), writes(instrs), writes(compounds), writes(alts), writes(compound_order), writes(alt_order), writes(instr_order) contract {
+  requires pos <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes one complex selector: compounds joined by combinators, ending at a top-level Comma or limit. None when nothing is found at the start (an empty slot); Invalid when the syntax is malformed anywhere within it, including a leading combinator or a trailing one.";
+  let start0 = skip_ws(values: values, at: pos, limit: limit);
+  let leads_with_combinator = if start0 < limit {
+    let c0 = values^.components.inner[start0];
+    let found = component_combinator(c: c0);
+    match found {
+      Some(value: ignored) => {
+        give True();
+      }
+      None() => {
+        give False();
+      }
+    }
+  } else {
+    give False();
+  }
+  if leads_with_combinator {
+    let refusal = SelectorError::Invalid();
+    let none_cr = None<ComplexResult>();
+    return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+  }
+  let collected = box_slots_new::<u32>(capacity: 0_u64);
+  let count = 0_u64;
+  let cur = start0;
+  let combinator = Combinator::Start();
+  loop @complex {
+    let cur_ok = cur <= limit;
+    if cur_ok {
+    } else {
+      let refusal = SelectorError::Invalid();
+      return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+    }
+    match parse_one_compound(atoms: atoms, values: values, instrs: instrs, compounds: compounds, alts: alts, compound_order: compound_order, alt_order: alt_order, instr_order: instr_order, pos: cur, limit: limit, depth: depth) {
+      Ok(value: outcome) => {
+        match outcome {
+          None() => {
+            let started = count == 0_u64;
+            if started {
+              let none_cr = None<ComplexResult>();
+              return Ok<Option<ComplexResult>, SelectorError>(value: none_cr);
+            }
+            let refusal = SelectorError::Invalid();
+            return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+          }
+          Some(value: cp) => {
+            let made_compound = Compound(simple_start: cp.simple_start, simple_end: cp.simple_end, combinator: combinator);
+            match push_compound(compounds: compounds, value: made_compound) {
+              Ok(value: cidx) => {
+                match push_order(order: &collected, value: cidx) {
+                  Ok(value: oidx) => {
+                  }
+                  Err(error: refusal) => {
+                    return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+                  }
+                }
+              }
+              Err(error: refusal) => {
+                return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+              }
+            }
+            set count = count +wrap 1_u64;
+            let over = count > max_compounds_per_selector;
+            if over {
+              let refusal = SelectorError::TooLarge();
+              return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+            }
+            set cur = cp.pos;
+            let cur_ok2 = cur <= limit;
+            if cur_ok2 {
+            } else {
+              let refusal = SelectorError::Invalid();
+              return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+            }
+            let ws_pos = skip_ws(values: values, at: cur, limit: limit);
+            let had_ws = ws_pos > cur;
+            set cur = ws_pos;
+            if cp.is_pseudo_element {
+              let at_end = cur >= limit;
+              if at_end {
+                let flag = True();
+                let finished = finish_complex_result(compound_order: compound_order, collected: &collected, never_matches: flag, pos: cur);
+                return finished;
+              }
+              let c1 = values^.components.inner[cur];
+              let comma1 = is_comma(c: c1);
+              if comma1 {
+                let flag2 = True();
+                let finished2 = finish_complex_result(compound_order: compound_order, collected: &collected, never_matches: flag2, pos: cur);
+                return finished2;
+              }
+              let refusal = SelectorError::Invalid();
+              return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+            }
+            let done = cur >= limit;
+            if done {
+              let flag3 = False();
+              let finished3 = finish_complex_result(compound_order: compound_order, collected: &collected, never_matches: flag3, pos: cur);
+              return finished3;
+            }
+            let c2 = values^.components.inner[cur];
+            let comma2 = is_comma(c: c2);
+            if comma2 {
+              let flag4 = False();
+              let finished4 = finish_complex_result(compound_order: compound_order, collected: &collected, never_matches: flag4, pos: cur);
+              return finished4;
+            }
+            match component_combinator(c: c2) {
+              Some(value: comb) => {
+                let after_comb = cur +wrap 1_u64;
+                let skipped = skip_ws(values: values, at: after_comb, limit: limit);
+                set cur = skipped;
+                set combinator = comb;
+              }
+              None() => {
+                if had_ws {
+                  let desc = Combinator::Descendant();
+                  set combinator = desc;
+                } else {
+                  let refusal = SelectorError::Invalid();
+                  return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+                }
+              }
+            }
+          }
+        }
+      }
+      Err(error: refusal) => {
+        return Err<Option<ComplexResult>, SelectorError>(error: refusal);
+      }
+    }
+  }
+  let unreachable_refusal = SelectorError::Invalid();
+  return Err<Option<ComplexResult>, SelectorError>(error: unreachable_refusal);
+}
+
+fn parse_complex_selector_list(atoms: &AtomTable, values: &ComponentList, instrs: &Box<Slots<Instr>>, compounds: &Box<Slots<Compound>>, alts: &Box<Slots<AltEntry>>, compound_order: &Box<Slots<u32>>, alt_order: &Box<Slots<u32>>, instr_order: &Box<Slots<u32>>, pos: u64, limit: u64, depth: u64) -> result: Result<AltRangeResult, SelectorError> reads(values), writes(atoms), writes(instrs), writes(compounds), writes(alts), writes(compound_order), writes(alt_order), writes(instr_order) contract {
+  requires pos <= limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Consumes a comma-separated <selector-list> of one or more complex selectors occupying all of [pos, limit) but trailing whitespace; Invalid when any is missing or malformed, TooLarge past the nesting-depth bound.";
+  let too_deep = depth > max_nesting_depth;
+  if too_deep {
+    let refusal = SelectorError::TooLarge();
+    return Err<AltRangeResult, SelectorError>(error: refusal);
+  }
+  let collected = box_slots_new::<u32>(capacity: 0_u64);
+  let cur = pos;
+  loop @list {
+    let cur_ok = cur <= limit;
+    if cur_ok {
+    } else {
+      let refusal = SelectorError::Invalid();
+      return Err<AltRangeResult, SelectorError>(error: refusal);
+    }
+    match parse_complex_selector(atoms: atoms, values: values, instrs: instrs, compounds: compounds, alts: alts, compound_order: compound_order, alt_order: alt_order, instr_order: instr_order, pos: cur, limit: limit, depth: depth) {
+      Ok(value: outcome) => {
+        match outcome {
+          None() => {
+            let refusal = SelectorError::Invalid();
+            return Err<AltRangeResult, SelectorError>(error: refusal);
+          }
+          Some(value: cr) => {
+            let made = AltEntry(compound_start: cr.compound_start, compound_end: cr.compound_end, never_matches: cr.never_matches);
+            match push_alt(alts: alts, value: made) {
+              Ok(value: aidx) => {
+                match push_order(order: &collected, value: aidx) {
+                  Ok(value: oidx) => {
+                  }
+                  Err(error: refusal) => {
+                    return Err<AltRangeResult, SelectorError>(error: refusal);
+                  }
+                }
+              }
+              Err(error: refusal) => {
+                return Err<AltRangeResult, SelectorError>(error: refusal);
+              }
+            }
+            set cur = cr.pos;
+            let has_more = cur < limit;
+            if has_more {
+              let c = values^.components.inner[cur];
+              let comma = is_comma(c: c);
+              if comma {
+                let after_comma = cur +wrap 1_u64;
+                let skipped = skip_ws(values: values, at: after_comma, limit: limit);
+                set cur = skipped;
+              } else {
+                break @list;
+              }
+            } else {
+              break @list;
+            }
+          }
+        }
+      }
+      Err(error: refusal) => {
+        return Err<AltRangeResult, SelectorError>(error: refusal);
+      }
+    }
+  }
+  match flush_order(order: alt_order, collected: &collected) {
+    Ok(value: range) => {
+      let result = AltRangeResult(alt_start: range.start, alt_end: range.end, pos: cur);
+      return Ok<AltRangeResult, SelectorError>(value: result);
+    }
+    Err(error: refusal) => {
+      return Err<AltRangeResult, SelectorError>(error: refusal);
+    }
+  }
+}
+
+fn parse_selector_list(values: &ComponentList, range: ComponentRange, atoms: &AtomTable) -> result: Result<SelectorList, SelectorError> reads(values), writes(atoms) {
+  doc "Parses the component values in range as a <selector-list>.";
+  let (start, limit) = clamp_selector_range(values: values, range: range);
+  let instrs = box_slots_new::<Instr>(capacity: 0_u64);
+  let compounds = box_slots_new::<Compound>(capacity: 0_u64);
+  let alts = box_slots_new::<AltEntry>(capacity: 0_u64);
+  let compound_order = box_slots_new::<u32>(capacity: 0_u64);
+  let alt_order = box_slots_new::<u32>(capacity: 0_u64);
+  let instr_order = box_slots_new::<u32>(capacity: 0_u64);
+  match parse_complex_selector_list(atoms: atoms, values: values, instrs: &instrs, compounds: &compounds, alts: &alts, compound_order: &compound_order, alt_order: &alt_order, instr_order: &instr_order, pos: start, limit: limit, depth: 0_u64) {
+    Ok(value: result) => {
+      let pos_ok = result.pos <= limit;
+      if pos_ok {
+      } else {
+        let refusal = SelectorError::Invalid();
+        return Err<SelectorList, SelectorError>(error: refusal);
+      }
+      let trailing = skip_ws(values: values, at: result.pos, limit: limit);
+      let complete = trailing == limit;
+      if complete {
+        let made = SelectorList(instrs: move instrs, compounds: move compounds, alts: move alts, compound_order: move compound_order, alt_order: move alt_order, instr_order: move instr_order, top_start: result.alt_start, top_end: result.alt_end);
+        return Ok<SelectorList, SelectorError>(value: move made);
+      }
+      let refusal = SelectorError::Invalid();
+      return Err<SelectorList, SelectorError>(error: refusal);
+    }
+    Err(error: refusal) => {
+      return Err<SelectorList, SelectorError>(error: refusal);
+    }
+  }
+}

@@ -1,0 +1,412 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Attribute = pkg::dom::Attribute;
+alias Document = pkg::dom::Document;
+alias Namespace = pkg::dom::Namespace;
+alias NodeId = pkg::dom::NodeId;
+
+fn find_last_formatting_element(state: &State, subject: Atom) -> found: Option<u64> reads(state) {
+  doc "Finds the last element in the list of active formatting elements, between the end of the list and the last marker (or the start), whose tag name is subject.";
+  let last_marker = afe_last_marker_index(state: state);
+  let scan_from = match last_marker {
+    Some(value: m) => {
+      let after = m +wrap 1_u64;
+      give after;
+    }
+    None() => {
+      give 0_u64;
+    }
+  }
+  let len = afe_len(state: state);
+  let below = scan_from > len;
+  if below {
+    return None<u64>();
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > scan_from;
+    if more {
+    } else {
+      break @scan;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < len;
+    let is_marker = afe_is_marker(state: state, idx: prev);
+    if is_marker {
+    } else {
+      let name = afe_name_at(state: state, idx: prev);
+      let hit = atom_eq(left: name, right: subject);
+      if hit {
+        let made = Some<u64>(value: prev);
+        return made;
+      }
+    }
+    set idx = prev;
+  }
+  return None<u64>();
+}
+
+fn find_furthest_block(state: &State, kw: &Keywords, above_index: u64) -> found: Option<u64> reads(state), reads(kw) {
+  doc "Finds the topmost node in the stack of open elements that is lower than (index greater than) above_index and is in the special category: the smallest index greater than above_index whose element is special.";
+  let len = open_len(state: state);
+  let idx = above_index +wrap 1_u64;
+  loop @scan {
+    let more = idx < len;
+    if more {
+    } else {
+      break @scan;
+    }
+    let elem = open_at(state: state, index: idx);
+    let special = is_special(namespace: elem.namespace, local_name: elem.local_name, kw: kw);
+    if special {
+      let made = Some<u64>(value: idx);
+      return made;
+    }
+    set idx = idx +wrap 1_u64;
+  }
+  return None<u64>();
+}
+
+fn run_any_other_end_tag_html(state: &State, kw: &Keywords, subject: Atom) -> result: unit reads(kw), writes(state) {
+  doc "In body's \"any other end tag\": walks the stack from the current node, popping through an HTML element with tag name subject, stopping if a special element is met first.";
+  let len = open_len(state: state);
+  let has = len > 0_u64;
+  if has {
+  } else {
+    return unit;
+  }
+  let idx = len;
+  loop @scan (
+    invariant bound: idx <= len
+  ) {
+    let more = idx > 0_u64;
+    if more {
+    } else {
+      break @scan;
+    }
+    let prev = idx -wrap 1_u64;
+    invariant prev_bound: prev < len;
+    let elem = open_at(state: state, index: prev);
+    let html = ns_is_html(namespace: elem.namespace);
+    let same = a_is(atom: elem.local_name, id: subject.index);
+    let match_tag = band(html, same);
+    if match_tag {
+      generate_implied_end_tags_except(state: state, kw: kw, except: subject);
+      pop_until_node(state: state, target: elem.node);
+      return unit;
+    }
+    let special = is_special(namespace: elem.namespace, local_name: elem.local_name, kw: kw);
+    if special {
+      return unit;
+    }
+    set idx = prev;
+  }
+  return unit;
+}
+
+fn adoption_agency(state: &State, document: &Document, kw: &Keywords, subject: Atom) -> result: Result<unit, TreeError> reads(kw), writes(state), writes(document) {
+  doc "13.2.6.4.7: the adoption agency algorithm, run for an end tag token whose tag name is subject.";
+  let cur = current_entry(state: state);
+  match cur {
+    Some(value: c) => {
+      let html = ns_is_html(namespace: c.namespace);
+      let same_name = a_is(atom: c.local_name, id: subject.index);
+      let quick = band(html, same_name);
+      if quick {
+        let idx_in_afe = afe_index_of_node(state: state, node: c.node);
+        match idx_in_afe {
+          None() => {
+            pop_open_if_any(state: state);
+            return Ok<unit, TreeError>(value: unit);
+          }
+          Some(value: ignored) => {
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let outer = 0_u64;
+  loop @outer (
+    invariant bound: outer <= 8_u64
+  ) {
+    let too_many = outer >= 8_u64;
+    if too_many {
+      break @outer;
+    }
+    set outer = outer +wrap 1_u64;
+    let fe = find_last_formatting_element(state: state, subject: subject);
+    match fe {
+      None() => {
+        run_any_other_end_tag_html(state: state, kw: kw, subject: subject);
+        return Ok<unit, TreeError>(value: unit);
+      }
+      Some(value: fidx) => {
+        let fidx_len = afe_len(state: state);
+        let fidx_ok = fidx < fidx_len;
+        if fidx_ok {
+        } else {
+          return Ok<unit, TreeError>(value: unit);
+        }
+        let fe_node = afe_node_at(state: state, idx: fidx);
+        let stack_pos = stack_index_of_node(state: state, target: fe_node);
+        match stack_pos {
+          None() => {
+            afe_remove_at(state: state, idx: fidx);
+            return Ok<unit, TreeError>(value: unit);
+          }
+          Some(value: stack_idx) => {
+            let ordinary_kind = ScopeKind::Ordinary();
+            let in_scope = has_in_scope(state: state, kw: kw, target: fe_node, kind: ordinary_kind);
+            if in_scope {
+            } else {
+              return Ok<unit, TreeError>(value: unit);
+            }
+            let above_ok = stack_idx > 0_u64;
+            if above_ok {
+            } else {
+              afe_remove_at(state: state, idx: fidx);
+              let removed2 = stack_contains_node(state: state, target: fe_node);
+              return Ok<unit, TreeError>(value: unit);
+            }
+            let common_ancestor_idx = stack_idx -wrap 1_u64;
+            let furthest = find_furthest_block(state: state, kw: kw, above_index: stack_idx);
+            match furthest {
+              None() => {
+                pop_until_node(state: state, target: fe_node);
+                let fidx_len2 = afe_len(state: state);
+                let fidx_ok2 = fidx < fidx_len2;
+                if fidx_ok2 {
+                  afe_remove_at(state: state, idx: fidx);
+                }
+                return Ok<unit, TreeError>(value: unit);
+              }
+              Some(value: furthest_idx) => {
+                let open_len_check = open_len(state: state);
+                let ca_ok = common_ancestor_idx < open_len_check;
+                if ca_ok {
+                } else {
+                  return Ok<unit, TreeError>(value: unit);
+                }
+                let fb_ok = furthest_idx < open_len_check;
+                if fb_ok {
+                } else {
+                  return Ok<unit, TreeError>(value: unit);
+                }
+                let ran = propagate adoption_reparent(state: state, document: document, kw: kw, fidx: fidx, fe_node: fe_node, stack_idx: stack_idx, common_ancestor_idx: common_ancestor_idx, furthest_idx: furthest_idx, subject: subject);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn adoption_recreate_node(state: &State, document: &Document, node_idx: u64, afe_i: u64, node_name: Atom, attrs_for_new: Box<Slots<Attribute>>, attrs_for_keep: Box<Slots<Attribute>>, html_ns: Namespace) -> result: Result<Option<NodeId>, TreeError> writes(state), writes(document) {
+  doc "Creates a fresh element named node_name (with attrs_for_new) and, when node_idx and afe_i are still in range, replaces the stack-of-open-elements entry at node_idx and the list-of-active-formatting-elements entry at afe_i with it (keeping attrs_for_keep there); returns None when either index has fallen out of range (which does not happen in a correct run).";
+  let new_node = propagate create_element_with_attrs(document: document, name: node_name, attrs: move attrs_for_new, namespace: html_ns);
+  let open_len_now = open_len(state: state);
+  let idx_ok = node_idx < open_len_now;
+  if idx_ok {
+  } else {
+    let none_node = None<NodeId>();
+    return Ok<Option<NodeId>, TreeError>(value: none_node);
+  }
+  let new_entry = StackEntry(node: new_node, namespace: html_ns, local_name: node_name);
+  set_open_at(state: state, index: node_idx, elem: new_entry);
+  let afe_len_now = afe_len(state: state);
+  let afe_ok = afe_i < afe_len_now;
+  if afe_ok {
+  } else {
+    let none_node2 = None<NodeId>();
+    return Ok<Option<NodeId>, TreeError>(value: none_node2);
+  }
+  let new_afe_entry = AfeEntry::Element(node: new_node, local_name: node_name, attributes: move attrs_for_keep);
+  set_afe_at(state: state, idx: afe_i, value: move new_afe_entry);
+  let some_node = Some<NodeId>(value: new_node);
+  return Ok<Option<NodeId>, TreeError>(value: some_node);
+}
+
+fn adoption_reparent(state: &State, document: &Document, kw: &Keywords, fidx: u64, fe_node: NodeId, stack_idx: u64, common_ancestor_idx: u64, furthest_idx: u64, subject: Atom) -> result: Result<unit, TreeError> writes(state), writes(document) contract {
+  requires common_ancestor_idx < state^.open_elements.inner.len;
+  requires furthest_idx < state^.open_elements.inner.len;
+} {
+  doc "The bookmark loop and final reparenting steps of the adoption agency algorithm, once a furthestBlock has been found.";
+  let common_ancestor = open_at(state: state, index: common_ancestor_idx);
+  let furthest_entry = open_at(state: state, index: furthest_idx);
+  let furthest_node = furthest_entry.node;
+  let html_ns = Namespace::Html();
+  let bookmark = fidx;
+  let last_node = furthest_node;
+  let last_was_furthest = True();
+  let node_idx = furthest_idx;
+  let inner = 0_u64;
+  loop @inner {
+    let above_ok = node_idx > 0_u64;
+    if above_ok {
+    } else {
+      break @inner;
+    }
+    set node_idx = node_idx -wrap 1_u64;
+    set inner = inner +wrap 1_u64;
+    let is_fe = node_idx == stack_idx;
+    if is_fe {
+      break @inner;
+    }
+    let node_len = open_len(state: state);
+    let node_in_range = node_idx < node_len;
+    if node_in_range {
+    } else {
+      break @inner;
+    }
+    let node_entry = open_at(state: state, index: node_idx);
+    let node_id = node_entry.node;
+    let node_afe_opt = afe_index_of_node(state: state, node: node_id);
+    let currently_in_afe = match node_afe_opt {
+      Some(value: ignored_idx) => {
+        give True();
+      }
+      None() => {
+        give False();
+      }
+    }
+    let old_enough = inner > 3_u64;
+    let should_drop_from_afe = band(old_enough, currently_in_afe);
+    if should_drop_from_afe {
+      match node_afe_opt {
+        Some(value: drop_idx) => {
+          let drop_len = afe_len(state: state);
+          let drop_ok = drop_idx < drop_len;
+          if drop_ok {
+            afe_remove_at(state: state, idx: drop_idx);
+          }
+        }
+        None() => {
+        }
+      }
+    }
+    let not_dropped = bnot(should_drop_from_afe);
+    let kept_in_afe = band(currently_in_afe, not_dropped);
+    if kept_in_afe {
+    } else {
+      let open_len_now = open_len(state: state);
+      let still_in_range = node_idx < open_len_now;
+      if still_in_range {
+        remove_open_at(state: state, index: node_idx);
+      }
+      let restart = True();
+    }
+    if kept_in_afe {
+      let afe_i = match node_afe_opt {
+        Some(value: v) => {
+          give v;
+        }
+        None() => {
+          give fidx;
+        }
+      }
+      let afe_i_len = afe_len(state: state);
+      let afe_i_ok = afe_i < afe_i_len;
+      if afe_i_ok {
+      } else {
+        break @inner;
+      }
+      let node_name = afe_name_at(state: state, idx: afe_i);
+      let attrs_for_new = propagate afe_clone_attrs_at(state: state, idx: afe_i);
+      let attrs_for_keep = propagate afe_clone_attrs_at(state: state, idx: afe_i);
+      let created = propagate adoption_recreate_node(state: state, document: document, node_idx: node_idx, afe_i: afe_i, node_name: node_name, attrs_for_new: move attrs_for_new, attrs_for_keep: move attrs_for_keep, html_ns: html_ns);
+      match created {
+        Some(value: new_node) => {
+          if last_was_furthest {
+            set bookmark = afe_i +wrap 1_u64;
+            set last_was_furthest = False();
+          }
+          let appended = propagate append_child_wrap(document: document, parent: new_node, child: last_node);
+          set last_node = new_node;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  let override_some = Some<StackEntry>(value: common_ancestor);
+  let place = appropriate_place(state: state, document: document, override_target: override_some);
+  let parent_opt = node_parent(document: document, node: last_node);
+  match parent_opt {
+    Some(value: p) => {
+      let detached = propagate detach_wrap(document: document, node: last_node);
+    }
+    None() => {
+    }
+  }
+  let inserted = propagate insert_at_place(document: document, place: place, node: last_node);
+  let fe_afe_opt = afe_index_of_node(state: state, node: fe_node);
+  let fe_afe_i = match fe_afe_opt {
+    Some(value: v2) => {
+      give v2;
+    }
+    None() => {
+      give fidx;
+    }
+  }
+  let fe_afe_len_now = afe_len(state: state);
+  let fe_afe_valid = fe_afe_i < fe_afe_len_now;
+  if fe_afe_valid {
+  } else {
+    return Ok<unit, TreeError>(value: unit);
+  }
+  let fe_attrs_for_new = propagate afe_clone_attrs_at(state: state, idx: fe_afe_i);
+  let fe_attrs_for_keep = propagate afe_clone_attrs_at(state: state, idx: fe_afe_i);
+  let new_formatting_node = propagate create_element_with_attrs(document: document, name: subject, attrs: move fe_attrs_for_new, namespace: html_ns);
+  let moved = propagate move_all_children(document: document, from_node: furthest_node, to_node: new_formatting_node);
+  let appended2 = propagate append_child_wrap(document: document, parent: furthest_node, child: new_formatting_node);
+  let bookmark_le = bookmark <= fe_afe_i;
+  let bookmark_adj = if bookmark_le {
+    give bookmark;
+  } else {
+    give bookmark -wrap 1_u64;
+  }
+  afe_remove_at(state: state, idx: fe_afe_i);
+  let afe_len_now = afe_len(state: state);
+  let bookmark_clamped = if bookmark_adj > afe_len_now {
+    give afe_len_now;
+  } else {
+    give bookmark_adj;
+  }
+  let new_afe_formatting = AfeEntry::Element(node: new_formatting_node, local_name: subject, attributes: move fe_attrs_for_keep);
+  let inserted2 = propagate insert_afe_at(state: state, idx: bookmark_clamped, value: move new_afe_formatting);
+  let fe_stack_opt = stack_index_of_node(state: state, target: fe_node);
+  match fe_stack_opt {
+    Some(value: fe_stack_now) => {
+      let fe_stack_len = open_len(state: state);
+      let fe_stack_ok = fe_stack_now < fe_stack_len;
+      if fe_stack_ok {
+      } else {
+        return Ok<unit, TreeError>(value: unit);
+      }
+      remove_open_at(state: state, index: fe_stack_now);
+      let furthest_now_opt = stack_index_of_node(state: state, target: furthest_node);
+      match furthest_now_opt {
+        Some(value: furthest_now) => {
+          let furthest_now_len = open_len(state: state);
+          let furthest_now_ok = furthest_now < furthest_now_len;
+          if furthest_now_ok {
+            let below_furthest = furthest_now +wrap 1_u64;
+            let new_stack_entry = StackEntry(node: new_formatting_node, namespace: html_ns, local_name: subject);
+            let inserted3 = propagate insert_open_at(state: state, index: below_furthest, elem: new_stack_entry);
+          }
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return Ok<unit, TreeError>(value: unit);
+}

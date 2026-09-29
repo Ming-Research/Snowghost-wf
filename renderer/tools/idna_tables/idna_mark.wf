@@ -1,0 +1,102 @@
+const gc_mn_word: Array<u8, 2> =[77_u8, 110_u8];
+
+const gc_mc_word: Array<u8, 2> =[77_u8, 99_u8];
+
+const gc_me_word: Array<u8, 2> =[77_u8, 101_u8];
+
+fn is_mark_word(word: &[u8]) -> result: Bool reads(word) {
+  doc "Tells whether word is one of the three General_Category=Mark values Mn, Mc, or Me.";
+  let mn_ref = &gc_mn_word[0_u64..gc_mn_word.len];
+  if field_equals(field: word, want: mn_ref) {
+    return True();
+  }
+  let mc_ref = &gc_mc_word[0_u64..gc_mc_word.len];
+  if field_equals(field: word, want: mc_ref) {
+    return True();
+  }
+  let me_ref = &gc_me_word[0_u64..gc_me_word.len];
+  if field_equals(field: word, want: me_ref) {
+    return True();
+  }
+  return False();
+}
+
+fn set_mark_range(mark_by_cp: &Box<Array<u8>>, value: u8, start: u64, stop: u64) -> result: unit writes(mark_by_cp) {
+  doc "Sets mark_by_cp[cp] to value for every cp in start..stop, clamped to the table's length.";
+  for (cp in start..stop) {
+    let cp_ok = cp < mark_by_cp^.inner.len;
+    if cp_ok {
+      set mark_by_cp^.inner[cp] = value;
+    }
+  }
+  return unit;
+}
+
+fn parse_mark_line(text: &[u8], line_start: u64, line_stop: u64, mark_by_cp: &Box<Array<u8>>) -> result: unit reads(text), writes(mark_by_cp) contract {
+  requires line_stop <= text^.len;
+} {
+  doc "Parses one explicit RANGE;VALUE line of DerivedGeneralCategory.txt, marking the range 1 when its category is Mn, Mc, or Me; a blank, comment, or malformed line does nothing, and every other category leaves the table's default 0 in place.";
+  let empty = line_start >= line_stop;
+  if empty {
+    return unit;
+  }
+  let readable = line_start < text^.len;
+  if readable {
+  } else {
+    return unit;
+  }
+  let first = text^[line_start];
+  let comment = first == number_sign;
+  if comment {
+    return unit;
+  }
+  let semi = find_byte(text: text, from: line_start, stop: line_stop, target: semicolon);
+  let has_semi = semi < line_stop;
+  if has_semi {
+  } else {
+    return unit;
+  }
+  let range_field_end = trim_ws_end(text: text, from: line_start, stop: semi);
+  match parse_range(text: text, from: line_start, stop: range_field_end) {
+    Some(value: found) => {
+      let value_start_raw = semi +wrap 1_u64;
+      let value_start = skip_ws(text: text, from: value_start_raw, stop: line_stop);
+      let value_field_end = line_field_end(text: text, from: value_start, stop: line_stop);
+      let value_end = trim_ws_end(text: text, from: value_start, stop: value_field_end);
+      let ok = value_end <= line_stop;
+      if ok {
+        let word = &text^[value_start..value_end];
+        let mark = is_mark_word(word: word);
+        if mark {
+          let start64 = cvt::<u32, u64>(found.start);
+          let end64 = cvt::<u32, u64>(found.end);
+          let stop64 = end64 +wrap 1_u64;
+          set_mark_range(mark_by_cp: mark_by_cp, value: 1_u8, start: start64, stop: stop64);
+        }
+      }
+      return unit;
+    }
+    None() => {
+      return unit;
+    }
+  }
+}
+
+fn parse_derived_general_category_mark(text: &[u8]) -> result: Box<Array<u8>> reads(text) {
+  doc "Builds a code-space array marking every code point whose General_Category is Mn, Mc, or Me (1) from DerivedGeneralCategory.txt's explicit RANGE;VALUE lines; every other code point is 0.";
+  let mark_by_cp = box_array_filled::<u8>(count: code_space, value: 0_u8);
+  let length = text^.len;
+  let at = 0_u64;
+  loop @lines {
+    let more = at < length;
+    if more {
+    } else {
+      return move mark_by_cp;
+    }
+    let found_stop = line_end(text: text, start: at);
+    let stop = imin(found_stop, length);
+    parse_mark_line(text: text, line_start: at, line_stop: stop, mark_by_cp: &mark_by_cp);
+    set at = stop +wrap 1_u64;
+  }
+  return move mark_by_cp;
+}

@@ -1,0 +1,497 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias AttributeNamespace = pkg::dom::AttributeNamespace;
+alias Attribute = pkg::dom::Attribute;
+alias Document = pkg::dom::Document;
+alias DomError = pkg::dom::DomError;
+alias Namespace = pkg::dom::Namespace;
+alias NodeData = pkg::dom::NodeData;
+alias NodeId = pkg::dom::NodeId;
+alias QuirksMode = pkg::dom::QuirksMode;
+alias TextSpan = pkg::dom::TextSpan;
+alias append_child = pkg::dom::append_child;
+alias add_attribute = pkg::dom::add_attribute;
+alias create_node = pkg::dom::create_node;
+alias detach = pkg::dom::detach;
+alias document_new = pkg::dom::document_new;
+alias insert_before = pkg::dom::insert_before;
+alias insert_text = pkg::dom::insert_text;
+alias store_text = pkg::dom::store_text;
+alias atom_find = pkg::base::atom::atom_find;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias ContentState = pkg::html::tokenizer::ContentState;
+alias Token = pkg::html::tokenizer::Token;
+alias TokAttribute = pkg::html::tokenizer::Attribute;
+alias TokenText = pkg::html::tokenizer::TokenText;
+alias Tokenizer = pkg::html::tokenizer::Tokenizer;
+alias next_token = pkg::html::tokenizer::next_token;
+alias token_text_new = pkg::html::tokenizer::token_text_new;
+alias tokenizer_new = pkg::html::tokenizer::tokenizer_new;
+alias tokenizer_set_state = pkg::html::tokenizer::tokenizer_set_state;
+
+struct StackEntry {
+  node: NodeId;
+  namespace: Namespace;
+  local_name: Atom;
+}
+
+enum AfeEntry {
+  Marker();
+  Element(node: NodeId, local_name: Atom, attributes: Box<Slots<Attribute>>);
+}
+
+enum InsertionMode {
+  Initial();
+  BeforeHtml();
+  BeforeHead();
+  InHead();
+  InHeadNoscript();
+  AfterHead();
+  InBody();
+  Text();
+  InTable();
+  InTableText();
+  InCaption();
+  InColumnGroup();
+  InTableBody();
+  InRow();
+  InCell();
+  InTemplate();
+  AfterBody();
+  InFrameset();
+  AfterFrameset();
+  AfterAfterBody();
+  AfterAfterFrameset();
+}
+
+struct Keywords {
+  applet: Atom;
+  basefont: Atom;
+  bgsound: Atom;
+  center: Atom;
+  frame: Atom;
+  frameset: Atom;
+  keygen: Atom;
+  listing: Atom;
+  marquee: Atom;
+  noembed: Atom;
+  noframes: Atom;
+  param: Atom;
+  plaintext: Atom;
+  xmp: Atom;
+  big: Atom;
+  nobr: Atom;
+  strike: Atom;
+  tt: Atom;
+  isindex: Atom;
+  rb: Atom;
+  rtc: Atom;
+  image: Atom;
+}
+
+struct State {
+  open_elements: Box<Slots<StackEntry>>;
+  open_p_count: u64;
+  afe: Box<Slots<AfeEntry>>;
+  mode: InsertionMode;
+  original_mode: InsertionMode;
+  template_modes: Box<Slots<InsertionMode>>;
+  head_pointer: Option<NodeId>;
+  form_pointer: Option<NodeId>;
+  frameset_ok: Bool;
+  foster_parenting: Bool;
+  is_fragment: Bool;
+  fragment_namespace: Namespace;
+  fragment_name: Atom;
+  scripting: Bool;
+  pending_table_text: Box<Slots<u8>>;
+  pending_table_all_whitespace: Bool;
+  pending_lf_skip: Bool;
+}
+
+fn atom_eq(left: Atom, right: Atom) -> result: Bool pure {
+  doc "Tells whether two atoms name the same interned text.";
+  return left.index == right.index;
+}
+
+fn node_eq(left: NodeId, right: NodeId) -> result: Bool pure {
+  doc "Tells whether two node identifiers name the same document node.";
+  return left.index == right.index;
+}
+
+fn namespace_eq(left: Namespace, right: Namespace) -> result: Bool pure {
+  doc "Tells whether two namespaces are the same.";
+  return eeq(left, right);
+}
+
+fn ns_is_html(namespace: Namespace) -> result: Bool pure {
+  doc "Tells whether namespace is the HTML namespace.";
+  let want = Namespace::Html();
+  return eeq(namespace, want);
+}
+
+fn ns_is_svg(namespace: Namespace) -> result: Bool pure {
+  doc "Tells whether namespace is the SVG namespace.";
+  let want = Namespace::Svg();
+  return eeq(namespace, want);
+}
+
+fn ns_is_mathml(namespace: Namespace) -> result: Bool pure {
+  doc "Tells whether namespace is the MathML namespace.";
+  let want = Namespace::MathMl();
+  return eeq(namespace, want);
+}
+
+fn a_is(atom: Atom, id: u32) -> result: Bool pure {
+  doc "Tells whether atom's interned index equals id, the usual way to compare a name against a static or re-exported atom constant.";
+  return atom.index == id;
+}
+
+fn push_generic<T: copy>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> result: Result<unit, TreeError> writes(cell) contract {
+  requires ceiling <= 4294967295_u64;
+} {
+  doc "Appends value to cell, doubling its backing (or starting it at 8) within ceiling; TooLarge when cell is already full at ceiling. Mirrors pkg::html::tokenizer's bytes_push, whose doubling arithmetic never needs to grow when it would fail to increase capacity, so that branch's inaction never drops a value in practice.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  let full = length >= capacity;
+  if full {
+    let empty = capacity == 0_u64;
+    if empty {
+      grow(cell: cell, capacity: 8_u64);
+      place_back(window: &cell^.inner, value: value);
+      return Ok<unit, TreeError>(value: unit);
+    }
+    let doubled = capacity +sat capacity;
+    let over = doubled > ceiling;
+    if over {
+      let room = capacity < ceiling;
+      if room {
+        grow(cell: cell, capacity: ceiling);
+        place_back(window: &cell^.inner, value: value);
+        return Ok<unit, TreeError>(value: unit);
+      }
+      let too_large = TreeError::TooLarge();
+      return Err<unit, TreeError>(error: too_large);
+    }
+    let grew = doubled > capacity;
+    if grew {
+      grow(cell: cell, capacity: doubled);
+      place_back(window: &cell^.inner, value: value);
+      return Ok<unit, TreeError>(value: unit);
+    }
+    let too_large2 = TreeError::TooLarge();
+    return Err<unit, TreeError>(error: too_large2);
+  }
+  place_back(window: &cell^.inner, value: value);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn bor4(a: Bool, b: Bool, c: Bool, d: Bool) -> result: Bool pure {
+  doc "Ors four flat Bool values without any nested call, since a table-driven name check is naturally an OR of many equality tests.";
+  let ab = bor(a, b);
+  let cd = bor(c, d);
+  let out = bor(ab, cd);
+  return out;
+}
+
+fn bor8(a: Bool, b: Bool, c: Bool, d: Bool, e: Bool, f: Bool, g: Bool, h: Bool) -> result: Bool pure {
+  doc "Ors eight flat Bool values without any nested call.";
+  let left = bor4(a: a, b: b, c: c, d: d);
+  let right = bor4(a: e, b: f, c: g, d: h);
+  let out = bor(left, right);
+  return out;
+}
+
+fn mode_eq(left: InsertionMode, right: InsertionMode) -> result: Bool pure {
+  doc "Tells whether two insertion modes are the same.";
+  return eeq(left, right);
+}
+
+const stack_ceiling: u64 = 16777216_u64;
+
+const afe_ceiling: u64 = 1048576_u64;
+
+const template_modes_ceiling: u64 = 16777216_u64;
+
+const pending_text_ceiling: u64 = 1073741824_u64;
+
+fn intern_keyword(atoms: &AtomTable, name: &[u8]) -> result: Result<Atom, TreeError> reads(name), writes(atoms) contract {
+  requires name^.len <= 65536_u64;
+} {
+  doc "Interns one fixed keyword name, wrapping a refusal as TreeError.";
+  match atom_intern(table: atoms, name: name) {
+    Ok(value: atom) => {
+      return Ok<Atom, TreeError>(value: atom);
+    }
+    Err(error: problem) => {
+      let too_large = TreeError::TooLarge();
+      return Err<Atom, TreeError>(error: too_large);
+    }
+  }
+}
+
+const kw_applet: Array<u8, 6> = "applet";
+
+const kw_basefont: Array<u8, 8> = "basefont";
+
+const kw_bgsound: Array<u8, 7> = "bgsound";
+
+const kw_center: Array<u8, 6> = "center";
+
+const kw_frame: Array<u8, 5> = "frame";
+
+const kw_frameset: Array<u8, 8> = "frameset";
+
+const kw_keygen: Array<u8, 6> = "keygen";
+
+const kw_listing: Array<u8, 7> = "listing";
+
+const kw_marquee: Array<u8, 7> = "marquee";
+
+const kw_noembed: Array<u8, 7> = "noembed";
+
+const kw_noframes: Array<u8, 8> = "noframes";
+
+const kw_param: Array<u8, 5> = "param";
+
+const kw_plaintext: Array<u8, 9> = "plaintext";
+
+const kw_xmp: Array<u8, 3> = "xmp";
+
+const kw_big: Array<u8, 3> = "big";
+
+const kw_nobr: Array<u8, 4> = "nobr";
+
+const kw_strike: Array<u8, 6> = "strike";
+
+const kw_tt: Array<u8, 2> = "tt";
+
+const kw_isindex: Array<u8, 7> = "isindex";
+
+const kw_rb: Array<u8, 2> = "rb";
+
+const kw_rtc: Array<u8, 3> = "rtc";
+
+const kw_image: Array<u8, 5> = "image";
+
+fn keywords_new(atoms: &AtomTable) -> result: Result<Keywords, TreeError> writes(atoms) {
+  doc "Interns every keyword atom this module needs beyond the static table, once per parse.";
+  let applet = propagate intern_keyword(atoms: atoms, name: &kw_applet[0_u64..kw_applet.len]);
+  let basefont = propagate intern_keyword(atoms: atoms, name: &kw_basefont[0_u64..kw_basefont.len]);
+  let bgsound = propagate intern_keyword(atoms: atoms, name: &kw_bgsound[0_u64..kw_bgsound.len]);
+  let center = propagate intern_keyword(atoms: atoms, name: &kw_center[0_u64..kw_center.len]);
+  let frame = propagate intern_keyword(atoms: atoms, name: &kw_frame[0_u64..kw_frame.len]);
+  let frameset = propagate intern_keyword(atoms: atoms, name: &kw_frameset[0_u64..kw_frameset.len]);
+  let keygen = propagate intern_keyword(atoms: atoms, name: &kw_keygen[0_u64..kw_keygen.len]);
+  let listing = propagate intern_keyword(atoms: atoms, name: &kw_listing[0_u64..kw_listing.len]);
+  let marquee = propagate intern_keyword(atoms: atoms, name: &kw_marquee[0_u64..kw_marquee.len]);
+  let noembed = propagate intern_keyword(atoms: atoms, name: &kw_noembed[0_u64..kw_noembed.len]);
+  let noframes = propagate intern_keyword(atoms: atoms, name: &kw_noframes[0_u64..kw_noframes.len]);
+  let param = propagate intern_keyword(atoms: atoms, name: &kw_param[0_u64..kw_param.len]);
+  let plaintext = propagate intern_keyword(atoms: atoms, name: &kw_plaintext[0_u64..kw_plaintext.len]);
+  let xmp = propagate intern_keyword(atoms: atoms, name: &kw_xmp[0_u64..kw_xmp.len]);
+  let big = propagate intern_keyword(atoms: atoms, name: &kw_big[0_u64..kw_big.len]);
+  let nobr = propagate intern_keyword(atoms: atoms, name: &kw_nobr[0_u64..kw_nobr.len]);
+  let strike = propagate intern_keyword(atoms: atoms, name: &kw_strike[0_u64..kw_strike.len]);
+  let tt = propagate intern_keyword(atoms: atoms, name: &kw_tt[0_u64..kw_tt.len]);
+  let isindex = propagate intern_keyword(atoms: atoms, name: &kw_isindex[0_u64..kw_isindex.len]);
+  let rb = propagate intern_keyword(atoms: atoms, name: &kw_rb[0_u64..kw_rb.len]);
+  let rtc = propagate intern_keyword(atoms: atoms, name: &kw_rtc[0_u64..kw_rtc.len]);
+  let image = propagate intern_keyword(atoms: atoms, name: &kw_image[0_u64..kw_image.len]);
+  let made = Keywords(applet: applet, basefont: basefont, bgsound: bgsound, center: center, frame: frame, frameset: frameset, keygen: keygen, listing: listing, marquee: marquee, noembed: noembed, noframes: noframes, param: param, plaintext: plaintext, xmp: xmp, big: big, nobr: nobr, strike: strike, tt: tt, isindex: isindex, rb: rb, rtc: rtc, image: image);
+  return Ok<Keywords, TreeError>(value: made);
+}
+
+fn state_new(scripting: Bool, is_fragment: Bool, fragment_namespace: Namespace, fragment_name: Atom) -> made: State pure {
+  doc "Returns the initial mutable parsing state: empty stack with no HTML p element counted, empty active formatting list, the \"initial\" insertion mode, no head or form pointer, frameset-ok, foster parenting off.";
+  let open_elements = box_slots_new::<StackEntry>(capacity: 0_u64);
+  let afe = box_slots_new::<AfeEntry>(capacity: 0_u64);
+  let template_modes = box_slots_new::<InsertionMode>(capacity: 0_u64);
+  let pending_table_text = box_slots_new::<u8>(capacity: 0_u64);
+  let initial_mode = InsertionMode::Initial();
+  let initial_mode2 = InsertionMode::Initial();
+  let no_head = None<NodeId>();
+  let no_form = None<NodeId>();
+  let ok_flag = True();
+  let no_foster = False();
+  let all_ws = True();
+  let no_lf_skip = False();
+  return State(open_elements: move open_elements, open_p_count: 0_u64, afe: move afe, mode: initial_mode, original_mode: initial_mode2, template_modes: move template_modes, head_pointer: no_head, form_pointer: no_form, frameset_ok: ok_flag, foster_parenting: no_foster, is_fragment: is_fragment, fragment_namespace: fragment_namespace, fragment_name: fragment_name, scripting: scripting, pending_table_text: move pending_table_text, pending_table_all_whitespace: all_ws, pending_lf_skip: no_lf_skip);
+}
+
+fn set_mode_initial(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to Initial.";
+  let m = InsertionMode::Initial();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_before_html(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to BeforeHtml.";
+  let m = InsertionMode::BeforeHtml();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_before_head(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to BeforeHead.";
+  let m = InsertionMode::BeforeHead();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_head(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InHead.";
+  let m = InsertionMode::InHead();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_head_noscript(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InHeadNoscript.";
+  let m = InsertionMode::InHeadNoscript();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_after_head(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to AfterHead.";
+  let m = InsertionMode::AfterHead();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_body(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InBody.";
+  let m = InsertionMode::InBody();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_text(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to Text.";
+  let m = InsertionMode::Text();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_table(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InTable.";
+  let m = InsertionMode::InTable();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_table_text(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InTableText.";
+  let m = InsertionMode::InTableText();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_caption(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InCaption.";
+  let m = InsertionMode::InCaption();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_column_group(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InColumnGroup.";
+  let m = InsertionMode::InColumnGroup();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_table_body(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InTableBody.";
+  let m = InsertionMode::InTableBody();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_row(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InRow.";
+  let m = InsertionMode::InRow();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_cell(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InCell.";
+  let m = InsertionMode::InCell();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_template(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InTemplate.";
+  let m = InsertionMode::InTemplate();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_after_body(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to AfterBody.";
+  let m = InsertionMode::AfterBody();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_in_frameset(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to InFrameset.";
+  let m = InsertionMode::InFrameset();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_after_frameset(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to AfterFrameset.";
+  let m = InsertionMode::AfterFrameset();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_after_after_body(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to AfterAfterBody.";
+  let m = InsertionMode::AfterAfterBody();
+  set state^.mode = m;
+  return unit;
+}
+
+fn set_mode_after_after_frameset(state: &State) -> result: unit writes(state) {
+  doc "Switches the current insertion mode to AfterAfterFrameset.";
+  let m = InsertionMode::AfterAfterFrameset();
+  set state^.mode = m;
+  return unit;
+}
+
+fn save_original_mode(state: &State) -> result: unit writes(state) {
+  doc "Sets the original insertion mode to the current insertion mode, as switching to \"text\" or \"in table text\" does.";
+  let m = state^.mode;
+  set state^.original_mode = m;
+  return unit;
+}
+
+fn restore_original_mode(state: &State) -> result: unit writes(state) {
+  doc "Switches the insertion mode to the original insertion mode.";
+  let m = state^.original_mode;
+  set state^.mode = m;
+  return unit;
+}
+
+fn push_template_mode(state: &State, mode: InsertionMode) -> result: Result<unit, TreeError> writes(state) {
+  doc "Pushes mode onto the stack of template insertion modes.";
+  let pushed = propagate push_generic::<InsertionMode>(cell: &state^.template_modes, value: mode, ceiling: template_modes_ceiling);
+  return Ok<unit, TreeError>(value: unit);
+}
+
+fn pop_template_mode(state: &State) -> result: unit writes(state) {
+  doc "Pops the current template insertion mode off the stack of template insertion modes.";
+  let len = state^.template_modes.inner.len;
+  let has = len > 0_u64;
+  if has {
+    let dropped = take_back(window: &state^.template_modes.inner);
+  }
+  return unit;
+}
