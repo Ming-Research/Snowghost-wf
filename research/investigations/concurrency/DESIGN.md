@@ -842,6 +842,29 @@ tokenizer takes at least half of the parse on both large pages (ecma262 and
 html5), the first parallel design targets the tokenizer (speculative
 chunks); otherwise it targets tree construction and the text copy.
 
+**Results.** At Snowghost commit 58fa8ee, `KEEP_BUILD=1 MODES="tokenize
+parse" RUNS=3 run.sh layout "ecma262 html5 apollo11"` took 8 minutes (an
+empty `WORKERS` falls back to its default, so the `--par` build ran at one,
+two and four workers too). Seconds per repetition, best of three, in the
+sequential build:
+
+| Page | Tokenizer alone | Whole parse | Tokenizer's share |
+|---|---:|---:|---:|
+| ecma262 | 0.0757 | 0.1773 | 43 % |
+| html5 | 0.0627 | 0.1557 | 40 % |
+| apollo11 | 0.0116 | 0.0209 | 56 % |
+
+- **Criterion: tree construction and the text copy first.** The tokenizer
+  takes 43 and 40 percent of the parse on ecma262 and html5, under half,
+  though it runs 60 percent of html5's instructions.
+- The `--par` build parses no faster at any worker count, within 5 percent
+  of the sequential build on every page and mode.
+- The tokenizer's share is an estimate: without tree construction it never
+  switches to raw text, RCDATA or script data.
+
+The raw output is in `runs/10-tokenize-58fa8ee.txt`, and the callgrind
+summary in `runs/9-callgrind-parse-075f359.txt`.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
