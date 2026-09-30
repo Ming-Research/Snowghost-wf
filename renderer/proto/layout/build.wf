@@ -120,25 +120,25 @@ fn is_collapsible(value: u32) -> collapsible: Bool pure {
   return collapsible;
 }
 
-fn add_scalar(open: &Decoding, value: u32) -> added: Bool writes(open) {
-  doc "Adds value to the paragraph being decoded, a collapsible character as a pending space that the next other scalar value writes and that is dropped at a paragraph's start. False when the paragraph would pass scalar_ceiling.";
+fn add_scalar(text: &Box<Slots<u32>>, space: &Bool, value: u32) -> added: Bool writes(text), writes(space) {
+  doc "Adds value to the paragraph text being decoded, a collapsible character as a pending space, held in space, that the next other scalar value writes and that is dropped at a paragraph's start. False when the paragraph would pass scalar_ceiling.";
   let collapsible = is_collapsible(value: value);
   if collapsible {
-    let started = open^.text.inner.len > 0_u64;
+    let started = text^.inner.len > 0_u64;
     if started {
-      set open^.space = True();
+      set space^ = True();
     }
     return True();
   }
-  if open^.space {
-    let spaced = push_item::<u32>(cell: &open^.text, value: 32_u32, ceiling: scalar_ceiling);
+  if space^ {
+    let spaced = push_item::<u32>(cell: text, value: 32_u32, ceiling: scalar_ceiling);
     if spaced {
     } else {
       return False();
     }
-    set open^.space = False();
+    set space^ = False();
   }
-  let added = push_item::<u32>(cell: &open^.text, value: value, ceiling: scalar_ceiling);
+  let added = push_item::<u32>(cell: text, value: value, ceiling: scalar_ceiling);
   return added;
 }
 
@@ -153,8 +153,8 @@ fn continuation(byte: u8) -> bits: Option<u32> pure {
   return None<u32>();
 }
 
-fn add_text(open: &Decoding, bytes: &[u8]) -> added: Bool reads(bytes), writes(open) {
-  doc "Adds the scalar values of bytes, decoded from UTF-8, to the paragraph being decoded; a byte that starts no well-formed sequence of at most four bytes adds U+FFFD and decoding resumes at the next byte. Overlong forms and surrogates are not rejected: the prototype only counts widths. False when the paragraph would pass scalar_ceiling.";
+fn add_text(text: &Box<Slots<u32>>, space: &Bool, bytes: &[u8]) -> added: Bool reads(bytes), writes(text), writes(space) {
+  doc "Adds the scalar values of bytes, decoded from UTF-8, to the paragraph text being decoded; a byte that starts no well-formed sequence of at most four bytes adds U+FFFD and decoding resumes at the next byte. Overlong forms and surrogates are not rejected: the prototype only counts widths. False when the paragraph would pass scalar_ceiling.";
   let count = bytes^.len;
   let skip = 0_u64;
   for (at in 0_u64..count) {
@@ -221,7 +221,7 @@ fn add_text(open: &Decoding, bytes: &[u8]) -> added: Bool reads(bytes), writes(o
           set skip = tail;
         }
       }
-      let added = add_scalar(open: open, value: value);
+      let added = add_scalar(text: text, space: space, value: value);
       if added {
       } else {
         return False();
@@ -243,7 +243,13 @@ fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutE
     return Ok<unit, LayoutError>(value: unit);
   }
   let count = recorded - first;
-  let empty = box_slots_new::<u32>(capacity: 0_u64);
+  let reserve = open^.size;
+  let bounded = reserve <= scalar_ceiling;
+  if bounded {
+  } else {
+    return too_large::<unit>();
+  }
+  let empty = box_slots_new::<u32>(capacity: reserve);
   let index = context^.paragraphs.inner.len;
   let paragraph = Paragraph(text: move empty, first: first, count: count, lines: 0_u64);
   let kept = push_item::<Paragraph>(cell: &context^.paragraphs, value: move paragraph, ceiling: item_ceiling);
@@ -323,35 +329,11 @@ fn gather_scalar(context: &Context, open: &Open, value: u32) -> result: Result<u
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn decode_pieces(pieces: &[Piece], text: &[u8]) -> made: Box<Slots<u32>> reads(pieces), reads(text) {
-  doc "Decodes pieces in order, each text node's bytes from UTF-8 and each inserted scalar value as itself, with whitespace collapsed as add_scalar collapses it, into a paragraph's scalar values; the paragraph ends without its pending space.";
+fn decode_pieces(pieces: &[Piece], text: &[u8], into: &Box<Slots<u32>>) -> result: unit reads(pieces), reads(text), writes(into) {
+  doc "Decodes pieces in order into into, each text node's bytes from UTF-8 and each inserted scalar value as itself, with whitespace collapsed as add_scalar collapses it; the paragraph ends without its pending space. into was reserved during the walk at the size the pieces bound, so decoding allocates nothing.";
   let count = pieces^.len;
   let stored = text^.len;
-  let size = 0_u64;
-  for (at in 0_u64..count) {
-    let piece = pieces^[at];
-    match piece {
-      Bytes(start: from, end: to) => {
-        let ordered = from <= to;
-        if ordered {
-          let length = to - from;
-          set size = size +wrap length;
-        }
-      }
-      Scalar(value: one) => {
-        set size = size +wrap 1_u64;
-      }
-    }
-  }
-  let small = size <= scalar_ceiling;
-  let capacity = if small {
-    give size;
-  } else {
-    give scalar_ceiling;
-  }
-  let empty = box_slots_new::<u32>(capacity: capacity);
-  let unspaced = False();
-  let decoding = Decoding(text: move empty, space: unspaced);
+  let space = False();
   for (at in 0_u64..count) {
     let piece = pieces^[at];
     match piece {
@@ -360,16 +342,15 @@ fn decode_pieces(pieces: &[Piece], text: &[u8]) -> made: Box<Slots<u32>> reads(p
         let inside = to <= stored;
         let usable = band(ordered, inside);
         if usable {
-          let added = add_text(open: &decoding, bytes: &text^[from..to]);
+          let added = add_text(text: into, space: &space, bytes: &text^[from..to]);
         }
       }
       Scalar(value: one) => {
-        let added = add_scalar(open: &decoding, value: one);
+        let added = add_scalar(text: into, space: &space, value: one);
       }
     }
   }
-  let Decoding(text: made, space: pending) = move decoding;
-  return move made;
+  return unit;
 }
 
 fn decode_all(paragraphs: &[Paragraph], pieces: &[Piece], text: &[u8]) -> result: unit reads(pieces), reads(text), writes(paragraphs) {
@@ -385,8 +366,7 @@ fn decode_all(paragraphs: &[Paragraph], pieces: &[Piece], text: &[u8]) -> result
       let fits = many <= room;
       if fits {
         let end = first + many;
-        let made = decode_pieces(pieces: &pieces^[first..end], text: text);
-        set paragraphs^[i].text = move made;
+        decode_pieces(pieces: &pieces^[first..end], text: text, into: &paragraphs^[i].text);
       }
     }
   }
