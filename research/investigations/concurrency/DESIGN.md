@@ -622,6 +622,35 @@ percent in allocation and copying.
   store) 0.29 and 0.23 s, so the builder is about 2 to 3 percent of those
   pages' four-worker pipeline.
 
+**Decoding after the walk** (the owner's choice after this measurement).
+The walk records each paragraph's text as pieces, a byte span of a text
+node or one scalar value (U+2028 for `br`, U+FFFC for an inline-level
+context), and a paragraph starts at its first piece holding a scalar value,
+so a text node of whitespace alone before it adds none. After a context's
+walk, one counted loop decodes each paragraph's pieces and collapses their
+whitespace, each iteration writing its own paragraph's text. The pieces of
+one paragraph depend only on each other, so the walk keeps only what orders
+the flow, and decoding runs once per build, not once per layout, leaving
+the paragraph as layout reads it unchanged.
+
+Criteria, written before measuring:
+
+1. **Equality.** Every page's `check` checksum and root height equal the
+   ones before the change: ecma262 `b47f12e705ca8399`, html5
+   `573435a08e88e874`, apollo11 `1b5748884b4ca817`, flat `2f23fed55397442f`,
+   deep `9bf5169a445b9dd7`, unbalanced `94024e7779ea1cdd` and paragraph
+   `c515c705c909bc8e`.
+2. **Speedup.** At four workers the build and L3 layout stages together
+   take at most two thirds of their time before (0.0516 s on ecma262,
+   0.0599 s on html5), that is, they are at least 1.5 times faster.
+
+**Setup** (the owner's choice after this measurement). Parsing, the
+traversal arrays and the rule store run once before style, in sequence.
+`proto_layout parse`, `traverse` and `rules` repeat one of them REPS more
+times. Their sequential times on the three real pages and their shares of
+the four-worker pipeline are recorded; no threshold selects among them,
+and the largest names the next sequential cost to study.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
