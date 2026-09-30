@@ -5,15 +5,15 @@ html5lib tree-construction tests that WPT now hosts.
 
 Reads every `.dat` file in TESTS_DIR, then each LOCAL file (cases the
 upstream tests lack, such as tests/html/tree-local.dat), writes the cases
-to a case file beside them and runs DRIVER on it from the repository root. Per case the
-case file holds a header line "SCRIPTING CONTEXT_LENGTH INPUT_LENGTH", the
-fragment context's bytes (empty for a document; otherwise "td" or
-"svg path", a namespace prefix and local name as the tests write them),
-the input's bytes and a newline. SCRIPTING is 1 for a test marked
-#script-on and 0 otherwise; a test marked neither runs once with scripting
-off. The driver prints each case's tree in the tests' `#document` format,
-one line per node or attribute, then a line holding only `#end`. Parse
-errors are not compared.
+to a case file beside them and runs DRIVER on it from the repository root.
+Per case the case file holds a header line "SCRIPTING CONTEXT_LENGTH
+INPUT_LENGTH", the fragment context's bytes (empty for a document;
+otherwise "td" or "svg path", a namespace prefix and local name as the
+tests write them), the input's bytes and a newline. SCRIPTING is 1 for a
+test marked #script-on and 0 otherwise; a test marked neither runs once
+with scripting off. The driver prints each case's tree in the tests'
+`#document` format, one line per node or attribute, then a line holding
+only `#end`. Parse errors are not compared.
 
 Files in EXCLUDED and cases in EXCLUDED_CASES are not run, each for the
 reason given; the summary line counts them. A driver that has not finished
