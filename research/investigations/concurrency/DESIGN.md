@@ -866,6 +866,11 @@ sequential build:
 The raw output is in `runs/10-tokenize-58fa8ee.txt`, and the callgrind
 summary in `runs/9-callgrind-parse-075f359.txt`.
 
+**The owner's ruling.** Parsing is left for now: at four workers it is 12
+to 18 percent of the pipeline, while style takes 70 to 80 percent. Copying
+runs of plain text whole, the cheapest shortening of parsing's chain,
+comes after style.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
