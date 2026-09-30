@@ -11,7 +11,10 @@
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
 #                                stage in modes L1 and L2 by default (MODES
-#                                overrides the list, for instance with L3) on
+#                                overrides the list, for instance with L3,
+#                                build and walk for the context tree's
+#                                construction, with and without decoding, or
+#                                parse, traverse and rules for setup) on
 #                                every page, or on PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
@@ -28,7 +31,8 @@
 #
 # layout prints the same columns with the mode (L1, L2 or L3) in place of the
 # shape; its T(0) also holds styling and building the context tree, and its
-# check compares L1, L2 and L3 and reports L3's fix-up totals.
+# check compares L1, L2 and L3 and reports L3's fix-up totals. With KEEP_BUILD
+# set, layout times the drivers already in build/ instead of building them.
 #
 # The drivers are built with WHITEFOOTC (by default the pinned compiler's gate
 # build, as the Makefile builds it).
@@ -123,6 +127,12 @@ reps_of() {
 # measured on the development machine. L3 keeps these counts, which leaves its
 # html5 stage at 0.87 s of T(REPS) 2.19 s.
 layout_reps_of() {
+	case ${2:-} in
+	build | walk | parse | traverse | rules)
+		setup_reps_of "$1" "$2"
+		return
+		;;
+	esac
 	case $1 in
 	ecma262) echo 100 ;;
 	html5) echo 30 ;;
@@ -131,6 +141,28 @@ layout_reps_of() {
 	deep) echo 200 ;;
 	unbalanced) echo 20 ;;
 	paragraph) echo 10 ;;
+	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
+	esac
+}
+
+# Repetitions of the context tree's construction (proto_layout build and
+# walk) and of the setup steps (parse, traverse, rules), chosen so the step is
+# at least half of T(REPS) in the sequential build for parse and build and a
+# seventh to a third for the shorter traverse and rules, whose times therefore
+# carry more of T(0)'s spread: T(0) is 1.6 to 4 s there, and on
+# html5 one build took about 0.032 s, one parse 0.14 s, and the traversal
+# arrays and the rule store under 0.03 s each, and apollo11's rule store,
+# from its large sheets, 0.018 s, measured on the development machine.
+setup_reps_of() {
+	case $2 in
+	parse) small=30 large=100 ;;
+	rules) small=200 large=200 ;;
+	*) small=200 large=2000 ;;
+	esac
+	case $1 in
+	ecma262 | html5 | flat | unbalanced) echo "$small" ;;
+	apollo11 | deep) echo "$large" ;;
+	paragraph) echo 100 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
 }
@@ -336,18 +368,21 @@ layout() {
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh "$here/run.sh" layout "$@"
 	fi
-	build_layout
+	if [ -z "${KEEP_BUILD:-}" ] || [ ! -x build/proto_layout ] || [ ! -x build/proto_layout_seq ]; then
+		build_layout
+	fi
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
 	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "drivers: $(sha256sum <build/proto_layout | cut -c1-16) $(sha256sum <build/proto_layout_seq | cut -c1-16)"
 	echo "page mode build reps T(0) T(REPS) stage"
 	for page in $pages; do
 		file=$(page_file "$page")
 		sheets=$(sheets_of "$page")
 		counts=$(build/proto_layout check 1 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5, $6, $7, $8, $9, $12, $13, $17, $18, $19, $20, $21, $22 }')
 		echo "# $page: $counts"
-		reps=${2:-$(layout_reps_of "$page")}
 		for layout_mode in $modes; do
+			reps=${2:-$(layout_reps_of "$page" "$layout_mode")}
 			for mode in $workers seq; do
 				zero=$(best "$mode" "$layout_mode" 0 "$file" "$ua" $sheets)
 				full=$(best "$mode" "$layout_mode" "$reps" "$file" "$ua" $sheets)

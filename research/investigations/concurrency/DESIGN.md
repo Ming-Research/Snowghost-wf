@@ -564,6 +564,242 @@ percent.
   at most about that share on these pages. It stays unbuilt; the synthetic
   one-paragraph page is the case it would serve.
 
+### Box tree construction
+
+With L3, layout's stage is a quarter of its sequential time on html5 and
+apollo11, so building the context tree (`build_layout`), which every
+layout run needs first and which runs in sequence, may now cost as much as
+laying the tree out. `proto_layout build REPS` builds the tree REPS more
+times after the first, so its stage time is measured like the others.
+
+**Where its dependencies are.** The builder walks the document in tree
+order. Within one context, text joins the open paragraph with whitespace
+collapsed against the scalar before it, and flow items are appended in
+order, so a context's own walk is a chain. A child context depends only on
+its element and its width, which comes from the enclosing context's width
+alone, so building it depends on nothing its siblings or the enclosing walk
+produce: child contexts are independent work, as they are in layout. The
+preorder map from node to style index is a scatter whose independence
+needs a permutation proof Whitefoot does not derive.
+
+Criterion, written before measuring: the build stage is timed in the
+sequential build and at four workers on the three real pages. If its
+sequential time exceeds L3's four-worker layout stage on any of them, the
+builder is the next sequential cost of layout, and a design that builds
+the tree along its true dependencies goes to the owner before any change;
+otherwise it waits behind the larger stages. The measurement runs in under
+ten minutes.
+
+**Results.** At Snowghost commit 5c5bb1f with the `290b575b` pin, under the
+lock: `MODES=build WORKERS=4 RUNS=3 run.sh layout "ecma262 html5 apollo11"`
+took 6 minutes, including building both drivers. Build stage in seconds per
+repetition, best of three, beside the four-worker layout stage measured
+before (L3 on html5 and apollo11; L2 on ecma262, which holds no float, so
+its L3 runs the same loop):
+
+| Page | Build seq | Build W4 | Layout W4 |
+|---|---:|---:|---:|
+| ecma262 | 0.0275 | 0.0288 | 0.0228 (L2) |
+| html5 | 0.0305 | 0.0309 | 0.0290 (L3) |
+| apollo11 | 0.0012 | 0.0013 | 0.0017 (L3) |
+
+Callgrind on html5's build stage (one build, sequential driver, collection
+limited to `build_layout`): 376 million instructions, 60 percent in
+`add_text`, which decodes UTF-8 and collapses whitespace, 20 percent in
+appending each scalar value to the open paragraph (`push_item`), 8 percent
+in the walk itself (`build_children` and `build_element`) and about 9
+percent in allocation and copying (`malloc`, `calloc`, `free`, `memcpy`
+and `memset`).
+
+- **Criterion: met** on ecma262 and html5, where the sequential build takes
+  longer than the four-worker layout stage; not on apollo11. The `--par`
+  build gains nothing, since nothing in the builder is split.
+- Four fifths of the builder is turning text into paragraphs' scalar
+  values, and on html5 one context holds 95 percent of the text, so
+  building child contexts in parallel would leave most of that work in one
+  context's walk.
+- For scale, at four workers the style stage takes 0.79 s on ecma262 and
+  1.02 s on html5, and setup (parsing, the traversal arrays and the rule
+  store) 0.29 and 0.23 s, so the builder is about 2 to 3 percent of those
+  pages' four-worker pipeline.
+
+**Decoding after the walk** (the owner's choice after this measurement).
+The walk records each paragraph's text as pieces, a byte span of a text
+node or one scalar value (U+2028 for `br`, U+FFFC for an inline-level
+context), and a paragraph starts at its first piece holding a scalar value,
+so a text node of whitespace alone before it adds none. After a context's
+walk, one counted loop decodes each paragraph's pieces and collapses their
+whitespace, each iteration writing its own paragraph's text. The pieces of
+one paragraph depend only on each other, so the walk keeps only what orders
+the flow, and decoding runs once per build, not once per layout, leaving
+the paragraph as layout reads it unchanged.
+
+Criteria, written before measuring:
+
+1. **Equality.** Every page's `check` checksum and root height equal the
+   ones before the change: ecma262 `b47f12e705ca8399`, html5
+   `573435a08e88e874`, apollo11 `1b5748884b4ca817`, flat `2f23fed55397442f`,
+   deep `9bf5169a445b9dd7`, unbalanced `94024e7779ea1cdd` and paragraph
+   `c515c705c909bc8e`.
+2. **Speedup.** At four workers the build and L3 layout stages together
+   take at most two thirds of their time before (0.0516 s on ecma262,
+   0.0599 s on html5), that is, they are at least 1.5 times faster.
+
+**Setup** (the owner's choice after this measurement). Parsing, the
+traversal arrays and the rule store run once before style, in sequence.
+`proto_layout parse`, `traverse` and `rules` repeat one of them REPS more
+times. Their sequential times on the three real pages and their shares of
+the four-worker pipeline are recorded; no threshold selects among them,
+and the largest names the next sequential cost to study.
+
+**Results.** At Snowghost commit 7c9caf3 with the same pin, machine and
+lock. Every page's paragraph and scalar value counts, root height and
+checksum equal the ones above in both builds, and `--par-ledger` splits
+`decode_all` as an independent map; `runs/0-check-base-e45ccb7.txt` holds
+the base's `check` output and `runs/8-check-075f359.txt` the output and the
+splits at 075f359. `MODES="build L3" WORKERS=4 RUNS=3 run.sh layout "ecma262
+html5"` took 7 minutes, including building both drivers; seconds per
+repetition, best of three:
+
+| Page | Build seq | Build W4 | L3 W4 | Build and L3, W4 | Before | Speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| ecma262 | 0.0369 | 0.0274 | 0.0206 | 0.0480 | 0.0516 | 1.08 |
+| html5 | 0.0370 | 0.0224 | 0.0260 | 0.0484 | 0.0599 | 1.24 |
+
+- **Criterion 1: met.**
+- **Criterion 2: not met.** Both pages got faster at four workers, by
+  1.08 and 1.24 times, not 1.5. The bound asked for the ideal on ecma262
+  and more than it on html5: with the old builder's decoding share (80
+  percent) divided by four and nothing else changed, the totals give 1.50
+  and 1.45. The totals before add L2's layout time, measured in an earlier
+  run, and after L3's; the layout code did not change.
+- The sequential build became 34 percent slower on ecma262 and 21 percent
+  on html5. Callgrind on html5's build counts 396 million instructions
+  against 376 million before, 75 percent of them in `decode_pieces`, the
+  split loop's body, and 25 percent in the walk. At four workers the build
+  runs 1.35 (ecma262) and 1.65 (html5) times faster than sequentially,
+  against about 2.3 if the decoding loop divided by four. What costs the
+  difference is not measured: candidates are the second pass over the
+  text, one allocation per paragraph inside the split loop, and on ecma262
+  the 15 percent of the text outside the largest context, whose small
+  contexts decode during the walk.
+
+`KEEP_BUILD=1 MODES="parse traverse rules" WORKERS=4 RUNS=3 run.sh layout
+"ecma262 html5 apollo11"` took 5 minutes; seconds per repetition, best of
+three. A step's share is of the four-worker pipeline taken as the three
+steps' four-worker times, style C from the style measurement, the build and
+L3 layout from the runs above (apollo11's build from the first build
+measurement):
+
+| Page | Parse seq | Parse W4 | Traversal W4 | Rule store W4 | Shares at W4: parse, traversal, rule store |
+|---|---:|---:|---:|---:|---|
+| ecma262 | 0.1827 | 0.1907 | 0.0066 | 0.0043 | 18, 0.6, 0.4 % |
+| html5 | 0.1443 | 0.1473 | 0.0040 | 0.0031 | 12, 0.3, 0.3 % |
+| apollo11 | 0.0197 | 0.0200 | 0.0004 | 0.0185 | 4, 0.1, 3.6 % |
+
+- The `--par` build is no faster within the spread between runs: apollo11's
+  rule store and traversal took 7 and 10 percent less at four workers, the
+  other steps within 5 percent.
+- Parsing is the largest sequential cost on ecma262 and html5. On apollo11,
+  whose style sheets are large, the rule store costs about as much as
+  parsing; each repetition of `rules` also reads the sheet files again.
+- The repeated steps run after the first, with the atom table already
+  filled, and the three steps sum to about 0.20 s on ecma262 and 0.15 s on
+  html5, against the 0.29 and 0.23 s of the style measurement's T(0); what
+  the difference holds, such as reading the files, starting the process or
+  the first run's cold atom table, is not measured.
+- Traversal and the rule store are 14 to 34 percent of T(REPS), so their
+  times carry about 10 to 15 percent of T(0)'s spread.
+
+**Where the decoding loop loses its speedup.** The 1.5 of criterion 2 was
+the ideal on ecma262 and above it on html5 (see above). An exploratory run,
+one each before this criterion, put ecma262's build at 0.032 s at one
+worker, 0.028 at two and 0.024 at four, so the split loop scales far less
+than its 75 percent share allows. Each iteration allocates its paragraph's
+text inside the split loop. The experiment allocates it instead during the
+walk, at the capacity the pieces bound, and leaves the decoding work as it
+is.
+
+Criterion, written before measuring: the build stage at one, two and four
+workers and sequentially, best of three, on ecma262 and html5, before and
+after. If the four-worker time falls by at least a fifth on both pages,
+allocation inside the split loop is the cost, and the change stays;
+otherwise the cost lies elsewhere and the builder is left as it is.
+
+Results, `KEEP_BUILD=1 MODES=build WORKERS="1 2 4" RUNS=3 run.sh layout
+"ecma262 html5"` before (commit f8fbad0) and after (93c2aae), 4 minutes
+each; every page's result is unchanged. Build stage in seconds per
+repetition, best of three:
+
+| Page | | W1 | W2 | W4 | seq |
+|---|---|---:|---:|---:|---:|
+| ecma262 | before | 0.0324 | 0.0275 | 0.0239 | 0.0327 |
+| ecma262 | after | 0.0285 | 0.0262 | 0.0213 | 0.0318 |
+| html5 | before | 0.0343 | 0.0267 | 0.0205 | 0.0355 |
+| html5 | after | 0.0313 | 0.0229 | 0.0184 | 0.0310 |
+
+- **Criterion: not met.** The four-worker time fell by 11 percent on
+  ecma262 and 10 percent on html5, not a fifth.
+- W1 over W4 is 1.34 on ecma262 and 1.70 on html5 after, and 1.36 and
+  1.67 before. The gains at every worker count lie within the spread
+  between runs found below, so whether the allocations weighed on the
+  loop's scaling cannot be told from these runs. Read by Amdahl's law, the
+  ratios leave about 66 and 45 percent of the one-worker time outside the
+  split loop, far above the walk's 25 percent of the instructions.
+- Each paragraph's reserved text holds one 4-byte slot per byte and
+  inserted scalar value, and stays reserved after decoding; the memory this
+  costs is not measured.
+
+**The walk's own time.** `proto_layout walk REPS` builds the tree REPS more
+times without decoding it. Criterion, written before measuring: the walk's
+time at one and four workers and sequentially, best of three, on ecma262
+and html5. If the walk takes at least half of the one-worker build on
+either page, the walk, not the decoding loop, limits the build's speedup,
+and the builder's next change would be to the walk; otherwise the decoding
+loop itself scales poorly.
+
+Results at commit 075f359, `KEEP_BUILD=1 MODES="walk build" WORKERS="1 4"
+RUNS=3 run.sh layout "ecma262 html5"`, 6 minutes; every page's result is
+unchanged. Seconds per repetition, best of three; the decoding is the build
+less the walk:
+
+| Page | Walk W1 | Walk W4 | Walk seq | Build W1 | Build W4 | Decoding W1 | Decoding W4 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | 0.0151 | 0.0152 | 0.0155 | 0.0311 | 0.0238 | 0.0160 | 0.0086 |
+| html5 | 0.0118 | 0.0124 | 0.0122 | 0.0315 | 0.0193 | 0.0197 | 0.0069 |
+
+- **Criterion: not met,** narrowly on ecma262: the walk is 49 percent of
+  the one-worker build there and 37 percent on html5.
+- Both halves limit the build. The walk gains nothing from workers, and
+  since commit 93c2aae it also allocates every paragraph's text. All
+  decoding, the split loops and the small contexts' loops that run during
+  the walk, is 1.86 times faster at four workers on ecma262 and 2.86 on
+  html5; with 85 and 95 percent of the text in the largest context, it
+  could reach at most about 2.8 and 3.5. The walk's one-worker time plus
+  all decoding divided by four would give 0.0191 and 0.0167 s at four
+  workers.
+- **The allocation experiment's gain is within the noise.** The same
+  decoding code at commit 93c2aae (075f359 adds only the flag that skips
+  it) took 0.0213 and 0.0285 s at four and one workers on
+  ecma262 in the run before, against 0.0238 and 0.0311 here, and 0.0184
+  against 0.0193 at four workers on html5: two runs differ by 5 to 12
+  percent, as much as the 11 and 10 percent the experiment gained. Its
+  verdict, less than a fifth, stands either way.
+- Against the builder before decoding moved out of the walk (0.0288 and
+  0.0309 s at four workers), the build at four workers now takes 0.0213 to
+  0.0238 s on ecma262 and 0.0184 to 0.0193 s on html5.
+
+The raw output of every run in this section and the callgrind summaries are
+in `runs/`, with the checkout path removed. The runs with `KEEP_BUILD`
+reused drivers built from commit 7c9caf3 (setup and the allocation
+experiment's before), 93c2aae (after) and 075f359 (walk); `run.sh` now
+prints each driver's hash.
+
+**The owner's ruling.** Decoding after the walk stays, and the builder is
+left here: what the walk and the decoding loop could still give is a few
+milliseconds, under 1 percent of the four-worker pipeline. Parsing, the
+largest sequential step, is the next one studied.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
