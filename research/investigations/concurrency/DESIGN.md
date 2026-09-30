@@ -693,6 +693,21 @@ Parsing is the largest sequential cost on ecma262 and html5; on apollo11,
 whose style sheets are large, the rule store costs as much as parsing,
 each about 4 percent.
 
+**Where the decoding loop loses its speedup.** The 1.5 of criterion 2 was
+the ideal: the old builder's decoding share divided by four and nothing
+else changed. One run each on ecma262 put the build at 0.032 s at one
+worker, 0.028 at two and 0.024 at four, so the split loop scales far less
+than its 75 percent share allows. Each iteration allocates its paragraph's
+text inside the split loop. The experiment allocates it instead during the
+walk, at the capacity the pieces bound, and leaves the decoding work as it
+is.
+
+Criterion, written before measuring: the build stage at one, two and four
+workers and sequentially, best of three, on ecma262 and html5, before and
+after. If the four-worker time falls by at least a fifth on both pages,
+allocation inside the split loop is the cost, and the change stays;
+otherwise the cost lies elsewhere and the builder is left as it is.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
