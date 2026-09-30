@@ -11,8 +11,9 @@
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
 #                                stage in modes L1 and L2 by default (MODES
-#                                overrides the list, for instance with L3) on
-#                                every page, or on PAGE
+#                                overrides the list, for instance with L3, or
+#                                build for the context tree's construction)
+#                                on every page, or on PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
 # ecma262, html5, apollo11, flat, deep, unbalanced and paragraph.
@@ -123,6 +124,10 @@ reps_of() {
 # measured on the development machine. L3 keeps these counts, which leaves its
 # html5 stage at 0.87 s of T(REPS) 2.19 s.
 layout_reps_of() {
+	if [ "${2:-}" = build ]; then
+		build_reps_of "$1"
+		return
+	fi
 	case $1 in
 	ecma262) echo 100 ;;
 	html5) echo 30 ;;
@@ -131,6 +136,19 @@ layout_reps_of() {
 	deep) echo 200 ;;
 	unbalanced) echo 20 ;;
 	paragraph) echo 10 ;;
+	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
+	esac
+}
+
+# Repetitions of the build stage (proto_layout build), chosen so the stage
+# is at least half of T(REPS) in the sequential build: T(0) is 1.8 to 4 s
+# there and one build took about 0.032 s on html5, measured on the
+# development machine.
+build_reps_of() {
+	case $1 in
+	ecma262 | html5 | flat | unbalanced) echo 200 ;;
+	apollo11 | deep) echo 2000 ;;
+	paragraph) echo 100 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
 }
@@ -346,8 +364,8 @@ layout() {
 		sheets=$(sheets_of "$page")
 		counts=$(build/proto_layout check 1 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5, $6, $7, $8, $9, $12, $13, $17, $18, $19, $20, $21, $22 }')
 		echo "# $page: $counts"
-		reps=${2:-$(layout_reps_of "$page")}
 		for layout_mode in $modes; do
+			reps=${2:-$(layout_reps_of "$page" "$layout_mode")}
 			for mode in $workers seq; do
 				zero=$(best "$mode" "$layout_mode" 0 "$file" "$ua" $sheets)
 				full=$(best "$mode" "$layout_mode" "$reps" "$file" "$ua" $sheets)

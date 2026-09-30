@@ -564,6 +564,32 @@ percent.
   at most about that share on these pages. It stays unbuilt; the synthetic
   one-paragraph page is the case it would serve.
 
+### Box tree construction
+
+With L3, layout's stage is a quarter of its sequential time on html5 and
+apollo11, so building the context tree (`build_layout`), which every
+layout run needs first and which runs in sequence, may now cost as much as
+laying the tree out. `proto_layout build REPS` builds the tree REPS more
+times after the first, so its stage time is measured like the others.
+
+**Where its dependencies are.** The builder walks the document in tree
+order. Within one context, text joins the open paragraph with whitespace
+collapsed against the scalar before it, and flow items are appended in
+order, so a context's own walk is a chain. A child context depends only on
+its element and its width, which comes from the enclosing context's width
+alone, so building it depends on nothing its siblings or the enclosing walk
+produce: child contexts are independent work, as they are in layout. The
+preorder map from node to style index is a scatter whose independence
+needs a permutation proof Whitefoot does not derive.
+
+Criterion, written before measuring: the build stage is timed in the
+sequential build and at four workers on the three real pages. If its
+sequential time exceeds L3's four-worker layout stage on any of them, the
+builder is the next sequential cost of layout, and a design that builds
+the tree along its true dependencies goes to the owner before any change;
+otherwise it waits behind the larger stages. The measurement runs in under
+ten minutes.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
