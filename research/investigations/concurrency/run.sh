@@ -12,7 +12,8 @@
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
 #                                stage in modes L1 and L2 by default (MODES
 #                                overrides the list, for instance with L3,
-#                                build for the context tree's construction or
+#                                build and walk for the context tree's
+#                                construction, with and without decoding, or
 #                                parse, traverse and rules for setup) on
 #                                every page, or on PAGE
 #
@@ -127,7 +128,7 @@ reps_of() {
 # html5 stage at 0.87 s of T(REPS) 2.19 s.
 layout_reps_of() {
 	case ${2:-} in
-	build | parse | traverse | rules)
+	build | walk | parse | traverse | rules)
 		setup_reps_of "$1" "$2"
 		return
 		;;
