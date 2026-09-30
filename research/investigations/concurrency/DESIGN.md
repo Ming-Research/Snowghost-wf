@@ -893,6 +893,28 @@ per element.
 
 The raw summary is in `runs/11-callgrind-style-58fa8ee.txt`.
 
+**A rule index** (the owner's choice). Each alternative of a rule's selector
+list keys the rule by its subject compound, the rightmost one: by its id if
+it has one, else its first class, else its type, each as a hash of the
+name's ASCII-lowercased bytes; a rule with an alternative that has none of
+them goes to a list tested against every element, and an alternative that
+never matches keys nothing. An element tests only the rules under the
+hashes of its own id, its class words and its local name, and that list,
+with the same `selector_matches` as before. A rule it skips has no
+alternative whose subject names the element's id, a class of it or its
+type, even ignoring case and namespace, so it cannot match: the matched
+rules, and so the cascade, are exactly those of matching every rule, and
+hash collisions only add rules to test.
+
+Criteria, written before measuring:
+
+1. **Equality.** `proto_style check` passes on all seven pages (shapes A, B
+   and C agree and the intern pass is sound), and every page's style
+   checksum in shape C equals the one before the change.
+2. **Speedup.** Shape C's style stage at four workers is at least 3 times
+   faster on ecma262 and on html5 than before, measured in the same run
+   against the previous driver.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
