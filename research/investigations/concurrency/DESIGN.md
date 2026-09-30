@@ -915,6 +915,34 @@ Criteria, written before measuring:
    faster on ecma262 and on html5 than before, measured in the same run
    against the previous driver.
 
+**Results.** At Snowghost commit ec21b7c. `proto_style check` passes on all
+seven pages, and every page's shape C checksum equals the one of the driver
+built from 7e2ada4, before the index (`runs/12-style-check.txt`). A build
+whose index skips the class buckets fails the check on ecma262 ("A differs
+from C at preorder element 59"). `--par-ledger` still splits
+`match_elements`. A one-shot script under the lock
+(`runs/13-style-index-script.sh.txt`) timed shape C with five repetitions,
+best of three, both drivers in the same run (`runs/13-style-index-ec21b7c.txt`),
+seconds per repetition:
+
+| Page | Rules | Before, W4 | After, W4 | Speedup | Before, seq | After, seq |
+|---|---:|---:|---:|---:|---:|---:|
+| ecma262 | 336 | 0.696 | 0.218 | 3.19 | 2.568 | 0.698 |
+| html5 | 324 | 0.942 | 0.734 | 1.28 | 3.522 | 2.710 |
+| apollo11 | 1,558 | 0.416 | 0.198 | 2.10 | 1.512 | 0.792 |
+
+- **Criterion 1: met.**
+- **Criterion 2: met on ecma262, not on html5.**
+- **What html5 spends its time on.** Callgrind on html5's shape C with
+  the index (`runs/14-callgrind-style-html5-ec21b7c.txt`): 24,587 million
+  instructions, 61 percent in `nth_scan` and 18 in `nth_qualifies`, which
+  evaluate `:nth-child` and `:nth-of-type` by counting the element's
+  siblings each time, so a rule of that kind costs time in proportion to
+  the element's position among its siblings, which points to long sibling
+  runs on html5; their lengths are not measured. The index cannot remove
+  those tests, since such a rule's subject is a common type or none, and
+  the rest of matching is about 20 percent.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
