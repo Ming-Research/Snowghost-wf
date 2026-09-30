@@ -148,11 +148,12 @@ layout_reps_of() {
 # of the setup steps (parse, traverse, rules), chosen so the step is at least
 # half of T(REPS) in the sequential build: T(0) is 1.6 to 4 s there, and on
 # html5 one build took about 0.032 s, one parse 0.14 s, and the traversal
-# arrays and the rule store under 0.03 s each, measured on the development
-# machine.
+# arrays and the rule store under 0.03 s each, and apollo11's rule store,
+# from its large sheets, 0.018 s, measured on the development machine.
 setup_reps_of() {
 	case $2 in
-	parse) small=30 large=300 ;;
+	parse) small=30 large=100 ;;
+	rules) small=200 large=200 ;;
 	*) small=200 large=2000 ;;
 	esac
 	case $1 in

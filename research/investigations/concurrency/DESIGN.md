@@ -651,6 +651,48 @@ times. Their sequential times on the three real pages and their shares of
 the four-worker pipeline are recorded; no threshold selects among them,
 and the largest names the next sequential cost to study.
 
+**Results.** At Snowghost commit 7c9caf3 with the same pin, machine and
+lock. Every page's paragraph and scalar value counts, root height and
+checksum equal the ones above in both builds, and `--par-ledger` splits
+`decode_all` as an independent map. `MODES="build L3" WORKERS=4 RUNS=3
+run.sh layout "ecma262 html5"` took 7 minutes, including building both
+drivers; seconds per repetition, best of three:
+
+| Page | Build seq | Build W4 | L3 W4 | Build and L3, W4 | Before | Speedup |
+|---|---:|---:|---:|---:|---:|---:|
+| ecma262 | 0.0369 | 0.0274 | 0.0206 | 0.0480 | 0.0516 | 1.08 |
+| html5 | 0.0370 | 0.0224 | 0.0260 | 0.0484 | 0.0599 | 1.24 |
+
+- **Criterion 1: met.**
+- **Criterion 2: not met.** Both pages got faster at four workers, by
+  1.08 and 1.24 times, not 1.5.
+- The sequential build became 34 percent slower on ecma262 and 21 percent
+  on html5. Callgrind on html5's build counts 396 million instructions
+  against 376 million before, 75 percent of them in `decode_pieces`, the
+  split loop's body, and 25 percent in the walk. At four workers the build
+  runs 1.35 (ecma262) and 1.65 (html5) times faster than sequentially,
+  against about 2.3 if the decoding loop divided by four. What costs the
+  difference is not measured: candidates are the second pass over the
+  text, one allocation per paragraph inside the split loop, and on ecma262
+  the 15 percent of the text outside the largest context, whose small
+  contexts decode during the walk.
+
+`KEEP_BUILD=1 MODES="parse traverse rules" WORKERS=4 RUNS=3 run.sh layout
+"ecma262 html5 apollo11"` took 5 minutes; seconds per repetition, best of
+three, with the step's share of the four-worker pipeline (setup, style C
+from the style measurement, build and L3 layout):
+
+| Page | Parse seq | Parse W4 | Traversal seq | Rule store seq | Parse's share at W4 |
+|---|---:|---:|---:|---:|---:|
+| ecma262 | 0.1827 | 0.1907 | 0.0067 | 0.0041 | 18 % |
+| html5 | 0.1443 | 0.1473 | 0.0042 | 0.0029 | 12 % |
+| apollo11 | 0.0197 | 0.0200 | 0.0004 | 0.0198 | 4 % |
+
+The `--par` build runs each step no faster than the sequential one.
+Parsing is the largest sequential cost on ecma262 and html5; on apollo11,
+whose style sheets are large, the rule store costs as much as parsing,
+each about 4 percent.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
