@@ -736,6 +736,36 @@ either page, the walk, not the decoding loop, limits the build's speedup,
 and the builder's next change would be to the walk; otherwise the decoding
 loop itself scales poorly.
 
+Results at commit 075f359, `KEEP_BUILD=1 MODES="walk build" WORKERS="1 4"
+RUNS=3 run.sh layout "ecma262 html5"`, 6 minutes; every page's result is
+unchanged. Seconds per repetition, best of three; the decoding is the build
+less the walk:
+
+| Page | Walk W1 | Walk W4 | Walk seq | Build W1 | Build W4 | Decoding W1 | Decoding W4 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | 0.0151 | 0.0152 | 0.0155 | 0.0311 | 0.0238 | 0.0160 | 0.0086 |
+| html5 | 0.0118 | 0.0124 | 0.0122 | 0.0315 | 0.0193 | 0.0197 | 0.0069 |
+
+- **Criterion: not met,** narrowly on ecma262: the walk is 49 percent of
+  the one-worker build there and 37 percent on html5.
+- Both halves limit the build. The walk gains nothing from workers, and
+  since commit 93c2aae it also allocates every paragraph's text; the
+  decoding loop runs 1.86 times faster at four workers on ecma262 and 2.86
+  on html5. With the walk as it is, a decoding loop that divided by four
+  would give 0.0191 and 0.0167 s at four workers.
+- **The allocation experiment's gain is within the noise.** The same build
+  at commit 93c2aae took 0.0213 and 0.0285 s at four and one workers on
+  ecma262 in the run before, against 0.0238 and 0.0311 here, and 0.0184
+  against 0.0193 at four workers on html5: two runs of the same code differ
+  by 5 to 12 percent, as much as the 10 and 11 percent the experiment
+  gained. Its verdict, less than a fifth, stands either way.
+- Against the builder before decoding moved out of the walk (0.0288 and
+  0.0309 s at four workers), the build at four workers now takes 0.0213 to
+  0.0238 s on ecma262 and 0.0184 to 0.0193 s on html5.
+
+The raw output of every run in this section and the callgrind summaries are
+in `runs/`, with the checkout path removed.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
