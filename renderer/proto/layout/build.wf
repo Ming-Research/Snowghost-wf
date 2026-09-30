@@ -99,10 +99,11 @@ fn push_item<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> pushed: B
 fn empty_context(width: u64) -> made: Context pure {
   doc "Returns a context of the given width that holds nothing and has not been laid out.";
   let flow = box_slots_new::<Flow>(capacity: 0_u64);
+  let pieces = box_slots_new::<Piece>(capacity: 0_u64);
   let paragraphs = box_slots_new::<Paragraph>(capacity: 0_u64);
   let children = box_slots_new::<Context>(capacity: 0_u64);
   let floated = False();
-  return Context(width: width, floated: floated, flow: move flow, paragraphs: move paragraphs, children: move children, height: 0_u64, rebroken: 0_u64, rebroken_scalars: 0_u64);
+  return Context(width: width, floated: floated, flow: move flow, pieces: move pieces, paragraphs: move paragraphs, children: move children, height: 0_u64, rebroken: 0_u64, rebroken_scalars: 0_u64);
 }
 
 fn is_collapsible(value: u32) -> collapsible: Bool pure {
@@ -119,8 +120,8 @@ fn is_collapsible(value: u32) -> collapsible: Bool pure {
   return collapsible;
 }
 
-fn add_scalar(open: &Open, value: u32) -> added: Bool writes(open) {
-  doc "Adds value to the open paragraph, a collapsible character as a pending space that the next other scalar value writes and that is dropped at a paragraph's start. False when the paragraph would pass scalar_ceiling.";
+fn add_scalar(open: &Decoding, value: u32) -> added: Bool writes(open) {
+  doc "Adds value to the paragraph being decoded, a collapsible character as a pending space that the next other scalar value writes and that is dropped at a paragraph's start. False when the paragraph would pass scalar_ceiling.";
   let collapsible = is_collapsible(value: value);
   if collapsible {
     let started = open^.text.inner.len > 0_u64;
@@ -152,8 +153,8 @@ fn continuation(byte: u8) -> bits: Option<u32> pure {
   return None<u32>();
 }
 
-fn add_text(open: &Open, bytes: &[u8]) -> added: Bool reads(bytes), writes(open) {
-  doc "Adds the scalar values of bytes, decoded from UTF-8, to the open paragraph; a byte that starts no well-formed sequence of at most four bytes adds U+FFFD and decoding resumes at the next byte. Overlong forms and surrogates are not rejected: the prototype only counts widths. False when the paragraph would pass scalar_ceiling.";
+fn add_text(open: &Decoding, bytes: &[u8]) -> added: Bool reads(bytes), writes(open) {
+  doc "Adds the scalar values of bytes, decoded from UTF-8, to the paragraph being decoded; a byte that starts no well-formed sequence of at most four bytes adds U+FFFD and decoding resumes at the next byte. Overlong forms and surrogates are not rejected: the prototype only counts widths. False when the paragraph would pass scalar_ceiling.";
   let count = bytes^.len;
   let skip = 0_u64;
   for (at in 0_u64..count) {
@@ -231,21 +232,20 @@ fn add_text(open: &Open, bytes: &[u8]) -> added: Bool reads(bytes), writes(open)
 }
 
 fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
-  doc "Moves the open paragraph, when it holds a scalar value, into context's paragraphs and flow, and starts an empty one.";
-  set open^.space = False();
-  let length = open^.text.inner.len;
-  if length == 0_u64 {
+  doc "Moves the open paragraph, when it holds a piece, into context's paragraphs and flow, and starts an empty one after its pieces.";
+  let recorded = context^.pieces.inner.len;
+  let first = open^.first;
+  let started = first < recorded;
+  if started {
+  } else {
+    set open^.first = recorded;
+    set open^.size = 0_u64;
     return Ok<unit, LayoutError>(value: unit);
   }
-  let fits = length <= scalar_ceiling;
-  if fits {
-  } else {
-    return too_large::<unit>();
-  }
-  let made = box_slots_new::<u32>(capacity: length);
-  split_off(source: &open^.text.inner, index: 0_u64, destination: &made.inner);
+  let count = recorded - first;
+  let empty = box_slots_new::<u32>(capacity: 0_u64);
   let index = context^.paragraphs.inner.len;
-  let paragraph = Paragraph(text: move made, lines: 0_u64);
+  let paragraph = Paragraph(text: move empty, first: first, count: count, lines: 0_u64);
   let kept = push_item::<Paragraph>(cell: &context^.paragraphs, value: move paragraph, ceiling: item_ceiling);
   if kept {
   } else {
@@ -257,7 +257,140 @@ fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutE
   } else {
     return too_large::<unit>();
   }
+  set open^.first = recorded;
+  set open^.size = 0_u64;
   return Ok<unit, LayoutError>(value: unit);
+}
+
+fn holds_scalar(bytes: &[u8]) -> holds: Bool reads(bytes) {
+  doc "Tells whether bytes hold a byte other than tab, line feed, form feed, carriage return and space, so that their decoding holds a scalar value that does not collapse.";
+  let count = bytes^.len;
+  for (at in 0_u64..count) {
+    let value = cvt::<u8, u32>(bytes^[at]);
+    let collapsible = is_collapsible(value: value);
+    if collapsible {
+    } else {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+  doc "Appends piece, standing for at most size scalar values, to the open paragraph; TooLarge when the paragraph would pass scalar_ceiling.";
+  let big = size > scalar_ceiling;
+  if big {
+    return too_large::<unit>();
+  }
+  let total = open^.size +wrap size;
+  let over = total > scalar_ceiling;
+  if over {
+    return too_large::<unit>();
+  }
+  let kept = push_item::<Piece>(cell: &context^.pieces, value: piece, ceiling: item_ceiling);
+  if kept {
+  } else {
+    return too_large::<unit>();
+  }
+  set open^.size = total;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn gather_text(context: &Context, open: &Open, bytes: &[u8], start: u64, end: u64) -> result: Result<unit, LayoutError> reads(bytes), writes(context), writes(open) {
+  doc "Adds a text node's bytes, found at start to end of the document's text, to the open paragraph as one piece; before the paragraph's first piece, bytes that are only collapsible characters add none, since decoding drops them.";
+  let count = bytes^.len;
+  if count == 0_u64 {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let started = open^.first < context^.pieces.inner.len;
+  if started {
+  } else {
+    let holds = holds_scalar(bytes: bytes);
+    if holds {
+    } else {
+      return Ok<unit, LayoutError>(value: unit);
+    }
+  }
+  let piece = Piece::Bytes(start: start, end: end);
+  let step_1 = propagate add_piece(context: context, open: open, piece: piece, size: count);
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn gather_scalar(context: &Context, open: &Open, value: u32) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+  doc "Adds one scalar value to the open paragraph as a piece.";
+  let piece = Piece::Scalar(value: value);
+  let step_1 = propagate add_piece(context: context, open: open, piece: piece, size: 1_u64);
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn decode_pieces(pieces: &[Piece], text: &[u8]) -> made: Box<Slots<u32>> reads(pieces), reads(text) {
+  doc "Decodes pieces in order, each text node's bytes from UTF-8 and each inserted scalar value as itself, with whitespace collapsed as add_scalar collapses it, into a paragraph's scalar values; the paragraph ends without its pending space.";
+  let count = pieces^.len;
+  let stored = text^.len;
+  let size = 0_u64;
+  for (at in 0_u64..count) {
+    let piece = pieces^[at];
+    match piece {
+      Bytes(start: from, end: to) => {
+        let ordered = from <= to;
+        if ordered {
+          let length = to - from;
+          set size = size +wrap length;
+        }
+      }
+      Scalar(value: one) => {
+        set size = size +wrap 1_u64;
+      }
+    }
+  }
+  let small = size <= scalar_ceiling;
+  let capacity = if small {
+    give size;
+  } else {
+    give scalar_ceiling;
+  }
+  let empty = box_slots_new::<u32>(capacity: capacity);
+  let unspaced = False();
+  let decoding = Decoding(text: move empty, space: unspaced);
+  for (at in 0_u64..count) {
+    let piece = pieces^[at];
+    match piece {
+      Bytes(start: from, end: to) => {
+        let ordered = from <= to;
+        let inside = to <= stored;
+        let usable = band(ordered, inside);
+        if usable {
+          let added = add_text(open: &decoding, bytes: &text^[from..to]);
+        }
+      }
+      Scalar(value: one) => {
+        let added = add_scalar(open: &decoding, value: one);
+      }
+    }
+  }
+  let Decoding(text: made, space: pending) = move decoding;
+  return move made;
+}
+
+fn decode_all(paragraphs: &[Paragraph], pieces: &[Piece], text: &[u8]) -> result: unit reads(pieces), reads(text), writes(paragraphs) {
+  doc "The decoding loop: iteration i decodes paragraph i's pieces and writes only its own text.";
+  let count = paragraphs^.len;
+  let total = pieces^.len;
+  for (i in 0_u64..count) {
+    let first = paragraphs^[i].first;
+    let many = paragraphs^[i].count;
+    let ahead = first <= total;
+    if ahead {
+      let room = total - first;
+      let fits = many <= room;
+      if fits {
+        let end = first + many;
+        let made = decode_pieces(pieces: &pieces^[first..end], text: text);
+        set paragraphs^[i].text = move made;
+      }
+    }
+  }
+  return unit;
 }
 
 fn margin_of(tag: u32) -> margin: u64 pure {
@@ -392,11 +525,13 @@ fn place(boxing: Boxing, item: Bool) -> placement: Placement pure {
 fn build_context(document: &Document, styles: &Styles, order: &[u32], node: NodeId, width: u64, item: Bool) -> result: Result<Context, LayoutError> reads(document), reads(styles), reads(order) {
   doc "Builds the context that node's children fill, width wide, item telling whether they are flex or grid items.";
   let context = empty_context(width: width);
-  let empty = box_slots_new::<u32>(capacity: 0_u64);
-  let unspaced = False();
-  let open = Open(text: move empty, space: unspaced);
+  let open = Open(first: 0_u64, size: 0_u64);
   let step_1 = propagate build_children(document: document, styles: styles, order: order, parent: node, item: item, context: &context, open: &open);
   let step_2 = propagate end_paragraph(context: &context, open: &open);
+  let paragraphs = context.paragraphs.inner.len;
+  let pieces = context.pieces.inner.len;
+  let stored = document^.text.inner.len;
+  decode_all(paragraphs: &context.paragraphs.inner[0_u64..paragraphs], pieces: &context.pieces.inner[0_u64..pieces], text: &document^.text.inner[0_u64..stored]);
   return Ok<Context, LayoutError>(value: move context);
 }
 
@@ -439,11 +574,7 @@ fn build_children(document: &Document, styles: &Styles, order: &[u32], parent: N
         } else {
           return inconsistent::<unit>();
         }
-        let added = add_text(open: open, bytes: &document^.text.inner[start..end]);
-        if added {
-        } else {
-          return too_large::<unit>();
-        }
+        let step_2 = propagate gather_text(context: context, open: open, bytes: &document^.text.inner[start..end], start: start, end: end);
       }
       Element(local_name: name, ..) => {
         let step_3 = propagate build_element(document: document, styles: styles, order: order, node: node, tag: name^.index, item: item, context: context, open: open);
@@ -494,11 +625,8 @@ fn build_element(document: &Document, styles: &Styles, order: &[u32], node: Node
     return Ok<unit, LayoutError>(value: unit);
   }
   if tag == atom_br {
-    let added = add_scalar(open: open, value: line_separator);
-    if added {
-      return Ok<unit, LayoutError>(value: unit);
-    }
-    return too_large::<unit>();
+    let step_10 = propagate gather_scalar(context: context, open: open, value: line_separator);
+    return Ok<unit, LayoutError>(value: unit);
   }
   let items = is_container(display: boxing.display);
   let placement = place(boxing: boxing, item: item);
@@ -544,11 +672,7 @@ fn build_element(document: &Document, styles: &Styles, order: &[u32], node: Node
         }
       }
       Atomic() => {
-        let added = add_scalar(open: open, value: object_mark);
-        if added {
-        } else {
-          return too_large::<unit>();
-        }
+        let step_11 = propagate gather_scalar(context: context, open: open, value: object_mark);
       }
       Inline() => {
       }

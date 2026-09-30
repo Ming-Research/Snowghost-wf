@@ -11,9 +11,10 @@
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
 #                                stage in modes L1 and L2 by default (MODES
-#                                overrides the list, for instance with L3, or
-#                                build for the context tree's construction)
-#                                on every page, or on PAGE
+#                                overrides the list, for instance with L3,
+#                                build for the context tree's construction or
+#                                parse, traverse and rules for setup) on
+#                                every page, or on PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
 # ecma262, html5, apollo11, flat, deep, unbalanced and paragraph.
@@ -29,7 +30,8 @@
 #
 # layout prints the same columns with the mode (L1, L2 or L3) in place of the
 # shape; its T(0) also holds styling and building the context tree, and its
-# check compares L1, L2 and L3 and reports L3's fix-up totals.
+# check compares L1, L2 and L3 and reports L3's fix-up totals. With KEEP_BUILD
+# set, layout times the drivers already in build/ instead of building them.
 #
 # The drivers are built with WHITEFOOTC (by default the pinned compiler's gate
 # build, as the Makefile builds it).
@@ -124,10 +126,12 @@ reps_of() {
 # measured on the development machine. L3 keeps these counts, which leaves its
 # html5 stage at 0.87 s of T(REPS) 2.19 s.
 layout_reps_of() {
-	if [ "${2:-}" = build ]; then
-		build_reps_of "$1"
+	case ${2:-} in
+	build | parse | traverse | rules)
+		setup_reps_of "$1" "$2"
 		return
-	fi
+		;;
+	esac
 	case $1 in
 	ecma262) echo 100 ;;
 	html5) echo 30 ;;
@@ -140,14 +144,20 @@ layout_reps_of() {
 	esac
 }
 
-# Repetitions of the build stage (proto_layout build), chosen so the stage
-# is at least half of T(REPS) in the sequential build: T(0) is 1.8 to 4 s
-# there and one build took about 0.032 s on html5, measured on the
-# development machine.
-build_reps_of() {
+# Repetitions of the context tree's construction (proto_layout build) and
+# of the setup steps (parse, traverse, rules), chosen so the step is at least
+# half of T(REPS) in the sequential build: T(0) is 1.6 to 4 s there, and on
+# html5 one build took about 0.032 s, one parse 0.14 s, and the traversal
+# arrays and the rule store under 0.03 s each, measured on the development
+# machine.
+setup_reps_of() {
+	case $2 in
+	parse) small=30 large=300 ;;
+	*) small=200 large=2000 ;;
+	esac
 	case $1 in
-	ecma262 | html5 | flat | unbalanced) echo 200 ;;
-	apollo11 | deep) echo 2000 ;;
+	ecma262 | html5 | flat | unbalanced) echo "$small" ;;
+	apollo11 | deep) echo "$large" ;;
 	paragraph) echo 100 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
@@ -354,7 +364,9 @@ layout() {
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh "$here/run.sh" layout "$@"
 	fi
-	build_layout
+	if [ -z "${KEEP_BUILD:-}" ] || [ ! -x build/proto_layout ] || [ ! -x build/proto_layout_seq ]; then
+		build_layout
+	fi
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
 	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
