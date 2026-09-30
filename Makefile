@@ -92,7 +92,7 @@ oracle-html-tokenizer: $(BUILD)/html_tokenizer_oracle
 	@cd $(ROOT) && $(PY) -B tests/html/oracle.py build/oracle/html5lib $<
 
 oracle-html-tree: $(BUILD)/html_tree_oracle
-	@cd $(ROOT) && $(PY) -B tests/html/tree_oracle.py build/oracle/wpt-parsing $<
+	@cd $(ROOT) && $(PY) -B tests/html/tree_oracle.py build/oracle/wpt-parsing $< tests/html/tree-local.dat
 
 oracle-css-rules: $(BUILD)/css_rules_oracle
 	@cd $(ROOT) && $(PY) -B tests/css/rules_oracle.py build/oracle/css $<
