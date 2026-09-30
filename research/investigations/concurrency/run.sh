@@ -120,7 +120,8 @@ reps_of() {
 # at least two thirds of T(REPS) with the --par build at four workers in L2,
 # where T(0) holds styling at four workers (1.2 s on ecma262, 1.4 s on html5,
 # 0.5 s on apollo11) and a repetition took 0.028, 0.10 and 0.0075 s,
-# measured on the development machine.
+# measured on the development machine. L3 keeps these counts, which leaves its
+# html5 stage at 0.87 s of T(REPS) 2.19 s.
 layout_reps_of() {
 	case $1 in
 	ecma262) echo 100 ;;

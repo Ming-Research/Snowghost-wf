@@ -527,9 +527,10 @@ percent.
 - **Criterion 1: met.**
 - **Criterion 2: met,** 3.31 on html5 and 2.94 on apollo11.
 - **Criterion 3: below the bound.** The fix-up breaks again at most 0.52
-  percent of the paragraphs and 2.14 percent of the scalar values. html5's
-  three floats narrow no paragraph: each ends above the next paragraph's
-  top, so what kept L2 at 0.87 there was only its float-free rule.
+  percent of the paragraphs and 2.14 percent of the scalar values. On html5
+  every paragraph starts at or below the lowest bottom of the floats placed
+  before it, so its three floats narrow no paragraph, and what kept L2 at
+  0.87 there was only its float-free rule.
 - **Criterion 4.** The largest paragraph is at most 1.07 percent of a real
   page's text, so no paragraph comes near a quarter of the stage at four
   workers, and breaking inside a paragraph would gain nothing on these
