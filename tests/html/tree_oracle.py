@@ -1,9 +1,10 @@
 """The HTML tree construction oracle: runs the Whitefoot driver over the
 html5lib tree-construction tests that WPT now hosts.
 
-    python3 tests/html/tree_oracle.py TESTS_DIR DRIVER
+    python3 tests/html/tree_oracle.py TESTS_DIR DRIVER [LOCAL.dat...]
 
-Reads every `.dat` file in TESTS_DIR, writes the cases to a case file
+Reads every `.dat` file in TESTS_DIR, then each LOCAL file, cases the
+upstream tests lack (tests/html/tree-local.dat), writes the cases to a case file
 beside them and runs DRIVER on it from the repository root. Per case the
 case file holds a header line "SCRIPTING CONTEXT_LENGTH INPUT_LENGTH", the
 fragment context's bytes (empty for a document; otherwise "td" or
@@ -15,11 +16,16 @@ one line per node or attribute, then a line holding only `#end`. Parse
 errors are not compared.
 
 Files in EXCLUDED and cases in EXCLUDED_CASES are not run, each for the
-reason given; the summary line counts them.
+reason given; the summary line counts them. A driver that has not finished
+after DRIVER_SECONDS fails the run, since a parse that does not end is a
+defect of its own.
 """
 
 import os
+import subprocess
 import sys
+
+DRIVER_SECONDS = 600
 
 EXCLUDED = {
     # The standard's newer processing instruction nodes; the tokenizer's
@@ -93,26 +99,29 @@ def parse_file(path):
 
 
 def main():
-    tests_dir, driver = sys.argv[1], sys.argv[2]
+    tests_dir, driver, local = sys.argv[1], sys.argv[2], sys.argv[3:]
     cases = []
     excluded = 0
-    for name in sorted(os.listdir(tests_dir)):
-        if name.endswith(".dat"):
-            found = parse_file(os.path.join(tests_dir, name))
-            if name in EXCLUDED:
-                excluded += len(found)
-                continue
-            for case in found:
-                if case[0] in EXCLUDED_CASES:
-                    excluded += 1
-                else:
-                    cases.append(case)
+    paths = [os.path.join(tests_dir, name) for name in sorted(os.listdir(tests_dir)) if name.endswith(".dat")]
+    for path in paths + local:
+        found = parse_file(path)
+        if os.path.basename(path) in EXCLUDED:
+            excluded += len(found)
+            continue
+        for case in found:
+            if case[0] in EXCLUDED_CASES:
+                excluded += 1
+            else:
+                cases.append(case)
     cases_path = os.path.join(tests_dir, "cases.bin")
     with open(cases_path, "wb") as file:
         for _, scripting, context, data, _ in cases:
             file.write(b"%d %d %d\n%s%s\n" % (scripting, len(context), len(data), context, data))
-    import subprocess
-    run = subprocess.run([driver, os.path.relpath(cases_path)], capture_output=True)
+    try:
+        run = subprocess.run([driver, os.path.relpath(cases_path)], capture_output=True, timeout=DRIVER_SECONDS)
+    except subprocess.TimeoutExpired:
+        print(f"html_tree: the driver did not finish within {DRIVER_SECONDS} s on {len(cases)} cases")
+        return 1
     outputs, current = [], []
     for line in run.stdout.split(b"\n"):
         if line == b"#end":
