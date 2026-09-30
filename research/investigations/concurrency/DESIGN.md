@@ -795,6 +795,11 @@ reused drivers built from commit 7c9caf3 (setup and the allocation
 experiment's before), 93c2aae (after) and 075f359 (walk); `run.sh` now
 prints each driver's hash.
 
+**The owner's ruling.** Decoding after the walk stays, and the builder is
+left here: what the walk and the decoding loop could still give is a few
+milliseconds, under 1 percent of the four-worker pipeline. Parsing, the
+largest sequential step, is the next one studied.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
