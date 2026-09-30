@@ -963,6 +963,35 @@ Criteria, written before measuring:
    3 times faster than with the rule index alone (0.734 s), measured in the
    same run against that driver, and no slower on ecma262 and apollo11.
 
+**Results.** Commit aacd878 walked each parent's children with a counted
+loop that ran to the node count whatever the list's length, work in
+proportion to the square of the nodes, and a first timing run stopped at
+its ten-minute limit; 0c66df9 leaves the walk at the last sibling. At
+0c66df9, `proto_style check` passes on all seven pages with every shape C
+checksum unchanged (`runs/16-style-check-0c66df9.txt`), and a build whose
+child positions are off by one fails the check on html5 and ecma262 ("A
+differs from C"). `--par-ledger` still splits `match_elements`. The
+one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
+with the rule index alone (ec21b7c) and with positions too (0c66df9) in one
+run, five repetitions, best of three (`runs/15-style-positions-0c66df9.txt`),
+seconds per repetition:
+
+| Page | Index, W4 | Positions, W4 | Speedup | Index, seq | Positions, seq |
+|---|---:|---:|---:|---:|---:|
+| ecma262 | 0.210 | 0.224 | 0.94 | 0.700 | 0.700 |
+| html5 | 0.730 | 0.180 | 4.06 | 2.600 | 0.578 |
+| apollo11 | 0.206 | 0.202 | 1.02 | 0.756 | 0.754 |
+
+- **Criterion 1: met.**
+- **Criterion 2: met on html5, not on ecma262,** which is 7 percent slower
+  at four workers and as fast sequentially. The position pass runs in
+  sequence before the parallel matching loop, so what it costs is not
+  divided among the workers, and ecma262 has little sibling counting for
+  it to save; the pass's own time is not measured.
+- Against shape C before the rule index, style at four workers now takes
+  0.224 s on ecma262 (0.696 s before), 0.180 s on html5 (0.942 s) and
+  0.202 s on apollo11 (0.416 s), each from its own run.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
