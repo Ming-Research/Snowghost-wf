@@ -967,17 +967,17 @@ Criteria, written before measuring:
 
 **Results.** Commit aacd878 walked each parent's children with a counted
 loop that ran to the node count whatever the list's length, work in
-proportion to the square of the nodes, and a first timing run stopped at
-its ten-minute limit; 0c66df9 leaves the walk at the last sibling. At
-0c66df9, `proto_style check` passes on all seven pages with every shape C
-checksum unchanged (`runs/16-style-check-0c66df9.txt`), and a build whose
-child positions are off by one fails the check on html5 and ecma262 ("A
-differs from C", `runs/17-negative-controls.txt`; that build is aacd878's
-code with the change the file names). `--par-ledger` still splits
-`match_elements`. The one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
+proportion to the square of the nodes, and a first timing run stopped at its
+ten-minute limit; 0c66df9 leaves the walk at the last sibling. At 0c66df9,
+`proto_style check` passes on all seven pages with every shape C checksum
+unchanged (`runs/16-style-check-0c66df9.txt`), and a build whose child
+positions are off by one fails the check on html5 and ecma262 ("A differs
+from C", `runs/17-negative-controls.txt`; that build is aacd878's code with
+the change the file names). `--par-ledger` still splits `match_elements`.
+The one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
 with the rule index alone (ec21b7c) and with positions too (0c66df9) in one
-run, five repetitions, best of three (`runs/15-style-positions-0c66df9.txt`),
-seconds per repetition:
+run, five repetitions, best of three
+(`runs/15-style-positions-0c66df9.txt`), seconds per repetition:
 
 | Page | Index, W4 | Positions, W4 | Speedup | Index, seq | Positions, seq |
 |---|---:|---:|---:|---:|---:|
@@ -1005,7 +1005,7 @@ ecma262. At 95b9073 the positions are
 one table of four words per node, the matcher's internal functions take it
 as a slice, and `selector_matches` passes an empty slice of a local array.
 Shape A still takes 6.57 s against 5.77 s for two repetitions on ecma262
-(best of three, sequential drivers from ec21b7c and 95b9073,
+(wall time with setup included, best of three, sequential drivers from ec21b7c and 95b9073,
 `runs/21-shape-a-95b9073.txt` with its script), 14 percent more, recorded in
 `docs/todo.md`. The same
 script timed the final drivers again (`runs/19-style-positions-95b9073.txt`),

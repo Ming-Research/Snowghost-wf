@@ -77,9 +77,10 @@ example apart from the renderer code that exposed it
   percent.** With the positions slice threaded through `list_matches`,
   `match_complex`, `compound_matches` and `instr_matches`, the style
   prototype's shape A, which calls `selector_matches` for every rule and
-  element, takes 6.57 s against 5.77 s for two repetitions on ecma262 (best
-  of three, sequential build, `research/investigations/concurrency/runs/21-shape-a-95b9073.txt`);
-  the cause is not attributed. Measure where
+  element, takes 6.57 s against 5.77 s for two repetitions on ecma262 (wall
+  time with setup included, best of three, sequential build; the run is in
+  the concurrency investigation's `runs/21-shape-a-95b9073.txt`); the cause
+  is not attributed. Measure where
   the time goes, and if it is the extra parameter, give the positions to
   the nth helpers another way; reopen when `selector_matches` is on a hot
   path outside the prototype.
