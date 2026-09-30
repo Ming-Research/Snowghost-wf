@@ -871,6 +871,28 @@ to 18 percent of the pipeline, while style takes 70 to 80 percent. Copying
 runs of plain text whole, the cheapest shortening of parsing's chain,
 comes after style.
 
+### Style's work per element
+
+Style runs in parallel already (shape C, 3.6 times faster at four workers
+than sequentially), yet takes 0.79 s on ecma262 and 1.02 s on html5 at four
+workers, 70 to 80 percent of the pipeline. Callgrind on ecma262's style
+computation (sequential driver built from commit 58fa8ee, collection
+limited to `compute_styles`): 32,248 million instructions, about 180,000
+per element.
+
+- Selector matching takes 65 percent: `match_complex` 34, `instr_matches`
+  23 and `backtrack` 8. `match_element` tests every rule of the store
+  against every element, so `match_complex` runs 106 million times, about
+  590 times per element; most of those rules cannot match the element,
+  since their rightmost compound names another id, class or tag.
+- `memset` takes 21 percent, all of it under `match_complex`: each call
+  creates `slots_new::<Frame, 64>()` for its backtracking, and the compiled
+  code clears the 64 frames, though a frame past the window's length is
+  never read.
+- `match_element`'s own loop takes 12 percent.
+
+The raw summary is in `runs/11-callgrind-style-58fa8ee.txt`.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
