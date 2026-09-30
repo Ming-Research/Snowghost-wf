@@ -2,7 +2,8 @@ alias MatchContext = pkg::css::selectors::MatchContext;
 alias SelectorList = pkg::css::selectors::SelectorList;
 alias SubjectKey = pkg::css::selectors::SubjectKey;
 alias TextSpan = pkg::dom::TextSpan;
-alias selector_matches = pkg::css::selectors::selector_matches;
+alias Positions = pkg::css::selectors::Positions;
+alias selector_matches_positioned = pkg::css::selectors::selector_matches_positioned;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Document = pkg::dom::Document;
 alias NodeId = pkg::dom::NodeId;
@@ -128,7 +129,7 @@ fn build_rule_index(store: &RuleStore, atoms: &AtomTable) -> result: Result<Rule
   return Ok<RuleIndex, StyleError>(value: move made);
 }
 
-fn test_rule(bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId, rule: u64) -> fits: Bool reads(store), reads(document), reads(atoms), writes(bits) {
+fn test_rule(bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, rule: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
   doc "Matches rule against element and sets bit rule mod 64 of word rule / 64 of bits when it matches. False when a matching rule has no word in bits.";
   let rules = store^.rules.inner.len;
   let known = rule < rules;
@@ -138,7 +139,7 @@ fn test_rule(bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomT
   }
   let none = None<NodeId>();
   let context = MatchContext(target: none, scope: none);
-  let matched = selector_matches(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context);
+  let matched = selector_matches_positioned(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context, positions: positions);
   if matched {
     let word = rule / 64_u64;
     let bit = rule % 64_u64;
@@ -155,7 +156,7 @@ fn test_rule(bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomT
   return True();
 }
 
-fn test_bucket(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), writes(bits) {
+fn test_bucket(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
   doc "Tests every rule listed under bucket against element.";
   let slots = index^.starts.inner.len;
   let listed = bucket < bucket_total;
@@ -182,7 +183,7 @@ fn test_bucket(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Do
   let fits = True();
   for (at in from..to) {
     let rule = cvt::<u32, u64>(index^.entries.inner[at]);
-    let one = test_rule(bits: bits, store: store, document: document, atoms: atoms, element: element, rule: rule);
+    let one = test_rule(bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, rule: rule);
     set fits = band(fits, one);
   }
   return fits;
@@ -216,7 +217,7 @@ fn is_class_space(byte: u8) -> space: Bool pure {
   return space;
 }
 
-fn test_classes(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), writes(bits) {
+fn test_classes(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
   doc "Tests the rules under the class bucket of every whitespace-separated word of the class attribute value span holds.";
   let start = cvt::<u32, u64>(span.start);
   let end = cvt::<u32, u64>(span.end);
@@ -239,7 +240,7 @@ fn test_classes(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &D
         let hash = name_hash(bytes: &document^.text.inner[word_start..at]);
         let low = iand(hash, bucket_mask);
         let bucket = key_buckets + low;
-        let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, element: element, bucket: bucket);
+        let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
         set fits = band(fits, one);
       }
       set in_word = False();
@@ -255,20 +256,20 @@ fn test_classes(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &D
       let hash = name_hash(bytes: &document^.text.inner[word_start..end]);
       let low = iand(hash, bucket_mask);
       let bucket = key_buckets + low;
-      let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, element: element, bucket: bucket);
+      let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
       set fits = band(fits, one);
     }
   }
   return fits;
 }
 
-fn match_indexed(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), writes(bits) {
+fn match_indexed(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
   doc "Matching for shape C through the rule index: tests the anything list and the rules under the buckets of element's local name, its first id attribute value and the words of its first class attribute value, found as the matchers find them, and sets bit r of bits for each matching rule r. bits holds zeros on entry. False when a matching rule has no word in bits.";
   let fits = True();
   let wide = index^.anything.inner.len;
   for (k in 0_u64..wide) {
     let rule = cvt::<u32, u64>(index^.anything.inner[k]);
-    let one = test_rule(bits: bits, store: store, document: document, atoms: atoms, element: element, rule: rule);
+    let one = test_rule(bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, rule: rule);
     set fits = band(fits, one);
   }
   let at = cvt::<u32, u64>(element.index);
@@ -296,7 +297,7 @@ fn match_indexed(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &
           let low = iand(hash, bucket_mask);
           let base = key_buckets + key_buckets;
           let bucket = base + low;
-          let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, element: element, bucket: bucket);
+          let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
           set fits = band(fits, one);
         }
       }
@@ -327,7 +328,7 @@ fn match_indexed(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &
             set seen_id = True();
             let hash = text_hash(document: document, span: attribute.value);
             let bucket = iand(hash, bucket_mask);
-            let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, element: element, bucket: bucket);
+            let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
             set fits = band(fits, one);
           }
           let is_class = attribute.name.index == atom_class;
@@ -335,7 +336,7 @@ fn match_indexed(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &
           let first_class = band(is_class, fresh_class);
           if first_class {
             set seen_class = True();
-            let one = test_classes(bits: bits, index: index, store: store, document: document, atoms: atoms, element: element, span: attribute.value);
+            let one = test_classes(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, span: attribute.value);
             set fits = band(fits, one);
           }
         }
