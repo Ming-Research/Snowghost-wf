@@ -26,6 +26,16 @@ example apart from the renderer code that exposed it
   open that follows links. Reopen when oracle runs from such worktrees are
   needed.
 
+- **A local `slots_new::<T, N>()` clears all N slots when created.** The
+  code compiled at the pin clears the whole window before any value is
+  placed, though no slot past `len` is readable ([WIN-1], [OP-13]); in
+  `pkg::css::selectors`'s `match_complex`, a 64-frame window per call, it
+  was 21 percent of the style stage's instructions on ecma262 before the
+  rule index (`research/investigations/concurrency/DESIGN.md`, "Style's
+  work per element"). Whitefoot records it in its `docs/todo.md`
+  (mbbill/Whitefoot#196). Change: a window created without clearing.
+  Reopen when that lands, to move the pin and measure again.
+
 - **No rounding conversion between float formats.** [OP-6]'s `cvt`
   from f64 to f32 is defined only for a value exactly representable in
   f32, and no operation rounds. `pkg::css::color` therefore narrows its
@@ -67,8 +77,9 @@ example apart from the renderer code that exposed it
   percent.** With the positions slice threaded through `list_matches`,
   `match_complex`, `compound_matches` and `instr_matches`, the style
   prototype's shape A, which calls `selector_matches` for every rule and
-  element, takes 6.63 s against 5.88 s for two repetitions on ecma262 (best
-  of three, sequential build); the cause is not attributed. Measure where
+  element, takes 6.57 s against 5.77 s for two repetitions on ecma262 (best
+  of three, sequential build, `research/investigations/concurrency/runs/21-shape-a-95b9073.txt`);
+  the cause is not attributed. Measure where
   the time goes, and if it is the extra parameter, give the positions to
   the nth helpers another way; reopen when `selector_matches` is on a hot
   path outside the prototype.

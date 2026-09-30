@@ -949,12 +949,13 @@ seconds per repetition:
 `-of-type` forms reads one result of a sibling count: the element's 1-based
 position among its parent's element children, or among those with its
 namespace and local name, and their total. One pass over the document,
-before matching, records both pairs for every element, walking each
-parent's children twice, first to number them and then to write their
-totals, and counting each type with a table indexed by its atom; matching reads them instead of counting. `:nth-child(An+B of S)` and
-`:nth-last-child(An+B of S)` depend on S and keep counting. The pass takes
-time in proportion to the nodes, where counting took time in proportion to
-the element's position for every test.
+before matching, records both pairs for every element, walking each parent's
+children twice, first to number them and then to write their totals, and
+counting each type with a table indexed by its atom; matching reads them
+instead of counting. `:nth-child(An+B of S)` and `:nth-last-child(An+B of
+S)` depend on S and keep counting. The pass takes time in proportion to the
+nodes, where counting took time in proportion to the element's position for
+every test.
 
 Criteria, written before measuring:
 
@@ -971,8 +972,9 @@ its ten-minute limit; 0c66df9 leaves the walk at the last sibling. At
 0c66df9, `proto_style check` passes on all seven pages with every shape C
 checksum unchanged (`runs/16-style-check-0c66df9.txt`), and a build whose
 child positions are off by one fails the check on html5 and ecma262 ("A
-differs from C", `runs/17-negative-controls.txt`). `--par-ledger` still
-splits `match_elements`. The one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
+differs from C", `runs/17-negative-controls.txt`; that build is aacd878's
+code with the change the file names). `--par-ledger` still splits
+`match_elements`. The one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
 with the rule index alone (ec21b7c) and with positions too (0c66df9) in one
 run, five repetitions, best of three (`runs/15-style-positions-0c66df9.txt`),
 seconds per repetition:
@@ -997,12 +999,15 @@ seconds per repetition:
 **Keeping `selector_matches` free of allocation.** The review found that
 0c66df9's `selector_matches`, the scanning entry the oracle and shapes A
 and B call, created four empty position arrays on every call, against its
-documented promise to allocate nothing, and that shape A took 6.13 s
-against 3.08 s for one repetition on ecma262. At 95b9073 the positions are
+documented promise to allocate nothing; one unrecorded run each gave shape
+A 6.13 s against the rule index driver's 3.08 s for one repetition on
+ecma262. At 95b9073 the positions are
 one table of four words per node, the matcher's internal functions take it
 as a slice, and `selector_matches` passes an empty slice of a local array.
-Shape A still takes 6.63 s against 5.88 s for two repetitions (best of
-three, sequential), 13 percent more, recorded in `docs/todo.md`. The same
+Shape A still takes 6.57 s against 5.77 s for two repetitions on ecma262
+(best of three, sequential drivers from ec21b7c and 95b9073,
+`runs/21-shape-a-95b9073.txt` with its script), 14 percent more, recorded in
+`docs/todo.md`. The same
 script timed the final drivers again (`runs/19-style-positions-95b9073.txt`),
 and every page's shape C checksum is unchanged at 95b9073
 (`runs/20-style-check-95b9073.txt`):
@@ -1026,7 +1031,6 @@ the pass could count per parent in parallel and, after a change, recount
 only the parents whose children changed. That form is not built or
 measured here; it is the candidate when the pass's cost or incremental
 style needs it.
-
 
 ### Whitefoot: an equality requirement over range lengths
 
