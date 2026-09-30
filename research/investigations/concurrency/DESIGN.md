@@ -708,6 +708,34 @@ after. If the four-worker time falls by at least a fifth on both pages,
 allocation inside the split loop is the cost, and the change stays;
 otherwise the cost lies elsewhere and the builder is left as it is.
 
+Results, `KEEP_BUILD=1 MODES=build WORKERS="1 2 4" RUNS=3 run.sh layout
+"ecma262 html5"` before (commit f8fbad0) and after (93c2aae), 4 minutes
+each; every page's result is unchanged. Build stage in seconds per
+repetition, best of three:
+
+| Page | | W1 | W2 | W4 | seq |
+|---|---|---:|---:|---:|---:|
+| ecma262 | before | 0.0324 | 0.0275 | 0.0239 | 0.0327 |
+| ecma262 | after | 0.0285 | 0.0262 | 0.0213 | 0.0318 |
+| html5 | before | 0.0343 | 0.0267 | 0.0205 | 0.0355 |
+| html5 | after | 0.0313 | 0.0229 | 0.0184 | 0.0310 |
+
+- **Criterion: not met.** The four-worker time fell by 11 percent on
+  ecma262 and 10 percent on html5, not a fifth.
+- One worker gained as much as four, so the allocations were work the
+  loop shared evenly, not what kept it from scaling: W1 over W4 stays 1.34
+  on ecma262 and 1.70 on html5. Read by Amdahl's law, those ratios leave
+  about 66 and 45 percent of the one-worker time outside the split loop,
+  far above the walk's 25 percent of the instructions.
+
+**The walk's own time.** `proto_layout walk REPS` builds the tree REPS more
+times without decoding it. Criterion, written before measuring: the walk's
+time at one and four workers and sequentially, best of three, on ecma262
+and html5. If the walk takes at least half of the one-worker build on
+either page, the walk, not the decoding loop, limits the build's speedup,
+and the builder's next change would be to the walk; otherwise the decoding
+loop itself scales poorly.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
