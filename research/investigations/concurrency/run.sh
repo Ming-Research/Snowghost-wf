@@ -145,9 +145,11 @@ layout_reps_of() {
 	esac
 }
 
-# Repetitions of the context tree's construction (proto_layout build) and
-# of the setup steps (parse, traverse, rules), chosen so the step is at least
-# half of T(REPS) in the sequential build: T(0) is 1.6 to 4 s there, and on
+# Repetitions of the context tree's construction (proto_layout build and
+# walk) and of the setup steps (parse, traverse, rules), chosen so the step is
+# at least half of T(REPS) in the sequential build for parse and build and a
+# fifth to a third for the shorter traverse and rules, whose times therefore
+# carry more of T(0)'s spread: T(0) is 1.6 to 4 s there, and on
 # html5 one build took about 0.032 s, one parse 0.14 s, and the traversal
 # arrays and the rule store under 0.03 s each, and apollo11's rule store,
 # from its large sheets, 0.018 s, measured on the development machine.
@@ -372,6 +374,7 @@ layout() {
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
 	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "drivers: $(sha256sum <build/proto_layout | cut -c1-16) $(sha256sum <build/proto_layout_seq | cut -c1-16)"
 	echo "page mode build reps T(0) T(REPS) stage"
 	for page in $pages; do
 		file=$(page_file "$page")

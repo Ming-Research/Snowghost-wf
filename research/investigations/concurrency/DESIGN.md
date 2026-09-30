@@ -607,8 +607,9 @@ Callgrind on html5's build stage (one build, sequential driver, collection
 limited to `build_layout`): 376 million instructions, 60 percent in
 `add_text`, which decodes UTF-8 and collapses whitespace, 20 percent in
 appending each scalar value to the open paragraph (`push_item`), 8 percent
-in the walk itself (`build_children` and `build_element`) and about 8
-percent in allocation and copying.
+in the walk itself (`build_children` and `build_element`) and about 9
+percent in allocation and copying (`malloc`, `calloc`, `free`, `memcpy`
+and `memset`).
 
 - **Criterion: met** on ecma262 and html5, where the sequential build takes
   longer than the four-worker layout stage; not on apollo11. The `--par`
@@ -654,7 +655,9 @@ and the largest names the next sequential cost to study.
 **Results.** At Snowghost commit 7c9caf3 with the same pin, machine and
 lock. Every page's paragraph and scalar value counts, root height and
 checksum equal the ones above in both builds, and `--par-ledger` splits
-`decode_all` as an independent map. `MODES="build L3" WORKERS=4 RUNS=3
+`decode_all` as an independent map, at this commit and at each later one;
+`runs/0-check-base-e45ccb7.txt` holds the base's `check` output and
+`runs/8-check-075f359.txt` the output and the splits at 075f359. `MODES="build L3" WORKERS=4 RUNS=3
 run.sh layout "ecma262 html5"` took 7 minutes, including building both
 drivers; seconds per repetition, best of three:
 
@@ -665,7 +668,11 @@ drivers; seconds per repetition, best of three:
 
 - **Criterion 1: met.**
 - **Criterion 2: not met.** Both pages got faster at four workers, by
-  1.08 and 1.24 times, not 1.5.
+  1.08 and 1.24 times, not 1.5. The bound asked for the ideal on ecma262
+  and more than it on html5: with the old builder's decoding share (80
+  percent) divided by four and nothing else changed, the totals give 1.50
+  and 1.45. The totals before add L2's layout time, measured in an earlier
+  run, and after L3's; the layout code did not change.
 - The sequential build became 34 percent slower on ecma262 and 21 percent
   on html5. Callgrind on html5's build counts 396 million instructions
   against 376 million before, 75 percent of them in `decode_pieces`, the
@@ -679,23 +686,33 @@ drivers; seconds per repetition, best of three:
 
 `KEEP_BUILD=1 MODES="parse traverse rules" WORKERS=4 RUNS=3 run.sh layout
 "ecma262 html5 apollo11"` took 5 minutes; seconds per repetition, best of
-three, with the step's share of the four-worker pipeline (setup, style C
-from the style measurement, build and L3 layout):
+three. A step's share is of the four-worker pipeline taken as the three
+steps' four-worker times, style C from the style measurement, the build and
+L3 layout from the runs above (apollo11's build from the first build
+measurement):
 
-| Page | Parse seq | Parse W4 | Traversal seq | Rule store seq | Parse's share at W4 |
-|---|---:|---:|---:|---:|---:|
-| ecma262 | 0.1827 | 0.1907 | 0.0067 | 0.0041 | 18 % |
-| html5 | 0.1443 | 0.1473 | 0.0042 | 0.0029 | 12 % |
-| apollo11 | 0.0197 | 0.0200 | 0.0004 | 0.0198 | 4 % |
+| Page | Parse seq | Parse W4 | Traversal W4 | Rule store W4 | Shares at W4: parse, traversal, rule store |
+|---|---:|---:|---:|---:|---|
+| ecma262 | 0.1827 | 0.1907 | 0.0066 | 0.0043 | 18, 0.6, 0.4 % |
+| html5 | 0.1443 | 0.1473 | 0.0040 | 0.0031 | 12, 0.3, 0.3 % |
+| apollo11 | 0.0197 | 0.0200 | 0.0004 | 0.0185 | 4, 0.1, 3.6 % |
 
-The `--par` build runs each step no faster than the sequential one.
-Parsing is the largest sequential cost on ecma262 and html5; on apollo11,
-whose style sheets are large, the rule store costs as much as parsing,
-each about 4 percent.
+- The `--par` build is no faster within the spread between runs: apollo11's
+  rule store and traversal took 7 and 10 percent less at four workers, the
+  other steps as much or more.
+- Parsing is the largest sequential cost on ecma262 and html5. On apollo11,
+  whose style sheets are large, the rule store costs about as much as
+  parsing; each repetition of `rules` also reads the sheet files again.
+- The repeated steps run after the first, with the atom table already
+  filled, and the three steps sum to about 0.20 s on ecma262 and 0.15 s on
+  html5, against the 0.29 and 0.23 s of the style measurement's T(0), which
+  also holds reading the files and starting the process.
+- Traversal and the rule store are a fifth to a third of T(REPS), so their
+  times carry about 10 to 15 percent of T(0)'s spread.
 
 **Where the decoding loop loses its speedup.** The 1.5 of criterion 2 was
-the ideal: the old builder's decoding share divided by four and nothing
-else changed. One run each on ecma262 put the build at 0.032 s at one
+the ideal on ecma262 and above it on html5 (see above). An exploratory run,
+one each before this criterion, put ecma262's build at 0.032 s at one
 worker, 0.028 at two and 0.024 at four, so the split loop scales far less
 than its 75 percent share allows. Each iteration allocates its paragraph's
 text inside the split loop. The experiment allocates it instead during the
@@ -722,11 +739,15 @@ repetition, best of three:
 
 - **Criterion: not met.** The four-worker time fell by 11 percent on
   ecma262 and 10 percent on html5, not a fifth.
-- One worker gained as much as four, so the allocations were work the
-  loop shared evenly, not what kept it from scaling: W1 over W4 stays 1.34
-  on ecma262 and 1.70 on html5. Read by Amdahl's law, those ratios leave
-  about 66 and 45 percent of the one-worker time outside the split loop,
-  far above the walk's 25 percent of the instructions.
+- W1 over W4 is 1.34 on ecma262 and 1.70 on html5 after, and 1.36 and
+  1.67 before. The gains at every worker count lie within the spread
+  between runs found below, so whether the allocations weighed on the
+  loop's scaling cannot be told from these runs. Read by Amdahl's law, the
+  ratios leave about 66 and 45 percent of the one-worker time outside the
+  split loop, far above the walk's 25 percent of the instructions.
+- Each paragraph's reserved text holds one 4-byte slot per byte and
+  inserted scalar value, and stays reserved after decoding; the memory this
+  costs is not measured.
 
 **The walk's own time.** `proto_layout walk REPS` builds the tree REPS more
 times without decoding it. Criterion, written before measuring: the walk's
@@ -749,22 +770,29 @@ less the walk:
 - **Criterion: not met,** narrowly on ecma262: the walk is 49 percent of
   the one-worker build there and 37 percent on html5.
 - Both halves limit the build. The walk gains nothing from workers, and
-  since commit 93c2aae it also allocates every paragraph's text; the
-  decoding loop runs 1.86 times faster at four workers on ecma262 and 2.86
-  on html5. With the walk as it is, a decoding loop that divided by four
-  would give 0.0191 and 0.0167 s at four workers.
-- **The allocation experiment's gain is within the noise.** The same build
-  at commit 93c2aae took 0.0213 and 0.0285 s at four and one workers on
+  since commit 93c2aae it also allocates every paragraph's text. All
+  decoding, the split loops and the small contexts' loops that run during
+  the walk, is 1.86 times faster at four workers on ecma262 and 2.86 on
+  html5; with 85 and 95 percent of the text in the largest context, it
+  could reach at most about 2.8 and 3.5. The walk's one-worker time plus
+  all decoding divided by four would give 0.0191 and 0.0167 s at four
+  workers.
+- **The allocation experiment's gain is within the noise.** The same
+  decoding code at commit 93c2aae (075f359 adds only the flag that skips
+  it) took 0.0213 and 0.0285 s at four and one workers on
   ecma262 in the run before, against 0.0238 and 0.0311 here, and 0.0184
-  against 0.0193 at four workers on html5: two runs of the same code differ
-  by 5 to 12 percent, as much as the 10 and 11 percent the experiment
-  gained. Its verdict, less than a fifth, stands either way.
+  against 0.0193 at four workers on html5: two runs differ by 5 to 12
+  percent, as much as the 11 and 10 percent the experiment gained. Its
+  verdict, less than a fifth, stands either way.
 - Against the builder before decoding moved out of the walk (0.0288 and
   0.0309 s at four workers), the build at four workers now takes 0.0213 to
   0.0238 s on ecma262 and 0.0184 to 0.0193 s on html5.
 
 The raw output of every run in this section and the callgrind summaries are
-in `runs/`, with the checkout path removed.
+in `runs/`, with the checkout path removed. The runs with `KEEP_BUILD`
+reused drivers built from commit 7c9caf3 (setup and the allocation
+experiment's before), 93c2aae (after) and 075f359 (walk); `run.sh` now
+prints each driver's hash.
 
 ### Whitefoot: an equality requirement over range lengths
 
