@@ -800,6 +800,48 @@ left here: what the walk and the decoding loop could still give is a few
 milliseconds, under 1 percent of the four-worker pipeline. Parsing, the
 largest sequential step, is the next one studied.
 
+### HTML parsing
+
+Parsing runs once, in sequence, before everything else, and takes 18 and 12
+percent of ecma262's and html5's four-worker pipeline. Callgrind on html5's
+parse (sequential driver at commit 57043e5, collection limited to
+`parse_document`): 1,358 million instructions, 60 percent in the tokenizer
+(`next_token`) and 39 percent in tree construction (`process_token`, with
+atom interning 5 percent and DOM insertion 7). The largest single costs are
+per-byte copies of text into the token's text buffer: `bytes_push` 13
+percent, `push_codepoint` 10 and UTF-8 decoding 7.
+
+**Where its dependencies are.**
+
+- *Tokenizer.* A state machine over the bytes: each byte's meaning depends
+  on the state the bytes before it left. Almost all of a page is in the data
+  state, and a chunk of the page tokenized from an assumed state agrees with
+  the true one from the first point where both states meet, typically at
+  the next `<` in data. Tree construction feeds back into the tokenizer:
+  after `script`, `style`, `title`, `textarea` and a few other start tags it
+  switches the tokenizer to script data, raw text or RCDATA, and it allows
+  CDATA sections only in foreign content. So a chunk's tokens can be
+  computed speculatively in parallel and checked where each chunk starts.
+- *Tree construction.* The insertion mode, the stack of open elements and
+  the list of active formatting elements carry from each token to the next,
+  and the adoption agency and foster parenting rewrite the tree on earlier
+  decisions. It is one chain over the tokens; interning names and building
+  a node's attributes depend only on the token.
+- *Copying text.* A text token's bytes are decoded to code points and
+  pushed back one at a time; a run of plain bytes could be copied whole.
+  That shortens the chain without parallelism.
+
+`proto_layout tokenize REPS` runs the tokenizer alone over the page REPS
+times, from the data state and with no tree construction, so the contents
+of `script`, `style`, `title` and `textarea` are tokenized as markup rather
+than as text; it counts the tokens.
+
+Criterion, written before measuring: the tokenizer alone and the whole
+parse, sequentially, best of three, on the three real pages. If the
+tokenizer takes at least half of the parse on both large pages (ecma262 and
+html5), the first parallel design targets the tokenizer (speculative
+chunks); otherwise it targets tree construction and the text copy.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
