@@ -857,8 +857,9 @@ sequential build:
 - **Criterion: tree construction and the text copy first.** The tokenizer
   takes 43 and 40 percent of the parse on ecma262 and html5, under half,
   though it runs 60 percent of html5's instructions.
-- The `--par` build parses no faster at any worker count, within 5 percent
-  of the sequential build on every page and mode.
+- The `--par` build shows no trend with workers: at one, two and four
+  workers it is 9 percent faster to 7 percent slower than the sequential
+  build, the extremes both on html5.
 - The tokenizer's share is an estimate: without tree construction it never
   switches to raw text, RCDATA or script data.
 
