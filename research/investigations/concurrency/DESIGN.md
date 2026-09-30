@@ -590,6 +590,38 @@ the tree along its true dependencies goes to the owner before any change;
 otherwise it waits behind the larger stages. The measurement runs in under
 ten minutes.
 
+**Results.** At Snowghost commit 5c5bb1f with the `290b575b` pin, under the
+lock: `MODES=build WORKERS=4 RUNS=3 run.sh layout "ecma262 html5 apollo11"`
+took 6 minutes, including building both drivers. Build stage in seconds per
+repetition, best of three, beside the four-worker layout stage measured
+before (L3 on html5 and apollo11; L2 on ecma262, which holds no float, so
+its L3 runs the same loop):
+
+| Page | Build seq | Build W4 | Layout W4 |
+|---|---:|---:|---:|
+| ecma262 | 0.0275 | 0.0288 | 0.0228 (L2) |
+| html5 | 0.0305 | 0.0309 | 0.0290 (L3) |
+| apollo11 | 0.0012 | 0.0013 | 0.0017 (L3) |
+
+Callgrind on html5's build stage (one build, sequential driver, collection
+limited to `build_layout`): 376 million instructions, 60 percent in
+`add_text`, which decodes UTF-8 and collapses whitespace, 20 percent in
+appending each scalar value to the open paragraph (`push_item`), 8 percent
+in the walk itself (`build_children` and `build_element`) and about 8
+percent in allocation and copying.
+
+- **Criterion: met** on ecma262 and html5, where the sequential build takes
+  longer than the four-worker layout stage; not on apollo11. The `--par`
+  build gains nothing, since nothing in the builder is split.
+- Four fifths of the builder is turning text into paragraphs' scalar
+  values, and on html5 one context holds 95 percent of the text, so
+  building child contexts in parallel would leave most of that work in one
+  context's walk.
+- For scale, at four workers the style stage takes 0.79 s on ecma262 and
+  1.02 s on html5, and setup (parsing, the traversal arrays and the rule
+  store) 0.29 and 0.23 s, so the builder is about 2 to 3 percent of those
+  pages' four-worker pipeline.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
