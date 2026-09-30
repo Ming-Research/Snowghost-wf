@@ -943,6 +943,26 @@ seconds per repetition:
   those tests, since such a rule's subject is a common type or none, and
   the rest of matching is about 20 percent.
 
+**Sibling positions** (the owner's choice). Every `:nth-child`,
+`:nth-last-child`, `:first-child`, `:last-child`, `:only-child` and their
+`-of-type` forms reads one result of a sibling count: the element's 1-based
+position among its parent's element children, or among those with its
+namespace and local name, and their total. One pass over the document,
+before matching, records both pairs for every element, walking each
+parent's children once and counting each type with a table indexed by its
+atom; matching reads them instead of counting. `:nth-child(An+B of S)` and
+`:nth-last-child(An+B of S)` depend on S and keep counting. The pass takes
+time in proportion to the nodes, where counting took time in proportion to
+the element's position for every test.
+
+Criteria, written before measuring:
+
+1. **Equality.** `proto_style check` passes on all seven pages and every
+   page's shape C checksum equals the one before the change.
+2. **Speedup.** Shape C's style stage at four workers on html5 is at least
+   3 times faster than with the rule index alone (0.734 s), measured in the
+   same run against that driver, and no slower on ecma262 and apollo11.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
