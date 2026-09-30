@@ -1,0 +1,349 @@
+const mix_first: u64 = 18397679294719823053_u64;
+
+const mix_second: u64 = 14181476777654086739_u64;
+
+const table_minimum: u64 = 16_u64;
+
+struct Table {
+  slots: Box<Array<u32>>;
+  values: Box<Array<u64>>;
+  distinct: u64;
+}
+
+struct Interned {
+  ids: Box<Array<u32>>;
+  group0: Table;
+  group1: Table;
+  group2: Table;
+  group3: Table;
+}
+
+fn group_values(computed: Computed, group: u64) -> values: Array<u64, 8> pure contract {
+  requires group < 4_u64;
+} {
+  doc "Returns the eight values of one group: groups 0 and 1 are the two halves of the inherited values, groups 2 and 3 of the others. The copy is written out slot by slot, so the sequential post-pass holds no loop the compiler would split.";
+  let values = array_filled::<u64, 8>(value: 0_u64);
+  let inherited = group < 2_u64;
+  if inherited {
+    let base = group * 8_u64;
+    let at_0 = base + 0_u64;
+    set values[0_u64] = computed.inherited[at_0];
+    let at_1 = base + 1_u64;
+    set values[1_u64] = computed.inherited[at_1];
+    let at_2 = base + 2_u64;
+    set values[2_u64] = computed.inherited[at_2];
+    let at_3 = base + 3_u64;
+    set values[3_u64] = computed.inherited[at_3];
+    let at_4 = base + 4_u64;
+    set values[4_u64] = computed.inherited[at_4];
+    let at_5 = base + 5_u64;
+    set values[5_u64] = computed.inherited[at_5];
+    let at_6 = base + 6_u64;
+    set values[6_u64] = computed.inherited[at_6];
+    let at_7 = base + 7_u64;
+    set values[7_u64] = computed.inherited[at_7];
+    return values;
+  }
+  let reset_group = group - 2_u64;
+  let reset_base = reset_group * 8_u64;
+  let reset_at_0 = reset_base + 0_u64;
+  set values[0_u64] = computed.reset[reset_at_0];
+  let reset_at_1 = reset_base + 1_u64;
+  set values[1_u64] = computed.reset[reset_at_1];
+  let reset_at_2 = reset_base + 2_u64;
+  set values[2_u64] = computed.reset[reset_at_2];
+  let reset_at_3 = reset_base + 3_u64;
+  set values[3_u64] = computed.reset[reset_at_3];
+  let reset_at_4 = reset_base + 4_u64;
+  set values[4_u64] = computed.reset[reset_at_4];
+  let reset_at_5 = reset_base + 5_u64;
+  set values[5_u64] = computed.reset[reset_at_5];
+  let reset_at_6 = reset_base + 6_u64;
+  set values[6_u64] = computed.reset[reset_at_6];
+  let reset_at_7 = reset_base + 7_u64;
+  set values[7_u64] = computed.reset[reset_at_7];
+  return values;
+}
+
+fn hash_group(values: Array<u64, 8>) -> hash: u64 pure {
+  doc "Hashes one group: 64-bit FNV-1a over its eight values, one value per step, then the MurmurHash3 finalizer, so a table index taken from the low bits depends on every bit.";
+  let current = fnv_offset;
+  for (slot in 0_u64..8_u64) {
+    let mixed = ixor(current, values[slot]);
+    set current = mixed *wrap fnv_prime;
+  }
+  let high = ishr(current, 33_u32);
+  let folded = ixor(current, high);
+  let spread = folded *wrap mix_first;
+  let high_again = ishr(spread, 33_u32);
+  let folded_again = ixor(spread, high_again);
+  let spread_again = folded_again *wrap mix_second;
+  let high_last = ishr(spread_again, 33_u32);
+  let finished = ixor(spread_again, high_last);
+  return finished;
+}
+
+fn table_new(count: u64) -> made: Table pure contract {
+  requires count <= 4294967294_u64;
+} {
+  doc "Returns an empty table for count values: its slots are the smallest power of two that is at least table_minimum and twice count, so the table never fills, and its value storage holds count entries of eight values.";
+  let wanted = count * 2_u64;
+  let least = imax(wanted, table_minimum);
+  let below = least - 1_u64;
+  let zeros = iclz(below);
+  let width = 64_u32 - zeros;
+  let capacity = ishl(1_u64, width);
+  let entries = count * 8_u64;
+  let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  let values = box_array_filled::<u64>(count: entries, value: 0_u64);
+  return Table(slots: move slots, values: move values, distinct: 0_u64);
+}
+
+fn same_group(table: &Table, item: u64, values: Array<u64, 8>) -> same: Bool reads(table) {
+  doc "Tells whether the stored values of entry equal values; False when entry has no stored values.";
+  let small = item < 4294967296_u64;
+  if small {
+  } else {
+    return False();
+  }
+  let start = item * 8_u64;
+  let end = start + 8_u64;
+  let stored = table^.values.inner.len;
+  let inside = end <= stored;
+  if inside {
+  } else {
+    return False();
+  }
+  let held = &table^.values.inner[start..end];
+  for (slot in 0_u64..8_u64) {
+    if held^[slot] == values[slot] {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn find_group(table: &Table, values: Array<u64, 8>) -> result: Option<u32> reads(table) {
+  doc "Returns the entry holding values, probing linearly from the slot the hash selects, or None when an empty slot comes first or no slot holds it.";
+  let capacity = table^.slots.inner.len;
+  if capacity == 0_u64 {
+    return None<u32>();
+  }
+  let mask = capacity - 1_u64;
+  let hash = hash_group(values: values);
+  for (probe in 0_u64..capacity) {
+    let moved = hash +wrap probe;
+    let position = iand(moved, mask);
+    let held = table^.slots.inner[position];
+    if held == 0_u32 {
+      return None<u32>();
+    }
+    let item = held - 1_u32;
+    let wide = cvt::<u32, u64>(item);
+    let same = same_group(table: table, item: wide, values: values);
+    if same {
+      return Some<u32>(value: item);
+    }
+  }
+  return None<u32>();
+}
+
+fn intern_group(table: &Table, values: Array<u64, 8>) -> result: Result<u32, StyleError> writes(table) {
+  doc "Returns the entry of values in table, adding it when the table has none: linear probing from the slot the hash selects, where an empty slot ends the search and receives the new entry. TooLarge when no slot or no value storage is left, which table_new's sizing rules out for at most count values.";
+  let capacity = table^.slots.inner.len;
+  if capacity == 0_u64 {
+    let failure = StyleError::TooLarge();
+    return Err<u32, StyleError>(error: failure);
+  }
+  let mask = capacity - 1_u64;
+  let hash = hash_group(values: values);
+  for (probe in 0_u64..capacity) {
+    let moved = hash +wrap probe;
+    let position = iand(moved, mask);
+    let held = table^.slots.inner[position];
+    if held == 0_u32 {
+      let item = table^.distinct;
+      let small = item < 4294967295_u64;
+      if small {
+      } else {
+        let failure = StyleError::TooLarge();
+        return Err<u32, StyleError>(error: failure);
+      }
+      let start = item * 8_u64;
+      let end = start + 8_u64;
+      let stored = table^.values.inner.len;
+      let inside = end <= stored;
+      if inside {
+      } else {
+        let failure = StyleError::TooLarge();
+        return Err<u32, StyleError>(error: failure);
+      }
+      for (slot in 0_u64..8_u64) {
+        let at = start + slot;
+        set table^.values.inner[at] = values[slot];
+      }
+      let next = item + 1_u64;
+      let narrow_entry = cvt::<u64, u32>(item);
+      let narrow_next = cvt::<u64, u32>(next);
+      set table^.slots.inner[position] = narrow_next;
+      set table^.distinct = next;
+      return Ok<u32, StyleError>(value: narrow_entry);
+    }
+    let item = held - 1_u32;
+    let wide = cvt::<u32, u64>(item);
+    let same = same_group(table: table, item: wide, values: values);
+    if same {
+      return Ok<u32, StyleError>(value: item);
+    }
+  }
+  let failure = StyleError::TooLarge();
+  return Err<u32, StyleError>(error: failure);
+}
+
+fn intern_one_group(styles: &[Computed], group: u64, ids: &[u32]) -> result: Result<Table, StyleError> reads(styles), writes(ids) contract {
+  requires group < 4_u64;
+  requires styles^.len <= 4294967294_u64;
+} {
+  doc "Interns group of every element in preorder into a new table and writes each element's entry at position 4 * element + group of ids. Inconsistent when ids does not hold four entries per element.";
+  let count = styles^.len;
+  let total = count * 4_u64;
+  let exact = ids^.len == total;
+  if exact {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Table, StyleError>(error: failure);
+  }
+  let table = table_new(count: count);
+  for (at in 0_u64..count) {
+    let values = group_values(computed: styles^[at], group: group);
+    let item = propagate intern_group(table: &table, values: values);
+    let base = at * 4_u64;
+    let place = base + group;
+    invariant placed: place < total {
+      use 4 times (at + 1_u64 <= count);
+      use (group <= 3_u64);
+    }
+    set ids^[place] = item;
+  }
+  return Ok<Table, StyleError>(value: move table);
+}
+
+fn intern_pass(styles: &[Computed]) -> result: Result<Interned, StyleError> reads(styles) {
+  doc "The intern post-pass: interns each of the four groups of every element into its own table and replaces the group by its entry, the four entries of element e at 4 * e to 4 * e + 4 of ids. Sequential: every group's pass writes the one ids array.";
+  let count = styles^.len;
+  let small = count <= 4294967294_u64;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Interned, StyleError>(error: failure);
+  }
+  let total = count * 4_u64;
+  let ids = box_array_filled::<u32>(count: total, value: 0_u32);
+  let first = propagate intern_one_group(styles: styles, group: 0_u64, ids: &ids.inner[0_u64..total]);
+  let second = propagate intern_one_group(styles: styles, group: 1_u64, ids: &ids.inner[0_u64..total]);
+  let third = propagate intern_one_group(styles: styles, group: 2_u64, ids: &ids.inner[0_u64..total]);
+  let fourth = propagate intern_one_group(styles: styles, group: 3_u64, ids: &ids.inner[0_u64..total]);
+  let made = Interned(ids: move ids, group0: move first, group1: move second, group2: move third, group3: move fourth);
+  return Ok<Interned, StyleError>(value: move made);
+}
+
+fn table_of(interned: &Interned, group: u64) -> distinct: u64 reads(interned) {
+  doc "Returns the number of distinct values of one group.";
+  if group == 0_u64 {
+    return interned^.group0.distinct;
+  }
+  if group == 1_u64 {
+    return interned^.group1.distinct;
+  }
+  if group == 2_u64 {
+    return interned^.group2.distinct;
+  }
+  return interned^.group3.distinct;
+}
+
+fn verify_group(styles: &[Computed], ids: &[u32], group: u64, table: &Table) -> sound: Bool reads(styles), reads(ids), reads(table) contract {
+  requires group < 4_u64;
+} {
+  doc "Checks one group of an intern pass against the styles it read: each element's entry holds exactly its values, and looking up each entry's values finds that entry, so no two entries hold the same values.";
+  let count = styles^.len;
+  let few = count <= 4294967294_u64;
+  if few {
+  } else {
+    return False();
+  }
+  let total = count * 4_u64;
+  let exact = ids^.len == total;
+  if exact {
+  } else {
+    return False();
+  }
+  let distinct = table^.distinct;
+  for (at in 0_u64..count) {
+    let values = group_values(computed: styles^[at], group: group);
+    let base = at * 4_u64;
+    let place = base + group;
+    invariant placed: place < total {
+      use 4 times (at + 1_u64 <= count);
+      use (group <= 3_u64);
+    }
+    let item = cvt::<u32, u64>(ids^[place]);
+    let listed = item < distinct;
+    if listed {
+    } else {
+      return False();
+    }
+    let same = same_group(table: table, item: item, values: values);
+    if same {
+    } else {
+      return False();
+    }
+  }
+  let stored = table^.values.inner.len;
+  for (item in 0_u64..distinct) {
+    let small = item < 4294967296_u64;
+    if small {
+    } else {
+      return False();
+    }
+    let start = item * 8_u64;
+    let end = start + 8_u64;
+    let inside = end <= stored;
+    if inside {
+    } else {
+      return False();
+    }
+    let values = array_filled::<u64, 8>(value: 0_u64);
+    for (slot in 0_u64..8_u64) {
+      let at = start + slot;
+      set values[slot] = table^.values.inner[at];
+    }
+    match find_group(table: table, values: values) {
+      Some(value: found) => {
+        let wide = cvt::<u32, u64>(found);
+        if wide == item {
+        } else {
+          return False();
+        }
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn verify_interned(styles: &[Computed], interned: &Interned) -> sound: Bool reads(styles), reads(interned) {
+  doc "Checks all four groups of an intern pass.";
+  let length = interned^.ids.inner.len;
+  let ids = &interned^.ids.inner[0_u64..length];
+  let first = verify_group(styles: styles, ids: ids, group: 0_u64, table: &interned^.group0);
+  let second = verify_group(styles: styles, ids: ids, group: 1_u64, table: &interned^.group1);
+  let third = verify_group(styles: styles, ids: ids, group: 2_u64, table: &interned^.group2);
+  let fourth = verify_group(styles: styles, ids: ids, group: 3_u64, table: &interned^.group3);
+  let low = band(first, second);
+  let high = band(third, fourth);
+  let all = band(low, high);
+  return all;
+}

@@ -1,0 +1,639 @@
+alias Document = pkg::dom::Document;
+alias Styles = pkg::proto::style::Styles;
+alias Traversal = pkg::proto::style::Traversal;
+alias Boxing = pkg::proto::style::Boxing;
+alias DisplayKeyword = pkg::proto::style::DisplayKeyword;
+alias FloatKeyword = pkg::proto::style::FloatKeyword;
+alias NodeId = pkg::dom::NodeId;
+alias OverflowKeyword = pkg::proto::style::OverflowKeyword;
+alias PositionKeyword = pkg::proto::style::PositionKeyword;
+alias TextSpan = pkg::dom::TextSpan;
+alias atom_blockquote = pkg::base::static_atoms::atom_blockquote;
+alias atom_br = pkg::base::static_atoms::atom_br;
+alias atom_dl = pkg::base::static_atoms::atom_dl;
+alias atom_figure = pkg::base::static_atoms::atom_figure;
+alias atom_h1 = pkg::base::static_atoms::atom_h1;
+alias atom_h6 = pkg::base::static_atoms::atom_h6;
+alias atom_hr = pkg::base::static_atoms::atom_hr;
+alias atom_ol = pkg::base::static_atoms::atom_ol;
+alias atom_p = pkg::base::static_atoms::atom_p;
+alias atom_pre = pkg::base::static_atoms::atom_pre;
+alias atom_ul = pkg::base::static_atoms::atom_ul;
+alias element_boxing = pkg::proto::style::element_boxing;
+
+const root_width: u64 = 800_u64;
+
+const narrowest: u64 = 8_u64;
+
+const scalar_ceiling: u64 = 1073741824_u64;
+
+const item_ceiling: u64 = 1073741824_u64;
+
+const unlisted: u32 = 4294967295_u32;
+
+const replacement: u32 = 65533_u32;
+
+const object_mark: u32 = 65532_u32;
+
+const line_separator: u32 = 8232_u32;
+
+enum Level {
+  Inline();
+  Block();
+  Floated();
+  Positioned();
+  Atomic();
+}
+
+struct Placement {
+  level: Level;
+  establishes: Bool;
+  divisor: u64;
+}
+
+fn refuse<T: drop>(failure: LayoutError) -> result: Result<T, LayoutError> pure {
+  doc "Returns failure as a refusal.";
+  return Err<T, LayoutError>(error: failure);
+}
+
+fn inconsistent<T: drop>() -> result: Result<T, LayoutError> pure {
+  doc "Returns the Inconsistent refusal.";
+  let failure = LayoutError::Inconsistent();
+  return Err<T, LayoutError>(error: failure);
+}
+
+fn too_large<T: drop>() -> result: Result<T, LayoutError> pure {
+  doc "Returns the TooLarge refusal.";
+  let failure = LayoutError::TooLarge();
+  return Err<T, LayoutError>(error: failure);
+}
+
+fn push_item<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> pushed: Bool writes(cell) contract {
+  requires ceiling <= 1073741824_u64;
+} {
+  doc "Appends value, doubling a full window (an empty one takes four slots) within ceiling; False, dropping value, when the window already holds ceiling items.";
+  let length = cell^.inner.len;
+  if length >= ceiling {
+    return False();
+  }
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < ceiling;
+    invariant full: capacity <= length;
+    let room = ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow(cell: cell, capacity: 4_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow(cell: cell, capacity: doubled);
+      }
+    } else {
+      grow(cell: cell, capacity: ceiling);
+    }
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return True();
+}
+
+fn empty_context(width: u64) -> made: Context pure {
+  doc "Returns a context of the given width that holds nothing and has not been laid out.";
+  let flow = box_slots_new::<Flow>(capacity: 0_u64);
+  let paragraphs = box_slots_new::<Paragraph>(capacity: 0_u64);
+  let children = box_slots_new::<Context>(capacity: 0_u64);
+  let floated = False();
+  return Context(width: width, floated: floated, flow: move flow, paragraphs: move paragraphs, children: move children, height: 0_u64, rebroken: 0_u64, rebroken_scalars: 0_u64);
+}
+
+fn is_collapsible(value: u32) -> collapsible: Bool pure {
+  doc "Tells whether value is tab, line feed, form feed, carriage return or space.";
+  let tab = value == 9_u32;
+  let feed = value == 10_u32;
+  let form = value == 12_u32;
+  let carriage = value == 13_u32;
+  let space = value == 32_u32;
+  let breaks = bor(feed, form);
+  let returns = bor(breaks, carriage);
+  let blank = bor(tab, space);
+  let collapsible = bor(returns, blank);
+  return collapsible;
+}
+
+fn add_scalar(open: &Open, value: u32) -> added: Bool writes(open) {
+  doc "Adds value to the open paragraph, a collapsible character as a pending space that the next other scalar value writes and that is dropped at a paragraph's start. False when the paragraph would pass scalar_ceiling.";
+  let collapsible = is_collapsible(value: value);
+  if collapsible {
+    let started = open^.text.inner.len > 0_u64;
+    if started {
+      set open^.space = True();
+    }
+    return True();
+  }
+  if open^.space {
+    let spaced = push_item::<u32>(cell: &open^.text, value: 32_u32, ceiling: scalar_ceiling);
+    if spaced {
+    } else {
+      return False();
+    }
+    set open^.space = False();
+  }
+  let added = push_item::<u32>(cell: &open^.text, value: value, ceiling: scalar_ceiling);
+  return added;
+}
+
+fn continuation(byte: u8) -> bits: Option<u32> pure {
+  doc "Returns the six payload bits of a UTF-8 continuation byte, or None for any other byte.";
+  let tagged = iand(byte, 192_u8);
+  if tagged == 128_u8 {
+    let payload = iand(byte, 63_u8);
+    let bits = cvt::<u8, u32>(payload);
+    return Some<u32>(value: bits);
+  }
+  return None<u32>();
+}
+
+fn add_text(open: &Open, bytes: &[u8]) -> added: Bool reads(bytes), writes(open) {
+  doc "Adds the scalar values of bytes, decoded from UTF-8, to the open paragraph; a byte that starts no well-formed sequence of at most four bytes adds U+FFFD and decoding resumes at the next byte. Overlong forms and surrogates are not rejected: the prototype only counts widths. False when the paragraph would pass scalar_ceiling.";
+  let count = bytes^.len;
+  let skip = 0_u64;
+  for (at in 0_u64..count) {
+    if skip > 0_u64 {
+      set skip = skip - 1_u64;
+    } else {
+      let lead = bytes^[at];
+      let wide = cvt::<u8, u32>(lead);
+      let ascii = lead < 128_u8;
+      let two_bits = iand(lead, 224_u8);
+      let three_bits = iand(lead, 240_u8);
+      let four_bits = iand(lead, 248_u8);
+      let two = two_bits == 192_u8;
+      let three = three_bits == 224_u8;
+      let four = four_bits == 240_u8;
+      let tail = if ascii {
+        give 0_u64;
+      } else if two {
+        give 1_u64;
+      } else if three {
+        give 2_u64;
+      } else if four {
+        give 3_u64;
+      } else {
+        give 4_u64;
+      }
+      let value = if ascii {
+        give wide;
+      } else {
+        give replacement;
+      }
+      let known = tail < 4_u64;
+      let left = count - at;
+      let fits = tail < left;
+      let complete = band(known, fits);
+      if complete {
+        let lead_bits = if two {
+          give iand(wide, 31_u32);
+        } else if three {
+          give iand(wide, 15_u32);
+        } else {
+          give iand(wide, 7_u32);
+        }
+        let decoded = lead_bits;
+        let whole = True();
+        for (next in 1_u64..4_u64) {
+          if next <= tail {
+            let index = at + next;
+            match continuation(byte: bytes^[index]) {
+              Some(value: bits) => {
+                let shifted = ishl.wrap(decoded, 6_u32);
+                set decoded = ior(shifted, bits);
+              }
+              None() => {
+                set whole = False();
+              }
+            }
+          }
+        }
+        if ascii {
+          set value = wide;
+        } else if whole {
+          set value = decoded;
+          set skip = tail;
+        }
+      }
+      let added = add_scalar(open: open, value: value);
+      if added {
+      } else {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+  doc "Moves the open paragraph, when it holds a scalar value, into context's paragraphs and flow, and starts an empty one.";
+  set open^.space = False();
+  let length = open^.text.inner.len;
+  if length == 0_u64 {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let fits = length <= scalar_ceiling;
+  if fits {
+  } else {
+    return too_large::<unit>();
+  }
+  let made = box_slots_new::<u32>(capacity: length);
+  split_off(source: &open^.text.inner, index: 0_u64, destination: &made.inner);
+  let index = context^.paragraphs.inner.len;
+  let paragraph = Paragraph(text: move made, lines: 0_u64);
+  let kept = push_item::<Paragraph>(cell: &context^.paragraphs, value: move paragraph, ceiling: item_ceiling);
+  if kept {
+  } else {
+    return too_large::<unit>();
+  }
+  let item = Flow::Text(index: index);
+  let listed = push_item::<Flow>(cell: &context^.flow, value: item, ceiling: item_ceiling);
+  if listed {
+  } else {
+    return too_large::<unit>();
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn margin_of(tag: u32) -> margin: u64 pure {
+  doc "Returns the block margin of an element named tag.";
+  let from_first = tag >= atom_h1;
+  let to_last = tag <= atom_h6;
+  let heading = band(from_first, to_last);
+  let paragraph = tag == atom_p;
+  let unordered = tag == atom_ul;
+  let ordered = tag == atom_ol;
+  let definitions = tag == atom_dl;
+  let quoted = tag == atom_blockquote;
+  let figure = tag == atom_figure;
+  let preformatted = tag == atom_pre;
+  let listing = bor(unordered, ordered);
+  let described = bor(definitions, quoted);
+  let shown = bor(figure, preformatted);
+  let texts = bor(heading, paragraph);
+  let lists = bor(listing, described);
+  let wide = bor(texts, lists);
+  let spaced = bor(wide, shown);
+  if spaced {
+    return 16_u64;
+  }
+  if tag == atom_hr {
+    return 8_u64;
+  }
+  return 0_u64;
+}
+
+fn is_inline_display(display: DisplayKeyword) -> inline: Bool pure {
+  doc "Tells whether display is inline or one of the ruby displays.";
+  let inline_value = DisplayKeyword::Inline();
+  let ruby_value = DisplayKeyword::Ruby();
+  let base_value = DisplayKeyword::RubyBase();
+  let text_value = DisplayKeyword::RubyText();
+  let base_box = DisplayKeyword::RubyBaseContainer();
+  let text_box = DisplayKeyword::RubyTextContainer();
+  let inline = eeq(display, inline_value);
+  let ruby = eeq(display, ruby_value);
+  let base = eeq(display, base_value);
+  let text = eeq(display, text_value);
+  let bases = eeq(display, base_box);
+  let texts = eeq(display, text_box);
+  let first = bor(inline, ruby);
+  let parts = bor(base, text);
+  let boxes = bor(bases, texts);
+  let some = bor(first, parts);
+  let any = bor(some, boxes);
+  return any;
+}
+
+fn is_inline_context(display: DisplayKeyword) -> inline_context: Bool pure {
+  doc "Tells whether display is inline-block, inline-table, inline-flex or inline-grid.";
+  let block_value = DisplayKeyword::InlineBlock();
+  let table_value = DisplayKeyword::InlineTable();
+  let flex_value = DisplayKeyword::InlineFlex();
+  let grid_value = DisplayKeyword::InlineGrid();
+  let block = eeq(display, block_value);
+  let table = eeq(display, table_value);
+  let flex = eeq(display, flex_value);
+  let grid = eeq(display, grid_value);
+  let boxes = bor(block, table);
+  let items = bor(flex, grid);
+  let any = bor(boxes, items);
+  return any;
+}
+
+fn is_container(display: DisplayKeyword) -> container: Bool pure {
+  doc "Tells whether display is flex, inline-flex, grid or inline-grid, whose children are items.";
+  let flex_value = DisplayKeyword::Flex();
+  let inline_flex_value = DisplayKeyword::InlineFlex();
+  let grid_value = DisplayKeyword::Grid();
+  let inline_grid_value = DisplayKeyword::InlineGrid();
+  let flex = eeq(display, flex_value);
+  let inline_flex = eeq(display, inline_flex_value);
+  let grid = eeq(display, grid_value);
+  let inline_grid = eeq(display, inline_grid_value);
+  let flexes = bor(flex, inline_flex);
+  let grids = bor(grid, inline_grid);
+  let any = bor(flexes, grids);
+  return any;
+}
+
+fn place(boxing: Boxing, item: Bool) -> placement: Placement pure {
+  doc "Returns where an element with boxing goes, item telling whether its parent is a flex or grid container.";
+  let no_float = FloatKeyword::None();
+  let unfloated = eeq(boxing.float, no_float);
+  if unfloated {
+  } else {
+    let level = Level::Floated();
+    let establishes = True();
+    return Placement(level: level, establishes: establishes, divisor: 3_u64);
+  }
+  let absolute_value = PositionKeyword::Absolute();
+  let fixed_value = PositionKeyword::Fixed();
+  let absolute = eeq(boxing.position, absolute_value);
+  let fixed = eeq(boxing.position, fixed_value);
+  let positioned = bor(absolute, fixed);
+  if positioned {
+    let level = Level::Positioned();
+    let establishes = True();
+    return Placement(level: level, establishes: establishes, divisor: 1_u64);
+  }
+  let cell_value = DisplayKeyword::TableCell();
+  let cell = eeq(boxing.display, cell_value);
+  let boxed = bor(cell, item);
+  if boxed {
+    let level = Level::Block();
+    let establishes = True();
+    return Placement(level: level, establishes: establishes, divisor: 4_u64);
+  }
+  let inline_context = is_inline_context(display: boxing.display);
+  if inline_context {
+    let level = Level::Atomic();
+    let establishes = True();
+    return Placement(level: level, establishes: establishes, divisor: 2_u64);
+  }
+  let inline = is_inline_display(display: boxing.display);
+  if inline {
+    let level = Level::Inline();
+    let establishes = False();
+    return Placement(level: level, establishes: establishes, divisor: 1_u64);
+  }
+  let visible_value = OverflowKeyword::Visible();
+  let visible = eeq(boxing.overflow, visible_value);
+  let clipped = bnot(visible);
+  let level = Level::Block();
+  return Placement(level: level, establishes: clipped, divisor: 1_u64);
+}
+
+fn build_context(document: &Document, styles: &Styles, order: &[u32], node: NodeId, width: u64, item: Bool) -> result: Result<Context, LayoutError> reads(document), reads(styles), reads(order) {
+  doc "Builds the context that node's children fill, width wide, item telling whether they are flex or grid items.";
+  let context = empty_context(width: width);
+  let empty = box_slots_new::<u32>(capacity: 0_u64);
+  let unspaced = False();
+  let open = Open(text: move empty, space: unspaced);
+  let step_1 = propagate build_children(document: document, styles: styles, order: order, parent: node, item: item, context: &context, open: &open);
+  let step_2 = propagate end_paragraph(context: &context, open: &open);
+  return Ok<Context, LayoutError>(value: move context);
+}
+
+fn build_children(document: &Document, styles: &Styles, order: &[u32], parent: NodeId, item: Bool, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(order), writes(context), writes(open) {
+  doc "Adds the children of parent, in order, to context and its open paragraph. The walk follows next siblings and takes at most one step per node; Inconsistent when a link names no node.";
+  let nodes = document^.nodes.inner.len;
+  let index = cvt::<u32, u64>(parent.index);
+  let known = index < nodes;
+  if known {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let cursor = document^.nodes.inner[index].links.first_child;
+  for (step in 0_u64..nodes) {
+    let node = match cursor {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return Ok<unit, LayoutError>(value: unit);
+      }
+    }
+    let at = cvt::<u32, u64>(node.index);
+    let reachable = at < nodes;
+    if reachable {
+    } else {
+      return inconsistent::<unit>();
+    }
+    set cursor = document^.nodes.inner[at].links.next_sibling;
+    let data = &document^.nodes.inner[at].data;
+    match data^ {
+      Text(data: span) => {
+        let start = cvt::<u32, u64>(span^.start);
+        let end = cvt::<u32, u64>(span^.end);
+        let stored = document^.text.inner.len;
+        let ordered = start <= end;
+        let inside = end <= stored;
+        let usable = band(ordered, inside);
+        if usable {
+        } else {
+          return inconsistent::<unit>();
+        }
+        let added = add_text(open: open, bytes: &document^.text.inner[start..end]);
+        if added {
+        } else {
+          return too_large::<unit>();
+        }
+      }
+      Element(local_name: name, ..) => {
+        let step_3 = propagate build_element(document: document, styles: styles, order: order, node: node, tag: name^.index, item: item, context: context, open: open);
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+  }
+  return inconsistent::<unit>();
+}
+
+fn build_element(document: &Document, styles: &Styles, order: &[u32], node: NodeId, tag: u32, item: Bool, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(order), writes(context), writes(open) {
+  doc "Adds the element node, named tag, to context and its open paragraph by its computed boxing.";
+  let at = cvt::<u32, u64>(node.index);
+  let listed = at < order^.len;
+  if listed {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let raw = order^[at];
+  if raw == unlisted {
+    return inconsistent::<unit>();
+  }
+  let preorder = cvt::<u32, u64>(raw);
+  let boxing = match element_boxing(styles: styles, element: preorder) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return inconsistent::<unit>();
+    }
+  }
+  let none_value = DisplayKeyword::None();
+  let hidden = eeq(boxing.display, none_value);
+  if hidden {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let contents_value = DisplayKeyword::Contents();
+  let transparent = eeq(boxing.display, contents_value);
+  if transparent {
+    let step_4 = propagate build_children(document: document, styles: styles, order: order, parent: node, item: item, context: context, open: open);
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  if tag == atom_br {
+    let added = add_scalar(open: open, value: line_separator);
+    if added {
+      return Ok<unit, LayoutError>(value: unit);
+    }
+    return too_large::<unit>();
+  }
+  let items = is_container(display: boxing.display);
+  let placement = place(boxing: boxing, item: item);
+  if placement.establishes {
+    let divisor = placement.divisor;
+    if divisor == 0_u64 {
+      return inconsistent::<unit>();
+    }
+    let divided = context^.width / divisor;
+    let width = if divided < narrowest {
+      give narrowest;
+    } else {
+      give divided;
+    }
+    let block_level = Level::Block();
+    let in_flow = eeq(placement.level, block_level);
+    if in_flow {
+      let step_5 = propagate end_paragraph(context: context, open: open);
+    }
+    let child = propagate build_context(document: document, styles: styles, order: order, node: node, width: width, item: items);
+    let index = context^.children.inner.len;
+    let kept = push_item::<Context>(cell: &context^.children, value: move child, ceiling: item_ceiling);
+    if kept {
+    } else {
+      return too_large::<unit>();
+    }
+    match placement.level {
+      Block() => {
+        let nested = Flow::Nested(index: index);
+        let listed_flow = push_item::<Flow>(cell: &context^.flow, value: nested, ceiling: item_ceiling);
+        if listed_flow {
+        } else {
+          return too_large::<unit>();
+        }
+      }
+      Floated() => {
+        set context^.floated = True();
+        let anchor = Flow::Float(index: index);
+        let anchored = push_item::<Flow>(cell: &context^.flow, value: anchor, ceiling: item_ceiling);
+        if anchored {
+        } else {
+          return too_large::<unit>();
+        }
+      }
+      Atomic() => {
+        let added = add_scalar(open: open, value: object_mark);
+        if added {
+        } else {
+          return too_large::<unit>();
+        }
+      }
+      Inline() => {
+      }
+      Positioned() => {
+      }
+    }
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let inline_level = Level::Inline();
+  let inline = eeq(placement.level, inline_level);
+  if inline {
+    let step_6 = propagate build_children(document: document, styles: styles, order: order, parent: node, item: items, context: context, open: open);
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let margin = margin_of(tag: tag);
+  let step_7 = propagate end_paragraph(context: context, open: open);
+  let opening = Flow::Open(margin: margin);
+  let opened = push_item::<Flow>(cell: &context^.flow, value: opening, ceiling: item_ceiling);
+  if opened {
+  } else {
+    return too_large::<unit>();
+  }
+  let step_8 = propagate build_children(document: document, styles: styles, order: order, parent: node, item: items, context: context, open: open);
+  let step_9 = propagate end_paragraph(context: context, open: open);
+  let closing = Flow::Close(margin: margin);
+  let closed = push_item::<Flow>(cell: &context^.flow, value: closing, ceiling: item_ceiling);
+  if closed {
+  } else {
+    return too_large::<unit>();
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn count_tree(context: &Context) -> counts: Array<u64, 3> reads(context) {
+  doc "Returns the number of contexts, paragraphs and paragraph scalar values in context's tree.";
+  let paragraphs = context^.paragraphs.inner.len;
+  let scalars = 0_u64;
+  for (at in 0_u64..paragraphs) {
+    set scalars = scalars +wrap context^.paragraphs.inner[at].text.inner.len;
+  }
+  let contexts = 1_u64;
+  let texts = paragraphs;
+  let children = context^.children.inner.len;
+  for (at in 0_u64..children) {
+    let below = count_tree(context: &context^.children.inner[at]);
+    set contexts = contexts +wrap below[0_u64];
+    set texts = texts +wrap below[1_u64];
+    set scalars = scalars +wrap below[2_u64];
+  }
+  let counts = array_filled::<u64, 3>(value: 0_u64);
+  set counts[0_u64] = contexts;
+  set counts[1_u64] = texts;
+  set counts[2_u64] = scalars;
+  return counts;
+}
+
+fn build_layout(document: &Document, traversal: &Traversal, styles: &Styles) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles) {
+  doc "Maps each element's node index to its preorder index and builds the root context from the document root's children.";
+  let nodes = document^.nodes.inner.len;
+  let small = nodes <= item_ceiling;
+  if small {
+  } else {
+    return too_large::<Layout>();
+  }
+  let order = box_array_filled::<u32>(count: nodes, value: unlisted);
+  let count = traversal^.elements.inner.len;
+  let few = count < 4294967295_u64;
+  if few {
+  } else {
+    return too_large::<Layout>();
+  }
+  for (position in 0_u64..count) {
+    let element = traversal^.elements.inner[position];
+    let at = cvt::<u32, u64>(element.index);
+    let known = at < nodes;
+    if known {
+      set order.inner[at] = cvt::<u64, u32>(position);
+    } else {
+      return inconsistent::<Layout>();
+    }
+  }
+  let root = NodeId(index: 0_u32);
+  let item = False();
+  let context = propagate build_context(document: document, styles: styles, order: &order.inner[0_u64..nodes], node: root, width: root_width, item: item);
+  let counts = count_tree(context: &context);
+  let made = Layout(root: move context, contexts: counts[0_u64], paragraphs: counts[1_u64], scalars: counts[2_u64]);
+  return Ok<Layout, LayoutError>(value: move made);
+}

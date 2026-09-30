@@ -8,11 +8,11 @@ owner's ruling.
 
 How does the renderer store its document, styles, boxes and fragments, and
 what types do all its stages share, so that every stage is incremental and
-parallel by formatting context (the `pipeline` tree) and Whitefoot can prove
-the parallel work independent? This vocabulary is the part of the renderer
-that is most expensive to change later (architecture study, "Division of
-work"), and the first milestone, headless static rendering, needs it before
-any stage can be written.
+parallel along its true data dependencies (the `pipeline` tree) and
+Whitefoot can prove the parallel work independent? This vocabulary is the
+part of the renderer that is most expensive to change later (architecture
+study, "Division of work"), and the first milestone, headless static
+rendering, needs it before any stage can be written.
 
 ## Constraints from Whitefoot
 
@@ -58,7 +58,9 @@ in Whitefoot alongside the range-length diagnostic work.
      `pipeline` tree requires. A node whose inputs are unchanged returns its
      result without descending. Siblings are laid out in parallel by halving
      the run, as the owned-tree probe shows.
-2. **Stage outputs are dense arrays in traversal order.** Style is computed
+2. **Stage outputs are dense arrays in traversal order.** (The concurrency
+   investigation's style measurement adopts flat matching then cascade over
+   this level order; this item awaits revision.) Style is computed
    level by level: the elements of one tree level sit contiguously in a level
    array, and one counted loop computes the level with each iteration writing
    its own slot, as the level-loop probe shows. Writing through an index
@@ -98,13 +100,18 @@ in Whitefoot alongside the range-length diagnostic work.
   simple and parallel, but a mutation deep in a large page recomputes one
   element per level down its subtree; cascading per formatting context would
   make style follow the same unit as layout. The first style prototype
-  measures both.
+  measured level order, preorder halving and flat matching then cascade,
+  not cascading per formatting context, and its criterion 1 adopts flat
+  matching then cascade (see the concurrency investigation).
 - **Fragment storage.** Whether fragments live inside each formatting
   context's node (simple, local) or in per-frame arrays handed to paint
   (easier to send to the shell) is decided by the first paint prototype.
 - **Floats and margin collapsing** couple the boxes inside one block
   formatting context; the owned tree keeps that sequential work inside one
-  node. The first block layout prototype confirms the node boundary.
+  node. The first block layout prototype keeps them in the block pass, the
+  stage's only sequential chain, and breaks lines before floats are placed
+  with an exact fix-up (the concurrency investigation's float section);
+  whether the node stays the unit of storage is open there.
 
 ## First steps
 

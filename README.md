@@ -10,8 +10,10 @@ parallel; a shell written in Rust hosts it on each operating system.
 
 The aim is a light platform for web-built applications, with a rendering
 pipeline that is parallel and incremental from end to end: a change to one
-element reruns only the stages and the parts of the page it affects, and the
-independent parts of every stage run on all cores.
+element reruns only the stages and the parts of the page it affects, and
+every part of every stage that does not depend on another runs in parallel.
+The renderer keeps only each algorithm's true dependencies and leaves the
+grain of parallel work to the Whitefoot compiler.
 
 ## License
 

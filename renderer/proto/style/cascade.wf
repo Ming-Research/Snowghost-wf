@@ -1,0 +1,150 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias MatchContext = pkg::css::selectors::MatchContext;
+alias NodeId = pkg::dom::NodeId;
+alias selector_matches = pkg::css::selectors::selector_matches;
+
+fn default_boxing() -> made: Boxing pure {
+  doc "Returns the initial keywords: display inline, float none, position static and overflow visible.";
+  let display = DisplayKeyword::Inline();
+  let floating = FloatKeyword::None();
+  let position = PositionKeyword::Static();
+  let overflow = OverflowKeyword::Visible();
+  return Boxing(display: display, float: floating, position: position, overflow: overflow);
+}
+
+fn with_groups(inherited: Array<u64, 16>, reset: Array<u64, 16>) -> made: Computed pure {
+  doc "Returns the initial keywords with the given groups.";
+  let boxing = default_boxing();
+  return Computed(boxing: boxing, inherited: inherited, reset: reset);
+}
+
+fn blank_computed() -> made: Computed pure {
+  doc "Returns the initial keywords with every group zero: the values a root inherits from, and the fill of a fresh result array. Each statement uses the one before it: --par would hand two independent statements to two lanes on every call.";
+  let zeros = array_filled::<u64, 16>(value: 0_u64);
+  let made = with_groups(inherited: zeros, reset: zeros);
+  return made;
+}
+
+fn inherit_from(parent: Computed) -> made: Computed pure {
+  doc "Starts one element's values: the initial keywords, the inherited groups 0 and 1 copied from its parent's values, and the groups 2 and 3 zero. Applying a record then replaces what it sets, so a slot no record sets keeps its parent's value or zero. It runs once per element, and each statement uses the one before it: --par would hand two independent statements to two lanes on every call.";
+  let zeros = array_filled::<u64, 16>(value: 0_u64);
+  let made = with_groups(inherited: parent.inherited, reset: zeros);
+  return made;
+}
+
+fn apply_record(computed: &Computed, record: Declared) -> result: unit writes(computed) {
+  doc "Applies one record: a keyword replaces its property's keyword, a group value replaces its slot.";
+  match record {
+    SetDisplay(value: keyword) => {
+      set computed^.boxing.display = keyword;
+    }
+    SetFloat(value: keyword) => {
+      set computed^.boxing.float = keyword;
+    }
+    SetPosition(value: keyword) => {
+      set computed^.boxing.position = keyword;
+    }
+    SetOverflow(value: keyword) => {
+      set computed^.boxing.overflow = keyword;
+    }
+    SetInherited(slot: index, hash: value) => {
+      let within = iand(index, 15_u64);
+      set computed^.inherited[within] = value;
+    }
+    SetReset(slot: index, hash: value) => {
+      let within = iand(index, 15_u64);
+      set computed^.reset[within] = value;
+    }
+  }
+  return unit;
+}
+
+fn apply_rule(store: &RuleStore, rule: u64, computed: &Computed) -> result: unit reads(store), writes(computed) contract {
+  requires rule < store^.rules.inner.len;
+} {
+  doc "Applies the records of one rule in order. add_rule records a range inside the store's records; the range is read clamped to them.";
+  let first = store^.rules.inner[rule].first;
+  let end = store^.rules.inner[rule].end;
+  let total = store^.records.inner.len;
+  let stop = imin(end, total);
+  let start = imin(first, stop);
+  for (at in start..stop) {
+    let record = store^.records.inner[at];
+    apply_record(computed: computed, record: record);
+  }
+  return unit;
+}
+
+fn style_element(store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId, parent: Computed) -> computed: Computed reads(store), reads(document), reads(atoms) {
+  doc "Computes one element's values for shapes A and B: tests every rule of store in order with selector_matches and applies each matching rule's records to the values inherit_from starts from.";
+  let current = inherit_from(parent: parent);
+  let rules = store^.rules.inner.len;
+  let none = None<NodeId>();
+  let context = MatchContext(target: none, scope: none);
+  for (rule in 0_u64..rules) {
+    let matched = selector_matches(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context);
+    if matched {
+      apply_rule(store: store, rule: rule, computed: &current);
+    }
+  }
+  return current;
+}
+
+fn match_element(bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId) -> fits: Bool reads(store), reads(document), reads(atoms), writes(bits) {
+  doc "Matching for shape C: tests every rule of store in order with selector_matches and sets bit r mod 64 of word r / 64 of bits for each matching rule r. bits holds zeros on entry. Returns False when a matching rule has no word in bits.";
+  let words = bits^.len;
+  let rules = store^.rules.inner.len;
+  let none = None<NodeId>();
+  let context = MatchContext(target: none, scope: none);
+  let fits = True();
+  for (rule in 0_u64..rules) {
+    let matched = selector_matches(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context);
+    if matched {
+      let word = rule / 64_u64;
+      let bit = rule % 64_u64;
+      let shift = cvt::<u64, u32>(bit);
+      let mask = ishl(1_u64, shift);
+      let inside = word < words;
+      if inside {
+        let old = bits^[word];
+        let updated = ior(old, mask);
+        set bits^[word] = updated;
+      } else {
+        set fits = False();
+      }
+    }
+  }
+  return fits;
+}
+
+fn cascade_element(bits: &[u64], store: &RuleStore, parent: Computed) -> (computed: Computed, known: Bool) reads(bits), reads(store) contract {
+  requires bits^.len <= 65536_u64;
+} {
+  doc "The cascade of shape C: applies, in rule order, the records of each rule whose bit match_element set, to the values inherit_from starts from. known is False when a set bit names no rule of store.";
+  let current = inherit_from(parent: parent);
+  let words = bits^.len;
+  let rules = store^.rules.inner.len;
+  let known = True();
+  for (word in 0_u64..words) {
+    let base = word * 64_u64;
+    let pending = bits^[word];
+    loop @set_bits {
+      if pending == 0_u64 {
+        break @set_bits;
+      }
+      let low = ictz(pending);
+      let offset = cvt::<u32, u64>(low);
+      let rule = base + offset;
+      let listed = rule < rules;
+      if listed {
+        apply_rule(store: store, rule: rule, computed: &current);
+      } else {
+        set known = False();
+      }
+      let below = pending -wrap 1_u64;
+      set pending = iand(pending, below);
+    }
+  }
+  return current, known;
+}
