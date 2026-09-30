@@ -148,7 +148,7 @@ layout_reps_of() {
 # Repetitions of the context tree's construction (proto_layout build and
 # walk) and of the setup steps (parse, traverse, rules), chosen so the step is
 # at least half of T(REPS) in the sequential build for parse and build and a
-# fifth to a third for the shorter traverse and rules, whose times therefore
+# seventh to a third for the shorter traverse and rules, whose times therefore
 # carry more of T(0)'s spread: T(0) is 1.6 to 4 s there, and on
 # html5 one build took about 0.032 s, one parse 0.14 s, and the traversal
 # arrays and the rule store under 0.03 s each, and apollo11's rule store,

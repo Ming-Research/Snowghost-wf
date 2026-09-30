@@ -655,11 +655,11 @@ and the largest names the next sequential cost to study.
 **Results.** At Snowghost commit 7c9caf3 with the same pin, machine and
 lock. Every page's paragraph and scalar value counts, root height and
 checksum equal the ones above in both builds, and `--par-ledger` splits
-`decode_all` as an independent map, at this commit and at each later one;
-`runs/0-check-base-e45ccb7.txt` holds the base's `check` output and
-`runs/8-check-075f359.txt` the output and the splits at 075f359. `MODES="build L3" WORKERS=4 RUNS=3
-run.sh layout "ecma262 html5"` took 7 minutes, including building both
-drivers; seconds per repetition, best of three:
+`decode_all` as an independent map; `runs/0-check-base-e45ccb7.txt` holds
+the base's `check` output and `runs/8-check-075f359.txt` the output and the
+splits at 075f359. `MODES="build L3" WORKERS=4 RUNS=3 run.sh layout "ecma262
+html5"` took 7 minutes, including building both drivers; seconds per
+repetition, best of three:
 
 | Page | Build seq | Build W4 | L3 W4 | Build and L3, W4 | Before | Speedup |
 |---|---:|---:|---:|---:|---:|---:|
@@ -699,15 +699,16 @@ measurement):
 
 - The `--par` build is no faster within the spread between runs: apollo11's
   rule store and traversal took 7 and 10 percent less at four workers, the
-  other steps as much or more.
+  other steps within 5 percent.
 - Parsing is the largest sequential cost on ecma262 and html5. On apollo11,
   whose style sheets are large, the rule store costs about as much as
   parsing; each repetition of `rules` also reads the sheet files again.
 - The repeated steps run after the first, with the atom table already
   filled, and the three steps sum to about 0.20 s on ecma262 and 0.15 s on
-  html5, against the 0.29 and 0.23 s of the style measurement's T(0), which
-  also holds reading the files and starting the process.
-- Traversal and the rule store are a fifth to a third of T(REPS), so their
+  html5, against the 0.29 and 0.23 s of the style measurement's T(0); what
+  the difference holds, such as reading the files, starting the process or
+  the first run's cold atom table, is not measured.
+- Traversal and the rule store are 14 to 34 percent of T(REPS), so their
   times carry about 10 to 15 percent of T(0)'s spread.
 
 **Where the decoding loop loses its speedup.** The 1.5 of criterion 2 was
