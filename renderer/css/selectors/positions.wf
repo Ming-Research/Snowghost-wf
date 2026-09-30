@@ -4,11 +4,8 @@ alias Namespace = pkg::dom::Namespace;
 
 fn empty_positions() -> made: Positions pure {
   doc "Positions that cover no node, so every count scans.";
-  let child_position = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
-  let child_total = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
-  let type_position = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
-  let type_total = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
-  return Positions(child_position: move child_position, child_total: move child_total, type_position: move type_position, type_total: move type_total);
+  let table = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
+  return Positions(table: move table);
 }
 
 fn namespace_slot(namespace: Namespace) -> slot: u64 pure {
@@ -88,10 +85,8 @@ fn sibling_positions(document: &Document) -> made: Positions reads(document) {
     return empty_positions();
   }
   let unseen = 4294967295_u64;
-  let child_position = box_array_filled::<u64>(count: count, value: 0_u64);
-  let child_total = box_array_filled::<u64>(count: count, value: 0_u64);
-  let type_position = box_array_filled::<u64>(count: count, value: 0_u64);
-  let type_total = box_array_filled::<u64>(count: count, value: 0_u64);
+  let words = count * 4_u64;
+  let table = box_array_filled::<u64>(count: words, value: 0_u64);
   let counter = box_array_filled::<u64>(count: keys, value: 0_u64);
   let stamp = box_array_filled::<u64>(count: keys, value: unseen);
   for (parent in 0_u64..count) {
@@ -112,7 +107,11 @@ fn sibling_positions(document: &Document) -> made: Positions reads(document) {
             match element_key(document: document, node: at) {
               Some(value: key) => {
                 set elements = elements +wrap 1_u64;
-                set child_position.inner[at] = elements;
+                let slot_0 = at * 4_u64;
+                let fits_0 = slot_0 < table.inner.len;
+                if fits_0 {
+                  set table.inner[slot_0] = elements;
+                }
                 let known = key < keys;
                 if known {
                   let fresh = stamp.inner[key] == parent;
@@ -123,7 +122,12 @@ fn sibling_positions(document: &Document) -> made: Positions reads(document) {
                   }
                   let typed = counter.inner[key] +wrap 1_u64;
                   set counter.inner[key] = typed;
-                  set type_position.inner[at] = typed;
+                  let base_2 = at * 4_u64;
+                  let slot_2 = base_2 + 2_u64;
+                  let fits_2 = slot_2 < table.inner.len;
+                  if fits_2 {
+                    set table.inner[slot_2] = typed;
+                  }
                 }
               }
               None() => {
@@ -155,10 +159,20 @@ fn sibling_positions(document: &Document) -> made: Positions reads(document) {
           if listed {
             match element_key(document: document, node: at) {
               Some(value: key) => {
-                set child_total.inner[at] = elements;
+                let base_1 = at * 4_u64;
+                let slot_1 = base_1 + 1_u64;
+                let fits_1 = slot_1 < table.inner.len;
+                if fits_1 {
+                  set table.inner[slot_1] = elements;
+                }
                 let known = key < keys;
                 if known {
-                  set type_total.inner[at] = counter.inner[key];
+                  let base_3 = at * 4_u64;
+                  let slot_3 = base_3 + 3_u64;
+                  let fits_3 = slot_3 < table.inner.len;
+                  if fits_3 {
+                    set table.inner[slot_3] = counter.inner[key];
+                  }
                 }
               }
               None() => {
@@ -176,32 +190,33 @@ fn sibling_positions(document: &Document) -> made: Positions reads(document) {
       set back = back +wrap 1_u64;
     }
   }
-  return Positions(child_position: move child_position, child_total: move child_total, type_position: move type_position, type_total: move type_total);
+  return Positions(table: move table);
 }
 
-fn positioned_scan(positions: &Positions, node: NodeId, same_type: Bool) -> scan: Option<NthScan> reads(positions) {
-  doc "The count nth_scan would return for node, from positions; None when positions does not cover node.";
+fn positioned_scan(positions: &[u64], node: NodeId, same_type: Bool) -> scan: Option<NthScan> reads(positions) {
+  doc "The count nth_scan would return for node, from positions, four words per node: position and total among the element siblings, then among those of its type; None when positions does not cover node.";
   let at = cvt::<u32, u64>(node.index);
-  let a = at < positions^.child_position.inner.len;
-  let b = at < positions^.child_total.inner.len;
-  let c = at < positions^.type_position.inner.len;
-  let d = at < positions^.type_total.inner.len;
-  let first = band(a, b);
-  let second = band(c, d);
-  let covered = band(first, second);
+  let base = at * 4_u64;
+  let last = base + 3_u64;
+  let covered = last < positions^.len;
   if covered {
   } else {
     return None<NthScan>();
   }
-  if same_type {
-    let position = positions^.type_position.inner[at];
-    let total = positions^.type_total.inner[at];
-    let found = position > 0_u64;
-    let scan = NthScan(position: position, total: total, found: found);
-    return Some<NthScan>(value: scan);
+  let offset = if same_type {
+    give 2_u64;
+  } else {
+    give 0_u64;
   }
-  let position = positions^.child_position.inner[at];
-  let total = positions^.child_total.inner[at];
+  let first = base + offset;
+  let second = first + 1_u64;
+  let within = second < positions^.len;
+  if within {
+  } else {
+    return None<NthScan>();
+  }
+  let position = positions^[first];
+  let total = positions^[second];
   let found = position > 0_u64;
   let scan = NthScan(position: position, total: total, found: found);
   return Some<NthScan>(value: scan);
