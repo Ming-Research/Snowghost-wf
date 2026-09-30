@@ -858,8 +858,8 @@ sequential build:
   takes 43 and 40 percent of the parse on ecma262 and html5, under half,
   though it runs 60 percent of html5's instructions.
 - The `--par` build shows no trend with workers: at one, two and four
-  workers it is 9 percent faster to 7 percent slower than the sequential
-  build, the extremes both on html5.
+  workers it is 9 percent faster (html5's parse at four) to 8 percent
+  slower (apollo11's tokenizer at one) than the sequential build.
 - The tokenizer's share is an estimate: without tree construction it never
   switches to raw text, RCDATA or script data.
 
