@@ -804,7 +804,7 @@ largest sequential step, is the next one studied.
 
 Parsing runs once, in sequence, before everything else, and takes 18 and 12
 percent of ecma262's and html5's four-worker pipeline. Callgrind on html5's
-parse (sequential driver at commit 57043e5, collection limited to
+parse (sequential driver built from commit 075f359, collection limited to
 `parse_document`): 1,358 million instructions, 60 percent in the tokenizer
 (`next_token`) and 39 percent in tree construction (`process_token`, with
 atom interning 5 percent and DOM insertion 7). The largest single costs are

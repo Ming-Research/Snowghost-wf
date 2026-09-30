@@ -14,7 +14,8 @@
 #                                overrides the list, for instance with L3,
 #                                build and walk for the context tree's
 #                                construction, with and without decoding, or
-#                                parse, traverse and rules for setup) on
+#                                parse, tokenize, traverse and rules for
+#                                setup) on
 #                                every page, or on PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
@@ -128,7 +129,7 @@ reps_of() {
 # html5 stage at 0.87 s of T(REPS) 2.19 s.
 layout_reps_of() {
 	case ${2:-} in
-	build | walk | parse | traverse | rules)
+	build | walk | parse | tokenize | traverse | rules)
 		setup_reps_of "$1" "$2"
 		return
 		;;
@@ -155,7 +156,7 @@ layout_reps_of() {
 # from its large sheets, 0.018 s, measured on the development machine.
 setup_reps_of() {
 	case $2 in
-	parse) small=30 large=100 ;;
+	parse | tokenize) small=30 large=100 ;;
 	rules) small=200 large=200 ;;
 	*) small=200 large=2000 ;;
 	esac
