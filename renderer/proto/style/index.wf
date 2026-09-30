@@ -1,0 +1,357 @@
+alias MatchContext = pkg::css::selectors::MatchContext;
+alias SelectorList = pkg::css::selectors::SelectorList;
+alias SubjectKey = pkg::css::selectors::SubjectKey;
+alias TextSpan = pkg::dom::TextSpan;
+alias Positions = pkg::css::selectors::Positions;
+alias selector_matches_positioned = pkg::css::selectors::selector_matches_positioned;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+alias alternative_count = pkg::css::selectors::alternative_count;
+alias atom_class = pkg::base::static_atoms::atom_class;
+alias atom_id = pkg::base::static_atoms::atom_id;
+alias name_hash = pkg::css::selectors::name_hash;
+alias subject_key = pkg::css::selectors::subject_key;
+
+const key_buckets: u64 = 1024_u64;
+
+const bucket_mask: u64 = 1023_u64;
+
+const bucket_total: u64 = 3072_u64;
+
+const no_bucket: u64 = 3072_u64;
+
+const any_bucket: u64 = 3073_u64;
+
+const pair_scale: u64 = 4194304_u64;
+
+fn key_bucket(key: SubjectKey) -> bucket: u64 pure {
+  doc "The bucket of a subject key: ids in the first key_buckets, classes in the next, types in the last, each by its hash's low bits; any_bucket for Anything and no_bucket for Nothing.";
+  match key {
+    Id(hash: h) => {
+      return iand(h, bucket_mask);
+    }
+    Class(hash: h) => {
+      let low = iand(h, bucket_mask);
+      return key_buckets + low;
+    }
+    Type(hash: h) => {
+      let low = iand(h, bucket_mask);
+      let base = key_buckets + key_buckets;
+      return base + low;
+    }
+    Anything() => {
+      return any_bucket;
+    }
+    Nothing() => {
+      return no_bucket;
+    }
+  }
+}
+
+fn rule_is_wide(list: &SelectorList, atoms: &AtomTable) -> wide: Bool reads(list), reads(atoms) {
+  doc "Tells whether some alternative of list keys Anything, so the rule is tested against every element.";
+  let alternatives = alternative_count(list: list);
+  for (a in 0_u64..alternatives) {
+    let key = subject_key(list: list, atoms: atoms, alternative: a);
+    let bucket = key_bucket(key: key);
+    if bucket == any_bucket {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn build_rule_index(store: &RuleStore, atoms: &AtomTable) -> result: Result<RuleIndex, StyleError> reads(store), reads(atoms) {
+  doc "Builds the rule index: every rule with an alternative that keys Anything in the anything list, and every other rule under the bucket of each alternative's key, bucket by bucket in rule order.";
+  let rules = store^.rules.inner.len;
+  let few = rules <= pair_scale;
+  if few {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<RuleIndex, StyleError>(error: failure);
+  }
+  let starts = box_array_filled::<u64>(count: 3073_u64, value: 0_u64);
+  let pairs = box_slots_new::<u64>(capacity: 0_u64);
+  let anything = box_slots_new::<u32>(capacity: 0_u64);
+  for (rule in 0_u64..rules) {
+    let wide = rule_is_wide(list: &store^.rules.inner[rule].selectors, atoms: atoms);
+    let number = cvt::<u64, u32>(rule);
+    if wide {
+      let step_1 = propagate push::<u32>(cell: &anything, value: number, ceiling: rule_ceiling);
+    } else {
+      let alternatives = alternative_count(list: &store^.rules.inner[rule].selectors);
+      for (a in 0_u64..alternatives) {
+        let key = subject_key(list: &store^.rules.inner[rule].selectors, atoms: atoms, alternative: a);
+        let bucket = key_bucket(key: key);
+        let keyed = bucket < bucket_total;
+        if keyed {
+          let scaled = bucket * pair_scale;
+          let pair = scaled + rule;
+          let step_2 = propagate push::<u64>(cell: &pairs, value: pair, ceiling: 4294967296_u64);
+          let next = bucket + 1_u64;
+          set starts.inner[next] = starts.inner[next] +wrap 1_u64;
+        }
+      }
+    }
+  }
+  for (bucket in 0_u64..bucket_total) {
+    let next = bucket + 1_u64;
+    set starts.inner[next] = starts.inner[next] +wrap starts.inner[bucket];
+  }
+  let total = pairs.inner.len;
+  let bounded = total <= 4294967296_u64;
+  if bounded {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<RuleIndex, StyleError>(error: failure);
+  }
+  let entries = box_array_filled::<u32>(count: total, value: 0_u32);
+  let cursor = box_array_filled::<u64>(count: bucket_total, value: 0_u64);
+  for (bucket in 0_u64..bucket_total) {
+    set cursor.inner[bucket] = starts.inner[bucket];
+  }
+  for (at in 0_u64..total) {
+    let pair = pairs.inner[at];
+    let bucket = pair / pair_scale;
+    let rule = pair % pair_scale;
+    let listed = bucket < bucket_total;
+    if listed {
+      let slot = cursor.inner[bucket];
+      let inside = slot < total;
+      if inside {
+        set entries.inner[slot] = cvt::<u64, u32>(rule);
+        set cursor.inner[bucket] = slot + 1_u64;
+      }
+    }
+  }
+  let made = RuleIndex(starts: move starts, entries: move entries, anything: move anything);
+  return Ok<RuleIndex, StyleError>(value: move made);
+}
+
+fn test_rule(bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, rule: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
+  doc "Matches rule against element and sets bit rule mod 64 of word rule / 64 of bits when it matches. False when a matching rule has no word in bits.";
+  let rules = store^.rules.inner.len;
+  let known = rule < rules;
+  if known {
+  } else {
+    return True();
+  }
+  let none = None<NodeId>();
+  let context = MatchContext(target: none, scope: none);
+  let matched = selector_matches_positioned(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context, positions: positions);
+  if matched {
+    let word = rule / 64_u64;
+    let bit = rule % 64_u64;
+    let shift = cvt::<u64, u32>(bit);
+    let mask = ishl(1_u64, shift);
+    let inside = word < bits^.len;
+    if inside {
+      let old = bits^[word];
+      set bits^[word] = ior(old, mask);
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn test_bucket(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
+  doc "Tests every rule listed under bucket against element.";
+  let slots = index^.starts.inner.len;
+  let listed = bucket < bucket_total;
+  if listed {
+  } else {
+    return True();
+  }
+  let next = bucket + 1_u64;
+  let within = next < slots;
+  if within {
+  } else {
+    return True();
+  }
+  let from = index^.starts.inner[bucket];
+  let to = index^.starts.inner[next];
+  let entries = index^.entries.inner.len;
+  let ordered = from <= to;
+  let inside = to <= entries;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return True();
+  }
+  let fits = True();
+  for (at in from..to) {
+    let rule = cvt::<u32, u64>(index^.entries.inner[at]);
+    let one = test_rule(bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, rule: rule);
+    set fits = band(fits, one);
+  }
+  return fits;
+}
+
+fn text_hash(document: &Document, span: TextSpan) -> hash: u64 reads(document) {
+  doc "name_hash of the document text span holds, 0 for a span outside the text.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  let inside = end <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    let hash = name_hash(bytes: &document^.text.inner[start..end]);
+    return hash;
+  }
+  return 0_u64;
+}
+
+fn is_class_space(byte: u8) -> space: Bool pure {
+  doc "Tells whether byte is one of the ASCII whitespace bytes the class matcher splits words on: space, tab, line feed, form feed and carriage return.";
+  let blank = byte == 32_u8;
+  let tab = byte == 9_u8;
+  let feed = byte == 10_u8;
+  let form = byte == 12_u8;
+  let carriage = byte == 13_u8;
+  let first = bor(blank, tab);
+  let second = bor(feed, form);
+  let some = bor(first, second);
+  let space = bor(some, carriage);
+  return space;
+}
+
+fn test_classes(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
+  doc "Tests the rules under the class bucket of every whitespace-separated word of the class attribute value span holds.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  let inside = end <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return True();
+  }
+  let fits = True();
+  let word_start = start;
+  let in_word = False();
+  for (at in start..end) {
+    let space = is_class_space(byte: document^.text.inner[at]);
+    if space {
+      let started = word_start <= at;
+      let closes = band(in_word, started);
+      if closes {
+        let hash = name_hash(bytes: &document^.text.inner[word_start..at]);
+        let low = iand(hash, bucket_mask);
+        let bucket = key_buckets + low;
+        let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
+        set fits = band(fits, one);
+      }
+      set in_word = False();
+    } else if in_word {
+    } else {
+      set word_start = at;
+      set in_word = True();
+    }
+  }
+  if in_word {
+    let ends = word_start <= end;
+    if ends {
+      let hash = name_hash(bytes: &document^.text.inner[word_start..end]);
+      let low = iand(hash, bucket_mask);
+      let bucket = key_buckets + low;
+      let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
+      set fits = band(fits, one);
+    }
+  }
+  return fits;
+}
+
+fn match_indexed(bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(bits) {
+  doc "Matching for shape C through the rule index: tests the anything list and the rules under the buckets of element's local name, its first id attribute value and the words of its first class attribute value, found as the matchers find them, and sets bit r of bits for each matching rule r. bits holds zeros on entry. False when a matching rule has no word in bits.";
+  let fits = True();
+  let wide = index^.anything.inner.len;
+  for (k in 0_u64..wide) {
+    let rule = cvt::<u32, u64>(index^.anything.inner[k]);
+    let one = test_rule(bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, rule: rule);
+    set fits = band(fits, one);
+  }
+  let at = cvt::<u32, u64>(element.index);
+  let nodes = document^.nodes.inner.len;
+  let known = at < nodes;
+  if known {
+  } else {
+    return fits;
+  }
+  let data = &document^.nodes.inner[at].data;
+  match data^ {
+    Element(namespace: space, local_name: name, attributes: attrs, template_contents: contents) => {
+      let name_at = cvt::<u32, u64>(name^.index);
+      let spans = atoms^.spans.inner.len;
+      let named = name_at < spans;
+      if named {
+        let span = atoms^.spans.inner[name_at];
+        let start = cvt::<u32, u64>(span.start);
+        let end = cvt::<u32, u64>(span.end);
+        let ordered = start <= end;
+        let inside = end <= atoms^.text.inner.len;
+        let usable = band(ordered, inside);
+        if usable {
+          let hash = name_hash(bytes: &atoms^.text.inner[start..end]);
+          let low = iand(hash, bucket_mask);
+          let base = key_buckets + key_buckets;
+          let bucket = base + low;
+          let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
+          set fits = band(fits, one);
+        }
+      }
+      let count = attrs^.inner.len;
+      let seen_id = False();
+      let seen_class = False();
+      for (k in 0_u64..count) {
+        let attribute = attrs^.inner[k];
+        let plain = match attribute.namespace {
+          NoNamespace() => {
+            give True();
+          }
+          XLink() => {
+            give False();
+          }
+          Xml() => {
+            give False();
+          }
+          XmlNs() => {
+            give False();
+          }
+        }
+        if plain {
+          let is_id = attribute.name.index == atom_id;
+          let fresh_id = bnot(seen_id);
+          let first_id = band(is_id, fresh_id);
+          if first_id {
+            set seen_id = True();
+            let hash = text_hash(document: document, span: attribute.value);
+            let bucket = iand(hash, bucket_mask);
+            let one = test_bucket(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, bucket: bucket);
+            set fits = band(fits, one);
+          }
+          let is_class = attribute.name.index == atom_class;
+          let fresh_class = bnot(seen_class);
+          let first_class = band(is_class, fresh_class);
+          if first_class {
+            set seen_class = True();
+            let one = test_classes(bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, span: attribute.value);
+            set fits = band(fits, one);
+          }
+        }
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return fits;
+}

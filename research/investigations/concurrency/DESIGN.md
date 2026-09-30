@@ -800,6 +800,238 @@ left here: what the walk and the decoding loop could still give is a few
 milliseconds, under 1 percent of the four-worker pipeline. Parsing, the
 largest sequential step, is the next one studied.
 
+### HTML parsing
+
+Parsing runs once, in sequence, before everything else, and takes 18 and 12
+percent of ecma262's and html5's four-worker pipeline. Callgrind on html5's
+parse (sequential driver built from commit 075f359, collection limited to
+`parse_document`): 1,358 million instructions, 60 percent in the tokenizer
+(`next_token`) and 39 percent in tree construction (`process_token`, with
+atom interning 5 percent and DOM insertion 7). The largest single costs are
+per-byte copies of text into the token's text buffer: `bytes_push` 13
+percent, `push_codepoint` 10 and UTF-8 decoding 7.
+
+**Where its dependencies are.**
+
+- *Tokenizer.* A state machine over the bytes: each byte's meaning depends
+  on the state the bytes before it left. Almost all of a page is in the data
+  state, and a chunk of the page tokenized from an assumed state agrees with
+  the true one from the first point where both states meet, typically at
+  the next `<` in data. Tree construction feeds back into the tokenizer:
+  after `script`, `style`, `title`, `textarea` and a few other start tags it
+  switches the tokenizer to script data, raw text or RCDATA, and it allows
+  CDATA sections only in foreign content. So a chunk's tokens can be
+  computed speculatively in parallel and checked where each chunk starts.
+- *Tree construction.* The insertion mode, the stack of open elements and
+  the list of active formatting elements carry from each token to the next,
+  and the adoption agency and foster parenting rewrite the tree on earlier
+  decisions. It is one chain over the tokens; interning names and building
+  a node's attributes depend only on the token.
+- *Copying text.* A text token's bytes are decoded to code points and
+  pushed back one at a time; a run of plain bytes could be copied whole.
+  That shortens the chain without parallelism.
+
+`proto_layout tokenize REPS` runs the tokenizer alone over the page REPS
+times, from the data state and with no tree construction, so the contents
+of `script`, `style`, `title` and `textarea` are tokenized as markup rather
+than as text; it counts the tokens.
+
+Criterion, written before measuring: the tokenizer alone and the whole
+parse, sequentially, best of three, on the three real pages. If the
+tokenizer takes at least half of the parse on both large pages (ecma262 and
+html5), the first parallel design targets the tokenizer (speculative
+chunks); otherwise it targets tree construction and the text copy.
+
+**Results.** At Snowghost commit 58fa8ee, `KEEP_BUILD=1 MODES="tokenize
+parse" RUNS=3 run.sh layout "ecma262 html5 apollo11"` took 8 minutes (an
+empty `WORKERS` falls back to its default, so the `--par` build ran at one,
+two and four workers too). Seconds per repetition, best of three, in the
+sequential build:
+
+| Page | Tokenizer alone | Whole parse | Tokenizer's share |
+|---|---:|---:|---:|
+| ecma262 | 0.0757 | 0.1773 | 43 % |
+| html5 | 0.0627 | 0.1557 | 40 % |
+| apollo11 | 0.0116 | 0.0209 | 56 % |
+
+- **Criterion: tree construction and the text copy first.** The tokenizer
+  takes 43 and 40 percent of the parse on ecma262 and html5, under half,
+  though it runs 60 percent of html5's instructions.
+- The `--par` build shows no trend with workers: at one, two and four
+  workers it is 9 percent faster (html5's parse at four) to 8 percent
+  slower (apollo11's tokenizer at one) than the sequential build.
+- The tokenizer's share is an estimate: without tree construction it never
+  switches to raw text, RCDATA or script data.
+
+The raw output is in `runs/10-tokenize-58fa8ee.txt`, and the callgrind
+summary in `runs/9-callgrind-parse-075f359.txt`.
+
+**The owner's ruling.** Parsing is left for now: at four workers it is 12
+to 18 percent of the pipeline, while style takes 70 to 80 percent. Copying
+runs of plain text whole, the cheapest shortening of parsing's chain,
+comes after style.
+
+### Style's work per element
+
+Style runs in parallel already (shape C, 3.6 times faster at four workers
+than sequentially), yet takes 0.79 s on ecma262 and 1.02 s on html5 at four
+workers, 70 to 80 percent of the pipeline. Callgrind on ecma262's style
+computation (sequential driver built from commit 58fa8ee, collection
+limited to `compute_styles`): 32,248 million instructions, about 180,000
+per element.
+
+- Selector matching takes 65 percent: `match_complex` 34, `instr_matches`
+  23 and `backtrack` 8. `match_element` tests every rule of the store
+  against every element, so `match_complex` runs 106 million times, about
+  590 times per element; most of those rules cannot match the element,
+  since their rightmost compound names another id, class or tag.
+- `memset` takes 21 percent, 99 percent of it under `match_complex`: each call
+  creates `slots_new::<Frame, 64>()` for its backtracking, and the compiled
+  code clears the 64 frames, though a frame past the window's length is
+  never read.
+- `match_element`'s own loop takes 12 percent.
+
+The raw summary is in `runs/11-callgrind-style-58fa8ee.txt`.
+
+**A rule index** (the owner's choice). Each alternative of a rule's selector
+list keys the rule by its subject compound, the rightmost one: by its id if
+it has one, else its first class, else its type, each as a hash of the
+name's ASCII-lowercased bytes; a rule with an alternative that has none of
+them goes to a list tested against every element, and an alternative that
+never matches keys nothing. An element tests only the rules under the
+hashes of its own id, its class words and its local name, and that list,
+with the same `selector_matches` as before. A rule it skips has no
+alternative whose subject names the element's id, a class of it or its
+type, even ignoring case and namespace, so it cannot match: the matched
+rules, and so the cascade, are exactly those of matching every rule, and
+hash collisions only add rules to test.
+
+Criteria, written before measuring:
+
+1. **Equality.** `proto_style check` passes on all seven pages (shapes A, B
+   and C agree and the intern pass is sound), and every page's style
+   checksum in shape C equals the one before the change.
+2. **Speedup.** Shape C's style stage at four workers is at least 3 times
+   faster on ecma262 and on html5 than before, measured in the same run
+   against the previous driver.
+
+**Results.** At Snowghost commit ec21b7c, `proto_style check` passes on all
+seven pages, and every page's shape C checksum equals the one of the driver
+built from 7e2ada4, before the index (`runs/12-style-check-ec21b7c.txt`). A
+build whose index skips the class buckets fails the check on ecma262 ("A
+differs from C at preorder element 59", `runs/17-negative-controls.txt`).
+`--par-ledger` still splits `match_elements` (`runs/18-style-ledger-95b9073.txt`
+records it at the end of this work). A one-shot script under the lock
+(`runs/13-style-index-script.sh.txt`) timed shape C with five repetitions,
+best of three, both drivers in the same run (`runs/13-style-index-ec21b7c.txt`),
+seconds per repetition:
+
+| Page | Rules | Before, W4 | After, W4 | Speedup | Before, seq | After, seq |
+|---|---:|---:|---:|---:|---:|---:|
+| ecma262 | 336 | 0.696 | 0.218 | 3.19 | 2.568 | 0.698 |
+| html5 | 324 | 0.942 | 0.734 | 1.28 | 3.522 | 2.710 |
+| apollo11 | 1,558 | 0.416 | 0.198 | 2.10 | 1.512 | 0.792 |
+
+- **Criterion 1: met.**
+- **Criterion 2: met on ecma262, not on html5.**
+- **What html5 spends its time on.** Callgrind on html5's shape C with
+  the index (`runs/14-callgrind-style-html5-ec21b7c.txt`): 24,587 million
+  instructions, 61 percent in `nth_scan` and 18 in `nth_qualifies`, which
+  evaluate `:nth-child` and `:nth-of-type` by counting the element's
+  siblings each time, so a rule of that kind costs time in proportion to
+  the element's position among its siblings, which points to long sibling
+  runs on html5; their lengths are not measured. The index cannot remove
+  those tests, since such a rule's subject is a common type or none, and
+  the rest of matching is about 20 percent.
+
+**Sibling positions** (the owner's choice). Every `:nth-child`,
+`:nth-last-child`, `:first-child`, `:last-child`, `:only-child` and their
+`-of-type` forms reads one result of a sibling count: the element's 1-based
+position among its parent's element children, or among those with its
+namespace and local name, and their total. One pass over the document,
+before matching, records both pairs for every element, walking each parent's
+children twice, first to number them and then to write their totals, and
+counting each type with a table indexed by its atom; matching reads them
+instead of counting. `:nth-child(An+B of S)` and `:nth-last-child(An+B of
+S)` depend on S and keep counting. The pass takes time in proportion to the
+nodes, where counting took time in proportion to the element's position for
+every test.
+
+Criteria, written before measuring:
+
+1. **Equality.** `proto_style check` passes on all seven pages and every
+   page's shape C checksum equals the one before the change.
+2. **Speedup.** Shape C's style stage at four workers on html5 is at least
+   3 times faster than with the rule index alone (0.734 s), measured in the
+   same run against that driver, and no slower on ecma262 and apollo11.
+
+**Results.** Commit aacd878 walked each parent's children with a counted
+loop that ran to the node count whatever the list's length, work in
+proportion to the square of the nodes, and a first timing run stopped at its
+ten-minute limit; 0c66df9 leaves the walk at the last sibling. At 0c66df9,
+`proto_style check` passes on all seven pages with every shape C checksum
+unchanged (`runs/16-style-check-0c66df9.txt`), and a build whose child
+positions are off by one fails the check on html5 and ecma262 ("A differs
+from C", `runs/17-negative-controls.txt`; that build is aacd878's code with
+the change the file names). `--par-ledger` still splits `match_elements`.
+The one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
+with the rule index alone (ec21b7c) and with positions too (0c66df9) in one
+run, five repetitions, best of three
+(`runs/15-style-positions-0c66df9.txt`), seconds per repetition:
+
+| Page | Index, W4 | Positions, W4 | Speedup | Index, seq | Positions, seq |
+|---|---:|---:|---:|---:|---:|
+| ecma262 | 0.210 | 0.224 | 0.94 | 0.700 | 0.700 |
+| html5 | 0.730 | 0.180 | 4.06 | 2.600 | 0.578 |
+| apollo11 | 0.206 | 0.202 | 1.02 | 0.756 | 0.754 |
+
+- **Criterion 1: met.**
+- **Criterion 2: met on html5, not on ecma262,** which is 7 percent slower
+  at four workers and as fast sequentially. A likely cause, not measured:
+  the position pass runs in sequence before the parallel matching loop, so
+  what it costs is not divided among the workers, and ecma262 may have
+  little sibling counting for it to save; neither the pass's own time nor
+  ecma262's sibling counting is measured.
+- Against shape C before the rule index, style at four workers now takes
+  0.224 s on ecma262 (0.696 s before), 0.180 s on html5 (0.942 s) and
+  0.202 s on apollo11 (0.416 s), each from its own run.
+
+**Keeping `selector_matches` free of allocation.** The review found that
+0c66df9's `selector_matches`, the scanning entry the oracle and shapes A
+and B call, created four empty position arrays on every call, against its
+documented promise to allocate nothing; one unrecorded run each gave shape
+A 6.13 s against the rule index driver's 3.08 s for one repetition on
+ecma262. At 95b9073 the positions are
+one table of four words per node, the matcher's internal functions take it
+as a slice, and `selector_matches` passes an empty slice of a local array.
+Shape A still takes 6.57 s against 5.77 s for two repetitions on ecma262
+(wall time with setup included, best of three, sequential drivers from ec21b7c and 95b9073,
+`runs/21-shape-a-95b9073.txt` with its script), 14 percent more, recorded in
+`docs/todo.md`. The same
+script timed the final drivers again (`runs/19-style-positions-95b9073.txt`),
+and every page's shape C checksum is unchanged at 95b9073
+(`runs/20-style-check-95b9073.txt`):
+
+| Page | Index, W4 | Positions, W4 | Speedup | Index, seq | Positions, seq |
+|---|---:|---:|---:|---:|---:|
+| ecma262 | 0.236 | 0.258 | 0.91 | 0.770 | 0.792 |
+| html5 | 0.832 | 0.206 | 4.04 | 3.002 | 0.652 |
+| apollo11 | 0.230 | 0.226 | 1.02 | 0.852 | 0.860 |
+
+The rule index driver, the same in both runs, took 10 to 16 percent longer
+in this one, and the verdicts hold: html5 met, ecma262 9 percent slower at
+four workers.
+
+**How the position pass fits the pipeline tree.** The `pipeline` tree asks
+every stage to keep only its algorithm's data dependencies and to run
+incrementally. The pass here is one sequential walk of the whole document
+sharing its type counters across parents. Its data dependencies are
+narrower: one parent's children depend only on that parent's child list, so
+the pass could count per parent in parallel and, after a change, recount
+only the parents whose children changed. That form is not built or
+measured here; it is the candidate when the pass's cost or incremental
+style needs it.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same

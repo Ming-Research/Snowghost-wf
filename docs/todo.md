@@ -26,6 +26,16 @@ example apart from the renderer code that exposed it
   open that follows links. Reopen when oracle runs from such worktrees are
   needed.
 
+- **A local `slots_new::<T, N>()` clears all N slots when created.** The
+  code compiled at the pin clears the whole window before any value is
+  placed, though no slot past `len` is readable ([WIN-1], [OP-13]); in
+  `pkg::css::selectors`'s `match_complex`, a 64-frame window per call, it
+  was 21 percent of the style stage's instructions on ecma262 before the
+  rule index (`research/investigations/concurrency/DESIGN.md`, "Style's
+  work per element"). Whitefoot records it in its `docs/todo.md`
+  (mbbill/Whitefoot#196). Change: a window created without clearing.
+  Reopen when that lands, to move the pin and measure again.
+
 - **No rounding conversion between float formats.** [OP-6]'s `cvt`
   from f64 to f32 is defined only for a value exactly representable in
   f32, and no operation rounds. `pkg::css::color` therefore narrows its
@@ -37,6 +47,43 @@ example apart from the renderer code that exposed it
   `narrow_f32`.
 
 ## Snowghost
+
+- **The HTML parser does not finish on some pages.** This 229-byte page,
+  reduced from a randomly generated one, keeps `parse_document` running
+  (`proto_layout_seq parse 1 PAGE ua.css` is still running after 20 s,
+  with the parser of main at 38a260e, which mbbill/Snowghost#21 leaves
+  unchanged):
+
+  ```html
+  > id="y"><svg><textarea><col lass="Ab b aB"><frameset class="d"><option class="aB b"></option><a><foreignObject class="a c"><frameset><textarea id="X"></textarea><annotation-xml></annotation-xml><br></br></a><script id="X"><h1></
+  ```
+
+  About 6 percent of the generated pages hung (10 of 160) in the review of
+  mbbill/Snowghost#21; the generator mixed misnesting, foster parenting,
+  SVG, MathML and `template`. A page from the network can stop the
+  renderer. Find the loop that makes no progress, fix it, and add the page
+  to the tree-construction tests; reopen now, before the parser is used on
+  pages that were not chosen for it.
+- **The selector oracle does not exercise the rule index or sibling
+  positions.** `tests/css/selectors_oracle.py` drives `selector_matches`,
+  which scans; `subject_key`, `name_hash`, `sibling_positions` and
+  `selector_matches_positioned` are checked only by the style prototype's
+  `check`, which compares shape C with shapes A and B on seven pages. Drive
+  `selector_matches_positioned` with `sibling_positions` in the oracle too,
+  and add cases that pin `subject_key` against `selector_matches` (ids and
+  classes in quirks mode, SVG and MathML names, duplicate attributes), when
+  either is used outside the prototype.
+- **Passing sibling positions costs the scanning matcher about 13
+  percent.** With the positions slice threaded through `list_matches`,
+  `match_complex`, `compound_matches` and `instr_matches`, the style
+  prototype's shape A, which calls `selector_matches` for every rule and
+  element, takes 6.57 s against 5.77 s for two repetitions on ecma262 (wall
+  time with setup included, best of three, sequential build; the run is in
+  the concurrency investigation's `runs/21-shape-a-95b9073.txt`); the cause
+  is not attributed. Measure where
+  the time goes, and if it is the extra parameter, give the positions to
+  the nth helpers another way; reopen when `selector_matches` is on a hot
+  path outside the prototype.
 
 - **No mechanical check for documents and artifacts.** `make check` does not
   refuse non-English text, personal filesystem paths or broken Markdown links
