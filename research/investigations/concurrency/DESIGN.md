@@ -885,7 +885,7 @@ per element.
   against every element, so `match_complex` runs 106 million times, about
   590 times per element; most of those rules cannot match the element,
   since their rightmost compound names another id, class or tag.
-- `memset` takes 21 percent, all of it under `match_complex`: each call
+- `memset` takes 21 percent, 99 percent of it under `match_complex`: each call
   creates `slots_new::<Frame, 64>()` for its backtracking, and the compiled
   code clears the 64 frames, though a frame past the window's length is
   never read.
@@ -915,12 +915,13 @@ Criteria, written before measuring:
    faster on ecma262 and on html5 than before, measured in the same run
    against the previous driver.
 
-**Results.** At Snowghost commit ec21b7c. `proto_style check` passes on all
+**Results.** At Snowghost commit ec21b7c, `proto_style check` passes on all
 seven pages, and every page's shape C checksum equals the one of the driver
-built from 7e2ada4, before the index (`runs/12-style-check.txt`). A build
-whose index skips the class buckets fails the check on ecma262 ("A differs
-from C at preorder element 59"). `--par-ledger` still splits
-`match_elements`. A one-shot script under the lock
+built from 7e2ada4, before the index (`runs/12-style-check-ec21b7c.txt`). A
+build whose index skips the class buckets fails the check on ecma262 ("A
+differs from C at preorder element 59", `runs/17-negative-controls.txt`).
+`--par-ledger` still splits `match_elements` (`runs/18-style-ledger-95b9073.txt`
+records it at the end of this work). A one-shot script under the lock
 (`runs/13-style-index-script.sh.txt`) timed shape C with five repetitions,
 best of three, both drivers in the same run (`runs/13-style-index-ec21b7c.txt`),
 seconds per repetition:
@@ -949,8 +950,8 @@ seconds per repetition:
 position among its parent's element children, or among those with its
 namespace and local name, and their total. One pass over the document,
 before matching, records both pairs for every element, walking each
-parent's children once and counting each type with a table indexed by its
-atom; matching reads them instead of counting. `:nth-child(An+B of S)` and
+parent's children twice, first to number them and then to write their
+totals, and counting each type with a table indexed by its atom; matching reads them instead of counting. `:nth-child(An+B of S)` and
 `:nth-last-child(An+B of S)` depend on S and keep counting. The pass takes
 time in proportion to the nodes, where counting took time in proportion to
 the element's position for every test.
@@ -970,8 +971,8 @@ its ten-minute limit; 0c66df9 leaves the walk at the last sibling. At
 0c66df9, `proto_style check` passes on all seven pages with every shape C
 checksum unchanged (`runs/16-style-check-0c66df9.txt`), and a build whose
 child positions are off by one fails the check on html5 and ecma262 ("A
-differs from C"). `--par-ledger` still splits `match_elements`. The
-one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
+differs from C", `runs/17-negative-controls.txt`). `--par-ledger` still
+splits `match_elements`. The one-shot script (`runs/15-style-positions-script.sh.txt`) timed shape C
 with the rule index alone (ec21b7c) and with positions too (0c66df9) in one
 run, five repetitions, best of three (`runs/15-style-positions-0c66df9.txt`),
 seconds per repetition:
@@ -984,13 +985,48 @@ seconds per repetition:
 
 - **Criterion 1: met.**
 - **Criterion 2: met on html5, not on ecma262,** which is 7 percent slower
-  at four workers and as fast sequentially. The position pass runs in
-  sequence before the parallel matching loop, so what it costs is not
-  divided among the workers, and ecma262 has little sibling counting for
-  it to save; the pass's own time is not measured.
+  at four workers and as fast sequentially. A likely cause, not measured:
+  the position pass runs in sequence before the parallel matching loop, so
+  what it costs is not divided among the workers, and ecma262 may have
+  little sibling counting for it to save; neither the pass's own time nor
+  ecma262's sibling counting is measured.
 - Against shape C before the rule index, style at four workers now takes
   0.224 s on ecma262 (0.696 s before), 0.180 s on html5 (0.942 s) and
   0.202 s on apollo11 (0.416 s), each from its own run.
+
+**Keeping `selector_matches` free of allocation.** The review found that
+0c66df9's `selector_matches`, the scanning entry the oracle and shapes A
+and B call, created four empty position arrays on every call, against its
+documented promise to allocate nothing, and that shape A took 6.13 s
+against 3.08 s for one repetition on ecma262. At 95b9073 the positions are
+one table of four words per node, the matcher's internal functions take it
+as a slice, and `selector_matches` passes an empty slice of a local array.
+Shape A still takes 6.63 s against 5.88 s for two repetitions (best of
+three, sequential), 13 percent more, recorded in `docs/todo.md`. The same
+script timed the final drivers again (`runs/19-style-positions-95b9073.txt`),
+and every page's shape C checksum is unchanged at 95b9073
+(`runs/20-style-check-95b9073.txt`):
+
+| Page | Index, W4 | Positions, W4 | Speedup | Index, seq | Positions, seq |
+|---|---:|---:|---:|---:|---:|
+| ecma262 | 0.236 | 0.258 | 0.91 | 0.770 | 0.792 |
+| html5 | 0.832 | 0.206 | 4.04 | 3.002 | 0.652 |
+| apollo11 | 0.230 | 0.226 | 1.02 | 0.852 | 0.860 |
+
+The rule index driver, the same in both runs, took 10 to 16 percent longer
+in this one, and the verdicts hold: html5 met, ecma262 9 percent slower at
+four workers.
+
+**How the position pass fits the pipeline tree.** The `pipeline` tree asks
+every stage to keep only its algorithm's data dependencies and to run
+incrementally. The pass here is one sequential walk of the whole document
+sharing its type counters across parents. Its data dependencies are
+narrower: one parent's children depend only on that parent's child list, so
+the pass could count per parent in parallel and, after a change, recount
+only the parents whose children changed. That form is not built or
+measured here; it is the candidate when the pass's cost or incremental
+style needs it.
+
 
 ### Whitefoot: an equality requirement over range lengths
 
