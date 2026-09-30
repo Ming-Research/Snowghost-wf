@@ -501,6 +501,41 @@ Criteria, written before measuring:
 
 Each measurement runs in under ten minutes.
 
+**Results.** At Snowghost commit 802eff0 with the `290b575b` pin, on the
+same machine under the lock. `proto_layout check` passes on all seven pages
+in both builds, the sequential build's checksums equal the `--par` build's,
+and a build whose L3 skips the fix-up fails the check on apollo11.
+`--par-ledger` still splits `break_all` as an independent map.
+`MODES="L1 L3" WORKERS=4 RUNS=3 run.sh layout "html5 apollo11"` took 6
+minutes, including building both drivers. Layout stage in seconds per
+repetition, best of three:
+
+| Page | L1 seq | L1 W4 | L3 seq | L3 W4 | L1 seq / L3 W4 |
+|---|---:|---:|---:|---:|---:|
+| html5 | 0.0960 | 0.1120 | 0.0967 | 0.0290 | 3.31 |
+| apollo11 | 0.0050 | 0.0052 | 0.0047 | 0.0017 | 2.94 |
+
+apollo11's stage is 0.26 to 0.75 s of wall time over 150 repetitions, so the
+0.01 s resolution of `time -p` bounds each of its figures to about 4
+percent.
+
+| Page | Floats | Paragraphs broken again | Their scalar values | Largest paragraph's share of the scalar values |
+|---|---:|---:|---:|---:|
+| html5 | 3 | 0 of 32,684 | 0 of 2,645,960 | 0.34 % (8,983) |
+| apollo11 | 4 | 4 of 770 (0.52 %) | 2,751 (2.14 %) | 1.07 % (1,381) |
+
+- **Criterion 1: met.**
+- **Criterion 2: met,** 3.31 on html5 and 2.94 on apollo11.
+- **Criterion 3: below the bound.** The fix-up breaks again at most 0.52
+  percent of the paragraphs and 2.14 percent of the scalar values. html5's
+  three floats narrow no paragraph: each ends above the next paragraph's
+  top, so what kept L2 at 0.87 there was only its float-free rule.
+- **Criterion 4.** The largest paragraph is at most 1.07 percent of a real
+  page's text, so no paragraph comes near a quarter of the stage at four
+  workers, and breaking inside a paragraph would gain nothing on these
+  pages. It stays unbuilt; the synthetic
+  one-paragraph page is the case it would serve.
+
 ### Whitefoot: an equality requirement over range lengths
 
 `range-length-probe.wf` in this directory passes two ranges with the same
