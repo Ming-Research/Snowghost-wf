@@ -36,8 +36,36 @@ fn advance_of(value: u32) -> width: u64 pure {
   return advance;
 }
 
-fn count_lines(text: &[u32], width: u64) -> lines: u64 reads(text) {
-  doc "Returns the number of lines text fills at width by greedy filling at its break opportunities: a segment, the text up to and including an opportunity, goes on the current line when it fits or the line is empty, and on a new line otherwise; a mandatory opportunity before the end starts a new line. 0 for empty text.";
+fn covered(bands: &[Band], top: u64) -> taken: u64 reads(bands) {
+  doc "Returns the summed width of the bands whose vertical range meets the line from top to top plus line_height.";
+  let count = bands^.len;
+  let bottom = top +wrap line_height;
+  let taken = 0_u64;
+  for (at in 0_u64..count) {
+    let starts = bands^[at].top < bottom;
+    let ends = bands^[at].bottom > top;
+    let meets = band(starts, ends);
+    if meets {
+      set taken = taken +wrap bands^[at].width;
+    }
+  }
+  return taken;
+}
+
+fn line_width(width: u64, bands: &[Band], top: u64) -> room: u64 reads(bands) {
+  doc "Returns the width of the line at top: width minus the bands it meets, at least 0.";
+  if bands^.len == 0_u64 {
+    return width;
+  }
+  let taken = covered(bands: bands, top: top);
+  if taken >= width {
+    return 0_u64;
+  }
+  return width - taken;
+}
+
+fn count_lines(text: &[u32], width: u64, top: u64, bands: &[Band]) -> lines: u64 reads(text), reads(bands) {
+  doc "Returns the number of lines text fills from top by greedy filling at its break opportunities, each line as wide as line_width gives: a segment, the text up to and including an opportunity, goes on the current line when it fits or the line is empty, and on a new line otherwise; a mandatory opportunity before the end starts a new line. 0 for empty text.";
   let count = text^.len;
   if count == 0_u64 {
     return 0_u64;
@@ -51,6 +79,8 @@ fn count_lines(text: &[u32], width: u64) -> lines: u64 reads(text) {
   let breaks = box_array_filled::<BreakOpportunity>(count: count, value: prohibited);
   find_line_breaks(text: text, opportunities: &breaks.inner[0_u64..count]);
   let lines = 1_u64;
+  let line_top = top;
+  let room = line_width(width: width, bands: bands, top: line_top);
   let used = 0_u64;
   let segment = 0_u64;
   let last = count - 1_u64;
@@ -72,10 +102,12 @@ fn count_lines(text: &[u32], width: u64) -> lines: u64 reads(text) {
     if ends {
       let filled = used +wrap segment;
       let started = used > 0_u64;
-      let over = filled > width;
+      let over = filled > room;
       let wraps = band(started, over);
       if wraps {
         set lines = lines +wrap 1_u64;
+        set line_top = line_top +wrap line_height;
+        set room = line_width(width: width, bands: bands, top: line_top);
         set used = segment;
       } else {
         set used = filled;
@@ -87,6 +119,8 @@ fn count_lines(text: &[u32], width: u64) -> lines: u64 reads(text) {
       let breaks_here = band(forced, before_end);
       if breaks_here {
         set lines = lines +wrap 1_u64;
+        set line_top = line_top +wrap line_height;
+        set room = line_width(width: width, bands: bands, top: line_top);
         set used = 0_u64;
       }
     }
@@ -94,18 +128,19 @@ fn count_lines(text: &[u32], width: u64) -> lines: u64 reads(text) {
   return lines;
 }
 
-fn paragraph_lines(paragraph: &Paragraph, width: u64) -> lines: u64 reads(paragraph) {
-  doc "Returns the number of lines paragraph fills at width.";
+fn paragraph_lines(paragraph: &Paragraph, width: u64, top: u64, bands: &[Band]) -> lines: u64 reads(paragraph), reads(bands) {
+  doc "Returns the number of lines paragraph fills from top beside bands.";
   let length = paragraph^.text.inner.len;
-  let lines = count_lines(text: &paragraph^.text.inner[0_u64..length], width: width);
+  let lines = count_lines(text: &paragraph^.text.inner[0_u64..length], width: width, top: top, bands: bands);
   return lines;
 }
 
 fn break_all(paragraphs: &[Paragraph], width: u64) -> result: unit writes(paragraphs) {
-  doc "L2's paragraph loop: iteration i breaks paragraph i into lines and writes only its own line count.";
+  doc "L2's and L3's paragraph loop: iteration i breaks paragraph i into lines at the full width and writes only its own line count.";
+  let none = box_slots_new::<Band>(capacity: 0_u64);
   let count = paragraphs^.len;
   for (i in 0_u64..count) {
-    let counted = paragraph_lines(paragraph: &paragraphs^[i], width: width);
+    let counted = paragraph_lines(paragraph: &paragraphs^[i], width: width, top: 0_u64, bands: &none.inner[0_u64..0_u64]);
     set paragraphs^[i].lines = counted;
   }
   return unit;
@@ -120,11 +155,15 @@ fn larger(first: u64, second: u64) -> result: u64 pure {
 }
 
 fn stack_flow(context: &Context, known: Bool) -> height: u64 writes(context) {
-  doc "Stacks context's flow in order and returns its height. With known False each paragraph is broken into lines where the flow reaches it; with known True the line counts written before are read.";
+  doc "Stacks context's flow in order, placing each float at its anchor, and returns its height. With known False each paragraph is broken into lines where the flow reaches it; with known True the line counts written before are read, and a paragraph whose top lies above the lowest float bottom so far is broken again and counted in context's rebroken totals.";
   let items = context^.flow.inner.len;
   let paragraphs = context^.paragraphs.inner.len;
   let children = context^.children.inner.len;
   let width = context^.width;
+  let bands = box_slots_new::<Band>(capacity: 0_u64);
+  let reach = 0_u64;
+  let rebroken = 0_u64;
+  let rebroken_scalars = 0_u64;
   let height = 0_u64;
   let pending = 0_u64;
   for (at in 0_u64..items) {
@@ -139,16 +178,26 @@ fn stack_flow(context: &Context, known: Bool) -> height: u64 writes(context) {
       Text(index: which) => {
         let listed = which < paragraphs;
         if listed {
-          let lines = if known {
+          let top = height +wrap pending;
+          let beside = top < reach;
+          let placed_bands = bands.inner.len;
+          let lines = if beside {
+            let exact = paragraph_lines(paragraph: &context^.paragraphs.inner[which], width: width, top: top, bands: &bands.inner[0_u64..placed_bands]);
+            set context^.paragraphs.inner[which].lines = exact;
+            if known {
+              set rebroken = rebroken +wrap 1_u64;
+              set rebroken_scalars = rebroken_scalars +wrap context^.paragraphs.inner[which].text.inner.len;
+            }
+            give exact;
+          } else if known {
             give context^.paragraphs.inner[which].lines;
           } else {
-            let counted = paragraph_lines(paragraph: &context^.paragraphs.inner[which], width: width);
+            let counted = paragraph_lines(paragraph: &context^.paragraphs.inner[which], width: width, top: top, bands: &bands.inner[0_u64..0_u64]);
             set context^.paragraphs.inner[which].lines = counted;
             give counted;
           }
           let tall = lines *wrap line_height;
-          let placed = height +wrap pending;
-          set height = placed +wrap tall;
+          set height = top +wrap tall;
           set pending = 0_u64;
         }
       }
@@ -161,34 +210,60 @@ fn stack_flow(context: &Context, known: Bool) -> height: u64 writes(context) {
           set pending = 0_u64;
         }
       }
+      Float(index: which) => {
+        let listed = which < children;
+        if listed {
+          let top = height +wrap pending;
+          let tall = context^.children.inner[which].height;
+          let wide = context^.children.inner[which].width;
+          let bottom = top +wrap tall;
+          let strip = Band(top: top, bottom: bottom, width: wide);
+          let kept = push_item::<Band>(cell: &bands, value: strip, ceiling: item_ceiling);
+          if kept {
+            set reach = larger(first: reach, second: bottom);
+          }
+        }
+      }
     }
   }
+  set context^.rebroken = rebroken;
+  set context^.rebroken_scalars = rebroken_scalars;
   let total = height +wrap pending;
-  return total;
+  let reached = larger(first: total, second: reach);
+  return reached;
 }
 
-fn lay_run(siblings: &[Context], paragraphs_first: Bool) -> result: unit writes(siblings) {
+fn lay_run(siblings: &[Context], plan: Plan) -> result: unit writes(siblings) {
   doc "Lays out a run of sibling contexts: one context directly, a longer run as its two halves, which are independent.";
   let count = siblings^.len;
   if count == 0_u64 {
     return unit;
   }
   if count == 1_u64 {
-    lay_context(context: &siblings^[0_u64], paragraphs_first: paragraphs_first);
+    lay_context(context: &siblings^[0_u64], plan: plan);
     return unit;
   }
   let half = count / 2_u64;
-  lay_run(siblings: &siblings^[0_u64..half], paragraphs_first: paragraphs_first);
-  lay_run(siblings: &siblings^[half..count], paragraphs_first: paragraphs_first);
+  lay_run(siblings: &siblings^[0_u64..half], plan: plan);
+  lay_run(siblings: &siblings^[half..count], plan: plan);
   return unit;
 }
 
-fn lay_context(context: &Context, paragraphs_first: Bool) -> result: unit writes(context) {
-  doc "Lays out context's child contexts, then its paragraphs in one loop when paragraphs_first holds and no float is among its boxes, then its flow.";
+fn lay_context(context: &Context, plan: Plan) -> result: unit writes(context) {
+  doc "Lays out context's child contexts, then its paragraphs in one loop at its full width when plan is Speculative, or FloatFree and no float is among its boxes, then its flow.";
   let kids = context^.children.inner.len;
-  lay_run(siblings: &context^.children.inner[0_u64..kids], paragraphs_first: paragraphs_first);
-  let unfloated = bnot(context^.floated);
-  let ahead = band(paragraphs_first, unfloated);
+  lay_run(siblings: &context^.children.inner[0_u64..kids], plan: plan);
+  let ahead = match plan {
+    Sequential() => {
+      give False();
+    }
+    FloatFree() => {
+      give bnot(context^.floated);
+    }
+    Speculative() => {
+      give True();
+    }
+  }
   if ahead {
     let count = context^.paragraphs.inner.len;
     let width = context^.width;
@@ -220,9 +295,9 @@ fn fold_tree(sum: u64, context: &Context) -> result: u64 reads(context) {
   return total;
 }
 
-fn lay_out(layout: &Layout, paragraphs_first: Bool) -> checksum: u64 writes(layout) {
+fn lay_out(layout: &Layout, plan: Plan) -> checksum: u64 writes(layout) {
   doc "Lays out the root context and folds the result.";
-  lay_context(context: &layout^.root, paragraphs_first: paragraphs_first);
+  lay_context(context: &layout^.root, plan: plan);
   let checksum = fold_tree(sum: fold_basis, context: &layout^.root);
   return checksum;
 }

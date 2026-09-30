@@ -31,7 +31,8 @@ alias rule_store_new = pkg::proto::style::rule_store_new;
 enum Mode {
   ContextsOnly();
   ParagraphsToo();
-  CheckBoth();
+  Speculative();
+  CheckAll();
   Profile();
 }
 
@@ -41,6 +42,8 @@ const l1_word: Array<u8, 2> = "L1";
 
 const l2_word: Array<u8, 2> = "L2";
 
+const l3_word: Array<u8, 2> = "L3";
+
 const check_word: Array<u8, 5> = "check";
 
 const profile_word: Array<u8, 7> = "profile";
@@ -49,7 +52,7 @@ const floated_label: Array<u8, 17> = " floated_scalars ";
 
 const top_label: Array<u8, 5> = " top ";
 
-const usage_text: Array<u8, 56> = "usage: proto_layout L1|L2|check|profile REPS PAGE SHEET\n";
+const usage_text: Array<u8, 59> = "usage: proto_layout L1|L2|L3|check|profile REPS PAGE SHEET\n";
 
 const unreadable_text: Array<u8, 27> = "proto_layout: cannot read: ";
 
@@ -63,7 +66,7 @@ const style_refused_text: Array<u8, 36> = "proto_layout: the style stage fails\n
 
 const layout_refused_text: Array<u8, 47> = "proto_layout: the context tree cannot be built\n";
 
-const differs_text: Array<u8, 45> = "proto_layout: check failed: L1 and L2 differ\n";
+const differs_text: Array<u8, 49> = "proto_layout: check failed: L1, L2 and L3 differ\n";
 
 const elements_label: Array<u8, 10> = " elements ";
 
@@ -80,6 +83,12 @@ const height_label: Array<u8, 8> = " height ";
 const checksum_label: Array<u8, 10> = " checksum ";
 
 const agree_word: Array<u8, 6> = " agree";
+
+const rebroken_label: Array<u8, 10> = " rebroken ";
+
+const largest_label: Array<u8, 9> = " largest ";
+
+const floats_label: Array<u8, 8> = " floats ";
 
 fn run(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Destructures the inputs, drives one invocation and closes the working directory.";
@@ -127,9 +136,14 @@ fn parse_mode(args: &Args) -> mode: Option<Mode> reads(args) {
     let found = Mode::ParagraphsToo();
     return Some<Mode>(value: found);
   }
+  let is_l3 = same_bytes(text: word, word: &l3_word[0_u64..l3_word.len]);
+  if is_l3 {
+    let found = Mode::Speculative();
+    return Some<Mode>(value: found);
+  }
   let is_check = same_bytes(text: word, word: &check_word[0_u64..check_word.len]);
   if is_check {
-    let found = Mode::CheckBoth();
+    let found = Mode::CheckAll();
     return Some<Mode>(value: found);
   }
   let is_profile = same_bytes(text: word, word: &profile_word[0_u64..profile_word.len]);
@@ -325,39 +339,60 @@ fn put_result(buffer: &Box<Slots<u8>>, name: &[u8], elements: u64, layout: &Layo
 }
 
 fn run_mode(mode: Mode, reps: u64, layout: &Layout, elements: u64, out: &OutputStream, err: &OutputStream, files: &HandleFactory, report: &Box<Slots<u8>>) -> code: u8 writes(layout), writes(out), writes(err), writes(files), writes(report) waits {
-  doc "Lays the tree out REPS times in the chosen mode and prints the result line; check lays it out once in each mode and compares the checksums.";
+  doc "Lays the tree out REPS times in the chosen mode and prints the result line; check lays it out once in each mode, compares the checksums and prints L3's fix-up totals.";
   let checksum = fold_basis;
   match mode {
     ContextsOnly() => {
-      let first = False();
+      let plan = Plan::Sequential();
       for (rep in 0_u64..reps) {
-        set checksum = lay_out(layout: layout, paragraphs_first: first);
+        set checksum = lay_out(layout: layout, plan: plan);
       }
       put_result(buffer: report, name: &l1_word[0_u64..l1_word.len], elements: elements, layout: layout, reps: reps, checksum: checksum);
     }
     ParagraphsToo() => {
-      let first = True();
+      let plan = Plan::FloatFree();
       for (rep in 0_u64..reps) {
-        set checksum = lay_out(layout: layout, paragraphs_first: first);
+        set checksum = lay_out(layout: layout, plan: plan);
       }
       put_result(buffer: report, name: &l2_word[0_u64..l2_word.len], elements: elements, layout: layout, reps: reps, checksum: checksum);
     }
-    CheckBoth() => {
-      let contexts_only = False();
-      let paragraphs_too = True();
-      let one = lay_out(layout: layout, paragraphs_first: contexts_only);
-      let two = lay_out(layout: layout, paragraphs_first: paragraphs_too);
-      if one == two {
+    Speculative() => {
+      let plan = Plan::Speculative();
+      for (rep in 0_u64..reps) {
+        set checksum = lay_out(layout: layout, plan: plan);
+      }
+      put_result(buffer: report, name: &l3_word[0_u64..l3_word.len], elements: elements, layout: layout, reps: reps, checksum: checksum);
+    }
+    CheckAll() => {
+      let sequential = Plan::Sequential();
+      let float_free = Plan::FloatFree();
+      let speculative = Plan::Speculative();
+      let one = lay_out(layout: layout, plan: sequential);
+      let two = lay_out(layout: layout, plan: float_free);
+      let three = lay_out(layout: layout, plan: speculative);
+      let first_pair = one == two;
+      let second_pair = one == three;
+      let same = band(first_pair, second_pair);
+      if same {
       } else {
         report_line(err: err, files: files, report: report, text: &differs_text[0_u64..differs_text.len]);
         return 1_u8;
       }
       put_result(buffer: report, name: &check_word[0_u64..check_word.len], elements: elements, layout: layout, reps: 1_u64, checksum: one);
       put_text(buffer: report, text: &agree_word[0_u64..agree_word.len]);
+      let fixed = fix_up_totals(context: &layout^.root);
+      put_text(buffer: report, text: &rebroken_label[0_u64..rebroken_label.len]);
+      put_decimal(buffer: report, value: fixed[0_u64]);
+      put_byte(buffer: report, value: '/'_u8);
+      put_decimal(buffer: report, value: fixed[1_u64]);
+      put_text(buffer: report, text: &largest_label[0_u64..largest_label.len]);
+      put_decimal(buffer: report, value: fixed[2_u64]);
+      put_text(buffer: report, text: &floats_label[0_u64..floats_label.len]);
+      put_decimal(buffer: report, value: fixed[3_u64]);
     }
     Profile() => {
-      let first = False();
-      let laid = lay_out(layout: layout, paragraphs_first: first);
+      let plan = Plan::Sequential();
+      let laid = lay_out(layout: layout, plan: plan);
       put_result(buffer: report, name: &profile_word[0_u64..profile_word.len], elements: elements, layout: layout, reps: reps, checksum: laid);
       let shares = profile_layout(layout: layout);
       put_profile(buffer: report, shares: &shares, top: reps);

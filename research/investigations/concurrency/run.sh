@@ -10,7 +10,8 @@
 #   run.sh style [PAGE [REPS]]   builds the style driver and times the style
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
-#                                stage in modes L1 and L2 on every page, or on
+#                                stage in modes L1 and L2 (MODES overrides the
+#                                list; L3 is the third) on every page, or on
 #                                PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
@@ -25,9 +26,9 @@
 # default the pinned checkout's .github/run-check.pl), so no other heavy job
 # shares the machine.
 #
-# layout prints the same columns with the mode (L1 or L2) in place of the
+# layout prints the same columns with the mode (L1, L2 or L3) in place of the
 # shape; its T(0) also holds styling and building the context tree, and its
-# check compares L1 with L2.
+# check compares L1, L2 and L3 and reports L3's fix-up totals.
 #
 # The drivers are built with WHITEFOOTC (by default the pinned compiler's gate
 # build, as the Makefile builds it).
@@ -46,6 +47,7 @@ compiler=${WHITEFOOTC:-$root/whitefoot/compiler/target/gate/whitefootc}
 lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
 runs=${RUNS:-7}
 workers=${WORKERS:-1 2 4}
+modes=${MODES:-L1 L2}
 real_pages='ecma262 html5 apollo11'
 synthetic_pages='flat deep unbalanced paragraph'
 
@@ -341,10 +343,10 @@ layout() {
 	for page in $pages; do
 		file=$(page_file "$page")
 		sheets=$(sheets_of "$page")
-		counts=$(build/proto_layout check 1 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5, $6, $7, $8, $9, $12, $13 }')
+		counts=$(build/proto_layout check 1 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5, $6, $7, $8, $9, $12, $13, $17, $18, $19, $20, $21, $22 }')
 		echo "# $page: $counts"
 		reps=${2:-$(layout_reps_of "$page")}
-		for layout_mode in L1 L2; do
+		for layout_mode in $modes; do
 			for mode in $workers seq; do
 				zero=$(best "$mode" "$layout_mode" 0 "$file" "$ua" $sheets)
 				full=$(best "$mode" "$layout_mode" "$reps" "$file" "$ua" $sheets)

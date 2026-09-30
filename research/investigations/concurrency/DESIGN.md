@@ -88,9 +88,10 @@ From the style prototype's computed `display`, `float`, `position` and
 Line breaking uses `pkg::text::line_break` with a fixed advance per scalar
 value (8 px; 0 for combining marks), since the font engine is not written
 yet. Block layout stacks boxes with fixed margins by tag and collapses
-adjacent sibling margins. Floats are recognized but do not shorten lines.
+adjacent sibling margins. A float sits where its element occurs in the
+flow and narrows the lines beside it (see [Floats](#floats-speculative-line-breaking-and-fix-up)).
 
-Two modes:
+Two modes, and a third one added for floats:
 
 - **L1, formatting contexts only** (the design tree's unit): child contexts
   are laid out in parallel by halving their run. Everything inside one
@@ -99,6 +100,9 @@ Two modes:
   float among its boxes breaks all its paragraphs in one counted loop, each
   iteration writing its own paragraph's result. Its block pass then runs in
   sequence.
+- **L3, speculative lines:** as L2, in every context, floats or not: each
+  paragraph is broken at the context's full width in parallel, and the block
+  pass breaks again, exactly, only the paragraphs a float narrows.
 
 ### Pages
 
@@ -450,6 +454,52 @@ in every round. The field form costs about 2 percent of the stage at one
 worker and 4 percent sequentially, and nothing measurable at four: within
 the criterion. The likely cause is the paragraph record growing from one
 word to two; it is left as is.
+
+### Floats: speculative line breaking and fix-up
+
+The pipeline tree breaks every paragraph into lines before floats are placed
+and breaks again only the paragraphs a float narrows. This section measures
+that on html5 and apollo11, whose largest context holds a float.
+
+**Where the layout stage's work sits.** Callgrind on flat's layout stage (L1,
+sequential build) attributes 91 percent of the instructions to
+`find_line_breaks` (building runs 20, deciding opportunities 63, writing them
+9), 8.5 percent to the greedy fill and 0.2 percent to stacking and the
+checksum. Breaking one paragraph depends on its text only; its greedy fill
+depends on the widths of its lines, which a float narrows. A float's place
+depends on the height of the flow before it, and so on the fill of every
+earlier paragraph. So the only true sequential chain is the block pass, and
+it is cheap unless many paragraphs sit beside floats.
+
+**The float model.** A float's anchor is where its element occurs in the
+flow; inside a paragraph that is before the paragraph, so the float narrows
+it from its first line. Its top is the flow's height plus the pending
+margin at the anchor, its width the float context's width (a third of the
+enclosing one) and its height that context's laid-out height. Floats do not
+push each other, and `clear` is not modelled. A line 20 px high whose
+vertical range meets a float is the context's width minus the widths of the
+floats it meets, at least 0, and a context's height reaches the lowest float
+bottom. Every mode computes the same layout: L1 and L2 fill each paragraph
+beside the floats already placed, and L3 re-breaks a paragraph whose top is
+above the lowest float bottom so far. That test is exact: float tops and
+paragraph tops only grow along the flow, so a float placed before a
+paragraph meets its lines exactly when its bottom lies below the paragraph's
+top.
+
+Criteria, written before measuring:
+
+1. **Equality.** L3's checksum equals L1's and L2's on all seven pages, and
+   the sequential build's checksums equal the `--par` build's.
+2. **Speedup.** At four workers, L3's layout stage on html5 and on apollo11
+   is at least 2 times faster than the sequential build's L1.
+3. **Fix-up share.** The share of paragraphs L3 re-breaks, by count and by
+   scalar values, is recorded; above 10 percent on either page means the
+   float approach is reconsidered.
+4. **Largest paragraph.** The largest paragraph's share of each page's
+   scalar values is recorded, to decide whether breaking inside a paragraph
+   is worth building.
+
+Each measurement runs in under ten minutes.
 
 ### Whitefoot: an equality requirement over range lengths
 
