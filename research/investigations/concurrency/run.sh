@@ -10,9 +10,9 @@
 #   run.sh style [PAGE [REPS]]   builds the style driver and times the style
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
-#                                stage in modes L1 and L2 (MODES overrides the
-#                                list; L3 is the third) on every page, or on
-#                                PAGE
+#                                stage in modes L1 and L2 by default (MODES
+#                                overrides the list, for instance with L3) on
+#                                every page, or on PAGE
 #
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
 # ecma262, html5, apollo11, flat, deep, unbalanced and paragraph.

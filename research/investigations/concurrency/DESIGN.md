@@ -170,6 +170,18 @@ Recorded before any run; the results section may not change them.
    page, the finding goes to Whitefoot. It shows that the runtime's
    worker-derived recursion depth under-serves unbalanced trees.
 
+## Open question: the unit of storage, invalidation and caching
+
+The layout result retired the formatting context as the unit of parallel
+work, but not necessarily as the unit of storage, invalidation or caching.
+The prototypes store an owned tree of contexts, and within it the parallel
+work follows data dependencies (paragraphs of one context, sibling
+contexts), not the nodes. The `pipeline` tree still commits to rerunning
+only the stages and the parts of the page a change affects; what "part"
+means there, a context, a paragraph or a stage's own record, is not decided
+here. The first incremental prototype, which reruns layout after a change,
+is the measurement that can decide it.
+
 ## Results
 
 ### Style measurement
@@ -238,7 +250,9 @@ of C: 0.0365 on ecma262 (4.6 percent), 0.0296 on html5 (2.9 percent) and
 ### Layout measurement
 
 `run.sh layout` at Snowghost commit 7d840e2 with the same pin, machine and
-lock as the style measurement: the layout stage (T(REPS) - T(0)) / REPS from
+lock as the style measurement, before floats had an anchor in the flow: a
+float then narrowed no line, so these figures describe that model, not the
+current one (see the float section below): the layout stage (T(REPS) - T(0)) / REPS from
 the best of seven runs, T(0) holding parsing, styling (shape C) and building
 the context tree. `run.sh check` passes: L1 and L2 agree on all seven pages,
 and the root heights of flat (1,520,016 px) and deep (15,216 px) equal the
@@ -504,7 +518,8 @@ Each measurement runs in under ten minutes.
 **Results.** At Snowghost commit 802eff0 with the `290b575b` pin, on the
 same machine under the lock. `proto_layout check` passes on all seven pages
 in both builds, the sequential build's checksums equal the `--par` build's,
-and a build whose L3 skips the fix-up fails the check on apollo11.
+and a build whose L3 skips the fix-up (`stack_flow` re-breaking only when
+`known` is False) fails the check on apollo11.
 `--par-ledger` still splits `break_all` as an independent map.
 `MODES="L1 L3" WORKERS=4 RUNS=3 run.sh layout "html5 apollo11"` took 6
 minutes, including building both drivers. Layout stage in seconds per
@@ -530,11 +545,16 @@ percent.
   percent of the paragraphs and 2.14 percent of the scalar values. On html5
   every paragraph starts at or below the lowest bottom of the floats placed
   before it, so its three floats narrow no paragraph, and what kept L2 at
-  0.87 there was only its float-free rule.
+  0.87 there was only its float-free rule. The driver does not print float
+  heights, so whether html5's floats are empty or follow the last paragraph
+  of their context is not known; either way html5 does not exercise the
+  fix-up, and apollo11's four paragraphs are its only exercise.
 - **Criterion 4.** The largest paragraph is at most 1.07 percent of a real
-  page's text, so no paragraph comes near a quarter of the stage at four
-  workers, and breaking inside a paragraph would gain nothing on these
-  pages. It stays unbuilt; the synthetic
+  page's text. The criterion set no threshold in advance. At four workers
+  the stage's time is about a quarter of its work plus its critical path,
+  and the largest paragraph, the part the paragraph loop cannot split, is
+  at most 1.07 percent of the work, so breaking inside a paragraph would
+  gain nothing on these pages. It stays unbuilt; the synthetic
   one-paragraph page is the case it would serve.
 
 ### Whitefoot: an equality requirement over range lengths

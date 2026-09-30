@@ -8,8 +8,8 @@ owner's ruling.
 
 How does the renderer store its document, styles, boxes and fragments, and
 what types do all its stages share, so that every stage is incremental and
-parallel by formatting context (the `pipeline` tree) and Whitefoot can prove
-the parallel work independent? This vocabulary is the part of the renderer
+parallel along its true data dependencies (the `pipeline` tree) and
+Whitefoot can prove the parallel work independent? This vocabulary is the part of the renderer
 that is most expensive to change later (architecture study, "Division of
 work"), and the first milestone, headless static rendering, needs it before
 any stage can be written.
@@ -98,13 +98,17 @@ in Whitefoot alongside the range-length diagnostic work.
   simple and parallel, but a mutation deep in a large page recomputes one
   element per level down its subtree; cascading per formatting context would
   make style follow the same unit as layout. The first style prototype
-  measures both.
+  measured both; the concurrency investigation adopts flat matching then
+  cascade (its criterion 1).
 - **Fragment storage.** Whether fragments live inside each formatting
   context's node (simple, local) or in per-frame arrays handed to paint
   (easier to send to the shell) is decided by the first paint prototype.
 - **Floats and margin collapsing** couple the boxes inside one block
   formatting context; the owned tree keeps that sequential work inside one
-  node. The first block layout prototype confirms the node boundary.
+  node. The first block layout prototype keeps them in the block pass, the
+  stage's only sequential chain, and breaks lines before floats are placed
+  with an exact fix-up (the concurrency investigation's float section);
+  whether the node stays the unit of storage is open there.
 
 ## First steps
 
