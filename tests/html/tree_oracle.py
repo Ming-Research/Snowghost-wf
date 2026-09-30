@@ -3,9 +3,9 @@ html5lib tree-construction tests that WPT now hosts.
 
     python3 tests/html/tree_oracle.py TESTS_DIR DRIVER [LOCAL.dat...]
 
-Reads every `.dat` file in TESTS_DIR, then each LOCAL file, cases the
-upstream tests lack (tests/html/tree-local.dat), writes the cases to a case file
-beside them and runs DRIVER on it from the repository root. Per case the
+Reads every `.dat` file in TESTS_DIR, then each LOCAL file (cases the
+upstream tests lack, such as tests/html/tree-local.dat), writes the cases
+to a case file beside them and runs DRIVER on it from the repository root. Per case the
 case file holds a header line "SCRIPTING CONTEXT_LENGTH INPUT_LENGTH", the
 fragment context's bytes (empty for a document; otherwise "td" or
 "svg path", a namespace prefix and local name as the tests write them),
