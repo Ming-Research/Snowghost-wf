@@ -4,10 +4,12 @@
 #   run.sh fetch                 downloads the three real pages and the style
 #                                sheets they load, each checked against its
 #                                pinned SHA-256
-#   run.sh synth                 writes the four synthetic pages
+#   run.sh synth                 writes the four synthetic pages and the
+#                                style check's ceiling page
 #   run.sh check [PAGE...]       builds the style and layout drivers and runs
 #                                their checks (A, B, C and D agree, the
-#                                intern pass is sound; L1, L2 and L3 agree)
+#                                intern pass is sound; L1, L2 and L3 agree),
+#                                and the style check on the ceiling page
 #   run.sh style [PAGE [REPS]]   builds the style driver and times the style
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
@@ -268,7 +270,19 @@ synth() {
 		printf '</p>\n'
 		page_end
 	} >"$data/paragraph.html"
-	for page in $synthetic_pages; do
+	# ceiling: the deepest tree the style traversal admits, its last element
+	# 4096 levels below html, for the style check alone.
+	{
+		page_start ceiling
+		i=0
+		while [ "$i" -lt 4095 ]; do
+			printf '<div>'
+			i=$((i + 1))
+		done
+		printf '%s\n' "$words"
+		page_end
+	} >"$data/ceiling.html"
+	for page in $synthetic_pages ceiling; do
 		echo "$page: $(wc -c <"$data/$page.html") bytes"
 	done
 }
@@ -323,6 +337,9 @@ check() {
 		printf '%s: ' "$page"
 		build/proto_layout check 1 "$file" "$ua" $(sheets_of "$page")
 	done
+	file=$(page_file ceiling)
+	printf 'ceiling: '
+	build/proto_style check 1 "$file" "$ua"
 }
 
 # Prints the elapsed seconds of one run of the driver: the sequential build

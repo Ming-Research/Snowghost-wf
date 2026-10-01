@@ -30,6 +30,29 @@ example apart from the renderer code that exposed it
   cascade"). Reopen the cascade, and the layout builder's map, when that
   pull request reaches Whitefoot's main and the pin moves.
 
+- **A parallel loop's body cannot bind an ordered result list.** Minimal
+  example: a counted loop whose body is `let (value, known) = f(k);` followed
+  by `set out[k] = value;` is denied parallelism as an unsupported body form
+  whatever `f` writes, while the same loop over a one-result `f` is
+  permitted. Style shape D's level loop therefore calls `cascade_into`, which
+  writes `cascade_element`'s values through an element reference and returns
+  its flag alone. Whitefoot records it in its `docs/todo.md`, "A counted
+  loop that binds an ordered result list is denied parallelism"
+  (mbbill/Whitefoot#203). Change: the permission survey gives each binder
+  its own place. Reopen when that lands; then call `cascade_element`
+  directly.
+
+- **A function receives every value its requirements name.** Minimal
+  example: a function whose requirement states `positions[slots[k]] == k`
+  for every `k` must take `positions` as a parameter though its body never
+  reads it, and every call passes it. `cascade_level` in
+  `renderer/proto/style/shapes.wf` takes `positions`, `depths` and `level`
+  only so its requirements can name them. Whitefoot records it in its
+  `docs/todo.md`, "Parameters a contract names but the body does not use
+  are passed at run time" (mbbill/Whitefoot#203). Change: a parameter that
+  only contracts read, erased by lowering. Reopen when that lands or the
+  calls' cost shows in a profile.
+
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
   `O_NOFOLLOW`, and `std::fs::open_read`, which follows links, takes a
@@ -67,6 +90,17 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Shapes C and D and the cascade timing repeat one match.**
+  `style_shape_c`, `style_shape_d` and `match_all` in
+  `renderer/proto/style/shapes.wf` each check the element and rule counts,
+  build the rule index and the sibling positions and run the flat match;
+  C and D then differ only in their cascade, which `cascade_only` already
+  chooses between. Impact: a change to the match has to be made three
+  times, and `check` compares C's and D's results but not `match_all`'s, so
+  a drift there would show only in the cascade timings. Change: C and D
+  call `match_all` and `cascade_only`. Reopen with the next change to the
+  match or when shape D replaces C in the pipeline, and time C again then,
+  since its code changes.
 - **The selector oracle does not exercise the rule index or sibling
   positions.** `tests/css/selectors_oracle.py` drives `selector_matches`,
   which scans; `subject_key`, `name_hash`, `sibling_positions` and
