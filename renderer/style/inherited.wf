@@ -56,7 +56,7 @@ const monospace_name: Array<u8, 9> = "monospace";
 
 const strict_sizes: Array<f32, 8> =[9.0_f32, 10.0_f32, 13.0_f32, 16.0_f32, 18.0_f32, 24.0_f32, 32.0_f32, 48.0_f32];
 
-const fixed_sizes: Array<f32, 8> =[9.0_f32, 9.0_f32, 10.0_f32, 13.0_f32, 16.0_f32, 20.0_f32, 26.0_f32, 40.0_f32];
+const fixed_sizes: Array<f32, 8> =[9.0_f32, 10.0_f32, 12.0_f32, 13.0_f32, 16.0_f32, 20.0_f32, 26.0_f32, 39.0_f32];
 
 const state_pending: u8 = 0_u8;
 
@@ -308,14 +308,39 @@ fn resolve_px(lengths: Lengths, basis: f32, ex: f32, ch: f32, environment: Envir
   return px;
 }
 
-fn font_size_of(declared: Option<Declared>, parent_size: f32, parent_keyword: u8, parent_ex: f32, parent_ch: f32, monospace: Bool, environment: Environment) -> (size: f32, keyword: u8) pure {
-  doc "Computes font-size: an absolute keyword from the table, larger and smaller as 1.2 times and divided by 1.2, a length or percentage against the parent's size; an inherited size that came from a keyword is looked up again for this element's family.";
+fn relative_factor(lengths: Lengths) -> factor: Option<f32> pure {
+  doc "The factor of a length made only of em and percent, as a multiple of the parent's size, or None when it has another unit.";
+  let zero_px = feq(lengths.px, 0.0_f32);
+  let zero_rem = feq(lengths.rem, 0.0_f32);
+  let zero_ex = feq(lengths.ex, 0.0_f32);
+  let zero_ch = feq(lengths.ch, 0.0_f32);
+  let zero_vw = feq(lengths.vw, 0.0_f32);
+  let zero_vh = feq(lengths.vh, 0.0_f32);
+  let zero_vmin = feq(lengths.vmin, 0.0_f32);
+  let zero_vmax = feq(lengths.vmax, 0.0_f32);
+  let a = band(zero_px, zero_rem);
+  let b = band(zero_ex, zero_ch);
+  let c = band(zero_vw, zero_vh);
+  let d = band(zero_vmin, zero_vmax);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let only = band(ab, cd);
+  if only {
+    let share = fdiv.strict(lengths.percent, 1.0e2_f32);
+    let factor = fadd.strict(lengths.em, share);
+    return Some<f32>(value: factor);
+  }
+  return None<f32>();
+}
+
+fn font_size_of(declared: Option<Declared>, parent_size: f32, parent_keyword: u8, parent_scale: f32, parent_ex: f32, parent_ch: f32, monospace: Bool, environment: Environment) -> (size: f32, keyword: u8, scale: f32) pure {
+  doc "Computes font-size as the reference browser does: an absolute keyword from the table of the element's family, monospace alone having its own; a size relative to a parent whose size came from a keyword (em, percent, larger at 1.2 times, smaller divided by 1.2) keeps that keyword with the factor, so it is looked up again for this element's family, as an inherited one is; any other length is resolved against the parent's size and drops the keyword.";
   match declared {
     Some(value: d) => {
       let initial = is_initial(declared: d);
       if initial {
         let size = keyword_size(keyword: 3_u64, monospace: monospace);
-        return size, 4_u8;
+        return size, 4_u8, 1.0_f32;
       }
       match declared_keyword(declared: d) {
         Some(value: k) => {
@@ -323,26 +348,53 @@ fn font_size_of(declared: Option<Declared>, parent_size: f32, parent_keyword: u8
           if wide < 8_u64 {
             let size = keyword_size(keyword: wide, monospace: monospace);
             let one_based = k +sat 1_u8;
-            return size, one_based;
+            return size, one_based, 1.0_f32;
           }
-          if wide == 8_u64 {
-            let size = fmul.strict(parent_size, 1.2_f32);
-            return size, 0_u8;
+          let factor = if wide == 8_u64 {
+            give 1.2_f32;
+          } else {
+            give fdiv.strict(1.0_f32, 1.2_f32);
           }
-          let size = fdiv.strict(parent_size, 1.2_f32);
-          return size, 0_u8;
+          if parent_keyword != 0_u8 {
+            let scale = fmul.strict(parent_scale, factor);
+            let index_wide = cvt::<u8, u64>(parent_keyword);
+            let index = index_wide - 1_u64;
+            let base = keyword_size(keyword: index, monospace: monospace);
+            let size = fmul.strict(base, scale);
+            return size, parent_keyword, scale;
+          }
+          let size = fmul.strict(parent_size, factor);
+          return size, 0_u8, 1.0_f32;
         }
         None() => {
         }
       }
       match declared_lengths(declared: d) {
         Some(value: lengths) => {
+          if parent_keyword != 0_u8 {
+            match relative_factor(lengths: lengths) {
+              Some(value: factor) => {
+                let negative_factor = flt(factor, 0.0_f32);
+                if negative_factor {
+                  return 0.0_f32, 0_u8, 1.0_f32;
+                }
+                let scale = fmul.strict(parent_scale, factor);
+                let index_wide = cvt::<u8, u64>(parent_keyword);
+                let index = index_wide - 1_u64;
+                let base = keyword_size(keyword: index, monospace: monospace);
+                let size = fmul.strict(base, scale);
+                return size, parent_keyword, scale;
+              }
+              None() => {
+              }
+            }
+          }
           let size = resolve_px(lengths: lengths, basis: parent_size, ex: parent_ex, ch: parent_ch, environment: environment);
           let negative = flt(size, 0.0_f32);
           if negative {
-            return 0.0_f32, 0_u8;
+            return 0.0_f32, 0_u8, 1.0_f32;
           }
-          return size, 0_u8;
+          return size, 0_u8, 1.0_f32;
         }
         None() => {
         }
@@ -354,10 +406,11 @@ fn font_size_of(declared: Option<Declared>, parent_size: f32, parent_keyword: u8
   if parent_keyword != 0_u8 {
     let wide = cvt::<u8, u64>(parent_keyword);
     let index = wide - 1_u64;
-    let size = keyword_size(keyword: index, monospace: monospace);
-    return size, parent_keyword;
+    let base = keyword_size(keyword: index, monospace: monospace);
+    let size = fmul.strict(base, parent_scale);
+    return size, parent_keyword, parent_scale;
   }
-  return parent_size, 0_u8;
+  return parent_size, 0_u8, 1.0_f32;
 }
 
 fn weight_of(declared: Option<Declared>, parent: f32) -> weight: f32 pure {
@@ -659,10 +712,9 @@ fn collect_customs(own: &Box<Slots<OwnCustom>>, store: &RuleStore, cascade: &Cas
               let rule = cvt::<u32, u64>(store^.custom_rules.inner[slot]);
               let listed_rule = rule < store^.rules.inner.len;
               if listed_rule {
-                let matched = matching_specificity(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context, positions: &cascade^.positions);
+                let matched = rule_packed(store: store, document: document, atoms: atoms, positions: &cascade^.positions, element: element, rule: rule);
                 match matched {
-                  Some(value: specificity) => {
-                    let packed = pack_specificity(specificity: specificity);
+                  Some(value: packed) => {
                     let first = store^.rules.inner[rule].custom_first;
                     let end = store^.rules.inner[rule].custom_end;
                     offer_customs(own: own, store: store, first: first, end: end, packed: packed);
@@ -878,7 +930,9 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   let sized = position < state^.fonts.inner.len;
   let texts_sized = position < state^.texts.inner.len;
   let flags_sized = position < state^.visibility.inner.len;
-  let keywords_sized = position < state^.font_keywords.inner.len;
+  let scales_listed = position < state^.font_scales.inner.len;
+  let keywords_listed = position < state^.font_keywords.inner.len;
+  let keywords_sized = band(scales_listed, keywords_listed);
   let sets_sized = position < state^.sets.inner.len;
   let some_sized = band(sized, texts_sized);
   let more_sized = band(flags_sized, keywords_sized);
@@ -893,6 +947,7 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   let parent_text = initial_text(state: state);
   let parent_visibility = 0_u8;
   let parent_keyword = 4_u8;
+  let parent_scale = 1.0_f32;
   let parent_set = 0_u32;
   let initial_ex = fmul.strict(environment.serif.x_height, 16.0_f32);
   let parent_ex = initial_ex;
@@ -912,6 +967,7 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
     set parent_text = state^.texts.inner[parent];
     set parent_visibility = state^.visibility.inner[parent];
     set parent_keyword = state^.font_keywords.inner[parent];
+    set parent_scale = state^.font_scales.inner[parent];
     set parent_set = state^.sets.inner[parent];
   }
   let set_id = propagate custom_set(state: state, store: store, cascade: cascade, document: document, atoms: atoms, element: element, position: position, parent_set: parent_set);
@@ -948,7 +1004,7 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   } else {
     give environment;
   }
-  let (size, size_keyword) = font_size_of(declared: size_declared, parent_size: parent_font.size, parent_keyword: parent_keyword, parent_ex: parent_ex, parent_ch: parent_ch, monospace: monospace, environment: size_environment);
+  let (size, size_keyword, size_scale) = font_size_of(declared: size_declared, parent_size: parent_font.size, parent_keyword: parent_keyword, parent_scale: parent_scale, parent_ex: parent_ex, parent_ch: parent_ch, monospace: monospace, environment: size_environment);
   let metrics = metrics_for(named: &state^.named, start: families_start, end: families_end, atoms: atoms, environment: environment);
   let (own_ex, own_ch) = font_units(metrics: metrics, size: size);
   if has_parent {
@@ -1020,7 +1076,9 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   let fonts_room = position < state^.fonts.inner.len;
   let texts_room = position < state^.texts.inner.len;
   let flags_room = position < state^.visibility.inner.len;
-  let keywords_room = position < state^.font_keywords.inner.len;
+  let scales_room = position < state^.font_scales.inner.len;
+  let keywords_present = position < state^.font_keywords.inner.len;
+  let keywords_room = band(scales_room, keywords_present);
   let first_rooms = band(fonts_room, texts_room);
   let second_rooms = band(flags_room, keywords_room);
   let some_rooms = band(first_rooms, second_rooms);
@@ -1033,6 +1091,7 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
     set state^.ch.inner[position] = own_ch;
     set state^.fonts.inner[position] = font;
     set state^.font_keywords.inner[position] = size_keyword;
+    set state^.font_scales.inner[position] = size_scale;
     set state^.texts.inner[position] = text;
     set state^.visibility.inner[position] = visibility;
   }
@@ -1106,6 +1165,7 @@ fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, ato
   let texts = box_array_filled::<TextGroup>(count: count, value: blank_text);
   let visibility = box_array_filled::<u8>(count: count, value: 0_u8);
   let font_keywords = box_array_filled::<u8>(count: count, value: 0_u8);
+  let font_scales = box_array_filled::<f32>(count: count, value: 1.0_f32);
   let sets = box_array_filled::<u32>(count: count, value: 0_u32);
   let ex = box_array_filled::<f32>(count: count, value: 8.0_f32);
   let ch = box_array_filled::<f32>(count: count, value: 8.0_f32);
@@ -1114,7 +1174,7 @@ fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, ato
   let first_set = propagate push::<CustomSet>(cell: &custom_sets, value: empty, ceiling: 4294967295_u64);
   let custom_entries = box_slots_new::<CustomEntry>(capacity: 0_u64);
   let custom_text = box_slots_new::<u8>(capacity: 0_u64);
-  let state = Inherited(fonts: move fonts, texts: move texts, visibility: move visibility, font_keywords: move font_keywords, ex: move ex, ch: move ch, sets: move sets, custom_sets: move custom_sets, custom_entries: move custom_entries, custom_text: move custom_text, named: move named, initial_family: initial_index, disc: disc, monospace: monospace, root_font_size: environment.root_font_size);
+  let state = Inherited(fonts: move fonts, texts: move texts, visibility: move visibility, font_keywords: move font_keywords, font_scales: move font_scales, ex: move ex, ch: move ch, sets: move sets, custom_sets: move custom_sets, custom_entries: move custom_entries, custom_text: move custom_text, named: move named, initial_family: initial_index, disc: disc, monospace: monospace, root_font_size: environment.root_font_size);
   for (position in 0_u64..count) {
     let done = propagate inherit_element(state: &state, store: store, cascade: cascade, document: document, atoms: atoms, traversal: traversal, environment: environment, position: position);
   }
