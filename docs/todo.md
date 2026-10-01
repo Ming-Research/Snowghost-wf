@@ -41,10 +41,13 @@ example apart from the renderer code that exposed it
   (`ENOTDIR`) and no std call reaches the file. Impact: `png_oracle check`
   refuses its `DIR` in a worktree whose `build` is a link to another
   checkout's build directory, so `make oracle-png` fails there; a `DIR`
-  spelling that reaches the same directory without a link works. Change: a
-  std function that forms a `RelativePath` from a byte range, or a component
-  open that follows links. Reopen when oracle runs from such worktrees are
-  needed.
+  spelling that reaches the same directory without a link works. The
+  `style_oracle` driver fails the same way on the real pages in such a
+  worktree (`build/research/concurrency` is a link), so
+  `research/investigations/style/run.sh` takes `PAGES`, a copy of the pages
+  outside the link. Change: a std function that forms a `RelativePath` from
+  a byte range, or a component open that follows links. Reopen when oracle
+  runs from such worktrees are needed.
 
 - **A local `slots_new::<T, N>()` clears all N slots when created.** The
   code compiled at the pin clears the whole window before any value is
@@ -134,8 +137,40 @@ example apart from the renderer code that exposed it
   and read SVG style elements. Reopen when an SVG-heavy page joins the
   corpus.
 
+- **Second-batch values the style stage parses differently from the
+  reference.** Each is a recorded class of the style investigation's second
+  batch (`research/investigations/style/DESIGN.md`): an integer `repeat()` in
+  a track list is expanded at parse time, as the interface declares, where
+  Chromium keeps `repeat(2, ...)`; `safe` and `unsafe` are dropped from
+  alignment values, which Chromium keeps; `justify-items: legacy` with a
+  direction is kept as `legacy`, which computes to `normal`, where Chromium
+  keeps `legacy center`. No real page uses any of them. Change: give
+  `TrackList` a list of repeated ranges with counts and the alignment values
+  an overflow-position bit and a legacy bit, if layout needs them; reopen
+  when a page uses one.
+- **`url()` in `content` is kept as written.** Chromium resolves it against
+  the document's base URL (`url("http://snowghost.test/page/x.png")`); the
+  stage keeps the specified URL, since it resolves no URL and loads no
+  image. Change: resolve it with `pkg::url` when images are loaded.
+- **The `lh` unit and CSS `round()` are not parsed.** ecma262's
+  `.corner-cell { height: 2lh }` (9 `th`) and apollo11's
+  `@supports (width: round(1.5px, 1px))` image widths (2 `img`, 325px where
+  the reference rounds to 330px) differ. Change: `lh` and `rlh` as lengths of
+  the element's and the root's computed line-height, and the stepped-value
+  functions in `calc()`. Reopen when layout needs either.
+- **Some presentational hints are not implemented.** The `li` `value` and
+  `ol` `start` and `reversed` hints for `counter-set` and `counter-reset`
+  (Chromium exposes neither in computed values), the dimension attributes of
+  a `source` in a `picture` that an `img` takes from it, `body`'s margin
+  attributes, `bgcolor`, `bordercolor`, `background`, and the `table[border]`
+  rules' place in the user-agent cascade: they are offered with the hints,
+  above every user-agent selector, so on a table with both `border` and
+  `frame` or `rules` they win where the Standard's later rules would.
+  Change: per-record specificity and order for the hint records. Reopen when
+  a page uses one.
 - **Component walking helpers are written twice.** `pkg::css::values`
-  (`tokens.wf`, `components.wf`) and `pkg::style` (`components.wf`) each
+  (`tokens.wf`, `components.wf`, and `shapes.wf`, whose `shape_of` the second
+  batch's grammars use) and `pkg::style` (`components.wf`) each
   classify components, skip whitespace, find a sibling and compare an
   identifier with a word list, because neither module can reach the
   other's private functions. Change: make one set public in

@@ -14,6 +14,9 @@ alias SizeGroup = pkg::css::values::SizeGroup;
 alias Sizing = pkg::css::values::Sizing;
 alias SpacingGroup = pkg::css::values::SpacingGroup;
 alias TextGroup = pkg::css::values::TextGroup;
+alias ContentGroup = pkg::css::values::ContentGroup;
+alias TableGroup = pkg::css::values::TableGroup;
+alias pseudo_element_after = pkg::css::selectors::pseudo_element_after;
 
 fn append_group<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: unit writes(cell) {
   doc "Appends value to a table that holds fewer than 2^30 entries, doubling its capacity when full.";
@@ -186,6 +189,12 @@ fn hash_size_group(hash: u64, value: SizeGroup) -> next: u64 pure {
   set acc = hash_sizing(hash: acc, value: value.min_height);
   set acc = hash_sizing(hash: acc, value: value.max_width);
   set acc = hash_sizing(hash: acc, value: value.max_height);
+  let w_aspect_auto = bool_word(value: value.aspect_auto);
+  set acc = mix(hash: acc, value: w_aspect_auto);
+  let w_aspect_width = float_word(value: value.aspect_width);
+  set acc = mix(hash: acc, value: w_aspect_width);
+  let w_aspect_height = float_word(value: value.aspect_height);
+  set acc = mix(hash: acc, value: w_aspect_height);
   set acc = hash_sizing(hash: acc, value: value.top);
   set acc = hash_sizing(hash: acc, value: value.right);
   set acc = hash_sizing(hash: acc, value: value.bottom);
@@ -222,6 +231,15 @@ fn same_size_group(first: SizeGroup, second: SizeGroup) -> same: Bool pure {
   }
   let equal_max_height = same_sizing(first: first.max_height, second: second.max_height);
   if equal_max_height {
+  } else {
+    return False();
+  }
+  let equal_aspect_auto = eeq(first.aspect_auto, second.aspect_auto);
+  let equal_aspect_width = feq(first.aspect_width, second.aspect_width);
+  let equal_aspect_height = feq(first.aspect_height, second.aspect_height);
+  let equal_aspect_sides = band(equal_aspect_width, equal_aspect_height);
+  let equal_aspect = band(equal_aspect_auto, equal_aspect_sides);
+  if equal_aspect {
   } else {
     return False();
   }
@@ -454,6 +472,10 @@ fn hash_text_group(hash: u64, value: TextGroup) -> next: u64 pure {
   set acc = mix(hash: acc, value: w_decoration_line);
   let w_list_style_type = cvt::<u32, u64>(value.list_style_type.index);
   set acc = mix(hash: acc, value: w_list_style_type);
+  let w_overflow_wrap = cvt::<u8, u64>(value.overflow_wrap);
+  set acc = mix(hash: acc, value: w_overflow_wrap);
+  let w_word_break = cvt::<u8, u64>(value.word_break);
+  set acc = mix(hash: acc, value: w_word_break);
   return acc;
 }
 
@@ -497,6 +519,12 @@ fn same_text_group(first: TextGroup, second: TextGroup) -> same: Bool pure {
     return False();
   }
   if first.list_style_type.index != second.list_style_type.index {
+    return False();
+  }
+  if first.overflow_wrap != second.overflow_wrap {
+    return False();
+  }
+  if first.word_break != second.word_break {
     return False();
   }
   return True();
@@ -1116,8 +1144,36 @@ fn intern_background_group(values: &[BackgroundGroup], ids: &[u32]) -> table: Bo
 }
 
 fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal) {
-  doc "Completes each element's text group with the third part's values, interns the seven value groups and the custom-property sets as eight calls that read and write disjoint places, and assembles every element's identifiers.";
-  let count = traversal^.elements.inner.len;
+  doc "Completes each styled node's text, table and content groups with values of the other part, interns the eleven value groups and the custom-property sets as twelve calls that read and write disjoint places, and assembles every element's identifiers and, after them, every pseudo-element's.";
+  let count = inherited^.fonts.inner.len;
+  let element_count = traversal^.elements.inner.len;
+  let fewer = element_count <= count;
+  let pseudo_count = count -sat element_count;
+  let pseudo_listed = inherited^.pseudo_parents.inner.len == pseudo_count;
+  let kinds_listed = inherited^.pseudo_kinds.inner.len == pseudo_count;
+  let tables_listed = inherited^.tables.inner.len == count;
+  let quotes_listed = inherited^.quotes.inner.len == count;
+  let list_positions_listed = inherited^.list_positions.inner.len == count;
+  let containers_listed = resets^.containers.inner.len == count;
+  let track_nodes_listed = resets^.track_nodes.inner.len == count;
+  let items_listed = resets^.items.inner.len == count;
+  let layouts_listed = resets^.table_layouts.inner.len == count;
+  let contents_listed = resets^.contents.inner.len == count;
+  let n1 = band(fewer, pseudo_listed);
+  let n2 = band(kinds_listed, tables_listed);
+  let n3 = band(quotes_listed, list_positions_listed);
+  let n4 = band(containers_listed, track_nodes_listed);
+  let n5 = band(items_listed, layouts_listed);
+  let n12 = band(n1, n2);
+  let n34 = band(n3, n4);
+  let n5c = band(n5, contents_listed);
+  let n1234 = band(n12, n34);
+  let second_listed = band(n1234, n5c);
+  if second_listed {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Styles, StyleError>(error: failure);
+  }
   let small = count <= 1073741824_u64;
   let fonts_listed = inherited^.fonts.inner.len == count;
   let texts_listed = inherited^.texts.inner.len == count;
@@ -1153,8 +1209,24 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
   let texts = box_array_filled::<TextGroup>(count: count, value: first_text);
   for (k in 0_u64..count) {
     let text = inherited^.texts.inner[k];
-    let made = TextGroup(color: text.color, text_align: text.text_align, text_indent: text.text_indent, text_transform: text.text_transform, white_space: text.white_space, letter_spacing: text.letter_spacing, word_spacing: text.word_spacing, vertical_align: resets^.vertical_aligns.inner[k], decoration_line: resets^.decorations.inner[k], list_style_type: text.list_style_type);
+    let made = TextGroup(color: text.color, text_align: text.text_align, text_indent: text.text_indent, text_transform: text.text_transform, white_space: text.white_space, letter_spacing: text.letter_spacing, word_spacing: text.word_spacing, vertical_align: resets^.vertical_aligns.inner[k], decoration_line: resets^.decorations.inner[k], list_style_type: text.list_style_type, overflow_wrap: text.overflow_wrap, word_break: text.word_break);
     set texts.inner[k] = made;
+  }
+  let first_table = initial_table();
+  let tables_in = box_array_filled::<TableGroup>(count: count, value: first_table);
+  let first_content = if count > 0_u64 {
+    give resets^.contents.inner[0_u64];
+  } else {
+    give ContentGroup(content: 0_u32, counter_reset: 0_u32, counter_increment: 0_u32, counter_set: 0_u32, quotes: 0_u32, list_style_position: 0_u8);
+  }
+  let contents_in = box_array_filled::<ContentGroup>(count: count, value: first_content);
+  for (k in 0_u64..count) {
+    let table = inherited^.tables.inner[k];
+    let made_table = TableGroup(border_collapse: table.border_collapse, spacing_horizontal: table.spacing_horizontal, spacing_vertical: table.spacing_vertical, table_layout: resets^.table_layouts.inner[k], caption_side: table.caption_side);
+    set tables_in.inner[k] = made_table;
+    let content = resets^.contents.inner[k];
+    let made_content = ContentGroup(content: content.content, counter_reset: content.counter_reset, counter_increment: content.counter_increment, counter_set: content.counter_set, quotes: inherited^.quotes.inner[k], list_style_position: inherited^.list_positions.inner[k]);
+    set contents_in.inner[k] = made_content;
   }
   let box_ids = box_array_filled::<u32>(count: count, value: 0_u32);
   let size_ids = box_array_filled::<u32>(count: count, value: 0_u32);
@@ -1163,6 +1235,10 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
   let font_ids = box_array_filled::<u32>(count: count, value: 0_u32);
   let text_ids = box_array_filled::<u32>(count: count, value: 0_u32);
   let background_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let container_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let item_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let table_ids = box_array_filled::<u32>(count: count, value: 0_u32);
+  let content_ids = box_array_filled::<u32>(count: count, value: 0_u32);
   let all_sets = inherited^.custom_sets.inner.len;
   let set_count = if all_sets <= 1073741824_u64 {
     give all_sets;
@@ -1178,8 +1254,13 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
   let text_table = intern_text_group(values: &texts.inner[0_u64..count], ids: &text_ids.inner[0_u64..count]);
   let backgrounds = intern_background_group(values: &resets^.backgrounds.inner[0_u64..count], ids: &background_ids.inner[0_u64..count]);
   let custom_distinct = intern_custom_sets(inherited: inherited, canon: &canon.inner[0_u64..set_count]);
-  let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32);
-  let elements = box_array_filled::<ComputedStyle>(count: count, value: blank);
+  let container_tables = intern_container_group(values: &resets^.containers.inner[0_u64..count], nodes: &resets^.track_nodes.inner[0_u64..count], inherited: inherited, ids: &container_ids.inner[0_u64..count]);
+  let items = intern_item_group(values: &resets^.items.inner[0_u64..count], ids: &item_ids.inner[0_u64..count]);
+  let tables = intern_table_group(values: &tables_in.inner[0_u64..count], ids: &table_ids.inner[0_u64..count]);
+  let content_tables = intern_content_group(values: &contents_in.inner[0_u64..count], inherited: inherited, ids: &content_ids.inner[0_u64..count]);
+  let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32, container: 0_u32, item: 0_u32, table: 0_u32, content: 0_u32);
+  let elements = box_array_filled::<ComputedStyle>(count: element_count, value: blank);
+  let pseudos = box_slots_new::<PseudoStyle>(capacity: 0_u64);
   for (k in 0_u64..count) {
     let raw_set = cvt::<u32, u64>(inherited^.sets.inner[k]);
     let custom = if raw_set < canon.inner.len {
@@ -1187,8 +1268,27 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
     } else {
       give 0_u32;
     }
-    let made = ComputedStyle(box: box_ids.inner[k], size: size_ids.inner[k], spacing: spacing_ids.inner[k], border: border_ids.inner[k], font: font_ids.inner[k], text: text_ids.inner[k], background: background_ids.inner[k], custom: custom);
-    set elements.inner[k] = made;
+    let made = ComputedStyle(box: box_ids.inner[k], size: size_ids.inner[k], spacing: spacing_ids.inner[k], border: border_ids.inner[k], font: font_ids.inner[k], text: text_ids.inner[k], background: background_ids.inner[k], custom: custom, container: container_ids.inner[k], item: item_ids.inner[k], table: table_ids.inner[k], content: content_ids.inner[k]);
+    let element_slot = k < elements.inner.len;
+    if element_slot {
+      set elements.inner[k] = made;
+    } else {
+      let pseudo_at = k -sat element_count;
+      let listed = pseudo_at < inherited^.pseudo_parents.inner.len;
+      let kind_listed = pseudo_at < inherited^.pseudo_kinds.inner.len;
+      let both = band(listed, kind_listed);
+      if both {
+        let origin = inherited^.pseudo_parents.inner[pseudo_at];
+        let kind = inherited^.pseudo_kinds.inner[pseudo_at];
+        let generated_kind = if kind == pseudo_element_after {
+          give pseudo_after;
+        } else {
+          give pseudo_before;
+        }
+        let pseudo = PseudoStyle(element: origin, kind: generated_kind, style: made);
+        let placed_pseudo = propagate push::<PseudoStyle>(cell: &pseudos, value: pseudo, ceiling: 4294967295_u64);
+      }
+    }
   }
   let families = box_slots_new::<Family>(capacity: 0_u64);
   let family_count = inherited^.named.families.inner.len;
@@ -1197,7 +1297,11 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
     let placed = propagate push::<Family>(cell: &families, value: family, ceiling: 4294967295_u64);
   }
   let custom_sets = custom_distinct;
-  let made = Styles(elements: move elements, boxes: move boxes, sizes: move sizes, spacings: move spacings, borders: move borders, fonts: move fonts, texts: move text_table, backgrounds: move backgrounds, families: move families, custom_sets: custom_sets);
+  let ContainerTables(groups: containers, lists: track_out) = move container_tables;
+  let TrackOut(tracks: tracks, track_lists: track_lists, line_names: line_names, area_maps: area_maps, named_areas: named_areas) = move track_out;
+  let ContentTables(groups: contents, lists: content_out) = move content_tables;
+  let ContentOut(content_lists: content_lists, content_items: content_items, counter_lists: counter_lists, counter_changes: counter_changes, quote_lists: quote_lists, quote_pairs: quote_pairs, text: generated_text) = move content_out;
+  let made = Styles(elements: move elements, boxes: move boxes, sizes: move sizes, spacings: move spacings, borders: move borders, fonts: move fonts, texts: move text_table, backgrounds: move backgrounds, families: move families, custom_sets: custom_sets, containers: move containers, items: move items, tables: move tables, contents: move contents, tracks: move tracks, track_lists: move track_lists, line_names: move line_names, area_maps: move area_maps, named_areas: move named_areas, content_lists: move content_lists, content_items: move content_items, counter_lists: move counter_lists, counter_changes: move counter_changes, quote_lists: move quote_lists, quote_pairs: move quote_pairs, generated_text: move generated_text, pseudos: move pseudos);
   return Ok<Styles, StyleError>(value: move made);
 }
 
