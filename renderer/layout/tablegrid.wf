@@ -4,13 +4,14 @@ alias Sizing = pkg::css::values::Sizing;
 alias sizing_value = pkg::css::values::sizing_value;
 
 struct Col {
-  doc "A column's working state while its width is resolved (CSS Tables 3, 3.8.3 and 3.9): its min-content and max-content widths, its intrinsic percentage width (0 when none), whether a specified length constrains it and that length (-1 when none), whether a cell starts in it, the borders and paddings its percentage cell adds to the percentage in fixed layout, and its resolved width.";
+  doc "A column's working state while its width is resolved (CSS Tables 3, 3.8.3 and 3.9): its min-content and max-content widths, its intrinsic percentage width (0 when none), whether a specified length constrains it and that length (-1 when none), whether a cell starts in it, whether it is collapsed (no cell starts in it and no col element gives it a box: it has no width and no spacing beside it), the borders and paddings its percentage cell adds to the percentage in fixed layout, and its resolved width.";
   min: i32;
   max: i32;
   percent: f32;
   constrained: Bool;
   fixed: i32;
   originates: Bool;
+  collapsed: Bool;
   extra: i32;
   width: i32;
 }
@@ -111,7 +112,7 @@ fn edges_get(list: &Box<Slots<Edges>>, at: u64) -> found: Edges reads(list) {
 fn fresh_col() -> made: Col pure {
   doc "A column with no constraint.";
   let no = False();
-  return Col(min: 0_i32, max: 0_i32, percent: 0.0_f32, constrained: no, fixed: -1_i32, originates: no, extra: 0_i32, width: 0_i32);
+  return Col(min: 0_i32, max: 0_i32, percent: 0.0_f32, constrained: no, fixed: -1_i32, originates: no, collapsed: no, extra: 0_i32, width: 0_i32);
 }
 
 fn zeros_cols(count: u64) -> made: Box<Slots<Col>> pure {
@@ -149,6 +150,47 @@ fn narrow(value: i64) -> made: i32 pure {
   let bounded = imin(low, 2147483647_i64);
   let made = cvt::<i64, i32>(bounded);
   return made;
+}
+
+fn visible_columns(cols: &Box<Slots<Col>>, first: u64, end: u64) -> count: u64 reads(cols) {
+  doc "How many of the columns first to end have a width and spacing beside them, the others being collapsed.";
+  let total = 0_u64;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let shown = bnot(col.collapsed);
+    if shown {
+      set total = total +sat 1_u64;
+    }
+  }
+  return total;
+}
+
+fn spacing_between(cols: &Box<Slots<Col>>, first: u64, end: u64, spacing: i32) -> total: i32 reads(cols) {
+  doc "The border spacing between the visible columns first to end: one fewer than they are.";
+  let shown = visible_columns(cols: cols, first: first, end: end);
+  if shown == 0_u64 {
+    return 0_i32;
+  }
+  let gaps = shown - 1_u64;
+  let made = multiple(amount: spacing, count: gaps);
+  return made;
+}
+
+fn mark_collapsed(context: &Context, cols: &Box<Slots<Col>>) -> result: unit reads(context), writes(cols) {
+  doc "Collapses the columns no cell starts in and no col element gives a box (the reference does; the draft's grid keeps them): a cell that spans them is as wide as the columns it does not span over, and no spacing is counted beside them.";
+  let columns = cols^.inner.len;
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let styled = if c < context^.columns.inner.len {
+      give context^.columns.inner[c].styled;
+    } else {
+      give False();
+    }
+    let kept = bor(col.originates, styled);
+    set col.collapsed = bnot(kept);
+    col_put(cols: cols, at: c, value: col);
+  }
+  return unit;
 }
 
 fn multiple(amount: i32, count: u64) -> total: i32 pure {
@@ -288,6 +330,8 @@ fn excess_weights(cols: &Box<Slots<Col>>, first: u64, end: u64, weights: &Box<Sl
         give 1_i64;
       }
       give 0_i64;
+    } else if col.collapsed {
+      give 0_i64;
     } else {
       give 1_i64;
     }
@@ -379,8 +423,7 @@ fn distribute_span(cols: &Box<Slots<Col>>, deltas: &Box<Slots<i32>>, weights: &B
   doc "Takes a cell spanning several columns into their min-content and max-content widths: what its outer widths exceed the columns' sums by, less the spacing between them, goes to the columns by the rules of excess_weights (CSS Tables 3, 3.9.3.2 for intrinsic widths).";
   let first = item.column;
   let end = first +sat item.columns;
-  let between_count = item.columns -sat 1_u64;
-  let between = multiple(amount: spacing, count: between_count);
+  let between = spacing_between(cols: cols, first: first, end: end, spacing: spacing);
   let min_sum = 0_i32;
   for (k in first..end) {
     let col = col_get(cols: cols, at: k);
@@ -452,6 +495,7 @@ fn measure_columns(context: &Context, styles: &Styles, items: &Box<Slots<Item>>,
       col_put(cols: cols, at: item.column, value: col);
     }
   }
+  mark_collapsed(context: context, cols: cols);
   for (i in 0_u64..count) {
     if i < items^.inner.len {
       let item = items^.inner[i];
@@ -515,6 +559,13 @@ fn measure_fixed(context: &Context, styles: &Styles, items: &Box<Slots<Item>>, c
       let col = col_get(cols: cols, at: item.column);
       set col.originates = True();
       col_put(cols: cols, at: item.column, value: col);
+    }
+  }
+  mark_collapsed(context: context, cols: cols);
+  for (i in 0_u64..count) {
+    if i < items^.inner.len {
+      let item = items^.inner[i];
+      let col = col_get(cols: cols, at: item.column);
       if item.row == 0_u64 {
         let first = item.column;
         let end = first +sat item.columns;
@@ -543,11 +594,11 @@ fn measure_fixed(context: &Context, styles: &Styles, items: &Box<Slots<Item>>, c
           }
           col_put(cols: cols, at: item.column, value: col);
         } else if item.width >= 0_i32 {
-          let between_count = item.columns -sat 1_u64;
-          let between = multiple(amount: spacing, count: between_count);
+          let between = spacing_between(cols: cols, first: first, end: end, spacing: spacing);
           let room = item.width -sat between;
+          let shown = visible_columns(cols: cols, first: first, end: end);
           let share = if room > 0_i32 {
-            let capped = imin(item.columns, 1048576_u64);
+            let capped = imin(shown, 1048576_u64);
             let wide = cvt::<u64, i32>(capped);
             if wide > 0_i32 {
               give room / wide;
@@ -558,7 +609,10 @@ fn measure_fixed(context: &Context, styles: &Styles, items: &Box<Slots<Item>>, c
           }
           for (k in first..end) {
             let part = col_get(cols: cols, at: k);
-            if part.fixed < 0_i32 {
+            let open = part.fixed < 0_i32;
+            let shown_part = bnot(part.collapsed);
+            let takes = band(open, shown_part);
+            if takes {
               set part.constrained = True();
               set part.fixed = share;
               col_put(cols: cols, at: k, value: part);

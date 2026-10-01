@@ -189,7 +189,13 @@ fn prepare_table(context: &Context, styles: &Styles, document: &Document, fonts:
   } else {
     measure_columns(context: context, styles: styles, items: &items, cols: &cols, spacing: spacing_h);
   }
-  return Table(borders: move borders, items: move items, cols: move cols, kinds: move kinds, collapsed: collapsed, fixed: fixed_mode, spacing_h: spacing_h, spacing_v: spacing_v, border: own_border, padding: own_padding, basis: basis);
+  let shown = visible_columns(cols: &cols, first: 0_u64, end: columns);
+  let rows_spacing = if shown > 0_u64 {
+    give spacing_v;
+  } else {
+    give 0_i32;
+  }
+  return Table(borders: move borders, items: move items, cols: move cols, kinds: move kinds, collapsed: collapsed, fixed: fixed_mode, spacing_h: spacing_h, spacing_v: rows_spacing, border: own_border, padding: own_padding, basis: basis);
 }
 
 fn captions_minimum(context: &Context, styles: &Styles) -> least: i32 reads(context), reads(styles) {
@@ -213,12 +219,13 @@ fn captions_minimum(context: &Context, styles: &Styles) -> least: i32 reads(cont
 }
 
 fn grid_spacing(table: &Table) -> total: i32 reads(table) {
-  doc "The horizontal border spacing a table with at least one column holds: one more than its columns (CSS Tables 3, 3.8.2).";
+  doc "The horizontal border spacing a table with at least one column holds: one more than its columns (CSS Tables 3, 3.8.2), the collapsed columns not counted.";
   let columns = table^.cols.inner.len;
-  if columns == 0_u64 {
+  let shown = visible_columns(cols: &table^.cols, first: 0_u64, end: columns);
+  if shown == 0_u64 {
     return 0_i32;
   }
-  let count = columns +sat 1_u64;
+  let count = shown +sat 1_u64;
   let made = multiple(amount: table^.spacing_h, count: count);
   return made;
 }
@@ -499,8 +506,8 @@ fn grow_tracks(tracks: &Box<Slots<Track>>, deltas: &Box<Slots<i32>>, weights: &B
   return unit;
 }
 
-fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<Slots<Track>>, natural: &Box<Slots<i32>>, ascents: &Box<Slots<i32>>, aligns: &Box<Slots<i32>>) -> result: unit reads(context), reads(styles), reads(table), writes(tracks), writes(natural), writes(ascents), writes(aligns) {
-  doc "The rows' heights from the laid-out cells (CSS Tables 3, 3.10.2): a row is as tall as its tallest cell that spans it alone and starts at the top, and as its baseline-aligned cells' tallest ascent and tallest descent together, and as its own specified height; cells spanning several rows then add what they lack, in proportion to the heights of the rows they span, in order of their spans. A cell's natural height is its laid-out height with the borders the table uses instead of its computed ones; a cell's specified height is a least height.";
+fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<Slots<Track>>, natural: &Box<Slots<i32>>, minimums: &Box<Slots<i32>>, ascents: &Box<Slots<i32>>, aligns: &Box<Slots<i32>>) -> result: unit reads(context), reads(styles), reads(table), writes(tracks), writes(natural), writes(minimums), writes(ascents), writes(aligns) {
+  doc "The rows' heights from the laid-out cells (CSS Tables 3, 3.10.2): a row is as tall as its tallest cell that spans it alone and starts at the top, and as its baseline-aligned cells' tallest ascent and tallest descent together, and as its own specified height; cells spanning several rows then add what they lack, in proportion to the heights of the rows they span, in order of their spans. A cell's natural height is its laid-out height with the borders the table uses instead of its computed ones, which its specified height does not change: that is a least height of its own, which does not move its content, so a baseline-aligned cell with room to spare in it does not make its row taller.";
   let rows = tracks^.inner.len;
   let count = table^.items.inner.len;
   for (r in 0_u64..rows) {
@@ -542,7 +549,13 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
           give natural_height -sat bottom_edge;
         }
         let align = align_of(styles: styles, style: style);
+        let frame_used = item.used.top +sat item.used.bottom;
+        let frame_padding = item.padding.top +sat item.padding.bottom;
+        let frame_vertical = frame_used +sat frame_padding;
+        let stated = specified_height(styles: styles, style: style, basis: -1_i32, frame: frame_vertical);
+        let minimum = imax(stated, 0_i32);
         put_i32(list: natural, at: i, value: natural_height);
+        put_i32(list: minimums, at: i, value: minimum);
         put_i32(list: ascents, at: i, value: ascent);
         put_i32(list: aligns, at: i, value: align);
         let track = track_get(tracks: tracks, at: item.row);
@@ -555,6 +568,9 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
           }
         } else if item.rows == 1_u64 {
           set track.size = imax(track.size, natural_height);
+        }
+        if item.rows == 1_u64 {
+          set track.size = imax(track.size, minimum);
         }
         if item.rows == 1_u64 {
           let sizes = size_of(styles: styles, style: style);
@@ -587,7 +603,9 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
           let between = multiple(amount: table^.spacing_v, count: between_count);
           let have = track_sum(tracks: tracks, first: first, end: end);
           let have_all = have +sat between;
-          let need = get_i32(list: natural, at: i);
+          let content_need = get_i32(list: natural, at: i);
+          let least_need = get_i32(list: minimums, at: i);
+          let need = imax(content_need, least_need);
           let excess = need -sat have_all;
           let no = False();
           grow_tracks(tracks: tracks, deltas: &deltas, weights: &weights, first: first, end: end, excess: excess, only_free: no);
@@ -673,15 +691,31 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
     distribute_auto(cols: &table.cols, assignable: assignable);
   }
   let origin_x = table.border.left +sat table.padding.left;
-  let cursor = origin_x +sat table.spacing_h;
+  let first_edge = if spacing > 0_i32 {
+    give origin_x +sat table.spacing_h;
+  } else {
+    give origin_x;
+  }
+  let edge = first_edge;
+  let seen = False();
   for (c in 0_u64..columns) {
     if c < table.cols.inner.len {
       if c < context^.columns.inner.len {
         let col = table.cols.inner[c];
-        set context^.columns.inner[c].x = cursor;
-        set context^.columns.inner[c].width = col.width;
-        let after = cursor +sat col.width;
-        set cursor = after +sat table.spacing_h;
+        if col.collapsed {
+          set context^.columns.inner[c].x = edge;
+          set context^.columns.inner[c].width = 0_i32;
+        } else {
+          let start = if seen {
+            give edge +sat table.spacing_h;
+          } else {
+            give edge;
+          }
+          set context^.columns.inner[c].x = start;
+          set context^.columns.inner[c].width = col.width;
+          set edge = start +sat col.width;
+          set seen = True();
+        }
       }
     }
   }
@@ -720,9 +754,10 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
     let pushed = push_item::<Track>(cell: &tracks, value: fresh, ceiling: item_ceiling);
   }
   let natural = filled_i32(count: items, value: 0_i32);
+  let minimums = filled_i32(count: items, value: 0_i32);
   let ascents = filled_i32(count: items, value: 0_i32);
   let aligns = filled_i32(count: items, value: 0_i32);
-  measure_rows(context: context, styles: styles, table: &table, tracks: &tracks, natural: &natural, ascents: &ascents, aligns: &aligns);
+  measure_rows(context: context, styles: styles, table: &table, tracks: &tracks, natural: &natural, minimums: &minimums, ascents: &ascents, aligns: &aligns);
   apply_group_heights(context: context, styles: styles, tracks: &tracks, spacing: table.spacing_v);
   let top_captions = 0_i32;
   let bottom_captions = 0_i32;
