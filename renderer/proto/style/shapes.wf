@@ -6,6 +6,8 @@ alias sibling_positions = pkg::css::selectors::sibling_positions;
 
 const words_ceiling: u64 = 65536_u64;
 
+const no_slot: u64 = 18446744073709551615_u64;
+
 fn refuse<T: drop>(failure: StyleError) -> result: Result<T, StyleError> pure {
   doc "Returns failure as a refusal.";
   return Err<T, StyleError>(error: failure);
@@ -267,6 +269,187 @@ fn cascade_elements(bits: &[u64], words: u64, parents: &[u32], out: &[Computed],
   return consistent;
 }
 
+fn cascade_level(slots: &[u64], positions: &[u64], depths: &[u64], parents: &[u32], bits: &[u64], words: u64, out: &[Computed], store: &RuleStore, level: u64) -> consistent: Bool reads(slots), reads(parents), reads(bits), reads(store), writes(out) contract {
+  requires parents^.len == out^.len;
+  requires positions^.len == out^.len;
+  requires depths^.len == out^.len;
+  requires forall listed(k in 0_u64..slots^.len) when slots^[k] < out^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
+  requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
+} {
+  doc "Shape D, one tree level: iteration k cascades the element at preorder index slots^[k] from its own run of match bits and its parent's values, which the level before computed, and writes them at that preorder index of out. The requirements state that the level's elements are distinct, positions^ naming each one's own iteration, and that a parent is one level above its element; the certificate separates any two iterations with them. False when bits is not words words per element or a set bit names no rule.";
+  let count = slots^.len;
+  let total = out^.len;
+  let few_words = words <= words_ceiling;
+  let few_elements = total <= 4294967296_u64;
+  let small = band(few_words, few_elements);
+  if small {
+  } else {
+    return False();
+  }
+  let size = words * total;
+  let exact = bits^.len == size;
+  if exact {
+  } else {
+    return False();
+  }
+  let consistent = True();
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let at = slots^[k];
+    if at < total {
+      let start = words * at;
+      let end = start + words;
+      invariant within: end <= size {
+        use words times (at + 1_u64 <= total);
+      }
+      let raw = cvt::<u32, u64>(parents^[at]);
+      let parent = if raw < total {
+        give out^[raw];
+      } else {
+        let blank = blank_computed();
+        give blank;
+      }
+      let known = cascade_into(bits: &bits^[start..end], store: store, parent: parent, slot: &out^[at]);
+      set consistent = band(consistent, known);
+    }
+  }
+  return consistent;
+}
+
+fn cascade_levels(bits: &[u64], words: u64, parents: &[u32], out: &[Computed], store: &RuleStore) -> consistent: Bool reads(bits), reads(parents), reads(store), writes(out) contract {
+  requires parents^.len == out^.len;
+  requires parents^.len <= 4294967294_u64;
+} {
+  doc "Shape D, the cascade: a validating pass derives each element's depth from its parent, which must precede it or be the document, and counts each depth; a second groups the elements by depth in preorder with each one's position in its group; and the levels are cascaded one after another by cascade_level. The two loops' invariants state what cascade_level requires. False when a parent neither precedes its element nor is the document, the tree is deeper than depth_ceiling, or a level's cascade is.";
+  let n = parents^.len;
+  let depths = box_array_filled::<u64>(count: n, value: 0_u64);
+  let ceiling_levels = depth_ceiling + 1_u64;
+  let sizes = box_array_filled::<u64>(count: ceiling_levels, value: 0_u64);
+  let deepest = 0_u64;
+  for (
+    at in 0_u64..n,
+    invariant forall up(e in 0_u64..at) when parents^[e] < n: parents^[e] < e, depths.inner[parents^[e]] + 1_u64 == depths.inner[e]
+  ) {
+    let raw = cvt::<u32, u64>(parents^[at]);
+    let depth = if raw == n {
+      give 0_u64;
+    } else if raw < at {
+      let above = depths.inner[raw];
+      if above < depth_ceiling {
+        give above + 1_u64;
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+    set depths.inner[at] = depth;
+    set deepest = imax(deepest, depth);
+    if depth < ceiling_levels {
+      let seen = sizes.inner[depth];
+      if seen < n {
+        set sizes.inner[depth] = seen + 1_u64;
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  if deepest >= depth_ceiling {
+    return False();
+  }
+  let levels = deepest + 1_u64;
+  let made = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..levels], value: no_slot);
+  match move made {
+    None() => {
+      return False();
+    }
+    Some(value: slots) => {
+      let fill = box_array_filled::<u64>(count: levels, value: 0_u64);
+      let positions = box_array_filled::<u64>(count: n, value: 0_u64);
+      let rows = slots.inner.len;
+      for (
+        at in 0_u64..n,
+        invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != no_slot: slots.inner[d][k] < at,
+        invariant forall listed(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != no_slot: positions.inner[slots.inner[d][k]] == k, depths.inner[slots.inner[d][k]] == d
+      ) {
+        let depth = depths.inner[at];
+        let within_rows = depth < rows;
+        let within_levels = depth < levels;
+        let known = band(within_rows, within_levels);
+        if known {
+          let offset = fill.inner[depth];
+          let segment = &slots.inner[depth];
+          if offset < segment^.len {
+            set segment^[offset] = at;
+            set positions.inner[at] = offset;
+            set fill.inner[depth] = offset + 1_u64;
+          } else {
+            return False();
+          }
+        } else {
+          return False();
+        }
+      }
+      let consistent = True();
+      for (level in 0_u64..rows) {
+        let done = cascade_level(slots: &slots.inner[level], positions: &positions.inner[0_u64..n], depths: &depths.inner[0_u64..n], parents: parents, bits: bits, words: words, out: out, store: store, level: level);
+        set consistent = band(consistent, done);
+      }
+      return consistent;
+    }
+  }
+}
+
+fn style_shape_d(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Box<Array<Computed>>, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
+  doc "Shape D, flat match then level cascade: matches as shape C does and cascades by cascade_levels, each level's elements in parallel and every result at its preorder index.";
+  let count = traversal^.elements.inner.len;
+  let rules = store^.rules.inner.len;
+  let few_elements = count <= 4294967294_u64;
+  let few_rules = rules <= 4194304_u64;
+  let listed = traversal^.parents.inner.len == count;
+  let small = band(few_elements, few_rules);
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  if listed {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let padded = rules + 63_u64;
+  let words = padded / 64_u64;
+  let total = words * count;
+  let bits = box_array_filled::<u64>(count: total, value: 0_u64);
+  let matched = bits.inner.len;
+  let index = propagate build_rule_index(store: store, atoms: atoms);
+  let positions = sibling_positions(document: document);
+  let elements = &traversal^.elements.inner[0_u64..count];
+  let fits = match_elements(bits: &bits.inner[0_u64..matched], words: words, elements: elements, index: &index, store: store, document: document, atoms: atoms, positions: &positions);
+  if fits {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let blank = blank_computed();
+  let results = box_array_filled::<Computed>(count: count, value: blank);
+  let parents = &traversal^.parents.inner[0_u64..count];
+  let out = &results.inner[0_u64..count];
+  let consistent = cascade_levels(bits: &bits.inner[0_u64..matched], words: words, parents: parents, out: out, store: store);
+  if consistent {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  return Ok<Box<Array<Computed>>, StyleError>(value: move results);
+}
+
 fn style_shape_c(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Box<Array<Computed>>, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
   doc "Shape C, flat match then cascade: returns every element's values in preorder, matched by match_elements through the rule index, with every element's sibling positions counted once, into a bit array of one run of ceil(rules / 64) words per element and then cascaded by cascade_elements.";
   let count = traversal^.elements.inner.len;
@@ -304,6 +487,72 @@ fn style_shape_c(store: &RuleStore, document: &Document, atoms: &AtomTable, trav
   let parents = &traversal^.parents.inner[0_u64..count];
   let out = &results.inner[0_u64..count];
   let consistent = cascade_elements(bits: &bits.inner[0_u64..matched], words: words, parents: parents, out: out, store: store);
+  if consistent {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  return Ok<Box<Array<Computed>>, StyleError>(value: move results);
+}
+
+struct Matched {
+  bits: Box<Array<u64>>;
+  words: u64;
+}
+
+fn match_all(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Matched, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
+  doc "The match half of shapes C and D alone: every element's run of match bits, for timing the cascade by itself.";
+  let count = traversal^.elements.inner.len;
+  let rules = store^.rules.inner.len;
+  let few_elements = count <= 4294967294_u64;
+  let few_rules = rules <= 4194304_u64;
+  let small = band(few_elements, few_rules);
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return refuse::<Matched>(failure: failure);
+  }
+  let padded = rules + 63_u64;
+  let words = padded / 64_u64;
+  let total = words * count;
+  let bits = box_array_filled::<u64>(count: total, value: 0_u64);
+  let matched = bits.inner.len;
+  let index = propagate build_rule_index(store: store, atoms: atoms);
+  let positions = sibling_positions(document: document);
+  let elements = &traversal^.elements.inner[0_u64..count];
+  let fits = match_elements(bits: &bits.inner[0_u64..matched], words: words, elements: elements, index: &index, store: store, document: document, atoms: atoms, positions: &positions);
+  if fits {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Matched>(failure: failure);
+  }
+  let made = Matched(bits: move bits, words: words);
+  return Ok<Matched, StyleError>(value: move made);
+}
+
+fn cascade_only(matched: &Matched, store: &RuleStore, traversal: &Traversal, by_level: Bool) -> result: Result<Box<Array<Computed>>, StyleError> reads(matched), reads(store), reads(traversal) {
+  doc "The cascade half alone over bits match_all made: shape C's preorder cascade, or shape D's level cascade when by_level.";
+  let count = traversal^.elements.inner.len;
+  let listed = traversal^.parents.inner.len == count;
+  let small = count <= 4294967294_u64;
+  let usable = band(listed, small);
+  if usable {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return refuse::<Box<Array<Computed>>>(failure: failure);
+  }
+  let blank = blank_computed();
+  let results = box_array_filled::<Computed>(count: count, value: blank);
+  let parents = &traversal^.parents.inner[0_u64..count];
+  let out = &results.inner[0_u64..count];
+  let size = matched^.bits.inner.len;
+  let bits = &matched^.bits.inner[0_u64..size];
+  let words = matched^.words;
+  let consistent = if by_level {
+    give cascade_levels(bits: bits, words: words, parents: parents, out: out, store: store);
+  } else {
+    give cascade_elements(bits: bits, words: words, parents: parents, out: out, store: store);
+  }
   if consistent {
   } else {
     let failure = StyleError::Inconsistent();

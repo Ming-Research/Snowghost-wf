@@ -21,7 +21,9 @@
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
 # ecma262, html5, apollo11, flat, deep, unbalanced and paragraph.
 #
-# style prints, per page, shape (A, B, C and the intern pass) and build, T(0)
+# style prints, per page, shape (A, B, C, D and the intern pass, or the
+# shapes SHAPES lists, where cascade-c and cascade-d time C's and D's cascade
+# alone over one match) and build, T(0)
 # and T(REPS) as the best of RUNS runs (seven by default) and the stage time
 # (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and 4
 # (WORKERS overrides the list) and the sequential build. REPS is chosen per
@@ -115,8 +117,18 @@ reps_of() {
 	paragraph) shapes=20000 intern=100000 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
+	case $1 in
+	ecma262) cascade=40 ;;
+	html5) cascade=60 ;;
+	apollo11) cascade=100 ;;
+	flat) cascade=1000 ;;
+	deep) cascade=5000 ;;
+	unbalanced) cascade=2000 ;;
+	paragraph) cascade=20000 ;;
+	esac
 	case $2 in
 	intern) echo "$intern" ;;
+	cascade-c | cascade-d) echo "$cascade" ;;
 	*) echo "$shapes" ;;
 	esac
 }
@@ -349,7 +361,7 @@ style() {
 		sheets=$(sheets_of "$page")
 		counts=$(build/proto_style C 0 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5 }')
 		echo "# $page: $counts"
-		for shape in A B C intern; do
+		for shape in ${SHAPES:-A B C D intern}; do
 			reps=${2:-$(reps_of "$page" "$shape")}
 			for mode in $workers seq; do
 				zero=$(best "$mode" "$shape" 0 "$file" "$ua" $sheets)

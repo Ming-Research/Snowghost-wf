@@ -28,6 +28,8 @@ enum Shape {
   LevelOrder();
   PreorderHalving();
   FlatMatch();
+  LevelCascade();
+  CascadeOnly(by_level: Bool);
   InternPass();
   CheckAll();
 }
@@ -40,11 +42,17 @@ const shape_b_word: Array<u8, 1> = "B";
 
 const shape_c_word: Array<u8, 1> = "C";
 
+const shape_d_word: Array<u8, 1> = "D";
+
+const cascade_c_word: Array<u8, 9> = "cascade-c";
+
+const cascade_d_word: Array<u8, 9> = "cascade-d";
+
 const intern_word: Array<u8, 6> = "intern";
 
 const check_word: Array<u8, 5> = "check";
 
-const usage_text: Array<u8, 54> = "usage: proto_style A|B|C|intern|check REPS PAGE SHEET\n";
+const usage_text: Array<u8, 76> = "usage: proto_style A|B|C|D|cascade-c|cascade-d|intern|check REPS PAGE SHEET\n";
 
 const unreadable_text: Array<u8, 26> = "proto_style: cannot read: ";
 
@@ -104,7 +112,9 @@ const agree_word: Array<u8, 6> = " agree";
 
 fn run(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Destructures the inputs, drives one invocation and closes the working directory.";
-  let Inputs(args: args, cwd: cwd, stdout: out, stderr: err, handles: files, stdin: unused_stdin) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, ..) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let code = drive(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
   close_directory(factory: &files, directory: move cwd);
   return exit_status(code: code);
@@ -151,6 +161,23 @@ fn parse_shape(args: &Args) -> shape: Option<Shape> reads(args) {
   let is_c = same_bytes(text: word, word: &shape_c_word[0_u64..shape_c_word.len]);
   if is_c {
     let found = Shape::FlatMatch();
+    return Some<Shape>(value: found);
+  }
+  let is_d = same_bytes(text: word, word: &shape_d_word[0_u64..shape_d_word.len]);
+  if is_d {
+    let found = Shape::LevelCascade();
+    return Some<Shape>(value: found);
+  }
+  let is_cascade_c = same_bytes(text: word, word: &cascade_c_word[0_u64..cascade_c_word.len]);
+  if is_cascade_c {
+    let preorder = False();
+    let found = Shape::CascadeOnly(by_level: preorder);
+    return Some<Shape>(value: found);
+  }
+  let is_cascade_d = same_bytes(text: word, word: &cascade_d_word[0_u64..cascade_d_word.len]);
+  if is_cascade_d {
+    let leveled = True();
+    let found = Shape::CascadeOnly(by_level: leveled);
     return Some<Shape>(value: found);
   }
   let is_intern = same_bytes(text: word, word: &intern_word[0_u64..intern_word.len]);
@@ -438,6 +465,54 @@ fn run_shape(shape: Shape, reps: u64, store: &RuleStore, document: &Document, at
       put_header(buffer: report, name: &shape_c_word[0_u64..shape_c_word.len], elements: elements, rules: rules, reps: reps);
       put_checksum(buffer: report, checksum: checksum);
     }
+    LevelCascade() => {
+      let last = None<Box<Array<Computed>>>();
+      for (rep in 0_u64..reps) {
+        match style_shape_d(store: store, document: document, atoms: atoms, traversal: traversal) {
+          Ok(value: made) => {
+            set last = Some<Box<Array<Computed>>>(value: move made);
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, report: report, failure: failure);
+            return 2_u8;
+          }
+        }
+      }
+      let checksum = checksum_last(last: move last);
+      put_header(buffer: report, name: &shape_d_word[0_u64..shape_d_word.len], elements: elements, rules: rules, reps: reps);
+      put_checksum(buffer: report, checksum: checksum);
+    }
+    CascadeOnly(by_level: leveled) => {
+      let matched = match match_all(store: store, document: document, atoms: atoms, traversal: traversal) {
+        Ok(value: made) => {
+          give move made;
+        }
+        Err(error: failure) => {
+          report_style(err: err, files: files, report: report, failure: failure);
+          return 2_u8;
+        }
+      }
+      let last = None<Box<Array<Computed>>>();
+      for (rep in 0_u64..reps) {
+        match cascade_only(matched: &matched, store: store, traversal: traversal, by_level: leveled) {
+          Ok(value: made) => {
+            set last = Some<Box<Array<Computed>>>(value: move made);
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, report: report, failure: failure);
+            return 2_u8;
+          }
+        }
+      }
+      let checksum = checksum_last(last: move last);
+      let name = if leveled {
+        give &cascade_d_word[0_u64..cascade_d_word.len];
+      } else {
+        give &cascade_c_word[0_u64..cascade_c_word.len];
+      }
+      put_header(buffer: report, name: name, elements: elements, rules: rules, reps: reps);
+      put_checksum(buffer: report, checksum: checksum);
+    }
     InternPass() => {
       let styled = style_shape_c(store: store, document: document, atoms: atoms, traversal: traversal);
       let styles = match move styled {
@@ -505,12 +580,13 @@ fn checksum_last(last: Option<Box<Array<Computed>>>) -> checksum: Option<u64> pu
 }
 
 fn check_all(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, err: &OutputStream, files: &HandleFactory, report: &Box<Slots<u8>>) -> code: u8 reads(store), reads(document), reads(atoms), reads(traversal), writes(err), writes(files), writes(report) waits {
-  doc "Runs A, B and C once, compares A and B with C element by element, checks the intern pass on C's result and appends the check line to report; returns 0 when everything agrees, 1 after reporting the first difference, 2 after a refusal.";
+  doc "Runs A, B, C and D once, compares A, B and D with C element by element, checks the intern pass on C's result and appends the check line to report; returns 0 when everything agrees, 1 after reporting the first difference, 2 after a refusal.";
   let elements = traversal^.elements.inner.len;
   let rules = rule_count(store: store);
   let level_made = style_shape_a(store: store, document: document, atoms: atoms, traversal: traversal);
   let halving_made = style_shape_b(store: store, document: document, atoms: atoms, traversal: traversal);
   let flat_made = style_shape_c(store: store, document: document, atoms: atoms, traversal: traversal);
+  let cascade_made = style_shape_d(store: store, document: document, atoms: atoms, traversal: traversal);
   let level = match move level_made {
     Ok(value: made) => {
       give move made;
@@ -538,8 +614,18 @@ fn check_all(store: &RuleStore, document: &Document, atoms: &AtomTable, traversa
       return 2_u8;
     }
   }
+  let cascade = match move cascade_made {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, report: report, failure: failure);
+      return 2_u8;
+    }
+  }
   let level_count = level.inner.len;
   let halving_count = halving.inner.len;
+  let cascade_count = cascade.inner.len;
   let flat_count = flat.inner.len;
   let position_count = traversal^.level_positions.inner.len;
   let flat_values = &flat.inner[0_u64..flat_count];
@@ -556,6 +642,13 @@ fn check_all(store: &RuleStore, document: &Document, atoms: &AtomTable, traversa
   if halving_field == 0_u64 {
   } else {
     report_difference(err: err, files: files, report: report, shape: &shape_b_word[0_u64..shape_b_word.len], element: halving_at, field: halving_field);
+    return 1_u8;
+  }
+  let cascade_values = &cascade.inner[0_u64..cascade_count];
+  let (cascade_at, cascade_field) = first_difference(results: cascade_values, reference: flat_values);
+  if cascade_field == 0_u64 {
+  } else {
+    report_difference(err: err, files: files, report: report, shape: &shape_d_word[0_u64..shape_d_word.len], element: cascade_at, field: cascade_field);
     return 1_u8;
   }
   let interned = match intern_pass(styles: flat_values) {
