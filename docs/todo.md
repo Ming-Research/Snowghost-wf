@@ -86,6 +86,15 @@ example apart from the renderer code that exposed it
   a change, recount only the parents whose children changed. The walk's own
   time is not measured. Reopen when it is, or when style runs incrementally
   (`design/pipeline/style.md`).
+- **Building the box tree as a walk then a decoding loop is measured on two
+  pages only.** On ecma262 and html5 it made the builder and layout together
+  1.08 and 1.24 times faster at four workers, short of the 1.5 sought, and
+  the sequential build 34 and 21 percent slower; the owner kept it because
+  what remains is under 1 percent of the four-worker pipeline
+  (`design/pipeline/layout.md`), and asked that it be measured again on
+  more real cases. Measure the real builder against decoding during the
+  walk, sequentially and at four workers, on every real page the first
+  milestone renders. Reopen when the real box tree builder exists.
 - **The tokenizer copies text one code point at a time.** `bytes_push` and
   `push_codepoint` take 13 and 10 percent of html5's parse, and UTF-8
   decoding 7 (the concurrency investigation's HTML parsing section): a text
