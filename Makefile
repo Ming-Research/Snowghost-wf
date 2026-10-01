@@ -22,7 +22,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
-	oracle-style-dump oracle-style
+	oracle-style-dump oracle-style oracle-layout-dump
 
 check: compiler renderer dom-selftest design-lint
 
@@ -163,6 +163,27 @@ oracle-style-dump:
 # `check` for the same reasons.
 oracle-style: compiler
 	@sh $(ROOT)/research/investigations/style/run.sh check
+
+# Dumps Chromium's boxes and text fragments for the three real pages of the
+# concurrency investigation, the oracle of the layout stage
+# (research/investigations/layout), with tests/layout/layout_oracle.mjs. It
+# needs what oracle-style-dump needs and stays out of `check`.
+LAYOUT_ORACLE := $(ORACLE)/layout
+oracle-layout-dump:
+	@mkdir -p $(LAYOUT_ORACLE)
+	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/ecma262.html \
+		assets/css/ecmarkup.css=$(STYLE_PAGES)/ecma262-ecmarkup.css \
+		assets/css/print.css=$(STYLE_PAGES)/ecma262-print.css \
+		> $(LAYOUT_ORACLE)/ecma262.chromium.tsv.part
+	@mv $(LAYOUT_ORACLE)/ecma262.chromium.tsv.part $(LAYOUT_ORACLE)/ecma262.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/html5.html \
+		> $(LAYOUT_ORACLE)/html5.chromium.tsv.part
+	@mv $(LAYOUT_ORACLE)/html5.chromium.tsv.part $(LAYOUT_ORACLE)/html5.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/apollo11.html \
+		'wikibase.client.init&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-modules.css' \
+		'modules=site.styles&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-site.css' \
+		> $(LAYOUT_ORACLE)/apollo11.chromium.tsv.part
+	@mv $(LAYOUT_ORACLE)/apollo11.chromium.tsv.part $(LAYOUT_ORACLE)/apollo11.chromium.tsv
 
 .PHONY: FORCE
 FORCE:
