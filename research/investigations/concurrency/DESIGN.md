@@ -15,6 +15,10 @@ tokenizer, which the owner placed after style; and counting sibling
 positions per parent, the candidate when the position pass's cost or
 incremental style needs it. The prototypes under `renderer/proto/` stay as
 the measurement drivers until the real style and layout stages replace them.
+Added after the close: shape D, a level cascade that Whitefoot's range facts
+make parallel, measured on a branch pinned to mbbill/Whitefoot#203's head
+([Shape D](#shape-d-a-proved-level-cascade)); it decides nothing until that
+pull request reaches Whitefoot's main.
 
 ## Question
 
@@ -1056,54 +1060,64 @@ document order. Its level loop is parallel only because Whitefoot can now
 prove that two elements of one level are distinct and that a parent lies
 one level above its element: range facts and the `apart` certificate of
 mbbill/Whitefoot#203, whose derivation and limits are in that repository's
-`research/investigations/unique-keys/POINTWISE.md`. Built at Snowghost
-7358347 with `whitefootc` from Whitefoot 450fea25 (binary
-f356784b0ffc0ea9), set through `WHITEFOOTC`; the `whitefoot/` pin now names
-that pull request's head, whose later commits change only range checking and
-give the same checksums and ledger lines.
+`research/investigations/unique-keys/POINTWISE.md`. `cascade_levels` derives
+the facts each time it runs, with a validating depth walk and a grouping by
+depth whose loop invariants state them, and `cascade_level`'s requirements
+carry them into the level loop, whose certificate is empty.
 
-- **Correctness.** `proto_style check` agrees on all six pages present on
-  this host, in the `--par` and the sequential build, with every checksum
-  equal to run 16's at 0c66df9 (`runs/22-style-check-7358347.txt`); check
-  compares A, B and D with C element by element. apollo11 is absent here.
+No criterion was written before these measurements, so they decide nothing:
+they show what the port costs and gains, and `design/pipeline/style.md`
+keeps the sequential cascade until that pull request reaches Whitefoot's
+main (`docs/todo.md`). Everything below was run at Snowghost 414cd5e and
+a6d65c8, whose `renderer/` is that of 399661d, with the pinned compiler,
+Whitefoot 145f6e9e (binary 3405311b79e98de1), on the four-processor
+development machine.
+
+- **Correctness.** `run.sh check` agrees on all six pages present on this
+  host, in the `--par` and the sequential build, with every checksum equal
+  to run 16's at 0c66df9, and on a page whose deepest element lies at
+  `depth_ceiling` (`runs/22-style-check-a6d65c8.txt`); `check` compares A,
+  B and D with C element by element. apollo11 is absent here. An earlier D
+  refused that page, which the traversal and C accept; a D left with its
+  roots' level uncascaded fails `check` with exit 1
+  (`runs/25-style-ceiling-and-control-399661d.txt`).
 - **Permission.** `--par-ledger` permits D's level loop (`shapes.wf:296`,
   one accumulator under `band`) and splits it; C's cascade loop stays
   denied, as do D's depth walk, its grouping and its loop over levels, each
   of which depends on what earlier iterations wrote
-  (`runs/24-style-ledger-7358347.txt`).
+  (`runs/24-style-ledger-414cd5e.txt`).
 - **Cost.** The style stage, C against D, and the cascade alone over one
   match, `cascade-c` against `cascade-d`, the best of five runs under the
-  check lock on the four-processor development machine
-  (`runs/23-style-shape-d-7358347.txt`), seconds:
+  check lock (`runs/23-style-shape-d-414cd5e.txt`), seconds:
 
 | Page | C seq | C W4 | D seq | D W4 | cascade-c seq | cascade-c W4 | cascade-d seq | cascade-d W4 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| ecma262 | 0.8067 | 0.2767 | 0.8300 | 0.2567 | 0.0415 | 0.0425 | 0.0517 | 0.0350 |
-| html5 | 0.6833 | 0.2167 | 0.6833 | 0.2133 | 0.0168 | 0.0168 | 0.0128 | 0.0062 |
-| flat | 0.0096 | 0.0045 | 0.0098 | 0.0040 | 0.0013 | 0.0013 | 0.0014 | 0.0008 |
-| unbalanced | 0.0048 | 0.0023 | 0.0049 | 0.0020 | 0.0006 | 0.0006 | 0.0007 | 0.0004 |
+| ecma262 | 0.7967 | 0.2600 | 0.8133 | 0.2600 | 0.0417 | 0.0417 | 0.0520 | 0.0347 |
+| html5 | 0.6733 | 0.2100 | 0.6733 | 0.2100 | 0.0178 | 0.0177 | 0.0127 | 0.0062 |
+| flat | 0.0095 | 0.0046 | 0.0097 | 0.0038 | 0.0013 | 0.0013 | 0.0014 | 0.0008 |
+| unbalanced | 0.0048 | 0.0023 | 0.0048 | 0.0019 | 0.0006 | 0.0006 | 0.0007 | 0.0004 |
 
   The deep and paragraph pages stay below the timer's resolution in every
   build.
 
-- **What it shows.** At four workers D's cascade is 1.21 times faster than
-  C's on ecma262, 2.71 times on html5, 1.6 on flat and 1.5 on unbalanced.
-  The cascade is 5 percent of C's sequential style stage on ecma262 and
-  2.5 percent on html5, which matching dominates, and 13.5 and 12.5
-  percent on flat and unbalanced. Over the whole stage at four workers D saves 0.0005 s on
-  flat and 0.0003 s on unbalanced, about its cascade's gain; on the real
-  pages the difference, 0.020 s on ecma262 and 0.003 s on html5, is not
-  separated from run-to-run variation: an earlier run of the same sources,
-  with a compiler build differing only in the range judgment, gave C and D
-  both 0.2633 s on ecma262. D's sequential cascade is slower than C's on
-  ecma262 (0.0517 s against 0.0415 s) and faster on html5 (0.0128 s against
-  0.0168 s); D adds the depth walk and the grouping, both sequential, and
+- **What it shows.** At four workers D's cascade is 1.20 times faster than
+  C's on ecma262, 2.85 times on html5, 1.6 on flat and 1.5 on unbalanced;
+  `cascade-d` includes the depth walk and the grouping, which stay
+  sequential. The cascade is 5 percent of C's sequential style stage on
+  ecma262 and 2.6 percent on html5, which matching dominates, and 14 and
+  12.5 percent on flat and unbalanced. Over the whole stage at four workers
+  D saves 0.0008 s on flat and 0.0004 s on unbalanced, where its cascade
+  gains 0.0005 s and 0.0002 s; on the real pages C and D take the same time, 0.2600 s on ecma262
+  and 0.2100 s on html5, and this run does not separate the cascade's gain,
+  0.007 s and 0.012 s, from the variation of the match around it. In the
+  sequential build D's cascade is slower than C's on ecma262 (0.0520 s
+  against 0.0417 s) and faster on html5 (0.0127 s against 0.0178 s);
   neither difference was attributed further.
 - **Port cost.** `cascade_level` takes `positions`, `depths` and `level`
   only so its requirements can name them, and its call of
   `cascade_element` moved into `cascade_into`, because Whitefoot's counted
   permission refuses a loop body that binds an ordered result list; both
-  are recorded in Whitefoot's `docs/todo.md`.
+  are recorded under *Whitefoot requirements* in `docs/todo.md`.
 
 ### Whitefoot: an equality requirement over range lengths
 
