@@ -114,7 +114,9 @@ fn measure_cells(context: &Context, styles: &Styles, borders: &Box<Slots<Edges>>
         let column_span = cvt::<u32, u64>(cell.column_span);
         let column_room = columns -sat column_first;
         let column_count = imin(column_span, column_room);
-        let made = Item(child: child, row: row_first, column: column_first, rows: row_count, columns: column_count, min: min_value, max_free: free_value, max_fixed: fixed_value, width: specified, percent: percent, border: border, padding: padding, used: used);
+        let group = box_of(styles: styles, style: style);
+        let border_box = border_box_sized(group: group);
+        let made = Item(child: child, row: row_first, column: column_first, rows: row_count, columns: column_count, min: min_value, max_free: free_value, max_fixed: fixed_value, width: specified, percent: percent, border: border, padding: padding, used: used, border_box: border_box);
         let pushed = push_item::<Item>(cell: items, value: made, ceiling: item_ceiling);
       }
     }
@@ -596,6 +598,54 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
   return unit;
 }
 
+fn apply_group_heights(context: &Context, styles: &Styles, tracks: &Box<Slots<Track>>, spacing: i32) -> result: unit reads(context), reads(styles), writes(tracks) {
+  doc "A row group's height is a least height for its rows (the reference does; the draft ignores heights on row groups): what it exceeds its rows' heights and the spacing between them by goes to the rows by grow_tracks.";
+  let rows = tracks^.inner.len;
+  let deltas = filled_i32(count: rows, value: 0_i32);
+  let weights = zeros_i64(count: rows);
+  for (r in 0_u64..rows) {
+    let group = group_at(context: context, at: r);
+    let real = bnot(group.anonymous);
+    let opens = if r == 0_u64 {
+      give True();
+    } else {
+      let before = r - 1_u64;
+      let earlier = group_at(context: context, at: before);
+      let other = earlier.element != group.element;
+      give bor(other, earlier.anonymous);
+    }
+    let starts = band(real, opens);
+    if starts {
+      let end = r +sat 1_u64;
+      let first_after = r +sat 1_u64;
+      for (k in first_after..rows) {
+        let later = group_at(context: context, at: k);
+        let same = later.element == group.element;
+        let named = bnot(later.anonymous);
+        let inside = band(same, named);
+        if inside {
+          set end = k +sat 1_u64;
+        } else {
+          break;
+        }
+      }
+      let sizes = size_of(styles: styles, style: group);
+      let (length, percent) = width_parts(value: sizes.height);
+      if length >= 0_i32 {
+        let count = end -sat r;
+        let between_count = count -sat 1_u64;
+        let between = multiple(amount: spacing, count: between_count);
+        let have = track_sum(tracks: tracks, first: r, end: end);
+        let have_all = have +sat between;
+        let excess = length -sat have_all;
+        let yes = True();
+        grow_tracks(tracks: tracks, deltas: &deltas, weights: &weights, first: r, end: end, excess: excess, only_free: yes);
+      }
+    }
+  }
+  return unit;
+}
+
 fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Lays out a table (CSS Tables 3, 3.2): its columns' measures, its width, the columns' used widths, its cells and captions in one counted loop at those widths, then the rows' heights, the table's height, the cells' vertical alignment, and the boxes of the table, its rows, row groups and columns. The context's border box is the table wrapper, which holds the captions; the table's own border box inside it holds the grid.";
   let style = context^.style;
@@ -673,6 +723,7 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let ascents = filled_i32(count: items, value: 0_i32);
   let aligns = filled_i32(count: items, value: 0_i32);
   measure_rows(context: context, styles: styles, table: &table, tracks: &tracks, natural: &natural, ascents: &ascents, aligns: &aligns);
+  apply_group_heights(context: context, styles: styles, tracks: &tracks, spacing: table.spacing_v);
   let top_captions = 0_i32;
   let bottom_captions = 0_i32;
   let captions = context^.captions.inner.len;
@@ -693,7 +744,10 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
     }
   }
   let content_height = track_sum(tracks: &tracks, first: 0_u64, end: rows);
-  let spacing_rows = if rows > 0_u64 {
+  let some_rows = rows > 0_u64;
+  let some_columns = columns > 0_u64;
+  let occupied = band(some_rows, some_columns);
+  let spacing_rows = if occupied {
     let count = rows +sat 1_u64;
     let made = multiple(amount: table.spacing_v, count: count);
     give made;
@@ -884,7 +938,7 @@ fn table_column(context: &Context, at: u64) -> found: TableColumn reads(context)
   let yes = True();
   let no = False();
   let anonymous = StyleRef(element: 0_u32, pseudo: no_pseudo, anonymous: yes);
-  return TableColumn(style: anonymous, styled: no, x: 0_i32, width: 0_i32);
+  return TableColumn(style: anonymous, styled: no, group: anonymous, x: 0_i32, width: 0_i32);
 }
 
 fn add_row_fragments(context: &Context, tracks: &Box<Slots<Track>>) -> result: unit reads(tracks), writes(context) {
@@ -952,7 +1006,7 @@ fn add_row_fragments(context: &Context, tracks: &Box<Slots<Track>>) -> result: u
 }
 
 fn add_column_fragments(context: &Context, tracks: &Box<Slots<Track>>, grid_top: i32) -> result: unit reads(tracks), writes(context) {
-  doc "Reports the boxes of the col elements, and of colgroup elements with no col child: a column box spans the rows' extent and its columns' widths, one box for the columns of one element (a span).";
+  doc "Reports the boxes of the col elements and the colgroup elements: a column box spans the rows' extent and its columns' widths, one box for the columns of one element (a span), a colgroup's the box of its columns.";
   let columns = context^.columns.inner.len;
   let rows = tracks^.inner.len;
   let top = if rows > 0_u64 {
@@ -1004,6 +1058,39 @@ fn add_column_fragments(context: &Context, tracks: &Box<Slots<Track>>, grid_top:
         }
         let width = right -sat column.x;
         add_fragment(context: context, kind: placed_element, owner: column.style.element, x: column.x, y: top, width: width, height: height);
+      }
+      let held = bnot(column.group.anonymous);
+      let group_opens = if c == 0_u64 {
+        give True();
+      } else {
+        let before = c - 1_u64;
+        let earlier = table_column(context: context, at: before);
+        let other = earlier.group.element != column.group.element;
+        let plain = earlier.group.anonymous;
+        give bor(other, plain);
+      }
+      let group_reported = band(held, group_opens);
+      if group_reported {
+        let right = column.x +sat column.width;
+        for (k in c..columns) {
+          let more = k +sat 1_u64;
+          let same = if more < columns {
+            let later = table_column(context: context, at: more);
+            let equal = later.group.element == column.group.element;
+            let named = bnot(later.group.anonymous);
+            give band(equal, named);
+          } else {
+            give False();
+          }
+          let reached = table_column(context: context, at: k);
+          set right = reached.x +sat reached.width;
+          if same {
+          } else {
+            break;
+          }
+        }
+        let width = right -sat column.x;
+        add_fragment(context: context, kind: placed_element, owner: column.group.element, x: column.x, y: top, width: width, height: height);
       }
     }
   }
