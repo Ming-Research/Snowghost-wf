@@ -429,7 +429,7 @@ fn offer(keys: &[u64], out: &[u32], store: &RuleStore, first: u32, end: u32, ori
 }
 
 fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, rule: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
-  doc "Matches rule against element and, when it matches, offers its declarations and sets its custom-property bit. False when its bit lies outside bits.";
+  doc "Matches rule against element and, when it matches, offers its declarations and, for a rule that sets custom properties, writes its packed specificity plus one to its slot of bits, which is zero where no such rule matched. False when its slot lies outside bits.";
   let rules = store^.rules.inner.len;
   let known = rule < rules;
   if known {
@@ -448,14 +448,10 @@ fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, documen
       let slot = store^.rules.inner[rule].custom_slot;
       if slot != 4294967295_u32 {
         let wide = cvt::<u32, u64>(slot);
-        let word = wide / 64_u64;
-        let bit = wide % 64_u64;
-        let shift = cvt::<u64, u32>(bit);
-        let mask = ishl(1_u64, shift);
-        let inside = word < bits^.len;
+        let inside = wide < bits^.len;
         if inside {
-          let old = bits^[word];
-          set bits^[word] = ior(old, mask);
+          let key = packed +sat 1_u64;
+          set bits^[wide] = key;
         } else {
           return False();
         }
@@ -516,7 +512,7 @@ fn match_element(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, sto
 }
 
 fn match_all(winners: &[u32], bits: &[u64], words: u64, elements: &[NodeId], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions) -> fits: Bool reads(elements), reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(winners), writes(bits) {
-  doc "The first part's loop: iteration i selects the winners of the element at preorder index i and writes only its own run of winner_words winners and words custom-rule bits.";
+  doc "The first part's loop: iteration i selects the winners of the element at preorder index i and writes only its own run of winner_words winners and words custom-rule keys, one per rule that sets custom properties.";
   let count = elements^.len;
   let few_words = words <= words_ceiling;
   let few_elements = count <= 4294967296_u64;
@@ -569,8 +565,7 @@ fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, tra
     let failure = StyleError::TooLarge();
     return Err<Cascade, StyleError>(error: failure);
   }
-  let padded = customs + 63_u64;
-  let words = padded / 64_u64;
+  let words = customs;
   let total_bits = words * count;
   let total_winners = winner_words * count;
   let bits = box_array_filled::<u64>(count: total_bits, value: 0_u64);
@@ -586,7 +581,7 @@ fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, tra
     let failure = StyleError::Inconsistent();
     return Err<Cascade, StyleError>(error: failure);
   }
-  let made = Cascade(positions: move positions, winners: move winners, custom_bits: move bits, custom_words: words);
+  let made = Cascade(positions: move positions, winners: move winners, custom_keys: move bits, custom_count: words);
   return Ok<Cascade, StyleError>(value: move made);
 }
 

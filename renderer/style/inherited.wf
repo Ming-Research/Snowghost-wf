@@ -687,44 +687,26 @@ fn offer_customs(own: &Box<Slots<OwnCustom>>, store: &RuleStore, first: u32, end
   return unit;
 }
 
-fn collect_customs(own: &Box<Slots<OwnCustom>>, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, element: NodeId, position: u64) -> result: unit reads(store), reads(cascade), reads(document), reads(atoms), writes(own) {
-  doc "Collects the winning custom declarations of the element from the custom-property rules the first part found matching and from its style attribute.";
-  let words = cascade^.custom_words;
-  let base = position *sat words;
+fn collect_customs(own: &Box<Slots<OwnCustom>>, store: &RuleStore, cascade: &Cascade, position: u64) -> result: unit reads(store), reads(cascade), writes(own) {
+  doc "Collects the winning custom declarations of the element from the specificities the first part recorded for the custom-property rules it matched, and from its style attribute.";
+  let count = cascade^.custom_count;
+  let base = position *sat count;
   let rules = store^.custom_rules.inner.len;
-  let none = None<NodeId>();
-  let context = MatchContext(target: none, scope: none);
-  for (w in 0_u64..words) {
-    let at = base +sat w;
-    let inside = at < cascade^.custom_bits.inner.len;
-    if inside {
-      let bits = cascade^.custom_bits.inner[at];
-      if bits != 0_u64 {
-        for (b in 0_u64..64_u64) {
-          let shift = cvt::<u64, u32>(b);
-          let mask = ishl(1_u64, shift);
-          let set_bit = iand(bits, mask);
-          if set_bit != 0_u64 {
-            let scaled = w *sat 64_u64;
-            let slot = scaled +sat b;
-            let known = slot < rules;
-            if known {
-              let rule = cvt::<u32, u64>(store^.custom_rules.inner[slot]);
-              let listed_rule = rule < store^.rules.inner.len;
-              if listed_rule {
-                let matched = rule_packed(store: store, document: document, atoms: atoms, positions: &cascade^.positions, element: element, rule: rule);
-                match matched {
-                  Some(value: packed) => {
-                    let first = store^.rules.inner[rule].custom_first;
-                    let end = store^.rules.inner[rule].custom_end;
-                    offer_customs(own: own, store: store, first: first, end: end, packed: packed);
-                  }
-                  None() => {
-                  }
-                }
-              }
-            }
-          }
+  for (slot in 0_u64..count) {
+    let at = base +sat slot;
+    let inside = at < cascade^.custom_keys.inner.len;
+    let known = slot < rules;
+    let usable = band(inside, known);
+    if usable {
+      let key = cascade^.custom_keys.inner[at];
+      if key != 0_u64 {
+        let packed = key - 1_u64;
+        let rule = cvt::<u32, u64>(store^.custom_rules.inner[slot]);
+        let listed_rule = rule < store^.rules.inner.len;
+        if listed_rule {
+          let first = store^.rules.inner[rule].custom_first;
+          let end = store^.rules.inner[rule].custom_end;
+          offer_customs(own: own, store: store, first: first, end: end, packed: packed);
         }
       }
     }
@@ -761,10 +743,10 @@ fn own_listed(own: &Box<Slots<OwnCustom>>, name: u32) -> found: Bool reads(own) 
   return False();
 }
 
-fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, element: NodeId, position: u64, parent_set: u32) -> result: Result<u32, StyleError> reads(store), reads(cascade), reads(document), reads(atoms), writes(state) {
-  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another; a value still waiting after as many rounds as there are values is in a cycle and is left out, as is one whose var() fails.";
+fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &AtomTable, position: u64, parent_set: u32) -> result: Result<u32, StyleError> reads(store), reads(cascade), reads(atoms), writes(state) {
+  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another; a value that refers to one still waiting, itself included, waits, so a value still waiting after as many rounds as there are values is in a cycle and is left out, as is one whose var() fails.";
   let own = box_slots_new::<OwnCustom>(capacity: 0_u64);
-  collect_customs(own: &own, store: store, cascade: cascade, document: document, atoms: atoms, element: element, position: position);
+  collect_customs(own: &own, store: store, cascade: cascade, position: position);
   let own_count = own.inner.len;
   if own_count == 0_u64 {
     return Ok<u32, StyleError>(value: parent_set);
@@ -833,16 +815,8 @@ fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, document:
                   give current;
                 }
                 let text_length = state^.custom_text.inner.len;
-                let others = box_slots_new::<u32>(capacity: 0_u64);
-                let blocked_count = blocked.inner.len;
-                for (b in 0_u64..blocked_count) {
-                  let name = blocked.inner[b];
-                  if name != own.inner[k].name {
-                    let kept = propagate push::<u32>(cell: &others, value: name, ceiling: 4294967295_u64);
-                  }
-                }
-                let others_count = others.inner.len;
-                give substitute(values: &store^.sheets.inner[sheet].values, start: start, end: end, entries: &state^.custom_entries.inner[entries_start..current], text: &state^.custom_text.inner[0_u64..text_length], blocked: &others.inner[0_u64..others_count], atoms: atoms, out: &scratch, depth: 0_u64);
+                let others_count = blocked.inner.len;
+                give substitute(values: &store^.sheets.inner[sheet].values, start: start, end: end, entries: &state^.custom_entries.inner[entries_start..current], text: &state^.custom_text.inner[0_u64..text_length], blocked: &blocked.inner[0_u64..others_count], atoms: atoms, out: &scratch, depth: 0_u64);
               } else {
                 give sub_invalid;
               }
@@ -970,7 +944,7 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
     set parent_scale = state^.font_scales.inner[parent];
     set parent_set = state^.sets.inner[parent];
   }
-  let set_id = propagate custom_set(state: state, store: store, cascade: cascade, document: document, atoms: atoms, element: element, position: position, parent_set: parent_set);
+  let set_id = propagate custom_set(state: state, store: store, cascade: cascade, atoms: atoms, position: position, parent_set: parent_set);
   let sets_room = position < state^.sets.inner.len;
   if sets_room {
     set state^.sets.inner[position] = set_id;
@@ -1024,7 +998,8 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   let align_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_align, set_id: set_id, atoms: atoms);
   let declared_align = align_of(declared: align_declared, parent: parent_text.text_align);
   let header_cell = is_html_th(document: document, element: element);
-  let undeclared = match align_declared {
+  let align_winner = winner_value(store: store, cascade: cascade, element: position, longhand: lh_text_align);
+  let undeclared = match align_winner {
     Some(..) => {
       give False();
     }

@@ -1117,7 +1117,7 @@ fn intern_background_group(values: &[BackgroundGroup], ids: &[u32]) -> table: Bo
 }
 
 fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal) {
-  doc "Completes each element's text group with the third part's values, interns the seven groups as seven calls that read and write disjoint places, and assembles every element's identifiers.";
+  doc "Completes each element's text group with the third part's values, interns the seven value groups and the custom-property sets as eight calls that read and write disjoint places, and assembles every element's identifiers.";
   let count = traversal^.elements.inner.len;
   let small = count <= 1073741824_u64;
   let fonts_listed = inherited^.fonts.inner.len == count;
@@ -1170,11 +1170,25 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
   let borders = intern_border_group(values: &resets^.borders.inner[0_u64..count], ids: &border_ids.inner[0_u64..count]);
   let fonts = intern_font_group(values: &inherited^.fonts.inner[0_u64..count], ids: &font_ids.inner[0_u64..count]);
   let text_table = intern_text_group(values: &texts.inner[0_u64..count], ids: &text_ids.inner[0_u64..count]);
+  let all_sets = inherited^.custom_sets.inner.len;
+  let set_count = if all_sets <= 1073741824_u64 {
+    give all_sets;
+  } else {
+    give 0_u64;
+  }
+  let canon = box_array_filled::<u32>(count: set_count, value: 0_u32);
+  let custom_distinct = intern_custom_sets(inherited: inherited, canon: &canon.inner[0_u64..set_count]);
   let backgrounds = intern_background_group(values: &resets^.backgrounds.inner[0_u64..count], ids: &background_ids.inner[0_u64..count]);
   let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32);
   let elements = box_array_filled::<ComputedStyle>(count: count, value: blank);
   for (k in 0_u64..count) {
-    let made = ComputedStyle(box: box_ids.inner[k], size: size_ids.inner[k], spacing: spacing_ids.inner[k], border: border_ids.inner[k], font: font_ids.inner[k], text: text_ids.inner[k], background: background_ids.inner[k], custom: inherited^.sets.inner[k]);
+    let raw_set = cvt::<u32, u64>(inherited^.sets.inner[k]);
+    let custom = if raw_set < canon.inner.len {
+      give canon.inner[raw_set];
+    } else {
+      give 0_u32;
+    }
+    let made = ComputedStyle(box: box_ids.inner[k], size: size_ids.inner[k], spacing: spacing_ids.inner[k], border: border_ids.inner[k], font: font_ids.inner[k], text: text_ids.inner[k], background: background_ids.inner[k], custom: custom);
     set elements.inner[k] = made;
   }
   let families = box_slots_new::<Family>(capacity: 0_u64);
@@ -1183,7 +1197,7 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
     let family = inherited^.named.families.inner[k];
     let placed = propagate push::<Family>(cell: &families, value: family, ceiling: 4294967295_u64);
   }
-  let custom_sets = inherited^.custom_sets.inner.len;
+  let custom_sets = custom_distinct;
   let made = Styles(elements: move elements, boxes: move boxes, sizes: move sizes, spacings: move spacings, borders: move borders, fonts: move fonts, texts: move text_table, backgrounds: move backgrounds, families: move families, custom_sets: custom_sets);
   return Ok<Styles, StyleError>(value: move made);
 }
@@ -1195,4 +1209,163 @@ fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTable, tra
   let resets = propagate reset_pass(store: store, cascade: &cascade, inherited: &inherited, atoms: atoms, traversal: traversal, environment: environment);
   let styles = propagate intern_styles(inherited: &inherited, resets: &resets, traversal: traversal);
   return Ok<Styles, StyleError>(value: move styles);
+}
+
+fn set_range(inherited: &Inherited, set_id: u64) -> (first: u64, end: u64) reads(inherited) contract {
+  ensures first <= end;
+  ensures end <= inherited^.custom_entries.inner.len;
+} {
+  doc "The custom_entry range of custom-property set set_id, empty for an unknown set.";
+  let known = set_id < inherited^.custom_sets.inner.len;
+  if known {
+  } else {
+    return 0_u64, 0_u64;
+  }
+  let first = cvt::<u32, u64>(inherited^.custom_sets.inner[set_id].first);
+  let end = cvt::<u32, u64>(inherited^.custom_sets.inner[set_id].end);
+  let ordered = first <= end;
+  let inside = end <= inherited^.custom_entries.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    return first, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn entry_text(inherited: &Inherited, custom_entry: CustomEntry) -> (start: u64, end: u64) reads(inherited) contract {
+  ensures start <= end;
+  ensures end <= inherited^.custom_text.inner.len;
+} {
+  doc "The text range of a custom-property custom_entry, empty when it lies outside the text.";
+  let start = cvt::<u32, u64>(custom_entry.start);
+  let end = cvt::<u32, u64>(custom_entry.end);
+  let ordered = start <= end;
+  let inside = end <= inherited^.custom_text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn hash_set(inherited: &Inherited, set_id: u64) -> hash: u64 reads(inherited) {
+  doc "Mixes every custom_entry's name and text of a custom-property set, in order.";
+  let (first, end) = set_range(inherited: inherited, set_id: set_id);
+  let acc = 14695981039346656037_u64;
+  for (k in first..end) {
+    let custom_entry = inherited^.custom_entries.inner[k];
+    let name = cvt::<u32, u64>(custom_entry.name.index);
+    set acc = mix(hash: acc, value: name);
+    let (a, b) = entry_text(inherited: inherited, custom_entry: custom_entry);
+    for (t in a..b) {
+      let byte = cvt::<u8, u64>(inherited^.custom_text.inner[t]);
+      set acc = mix(hash: acc, value: byte);
+    }
+  }
+  return acc;
+}
+
+fn same_sets(inherited: &Inherited, first_set: u64, second_set: u64) -> same: Bool reads(inherited) {
+  doc "True when two custom-property sets hold the same names with the same texts in the same order.";
+  let (a_first, a_end) = set_range(inherited: inherited, set_id: first_set);
+  let (b_first, b_end) = set_range(inherited: inherited, set_id: second_set);
+  let a_count = a_end - a_first;
+  let b_count = b_end - b_first;
+  if a_count != b_count {
+    return False();
+  }
+  for (k in 0_u64..a_count) {
+    let a_at = a_first +sat k;
+    let b_at = b_first +sat k;
+    let a_inside = a_at < inherited^.custom_entries.inner.len;
+    let b_inside = b_at < inherited^.custom_entries.inner.len;
+    let inside = band(a_inside, b_inside);
+    if inside {
+    } else {
+      return False();
+    }
+    let a_entry = inherited^.custom_entries.inner[a_at];
+    let b_entry = inherited^.custom_entries.inner[b_at];
+    if a_entry.name.index != b_entry.name.index {
+      return False();
+    }
+    let (a_start, a_stop) = entry_text(inherited: inherited, custom_entry: a_entry);
+    let (b_start, b_stop) = entry_text(inherited: inherited, custom_entry: b_entry);
+    let a_size = a_stop - a_start;
+    let b_size = b_stop - b_start;
+    if a_size != b_size {
+      return False();
+    }
+    for (t in 0_u64..a_size) {
+      let a_byte_at = a_start +sat t;
+      let b_byte_at = b_start +sat t;
+      let a_byte_in = a_byte_at < inherited^.custom_text.inner.len;
+      let b_byte_in = b_byte_at < inherited^.custom_text.inner.len;
+      let bytes_in = band(a_byte_in, b_byte_in);
+      if bytes_in {
+        if inherited^.custom_text.inner[a_byte_at] != inherited^.custom_text.inner[b_byte_at] {
+          return False();
+        }
+      }
+    }
+  }
+  return True();
+}
+
+fn intern_custom_sets(inherited: &Inherited, canon: &[u32]) -> distinct: u64 reads(inherited), writes(canon) {
+  doc "Gives every custom-property set the identifier of the first set with the same entries, written to canon by set, and returns the number of distinct sets.";
+  let count = canon^.len;
+  let listed = count == inherited^.custom_sets.inner.len;
+  let small = count <= 1073741824_u64;
+  let usable = band(listed, small);
+  if usable {
+  } else {
+    return 0_u64;
+  }
+  let capacity = 16_u64;
+  for (step in 0_u64..64_u64) {
+    let half = capacity / 2_u64;
+    if half >= count {
+      break;
+    }
+    set capacity = capacity *sat 2_u64;
+  }
+  let fits = capacity <= 4294967296_u64;
+  if fits {
+  } else {
+    return 0_u64;
+  }
+  let mask = capacity -sat 1_u64;
+  let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  let distinct = 0_u64;
+  for (i in 0_u64..count) {
+    let hash = hash_set(inherited: inherited, set_id: i);
+    let probe = iand(hash, mask);
+    let found = cvt.wrap::<u64, u32>(i);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      let inside = at < slots.inner.len;
+      if inside {
+      } else {
+        break;
+      }
+      let held = slots.inner[at];
+      if held == 0_u32 {
+        let one_based = i +sat 1_u64;
+        set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+        set distinct = distinct +sat 1_u64;
+        break;
+      }
+      let other = cvt::<u32, u64>(held);
+      let other_set = other -sat 1_u64;
+      let same = same_sets(inherited: inherited, first_set: other_set, second_set: i);
+      if same {
+        set found = cvt.wrap::<u64, u32>(other_set);
+        break;
+      }
+      set probe = at +wrap 1_u64;
+    }
+    set canon^[i] = found;
+  }
+  return distinct;
 }
