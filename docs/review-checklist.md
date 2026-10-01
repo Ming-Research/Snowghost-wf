@@ -122,7 +122,13 @@ made a material choice elsewhere.
 - [ ] **R2 — Discriminating evidence.** An experiment used to select a design
   states the comparison that could distinguish it, its conditions and its
   actual outcome; a criterion claimed as prior is inspectable.
-- [ ] **R3 — Maintained tree.** Added, changed or retired decisions have
+- [ ] **R3 — Parallelism first.** Each material choice of a stage,
+  algorithm, data structure or interface states its candidates' data
+  dependencies, prefers the shortest chain of true dependencies, and names
+  the dependency behind every order it adds, such as a shared cache or
+  table, a sequential pass or a global counter
+  ([AGENTS.md](../AGENTS.md#project-goal)).
+- [ ] **R4 — Maintained tree.** Added, changed or retired decisions have
   corresponding design records under the design skill, and cited sources
   resolve and support their scope.
 
