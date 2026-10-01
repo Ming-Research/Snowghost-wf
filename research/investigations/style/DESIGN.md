@@ -195,9 +195,34 @@ public fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTab
 - `build_rules` evaluates `@media` and `@supports` against `Environment`
   and the supported longhands, once per sheet, so matching never sees a
   rule whose condition fails.
-- `compute_styles` is shape C: one parallel loop matches and orders each
-  element's declarations, one pass in document order cascades, computes and
-  inherits, and a sequential pass interns the groups.
+- `compute_styles` runs in three parts (Q50): a parallel loop matches,
+  orders and selects each element's cascaded values and computes what needs
+  nothing from the parent; one pass in document order computes the font
+  size, the custom properties and the inherited values; a second parallel
+  loop computes the rest. The eight group tables are then interned as eight
+  independent tasks (Q48).
+- `var()` is substituted where its result is needed (Q47): in the pass in
+  document order for the font size and inherited longhands, which children
+  read, and per element in the second loop for every other longhand, with
+  no cache shared across elements.
 
-The decisions these carry are brought to the owner as cards with the
-interfaces.
+## Owner rulings
+
+- **2026-10-01, scope.** The scope, oracle and criteria above, with flex,
+  grid and generated content in the second batch.
+- **2026-10-01, Q46 to Q50**, after the owner asked whether the
+  recommendations were right for parallelism and the first `var()`
+  recommendation, a cache shared across elements, was withdrawn for adding
+  an order the cascade does not need:
+  - Q46: `matching_specificity` in `pkg::css::selectors`;
+  - Q47: `var()` substituted where its result is needed, with no shared
+    cache;
+  - Q48: eight computed-value groups, interned in parallel;
+  - Q49: percentages and `calc()` with percentages stay unresolved until
+    layout;
+  - Q50: the stage in three parts, the pass in document order holding only
+    what depends on the parent.
+  The tree records Q47, Q48, Q49 and Q50 in `design/pipeline/style.md` and
+  `design/vocabulary.md`; their log entry is written with the stage's
+  completion. The owner also asked that `AGENTS.md` require every design
+  choice to start from its candidates' dependencies (mbbill/Snowghost#25).
