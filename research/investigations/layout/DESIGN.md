@@ -2,8 +2,8 @@
 
 Status: the owner approved the scope, the oracle and the criteria below on
 2026-10-01, with the four choices as recommended ("Owner rulings"). The
-interface choices Q51 to Q58 ("Interface choices") wait for the owner; no
-layout code is written.
+interface choices Q51 to Q58 were approved as recommended the same day
+("Interface choices"), and the tree records them.
 
 ## Question
 
@@ -270,8 +270,8 @@ Proposed, to be recorded before any code:
 
 ## Interface choices
 
-Proposed for the owner as decision cards Q51 to Q58; each starts from the
-dependencies of its candidates.
+Brought to the owner as decision cards Q51 to Q58 and approved as
+recommended; each starts from the dependencies of its candidates.
 
 - **Q51, pseudo-element styles.** The first part of the style stage also
   matches the rules whose subject ends in `::before` or `::after`, and the
@@ -348,3 +348,5 @@ dependencies of its candidates.
   generated content; font matching as Snowghost's own table equal to the
   reference's resolution on its host; scrollbars that take no space; the
   criteria's bounds and measures as proposed.
+- **2026-10-01, Q51 to Q58,** written in Chinese: all as recommended, and
+  start the implementation.
