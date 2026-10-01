@@ -6,9 +6,11 @@ and the interfaces' choices Q46 to Q50 the same day. The stage is written
 (`pkg::css::values`, `pkg::style`, the `style_oracle` driver) and measured
 below; criterion 1 holds on ecma262 and fails on html5 and apollo11 on the
 border colors alone, which trace to one rule of Chromium's user-agent sheet
-that the HTML Standard does not have. Three choices wait for the owner
-("Open for the owner" below): that rule, how `ex` and `ch` are resolved, and
-where lengths become `LayoutUnit`.
+that the HTML Standard does not have. The owner ruled the three choices the
+results raised on 2026-10-01 ("Choices after the results" below): the stage
+keeps the Standard's sheet, so that failure stays recorded; `ex` and `ch`
+come from the default fonts' metrics; and lengths become `LayoutUnit` when
+layout reads them.
 
 ## Question
 
@@ -323,13 +325,20 @@ parallel pairs; interning speeds up only 1.1 to 2.1 times from one worker to
 four on ecma262 and html5 (criterion 2), so how much of that parallelism the runtime uses is not
 known.
 
-## Open for the owner
+## Choices after the results
 
 - **Chromium's `table { border-color: gray }`.** With the HTML Standard's
   sheet, html5 and apollo11 fail criterion 1 on the border colors alone,
   and with this one rule added both pass (criterion 1 above). Keeping the
   Standard's sheet records the difference, as the scope says; adding the
   rule makes the stage match the reference on every page.
+  The owner ruled for the Standard's sheet. The rendering section of the
+  HTML Standard (checked again on 2026-10-01 at
+  https://html.spec.whatwg.org/multipage/rendering.html) sets table border
+  colors only as `inherit` on row groups and rows, `black` on the cells of a
+  table with a `rules` attribute and, as a presentational hint, from the
+  `bordercolor` attribute, so criterion 1 stays unmet on html5 and apollo11
+  by this one recorded difference.
 - **`ex` and `ch`.** Taken as half an em, as CSS allows without font
   metrics, they put 13,306 of ecma262's 179,471 elements (7.4 percent) off
   in `margin-right`, by up to 15 percent (`runs/ex-half-em.txt`). The
@@ -342,17 +351,18 @@ known.
   Mono 1,120, its x glyph's height as it has no OS/2 x-height, rounded up to
   whole pixels as the reference does, and 1,233, read from the fonts'
   `OS/2`, `glyf` and `hmtx` tables), which gives 100 percent on those
-  margins; the decision is in `design/pipeline/style.md`, provisional until
-  the font stage matches families. The metrics are those of the reference's
+  margins; the owner agreed, and the decision is in
+  `design/pipeline/style.md`, provisional until the font stage matches
+  families. The metrics are those of the reference's
   host, so this criterion's result for `ex` and `ch` is tuned to it.
 - **Where lengths become `LayoutUnit`.** `design/vocabulary.md` rounds a CSS
   length to 1/64 of a pixel once, at computed-value time. The stage keeps
   computed lengths as `f32` pixels: the reference's `computedStyleMap`
   reports them unrounded (4.13086px), and percentages and `calc()` with
   them already wait for layout (Q49), so layout reads every length anyway.
-  The proposal is to round when layout reads a computed length, the one
-  rounding the decision asks for, moved to layout's input; until the owner
-  decides, the stage departs from the decision there.
+  The proposal was to round when layout reads a computed length, the one
+  rounding the decision asks for, moved to layout's input; the owner agreed,
+  and `design/vocabulary.md` records it.
 
 ## Owner rulings
 
@@ -373,3 +383,10 @@ known.
   The tree records Q47, Q48, Q49 and Q50 in `design/pipeline/style.md` and
   `design/vocabulary.md`. The owner also asked that `AGENTS.md` require every design
   choice to start from its candidates' dependencies (mbbill/Snowghost#25).
+- **2026-10-01, the three choices after the results**, written in Chinese
+  after the handoff of mbbill/Snowghost#24: keep the HTML Standard's
+  user-agent sheet without Chromium's `table { border-color: gray }`;
+  resolve `ex` and `ch` from the default fonts' metrics, provisionally;
+  round a computed length to `LayoutUnit` when layout reads it. The owner
+  also approved the tree changes of `design/pipeline/style.md` and
+  `design/vocabulary.md`.

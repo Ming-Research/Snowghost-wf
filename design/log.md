@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-01 Record the real style stage's shape, value groups and units
+
+Nodes: pipeline/style, vocabulary
+
+Owner-approved: 2026-10-01, after the handoff of PR #24, the owner wrote in Chinese, item by item, to follow the Standard, agreed, agreed and approved: keep the HTML Standard's user-agent sheet without Chromium's table border color, agree to resolving `ex` and `ch` from the default fonts' metrics, agree to rounding lengths to `LayoutUnit` where layout reads them, and approve the tree changes; the stage's interface choices Q46 to Q50 had been approved earlier that day.
+
+Summary: The style tree replaces matching followed by one cascade pass with three parts: a parallel loop that matches and selects each longhand's winning declaration by a key that needs no sorting, a pass in document order holding only what the parent decides (font size, custom properties and inherited values), and a second parallel loop for every other value, substituting `var()` per element with no shared cache, since a shared cache or one pass doing everything would order work that has no dependency. It records the user-agent sheet as the HTML Standard's rules with the reference browser's differences recorded, not copied, and `ex` and `ch` from the default fonts' metrics, provisional until the font stage matches families. The vocabulary tree names the eight computed-value groups and interns each as its own parallel task, still provisional on timing interning alone; keeps a percentage, alone or in `calc()`, unresolved until layout; and rounds a computed length to `LayoutUnit` once when layout reads it rather than at computed-value time. The grounds and measurements are in research/investigations/style/DESIGN.md.
+
 ## 2026-10-01 Record the shared vocabulary and the style and layout stages' shapes
 
 Nodes: vocabulary, pipeline/style, pipeline/layout
