@@ -243,8 +243,8 @@ oracle-fonts:
 
 # The oracle of the layout stage's text preparation
 # (research/investigations/layout, "Text preparation results"): draws 1,000
-# text cases from each of the three real pages, adds the extents and break
-# cases, measures them all in Chromium with tests/layout/text_oracle.mjs,
+# text cases from each of the three real pages, adds the extents and
+# synthetic cases, measures them all in Chromium with tests/layout/text_oracle.mjs,
 # runs the text_oracle driver on the same cases and compares the two. It
 # needs what oracle-style-dump needs and the installed fonts, and stays out
 # of `check`; it fails while fewer than 99 percent of the widths match.
@@ -259,8 +259,8 @@ oracle-text: oracle-fonts $(BUILD)/text_oracle
 		'wikibase.client.init&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-modules.css' \
 		'modules=site.styles&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-site.css' > $(TEXT_ORACLE)/apollo11.cases
 	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs extents > $(TEXT_ORACLE)/extents.cases
-	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs breaks > $(TEXT_ORACLE)/breaks.cases
-	@cd $(TEXT_ORACLE) && cat ecma262.cases html5.cases apollo11.cases extents.cases breaks.cases > cases.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs synthetic > $(TEXT_ORACLE)/synthetic.cases
+	@cd $(TEXT_ORACLE) && cat ecma262.cases html5.cases apollo11.cases extents.cases synthetic.cases > cases.tsv
 	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs measure $(TEXT_ORACLE)/cases.tsv > $(TEXT_ORACLE)/chromium.tsv
 	@cd $(ROOT) && $(BUILD)/text_oracle build/fonts build/oracle/text/cases.tsv > $(TEXT_ORACLE)/snowghost.tsv
 	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs compare $(TEXT_ORACLE)/cases.tsv $(TEXT_ORACLE)/chromium.tsv $(TEXT_ORACLE)/snowghost.tsv

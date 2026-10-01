@@ -3,7 +3,7 @@
 //
 //   node tests/layout/text_oracle.mjs cases PREFIX COUNT PAGE.html [URL-SUFFIX=SHEET.css ...] > cases.tsv
 //   node tests/layout/text_oracle.mjs extents > extents.tsv
-//   node tests/layout/text_oracle.mjs breaks > breaks.tsv
+//   node tests/layout/text_oracle.mjs synthetic > synthetic.tsv
 //   node tests/layout/text_oracle.mjs measure cases.tsv > chromium.tsv
 //   node tests/layout/text_oracle.mjs compare cases.tsv chromium.tsv snowghost.tsv
 //   node tests/layout/text_oracle.mjs fallback > fallback.txt
@@ -14,10 +14,11 @@
 // the mapped sheets served and every other request refused) and writes one
 // text case for each of COUNT rendered text nodes taken at even steps of
 // document order, each with the computed style of its parent element.
-// extents writes the extents cases of the faces the oracle checks, breaks
+// extents writes the extents cases of the faces the oracle checks, synthetic
 // a fixed set of text cases for break opportunities (URLs, slashes,
 // hyphens, punctuation, scripts, special spaces) under each word-break and
-// overflow-wrap. measure
+// overflow-wrap, and for letter-spacing and word-spacing, which the pages
+// barely use. measure
 // lays every case out in a page of its own font size (Chromium shares a
 // font's platform data between sizes that are close, so one page per size
 // keeps one case's size from changing another's) and writes Chromium's
@@ -46,7 +47,7 @@
 // Result file, as measure writes it and the driver writes it:
 //
 //   T<TAB>ID<TAB>WIDTH<TAB>FACES<TAB>BREAKS<TAB>EMERGENCY
-//   X<TAB>ID<TAB>CONTENT<TAB>LINE<TAB>BASELINE
+//   X<TAB>ID<TAB>CONTENT<TAB>LINE<TAB>BASELINE<TAB>XHEIGHT
 //
 // WIDTH is the text's width on one line in 1/64 px, rounded up (Chromium's
 // getBoundingClientRect width of a span with white-space: pre, times 64);
@@ -59,14 +60,17 @@
 // text in a zero-width box with the case's white-space and word-break (normal
 // for break-word, which is normal with overflow-wrap anywhere) and
 // overflow-wrap normal; EMERGENCY the further indices it breaks before with
-// the case's word-break and overflow-wrap. CONTENT is ascent plus descent in px (a span's
-// height), LINE the height of a one-line block with line-height normal and
-// BASELINE the distance from that block's top to its baseline. The driver
+// the case's word-break and overflow-wrap. CONTENT is ascent plus descent in
+// px (a span's height), LINE the height of a one-line block with line-height
+// normal, BASELINE the distance from that block's top to its baseline and
+// XHEIGHT the width of a block of width 10ex in 1/64 px (ten x-heights,
+// truncated to 1/64 px). The driver
 // also writes one F<TAB>N<TAB>NAME line per face it loaded, in order, NAME
 // the face's PostScript name, through which compare maps its face indices.
 //
 // compare prints the share of text cases whose width is exactly Chromium's
-// and whose faces are Chromium's, the extents cases that match, and each
+// and whose faces are Chromium's, the extents cases whose content height,
+// line height and baseline match, those whose x-height matches, and each
 // mismatch class with its count and examples. Exit status 0 when at least
 // 99.0% of the text cases match exactly and every extents case matches, 1
 // otherwise, 2 on a usage or input error.
@@ -88,7 +92,7 @@ function usage(message) {
   process.stderr.write(
     'usage: text_oracle.mjs cases PREFIX COUNT PAGE.html [URL-SUFFIX=SHEET.css ...]\n' +
     '       text_oracle.mjs extents\n' +
-    '       text_oracle.mjs breaks\n' +
+    '       text_oracle.mjs synthetic\n' +
     '       text_oracle.mjs measure cases.tsv\n' +
     '       text_oracle.mjs compare cases.tsv chromium.tsv snowghost.tsv\n' +
     '       text_oracle.mjs fallback\n' +
@@ -215,7 +219,7 @@ function extents() {
   return writeOut(lines.join('\n') + '\n');
 }
 
-// ---- breaks ----
+// ---- synthetic ----
 
 const BREAK_TEXTS = ['http://www.example.com/foo/bar?x=1&y=2', 'and/or', 'e-mail and well-known', '1,000,000.50', 'ISO/IEC 16262',
   'foo_bar.baz(qux)', 'a\u2014b a\u2013b', 'x = (y + 1) * 2;', 'CJK \u6f22\u5b57\u304b\u306a\u6df7\u3058\u308a\u6587', '\u00c9COLE-\u00e9cole',
@@ -226,9 +230,18 @@ const BREAK_TEXTS = ['http://www.example.com/foo/bar?x=1&y=2', 'and/or', 'e-mail
   'self.foo=bar||baz', 'Array.prototype.map()', '"quoted"(paren)', 'end.', 'U+2028 and \u2026 ellipsis'];
 const BREAK_SETTINGS = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [0, 2]];
 
-function breaks() {
+const SPACING_TEXTS = ['The quick brown fox jumps over the lazy dog', 'Table of Contents', 'non\u00a0breaking and  two spaces', 'AVAWAVAW To. Ty.'];
+const SPACING_SETTINGS = [['serif', 1, 0], ['serif', -0.5, 0], ['sans-serif', 1.6, 0], ['serif', 0, 4], ['monospace', 0.25, 2.5], ['sans-serif', 2, -1]];
+
+function synthetic() {
   const lines = [];
   let n = 0;
+  for (const text of SPACING_TEXTS) {
+    for (const [family, letter, word] of SPACING_SETTINGS) {
+      const hex = Array.from(text).map((c) => c.codePointAt(0).toString(16)).join(' ');
+      lines.push(`T\ts${n++}\t${family}\t16\t400\t0\t${letter}\t${word}\t1\t0\t0\t${hex}`);
+    }
+  }
   for (const text of BREAK_TEXTS) {
     for (const [wordBreak, overflowWrap] of BREAK_SETTINGS) {
       const hex = Array.from(text).map((c) => c.codePointAt(0).toString(16)).join(' ');
@@ -387,10 +400,16 @@ async function measure(path) {
           block.appendChild(span);
           block.appendChild(marker);
           body.appendChild(block);
-          return { block, span, marker };
-        }).map(({ block, span, marker }) => {
+          const ex = document.createElement('div');
+          font(ex, c);
+          ex.style.width = '10ex';
+          ex.style.height = '0px';
+          body.appendChild(ex);
+          return { block, span, marker, ex };
+        }).map(({ block, span, marker, ex }) => {
           const top = block.getBoundingClientRect().top;
-          return [span.getClientRects()[0].height, block.getBoundingClientRect().height, marker.getBoundingClientRect().bottom - top];
+          return [span.getClientRects()[0].height, block.getBoundingClientRect().height, marker.getBoundingClientRect().bottom - top,
+            ex.getBoundingClientRect().width * 64];
         });
         return { textResults, extentResults };
       }, { texts: group.text, extentsList: group.extent });
@@ -432,7 +451,7 @@ function parseResults(path) {
         return [item.slice(0, colon), Number(item.slice(colon + 1))];
       });
       texts.set(f[1], { width: Number(f[2]), faces: faceCounts, breaks: list(f[4]), emergency: list(f[5]) });
-    } else if (f[0] === 'X' && f.length === 5) {
+    } else if (f[0] === 'X' && f.length === 6) {
       extentResults.set(f[1], f.slice(2).map(Number));
     } else if (f[0] === 'F' && f.length === 3) {
       faces.push(f[2]);
@@ -481,13 +500,16 @@ function compare(casesPath, chromiumPath, snowghostPath) {
     }
   }
   let extentsSame = 0;
+  let xSame = 0;
   for (const c of extentCases) {
     const want = chromium.extentResults.get(c.id);
     const got = snowghost.extentResults.get(c.id);
     const shown = `${c.id} ${c.family} ${c.size}px ${c.weight} ${c.style}`;
     if (!want || !got) { note('missing extents', shown); continue; }
-    if (want.join() === got.join()) extentsSame++;
-    else note('extents', `${shown} chromium ${want.join(' ')} snowghost ${got.join(' ')}`);
+    if (want.slice(0, 3).join() === got.slice(0, 3).join()) extentsSame++;
+    else note('extents', `${shown} chromium ${want.slice(0, 3).join(' ')} snowghost ${got.slice(0, 3).join(' ')}`);
+    if (want[3] === got[3]) xSame++;
+    else note(`x-height, ${c.family}`, `${shown} chromium ${want[3] / 640} snowghost ${got[3] / 640}`);
   }
   const percent = (n, d) => (d === 0 ? 100 : Math.floor((10000 * n) / d) / 100);
   const n = textCases.length;
@@ -497,6 +519,7 @@ function compare(casesPath, chromiumPath, snowghostPath) {
     `  same faces: ${facesSame} (${percent(facesSame, n)}%)`,
     `  same breaks: ${breaksSame} (${percent(breaksSame, n)}%)`,
     `extents cases: ${extentCases.length}, matching ${extentsSame}`,
+    `  x-height (reported, not judged) matching ${xSame}`,
   ];
   for (const [name, entry] of [...classes].sort((a, b) => b[1].count - a[1].count)) {
     lines.push(`${name}: ${entry.count}`);
@@ -554,6 +577,6 @@ else if (mode === 'extents' && rest.length === 0) await extents();
 else if (mode === 'measure' && rest.length === 1) await measure(rest[0]);
 else if (mode === 'compare' && rest.length === 3) compare(...rest);
 else if (mode === 'fallback' && rest.length === 0) await fallback();
-else if (mode === 'breaks' && rest.length === 0) await breaks();
+else if (mode === 'synthetic' && rest.length === 0) await synthetic();
 else if (mode === 'ascii' && rest.length === 0) await ascii();
 else usage();
