@@ -3,16 +3,21 @@
 //
 //   node tests/layout/text_oracle.mjs cases PREFIX COUNT PAGE.html [URL-SUFFIX=SHEET.css ...] > cases.tsv
 //   node tests/layout/text_oracle.mjs extents > extents.tsv
+//   node tests/layout/text_oracle.mjs breaks > breaks.tsv
 //   node tests/layout/text_oracle.mjs measure cases.tsv > chromium.tsv
-//   node tests/layout/text_oracle.mjs compare FONTS cases.tsv chromium.tsv snowghost.tsv
+//   node tests/layout/text_oracle.mjs compare cases.tsv chromium.tsv snowghost.tsv
 //   node tests/layout/text_oracle.mjs fallback > fallback.txt
+//   node tests/layout/text_oracle.mjs ascii > ascii.txt
 //
 // cases loads PAGE.html as tests/layout/layout_oracle.mjs does (scripts
 // disabled, a 1280x720 viewport, device scale factor 1, media type screen,
 // the mapped sheets served and every other request refused) and writes one
 // text case for each of COUNT rendered text nodes taken at even steps of
 // document order, each with the computed style of its parent element.
-// extents writes the extents cases of the faces the oracle checks. measure
+// extents writes the extents cases of the faces the oracle checks, breaks
+// a fixed set of text cases for break opportunities (URLs, slashes,
+// hyphens, punctuation, scripts, special spaces) under each word-break and
+// overflow-wrap. measure
 // lays every case out in a page of its own font size (Chromium shares a
 // font's platform data between sizes that are close, so one page per size
 // keeps one case's size from changing another's) and writes Chromium's
@@ -20,7 +25,9 @@
 // entry's, against it. fallback writes the platform face Chromium draws
 // single characters with, each in a block of its own, under a few
 // font-family lists and styles: the evidence for the fallback order of
-// tests/layout/text-fonts.tsv.
+// pkg::oracle::fonts. ascii writes, for each printable ASCII scalar, whether
+// Chromium breaks a line between it and each printable ASCII scalar, the
+// table pkg::layout::text's ascii_breaks encodes.
 //
 // Case file. UTF-8, LF line ends, no header, two kinds of line:
 //
@@ -46,15 +53,17 @@
 // FACES the faces that draw it, comma-separated, each NAME:COUNT with the
 // face's PostScript name and its glyph count (Chromium's
 // CSS.getPlatformFontsForNode; the driver counts scalars and writes face
-// indices that compare maps through FONTS); BREAKS the indices i of TEXT
+// indices, with b appended for synthetic bold, that compare maps through its
+// F lines); BREAKS the indices i of TEXT
 // before which a line may break, comma-separated, as Chromium breaks the
-// text in a zero-width box with the case's white-space and word-break and
+// text in a zero-width box with the case's white-space and word-break (normal
+// for break-word, which is normal with overflow-wrap anywhere) and
 // overflow-wrap normal; EMERGENCY the further indices it breaks before with
-// the case's overflow-wrap. CONTENT is ascent plus descent in px (a span's
+// the case's word-break and overflow-wrap. CONTENT is ascent plus descent in px (a span's
 // height), LINE the height of a one-line block with line-height normal and
 // BASELINE the distance from that block's top to its baseline. The driver
-// also writes one F<TAB>N<TAB>STATUS line per face of FONTS, in order:
-// loaded, or the reason the face was refused.
+// also writes one F<TAB>N<TAB>NAME line per face it loaded, in order, NAME
+// the face's PostScript name, through which compare maps its face indices.
 //
 // compare prints the share of text cases whose width is exactly Chromium's
 // and whose faces are Chromium's, the extents cases that match, and each
@@ -79,9 +88,11 @@ function usage(message) {
   process.stderr.write(
     'usage: text_oracle.mjs cases PREFIX COUNT PAGE.html [URL-SUFFIX=SHEET.css ...]\n' +
     '       text_oracle.mjs extents\n' +
+    '       text_oracle.mjs breaks\n' +
     '       text_oracle.mjs measure cases.tsv\n' +
-    '       text_oracle.mjs compare FONTS cases.tsv chromium.tsv snowghost.tsv\n' +
-    '       text_oracle.mjs fallback\n');
+    '       text_oracle.mjs compare cases.tsv chromium.tsv snowghost.tsv\n' +
+    '       text_oracle.mjs fallback\n' +
+    '       text_oracle.mjs ascii\n');
   process.exit(2);
 }
 
@@ -204,6 +215,64 @@ function extents() {
   return writeOut(lines.join('\n') + '\n');
 }
 
+// ---- breaks ----
+
+const BREAK_TEXTS = ['http://www.example.com/foo/bar?x=1&y=2', 'and/or', 'e-mail and well-known', '1,000,000.50', 'ISO/IEC 16262',
+  'foo_bar.baz(qux)', 'a\u2014b a\u2013b', 'x = (y + 1) * 2;', 'CJK \u6f22\u5b57\u304b\u306a\u6df7\u3058\u308a\u6587', '\u00c9COLE-\u00e9cole',
+  "don't \u201cquoted\u201d", 'price: $10.00 or 50%', '#hash a/b/c', '[1, 2, 3] { key: value }', '1-2-3 -1 a -1',
+  'foo-bar-baz Ab12', 'C++ and C#', 'na\u00efve caf\u00e9', '\u0395\u03bb\u03bb\u03b7\u03bd\u03b9\u03ba\u03ac \u03ba\u03b5\u03af\u03bc\u03b5\u03bd\u03bf',
+  '\u0440\u0443\u0441\u0441\u043a\u0438\u0439 \u0442\u0435\u043a\u0441\u0442', 'non\u00a0breaking space', 'soft\u00adhyphen', 'zero\u200bwidth',
+  'word\u2060joiner', 'emoji \ud83d\ude00 text', 'a.b,c;d:e!f?g', 'x\u2192y \u2200x \u2208 A', 'O(n\u00b2) \u2264 k', '\u00a7 1.2.3 \u00b6',
+  'self.foo=bar||baz', 'Array.prototype.map()', '"quoted"(paren)', 'end.', 'U+2028 and \u2026 ellipsis'];
+const BREAK_SETTINGS = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [0, 2]];
+
+function breaks() {
+  const lines = [];
+  let n = 0;
+  for (const text of BREAK_TEXTS) {
+    for (const [wordBreak, overflowWrap] of BREAK_SETTINGS) {
+      const hex = Array.from(text).map((c) => c.codePointAt(0).toString(16)).join(' ');
+      lines.push(`T\tb${n++}\tserif\t16\t400\t0\t0\t0\t1\t${wordBreak}\t${overflowWrap}\t${hex}`);
+    }
+  }
+  return writeOut(lines.join('\n') + '\n');
+}
+
+// ---- ascii ----
+
+async function ascii() {
+  const browser = await launch();
+  try {
+    const { page } = await blankPage(browser);
+    const rows = await page.evaluate(() => {
+      const out = [];
+      const range = document.createRange();
+      for (let a = 0x21; a <= 0x7e; a++) {
+        let row = '';
+        for (let b = 0x21; b <= 0x7e; b++) {
+          const box = document.createElement('div');
+          box.style.cssText = 'width:0;font:16px serif;white-space:pre-wrap';
+          box.textContent = 'x' + String.fromCharCode(a) + String.fromCharCode(b) + 'x';
+          document.body.appendChild(box);
+          const node = box.firstChild;
+          range.setStart(node, 1);
+          range.setEnd(node, 2);
+          const first = range.getBoundingClientRect().top;
+          range.setStart(node, 2);
+          range.setEnd(node, 3);
+          row += range.getBoundingClientRect().top > first + 0.5 ? '1' : '0';
+          box.remove();
+        }
+        out.push(`${String.fromCharCode(a)} ${row}`);
+      }
+      return out;
+    });
+    await writeOut(rows.join('\n') + '\n');
+  } finally {
+    await browser.close();
+  }
+}
+
 // ---- measure ----
 
 function parseCases(path) {
@@ -260,8 +329,9 @@ async function measure(path) {
           for (const ch of box.textContent) {
             range.setStart(node, offset);
             range.setEnd(node, offset + ch.length);
-            const rect = range.getBoundingClientRect();
-            if (rect.width !== 0 || rect.height !== 0) {
+            const rects = range.getClientRects();
+            const rect = rects.length === 0 ? null : rects[rects.length - 1];
+            if (rect !== null && (rect.width !== 0 || rect.height !== 0)) {
               if (top !== null && rect.top > top + 0.5) starts.push(index);
               if (top === null || rect.top > top + 0.5) top = rect.top;
             }
@@ -270,12 +340,12 @@ async function measure(path) {
           }
           return starts;
         };
-        const breakBox = (c, overflowWrap) => {
+        const breakBox = (c, overflowWrap, wordBreak) => {
           const box = document.createElement('div');
           font(box, c);
           box.style.width = '0px';
           box.style.whiteSpace = c.wrap ? 'pre-wrap' : 'pre';
-          box.style.wordBreak = WORD_BREAK[c.wordBreak];
+          box.style.wordBreak = WORD_BREAK[wordBreak];
           box.style.overflowWrap = OVERFLOW_WRAP[overflowWrap];
           box.style.letterSpacing = `${c.letter}px`;
           box.style.wordSpacing = `${c.word}px`;
@@ -294,8 +364,8 @@ async function measure(path) {
           span.textContent = c.text;
           line.appendChild(span);
           body.appendChild(line);
-          const normal = breakBox(c, 0);
-          const own = c.overflowWrap === 0 ? null : breakBox(c, c.overflowWrap);
+          const normal = breakBox(c, 0, c.wordBreak === 3 ? 0 : c.wordBreak);
+          const own = c.overflowWrap === 0 && c.wordBreak !== 3 ? null : breakBox(c, c.overflowWrap, c.wordBreak);
           return { span, normal, own };
         }).map(({ span, normal, own }) => {
           const width = span.getBoundingClientRect().width * 64;
@@ -373,18 +443,11 @@ function parseResults(path) {
   return { texts, extentResults, faces };
 }
 
-function parseFonts(path) {
-  return readFileSync(path, 'utf8').split('\n').filter((line) => line !== '' && !line.startsWith('#'))
-    .map((line) => line.split('\t')[3]);
-}
-
-function compare(fontsPath, casesPath, chromiumPath, snowghostPath) {
-  const names = parseFonts(fontsPath);
+function compare(casesPath, chromiumPath, snowghostPath) {
   const { textCases, extentCases } = parseCases(casesPath);
   const chromium = parseResults(chromiumPath);
   const snowghost = parseResults(snowghostPath);
-  const loaded = [];
-  snowghost.faces.forEach((status, k) => { if (status === 'loaded') loaded.push(names[k]); });
+  const loaded = snowghost.faces;
   const classes = new Map();
   const note = (name, example) => {
     if (!classes.has(name)) classes.set(name, { count: 0, examples: [] });
@@ -489,6 +552,8 @@ const [mode, ...rest] = process.argv.slice(2);
 if (mode === 'cases' && rest.length >= 3 && Number(rest[1]) > 0) await cases(rest[0], Number(rest[1]), rest[2], rest.slice(3));
 else if (mode === 'extents' && rest.length === 0) await extents();
 else if (mode === 'measure' && rest.length === 1) await measure(rest[0]);
-else if (mode === 'compare' && rest.length === 4) compare(...rest);
+else if (mode === 'compare' && rest.length === 3) compare(...rest);
 else if (mode === 'fallback' && rest.length === 0) await fallback();
+else if (mode === 'breaks' && rest.length === 0) await breaks();
+else if (mode === 'ascii' && rest.length === 0) await ascii();
 else usage();
