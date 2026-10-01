@@ -72,9 +72,10 @@ where its draft decision stands.
    and with matching every element in one counted loop in document order
    followed by a cascade pass in document order (C). Its criterion 1 adopted
    C: 0.790 s at four workers against 0.810 s for A and 1.107 s for B on the
-   median real page, and C needs no second order map. A rule index and a
-   table of sibling positions then made the style stage at four workers 2.1
-   to 5.2 times faster on the three real pages. Draft decisions in `design/pipeline/style.md`. Writing through an
+   median real page, and C needs no second order map. A rule index then
+   made the style stage at four workers 1.3 to 3.2 times faster on the three
+   real pages, and a table of sibling positions a further 4.1 times on
+   html5, each measured against its predecessor in one run. Draft decisions in `design/pipeline/style.md`. Writing through an
    index array (`styles[order[k]]`) still needs a permutation proof
    Whitefoot does not derive, so every stage writes its outputs in the order
    it computes them.
@@ -90,11 +91,14 @@ where its draft decision stands.
    computed style is a small struct of group identifiers, so equal styles
    share storage and a style comparison is a comparison of identifiers.
    Inheritance copies an identifier. The style measurement's criterion 2
-   adopted interning as one sequential pass after the style stage: it costs
-   at most 4.6 percent of the parallel style stage on every real page. The
-   groups themselves are the proposal's and are revisited when real computed
-   values replace the prototype's placeholder groups. Draft decision in
-   `design/vocabulary.md`.
+   adopted interning as one sequential pass after the style stage, which
+   cost at most 4.6 percent of the four-worker style stage then. The rule
+   index made that stage three times faster on ecma262 and html5 without
+   changing the pass, which is now about 14 to 16 percent of it, at the
+   criterion's 15 percent bound, so the pass is measured again on the real
+   style stage. The groups themselves are the proposal's and are revisited
+   when real computed values replace the prototype's four placeholder
+   groups. Draft decision, provisional on both, in `design/vocabulary.md`.
 5. **Text is UTF-8 and names are atoms.** Text content lives in one byte
    arena per document addressed by `u32` spans. `pkg::dom` stores UTF-8; the
    widening to WTF-8, UTF-8 that also encodes lone surrogates as Servo
@@ -114,13 +118,15 @@ where its draft decision stands.
 
 ## Open questions
 
-- **Tree levels versus formatting contexts for style.** Resolved: neither.
+- **Tree levels versus formatting contexts for style.** Answered in the
+  draft: neither.
   Style matches in document order (proposal 2), and an element's cascade
   depends on its parent, not on its formatting context.
 - **Fragment storage.** Whether fragments live inside each formatting
   context's node (simple, local) or in per-frame arrays handed to paint
   (easier to send to the shell) is decided by the first paint prototype.
-- **Floats and margin collapsing.** Resolved for layout's parallel work:
+- **Floats and margin collapsing.** Answered in the draft for layout's
+  parallel work:
   paragraphs are broken before floats are placed and broken again exactly
   where a float narrows them (the `pipeline` tree), and the block pass is
   the only sequential chain; the fix-up broke again at most 0.52 percent of

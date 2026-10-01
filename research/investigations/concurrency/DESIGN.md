@@ -26,8 +26,9 @@ arrays, an owned tree of formatting contexts). Does that choice decide how
 much of style and layout runs in parallel on real pages, and which shape
 parallelizes best under `whitefootc --par` on four cores?
 
-The design tree fixes the independent formatting context as the unit of
-parallel work (`design/pipeline.md`). Real pages often hold most of their
+The design tree fixed the independent formatting context as the unit of
+parallel work (`design/pipeline.md`) when this question was asked; the
+layout measurement below retired it. Real pages often hold most of their
 content in one block formatting context, so the measurement also asks how
 much parallelism that unit leaves on them.
 
@@ -36,8 +37,9 @@ much parallelism that unit leaves on them.
 Two prototype drivers under `renderer/proto/`, registered in
 `renderer/modules.wfg` with their own entries. They exist only for this
 investigation and are deleted when the real style and layout stages replace
-them as measurement drivers, with the numbers kept here. They reuse the finished modules: `pkg::html::tree_builder` builds the
-document, `pkg::css::syntax`, `pkg::css::rules` and `pkg::css::selectors`
+them as measurement drivers, with the numbers kept here. They reuse the
+finished modules: `pkg::html::tree_builder` builds the document,
+`pkg::css::syntax`, `pkg::css::rules` and `pkg::css::selectors`
 parse and match the page's style sheets, and `pkg::text::line_break` finds
 break opportunities.
 
