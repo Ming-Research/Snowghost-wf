@@ -17,8 +17,9 @@
 // extents writes the extents cases of the faces the oracle checks, synthetic
 // a fixed set of text cases for break opportunities (URLs, slashes,
 // hyphens, punctuation, scripts, special spaces) under each word-break and
-// overflow-wrap, and for letter-spacing and word-spacing, which the pages
-// barely use. measure
+// overflow-wrap, for letter-spacing and word-spacing, which the pages
+// barely use, and for synthetic bold and oblique and the sizes whose
+// quantization shows. measure
 // lays every case out in a page of its own font size (Chromium shares a
 // font's platform data between sizes that are close, so one page per size
 // keeps one case's size from changing another's) and writes Chromium's
@@ -233,9 +234,18 @@ const BREAK_SETTINGS = [[0, 0], [1, 0], [2, 0], [3, 0], [0, 1], [0, 2]];
 const SPACING_TEXTS = ['The quick brown fox jumps over the lazy dog', 'Table of Contents', 'non\u00a0breaking and  two spaces', 'AVAWAVAW To. Ty.'];
 const SPACING_SETTINGS = [['serif', 1, 0], ['serif', -0.5, 0], ['sans-serif', 1.6, 0], ['serif', 0, 4], ['monospace', 0.25, 2.5], ['sans-serif', 2, -1]];
 
+const STYLE_CASES = [['Unifont', 16, 400, 0], ['Unifont', 16, 700, 0], ['IPAGothic', 16, 700, 0], ['"DejaVu Sans"', 16, 400, 1],
+  ['"DejaVu Sans"', 16, 700, 1], ['"Liberation Serif"', 18.72, 400, 0], ['"Liberation Serif"', 18.63, 400, 0],
+  ['"Liberation Serif"', 18.8, 400, 0], ['"Liberation Serif"', 14.144, 400, 0], ['"Liberation Serif"', 10.6667, 700, 0]];
+const STYLE_TEXT = 'WWWWWWWW The quick brown fox \u6f22\u5b57';
+
 function synthetic() {
   const lines = [];
   let n = 0;
+  for (const [family, size, weight, style] of STYLE_CASES) {
+    const hex = Array.from(STYLE_TEXT).map((c) => c.codePointAt(0).toString(16)).join(' ');
+    lines.push(`T\tv${n++}\t${family}\t${size}\t${weight}\t${style}\t0\t0\t1\t0\t0\t${hex}`);
+  }
   for (const text of SPACING_TEXTS) {
     for (const [family, letter, word] of SPACING_SETTINGS) {
       const hex = Array.from(text).map((c) => c.codePointAt(0).toString(16)).join(' ');
