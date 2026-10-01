@@ -1,0 +1,301 @@
+alias Args = std::text::Args;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias FontMetrics = pkg::css::values::FontMetrics;
+alias HandleFactory = std::io::HandleFactory;
+alias IoError = std::io::IoError;
+alias TextSpan = pkg::dom::TextSpan;
+alias add_sheet = pkg::style::add_sheet;
+alias add_style_attributes = pkg::style::add_style_attributes;
+alias add_style_element = pkg::style::add_style_element;
+alias args_count = std::text::args_count;
+alias argument_bytes = pkg::oracle::support::argument_bytes;
+alias atom_table_new = pkg::base::atom::atom_table_new;
+alias build_traversal = pkg::style::build_traversal;
+alias close_directory = std::fs::close_directory;
+alias media_holds = pkg::style::media_holds;
+alias origin_author = pkg::style::origin_author;
+alias origin_user_agent = pkg::style::origin_user_agent;
+alias open_directory_path = pkg::oracle::support::open_directory_path;
+alias parse_document = pkg::html::tree_builder::parse_document;
+alias read_argument_file = pkg::oracle::support::read_argument_file;
+alias read_directory_file = pkg::oracle::support::read_directory_file;
+alias rule_store_new = pkg::style::rule_store_new;
+alias sheet_sources = pkg::style::sheet_sources;
+
+fn default_environment() -> made: Environment pure {
+  doc "The oracles' environment.";
+  let no = False();
+  let yes = True();
+  let serif = FontMetrics(x_height: 0.45898437_f32, zero_advance: 0.5_f32, x_rounds_up: no);
+  let sans = FontMetrics(x_height: 0.5283203_f32, zero_advance: 0.55615232_f32, x_rounds_up: no);
+  let mono = FontMetrics(x_height: 0.546875_f32, zero_advance: 0.6020508_f32, x_rounds_up: yes);
+  return Environment(width: 1.28e3_f32, height: 7.2e2_f32, root_font_size: 16.0_f32, serif: serif, sans: sans, mono: mono);
+}
+
+fn ends_with(text: &[u8], suffix: &[u8]) -> found: Bool reads(text), reads(suffix) {
+  doc "True when text ends with suffix.";
+  let length = text^.len;
+  let size = suffix^.len;
+  if size > length {
+    return False();
+  }
+  let offset = length - size;
+  for (k in 0_u64..size) {
+    let at = offset + k;
+    if text^[at] != suffix^[k] {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn last_equals(bytes: &[u8]) -> at: Option<u64> reads(bytes) {
+  doc "The index of the last = in bytes, or None.";
+  let length = bytes^.len;
+  for (step in 0_u64..length) {
+    let back = length - step;
+    let at = back - 1_u64;
+    if bytes^[at] == 61_u8 {
+      return Some<u64>(value: at);
+    }
+  }
+  return None<u64>();
+}
+
+fn read_suffix_path(factory: &HandleFactory, cwd: &DirectoryRead, args: &Args, position: u64) -> result: Result<Box<Slots<u8>>, IoError> reads(cwd), reads(args), writes(factory) waits {
+  doc "Reads the file whose relative path follows the last = of the argument at position: its directories opened from cwd one by one, then its last component.";
+  let bytes = match argument_bytes(args: args, position: position) {
+    Some(value: found) => {
+      give move found;
+    }
+    None() => {
+      let empty = box_slots_new::<u8>(capacity: 0_u64);
+      give move empty;
+    }
+  }
+  let size = bytes.inner.len;
+  let equals = match last_equals(bytes: &bytes.inner[0_u64..size]) {
+    Some(value: at) => {
+      give at;
+    }
+    None() => {
+      give 0_u64;
+    }
+  }
+  let start = equals +sat 1_u64;
+  let slash = start;
+  let has_slash = False();
+  for (k in start..size) {
+    if bytes.inner[k] == 47_u8 {
+      set slash = k;
+      set has_slash = True();
+    }
+  }
+  let name_start = if has_slash {
+    give slash +sat 1_u64;
+  } else {
+    give start;
+  }
+  let ordered = name_start <= size;
+  let start_ordered = start <= slash;
+  let slash_inside = slash <= size;
+  let arg_11 = band(start_ordered, slash_inside);
+  let usable = band(ordered, arg_11);
+  if usable {
+  } else {
+    let empty = box_slots_new::<u8>(capacity: 0_u64);
+    return Ok<Box<Slots<u8>>, IoError>(value: move empty);
+  }
+  if has_slash {
+    let directory = match open_directory_path(factory: factory, root: cwd, name: &bytes.inner[start..slash]) {
+      Ok(value: found) => {
+        give move found;
+      }
+      Err(error: problem) => {
+        return Err<Box<Slots<u8>>, IoError>(error: problem);
+      }
+    }
+    let read = read_directory_file(factory: factory, directory: &directory, name: &bytes.inner[name_start..size]);
+    close_directory(factory: factory, directory: move directory);
+    return move read;
+  }
+  let read = read_directory_file(factory: factory, directory: cwd, name: &bytes.inner[name_start..size]);
+  return move read;
+}
+
+fn mapped_sheet(args: &Args, document: &Document, href: TextSpan, first: u64) -> position: Option<u64> reads(args), reads(document) {
+  doc "The argument position, from first, whose SUFFIX the link's href ends with, the longest such suffix winning, or None.";
+  let start = cvt::<u32, u64>(href.start);
+  let end = cvt::<u32, u64>(href.end);
+  let length = document^.text.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return None<u64>();
+  }
+  let count = args_count(args: args);
+  let best = None<u64>();
+  let best_size = 0_u64;
+  for (position in first..count) {
+    match argument_bytes(args: args, position: position) {
+      Some(value: bytes) => {
+        let size = bytes.inner.len;
+        match last_equals(bytes: &bytes.inner[0_u64..size]) {
+          Some(value: equals) => {
+            let fits = equals <= size;
+            if fits {
+              let matched = ends_with(text: &document^.text.inner[start..end], suffix: &bytes.inner[0_u64..equals]);
+              let longer = equals > best_size;
+              let better = band(matched, longer);
+              if better {
+                set best = Some<u64>(value: position);
+                set best_size = equals;
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  return best;
+}
+
+fn load_page(factory: &HandleFactory, cwd: &DirectoryRead, args: &Args, page: u64, sheet: u64, environment: Environment) -> result: Result<Page, PageError> reads(cwd), reads(args), writes(factory) waits {
+  doc "Reads, parses and styles the page as the style oracle does.";
+  let source = match read_argument_file(factory: factory, cwd: cwd, args: args, position: page) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      let failure = PageError::Unreadable();
+      return Err<Page, PageError>(error: failure);
+    }
+  }
+  let length = source.inner.len;
+  if length > 1073741824_u64 {
+    let failure = PageError::TooLarge();
+    return Err<Page, PageError>(error: failure);
+  }
+  let atoms = atom_table_new();
+  let scripting = False();
+  let parsed = parse_document(source: &source.inner[0_u64..length], scripting: scripting, atoms: &atoms);
+  let document = match move parsed {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      let failure = PageError::Unparsed();
+      return Err<Page, PageError>(error: failure);
+    }
+  }
+  let traversal = match build_traversal(document: &document) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: problem) => {
+      let failure = PageError::Style(failure: problem);
+      return Err<Page, PageError>(error: failure);
+    }
+  }
+  let store = rule_store_new();
+  let ua = match read_argument_file(factory: factory, cwd: cwd, args: args, position: sheet) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      let failure = PageError::Unreadable();
+      return Err<Page, PageError>(error: failure);
+    }
+  }
+  let ua_size = ua.inner.len;
+  if ua_size > 16777216_u64 {
+    let failure = PageError::TooLarge();
+    return Err<Page, PageError>(error: failure);
+  }
+  match add_sheet(store: &store, source: &ua.inner[0_u64..ua_size], origin: origin_user_agent, environment: environment, atoms: &atoms) {
+    Ok(..) => {
+    }
+    Err(error: problem) => {
+      let failure = PageError::Style(failure: problem);
+      return Err<Page, PageError>(error: failure);
+    }
+  }
+  let first_mapping = sheet +sat 1_u64;
+  let sources = sheet_sources(document: &document, traversal: &traversal);
+  let source_count = sources.inner.len;
+  for (k in 0_u64..source_count) {
+    let found_source = sources.inner[k];
+    match found_source {
+      StyleElement(node: styled) => {
+        match add_style_element(store: &store, document: &document, node: styled, environment: environment, atoms: &atoms) {
+          Ok(..) => {
+          }
+          Err(error: problem) => {
+            let failure = PageError::Style(failure: problem);
+            return Err<Page, PageError>(error: failure);
+          }
+        }
+      }
+      Link(node: linked, href: link_href, media: link_media) => {
+        let applies = match link_media {
+          Some(value: span) => {
+            give media_holds(document: &document, span: span, environment: environment);
+          }
+          None() => {
+            give True();
+          }
+        }
+        if applies {
+          match mapped_sheet(args: args, document: &document, href: link_href, first: first_mapping) {
+            Some(value: position) => {
+              let read = read_suffix_path(factory: factory, cwd: cwd, args: args, position: position);
+              let text = match move read {
+                Ok(value: found) => {
+                  give move found;
+                }
+                Err(..) => {
+                  let failure = PageError::Unreadable();
+                  return Err<Page, PageError>(error: failure);
+                }
+              }
+              let size = text.inner.len;
+              if size > 16777216_u64 {
+                let failure = PageError::TooLarge();
+                return Err<Page, PageError>(error: failure);
+              }
+              match add_sheet(store: &store, source: &text.inner[0_u64..size], origin: origin_author, environment: environment, atoms: &atoms) {
+                Ok(..) => {
+                }
+                Err(error: problem) => {
+                  let failure = PageError::Style(failure: problem);
+                  return Err<Page, PageError>(error: failure);
+                }
+              }
+            }
+            None() => {
+            }
+          }
+        }
+      }
+    }
+  }
+  match add_style_attributes(store: &store, document: &document, traversal: &traversal, atoms: &atoms) {
+    Ok(..) => {
+    }
+    Err(error: problem) => {
+      let failure = PageError::Style(failure: problem);
+      return Err<Page, PageError>(error: failure);
+    }
+  }
+  let made = Page(document: move document, atoms: move atoms, traversal: move traversal, store: move store);
+  return Ok<Page, PageError>(value: move made);
+}
