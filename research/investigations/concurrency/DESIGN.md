@@ -1058,8 +1058,9 @@ one level above its element: range facts and the `apart` certificate of
 mbbill/Whitefoot#203, whose derivation and limits are in that repository's
 `research/investigations/unique-keys/POINTWISE.md`. Built at Snowghost
 7358347 with `whitefootc` from Whitefoot 450fea25 (binary
-f356784b0ffc0ea9); the `whitefoot/` pin does not carry range facts, so the
-build sets `WHITEFOOTC`.
+f356784b0ffc0ea9), set through `WHITEFOOTC`; the `whitefoot/` pin now names
+that pull request's head, whose later commits change only range checking and
+give the same checksums and ledger lines.
 
 - **Correctness.** `proto_style check` agrees on all six pages present on
   this host, in the `--par` and the sequential build, with every checksum
