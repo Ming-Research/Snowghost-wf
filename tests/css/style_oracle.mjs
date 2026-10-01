@@ -33,7 +33,9 @@
 //   order, each the computed value as
 //   element.computedStyleMap().get(property).toString() serializes it in
 //   Chromium 141 (lengths resolved to px except percentages, colors
-//   resolved, currentcolor resolved to the color).
+//   resolved, currentcolor resolved to the color). get() returns the first
+//   item of a property Chromium lists as list-valued, so grid-auto-columns
+//   and grid-auto-rows hold their first track only.
 // - After the element lines comes one line for each ::before and ::after
 //   pseudo-element whose computed content, as
 //   getComputedStyle(element, pseudo).content reads it, is not none, in
@@ -44,8 +46,10 @@
 //   serializes as computedStyleMap does except for the properties whose
 //   resolved value differs from the computed value (CSSOM, "resolved
 //   values"): width, height, top, right, bottom, left, the four margins and
-//   the four paddings, which read their used value, line-height, which reads
-//   its used value in px unless it is normal, and grid-template-columns and
+//   the four paddings, which read their used value, min-width and min-height,
+//   which Chromium reads as 0px for auto on a box that is no flex or grid
+//   item, line-height, which reads its used value in px unless it is normal,
+//   and grid-template-columns and
 //   grid-template-rows on a grid container, which read the used track sizes.
 //   The dump writes those cells empty (RESOLVED and GRID_RESOLVED below); a
 //   driver writes its computed value there or nothing.
@@ -77,6 +81,11 @@
 //   color, hsl, hwb) and color keywords fall under the token rules above;
 //   Chromium resolves hsl and hwb to rgb() or rgba() and keeps lab, lch,
 //   oklab, oklch and color() in their own space.
+//
+// - counter-reset, counter-increment and counter-set: Chromium keeps a
+//   computed counter list in a hash map, so it serializes the name and value
+//   pairs in an order of its own rather than the specified one; their pairs
+//   are sorted on both sides before comparing.
 //
 // compare prints, per property, the matched count, the total of compared
 // cells over element and pseudo-element lines and the percentage
@@ -121,17 +130,29 @@ const PROPERTIES = [
 
 // The properties whose getComputedStyle value is a resolved value that
 // differs from the computed value (CSSOM, "resolved values"): sizes, margins,
-// paddings and offsets read the used value in px, and line-height the used
-// value unless it is normal. A pseudo-element row dumps them empty, as it
+// paddings and offsets read the used value in px, line-height the used
+// value unless it is normal, and min-width and min-height read auto as 0px
+// on a box that is no flex or grid item. A pseudo-element row dumps them empty, as it
 // has no computedStyleMap; grid-template-columns and grid-template-rows are
 // dumped empty too when the pseudo-element is a grid container.
 const RESOLVED = new Set([
-  'width', 'height', 'top', 'right', 'bottom', 'left',
+  'width', 'height', 'min-width', 'min-height', 'top', 'right', 'bottom', 'left',
   'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
   'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
   'line-height',
 ]);
 const GRID_RESOLVED = new Set(['grid-template-columns', 'grid-template-rows']);
+
+// The counter properties, whose name and value pairs compare in any order.
+const COUNTERS = new Set(['counter-reset', 'counter-increment', 'counter-set']);
+
+function sortedPairs(value) {
+  const words = value.trim().split(/\s+/);
+  if (words.length % 2 !== 0) return value;
+  const pairs = [];
+  for (let k = 0; k < words.length; k += 2) pairs.push(words[k] + ' ' + words[k + 1]);
+  return pairs.sort().join(' ');
+}
 
 const CHROMIUM = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const PLAYWRIGHT = process.env.PLAYWRIGHT || '/opt/node22/lib/node_modules/playwright';
@@ -413,12 +434,14 @@ function compare(chromiumPath, snowghostPath) {
     let matched = 0;
     let total = 0;
     const pairs = new Map();
+    const counters = COUNTERS.has(PROPERTIES[p]);
     for (let row = 0; row < lines; row++) {
       if (row >= elements && rowsL[row][column] === '') continue;
       total++;
       const a = unescape(rowsL[row][column]);
       const b = unescape(rowsR[row][column]);
-      if (valuesEqual(a, b)) {
+      const equal = counters ? valuesEqual(sortedPairs(a), sortedPairs(b)) : valuesEqual(a, b);
+      if (equal) {
         matched++;
         continue;
       }
