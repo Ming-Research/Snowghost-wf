@@ -313,6 +313,17 @@ of a few hundredths is within the runs' noise.
   and html5 in the two later runs, and the first run measured it slower at
   four workers. Every run measures it as a difference of whole runs, so it
   is timed alone next (`docs/todo.md`).
+- **At the final code** (commit fd6338d, best of five runs,
+  `runs/time-parts-fd6338d.txt`), matching and the whole stage ran 8 to 15
+  percent slower in both builds than at d0e70c6, though matching's code
+  differs only in one bound and its start-up time T(0) rose too (0.27 to
+  0.31 s on ecma262 against 0.25 to 0.29 s); the difference is not
+  attributed. The stage's speedup from the sequential build to
+  four workers is unchanged: 2.4, 2.9 and 3.6 times on ecma262, html5 and
+  apollo11 (1.688 to 0.700, 1.650 to 0.568 and 0.823 to 0.230 s), against
+  2.4, 2.9 and 3.6 at d0e70c6. On ecma262 the pass in document order
+  (0.172 s sequential) bounds four workers at about 3.1 times; matching
+  scales 3.5 times, the third part 2.0 and interning 1.3.
 
 ### Criterion 3: equal builds
 
