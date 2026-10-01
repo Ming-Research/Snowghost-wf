@@ -86,8 +86,12 @@ filters, masks, opacity, transitions and animations.
 Chromium 141 (`/opt/pw-browsers/chromium-1194`), headless, with scripts
 disabled, the same viewport, and every request answered from the pinned
 page copies or refused. For each element in document order it reports
-`getComputedStyle` for every longhand in scope; the stage's computed values
-are written in the same serialization and compared property by property.
+`computedStyleMap()` for every longhand in scope; the stage's computed
+values are written in the same serialization and compared property by
+property. `getComputedStyle` is not used: for sizes, margins, paddings and
+offsets it reports values resolved by layout, so `width: 50%` reads
+`632px` there and `50%` in `computedStyleMap()`, the computed value this
+stage produces (checked with a one-element page).
 A first run on ecma262 loaded the page and its two sheets this way and
 counted 179,471 elements, the same count Snowghost's tree builder gives,
 so the two documents can be compared element by element.
