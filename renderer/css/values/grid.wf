@@ -1,0 +1,1533 @@
+alias Atom = pkg::base::atom::Atom;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+const breadth_words: Array<u8, 28> = "auto min-content max-content";
+
+const fr_word: Array<u8, 2> = "fr";
+
+const minmax_word: Array<u8, 6> = "minmax";
+
+const fit_content_word: Array<u8, 11> = "fit-content";
+
+const repeat_word: Array<u8, 6> = "repeat";
+
+const auto_repeat_words: Array<u8, 18> = "auto-fill auto-fit";
+
+const span_text: Array<u8, 4> = "span";
+
+const auto_flow_word: Array<u8, 9> = "auto-flow";
+
+const dense_word: Array<u8, 5> = "dense";
+
+const flow_axis_words: Array<u8, 16> = "row column dense";
+
+const max_tracks: u64 = 10000_u64;
+
+struct TrackCursor {
+  pending_first: u32;
+  pending_end: u32;
+  all_fixed: Bool;
+  valid: Bool;
+}
+
+fn breadth_of(kind: u8, lengths: Lengths, flex: f32) -> made: DeclaredBreadth pure {
+  doc "A declared track breadth.";
+  return DeclaredBreadth(kind: kind, value: lengths, flex: flex);
+}
+
+fn breadth_at(values: &ComponentList, at: u64, limit: u64, allow_flex: Bool, allow_intrinsic: Bool) -> breadth: Option<DeclaredBreadth> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Parses the one component from at to limit as a track breadth: auto, min-content or max-content when allow_intrinsic holds, a flex value in fr when allow_flex holds, or a non-negative length-percentage.";
+  let zero = lengths_zero();
+  let shape = shape_of(values: values, at: at);
+  if shape.kind == s_ident {
+    let n = breadth_words.len;
+    let found = span_word(values: values, span: shape.name, list: &breadth_words[0_u64..n]);
+    match found {
+      Some(value: i) => {
+        if allow_intrinsic {
+        } else {
+          return None<DeclaredBreadth>();
+        }
+        let kind = if i == 0_u64 {
+          give track_auto;
+        } else if i == 1_u64 {
+          give track_min_content;
+        } else {
+          give track_max_content;
+        }
+        let made = breadth_of(kind: kind, lengths: zero, flex: 0.0_f32);
+        return Some<DeclaredBreadth>(value: made);
+      }
+      None() => {
+        return None<DeclaredBreadth>();
+      }
+    }
+  }
+  if shape.kind == s_dimension {
+    let fr_n = fr_word.len;
+    let flexible = span_is(values: values, span: shape.name, word: &fr_word[0_u64..fr_n]);
+    if flexible {
+      if allow_flex {
+      } else {
+        return None<DeclaredBreadth>();
+      }
+      let negative = flt(shape.value, 0.0_f64);
+      if negative {
+        return None<DeclaredBreadth>();
+      }
+      let amount = narrow(value: shape.value);
+      let made = breadth_of(kind: track_flex, lengths: zero, flex: amount);
+      return Some<DeclaredBreadth>(value: made);
+    }
+  }
+  let yes = True();
+  let no = False();
+  match length_at(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no) {
+    Some(value: parsed) => {
+      if parsed.next != limit {
+        return None<DeclaredBreadth>();
+      }
+      let made = breadth_of(kind: track_length, lengths: parsed.value.lengths, flex: 0.0_f32);
+      return Some<DeclaredBreadth>(value: made);
+    }
+    None() => {
+      return None<DeclaredBreadth>();
+    }
+  }
+}
+
+fn piece_breadth(values: &ComponentList, start: u64, end: u64, allow_flex: Bool) -> breadth: Option<DeclaredBreadth> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses the one component of a function argument from start to end as a track breadth.";
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < end;
+      if inside {
+      } else {
+        return None<DeclaredBreadth>();
+      }
+      let next = sibling_after(values: values, at: at, limit: end);
+      let yes = True();
+      let made = breadth_at(values: values, at: at, limit: next, allow_flex: allow_flex, allow_intrinsic: yes);
+      return made;
+    }
+    None() => {
+      return None<DeclaredBreadth>();
+    }
+  }
+}
+
+fn track_at(values: &ComponentList, at: u64, limit: u64) -> track: Option<DeclaredTrack> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Parses the one component from at to limit as a track size: a breadth, which is both the minimum and the maximum; minmax() of an inflexible breadth and a breadth; or fit-content() of a length-percentage, kept as an auto minimum and the length as the maximum with fit_content set. A single flexible breadth is kept as both, so a reader takes a flexible minimum as auto.";
+  let empty = LineNames(first: 0_u32, end: 0_u32);
+  let no = False();
+  let yes = True();
+  let shape = shape_of(values: values, at: at);
+  if shape.kind == s_function {
+    let contents = at +sat 1_u64;
+    let close_wide = cvt::<u32, u64>(shape.end);
+    let close = bound(values: values, at: close_wide);
+    let minmax_n = minmax_word.len;
+    let fit_n = fit_content_word.len;
+    let is_minmax = span_is(values: values, span: shape.name, word: &minmax_word[0_u64..minmax_n]);
+    let is_fit = span_is(values: values, span: shape.name, word: &fit_content_word[0_u64..fit_n]);
+    let start = bound(values: values, at: contents);
+    let pieces = split_pieces(values: values, start: start, end: close);
+    if is_minmax {
+      if pieces.count != 2_u64 {
+        return None<DeclaredTrack>();
+      }
+      let first_end = bound(values: values, at: pieces.first_end);
+      let second_end = bound(values: values, at: pieces.second_end);
+      let low = piece_breadth(values: values, start: pieces.first_start, end: first_end, allow_flex: no);
+      let high = piece_breadth(values: values, start: pieces.second_start, end: second_end, allow_flex: yes);
+      match low {
+        Some(value: min) => {
+          match high {
+            Some(value: max) => {
+              let made = DeclaredTrack(min: min, max: max, fit_content: no, names_before: empty);
+              return Some<DeclaredTrack>(value: made);
+            }
+            None() => {
+              return None<DeclaredTrack>();
+            }
+          }
+        }
+        None() => {
+          return None<DeclaredTrack>();
+        }
+      }
+    }
+    if is_fit {
+      if pieces.count != 1_u64 {
+        return None<DeclaredTrack>();
+      }
+      match single_at(values: values, start: start, end: close) {
+        Some(value: inner) => {
+          let inside = inner < close;
+          if inside {
+          } else {
+            return None<DeclaredTrack>();
+          }
+          let inner_next = sibling_after(values: values, at: inner, limit: close);
+          match length_at(values: values, at: inner, limit: inner_next, allow_percent: yes, allow_negative: no) {
+            Some(value: parsed) => {
+              if parsed.next != inner_next {
+                return None<DeclaredTrack>();
+              }
+              let zero = lengths_zero();
+              let min = breadth_of(kind: track_auto, lengths: zero, flex: 0.0_f32);
+              let max = breadth_of(kind: track_length, lengths: parsed.value.lengths, flex: 0.0_f32);
+              let made = DeclaredTrack(min: min, max: max, fit_content: yes, names_before: empty);
+              return Some<DeclaredTrack>(value: made);
+            }
+            None() => {
+              return None<DeclaredTrack>();
+            }
+          }
+        }
+        None() => {
+          return None<DeclaredTrack>();
+        }
+      }
+    }
+  }
+  match breadth_at(values: values, at: at, limit: limit, allow_flex: yes, allow_intrinsic: yes) {
+    Some(value: breadth) => {
+      let made = DeclaredTrack(min: breadth, max: breadth, fit_content: no, names_before: empty);
+      return Some<DeclaredTrack>(value: made);
+    }
+    None() => {
+      return None<DeclaredTrack>();
+    }
+  }
+}
+
+fn track_fixed(track: DeclaredTrack) -> fixed: Bool pure {
+  doc "True for a fixed size, which an automatic repetition requires of every track: not fit-content(), and a length as its minimum or maximum.";
+  if track.fit_content {
+    return False();
+  }
+  let low = track.min.kind == track_length;
+  let high = track.max.kind == track_length;
+  let either = bor(low, high);
+  return either;
+}
+
+fn names_block(values: &ComponentList, at: u64, close: u64, exp: &Expansion, cursor: &TrackCursor) -> valid: Bool reads(values), writes(exp), writes(cursor) contract {
+  requires close <= values^.components.inner.len;
+} {
+  doc "Appends the line names of the bracket block whose contents run from at to close to the pending names of cursor, which merge with names already pending; false for a component that is no custom-ident or is span.";
+  let span = close -sat at;
+  let position = at;
+  let span_n = span_text.len;
+  for (step in 0_u64..span) {
+    let k = skip_space(values: values, at: position, limit: close);
+    if k >= close {
+      break;
+    }
+    let next = sibling_after(values: values, at: k, limit: close);
+    let shape = shape_of(values: values, at: k);
+    if shape.kind != s_ident {
+      return False();
+    }
+    let custom = is_custom_ident(values: values, span: shape.name);
+    let spanning = span_is(values: values, span: shape.name, word: &span_text[0_u64..span_n]);
+    let not_custom = bnot(custom);
+    let refused = bor(not_custom, spanning);
+    if refused {
+      return False();
+    }
+    let no = False();
+    let name = local_name(exp: exp, values: values, span: shape.name, lower: no);
+    let pending_end = cvt::<u32, u64>(cursor^.pending_end);
+    let length = exp^.side.line_names.inner.len;
+    if pending_end != length {
+      let fresh = to_u32(value: length);
+      set cursor^.pending_first = fresh;
+    }
+    put::<Atom>(cell: &exp^.side.line_names, value: name);
+    let after = exp^.side.line_names.inner.len;
+    set cursor^.pending_end = to_u32(value: after);
+    set position = next;
+  }
+  return True();
+}
+
+fn take_pending(exp: &Expansion, cursor: &TrackCursor) -> names: LineNames reads(exp), writes(cursor) {
+  doc "Returns the pending names of cursor and leaves none pending.";
+  let made = LineNames(first: cursor^.pending_first, end: cursor^.pending_end);
+  let length = exp^.side.line_names.inner.len;
+  let at = to_u32(value: length);
+  set cursor^.pending_first = at;
+  set cursor^.pending_end = at;
+  return made;
+}
+
+fn track_items(values: &ComponentList, start: u64, end: u64, exp: &Expansion, cursor: &TrackCursor, allow_names: Bool) -> valid: Bool reads(values), writes(exp), writes(cursor) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Appends the line names and track sizes from start to end, none of them a repeat(), to the expansion's tracks, each track taking the names pending before it.";
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    if shape.kind == s_bracket {
+      if allow_names {
+      } else {
+        return False();
+      }
+      let contents = at +sat 1_u64;
+      let close_wide = cvt::<u32, u64>(shape.end);
+      let close = bound(values: values, at: close_wide);
+      let named = names_block(values: values, at: contents, close: close, exp: exp, cursor: cursor);
+      if named {
+      } else {
+        return False();
+      }
+    } else {
+      match track_at(values: values, at: at, limit: next) {
+        Some(value: track) => {
+          let count = exp^.side.tracks.inner.len;
+          if count >= max_tracks {
+            return False();
+          }
+          let fixed = track_fixed(track: track);
+          set cursor^.all_fixed = band(cursor^.all_fixed, fixed);
+          let names = take_pending(exp: exp, cursor: cursor);
+          let made = DeclaredTrack(min: track.min, max: track.max, fit_content: track.fit_content, names_before: names);
+          put::<DeclaredTrack>(cell: &exp^.side.tracks, value: made);
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    set position = next;
+  }
+  return True();
+}
+
+fn parse_tracks(values: &ComponentList, start: u64, end: u64, exp: &Expansion, allow_repeat: Bool, allow_names: Bool) -> list: Option<u32> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses a track list from start to end into the expansion's side store and returns its index among the track lists: line names and track sizes, and when allow_repeat holds repeat() with an integer count, expanded here, or with auto-fill or auto-fit, kept as the list's one repeated range, in which case every track must have a fixed size. None for an invalid or empty list.";
+  let names_at = to_u32(value: exp^.side.line_names.inner.len);
+  let yes = True();
+  let cursor = TrackCursor(pending_first: names_at, pending_end: names_at, all_fixed: yes, valid: yes);
+  let first = exp^.side.tracks.inner.len;
+  let repeat_kind = repeat_none;
+  let repeat_first = 0_u64;
+  let repeat_end = 0_u64;
+  let empty = LineNames(first: names_at, end: names_at);
+  let repeat_before = empty;
+  let repeat_after = empty;
+  let span = end -sat start;
+  let position = start;
+  let repeat_n = repeat_word.len;
+  let auto_n = auto_repeat_words.len;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    let function = shape.kind == s_function;
+    let repeating = if function {
+      give span_is(values: values, span: shape.name, word: &repeat_word[0_u64..repeat_n]);
+    } else {
+      give False();
+    }
+    if repeating {
+      if allow_repeat {
+      } else {
+        return None<u32>();
+      }
+      let contents = at +sat 1_u64;
+      let close_wide = cvt::<u32, u64>(shape.end);
+      let close = bound(values: values, at: close_wide);
+      let inner_start = bound(values: values, at: contents);
+      let pieces = split_pieces(values: values, start: inner_start, end: close);
+      if pieces.count != 2_u64 {
+        return None<u32>();
+      }
+      let count_end = bound(values: values, at: pieces.first_end);
+      let list_end = bound(values: values, at: pieces.second_end);
+      let count_at = match single_at(values: values, start: pieces.first_start, end: count_end) {
+        Some(value: k) => {
+          give k;
+        }
+        None() => {
+          return None<u32>();
+        }
+      }
+      let inside = count_at < values^.components.inner.len;
+      if inside {
+      } else {
+        return None<u32>();
+      }
+      let count_shape = shape_of(values: values, at: count_at);
+      if count_shape.kind == s_ident {
+        let found = span_word(values: values, span: count_shape.name, list: &auto_repeat_words[0_u64..auto_n]);
+        let kind = match found {
+          Some(value: i) => {
+            if i == 0_u64 {
+              give repeat_auto_fill;
+            } else {
+              give repeat_auto_fit;
+            }
+          }
+          None() => {
+            return None<u32>();
+          }
+        }
+        if repeat_kind != repeat_none {
+          return None<u32>();
+        }
+        set repeat_kind = kind;
+        set repeat_before = take_pending(exp: exp, cursor: &cursor);
+        set repeat_first = exp^.side.tracks.inner.len;
+        let inner = track_items(values: values, start: pieces.second_start, end: list_end, exp: exp, cursor: &cursor, allow_names: allow_names);
+        if inner {
+        } else {
+          return None<u32>();
+        }
+        set repeat_end = exp^.side.tracks.inner.len;
+        if repeat_end <= repeat_first {
+          return None<u32>();
+        }
+        set repeat_after = take_pending(exp: exp, cursor: &cursor);
+      } else if count_shape.kind == s_number {
+        if count_shape.integer {
+        } else {
+          return None<u32>();
+        }
+        let low = flt(count_shape.value, 1.0_f64);
+        if low {
+          return None<u32>();
+        }
+        let capped = fmin(count_shape.value, 1.0e4_f64);
+        let representable = cvt.defined::<f64, u64>(capped);
+        let repeats = if representable {
+          give cvt::<f64, u64>(capped);
+        } else {
+          give 1_u64;
+        }
+        for (repetition in 0_u64..repeats) {
+          let before = exp^.side.tracks.inner.len;
+          let inner = track_items(values: values, start: pieces.second_start, end: list_end, exp: exp, cursor: &cursor, allow_names: allow_names);
+          if inner {
+          } else {
+            return None<u32>();
+          }
+          let after = exp^.side.tracks.inner.len;
+          if after <= before {
+            return None<u32>();
+          }
+          if after >= max_tracks {
+            break;
+          }
+        }
+      } else {
+        return None<u32>();
+      }
+    } else {
+      let one = track_items(values: values, start: at, end: next, exp: exp, cursor: &cursor, allow_names: allow_names);
+      if one {
+      } else {
+        return None<u32>();
+      }
+    }
+    set position = next;
+  }
+  let last = exp^.side.tracks.inner.len;
+  if last <= first {
+    return None<u32>();
+  }
+  if repeat_kind != repeat_none {
+    if cursor.all_fixed {
+    } else {
+      return None<u32>();
+    }
+  }
+  let after_all = take_pending(exp: exp, cursor: &cursor);
+  let a = to_u32(value: first);
+  let b = to_u32(value: last);
+  let c = to_u32(value: repeat_first);
+  let d = to_u32(value: repeat_end);
+  let made = TrackList(first: a, end: b, repeat_kind: repeat_kind, repeat_names_before: repeat_before, repeat_first: c, repeat_end: d, repeat_names_after: repeat_after, names_after: after_all);
+  let index = exp^.side.track_lists.inner.len;
+  put::<TrackList>(cell: &exp^.side.track_lists, value: made);
+  let narrowed = to_u32(value: index);
+  return Some<u32>(value: narrowed);
+}
+
+fn template_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses grid-template-columns or grid-template-rows from start to end: none, or a track list with names and repeat().";
+  let none_n = none_word.len;
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+        let none_value = ident_is(values: values, at: at, word: &none_word[0_u64..none_n]);
+        if none_value {
+          let made = Declared::Keyword(keyword: keyword_none);
+          return Some<Declared>(value: made);
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let yes = True();
+  match parse_tracks(values: values, start: start, end: end, exp: exp, allow_repeat: yes, allow_names: yes) {
+    Some(value: index) => {
+      let made = Declared::Stored(kind: stored_tracks, index: index);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn auto_tracks_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses grid-auto-columns or grid-auto-rows from start to end: one or more track sizes, auto alone kept as the keyword auto.";
+  let auto_n = size_auto_word.len;
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+        let auto_value = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+        if auto_value {
+          let made = Declared::Keyword(keyword: keyword_auto);
+          return Some<Declared>(value: made);
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let no = False();
+  match parse_tracks(values: values, start: start, end: end, exp: exp, allow_repeat: no, allow_names: no) {
+    Some(value: index) => {
+      let made = Declared::Stored(kind: stored_tracks, index: index);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn name_byte(byte: u8) -> name: Bool pure {
+  doc "True for a byte of a named cell token: an ASCII letter, digit, hyphen or underscore, or any byte of a non-ASCII code point.";
+  let lower_from = byte >= 97_u8;
+  let lower_to = byte <= 122_u8;
+  let upper_from = byte >= 65_u8;
+  let upper_to = byte <= 90_u8;
+  let digit_from = byte >= 48_u8;
+  let digit_to = byte <= 57_u8;
+  let lower = band(lower_from, lower_to);
+  let upper = band(upper_from, upper_to);
+  let digit = band(digit_from, digit_to);
+  let hyphen = byte == 45_u8;
+  let underscore = byte == 95_u8;
+  let wide = byte >= 128_u8;
+  let letters = bor(lower, upper);
+  let marks = bor(hyphen, underscore);
+  let some = bor(letters, digit);
+  let more = bor(marks, wide);
+  let any = bor(some, more);
+  return any;
+}
+
+fn space_byte(byte: u8) -> space: Bool pure {
+  doc "True for space, tab, line feed, form feed and carriage return.";
+  let blank = byte == 32_u8;
+  let tab = byte == 9_u8;
+  let feed = byte == 10_u8;
+  let form = byte == 12_u8;
+  let carriage = byte == 13_u8;
+  let a = bor(blank, tab);
+  let b = bor(feed, form);
+  let c = bor(a, b);
+  let any = bor(c, carriage);
+  return any;
+}
+
+struct Cell {
+  start: u64;
+  end: u64;
+  area: u32;
+}
+
+fn same_text(values: &ComponentList, a0: u64, a1: u64, b0: u64, b1: u64) -> same: Bool reads(values) {
+  doc "True when the text from a0 to a1 equals the text from b0 to b1, byte for byte.";
+  let length = values^.text.inner.len;
+  let a_width = a1 -sat a0;
+  let b_width = b1 -sat b0;
+  if a_width != b_width {
+    return False();
+  }
+  for (k in 0_u64..a_width) {
+    let x = a0 +sat k;
+    let y = b0 +sat k;
+    let inside_x = x < length;
+    let inside_y = y < length;
+    let inside = band(inside_x, inside_y);
+    if inside {
+      if values^.text.inner[x] != values^.text.inner[y] {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+const null_area: u32 = 4294967295_u32;
+
+fn parse_areas(values: &ComponentList, strings: &Box<Slots<u64>>, exp: &Expansion) -> map: Option<u32> reads(values), reads(strings), writes(exp) {
+  doc "Parses the strings at the component indices of strings, one row each, as grid-template-areas: each a run of cell tokens separated by whitespace, a run of full stops being a null cell, every row with the same number of cells, and every named area a filled rectangle. It appends the areas, in order of first appearance, and the map to the expansion's side store and returns the map's index; None for an invalid grid.";
+  let cells = box_slots_new::<Cell>(capacity: 0_u64);
+  let row_count = strings^.inner.len;
+  if row_count == 0_u64 {
+    return None<u32>();
+  }
+  let columns = 0_u64;
+  let names = box_slots_new::<Cell>(capacity: 0_u64);
+  let text_length = values^.text.inner.len;
+  for (r in 0_u64..row_count) {
+    let at = strings^.inner[r];
+    let inside = at < values^.components.inner.len;
+    if inside {
+    } else {
+      return None<u32>();
+    }
+    let shape = shape_of(values: values, at: at);
+    if shape.kind != s_string {
+      return None<u32>();
+    }
+    let (a, b) = text_of(values: values, span: shape.name);
+    let in_row = 0_u64;
+    let token_start = a;
+    let in_token = False();
+    let stop = b +sat 1_u64;
+    for (k in a..stop) {
+      let boundary = k >= b;
+      let byte = if boundary {
+        give 32_u8;
+      } else if k < text_length {
+        give values^.text.inner[k];
+      } else {
+        give 32_u8;
+      }
+      let blank = space_byte(byte: byte);
+      let dot = byte == 46_u8;
+      let in_dots = if in_token {
+        let first_at = token_start < text_length;
+        let first_byte = if first_at {
+          give values^.text.inner[token_start];
+        } else {
+          give 0_u8;
+        }
+        give first_byte == 46_u8;
+      } else {
+        give False();
+      }
+      let named = name_byte(byte: byte);
+      let continues = if in_dots {
+        give dot;
+      } else {
+        give named;
+      }
+      let still = band(in_token, continues);
+      if still {
+      } else {
+        if in_token {
+          let area = if in_dots {
+            give null_area;
+          } else {
+            let known = names.inner.len;
+            let found = null_area;
+            for (n in 0_u64..known) {
+              let other = names.inner[n];
+              let same = same_text(values: values, a0: other.start, a1: other.end, b0: token_start, b1: k);
+              if same {
+                set found = to_u32(value: n);
+                break;
+              }
+            }
+            if found == null_area {
+              let fresh = to_u32(value: known);
+              let named_cell = Cell(start: token_start, end: k, area: fresh);
+              put::<Cell>(cell: &names, value: named_cell);
+              set found = fresh;
+            }
+            give found;
+          }
+          let cell = Cell(start: token_start, end: k, area: area);
+          put::<Cell>(cell: &cells, value: cell);
+          set in_row = in_row +sat 1_u64;
+          set in_token = False();
+        }
+        if blank {
+        } else if dot {
+          set token_start = k;
+          set in_token = True();
+        } else if named {
+          set token_start = k;
+          set in_token = True();
+        } else {
+          return None<u32>();
+        }
+      }
+    }
+    if r == 0_u64 {
+      set columns = in_row;
+    } else if in_row != columns {
+      return None<u32>();
+    }
+  }
+  if columns == 0_u64 {
+    return None<u32>();
+  }
+  let first = exp^.side.named_areas.inner.len;
+  let total = cells.inner.len;
+  let area_count = names.inner.len;
+  for (n in 0_u64..area_count) {
+    let wanted = to_u32(value: n);
+    let top = row_count;
+    let bottom = 0_u64;
+    let left = columns;
+    let right = 0_u64;
+    let filled = 0_u64;
+    for (c in 0_u64..total) {
+      if cells.inner[c].area == wanted {
+        let row = c / columns;
+        let column = c % columns;
+        if row < top {
+          set top = row;
+        }
+        if row >= bottom {
+          set bottom = row +sat 1_u64;
+        }
+        if column < left {
+          set left = column;
+        }
+        if column >= right {
+          set right = column +sat 1_u64;
+        }
+        set filled = filled +sat 1_u64;
+      }
+    }
+    let height = bottom -sat top;
+    let width = right -sat left;
+    let area = height *sat width;
+    if area != filled {
+      return None<u32>();
+    }
+    let area_cell = names.inner[n];
+    let name = local_text_name(exp: exp, values: values, start: area_cell.start, end: area_cell.end);
+    let lifted_3 = to_u32(value: top);
+    let lifted_4 = to_u32(value: bottom);
+    let lifted_5 = to_u32(value: left);
+    let lifted_6 = to_u32(value: right);
+    let made = NamedArea(name: name, row_start: lifted_3, row_end: lifted_4, column_start: lifted_5, column_end: lifted_6);
+    put::<NamedArea>(cell: &exp^.side.named_areas, value: made);
+  }
+  let last = exp^.side.named_areas.inner.len;
+  let lifted_7 = to_u32(value: row_count);
+  let lifted_8 = to_u32(value: columns);
+  let lifted_9 = to_u32(value: first);
+  let lifted_10 = to_u32(value: last);
+  let map = AreaMap(rows: lifted_7, columns: lifted_8, first: lifted_9, end: lifted_10);
+  let index = exp^.side.area_maps.inner.len;
+  put::<AreaMap>(cell: &exp^.side.area_maps, value: map);
+  let narrowed = to_u32(value: index);
+  return Some<u32>(value: narrowed);
+}
+
+fn local_text_name(exp: &Expansion, values: &ComponentList, start: u64, end: u64) -> name: Atom reads(values), writes(exp) {
+  doc "Appends the text of values from start to end as one more name of the expansion, as local_name does.";
+  let from = exp^.text.inner.len;
+  let length = values^.text.inner.len;
+  for (k in start..end) {
+    let inside = k < length;
+    if inside {
+      let byte = values^.text.inner[k];
+      put::<u8>(cell: &exp^.text, value: byte);
+    }
+  }
+  let to = exp^.text.inner.len;
+  let index = exp^.names.inner.len;
+  let a = to_u32(value: from);
+  let b = to_u32(value: to);
+  let no = False();
+  let made = NameRef(start: a, end: b, generic: no);
+  put::<NameRef>(cell: &exp^.names, value: made);
+  let narrowed = to_u32(value: index);
+  return Atom(index: narrowed);
+}
+
+fn areas_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses grid-template-areas from start to end: none, or one or more strings.";
+  let none_n = none_word.len;
+  let strings = box_slots_new::<u64>(capacity: 0_u64);
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    if shape.kind == s_string {
+      put::<u64>(cell: &strings, value: at);
+    } else if shape.kind == s_ident {
+      let none_value = span_is(values: values, span: shape.name, word: &none_word[0_u64..none_n]);
+      let alone = next >= end;
+      let first = strings.inner.len == 0_u64;
+      let only = band(alone, first);
+      let both = band(none_value, only);
+      if both {
+        let made = Declared::Keyword(keyword: keyword_none);
+        return Some<Declared>(value: made);
+      }
+      return None<Declared>();
+    } else {
+      return None<Declared>();
+    }
+    set position = next;
+  }
+  match parse_areas(values: values, strings: &strings, exp: exp) {
+    Some(value: index) => {
+      let made = Declared::Stored(kind: stored_areas, index: index);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn flow_value(values: &ComponentList, start: u64, end: u64) -> declared: Option<Declared> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses grid-auto-flow from start to end: row or column, dense, or both in either order, as the bits flow_column and flow_dense.";
+  let bits = 0_u8;
+  let axis = False();
+  let dense = False();
+  let span = end -sat start;
+  let position = start;
+  let n = flow_axis_words.len;
+  let words = 0_u64;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    if shape.kind != s_ident {
+      return None<Declared>();
+    }
+    let found = span_word(values: values, span: shape.name, list: &flow_axis_words[0_u64..n]);
+    match found {
+      Some(value: i) => {
+        if i == 2_u64 {
+          if dense {
+            return None<Declared>();
+          }
+          set dense = True();
+          set bits = ior(bits, flow_dense);
+        } else {
+          if axis {
+            return None<Declared>();
+          }
+          set axis = True();
+          if i == 1_u64 {
+            set bits = ior(bits, flow_column);
+          }
+        }
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+    set words = words +sat 1_u64;
+    set position = next;
+  }
+  if words == 0_u64 {
+    return None<Declared>();
+  }
+  let made = Declared::Keyword(keyword: bits);
+  return Some<Declared>(value: made);
+}
+
+fn line_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses a grid line from start to end: auto as the keyword auto; otherwise a custom-ident, an integer other than zero with an optional custom-ident, or span with a positive integer, a custom-ident or both, in any order, kept as a GridLine in the expansion's side store with number 0 where no integer is given.";
+  let auto_n = size_auto_word.len;
+  let span_n = span_text.len;
+  let spanning = False();
+  let has_number = False();
+  let number = 0_i32;
+  let named = False();
+  let name = Atom(index: 0_u32);
+  let words = 0_u64;
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    set words = words +sat 1_u64;
+    if shape.kind == s_ident {
+      let auto_value = span_is(values: values, span: shape.name, word: &size_auto_word[0_u64..auto_n]);
+      if auto_value {
+        let alone = next >= end;
+        let first = words == 1_u64;
+        let only = band(alone, first);
+        if only {
+          let made = Declared::Keyword(keyword: keyword_auto);
+          return Some<Declared>(value: made);
+        }
+        return None<Declared>();
+      }
+      let span_value = span_is(values: values, span: shape.name, word: &span_text[0_u64..span_n]);
+      if span_value {
+        if spanning {
+          return None<Declared>();
+        }
+        set spanning = True();
+      } else {
+        if named {
+          return None<Declared>();
+        }
+        let custom = is_custom_ident(values: values, span: shape.name);
+        if custom {
+        } else {
+          return None<Declared>();
+        }
+        let no = False();
+        set name = local_name(exp: exp, values: values, span: shape.name, lower: no);
+        set named = True();
+      }
+    } else if shape.kind == s_number {
+      if has_number {
+        return None<Declared>();
+      }
+      if shape.integer {
+      } else {
+        return None<Declared>();
+      }
+      let zero = feq(shape.value, 0.0_f64);
+      if zero {
+        return None<Declared>();
+      }
+      let clamped_high = fmin(shape.value, 1.0e4_f64);
+      let clamped = fmax(clamped_high, -1.0e4_f64);
+      let representable = cvt.defined::<f64, i32>(clamped);
+      if representable {
+        set number = cvt::<f64, i32>(clamped);
+      }
+      set has_number = True();
+    } else {
+      return None<Declared>();
+    }
+    set position = next;
+  }
+  let something = bor(has_number, named);
+  if something {
+  } else {
+    return None<Declared>();
+  }
+  if spanning {
+    let negative = number < 0_i32;
+    if negative {
+      return None<Declared>();
+    }
+  }
+  let kind = if spanning {
+    give line_span;
+  } else {
+    give line_number;
+  }
+  let line = GridLine(kind: kind, number: number, name: name, named: named);
+  let index = exp^.side.grid_lines.inner.len;
+  put::<GridLine>(cell: &exp^.side.grid_lines, value: line);
+  let narrowed = to_u32(value: index);
+  let made = Declared::Stored(kind: stored_line, index: narrowed);
+  return Some<Declared>(value: made);
+}
+
+fn lone_ident_line(exp: &Expansion, declared: Declared) -> lone: Bool reads(exp) {
+  doc "True when a grid line declared value is a custom-ident alone, which an omitted line of grid-area, grid-row and grid-column copies.";
+  match declared {
+    Stored(kind: k, index: i) => {
+      if k != stored_line {
+        return False();
+      }
+      let at = cvt::<u32, u64>(i);
+      let inside = at < exp^.side.grid_lines.inner.len;
+      if inside {
+      } else {
+        return False();
+      }
+      let line = exp^.side.grid_lines.inner[at];
+      let plain = line.kind == line_number;
+      let no_number = line.number == 0_i32;
+      let a = band(plain, no_number);
+      let b = band(a, line.named);
+      return b;
+    }
+    Keyword(..) => {
+      return False();
+    }
+    Length(..) => {
+      return False();
+    }
+    Number(..) => {
+      return False();
+    }
+    Integer(..) => {
+      return False();
+    }
+    ColorValue(..) => {
+      return False();
+    }
+    CurrentColor() => {
+      return False();
+    }
+    Families(..) => {
+      return False();
+    }
+    ListStyle(..) => {
+      return False();
+    }
+    Wide(..) => {
+      return False();
+    }
+    Pending(..) => {
+      return False();
+    }
+    Ratio(..) => {
+      return False();
+    }
+  }
+}
+
+fn slash_split(values: &ComponentList, start: u64, end: u64) -> pieces: Pieces reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Splits the components from start to end at top-level solidus delimiters into at most three pieces, as split_pieces splits at commas; count is 4 for more than three.";
+  let count = 1_u64;
+  let a1 = end;
+  let b0 = end;
+  let b1 = end;
+  let c0 = end;
+  let c1 = end;
+  let cursor = start;
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    if cursor >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: cursor, limit: end);
+    let shape = shape_of(values: values, at: cursor);
+    let delim = shape.kind == s_delim;
+    let slash = shape.code == 47_u32;
+    let both = band(delim, slash);
+    if both {
+      if count == 1_u64 {
+        set a1 = cursor;
+        set b0 = next;
+      } else if count == 2_u64 {
+        set b1 = cursor;
+        set c0 = next;
+      } else if count == 3_u64 {
+        set c1 = cursor;
+      }
+      set count = count +sat 1_u64;
+    }
+    set cursor = next;
+  }
+  return Pieces(count: count, first_start: start, first_end: a1, second_start: b0, second_end: b1, third_start: c0, third_end: c1);
+}
+
+struct Slashes {
+  count: u64;
+  starts: Array<u64, 4>;
+  ends: Array<u64, 4>;
+}
+
+fn slash_parts(values: &ComponentList, start: u64, end: u64) -> parts: Slashes reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Splits the components from start to end at top-level solidus delimiters into at most four parts; count is 5 for more than four.";
+  let starts = array_filled::<u64, 4>(value: end);
+  let ends = array_filled::<u64, 4>(value: end);
+  set starts[0_u64] = start;
+  let count = 1_u64;
+  let cursor = start;
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    if cursor >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: cursor, limit: end);
+    let shape = shape_of(values: values, at: cursor);
+    let delim = shape.kind == s_delim;
+    let slash = shape.code == 47_u32;
+    let both = band(delim, slash);
+    if both {
+      if count < 4_u64 {
+        let previous = count -sat 1_u64;
+        set ends[previous] = cursor;
+        set starts[count] = next;
+      }
+      set count = count +sat 1_u64;
+    }
+    set cursor = next;
+  }
+  return Slashes(count: count, starts: starts, ends: ends);
+}
+
+fn expand_lines(values: &ComponentList, start: u64, end: u64, shorthand: u8, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands grid-area (row-start / column-start / row-end / column-end) or grid-row and grid-column (start / end): each given part is a grid line; an omitted part copies the part it pairs with when that is a custom-ident alone, as the end copies its start and grid-area's column-start copies its row-start, and is auto otherwise.";
+  let parts = slash_parts(values: values, start: start, end: end);
+  let limit = if shorthand == sh_grid_area {
+    give 4_u64;
+  } else {
+    give 2_u64;
+  }
+  let given = parts.count;
+  if given > limit {
+    return False();
+  }
+  let auto_value = Declared::Keyword(keyword: keyword_auto);
+  let values_out = array_filled::<Declared, 4>(value: auto_value);
+  for (k in 0_u64..4_u64) {
+    if k < given {
+      let s = parts.starts[k];
+      let e = parts.ends[k];
+      let bounded = bound(values: values, at: e);
+      match line_value(values: values, start: s, end: bounded, exp: exp) {
+        Some(value: v) => {
+          set values_out[k] = v;
+        }
+        None() => {
+          return False();
+        }
+      }
+    } else if k < limit {
+      let partner = if k == 1_u64 {
+        give 0_u64;
+      } else if k == 2_u64 {
+        give 0_u64;
+      } else {
+        give 1_u64;
+      }
+      let source = values_out[partner];
+      let copies = lone_ident_line(exp: exp, declared: source);
+      if copies {
+        set values_out[k] = source;
+      }
+    }
+  }
+  if shorthand == sh_grid_area {
+    put_value(exp: exp, longhand: lh_grid_row_start, value: values_out[0_u64]);
+    put_value(exp: exp, longhand: lh_grid_column_start, value: values_out[1_u64]);
+    put_value(exp: exp, longhand: lh_grid_row_end, value: values_out[2_u64]);
+    put_value(exp: exp, longhand: lh_grid_column_end, value: values_out[3_u64]);
+    return True();
+  }
+  let first = if shorthand == sh_grid_row {
+    give lh_grid_row_start;
+  } else {
+    give lh_grid_column_start;
+  }
+  let second = if shorthand == sh_grid_row {
+    give lh_grid_row_end;
+  } else {
+    give lh_grid_column_end;
+  }
+  put_value(exp: exp, longhand: first, value: values_out[0_u64]);
+  put_value(exp: exp, longhand: second, value: values_out[1_u64]);
+  return True();
+}
+
+fn has_string(values: &ComponentList, start: u64, end: u64) -> found: Bool reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "True when a string appears at the top level from start to end.";
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    if position >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: position, limit: end);
+    let shape = shape_of(values: values, at: position);
+    if shape.kind == s_string {
+      return True();
+    }
+    set position = next;
+  }
+  return False();
+}
+
+fn template_areas_form(values: &ComponentList, start: u64, end: u64, columns_start: u64, columns_end: u64, has_columns: Bool, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+  requires columns_end <= values^.components.inner.len;
+} {
+  doc "Expands the area form of grid-template: rows of optional line names, a string, an optional track size and optional line names, then an optional solidus and a track list without repeat(); each string is a row of grid-template-areas and gives a row track, auto when it names no size.";
+  let strings = box_slots_new::<u64>(capacity: 0_u64);
+  let names_at = to_u32(value: exp^.side.line_names.inner.len);
+  let yes = True();
+  let cursor = TrackCursor(pending_first: names_at, pending_end: names_at, all_fixed: yes, valid: yes);
+  let first = exp^.side.tracks.inner.len;
+  let row_open = False();
+  let span = end -sat start;
+  let position = start;
+  let zero = lengths_zero();
+  let no = False();
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    if shape.kind == s_string {
+      if row_open {
+        let auto_breadth = breadth_of(kind: track_auto, lengths: zero, flex: 0.0_f32);
+        let names = take_pending(exp: exp, cursor: &cursor);
+        let made = DeclaredTrack(min: auto_breadth, max: auto_breadth, fit_content: no, names_before: names);
+        put::<DeclaredTrack>(cell: &exp^.side.tracks, value: made);
+      }
+      put::<u64>(cell: &strings, value: at);
+      set row_open = True();
+    } else if shape.kind == s_bracket {
+      let contents = at +sat 1_u64;
+      let close_wide = cvt::<u32, u64>(shape.end);
+      let close = bound(values: values, at: close_wide);
+      let named = names_block(values: values, at: contents, close: close, exp: exp, cursor: &cursor);
+      if named {
+      } else {
+        return False();
+      }
+    } else {
+      if row_open {
+      } else {
+        return False();
+      }
+      match track_at(values: values, at: at, limit: next) {
+        Some(value: track) => {
+          let names = take_pending(exp: exp, cursor: &cursor);
+          let made = DeclaredTrack(min: track.min, max: track.max, fit_content: track.fit_content, names_before: names);
+          put::<DeclaredTrack>(cell: &exp^.side.tracks, value: made);
+          set row_open = False();
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    set position = next;
+  }
+  if row_open {
+    let auto_breadth = breadth_of(kind: track_auto, lengths: zero, flex: 0.0_f32);
+    let names = take_pending(exp: exp, cursor: &cursor);
+    let made = DeclaredTrack(min: auto_breadth, max: auto_breadth, fit_content: no, names_before: names);
+    put::<DeclaredTrack>(cell: &exp^.side.tracks, value: made);
+  }
+  let last = exp^.side.tracks.inner.len;
+  if last <= first {
+    return False();
+  }
+  let after_all = take_pending(exp: exp, cursor: &cursor);
+  let empty = LineNames(first: after_all.end, end: after_all.end);
+  let lifted_11 = to_u32(value: first);
+  let lifted_12 = to_u32(value: last);
+  let rows = TrackList(first: lifted_11, end: lifted_12, repeat_kind: repeat_none, repeat_names_before: empty, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: empty, names_after: after_all);
+  let rows_index = to_u32(value: exp^.side.track_lists.inner.len);
+  put::<TrackList>(cell: &exp^.side.track_lists, value: rows);
+  let columns = if has_columns {
+    match parse_tracks(values: values, start: columns_start, end: columns_end, exp: exp, allow_repeat: no, allow_names: yes) {
+      Some(value: index) => {
+        give Declared::Stored(kind: stored_tracks, index: index);
+      }
+      None() => {
+        return False();
+      }
+    }
+  } else {
+    give Declared::Keyword(keyword: keyword_none);
+  }
+  let areas = match parse_areas(values: values, strings: &strings, exp: exp) {
+    Some(value: index) => {
+      give Declared::Stored(kind: stored_areas, index: index);
+    }
+    None() => {
+      return False();
+    }
+  }
+  let rows_value = Declared::Stored(kind: stored_tracks, index: rows_index);
+  put_value(exp: exp, longhand: lh_grid_template_rows, value: rows_value);
+  put_value(exp: exp, longhand: lh_grid_template_columns, value: columns);
+  put_value(exp: exp, longhand: lh_grid_template_areas, value: areas);
+  return True();
+}
+
+fn expand_template(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands grid-template: none for all three longhands; rows / columns with no areas; or the area form.";
+  let none_value = Declared::Keyword(keyword: keyword_none);
+  let none_n = none_word.len;
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+        let is_none = ident_is(values: values, at: at, word: &none_word[0_u64..none_n]);
+        if is_none {
+          put_value(exp: exp, longhand: lh_grid_template_rows, value: none_value);
+          put_value(exp: exp, longhand: lh_grid_template_columns, value: none_value);
+          put_value(exp: exp, longhand: lh_grid_template_areas, value: none_value);
+          return True();
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let pieces = slash_split(values: values, start: start, end: end);
+  if pieces.count > 2_u64 {
+    return False();
+  }
+  let rows_end = bound(values: values, at: pieces.first_end);
+  let columns_end = bound(values: values, at: pieces.second_end);
+  let areas = has_string(values: values, start: start, end: rows_end);
+  let has_columns = pieces.count == 2_u64;
+  if areas {
+    let made = template_areas_form(values: values, start: start, end: rows_end, columns_start: pieces.second_start, columns_end: columns_end, has_columns: has_columns, exp: exp);
+    return made;
+  }
+  if has_columns {
+  } else {
+    return False();
+  }
+  let rows = template_value(values: values, start: start, end: rows_end, exp: exp);
+  let columns = template_value(values: values, start: pieces.second_start, end: columns_end, exp: exp);
+  match rows {
+    Some(value: r) => {
+      match columns {
+        Some(value: c) => {
+          put_value(exp: exp, longhand: lh_grid_template_rows, value: r);
+          put_value(exp: exp, longhand: lh_grid_template_columns, value: c);
+          put_value(exp: exp, longhand: lh_grid_template_areas, value: none_value);
+          return True();
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+struct FlowPart {
+  found: Bool;
+  dense: Bool;
+  rest: u64;
+  valid: Bool;
+}
+
+fn flow_part(values: &ComponentList, start: u64, end: u64) -> part: FlowPart reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Reads the auto-flow keyword and an optional dense, in either order, at the start of one side of the grid shorthand; rest is where the side's auto track sizes begin.";
+  let flow_n = auto_flow_word.len;
+  let dense_n = dense_word.len;
+  let found = False();
+  let dense = False();
+  let position = start;
+  let yes = True();
+  for (step in 0_u64..2_u64) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let is_flow = ident_is(values: values, at: at, word: &auto_flow_word[0_u64..flow_n]);
+    let is_dense = ident_is(values: values, at: at, word: &dense_word[0_u64..dense_n]);
+    if is_flow {
+      if found {
+        let no = False();
+        return FlowPart(found: found, dense: dense, rest: position, valid: no);
+      }
+      set found = True();
+    } else if is_dense {
+      if dense {
+        let no = False();
+        return FlowPart(found: found, dense: dense, rest: position, valid: no);
+      }
+      set dense = True();
+    } else {
+      break;
+    }
+    set position = next;
+  }
+  let unfound = bnot(found);
+  let lone_dense = band(dense, unfound);
+  let valid = bnot(lone_dense);
+  return FlowPart(found: found, dense: dense, rest: position, valid: valid);
+}
+
+fn expand_grid(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands the grid shorthand: a grid-template value with grid-auto-flow row and auto implicit tracks; or rows / auto-flow [dense] [auto-columns]; or auto-flow [dense] [auto-rows] / columns, where the side without auto-flow is a template track list and the other template longhands are none.";
+  let none_value = Declared::Keyword(keyword: keyword_none);
+  let auto_value = Declared::Keyword(keyword: keyword_auto);
+  let pieces = slash_split(values: values, start: start, end: end);
+  let left_end = bound(values: values, at: pieces.first_end);
+  let right_end = bound(values: values, at: pieces.second_end);
+  let left = flow_part(values: values, start: start, end: left_end);
+  let right = if pieces.count == 2_u64 {
+    give flow_part(values: values, start: pieces.second_start, end: right_end);
+  } else {
+    let no = False();
+    let yes = True();
+    give FlowPart(found: no, dense: no, rest: end, valid: yes);
+  }
+  let any_flow = bor(left.found, right.found);
+  if any_flow {
+  } else {
+    let made = expand_template(values: values, start: start, end: end, exp: exp);
+    if made {
+      let row_flow = Declared::Keyword(keyword: 0_u8);
+      put_value(exp: exp, longhand: lh_grid_auto_flow, value: row_flow);
+      put_value(exp: exp, longhand: lh_grid_auto_columns, value: auto_value);
+      put_value(exp: exp, longhand: lh_grid_auto_rows, value: auto_value);
+    }
+    return made;
+  }
+  let usable = band(left.valid, right.valid);
+  let both = band(left.found, right.found);
+  let two = pieces.count == 2_u64;
+  let fine = band(usable, two);
+  if both {
+    return False();
+  }
+  if fine {
+  } else {
+    return False();
+  }
+  if left.found {
+    let rows_at = skip_space(values: values, at: left.rest, limit: left_end);
+    let rows_empty = rows_at >= left_end;
+    let auto_rows = if rows_empty {
+      give auto_value;
+    } else {
+      match auto_tracks_value(values: values, start: left.rest, end: left_end, exp: exp) {
+        Some(value: v) => {
+          give v;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+    let columns = match template_value(values: values, start: pieces.second_start, end: right_end, exp: exp) {
+      Some(value: v) => {
+        give v;
+      }
+      None() => {
+        return False();
+      }
+    }
+    let bits = if left.dense {
+      give flow_dense;
+    } else {
+      give 0_u8;
+    }
+    let flow = Declared::Keyword(keyword: bits);
+    put_value(exp: exp, longhand: lh_grid_template_rows, value: none_value);
+    put_value(exp: exp, longhand: lh_grid_template_columns, value: columns);
+    put_value(exp: exp, longhand: lh_grid_template_areas, value: none_value);
+    put_value(exp: exp, longhand: lh_grid_auto_flow, value: flow);
+    put_value(exp: exp, longhand: lh_grid_auto_columns, value: auto_value);
+    put_value(exp: exp, longhand: lh_grid_auto_rows, value: auto_rows);
+    return True();
+  }
+  let columns_at = skip_space(values: values, at: right.rest, limit: right_end);
+  let columns_empty = columns_at >= right_end;
+  let auto_columns = if columns_empty {
+    give auto_value;
+  } else {
+    match auto_tracks_value(values: values, start: right.rest, end: right_end, exp: exp) {
+      Some(value: v) => {
+        give v;
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  let rows = match template_value(values: values, start: start, end: left_end, exp: exp) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return False();
+    }
+  }
+  let column_bits = if right.dense {
+    give ior(flow_column, flow_dense);
+  } else {
+    give flow_column;
+  }
+  let flow = Declared::Keyword(keyword: column_bits);
+  put_value(exp: exp, longhand: lh_grid_template_rows, value: rows);
+  put_value(exp: exp, longhand: lh_grid_template_columns, value: none_value);
+  put_value(exp: exp, longhand: lh_grid_template_areas, value: none_value);
+  put_value(exp: exp, longhand: lh_grid_auto_flow, value: flow);
+  put_value(exp: exp, longhand: lh_grid_auto_columns, value: auto_columns);
+  put_value(exp: exp, longhand: lh_grid_auto_rows, value: auto_value);
+  return True();
+}

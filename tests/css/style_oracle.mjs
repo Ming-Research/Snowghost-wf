@@ -18,9 +18,10 @@
 // media=print, but does not apply it.
 //
 // File format, the contract a Snowghost driver writes to. UTF-8, LF line
-// ends, one header line, then one line per element:
+// ends, one header line, then one line per element, then one line per
+// generated pseudo-element:
 //
-//   index<TAB>name<TAB>display<TAB>position<TAB>...<TAB>background-color
+//   index<TAB>name<TAB>display<TAB>position<TAB>...<TAB>word-break
 //   INDEX<TAB>LOCALNAME<TAB>VALUE<TAB>...<TAB>VALUE
 //
 // - Elements are in document order: a preorder walk of the document's
@@ -28,18 +29,36 @@
 //   document.querySelectorAll('*'). INDEX counts from 0; LOCALNAME is the
 //   element's local name as the DOM gives it (case preserved, so SVG's
 //   linearGradient stays as written), without a namespace.
-// - The value columns are the 55 longhands of PROPERTIES below, in that
+// - The value columns are the 92 longhands of PROPERTIES below, in that
 //   order, each the computed value as
 //   element.computedStyleMap().get(property).toString() serializes it in
 //   Chromium 141 (lengths resolved to px except percentages, colors
 //   resolved, currentcolor resolved to the color).
+// - After the element lines comes one line for each ::before and ::after
+//   pseudo-element whose computed content, as
+//   getComputedStyle(element, pseudo).content reads it, is not none, in
+//   document order of their elements, ::before before ::after. INDEX is the
+//   element's index and LOCALNAME is ::before or ::after. Pseudo-elements
+//   have no computedStyleMap, so the values are
+//   getComputedStyle(element, pseudo).getPropertyValue(property), which
+//   serializes as computedStyleMap does except for the properties whose
+//   resolved value differs from the computed value (CSSOM, "resolved
+//   values"): width, height, top, right, bottom, left, the four margins and
+//   the four paddings, which read their used value, line-height, which reads
+//   its used value in px unless it is normal, and grid-template-columns and
+//   grid-template-rows on a grid container, which read the used track sizes.
+//   The dump writes those cells empty (RESOLVED and GRID_RESOLVED below); a
+//   driver writes its computed value there or nothing.
 // - In INDEX, LOCALNAME and every value, a backslash is written \\, a tab
 //   \t, a line feed \n and a carriage return \r; no other escape exists.
 //
 // compare reads two such files and requires the same header, the same
-// element count and, line by line, the same INDEX and LOCALNAME; at the
-// first difference it reports it and stops with status 1. It then compares
-// every value after unescaping and normalizing both sides:
+// number of lines and, line by line, the same INDEX and LOCALNAME, with the
+// element lines numbered 0, 1, 2 and so on; at the first difference it
+// reports it and stops with status 1. It then compares every value after
+// unescaping and normalizing both sides, except that a cell of a
+// pseudo-element line that is empty in the first file, Chromium's, is not
+// compared and counts in neither the matched nor the total count:
 //
 // - The value is split into tokens: numbers (with an optional unit or %),
 //   quoted strings, identifiers, and the punctuation ( ) , /. Whitespace
@@ -59,13 +78,14 @@
 //   Chromium resolves hsl and hwb to rgb() or rgba() and keeps lab, lch,
 //   oklab, oklch and color() in their own space.
 //
-// compare prints, per property, the matched count, the total and the
-// percentage (truncated to two decimals), and for each property below 100%
+// compare prints, per property, the matched count, the total of compared
+// cells over element and pseudo-element lines and the percentage
+// (truncated to two decimals), and for each property below 100%
 // its five most frequent mismatching (chromium value, snowghost value)
 // pairs, unescaped but not normalized, with their counts and one example
 // element's index and local name.
-// Exit status: 0 when every property matches on at least 99.0% of the
-// elements; 1 when one does not, or the files' structure differs; 2 on a
+// Exit status: 0 when every property matches on at least 99.0% of its
+// compared cells; 1 when one does not, or the files' structure differs; 2 on a
 // usage or input error.
 //
 // CHROMIUM and PLAYWRIGHT override the browser binary and the playwright
@@ -88,7 +108,30 @@ const PROPERTIES = [
   'color', 'text-align', 'text-indent', 'text-transform', 'white-space', 'letter-spacing', 'word-spacing',
   'vertical-align', 'text-decoration-line', 'list-style-type',
   'background-color',
+  'flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'align-content', 'justify-items',
+  'row-gap', 'column-gap',
+  'grid-template-columns', 'grid-template-rows', 'grid-template-areas', 'grid-auto-flow',
+  'grid-auto-columns', 'grid-auto-rows',
+  'order', 'flex-grow', 'flex-shrink', 'flex-basis', 'align-self', 'justify-self',
+  'grid-row-start', 'grid-row-end', 'grid-column-start', 'grid-column-end',
+  'aspect-ratio', 'border-collapse', 'border-spacing', 'table-layout', 'caption-side',
+  'content', 'counter-reset', 'counter-increment', 'counter-set', 'quotes',
+  'list-style-position', 'overflow-wrap', 'word-break',
 ];
+
+// The properties whose getComputedStyle value is a resolved value that
+// differs from the computed value (CSSOM, "resolved values"): sizes, margins,
+// paddings and offsets read the used value in px, and line-height the used
+// value unless it is normal. A pseudo-element row dumps them empty, as it
+// has no computedStyleMap; grid-template-columns and grid-template-rows are
+// dumped empty too when the pseudo-element is a grid container.
+const RESOLVED = new Set([
+  'width', 'height', 'top', 'right', 'bottom', 'left',
+  'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+  'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+  'line-height',
+]);
+const GRID_RESOLVED = new Set(['grid-template-columns', 'grid-template-rows']);
 
 const CHROMIUM = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const PLAYWRIGHT = process.env.PLAYWRIGHT || '/opt/node22/lib/node_modules/playwright';
@@ -178,9 +221,34 @@ async function dump(pagePath, mappings) {
       }, { start, end: Math.min(start + BATCH, count), properties: PROPERTIES });
       await writeOut(text);
     }
+    let pseudos = 0;
+    for (let start = 0; start < count; start += BATCH) {
+      const { text, rows } = await page.evaluate(({ start, end, properties, resolved, gridResolved }) => {
+        const escape = (value) => value.replace(/[\\\t\n\r]/g,
+          (c) => (c === '\\' ? '\\\\' : c === '\t' ? '\\t' : c === '\n' ? '\\n' : '\\r'));
+        const elements = globalThis.__styleOracleElements;
+        const lines = [];
+        for (let i = start; i < end; i++) {
+          for (const pseudo of ['::before', '::after']) {
+            const style = getComputedStyle(elements[i], pseudo);
+            if (style.content === 'none') continue;
+            const grid = style.display === 'grid' || style.display === 'inline-grid';
+            const fields = [String(i), pseudo];
+            for (const property of properties) {
+              const empty = resolved.includes(property) || (grid && gridResolved.includes(property));
+              fields.push(empty ? '' : escape(style.getPropertyValue(property)));
+            }
+            lines.push(fields.join('\t'));
+          }
+        }
+        return { text: lines.length ? lines.join('\n') + '\n' : '', rows: lines.length };
+      }, { start, end: Math.min(start + BATCH, count), properties: PROPERTIES, resolved: [...RESOLVED], gridResolved: [...GRID_RESOLVED] });
+      pseudos += rows;
+      await writeOut(text);
+    }
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
     const kinds = [...refused].map(([type, n]) => `${n} ${type}`).join(', ');
-    process.stderr.write(`${basename(pagePath)}: ${count} elements in ${seconds.toFixed(2)} s` +
+    process.stderr.write(`${basename(pagePath)}: ${count} elements and ${pseudos} pseudo-elements in ${seconds.toFixed(2)} s` +
       `; refused ${kinds || 'no requests'}\n`);
   } finally {
     await browser.close();
@@ -298,11 +366,12 @@ function compare(chromiumPath, snowghostPath) {
     }
   }
   if (left.length !== right.length) {
-    console.log(`element count differs: ${chromiumPath} has ${left.length - 1}, ${snowghostPath} has ${right.length - 1}`);
+    console.log(`line count differs: ${chromiumPath} has ${left.length - 1}, ${snowghostPath} has ${right.length - 1}`);
   }
   const rowsL = [];
   const rowsR = [];
   const shared = Math.min(left.length, right.length);
+  let elements = 0;
   for (let line = 1; line < shared; line++) {
     const l = left[line].split('\t');
     const r = right[line].split('\t');
@@ -312,10 +381,19 @@ function compare(chromiumPath, snowghostPath) {
         return 1;
       }
     }
-    if (l[0] !== r[0] || l[1] !== r[1] || l[0] !== String(line - 1)) {
-      console.log(`first divergence at line ${line + 1}: ${chromiumPath} has element ${l[0]} <${unescape(l[1])}>, ` +
-        `${snowghostPath} has element ${r[0]} <${unescape(r[1])}> (expected index ${line - 1})`);
+    const pseudo = l[1].startsWith('::');
+    const expected = pseudo ? l[0] : String(elements);
+    if (l[0] !== r[0] || l[1] !== r[1] || l[0] !== expected || (pseudo && elements === 0)) {
+      console.log(`first divergence at line ${line + 1}: ${chromiumPath} has ${l[0]} <${unescape(l[1])}>, ` +
+        `${snowghostPath} has ${r[0]} <${unescape(r[1])}>` + (pseudo ? '' : ` (expected element ${elements})`));
       return 1;
+    }
+    if (!pseudo) {
+      if (rowsL.length > elements) {
+        console.log(`line ${line + 1}: element ${l[0]} follows a pseudo-element line`);
+        return 1;
+      }
+      elements++;
     }
     rowsL.push(l);
     rowsR.push(r);
@@ -323,18 +401,21 @@ function compare(chromiumPath, snowghostPath) {
   if (left.length !== right.length) {
     const longer = left.length > right.length ? [chromiumPath, left] : [snowghostPath, right];
     const extra = longer[1][shared].split('\t');
-    console.log(`first divergence at line ${shared + 1}: only ${longer[0]} has element ${extra[0]} <${unescape(extra[1] || '')}>`);
+    console.log(`first divergence at line ${shared + 1}: only ${longer[0]} has ${extra[0]} <${unescape(extra[1] || '')}>`);
     return 1;
   }
 
-  const total = rowsL.length;
+  const lines = rowsL.length;
   let failed = 0;
   const width = Math.max(...PROPERTIES.map((p) => p.length));
   for (let p = 0; p < PROPERTIES.length; p++) {
     const column = p + 2;
     let matched = 0;
+    let total = 0;
     const pairs = new Map();
-    for (let row = 0; row < total; row++) {
+    for (let row = 0; row < lines; row++) {
+      if (row >= elements && rowsL[row][column] === '') continue;
+      total++;
       const a = unescape(rowsL[row][column]);
       const b = unescape(rowsR[row][column]);
       if (valuesEqual(a, b)) {
@@ -360,9 +441,10 @@ function compare(chromiumPath, snowghostPath) {
       }
     }
   }
+  const counted = `${elements} elements and ${lines - elements} pseudo-elements`;
   console.log(failed === 0
-    ? `every property matches on at least ${PASS_PERCENT.toFixed(1)}% of ${total} elements`
-    : `${failed} of ${PROPERTIES.length} properties below ${PASS_PERCENT.toFixed(1)}% on ${total} elements`);
+    ? `every property matches on at least ${PASS_PERCENT.toFixed(1)}% of its cells on ${counted}`
+    : `${failed} of ${PROPERTIES.length} properties below ${PASS_PERCENT.toFixed(1)}% on ${counted}`);
   return failed === 0 ? 0 : 1;
 }
 

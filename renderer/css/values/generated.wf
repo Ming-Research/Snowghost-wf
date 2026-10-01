@@ -1,0 +1,494 @@
+alias Atom = pkg::base::atom::Atom;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+const content_function_words: Array<u8, 21> = "counter counters attr";
+
+const quote_words: Array<u8, 51> = "open-quote close-quote no-open-quote no-close-quote";
+
+const url_word: Array<u8, 3> = "url";
+
+const decimal_word: Array<u8, 7> = "decimal";
+
+const normal_none_words: Array<u8, 11> = "normal none";
+
+fn content_item(kind: u8, text_start: u32, text_end: u32, name: Atom, list_style: Atom) -> made: ContentItem pure {
+  doc "A content item.";
+  return ContentItem(kind: kind, text_start: text_start, text_end: text_end, name: name, list_style: list_style);
+}
+
+fn style_name(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> style: Option<Atom> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "The counter style named by the one identifier from start to end, lowered, as a placeholder atom.";
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+      } else {
+        return None<Atom>();
+      }
+      let shape = shape_of(values: values, at: at);
+      if shape.kind != s_ident {
+        return None<Atom>();
+      }
+      let yes = True();
+      let name = local_name(exp: exp, values: values, span: shape.name, lower: yes);
+      return Some<Atom>(value: name);
+    }
+    None() => {
+      return None<Atom>();
+    }
+  }
+}
+
+fn ident_piece(values: &ComponentList, start: u64, end: u64) -> name: Option<Span> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "The name of the one identifier from start to end, or None.";
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+      } else {
+        return None<Span>();
+      }
+      let shape = shape_of(values: values, at: at);
+      if shape.kind != s_ident {
+        return None<Span>();
+      }
+      return Some<Span>(value: shape.name);
+    }
+    None() => {
+      return None<Span>();
+    }
+  }
+}
+
+fn string_piece(values: &ComponentList, start: u64, end: u64) -> text: Option<Span> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "The value of the one string from start to end, or None.";
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+      } else {
+        return None<Span>();
+      }
+      let shape = shape_of(values: values, at: at);
+      if shape.kind != s_string {
+        return None<Span>();
+      }
+      return Some<Span>(value: shape.name);
+    }
+    None() => {
+      return None<Span>();
+    }
+  }
+}
+
+fn content_function(values: &ComponentList, at: u64, close: u64, which: u64, exp: &Expansion) -> item: Option<ContentItem> reads(values), writes(exp) contract {
+  requires close <= values^.components.inner.len;
+} {
+  doc "Parses counter(name, style?), counters(name, separator, style?) or attr(name) whose contents run from at to close; a counter's style defaults to decimal, a counters() separator is its text, and an attribute name is lowered.";
+  let zero_atom = Atom(index: 0_u32);
+  let pieces = split_pieces(values: values, start: at, end: close);
+  let first_end = bound(values: values, at: pieces.first_end);
+  let second_end = bound(values: values, at: pieces.second_end);
+  let third_end = bound(values: values, at: pieces.third_end);
+  let name_span = match ident_piece(values: values, start: pieces.first_start, end: first_end) {
+    Some(value: s) => {
+      give s;
+    }
+    None() => {
+      return None<ContentItem>();
+    }
+  }
+  let decimal_n = decimal_word.len;
+  if which == 2_u64 {
+    if pieces.count != 1_u64 {
+      return None<ContentItem>();
+    }
+    let yes = True();
+    let name = local_name(exp: exp, values: values, span: name_span, lower: yes);
+    let made = content_item(kind: item_attr, text_start: 0_u32, text_end: 0_u32, name: name, list_style: zero_atom);
+    return Some<ContentItem>(value: made);
+  }
+  let custom = is_custom_ident(values: values, span: name_span);
+  if custom {
+  } else {
+    return None<ContentItem>();
+  }
+  let no = False();
+  let name = local_name(exp: exp, values: values, span: name_span, lower: no);
+  if which == 0_u64 {
+    if pieces.count > 2_u64 {
+      return None<ContentItem>();
+    }
+    let style = if pieces.count == 2_u64 {
+      match style_name(values: values, start: pieces.second_start, end: second_end, exp: exp) {
+        Some(value: s) => {
+          give s;
+        }
+        None() => {
+          return None<ContentItem>();
+        }
+      }
+    } else {
+      give local_word(exp: exp, word: &decimal_word[0_u64..decimal_n]);
+    }
+    let made = content_item(kind: item_counter, text_start: 0_u32, text_end: 0_u32, name: name, list_style: style);
+    return Some<ContentItem>(value: made);
+  }
+  let small = pieces.count < 2_u64;
+  let large = pieces.count > 3_u64;
+  let wrong = bor(small, large);
+  if wrong {
+    return None<ContentItem>();
+  }
+  let separator = match string_piece(values: values, start: pieces.second_start, end: second_end) {
+    Some(value: s) => {
+      give s;
+    }
+    None() => {
+      return None<ContentItem>();
+    }
+  }
+  let (text_start, text_end) = side_text(exp: exp, values: values, span: separator);
+  let style = if pieces.count == 3_u64 {
+    match style_name(values: values, start: pieces.third_start, end: third_end, exp: exp) {
+      Some(value: s) => {
+        give s;
+      }
+      None() => {
+        return None<ContentItem>();
+      }
+    }
+  } else {
+    give local_word(exp: exp, word: &decimal_word[0_u64..decimal_n]);
+  }
+  let made = content_item(kind: item_counters, text_start: text_start, text_end: text_end, name: name, list_style: style);
+  return Some<ContentItem>(value: made);
+}
+
+fn content_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses content: normal and none as keywords, or a list of strings, counter(), counters(), attr(), the four quote keywords and url() images, then optionally a solidus and alternative text of strings, counter(), counters() and attr(), which follows an item_alt marker in the list.";
+  let zero_atom = Atom(index: 0_u32);
+  let words_n = normal_none_words.len;
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+        let found = word_at(values: values, at: at, list: &normal_none_words[0_u64..words_n]);
+        match found {
+          Some(value: i) => {
+            let keyword = if i == 0_u64 {
+              give keyword_normal;
+            } else {
+              give keyword_none;
+            }
+            let made = Declared::Keyword(keyword: keyword);
+            return Some<Declared>(value: made);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let first = exp^.side.content_items.inner.len;
+  let alternative = False();
+  let main_items = 0_u64;
+  let alt_items = 0_u64;
+  let span = end -sat start;
+  let position = start;
+  let quote_n = quote_words.len;
+  let function_n = content_function_words.len;
+  let url_n = url_word.len;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    let item = if shape.kind == s_string {
+      let (a, b) = side_text(exp: exp, values: values, span: shape.name);
+      let made = content_item(kind: item_string, text_start: a, text_end: b, name: zero_atom, list_style: zero_atom);
+      give Some<ContentItem>(value: made);
+    } else if shape.kind == s_url {
+      if alternative {
+        return None<Declared>();
+      }
+      let (a, b) = side_text(exp: exp, values: values, span: shape.name);
+      let made = content_item(kind: item_url, text_start: a, text_end: b, name: zero_atom, list_style: zero_atom);
+      give Some<ContentItem>(value: made);
+    } else if shape.kind == s_ident {
+      if alternative {
+        return None<Declared>();
+      }
+      let found = span_word(values: values, span: shape.name, list: &quote_words[0_u64..quote_n]);
+      match found {
+        Some(value: i) => {
+          let offset_kind = cvt.wrap::<u64, u8>(i);
+          let kind = item_open_quote +sat offset_kind;
+          let made = content_item(kind: kind, text_start: 0_u32, text_end: 0_u32, name: zero_atom, list_style: zero_atom);
+          give Some<ContentItem>(value: made);
+        }
+        None() => {
+          return None<Declared>();
+        }
+      }
+    } else if shape.kind == s_function {
+      let contents = at +sat 1_u64;
+      let close_wide = cvt::<u32, u64>(shape.end);
+      let close = bound(values: values, at: close_wide);
+      let inner = bound(values: values, at: contents);
+      let is_url = span_is(values: values, span: shape.name, word: &url_word[0_u64..url_n]);
+      if is_url {
+        if alternative {
+          return None<Declared>();
+        }
+        match string_piece(values: values, start: inner, end: close) {
+          Some(value: text) => {
+            let (a, b) = side_text(exp: exp, values: values, span: text);
+            let made = content_item(kind: item_url, text_start: a, text_end: b, name: zero_atom, list_style: zero_atom);
+            give Some<ContentItem>(value: made);
+          }
+          None() => {
+            return None<Declared>();
+          }
+        }
+      } else {
+        match span_word(values: values, span: shape.name, list: &content_function_words[0_u64..function_n]) {
+          Some(value: which) => {
+            match content_function(values: values, at: inner, close: close, which: which, exp: exp) {
+              Some(value: made) => {
+                give Some<ContentItem>(value: made);
+              }
+              None() => {
+                return None<Declared>();
+              }
+            }
+          }
+          None() => {
+            return None<Declared>();
+          }
+        }
+      }
+    } else if shape.kind == s_delim {
+      let slash = shape.code == 47_u32;
+      let not_slash = bnot(slash);
+      let opened = bor(alternative, not_slash);
+      let empty = main_items == 0_u64;
+      let refused = bor(opened, empty);
+      if refused {
+        return None<Declared>();
+      }
+      set alternative = True();
+      let made = content_item(kind: item_alt, text_start: 0_u32, text_end: 0_u32, name: zero_atom, list_style: zero_atom);
+      give Some<ContentItem>(value: made);
+    } else {
+      return None<Declared>();
+    }
+    match item {
+      Some(value: made) => {
+        put::<ContentItem>(cell: &exp^.side.content_items, value: made);
+        if made.kind != item_alt {
+          if alternative {
+            set alt_items = alt_items +sat 1_u64;
+          } else {
+            set main_items = main_items +sat 1_u64;
+          }
+        }
+      }
+      None() => {
+      }
+    }
+    set position = next;
+  }
+  if main_items == 0_u64 {
+    return None<Declared>();
+  }
+  let no_alt = alt_items == 0_u64;
+  let dangling = band(alternative, no_alt);
+  if dangling {
+    return None<Declared>();
+  }
+  let last = exp^.side.content_items.inner.len;
+  let lifted_1 = to_u32(value: first);
+  let lifted_2 = to_u32(value: last);
+  let list = ContentList(first: lifted_1, end: lifted_2);
+  let index = exp^.side.content_lists.inner.len;
+  put::<ContentList>(cell: &exp^.side.content_lists, value: list);
+  let lifted_3 = to_u32(value: index);
+  let made = Declared::Stored(kind: stored_content, index: lifted_3);
+  return Some<Declared>(value: made);
+}
+
+fn counters_value(values: &ComponentList, start: u64, end: u64, longhand: u8, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses counter-reset, counter-increment or counter-set: none as the keyword none, or counter names each with an optional integer, which defaults to 1 for counter-increment and 0 otherwise.";
+  let none_n = none_word.len;
+  let default_value = if longhand == lh_counter_increment {
+    give 1_i32;
+  } else {
+    give 0_i32;
+  }
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+        let is_none = ident_is(values: values, at: at, word: &none_word[0_u64..none_n]);
+        if is_none {
+          let made = Declared::Keyword(keyword: keyword_none);
+          return Some<Declared>(value: made);
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let first = exp^.side.counter_changes.inner.len;
+  let open = False();
+  let name = Atom(index: 0_u32);
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    if shape.kind == s_ident {
+      if open {
+        let change = CounterChange(name: name, value: default_value);
+        put::<CounterChange>(cell: &exp^.side.counter_changes, value: change);
+      }
+      let custom = is_custom_ident(values: values, span: shape.name);
+      let is_none = span_is(values: values, span: shape.name, word: &none_word[0_u64..none_n]);
+      let not_none = bnot(is_none);
+      let usable = band(custom, not_none);
+      if usable {
+      } else {
+        return None<Declared>();
+      }
+      let no = False();
+      set name = local_name(exp: exp, values: values, span: shape.name, lower: no);
+      set open = True();
+    } else if shape.kind == s_number {
+      let whole = band(open, shape.integer);
+      if whole {
+      } else {
+        return None<Declared>();
+      }
+      let high = fmin(shape.value, 2147483647.0_f64);
+      let clamped = fmax(high, -2147483648.0_f64);
+      let representable = cvt.defined::<f64, i32>(clamped);
+      let amount = if representable {
+        give cvt::<f64, i32>(clamped);
+      } else {
+        give 0_i32;
+      }
+      let change = CounterChange(name: name, value: amount);
+      put::<CounterChange>(cell: &exp^.side.counter_changes, value: change);
+      set open = False();
+    } else {
+      return None<Declared>();
+    }
+    set position = next;
+  }
+  if open {
+    let change = CounterChange(name: name, value: default_value);
+    put::<CounterChange>(cell: &exp^.side.counter_changes, value: change);
+  }
+  let last = exp^.side.counter_changes.inner.len;
+  if last <= first {
+    return None<Declared>();
+  }
+  let lifted_4 = to_u32(value: first);
+  let lifted_5 = to_u32(value: last);
+  let list = CounterList(first: lifted_4, end: lifted_5);
+  let index = exp^.side.counter_lists.inner.len;
+  put::<CounterList>(cell: &exp^.side.counter_lists, value: list);
+  let lifted_6 = to_u32(value: index);
+  let made = Declared::Stored(kind: stored_counters, index: lifted_6);
+  return Some<Declared>(value: made);
+}
+
+fn quotes_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses quotes: auto and none as keywords, or pairs of strings, open then close.";
+  let auto_n = size_auto_word.len;
+  let none_n = none_word.len;
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < values^.components.inner.len;
+      if inside {
+        let is_auto = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+        if is_auto {
+          let made = Declared::Keyword(keyword: keyword_auto);
+          return Some<Declared>(value: made);
+        }
+        let is_none = ident_is(values: values, at: at, word: &none_word[0_u64..none_n]);
+        if is_none {
+          let made = Declared::Keyword(keyword: keyword_none);
+          return Some<Declared>(value: made);
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let first = exp^.side.quote_pairs.inner.len;
+  let open = False();
+  let open_start = 0_u32;
+  let open_end = 0_u32;
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let shape = shape_of(values: values, at: at);
+    if shape.kind != s_string {
+      return None<Declared>();
+    }
+    let (a, b) = side_text(exp: exp, values: values, span: shape.name);
+    if open {
+      let pair = QuotePair(open_start: open_start, open_end: open_end, close_start: a, close_end: b);
+      put::<QuotePair>(cell: &exp^.side.quote_pairs, value: pair);
+      set open = False();
+    } else {
+      set open_start = a;
+      set open_end = b;
+      set open = True();
+    }
+    set position = next;
+  }
+  if open {
+    return None<Declared>();
+  }
+  let last = exp^.side.quote_pairs.inner.len;
+  if last <= first {
+    return None<Declared>();
+  }
+  let lifted_7 = to_u32(value: first);
+  let lifted_8 = to_u32(value: last);
+  let list = QuoteList(first: lifted_7, end: lifted_8);
+  let index = exp^.side.quote_lists.inner.len;
+  put::<QuoteList>(cell: &exp^.side.quote_lists, value: list);
+  let lifted_9 = to_u32(value: index);
+  let made = Declared::Stored(kind: stored_quotes, index: lifted_9);
+  return Some<Declared>(value: made);
+}

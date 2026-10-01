@@ -315,6 +315,24 @@ public const quotes_auto: u32 = 0_u32;
 
 public const quotes_none: u32 = 1_u32;
 
+public const item_url: u8 = 8_u8;
+
+public const item_alt: u8 = 9_u8;
+
+public const stored_tracks: u8 = 0_u8;
+
+public const stored_areas: u8 = 1_u8;
+
+public const stored_line: u8 = 2_u8;
+
+public const stored_content: u8 = 3_u8;
+
+public const stored_counters: u8 = 4_u8;
+
+public const stored_quotes: u8 = 5_u8;
+
+public const stored_spacing: u8 = 6_u8;
+
 public struct Lengths {
   public px: f32;
   public em: f32;
@@ -339,6 +357,8 @@ public enum Declared {
   ListStyle(public name: Atom);
   Wide(public keyword: u8);
   Pending(public sheet: u32, public start: u32, public end: u32, public shorthand: u8);
+  Ratio(public auto: Bool, public width: f32, public height: f32);
+  Stored(public kind: u8, public index: u32);
 }
 
 public struct Declaration {
@@ -352,9 +372,36 @@ public struct Family {
   public generic: Bool;
 }
 
+public struct DeclaredBreadth {
+  public kind: u8;
+  public value: Lengths;
+  public flex: f32;
+}
+
+public struct DeclaredTrack {
+  public min: DeclaredBreadth;
+  public max: DeclaredBreadth;
+  public fit_content: Bool;
+  public names_before: LineNames;
+}
+
 public struct DeclarationStore {
   public readonly declarations: Box<Slots<Declaration>>;
   public readonly families: Box<Slots<Family>>;
+  public readonly tracks: Box<Slots<DeclaredTrack>>;
+  public readonly track_lists: Box<Slots<TrackList>>;
+  public readonly line_names: Box<Slots<Atom>>;
+  public readonly area_maps: Box<Slots<AreaMap>>;
+  public readonly named_areas: Box<Slots<NamedArea>>;
+  public readonly grid_lines: Box<Slots<GridLine>>;
+  public readonly content_lists: Box<Slots<ContentList>>;
+  public readonly content_items: Box<Slots<ContentItem>>;
+  public readonly counter_lists: Box<Slots<CounterList>>;
+  public readonly counter_changes: Box<Slots<CounterChange>>;
+  public readonly quote_lists: Box<Slots<QuoteList>>;
+  public readonly quote_pairs: Box<Slots<QuotePair>>;
+  public readonly text: Box<Slots<u8>>;
+  public readonly spacings: Box<Slots<Lengths>>;
 }
 
 public enum ValuesError {
@@ -414,7 +461,8 @@ public struct SizeGroup {
   public max_width: Sizing;
   public max_height: Sizing;
   public aspect_auto: Bool;
-  public aspect_ratio: f32;
+  public aspect_width: f32;
+  public aspect_height: f32;
   public top: Sizing;
   public right: Sizing;
   public bottom: Sizing;
@@ -497,6 +545,7 @@ public struct TrackList {
   public first: u32;
   public end: u32;
   public repeat_kind: u8;
+  public repeat_names_before: LineNames;
   public repeat_first: u32;
   public repeat_end: u32;
   public repeat_names_after: LineNames;
@@ -609,21 +658,23 @@ public struct ContentGroup {
 
 public fn declaration_store_new() -> made: DeclarationStore pure doc "Returns a store that holds no declaration and no family name.";
 
-public fn longhand_of(name: &[u8]) -> found: Option<u8> reads(name) doc "Returns the longhand whose CSS name is name, ASCII case-insensitively, or None for a name that is no longhand in scope.";
+public fn longhand_of(name: &[u8]) -> found: Option<u8> reads(name) doc "Returns the longhand whose CSS name is name, ASCII case-insensitively, or one of the aliases word-wrap, grid-row-gap and grid-column-gap names, or None for a name that is no longhand in scope.";
 
-public fn longhand_inherited(longhand: u8) -> inherited: Bool pure doc "Returns whether the longhand is inherited: visibility, the font longhands, color, text-align, text-indent, text-transform, white-space, letter-spacing, word-spacing and list-style-type.";
+public fn longhand_inherited(longhand: u8) -> inherited: Bool pure doc "Returns whether the longhand is inherited: visibility, the font longhands, color, text-align, text-indent, text-transform, white-space, letter-spacing, word-spacing, list-style-type, border-collapse, border-spacing, caption-side, quotes, list-style-position, overflow-wrap and word-break.";
 
 public fn keyword_count(longhand: u8) -> count: u64 pure doc "Returns how many keywords the longhand's keyword list holds, 0 for a longhand with none.";
 
 public fn put_keyword(out: &Box<Slots<u8>>, longhand: u8, keyword: u8) -> result: unit writes(out) doc "Appends the CSS spelling of keyword number keyword of the longhand's keyword list to out, as Chromium serializes it; appends nothing for a keyword out of the list.";
 
-public fn parse_declaration(values: &ComponentList, name: Span, range: ComponentRange, important: Bool, sheet: u32, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<u64, ValuesError> reads(values), writes(atoms), writes(store) doc "Parses one declaration of a style rule or style attribute whose name is name and whose value is the component values of values in range, as pkg::css::rules gives it, and appends a Declaration for each longhand it sets: one for a longhand in scope, one per longhand for a shorthand in scope (margin, padding, border, border-top, border-right, border-bottom, border-left, border-width, border-style, border-color, font, background, overflow, list-style, text-decoration, inset), each with important. Keywords are numbered by the longhand's keyword list, with keyword_auto, keyword_none, keyword_normal, keyword_bolder and keyword_lighter for those words where a grammar mixes them with lengths or numbers; text-decoration-line is a Keyword holding its decoration bits; font-weight normal and bold are the Numbers 400 and 700; font-size keywords are numbered by their list, xx-small to smaller; thin, medium and thick border widths are 1, 3 and 5 px. A value that holds a var() function is not parsed: every longhand it sets gets Pending with its sheet and range and the shorthand's number (255 for a longhand), to be substituted and parsed per element. initial, inherit and unset give Wide; revert is taken as unset. Returns the number of declarations appended, 0 for an unknown name or an invalid value. TooLarge when the store would pass 2^32 - 1 entries.";
+public fn parse_declaration(values: &ComponentList, name: Span, range: ComponentRange, important: Bool, sheet: u32, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<u64, ValuesError> reads(values), writes(atoms), writes(store) doc "Parses one declaration of a style rule or style attribute whose name is name and whose value is the component values of values in range, as pkg::css::rules gives it, and appends a Declaration for each longhand it sets: one for a longhand in scope or one of its aliases (word-wrap, grid-row-gap, grid-column-gap), one per longhand for a shorthand in scope (margin, padding, border, border-top, border-right, border-bottom, border-left, border-width, border-style, border-color, font, background, overflow, list-style with its type and position, text-decoration, inset, flex, flex-flow, gap and its alias grid-gap, place-items, place-content, place-self, grid-template, grid, grid-area, grid-row, grid-column), each with important. Keywords are numbered by the longhand's keyword list, with keyword_auto, keyword_none, keyword_normal, keyword_bolder and keyword_lighter for those words where a grammar mixes them with lengths or numbers; text-decoration-line is a Keyword holding its decoration bits and grid-auto-flow one holding flow_column and flow_dense; the six alignment longhands are Keywords numbered by the align_ constants, first baseline being baseline, safe and unsafe dropped, legacy with a direction being legacy; font-weight normal and bold are the Numbers 400 and 700; font-size keywords are numbered by their list, xx-small to smaller; thin, medium and thick border widths are 1, 3 and 5 px; an explicit 0% keeps its percentage as negative zero. A value of variable length is a Stored value naming one entry of the store's side stores by its kind: a track list (grid-template-columns, grid-template-rows, grid-auto-columns, grid-auto-rows, integer repeat() expanded and one auto-fill or auto-fit repeat() kept as the list's repeated range), an area map, a grid line, a content list (an item_alt item separating the alternative text), a counter list, a quote list, or two border-spacing lengths; names in them are interned in atoms. aspect-ratio is Ratio or the keyword auto, and none, normal and auto where those longhands allow them are Keywords. A value that holds a var() function is not parsed: every longhand it sets gets Pending with its sheet and range and the shorthand's number (255 for a longhand), to be substituted and parsed per element. initial, inherit and unset give Wide; revert is taken as unset. Returns the number of declarations appended, 0 for an unknown name or an invalid value. TooLarge when the store would pass 2^32 - 1 entries.";
 
-public fn parse_pending(values: &ComponentList, range: ComponentRange, shorthand: u8, longhand: u8) -> result: Option<Declared> reads(values) doc "Parses the component values in range, a var()-free value after substitution, as the shorthand numbered shorthand (255 for the longhand itself) and returns the declared value it gives longhand, or None when the value is invalid, which makes the declaration invalid at computed-value time. It reads nothing shared, so the parallel loops call it per element; font-family and list-style-type, whose values name atoms, give None here and are parsed by parse_pending_named.";
+public fn parse_pending(values: &ComponentList, range: ComponentRange, shorthand: u8, longhand: u8) -> result: Option<Declared> reads(values) doc "Parses the component values in range, a var()-free value after substitution, as the shorthand numbered shorthand (255 for the longhand itself) and returns the declared value it gives longhand, or None when the value is invalid, which makes the declaration invalid at computed-value time. It reads nothing shared, so the parallel loops call it per element; font-family, list-style-type and every longhand whose value is Stored, which need the shared atoms or store, give None here and are parsed by parse_pending_named.";
 
-public fn parse_pending_named(values: &ComponentList, range: ComponentRange, shorthand: u8, longhand: u8, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<Option<Declared>, ValuesError> reads(values), writes(atoms), writes(store) doc "Parses as parse_pending does for every longhand, interning the names of font-family and list-style-type in atoms and appending font-family lists to store; the pass in document order calls it, since both longhands are inherited. TooLarge when the store or atoms would pass 2^32 - 1 entries.";
+public fn parse_pending_named(values: &ComponentList, range: ComponentRange, shorthand: u8, longhand: u8, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<Option<Declared>, ValuesError> reads(values), writes(atoms), writes(store) doc "Parses as parse_pending does for every longhand, interning the names of font-family, list-style-type and Stored values in atoms and appending font-family lists and Stored values' side entries to store; the pass in document order calls it, since it writes shared tables. TooLarge when the store or atoms would pass 2^32 - 1 entries.";
 
 public fn parse_length(values: &ComponentList, range: ComponentRange, allow_percent: Bool, allow_negative: Bool) -> result: Option<Lengths> reads(values) doc "Parses the component values in range, surrounded by optional whitespace, as one <length>, or <length-percentage> when allow_percent holds, the number 0 or a calc() of them, refusing a negative value outside calc() unless allow_negative holds; for a media feature's value and the like.";
+
+public fn declaration_store_side_copy(from: &DeclarationStore) -> result: Result<DeclarationStore, ValuesError> reads(from) doc "Returns a store with no declaration that holds from's family names and side stores at the same indices, so every Families and Stored value of from reads the same entries in it. TooLarge when a table would pass 2^32 - 1 entries.";
 
 public fn append_family(store: &DeclarationStore, family: Family) -> result: Result<unit, ValuesError> writes(store) doc "Appends family to store's family names; TooLarge when the store would pass 2^32 - 1 of them.";
 
