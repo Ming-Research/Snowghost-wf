@@ -60,6 +60,23 @@ example apart from the renderer code that exposed it
   only contracts read, erased by lowering. Reopen when that lands or the
   calls' cost shows in a profile.
 
+- **Proving an index that points at an ancestor costs seconds per loop.**
+  Minimal example: after a loop that derives each element's depth from its
+  parent, a loop over the elements sets `owners[e]` to `e` or to
+  `owners[parents[e]]` with the invariant
+  `depths[owners[e]] <= depths[e]` for every `e` already visited; that
+  invariant takes Whitefoot 12.5 s to check, and took 392.6 s when the
+  owners were written in the depth loop itself
+  (`research/investigations/unique-keys/owner_loop.wf` and POINTWISE.md's
+  "Snowghost's inherited pass" in mbbill/Whitefoot#203). The real style
+  stage's pass in document order needs that fact to run as a level loop:
+  each element reads the custom-property set of its parent's owner while
+  the level writes the sets of the elements that declare their own, and
+  the fact separates the two. Whitefoot records the cause in its
+  `docs/todo.md`, "The range judgment splits every open read pair".
+  Change: a derivation that skips the read pairs a contradiction does not
+  use. Reopen when that lands, before the pass is rewritten.
+
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
   `O_NOFOLLOW`, and `std::fs::open_read`, which follows links, takes a

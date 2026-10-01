@@ -1060,59 +1060,71 @@ document order. Its level loop is parallel only because Whitefoot can now
 prove that two elements of one level are distinct and that a parent lies
 one level above its element: range facts and the `apart` certificate of
 mbbill/Whitefoot#203, whose derivation and limits are in that repository's
-`research/investigations/unique-keys/POINTWISE.md`. `cascade_levels` derives
-the facts each time it runs, with a validating depth walk and a grouping by
-depth whose loop invariants state them, and `cascade_level`'s requirements
-carry them into the level loop, whose certificate is empty.
+`research/investigations/unique-keys/POINTWISE.md`. `level_index` derives
+the facts each time the stage runs, with a validating depth walk and a
+grouping by depth whose loop invariants state them, and hands them back as
+range postconditions of the `LevelIndex` it returns under `Some`;
+`cascade_levels` calls it and passes them to `cascade_level`'s
+requirements, which carry them into the level loop, whose certificate is
+empty.
 
 No criterion was written before these measurements, so they decide nothing:
 they show what the port costs and gains, and `design/pipeline/style.md`
 keeps the sequential cascade until that pull request reaches Whitefoot's
-main (`docs/todo.md`). Everything below was run at Snowghost 414cd5e and
-a6d65c8, whose `renderer/` is that of 399661d, with the pinned compiler,
-Whitefoot 145f6e9e (binary 3405311b79e98de1), on the four-processor
-development machine.
+main (`docs/todo.md`). Everything below was run at Snowghost 5a01982 with
+the pinned compiler, Whitefoot 4a58c4d8 (binary 719d9ad47d00fd81), on the
+four-processor development machine; runs 22 to 25 hold the same
+measurements at 414cd5e and a6d65c8, before `level_index` moved into a
+function of its own, with Whitefoot 145f6e9e.
 
 - **Correctness.** `run.sh check` agrees on all six pages present on this
   host, in the `--par` and the sequential build, with every checksum equal
-  to run 16's at 0c66df9, and on a page whose deepest element lies at
-  `depth_ceiling` (`runs/22-style-check-a6d65c8.txt`); `check` compares A,
-  B and D with C element by element. apollo11 is absent here. An earlier D
-  refused that page, which the traversal and C accept; a D left with its
-  roots' level uncascaded fails `check` with exit 1
+  to run 16's at 0c66df9 and run 22's, and on a page whose deepest element
+  lies at `depth_ceiling` (`runs/26-style-check-5a01982.txt`); `check`
+  compares A, B and D with C element by element. apollo11 is absent here.
+  An earlier D refused that page, which the traversal and C accept; a D
+  left with its roots' level uncascaded fails `check` with exit 1
   (`runs/25-style-ceiling-and-control-399661d.txt`).
+- **The producer's facts.** `level_index` proves its `listed` and `up`
+  postconditions at its `Some` return, and `cascade_levels` holds them in
+  the `Some` arm of its match; without the `listed` postcondition the call
+  of `cascade_level` is rejected, and without the grouping loop's `grouped`
+  invariant the return is (`runs/29-level-index-controls-5a01982.txt`).
 - **Permission.** `--par-ledger` permits D's level loop (`shapes.wf:296`,
   one accumulator under `band`) and splits it; C's cascade loop stays
-  denied, as do D's depth walk, its grouping and its loop over levels, each
-  of which depends on what earlier iterations wrote
-  (`runs/24-style-ledger-414cd5e.txt`).
+  denied, as do `level_index`'s depth walk and grouping and
+  `cascade_levels`' loop over levels, each of which depends on what earlier
+  iterations wrote (`runs/27-style-ledger-5a01982.txt`).
 - **Cost.** The style stage, C against D, and the cascade alone over one
   match, `cascade-c` against `cascade-d`, the best of five runs under the
-  check lock (`runs/23-style-shape-d-414cd5e.txt`), seconds:
+  check lock (`runs/28-style-shape-d-5a01982.txt`), seconds:
 
 | Page | C seq | C W4 | D seq | D W4 | cascade-c seq | cascade-c W4 | cascade-d seq | cascade-d W4 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| ecma262 | 0.7967 | 0.2600 | 0.8133 | 0.2600 | 0.0417 | 0.0417 | 0.0520 | 0.0347 |
-| html5 | 0.6733 | 0.2100 | 0.6733 | 0.2100 | 0.0178 | 0.0177 | 0.0127 | 0.0062 |
-| flat | 0.0095 | 0.0046 | 0.0097 | 0.0038 | 0.0013 | 0.0013 | 0.0014 | 0.0008 |
-| unbalanced | 0.0048 | 0.0023 | 0.0048 | 0.0019 | 0.0006 | 0.0006 | 0.0007 | 0.0004 |
+| ecma262 | 0.6800 | 0.2300 | 0.7033 | 0.2367 | 0.0392 | 0.0403 | 0.0565 | 0.0340 |
+| html5 | 0.5967 | 0.1833 | 0.5700 | 0.1800 | 0.0202 | 0.0190 | 0.0152 | 0.0068 |
+| flat | 0.0087 | 0.0045 | 0.0090 | 0.0039 | 0.0012 | 0.0011 | 0.0013 | 0.0009 |
+| unbalanced | 0.0042 | 0.0021 | 0.0042 | 0.0019 | 0.0006 | 0.0006 | 0.0006 | 0.0004 |
 
   The deep and paragraph pages stay below the timer's resolution in every
-  build.
+  build. Run 23 measured the cascade before `level_index` became a
+  function, on another host (`Linux 6.18.44-fc-v50` against `fc-v51`), so
+  the two runs are not compared.
 
-- **What it shows.** At four workers D's cascade is 1.20 times faster than
-  C's on ecma262, 2.85 times on html5, 1.6 on flat and 1.5 on unbalanced;
+- **What it shows.** At four workers D's cascade is 1.19 times faster than
+  C's on ecma262, 2.79 times on html5, 1.2 on flat and 1.5 on unbalanced;
   `cascade-d` includes the depth walk and the grouping, which stay
-  sequential. The cascade is 5 percent of C's sequential style stage on
-  ecma262 and 2.6 percent on html5, which matching dominates, and 14 and
-  12.5 percent on flat and unbalanced. Over the whole stage at four workers
-  D saves 0.0008 s on flat and 0.0004 s on unbalanced, where its cascade
-  gains 0.0005 s and 0.0002 s; on the real pages C and D take the same time, 0.2600 s on ecma262
-  and 0.2100 s on html5, and this run does not separate the cascade's gain,
-  0.007 s and 0.012 s, from the variation of the match around it. In the
-  sequential build D's cascade is slower than C's on ecma262 (0.0520 s
-  against 0.0417 s) and faster on html5 (0.0127 s against 0.0178 s);
-  neither difference was attributed further.
+  sequential. The cascade is 5.8 percent of C's sequential style stage on
+  ecma262 and 3.4 percent on html5, which matching dominates, and 14
+  percent on flat and unbalanced. Over the whole stage at four workers D
+  saves 0.0006 s on flat and 0.0002 s on unbalanced, where its cascade
+  gains 0.0002 s each; on the real pages D takes 0.2367 s against C's
+  0.2300 s on ecma262 and 0.1800 s against 0.1833 s on html5, and this run
+  does not separate the cascade's gain, 0.006 s and 0.012 s, from the
+  variation of the match around it. In the sequential build D's cascade is
+  slower than C's on ecma262 (0.0565 s against 0.0392 s) and faster on
+  html5 (0.0152 s against 0.0202 s); neither difference was attributed
+  further.
 - **Port cost.** `cascade_level` takes `positions`, `depths` and `level`
   only so its requirements can name them, and its call of
   `cascade_element` moved into `cascade_into`, because Whitefoot's counted
