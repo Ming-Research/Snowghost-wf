@@ -1,11 +1,10 @@
 # Shared vocabulary
 
-Status: revised after the concurrency investigation and brought to the
-owner. Proposals 1 to 5 are in the design tree as draft decisions
-(`design/vocabulary.md`, `design/pipeline/style.md` and
-`design/pipeline/layout.md`), each awaiting the owner's ruling; proposal 6
-waits for the first paint prototype. Nothing here is decided until the log
-records the ruling.
+Status: revised after the concurrency investigation; the owner approved
+its draft decisions on 2026-10-01 (`design/log.md`), recorded in
+`design/vocabulary.md`, `design/pipeline/style.md` and
+`design/pipeline/layout.md`, several of them provisional. Proposal 6 waits
+for the first paint prototype.
 
 ## Question
 
@@ -49,7 +48,7 @@ in Whitefoot alongside the range-length diagnostic work.
 ## Proposal
 
 Each item says what the concurrency investigation's measurements changed and
-where its draft decision stands.
+where its decision stands.
 
 1. **Two storage regimes.**
    - **The document is an arena.** Nodes live in a `Box<Slots<Node>>` indexed
@@ -57,7 +56,7 @@ where its draft decision stands.
      sibling links as indices. Script and the parser need random access by
      identity and mutation anywhere, which an owned tree cannot give.
      `pkg::dom` implements it, and the HTML tree builder, judged
-     by the tree-construction tests (`make oracle-html-tree`), builds on it. Draft decision in `design/vocabulary.md`.
+     by the tree-construction tests (`make oracle-html-tree`), builds on it. Decision in `design/vocabulary.md`.
    - **Layout data is an owned tree of formatting contexts.** The layout
      measurement retired the context as the unit of parallel work: one block
      formatting context holds 85 to 95 percent of each real page's text, so
@@ -66,7 +65,7 @@ where its draft decision stands.
      tree, and nothing measured argues against it as storage for static
      rendering; whether a context is also the unit of memoization and
      invalidation is the open question the first incremental prototype
-     decides. Draft decision, provisional, in `design/pipeline/layout.md`.
+     decides. Decision, provisional, in `design/pipeline/layout.md`.
 2. **Stage outputs in document order.** Superseded. The style measurement
    compared the level order proposed here (A) with halving the preorder (B)
    and with matching every element in one counted loop in document order
@@ -75,7 +74,7 @@ where its draft decision stands.
    median real page, and C needs no second order map. A rule index then
    made the style stage at four workers 1.3 to 3.2 times faster on the three
    real pages, and a table of sibling positions a further 4.1 times on
-   html5, each measured against its predecessor in one run. Draft decisions in `design/pipeline/style.md`. Writing through an
+   html5, each measured against its predecessor in one run. Decisions in `design/pipeline/style.md`. Writing through an
    index array (`styles[order[k]]`) still needs a permutation proof
    Whitefoot does not derive, so every stage writes its outputs in the order
    it computes them.
@@ -84,7 +83,7 @@ where its draft decision stands.
    and comparison, and layouts that do not depend on floating-point rounding.
    `pkg::base::geometry` implements it with `Point`, `Size`, `Rect` and
    `Sides`; conversion from CSS lengths rounds once, at computed-value time.
-   Nothing measured bears on it. Draft decision in `design/vocabulary.md`.
+   Nothing measured bears on it. Decision in `design/vocabulary.md`.
 4. **Computed styles are interned.** Computed values are grouped (box, text,
    font, background, border, margin and padding, position), each group
    interned in a style store and named by a `u32` identifier. An element's
@@ -99,7 +98,7 @@ where its draft decision stands.
    criterion's 15 percent bound, so the pass is measured again on the real
    style stage. The groups themselves are the proposal's and are revisited
    when real computed values replace the prototype's four placeholder
-   groups. Draft decision, provisional on both, in `design/vocabulary.md`.
+   groups. Decision, provisional on both, in `design/vocabulary.md`.
 5. **Text is UTF-8 and names are atoms.** Text content lives in one byte
    arena per document addressed by `u32` spans. `pkg::dom` stores UTF-8; the
    widening to WTF-8, UTF-8 that also encodes lone surrogates as Servo
@@ -107,7 +106,7 @@ where its draft decision stands.
    surrogate, so it waits for script. Tag, attribute and property names are
    atoms: `u32` indices into an atom table, with the names the renderer
    knows given fixed indices by a generated table (`pkg::base::atom` and
-   `pkg::base::static_atoms`). Draft decisions in `design/vocabulary.md`.
+   `pkg::base::static_atoms`). Decisions in `design/vocabulary.md`.
 6. **The display list is flat per stacking context.** Paint emits, per
    stacking context, an array of items (rectangles, borders, text runs,
    images) that refer to clip and transform nodes by index, and to fonts and
@@ -120,13 +119,13 @@ where its draft decision stands.
 ## Open questions
 
 - **Tree levels versus formatting contexts for style.** Answered in the
-  draft: neither.
+  tree: neither.
   Style matches in document order (proposal 2), and an element's cascade
   depends on its parent, not on its formatting context.
 - **Fragment storage.** Whether fragments live inside each formatting
   context's node (simple, local) or in per-frame arrays handed to paint
   (easier to send to the shell) is decided by the first paint prototype.
-- **Floats and margin collapsing.** Answered in the draft for layout's
+- **Floats and margin collapsing.** Answered in the tree for layout's
   parallel work:
   paragraphs are broken before floats are placed and broken again exactly
   where a float narrows them (the `pipeline` tree), and the block pass is
@@ -137,16 +136,19 @@ where its draft decision stands.
   investigation's open question. The first incremental prototype decides
   it.
 - **The cascade pass's order.** The cascade runs in document order, which
-  orders siblings that depend only on their common parent. Its share of the
-  style stage is not measured; when real computed values make it
-  substantial, cascading each tree level, or each parent's children, in a
-  counted loop is the alternative.
+  orders siblings that depend only on their common parent. Cascading each
+  tree level in parallel straight into document order writes through
+  indices that are distinct but that Whitefoot cannot prove distinct; the
+  owner sent that capability to its own Whitefoot investigation, with an
+  affine key minted only by its container as the leading candidate
+  (`docs/todo.md`, Whitefoot requirements). The pass's cost is measured on
+  the real cascade meanwhile.
 
 ## Next steps
 
 The first vocabulary modules are written: `pkg::base::geometry`,
 `pkg::base::atom` and `pkg::dom`, with the HTML tokenizer and tree builder
-built against them. After the owner's ruling on the draft decisions, the
+built against them. With these decisions approved, the
 first milestone, headless static rendering, needs the stages in order:
 
 - the style stage with real computed values: specificity, importance and

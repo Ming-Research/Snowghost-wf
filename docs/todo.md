@@ -11,6 +11,23 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
 
+- **A write through indices the program knows are distinct cannot be
+  proved disjoint.** Minimal example: a tree in an arena, each node's
+  children's indices kept in its own list, built in one pass in index
+  order, so every index appears in exactly one list; a counted loop over
+  one level's nodes writes `results[child]` for each of their children.
+  The writes never collide, but Whitefoot sees integers read from storage
+  and cannot prove them distinct, so the loop cannot run in parallel. It
+  keeps the style stage's cascade a sequential pass in document order
+  (`design/pipeline/style.md`), and the layout builder's map from node to
+  style index is the same scatter. The owner prefers a mechanism that
+  works for any container (array, hash map, arena), needs no restricted
+  container operations and costs nothing at run time; the candidate is an
+  affine key that only its container mints, so that two places hold two
+  different keys, studied in Whitefoot as its own investigation against
+  monotone containers and a built-in partition. Reopen the cascade when
+  Whitefoot settles it.
+
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
   `O_NOFOLLOW`, and `std::fs::open_read`, which follows links, takes a

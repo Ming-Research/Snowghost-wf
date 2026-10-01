@@ -4,11 +4,11 @@ Status: closed. Its results fed the design tree and the vocabulary
 proposal: the owner approved the `pipeline` tree's principle of maximal
 parallelism along true data dependencies after the layout measurement, and
 ruled on the builder, parsing and style steps below as they were measured.
-The draft decisions it supports, matching in document order with a rule
-index and sibling positions, interning as a sequential post-pass, and the
-owned context tree with speculative line breaking, are in
+The decisions it supports, matching in document order with a rule index
+and sibling positions, interning as a sequential post-pass, and the owned
+context tree with speculative line breaking, are in
 `design/pipeline/style.md`, `design/pipeline/layout.md` and
-`design/vocabulary.md`, awaiting the owner's ruling. Left open here:
+`design/vocabulary.md`, approved on 2026-10-01. Left open here:
 the unit of memoization and invalidation (below), which the first
 incremental prototype decides; copying runs of plain text whole in the
 tokenizer, which the owner placed after style; and counting sibling
