@@ -1,0 +1,1339 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+alias NodeId = pkg::dom::NodeId;
+alias atom_img = pkg::base::static_atoms::atom_img;
+alias sizing_value = pkg::css::values::sizing_value;
+alias break_mandatory = pkg::layout::text::break_mandatory;
+alias break_allowed = pkg::layout::text::break_allowed;
+
+struct Frame {
+  doc "A block box open during a flow pass: its index, the left offset and width of its content box in the context's content box, its top border and padding, and, in the stacking pass, whether its border-box top is known yet and its relative offset.";
+  block: u32;
+  left: i32;
+  width: i32;
+  top_frame: i32;
+  known: Bool;
+  dx: i32;
+  dy: i32;
+}
+
+struct Stack {
+  doc "The stacking pass's vertical state: the bottom of the last placed content (cursor), the margins waiting to collapse (the largest positive and the most negative), the floats placed so far, and the lowest top any later float may take.";
+  cursor: i32;
+  positive: i32;
+  negative: i32;
+  floats: Box<Slots<Exclusion>>;
+  float_floor: i32;
+}
+
+fn pending_margin(stack: &Stack) -> margin: i32 reads(stack) {
+  doc "The collapsed value of the waiting margins.";
+  let made = stack^.positive +sat stack^.negative;
+  return made;
+}
+
+fn add_margin(stack: &Stack, margin: i32) -> result: unit writes(stack) {
+  doc "Adds a margin to the waiting margins, which collapse to the largest positive plus the most negative.";
+  if margin >= 0_i32 {
+    set stack^.positive = imax(stack^.positive, margin);
+  } else {
+    set stack^.negative = imin(stack^.negative, margin);
+  }
+  return unit;
+}
+
+fn clear_margins(stack: &Stack) -> result: unit writes(stack) {
+  doc "Forgets the waiting margins once something separates them from later content.";
+  set stack^.positive = 0_i32;
+  set stack^.negative = 0_i32;
+  return unit;
+}
+
+fn float_bottom(stack: &Stack, side: u8) -> bottom: i32 reads(stack) {
+  doc "The lowest bottom of the floats on side (clear_left, clear_right or clear_both), or minus infinity.";
+  let lowest = -2147483647_i32;
+  let count = stack^.floats.inner.len;
+  for (k in 0_u64..count) {
+    let float_box = stack^.floats.inner[k];
+    let wanted_left = side == clear_left;
+    let wanted_right = side == clear_right;
+    let wanted_both = side == clear_both;
+    let left_hit = band(wanted_left, float_box.left);
+    let right_side = bnot(float_box.left);
+    let right_hit = band(wanted_right, right_side);
+    let hit_pair = bor(left_hit, right_hit);
+    let hit = bor(hit_pair, wanted_both);
+    if hit {
+      set lowest = imax(lowest, float_box.bottom);
+    }
+  }
+  return lowest;
+}
+
+fn block_width(styles: &Styles, style: StyleRef, available: i32) -> (width: i32, left: i32, margin_left: i32, margin_right: i32) reads(styles) {
+  doc "The border-box width and the left offset of an in-flow block-level box in a containing block available wide (CSS 2.2 10.3.3): an auto width fills the space its margins leave; a given width keeps it, with auto margins sharing the rest equally, one auto margin taking it all, and with none auto the right margin taking the rest.";
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: available);
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let margins = margin_edges(styles: styles, style: style, basis: available);
+  let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
+  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: available, frame: frame);
+  let specified = specified_width(styles: styles, style: style, basis: available, frame: frame);
+  let around = horizontal(edges: margins);
+  let natural = if specified >= 0_i32 {
+    give specified;
+  } else {
+    give available -sat around;
+  }
+  let clamped = clamp_size(size: natural, minimum: minimum, maximum: maximum);
+  let width = imax(clamped, frame);
+  let free = available -sat width;
+  let either = bor(auto_left, auto_right);
+  let fixed_test = specified >= 0_i32;
+  let fixed = band(fixed_test, either);
+  let limited = clamped != natural;
+  let centring_pair = band(limited, either);
+  let centring = bor(fixed, centring_pair);
+  if centring {
+    let room = free -sat around;
+    if auto_left {
+      if auto_right {
+        let half = room / 2_i32;
+        let left = margins.left +sat half;
+        let right = free -sat left;
+        return width, left, left, right;
+      }
+      let left = free -sat margins.right;
+      return width, left, left, margins.right;
+    }
+    let right = free -sat margins.left;
+    return width, margins.left, margins.left, right;
+  }
+  return width, margins.left, margins.left, margins.right;
+}
+
+fn relative_offset(styles: &Styles, style: StyleRef, basis_width: i32, basis_height: i32) -> (dx: i32, dy: i32) reads(styles) {
+  doc "The offset position: relative gives a box (CSS 2.2 9.4.3): left, or minus right when left is auto; top, or minus bottom when top is auto; zero for every other position.";
+  let group = box_of(styles: styles, style: style);
+  if group.position == position_relative {
+  } else {
+    return 0_i32, 0_i32;
+  }
+  let sizes = size_of(styles: styles, style: style);
+  let left = inset_value(value: sizes.left, basis: basis_width);
+  let right = inset_value(value: sizes.right, basis: basis_width);
+  let top = inset_value(value: sizes.top, basis: basis_height);
+  let bottom = inset_value(value: sizes.bottom, basis: basis_height);
+  let left_known = sizes.left.kind == sizing_value;
+  let right_known = sizes.right.kind == sizing_value;
+  let top_known = sizes.top.kind == sizing_value;
+  let bottom_known = sizes.bottom.kind == sizing_value;
+  let dx = if left_known {
+    give left;
+  } else if right_known {
+    give 0_i32 -sat right;
+  } else {
+    give 0_i32;
+  }
+  let dy = if top_known {
+    give top;
+  } else if bottom_known {
+    give 0_i32 -sat bottom;
+  } else {
+    give 0_i32;
+  }
+  return dx, dy;
+}
+
+fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, content_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "The pre-pass of a flow context: walks its flow with the containing widths of the open block boxes, sets each block's width and left offset, each paragraph's width and left offset, and each child context's space: in-flow children fill their containing block, floats, out-of-flow boxes and atomic inlines shrink to fit.";
+  let frames = box_slots_new::<Frame>(capacity: 8_u64);
+  let flow_count = context^.flow.inner.len;
+  let left = 0_i32;
+  let width = content_width;
+  for (k in 0_u64..flow_count) {
+    if k >= context^.flow.inner.len {
+      break;
+    }
+    let item = context^.flow.inner[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < context^.blocks.inner.len {
+          let style = context^.blocks.inner[at].style;
+          let (box_width, offset, margin_left, margin_right) = block_width(styles: styles, style: style, available: width);
+          let x = left +sat offset;
+          set context^.blocks.inner[at].x = x;
+          set context^.blocks.inner[at].width = box_width;
+          let border = border_edges(styles: styles, style: style);
+          let padding = padding_edges(styles: styles, style: style, basis: width);
+          let unknown_top = False();
+          let saved = Frame(block: b, left: left, width: width, top_frame: 0_i32, known: unknown_top, dx: 0_i32, dy: 0_i32);
+          let pushed = push_item::<Frame>(cell: &frames, value: saved, ceiling: item_ceiling);
+          let inner_left = x +sat border.left;
+          set left = inner_left +sat padding.left;
+          let frame_border = horizontal(edges: border);
+          let frame_padding = horizontal(edges: padding);
+          let frame = frame_border +sat frame_padding;
+          let inner = box_width -sat frame;
+          set width = imax(inner, 0_i32);
+        }
+      }
+      Close(..) => {
+        let depth = frames.inner.len;
+        if depth > 0_u64 {
+          let last = depth - 1_u64;
+          set left = frames.inner[last].left;
+          set width = frames.inner[last].width;
+          let removed = take_back(window: &frames.inner);
+        }
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          set context^.paragraphs.inner[at].width = width;
+          set context^.paragraphs.inner[at].left = left;
+          let marks = context^.paragraphs.inner[at].marks.inner.len;
+          for (m in 0_u64..marks) {
+            let mark = context^.paragraphs.inner[at].marks.inner[m];
+            match mark {
+              Atomic(context: child, ..) => {
+                let child_at = cvt::<u32, u64>(child);
+                if child_at < context^.children.inner.len {
+                  let yes = True();
+                  set context^.children.inner[child_at].space = child_space(available: width, basis_width: width, basis_height: unknown, shrink: yes);
+                }
+              }
+              Open(..) => {
+              }
+              Close(..) => {
+              }
+              Node(..) => {
+              }
+            }
+          }
+        }
+      }
+      Child(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let no = False();
+          let kind = context^.children.inner[at].kind;
+          let table = kind == ctx_table;
+          let replaced = kind == ctx_replaced;
+          let fits = bor(table, replaced);
+          set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: content_height, shrink: fits);
+          set context^.children.inner[at].x = left;
+        }
+      }
+      Float(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let yes = True();
+          set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: content_height, shrink: yes);
+          set context^.children.inner[at].x = left;
+        }
+      }
+      Out(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let yes = True();
+          set context^.children.inner[at].space = child_space(available: content_width, basis_width: content_width, basis_height: content_height, shrink: yes);
+          set context^.children.inner[at].x = left;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Lays out one child context in the space its parent wrote, then resolves its margins against its containing block's width.";
+  lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let basis = child^.space.basis_width;
+  let margins = margin_edges(styles: styles, style: child^.style, basis: basis);
+  set child^.margin_top = margins.top;
+  set child^.margin_right = margins.right;
+  set child^.margin_bottom = margins.bottom;
+  set child^.margin_left = margins.left;
+  return unit;
+}
+
+fn lay_out_children(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out every child context, one per iteration of a counted loop, each iteration writing only its own child.";
+  let count = context^.children.inner.len;
+  for (i in 0_u64..count) {
+    lay_out_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  }
+  return unit;
+}
+
+fn break_paragraph(paragraph: &Paragraph, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion], origin_y: i32) -> result: unit reads(children), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(paragraph) {
+  doc "Breaks a paragraph into lines at its width beside exclusions (none for the speculative pass) and computes its lines' metrics and fragments.";
+  let width = paragraph^.width;
+  let sizes = measure(paragraph: paragraph, children: children, styles: styles, basis: width);
+  let origin_x = paragraph^.left;
+  break_lines(paragraph: paragraph, sizes: &sizes, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions, origin_x: origin_x, origin_y: origin_y, width: width);
+  finish_lines(paragraph: paragraph, sizes: &sizes, children: children, styles: styles, fonts: fonts, picks: picks, basis: width);
+  return unit;
+}
+
+fn break_all(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "The speculative pass (design/pipeline/layout.md): breaks every paragraph at its full width in one counted loop, each iteration writing only its own paragraph.";
+  let count = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  let none = box_slots_new::<Exclusion>(capacity: 0_u64);
+  for (i in 0_u64..count) {
+    break_paragraph(paragraph: &context^.paragraphs.inner[i], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, exclusions: &none.inner[0_u64..0_u64], origin_y: 0_i32);
+  }
+  return unit;
+}
+
+fn place_float(context: &Context, stack: &Stack, child: u64, side_left: Bool, containing_left: i32, containing_width: i32, content_left: i32, content_top: i32) -> result: unit writes(context), writes(stack) {
+  doc "Places a laid-out float (CSS 2.2 9.5.1): at the flow's current position or the previous float's top, whichever is lower, moved down past floats until its margin box fits beside them, against the left or right edge of the space they leave, and records it as an exclusion.";
+  if child < context^.children.inner.len {
+  } else {
+    return unit;
+  }
+  let style = context^.children.inner[child].style;
+  let width = context^.children.inner[child].width;
+  let height = context^.children.inner[child].height;
+  let margin_left = context^.children.inner[child].margin_left;
+  let margin_right = context^.children.inner[child].margin_right;
+  let margin_top = context^.children.inner[child].margin_top;
+  let margin_bottom = context^.children.inner[child].margin_bottom;
+  let box_width = width +sat margin_left;
+  let outer_width = box_width +sat margin_right;
+  let box_height = height +sat margin_top;
+  let outer_height = box_height +sat margin_bottom;
+  let start_term = pending_margin(stack: stack);
+  let start = stack^.cursor +sat start_term;
+  let y = imax(start, stack^.float_floor);
+  let count = stack^.floats.inner.len;
+  let containing_right = containing_left +sat containing_width;
+  let x = containing_left;
+  for (attempt in 0_u64..count) {
+    let bottom = y +sat outer_height;
+    let (left_edge, right_edge) = exclusion_room(exclusions: &stack^.floats.inner[0_u64..count], top: y, bottom: bottom, width: containing_right);
+    let left_limit = imax(left_edge, containing_left);
+    let right_limit = imin(right_edge, containing_right);
+    let room = right_limit -sat left_limit;
+    if room >= outer_width {
+      if side_left {
+        set x = left_limit;
+      } else {
+        set x = right_limit -sat outer_width;
+      }
+      break;
+    }
+    let next = lowest_bottom_above(exclusions: &stack^.floats.inner[0_u64..count], top: y);
+    if next <= y {
+      if side_left {
+        set x = left_limit;
+      } else {
+        set x = right_limit -sat outer_width;
+      }
+      break;
+    }
+    set y = next;
+  }
+  if count == 0_u64 {
+    if side_left {
+      set x = containing_left;
+    } else {
+      set x = containing_right -sat outer_width;
+    }
+  }
+  let x_box = x +sat margin_left;
+  let y_box = y +sat margin_top;
+  set context^.children.inner[child].x = content_left +sat x_box;
+  set context^.children.inner[child].y = content_top +sat y_box;
+  let edge = if side_left {
+    give x +sat outer_width;
+  } else {
+    give x;
+  }
+  let bottom = y +sat outer_height;
+  let made = Exclusion(left: side_left, top: y, bottom: bottom, edge: edge);
+  let pushed = push_item::<Exclusion>(cell: &stack^.floats, value: made, ceiling: item_ceiling);
+  set stack^.float_floor = imax(stack^.float_floor, y);
+  return unit;
+}
+
+fn lowest_bottom_above(exclusions: &[Exclusion], top: i32) -> bottom: i32 reads(exclusions) {
+  doc "The smallest float bottom below top, where the space beside the floats next changes, or top when none is.";
+  let best = 2147483647_i32;
+  let count = exclusions^.len;
+  for (k in 0_u64..count) {
+    let bottom = exclusions^[k].bottom;
+    if bottom > top {
+      set best = imin(best, bottom);
+    }
+  }
+  if best == 2147483647_i32 {
+    return top;
+  }
+  return best;
+}
+
+fn overlaps_floats(stack: &Stack, top: i32, bottom: i32) -> overlapping: Bool reads(stack) {
+  doc "Tells whether a float's extent meets top to bottom.";
+  let count = stack^.floats.inner.len;
+  for (k in 0_u64..count) {
+    let float_box = stack^.floats.inner[k];
+    let below = float_box.bottom <= top;
+    let above = float_box.top >= bottom;
+    let apart = bor(below, above);
+    if apart {
+    } else {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn resolve_open(context: &Context, frames: &Box<Slots<Frame>>, y: i32) -> result: unit writes(context), writes(frames) {
+  doc "Gives every open block whose top was waiting on its margins collapsing the border-box top y.";
+  let count = frames^.inner.len;
+  for (k in 0_u64..count) {
+    if frames^.inner[k].known {
+    } else {
+      let block = cvt::<u32, u64>(frames^.inner[k].block);
+      if block < context^.blocks.inner.len {
+        set context^.blocks.inner[block].y = y;
+      }
+      set frames^.inner[k].known = True();
+    }
+  }
+  return unit;
+}
+
+fn offset_of(frames: &Box<Slots<Frame>>) -> (dx: i32, dy: i32) reads(frames) {
+  doc "The relative offset the open blocks add to what they contain.";
+  let count = frames^.inner.len;
+  if count == 0_u64 {
+    return 0_i32, 0_i32;
+  }
+  let last = count - 1_u64;
+  return frames^.inner[last].dx, frames^.inner[last].dy;
+}
+
+fn paragraph_height(context: &Context, at: u64) -> height: i32 reads(context) {
+  doc "The height of paragraph at, 0 when there is none.";
+  if at < context^.paragraphs.inner.len {
+    let found = context^.paragraphs.inner[at].height;
+    return found;
+  }
+  return 0_i32;
+}
+
+fn last_baseline(context: &Context, at: u64) -> (baseline: i32, found: Bool) reads(context) {
+  doc "The baseline of paragraph at's last line from the paragraph's top, and whether it has a line.";
+  if at < context^.paragraphs.inner.len {
+    let count = context^.paragraphs.inner[at].lines.inner.len;
+    if count > 0_u64 {
+      let last = count - 1_u64;
+      let line = context^.paragraphs.inner[at].lines.inner[last];
+      let made = line.top +sat line.baseline;
+      return made, True();
+    }
+  }
+  return 0_i32, False();
+}
+
+fn place_paragraph(context: &Context, at: u64, content_left: i32, dx: i32, top: i32) -> result: unit writes(context) {
+  doc "Sets paragraph at's origin in the context's border box, its left moved by the content box's left and the relative offset dx, and places its atomic inlines' child contexts.";
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return unit;
+  }
+  let shifted_left = context^.paragraphs.inner[at].left +sat dx;
+  let left = content_left +sat shifted_left;
+  set context^.paragraphs.inner[at].left = left;
+  set context^.paragraphs.inner[at].top = top;
+  let atomics = context^.paragraphs.inner[at].atomics.inner.len;
+  for (a in 0_u64..atomics) {
+    if at < context^.paragraphs.inner.len {
+      if a < context^.paragraphs.inner[at].atomics.inner.len {
+        let placed = context^.paragraphs.inner[at].atomics.inner[a];
+        let child = cvt::<u32, u64>(placed.context);
+        if child < context^.children.inner.len {
+          set context^.children.inner[child].x = left +sat placed.x;
+          set context^.children.inner[child].y = top +sat placed.y;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks, content_left: i32, content_top: i32, content_width: i32, basis_height: i32) -> (height: i32, baseline: i32, has_baseline: Bool) reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions, and returns the content height, which contains the floats, and the last line's baseline.";
+  let empty_floats = box_slots_new::<Exclusion>(capacity: 0_u64);
+  let stack = Stack(cursor: 0_i32, positive: 0_i32, negative: 0_i32, floats: move empty_floats, float_floor: -2147483647_i32);
+  let frames = box_slots_new::<Frame>(capacity: 8_u64);
+  let left = 0_i32;
+  let width = content_width;
+  let baseline = 0_i32;
+  let has_baseline = False();
+  let flow_count = context^.flow.inner.len;
+  for (k in 0_u64..flow_count) {
+    if k >= context^.flow.inner.len {
+      break;
+    }
+    let item = context^.flow.inner[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < context^.blocks.inner.len {
+          let style = context^.blocks.inner[at].style;
+          let block_x = context^.blocks.inner[at].x;
+          let block_width_here = context^.blocks.inner[at].width;
+          let border = border_edges(styles: styles, style: style);
+          let padding = padding_edges(styles: styles, style: style, basis: width);
+          let margins = margin_edges(styles: styles, style: style, basis: width);
+          let group = box_of(styles: styles, style: style);
+          let top_frame = border.top +sat padding.top;
+          add_margin(stack: &stack, margin: margins.top);
+          let (outer_dx, outer_dy) = offset_of(frames: &frames);
+          let (dx, dy) = relative_offset(styles: styles, style: style, basis_width: width, basis_height: unknown);
+          let total_dx = outer_dx +sat dx;
+          let total_dy = outer_dy +sat dy;
+          let clears = group.clear != clear_none;
+          let clear_floor = if clears {
+            give float_bottom(stack: &stack, side: group.clear);
+          } else {
+            give -2147483647_i32;
+          }
+          let natural_term = pending_margin(stack: &stack);
+          let natural = stack.cursor +sat natural_term;
+          let cleared = clear_floor > natural;
+          let unknown_top = False();
+          let saved = Frame(block: b, left: left, width: width, top_frame: top_frame, known: unknown_top, dx: total_dx, dy: total_dy);
+          let pushed = push_item::<Frame>(cell: &frames, value: saved, ceiling: item_ceiling);
+          let framed = top_frame > 0_i32;
+          let resolve = bor(framed, cleared);
+          if resolve {
+            let y = imax(natural, clear_floor);
+            resolve_open(context: context, frames: &frames, y: y);
+            set stack.cursor = y +sat top_frame;
+            clear_margins(stack: &stack);
+          }
+          let inner_left = block_x +sat border.left;
+          set left = inner_left +sat padding.left;
+          let frame_border = horizontal(edges: border);
+          let frame_padding = horizontal(edges: padding);
+          let frame = frame_border +sat frame_padding;
+          let inner = block_width_here -sat frame;
+          set width = imax(inner, 0_i32);
+        }
+      }
+      Close(block: b) => {
+        let depth = frames.inner.len;
+        let at = cvt::<u32, u64>(b);
+        let present = at < context^.blocks.inner.len;
+        let open = depth > 0_u64;
+        let usable = band(present, open);
+        if usable {
+          let last = depth - 1_u64;
+          let frame = frames.inner[last];
+          let style = context^.blocks.inner[at].style;
+          let outer_width = frame.width;
+          let border = border_edges(styles: styles, style: style);
+          let padding = padding_edges(styles: styles, style: style, basis: outer_width);
+          let margins = margin_edges(styles: styles, style: style, basis: outer_width);
+          let bottom_frame = border.bottom +sat padding.bottom;
+          let vertical_frame = frame.top_frame +sat bottom_frame;
+          let specified = specified_height(styles: styles, style: style, basis: basis_height, frame: vertical_frame);
+          let (minimum, maximum) = height_limits(styles: styles, style: style, basis: basis_height, frame: vertical_frame);
+          if frame.known {
+            let top = context^.blocks.inner[at].y;
+            let closes_inside = bottom_frame > 0_i32;
+            let fixed = specified >= 0_i32;
+            let contained = bor(closes_inside, fixed);
+            let collapsed_end = pending_margin(stack: &stack);
+            let content_end = if contained {
+              give stack.cursor +sat collapsed_end;
+            } else {
+              give stack.cursor;
+            }
+            let natural = content_end -sat top;
+            let automatic = natural +sat bottom_frame;
+            let chosen = if fixed {
+              give specified;
+            } else {
+              give automatic;
+            }
+            let clamped = clamp_size(size: chosen, minimum: minimum, maximum: maximum);
+            let height = imax(clamped, vertical_frame);
+            set context^.blocks.inner[at].height = height;
+            let grew = height != automatic;
+            let separate = bor(contained, grew);
+            if separate {
+              set stack.cursor = top +sat height;
+              clear_margins(stack: &stack);
+            }
+            add_margin(stack: &stack, margin: margins.bottom);
+          } else {
+            let y_term = pending_margin(stack: &stack);
+            let y = stack.cursor +sat y_term;
+            set context^.blocks.inner[at].y = y;
+            set frames.inner[last].known = True();
+            let chosen = if specified >= 0_i32 {
+              give specified;
+            } else {
+              give 0_i32;
+            }
+            let clamped = clamp_size(size: chosen, minimum: minimum, maximum: maximum);
+            let height = imax(clamped, vertical_frame);
+            set context^.blocks.inner[at].height = height;
+            if height > 0_i32 {
+              set stack.cursor = y +sat height;
+              clear_margins(stack: &stack);
+            }
+            add_margin(stack: &stack, margin: margins.bottom);
+          }
+          let removed = take_back(window: &frames.inner);
+          set left = frame.left;
+          set width = frame.width;
+          let dx = frame.dx;
+          let dy = frame.dy;
+          let x_shifted = context^.blocks.inner[at].x +sat dx;
+          let y_shifted = context^.blocks.inner[at].y +sat dy;
+          set context^.blocks.inner[at].x = content_left +sat x_shifted;
+          set context^.blocks.inner[at].y = content_top +sat y_shifted;
+        }
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        let lines = if at < context^.paragraphs.inner.len {
+          give context^.paragraphs.inner[at].lines.inner.len;
+        } else {
+          give 0_u64;
+        }
+        if lines > 0_u64 {
+          let waiting = pending_margin(stack: &stack);
+          let y = stack.cursor +sat waiting;
+          resolve_open(context: context, frames: &frames, y: y);
+          clear_margins(stack: &stack);
+          let height = paragraph_height(context: context, at: at);
+          let bottom = y +sat height;
+          let narrowed = overlaps_floats(stack: &stack, top: y, bottom: bottom);
+          let children = context^.children.inner.len;
+          let floats = stack.floats.inner.len;
+          let present = at < context^.paragraphs.inner.len;
+          let rebreak = band(narrowed, present);
+          if rebreak {
+            break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, exclusions: &stack.floats.inner[0_u64..floats], origin_y: y);
+          }
+          let placed_height = paragraph_height(context: context, at: at);
+          let (dx, dy) = offset_of(frames: &frames);
+          let (line_base, has_line) = last_baseline(context: context, at: at);
+          if has_line {
+            let from_top = y +sat line_base;
+            set baseline = content_top +sat from_top;
+            set has_baseline = True();
+          }
+          set stack.cursor = y +sat placed_height;
+          let shifted_top = y +sat dy;
+          let top = content_top +sat shifted_top;
+          place_paragraph(context: context, at: at, content_left: content_left, dx: dx, top: top);
+        }
+      }
+      Child(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let style = context^.children.inner[at].style;
+          let group = box_of(styles: styles, style: style);
+          add_margin(stack: &stack, margin: context^.children.inner[at].margin_top);
+          let natural_term = pending_margin(stack: &stack);
+          let natural = stack.cursor +sat natural_term;
+          let clear_floor = if group.clear != clear_none {
+            give float_bottom(stack: &stack, side: group.clear);
+          } else {
+            give -2147483647_i32;
+          }
+          let y_start = imax(natural, clear_floor);
+          let child_height = context^.children.inner[at].height;
+          let child_width = context^.children.inner[at].width;
+          let margin_left = context^.children.inner[at].margin_left;
+          let y = y_start;
+          let x_offset = margin_left;
+          let floats = stack.floats.inner.len;
+          if floats > 0_u64 {
+            for (attempt in 0_u64..floats) {
+              let bottom = y +sat child_height;
+              let containing_right = left +sat width;
+              let (left_edge, right_edge) = exclusion_room(exclusions: &stack.floats.inner[0_u64..floats], top: y, bottom: bottom, width: containing_right);
+              let left_limit = imax(left_edge, left);
+              let right_limit = imin(right_edge, containing_right);
+              let room = right_limit -sat left_limit;
+              let needed = child_width +sat margin_left;
+              if room >= needed {
+                set x_offset = left_limit -sat left;
+                set x_offset = x_offset +sat margin_left;
+                break;
+              }
+              let next = lowest_bottom_above(exclusions: &stack.floats.inner[0_u64..floats], top: y);
+              if next <= y {
+                break;
+              }
+              set y = next;
+            }
+          }
+          resolve_open(context: context, frames: &frames, y: y);
+          clear_margins(stack: &stack);
+          let (dx, dy) = offset_of(frames: &frames);
+          let (own_dx, own_dy) = relative_offset(styles: styles, style: style, basis_width: width, basis_height: unknown);
+          let x_inner = left +sat x_offset;
+          let x_moved = x_inner +sat dx;
+          let x_total = x_moved +sat own_dx;
+          let y_moved = y +sat dy;
+          let y_total = y_moved +sat own_dy;
+          if at < context^.children.inner.len {
+            set context^.children.inner[at].x = content_left +sat x_total;
+            set context^.children.inner[at].y = content_top +sat y_total;
+            if context^.children.inner[at].has_baseline {
+              let child_base = y +sat context^.children.inner[at].baseline;
+              set baseline = content_top +sat child_base;
+              set has_baseline = True();
+            }
+            let margin_bottom = context^.children.inner[at].margin_bottom;
+            add_margin(stack: &stack, margin: margin_bottom);
+          }
+          set stack.cursor = y +sat child_height;
+        }
+      }
+      Float(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let style = context^.children.inner[at].style;
+          let group = box_of(styles: styles, style: style);
+          let side_left = group.float == float_left;
+          if group.clear != clear_none {
+            let clear_floor = float_bottom(stack: &stack, side: group.clear);
+            set stack.float_floor = imax(stack.float_floor, clear_floor);
+          }
+          place_float(context: context, stack: &stack, child: at, side_left: side_left, containing_left: left, containing_width: width, content_left: content_left, content_top: content_top);
+          let (dx, dy) = offset_of(frames: &frames);
+          if at < context^.children.inner.len {
+            set context^.children.inner[at].x = context^.children.inner[at].x +sat dx;
+            set context^.children.inner[at].y = context^.children.inner[at].y +sat dy;
+          }
+        }
+      }
+      Out(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let y_term = pending_margin(stack: &stack);
+          let y = stack.cursor +sat y_term;
+          let margin_left = context^.children.inner[at].margin_left;
+          let margin_top = context^.children.inner[at].margin_top;
+          let x_static = left +sat margin_left;
+          let y_static = y +sat margin_top;
+          set context^.children.inner[at].x = content_left +sat x_static;
+          set context^.children.inner[at].y = content_top +sat y_static;
+        }
+      }
+    }
+  }
+  let end_term = pending_margin(stack: &stack);
+  let end = stack.cursor +sat end_term;
+  let float_end = float_bottom(stack: &stack, side: clear_both);
+  let height = imax(end, float_end);
+  let positive = imax(height, 0_i32);
+  return positive, baseline, has_baseline;
+}
+
+fn copy_fragments(context: &Context) -> result: unit writes(context) {
+  doc "Adds the fragments of the context's shown block boxes and of its paragraphs, moved by each paragraph's origin, to the context's fragments.";
+  let blocks = context^.blocks.inner.len;
+  for (b in 0_u64..blocks) {
+    if b >= context^.blocks.inner.len {
+      break;
+    }
+    let block = context^.blocks.inner[b];
+    let shown = shown_owner(style: block.style);
+    if shown {
+      add_fragment(context: context, kind: placed_element, owner: block.style.element, x: block.x, y: block.y, width: block.width, height: block.height);
+    }
+  }
+  let paragraphs = context^.paragraphs.inner.len;
+  for (p in 0_u64..paragraphs) {
+    if p >= context^.paragraphs.inner.len {
+      break;
+    }
+    let left = context^.paragraphs.inner[p].left;
+    let top = context^.paragraphs.inner[p].top;
+    let count = context^.paragraphs.inner[p].fragments.inner.len;
+    for (f in 0_u64..count) {
+      if p >= context^.paragraphs.inner.len {
+        break;
+      }
+      if f >= context^.paragraphs.inner[p].fragments.inner.len {
+        break;
+      }
+      let fragment = context^.paragraphs.inner[p].fragments.inner[f];
+      let x = left +sat fragment.x;
+      let y = top +sat fragment.y;
+      add_fragment(context: context, kind: fragment.kind, owner: fragment.owner, x: x, y: y, width: fragment.width, height: fragment.height);
+    }
+  }
+  return unit;
+}
+
+fn position_out(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Positions the context's absolutely and fixed positioned children (CSS 2.2 10.3.7 and 10.6.4): against the context's padding box, or the viewport for a fixed box, by left or right and top or bottom, keeping the static position on an axis where both are auto; a box whose opposite insets are both set and whose size is auto is laid out again at the size they leave.";
+  let border = border_edges(styles: styles, style: context^.style);
+  let box_width_term = horizontal(edges: border);
+  let box_width = context^.width -sat box_width_term;
+  let box_height_term = vertical(edges: border);
+  let box_height = context^.height -sat box_height_term;
+  let viewport_width = units(px: viewport.width);
+  let viewport_height = units(px: viewport.height);
+  let flow_count = context^.flow.inner.len;
+  for (k in 0_u64..flow_count) {
+    if k >= context^.flow.inner.len {
+      break;
+    }
+    let item = context^.flow.inner[k];
+    match item {
+      Out(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let style = context^.children.inner[at].style;
+          let group = box_of(styles: styles, style: style);
+          let fixed = group.position == position_fixed;
+          let cb_left = if fixed {
+            give 0_i32;
+          } else {
+            give border.left;
+          }
+          let cb_top = if fixed {
+            give 0_i32;
+          } else {
+            give border.top;
+          }
+          let cb_width = if fixed {
+            give viewport_width;
+          } else {
+            give box_width;
+          }
+          let cb_height = if fixed {
+            give viewport_height;
+          } else {
+            give box_height;
+          }
+          let sizes = size_of(styles: styles, style: style);
+          let left = inset_value(value: sizes.left, basis: cb_width);
+          let right = inset_value(value: sizes.right, basis: cb_width);
+          let top = inset_value(value: sizes.top, basis: cb_height);
+          let bottom = inset_value(value: sizes.bottom, basis: cb_height);
+          let left_set = sizes.left.kind == sizing_value;
+          let right_set = sizes.right.kind == sizing_value;
+          let top_set = sizes.top.kind == sizing_value;
+          let bottom_set = sizes.bottom.kind == sizing_value;
+          let width_auto = sizes.width.kind != sizing_value;
+          let height_auto = sizes.height.kind != sizing_value;
+          let stretch_width_pair = band(left_set, right_set);
+          let stretch_width = band(stretch_width_pair, width_auto);
+          let stretch_height_pair = band(top_set, bottom_set);
+          let stretch_height = band(stretch_height_pair, height_auto);
+          let again = bor(stretch_width, stretch_height);
+          if again {
+            let margin_lr = context^.children.inner[at].margin_left +sat context^.children.inner[at].margin_right;
+            let margin_tb = context^.children.inner[at].margin_top +sat context^.children.inner[at].margin_bottom;
+            let inset_lr = left +sat right;
+            let inset_tb = top +sat bottom;
+            let width_left = cb_width -sat inset_lr;
+            let height_left = cb_height -sat inset_tb;
+            let forced_width = if stretch_width {
+              let width_room = width_left -sat margin_lr;
+              give imax(width_room, 0_i32);
+            } else {
+              give unknown;
+            }
+            let forced_height = if stretch_height {
+              let height_room = height_left -sat margin_tb;
+              give imax(height_room, 0_i32);
+            } else {
+              give unknown;
+            }
+            let no = False();
+            set context^.children.inner[at].space = Space(available: cb_width, basis_width: cb_width, basis_height: cb_height, forced_width: forced_width, forced_height: forced_height, shrink: no);
+            set context^.children.inner[at].intrinsic_known = False();
+            lay_out_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+          }
+          let width = context^.children.inner[at].width;
+          let height = context^.children.inner[at].height;
+          let margin_left = context^.children.inner[at].margin_left;
+          let margin_right = context^.children.inner[at].margin_right;
+          let margin_top = context^.children.inner[at].margin_top;
+          let margin_bottom = context^.children.inner[at].margin_bottom;
+          if left_set {
+            let from = cb_left +sat left;
+            set context^.children.inner[at].x = from +sat margin_left;
+          } else if right_set {
+            let edge = cb_left +sat cb_width;
+            let inner = edge -sat right;
+            let outer = inner -sat margin_right;
+            set context^.children.inner[at].x = outer -sat width;
+          }
+          if top_set {
+            let from = cb_top +sat top;
+            set context^.children.inner[at].y = from +sat margin_top;
+          } else if bottom_set {
+            let edge = cb_top +sat cb_height;
+            let inner = edge -sat bottom;
+            let outer = inner -sat margin_bottom;
+            set context^.children.inner[at].y = outer -sat height;
+          }
+          let placed = bor(left_set, right_set);
+          let placed_vertically = bor(top_set, bottom_set);
+          let anchored = band(placed, placed_vertically);
+          set context^.children.inner[at].viewport_origin = band(fixed, anchored);
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out a flow context: its width, a pre-pass giving every box its containing width, its child contexts in parallel, its paragraphs broken in parallel at their full widths, the stacking pass, its height and positioned children, then its fragments.";
+  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set context^.width = width;
+  let style = context^.style;
+  let basis = context^.space.basis_width;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis);
+  let content_left = border.left +sat padding.left;
+  let content_top = border.top +sat padding.top;
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let inner = width -sat frame;
+  let content_width = imax(inner, 0_i32);
+  let frame_vertical_border = vertical(edges: border);
+  let frame_vertical_padding = vertical(edges: padding);
+  let frame_vertical = frame_vertical_border +sat frame_vertical_padding;
+  let forced = context^.space.forced_height;
+  let specified = specified_height(styles: styles, style: style, basis: context^.space.basis_height, frame: frame_vertical);
+  let definite = if forced >= 0_i32 {
+    give forced -sat frame_vertical;
+  } else if specified >= 0_i32 {
+    give specified -sat frame_vertical;
+  } else {
+    give unknown;
+  }
+  prepare_spaces(context: context, styles: styles, content_width: content_width, content_height: definite);
+  lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  break_all(context: context, styles: styles, fonts: fonts, picks: picks);
+  let (height, baseline, has_baseline) = stack_flow(context: context, styles: styles, fonts: fonts, picks: picks, content_left: content_left, content_top: content_top, content_width: content_width, basis_height: definite);
+  let used = used_height(context: context, styles: styles, content: height);
+  set context^.height = used;
+  let group = box_of(styles: styles, style: style);
+  let visible_x = group.overflow_x == overflow_visible;
+  let visible_y = group.overflow_y == overflow_visible;
+  let visible = band(visible_x, visible_y);
+  set context^.baseline = baseline;
+  set context^.has_baseline = band(has_baseline, visible);
+  position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  add_own_fragment(context: context);
+  copy_fragments(context: context);
+  return unit;
+}
+
+fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, minimum: Bool) -> width: i32 reads(paragraph), reads(children), reads(styles) {
+  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give.";
+  let count = paragraph^.text.inner.len;
+  let sizes = measure(paragraph: paragraph, children: children, styles: styles, basis: 0_i32);
+  let marks = paragraph^.marks.inner.len;
+  for (m in 0_u64..marks) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Atomic(at: here, context: child) => {
+        let at = cvt::<u32, u64>(here);
+        let child_at = cvt::<u32, u64>(child);
+        let inside = at < count;
+        let known = child_at < children^.len;
+        let usable = band(inside, known);
+        if usable {
+          let base = if minimum {
+            give children^[child_at].min_content;
+          } else {
+            give children^[child_at].max_content;
+          }
+          let with_left = base +sat children^[child_at].margin_left;
+          let outer = with_left +sat children^[child_at].margin_right;
+          if at < sizes.advances.inner.len {
+            set sizes.advances.inner[at] = pixels(raw: outer);
+          }
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  let text = text_of(styles: styles, style: paragraph^.style);
+  let indent = resolve_lp(value: text.text_indent, basis: 0_i32);
+  let best = 0.0_f32;
+  let current = pixels(raw: indent);
+  let trailing = 0.0_f32;
+  for (j in 0_u64..count) {
+    let kind = break_at(paragraph: paragraph, at: j);
+    let mandatory = kind == break_mandatory;
+    let allowed = kind == break_allowed;
+    let ends = if minimum {
+      give bor(mandatory, allowed);
+    } else {
+      give mandatory;
+    }
+    let started = j > 0_u64;
+    let cut = band(ends, started);
+    if cut {
+      let visible = fsub.strict(current, trailing);
+      set best = fmax(best, visible);
+      set current = 0.0_f32;
+      set trailing = 0.0_f32;
+    }
+    let opening = open_at(sizes: &sizes, at: j);
+    let advance = advance_at(sizes: &sizes, at: j);
+    let next = j +sat 1_u64;
+    let closing = close_at(sizes: &sizes, at: next);
+    let with_open = fadd.strict(current, opening);
+    let with_advance = fadd.strict(with_open, advance);
+    set current = fadd.strict(with_advance, closing);
+    let hangs = collapsible_at(sizes: &sizes, at: j);
+    if hangs {
+      let grown = fadd.strict(trailing, advance);
+      set trailing = fadd.strict(grown, closing);
+    } else {
+      set trailing = 0.0_f32;
+    }
+  }
+  let visible = fsub.strict(current, trailing);
+  set best = fmax(best, visible);
+  let made = units_up(px: best);
+  return made;
+}
+
+fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The content's min-content and max-content widths of a flow context: the largest over its paragraphs and its in-flow and floated child contexts' contributions (their intrinsic sizes plus margins), each inside the margins, borders and paddings of the block boxes around it, a block box with a given width contributing that width instead of its content.";
+  let children = context^.children.inner.len;
+  for (c in 0_u64..children) {
+    let (least, most) = intrinsic_sizes(context: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let style = context^.children.inner[c].style;
+    let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+    set context^.children.inner[c].margin_left = margins.left;
+    set context^.children.inner[c].margin_right = margins.right;
+  }
+  let least = 0_i32;
+  let most = 0_i32;
+  let frames = box_slots_new::<i32>(capacity: 8_u64);
+  let fixed = box_slots_new::<i32>(capacity: 8_u64);
+  let around = 0_i32;
+  let fixed_depth = 0_u64;
+  let flow_count = context^.flow.inner.len;
+  for (k in 0_u64..flow_count) {
+    if k >= context^.flow.inner.len {
+      break;
+    }
+    let item = context^.flow.inner[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < context^.blocks.inner.len {
+          let style = context^.blocks.inner[at].style;
+          let border = border_edges(styles: styles, style: style);
+          let padding = padding_edges(styles: styles, style: style, basis: 0_i32);
+          let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+          let frame_border = horizontal(edges: border);
+          let frame_padding = horizontal(edges: padding);
+          let frame_margin = horizontal(edges: margins);
+          let inner_frame = frame_border +sat frame_padding;
+          let outer_frame = inner_frame +sat frame_margin;
+          let pushed = push_item::<i32>(cell: &frames, value: around, ceiling: item_ceiling);
+          let specified = specified_width(styles: styles, style: style, basis: unknown, frame: inner_frame);
+          let pushed_fixed = push_item::<i32>(cell: &fixed, value: specified, ceiling: item_ceiling);
+          if specified >= 0_i32 {
+            let whole = specified +sat frame_margin;
+            let contribution = whole +sat around;
+            set least = imax(least, contribution);
+            set most = imax(most, contribution);
+            set fixed_depth = fixed_depth +sat 1_u64;
+          }
+          set around = around +sat outer_frame;
+        }
+      }
+      Close(..) => {
+        let depth = frames.inner.len;
+        if depth > 0_u64 {
+          let last = depth - 1_u64;
+          set around = frames.inner[last];
+          let was_fixed = if last < fixed.inner.len {
+            give fixed.inner[last] >= 0_i32;
+          } else {
+            give False();
+          }
+          if was_fixed {
+            set fixed_depth = fixed_depth -sat 1_u64;
+          }
+          let removed = take_back(window: &frames.inner);
+          if fixed.inner.len > 0_u64 {
+            let removed_fixed = take_back(window: &fixed.inner);
+          }
+        }
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        let open = fixed_depth == 0_u64;
+        let present = at < context^.paragraphs.inner.len;
+        let usable = band(open, present);
+        if usable {
+          let yes = True();
+          let no = False();
+          let low = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, minimum: yes);
+          let high = paragraph_intrinsic(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, minimum: no);
+          let low_total = low +sat around;
+          let high_total = high +sat around;
+          set least = imax(least, low_total);
+          set most = imax(most, high_total);
+        }
+      }
+      Child(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        let open = fixed_depth == 0_u64;
+        let present = at < children;
+        let usable = band(open, present);
+        if usable {
+          let child = &context^.children.inner[at];
+          let margins = child^.margin_left +sat child^.margin_right;
+          let low = child^.min_content +sat margins;
+          let high = child^.max_content +sat margins;
+          let low_total = low +sat around;
+          let high_total = high +sat around;
+          set least = imax(least, low_total);
+          set most = imax(most, high_total);
+        }
+      }
+      Float(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        let open = fixed_depth == 0_u64;
+        let present = at < children;
+        let usable = band(open, present);
+        if usable {
+          let child = &context^.children.inner[at];
+          let margins = child^.margin_left +sat child^.margin_right;
+          let low = child^.min_content +sat margins;
+          let high = child^.max_content +sat margins;
+          let low_total = low +sat around;
+          let high_total = high +sat around;
+          set least = imax(least, low_total);
+          set most = imax(most, high_total);
+        }
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return least, most;
+}
+
+fn natural_size() -> (width: i32, height: i32) pure {
+  doc "The natural size of a replaced box the stage does not load: 300 by 150 px, as CSS 2.2 10.3.2 falls back to.";
+  return 19200_i32, 9600_i32;
+}
+
+fn intrinsic_replaced() -> (minimum: i32, maximum: i32) pure {
+  doc "A replaced box's content width is its natural width.";
+  let (width, height) = natural_size();
+  return width, width;
+}
+
+fn lay_out_replaced(context: &Context, styles: &Styles) -> result: unit reads(styles), writes(context) {
+  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given.";
+  let (natural_width, natural_height) = natural_size();
+  let style = context^.style;
+  let basis = context^.space.basis_width;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis);
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let frame_vertical_border = vertical(edges: border);
+  let frame_vertical_padding = vertical(edges: padding);
+  let frame_vertical = frame_vertical_border +sat frame_vertical_padding;
+  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  let specified_tall = specified_height(styles: styles, style: style, basis: context^.space.basis_height, frame: frame_vertical);
+  let width = if context^.space.forced_width >= 0_i32 {
+    give context^.space.forced_width;
+  } else if specified >= 0_i32 {
+    give specified;
+  } else if specified_tall >= 0_i32 {
+    let content_height = specified_tall -sat frame_vertical;
+    let scaled = if natural_height > 0_i32 {
+      let wide = cvt::<i32, i64>(content_height);
+      let ratio_top = cvt::<i32, i64>(natural_width);
+      let ratio_bottom = cvt::<i32, i64>(natural_height);
+      let product = wide *sat ratio_top;
+      let quotient = product / ratio_bottom;
+      let bounded_floor = imax(quotient, 0_i64);
+      let bounded = imin(bounded_floor, 2147483647_i64);
+      give cvt::<i64, i32>(bounded);
+    } else {
+      give 0_i32;
+    }
+    give scaled +sat frame;
+  } else {
+    give natural_width +sat frame;
+  }
+  set context^.width = width;
+  let content_width = width -sat frame;
+  let natural_tall = if specified >= 0_i32 {
+    if natural_width > 0_i32 {
+      let wide = cvt::<i32, i64>(content_width);
+      let ratio_top = cvt::<i32, i64>(natural_height);
+      let ratio_bottom = cvt::<i32, i64>(natural_width);
+      let product = wide *sat ratio_top;
+      let quotient = product / ratio_bottom;
+      let bounded_floor = imax(quotient, 0_i64);
+      let bounded = imin(bounded_floor, 2147483647_i64);
+      give cvt::<i64, i32>(bounded);
+    } else {
+      give 0_i32;
+    }
+  } else {
+    give natural_height;
+  }
+  let height = used_height(context: context, styles: styles, content: natural_tall);
+  set context^.height = height;
+  set context^.has_baseline = False();
+  add_own_fragment(context: context);
+  return unit;
+}
+
+fn lay_out_stacked(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "A placeholder layout for container kinds not yet implemented: the context takes its used width and stacks its children down its content box at its content width.";
+  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set context^.width = width;
+  let style = context^.style;
+  let basis = context^.space.basis_width;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis);
+  let content_left = border.left +sat padding.left;
+  let content_top = border.top +sat padding.top;
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let inner = width -sat frame;
+  let content_width = imax(inner, 0_i32);
+  let count = context^.children.inner.len;
+  for (i in 0_u64..count) {
+    let no = False();
+    set context^.children.inner[i].space = child_space(available: content_width, basis_width: content_width, basis_height: unknown, shrink: no);
+  }
+  lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let cursor = 0_i32;
+  for (i in 0_u64..count) {
+    if i >= context^.children.inner.len {
+      break;
+    }
+    let above = cursor +sat context^.children.inner[i].margin_top;
+    let x = content_left +sat context^.children.inner[i].margin_left;
+    set context^.children.inner[i].x = x;
+    set context^.children.inner[i].y = content_top +sat above;
+    let below = above +sat context^.children.inner[i].height;
+    set cursor = below +sat context^.children.inner[i].margin_bottom;
+  }
+  let used = used_height(context: context, styles: styles, content: cursor);
+  set context^.height = used;
+  set context^.has_baseline = False();
+  add_own_fragment(context: context);
+  return unit;
+}
+
+fn intrinsic_stacked(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The placeholder's intrinsic sizes: the largest of its children's contributions.";
+  let least = 0_i32;
+  let most = 0_i32;
+  let count = context^.children.inner.len;
+  for (i in 0_u64..count) {
+    let (low, high) = intrinsic_sizes(context: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    set least = imax(least, low);
+    set most = imax(most, high);
+  }
+  return least, most;
+}
+
+fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) {
+  doc "Lays out the initial containing block at the viewport's width, its origin at the viewport's.";
+  let viewport = layout^.viewport;
+  let width = units(px: viewport.width);
+  let height = units(px: viewport.height);
+  let no = False();
+  set layout^.root.space = Space(available: width, basis_width: width, basis_height: height, forced_width: width, forced_height: unknown, shrink: no);
+  lay_out_context(context: &layout^.root, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set layout^.root.x = 0_i32;
+  set layout^.root.y = 0_i32;
+  return unit;
+}
+
+fn place_context(context: &Context, x: i32, y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(context), writes(out) {
+  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin.";
+  let count = context^.fragments.inner.len;
+  for (f in 0_u64..count) {
+    let fragment = context^.fragments.inner[f];
+    let left = x +sat fragment.x;
+    let top = y +sat fragment.y;
+    let px_x = pixels(raw: left);
+    let px_y = pixels(raw: top);
+    let px_width = pixels(raw: fragment.width);
+    let px_height = pixels(raw: fragment.height);
+    let made = PlacedRect(kind: fragment.kind, owner: fragment.owner, x: px_x, y: px_y, width: px_width, height: px_height);
+    let pushed = push_item::<PlacedRect>(cell: out, value: made, ceiling: item_ceiling);
+  }
+  let children = context^.children.inner.len;
+  for (c in 0_u64..children) {
+    let child = &context^.children.inner[c];
+    let moved_x = x +sat child^.x;
+    let moved_y = y +sat child^.y;
+    let child_x = if child^.viewport_origin {
+      give child^.x;
+    } else {
+      give moved_x;
+    }
+    let child_y = if child^.viewport_origin {
+      give child^.y;
+    } else {
+      give moved_y;
+    }
+    place_context(context: child, x: child_x, y: child_y, out: out);
+  }
+  return unit;
+}
+
+fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) {
+  doc "The walk that turns every context's relative fragments into viewport coordinates.";
+  let out = box_slots_new::<PlacedRect>(capacity: 1024_u64);
+  place_context(context: &layout^.root, x: layout^.root.x, y: layout^.root.y, out: &out);
+  return move out;
+}

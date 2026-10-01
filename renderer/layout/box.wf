@@ -1,0 +1,375 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+alias Sizing = pkg::css::values::Sizing;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias sizing_value = pkg::css::values::sizing_value;
+alias sizing_auto = pkg::css::values::sizing_auto;
+alias sizing_none = pkg::css::values::sizing_none;
+alias sizing_keyword = pkg::css::values::sizing_keyword;
+
+const unknown: i32 = -1_i32;
+
+struct Edges {
+  doc "Four lengths in layout units, one per side.";
+  top: i32;
+  right: i32;
+  bottom: i32;
+  left: i32;
+}
+
+fn no_edges() -> made: Edges pure {
+  doc "Edges of zero.";
+  return Edges(top: 0_i32, right: 0_i32, bottom: 0_i32, left: 0_i32);
+}
+
+fn border_edges(styles: &Styles, style: StyleRef) -> edges: Edges reads(styles) {
+  doc "The used border widths of style's box, truncated to layout units.";
+  let group = border_widths_of(styles: styles, style: style);
+  let top = units(px: group.top_width);
+  let right = units(px: group.right_width);
+  let bottom = units(px: group.bottom_width);
+  let left = units(px: group.left_width);
+  return Edges(top: top, right: right, bottom: bottom, left: left);
+}
+
+fn padding_edges(styles: &Styles, style: StyleRef, basis: i32) -> edges: Edges reads(styles) {
+  doc "The used paddings of style's box, percentages of basis (the containing block's width), never negative.";
+  let group = spacing_of(styles: styles, style: style);
+  let top_raw = resolve_lp(value: group.padding_top, basis: basis);
+  let right_raw = resolve_lp(value: group.padding_right, basis: basis);
+  let bottom_raw = resolve_lp(value: group.padding_bottom, basis: basis);
+  let left_raw = resolve_lp(value: group.padding_left, basis: basis);
+  let top = imax(top_raw, 0_i32);
+  let right = imax(right_raw, 0_i32);
+  let bottom = imax(bottom_raw, 0_i32);
+  let left = imax(left_raw, 0_i32);
+  return Edges(top: top, right: right, bottom: bottom, left: left);
+}
+
+fn margin_or_zero(value: Sizing, basis: i32) -> raw: i32 pure {
+  doc "A computed margin resolved against basis, with auto as zero.";
+  if value.kind == sizing_value {
+    let made = resolve_lp(value: value.value, basis: basis);
+    return made;
+  }
+  return 0_i32;
+}
+
+fn margin_edges(styles: &Styles, style: StyleRef, basis: i32) -> edges: Edges reads(styles) {
+  doc "The margins of style's box resolved against basis, auto taken as zero.";
+  let group = spacing_of(styles: styles, style: style);
+  let top = margin_or_zero(value: group.margin_top, basis: basis);
+  let right = margin_or_zero(value: group.margin_right, basis: basis);
+  let bottom = margin_or_zero(value: group.margin_bottom, basis: basis);
+  let left = margin_or_zero(value: group.margin_left, basis: basis);
+  return Edges(top: top, right: right, bottom: bottom, left: left);
+}
+
+fn margin_auto(styles: &Styles, style: StyleRef) -> (left: Bool, right: Bool, top: Bool, bottom: Bool) reads(styles) {
+  doc "Which of style's margins are auto.";
+  let group = spacing_of(styles: styles, style: style);
+  let left = group.margin_left.kind == sizing_auto;
+  let right = group.margin_right.kind == sizing_auto;
+  let top = group.margin_top.kind == sizing_auto;
+  let bottom = group.margin_bottom.kind == sizing_auto;
+  return left, right, top, bottom;
+}
+
+fn size_value(value: Sizing, basis: i32) -> raw: i32 pure {
+  doc "A computed width or height as layout units, or unknown for auto, none, a keyword, or a percentage of an unknown basis.";
+  if value.kind == sizing_value {
+    let percent = value.value.has_percent;
+    let indefinite = basis < 0_i32;
+    let blocked = band(percent, indefinite);
+    if blocked {
+      return unknown;
+    }
+    let made = resolve_lp(value: value.value, basis: basis);
+    return made;
+  }
+  return unknown;
+}
+
+fn inset_value(value: Sizing, basis: i32) -> raw: i32 pure {
+  doc "A computed top, right, bottom or left offset as layout units, or unknown for auto or a percentage of an unknown basis.";
+  let made = size_value(value: value, basis: basis);
+  return made;
+}
+
+fn horizontal(edges: Edges) -> sum: i32 pure {
+  doc "left plus right.";
+  let made = edges.left +sat edges.right;
+  return made;
+}
+
+fn vertical(edges: Edges) -> sum: i32 pure {
+  doc "top plus bottom.";
+  let made = edges.top +sat edges.bottom;
+  return made;
+}
+
+fn border_box_from_content(content: i32, border_box_sizing: Bool, frame: i32) -> raw: i32 pure {
+  doc "The border-box size of a computed width or height, given box-sizing and the box's paddings and borders on that axis (frame).";
+  if border_box_sizing {
+    let made = imax(content, frame);
+    return made;
+  }
+  let made = content +sat frame;
+  return made;
+}
+
+fn clamp_size(size: i32, minimum: i32, maximum: i32) -> raw: i32 pure {
+  doc "size within maximum (unknown for none) and then at least minimum (unknown for none), as CSS 2.2 10.4 orders them.";
+  let capped = if maximum >= 0_i32 {
+    give imin(size, maximum);
+  } else {
+    give size;
+  }
+  let floored = if minimum >= 0_i32 {
+    give imax(capped, minimum);
+  } else {
+    give capped;
+  }
+  return floored;
+}
+
+fn width_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> (minimum: i32, maximum: i32) reads(styles) {
+  doc "The border-box min-width and max-width of style's box against basis (unknown when absent), with box-sizing applied.";
+  let sizes = size_of(styles: styles, style: style);
+  let group = box_of(styles: styles, style: style);
+  let border_box = group.box_sizing == box_sizing_border;
+  let min_raw = size_value(value: sizes.min_width, basis: basis);
+  let max_raw = size_value(value: sizes.max_width, basis: basis);
+  let minimum = if min_raw >= 0_i32 {
+    give border_box_from_content(content: min_raw, border_box_sizing: border_box, frame: frame);
+  } else {
+    give unknown;
+  }
+  let maximum = if max_raw >= 0_i32 {
+    give border_box_from_content(content: max_raw, border_box_sizing: border_box, frame: frame);
+  } else {
+    give unknown;
+  }
+  return minimum, maximum;
+}
+
+fn height_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> (minimum: i32, maximum: i32) reads(styles) {
+  doc "The border-box min-height and max-height of style's box against basis (unknown when absent or indefinite), with box-sizing applied.";
+  let sizes = size_of(styles: styles, style: style);
+  let group = box_of(styles: styles, style: style);
+  let border_box = group.box_sizing == box_sizing_border;
+  let min_raw = size_value(value: sizes.min_height, basis: basis);
+  let max_raw = size_value(value: sizes.max_height, basis: basis);
+  let minimum = if min_raw >= 0_i32 {
+    give border_box_from_content(content: min_raw, border_box_sizing: border_box, frame: frame);
+  } else {
+    give unknown;
+  }
+  let maximum = if max_raw >= 0_i32 {
+    give border_box_from_content(content: max_raw, border_box_sizing: border_box, frame: frame);
+  } else {
+    give unknown;
+  }
+  return minimum, maximum;
+}
+
+fn specified_width(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> raw: i32 reads(styles) {
+  doc "The border-box width style's width property gives against basis, with box-sizing applied, or unknown for auto and the content keywords.";
+  let sizes = size_of(styles: styles, style: style);
+  let group = box_of(styles: styles, style: style);
+  let border_box = group.box_sizing == box_sizing_border;
+  let content = size_value(value: sizes.width, basis: basis);
+  if content >= 0_i32 {
+    let made = border_box_from_content(content: content, border_box_sizing: border_box, frame: frame);
+    return made;
+  }
+  return unknown;
+}
+
+fn specified_height(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> raw: i32 reads(styles) {
+  doc "The border-box height style's height property gives against basis (unknown when indefinite), with box-sizing applied, or unknown for auto.";
+  let sizes = size_of(styles: styles, style: style);
+  let group = box_of(styles: styles, style: style);
+  let border_box = group.box_sizing == box_sizing_border;
+  let content = size_value(value: sizes.height, basis: basis);
+  if content >= 0_i32 {
+    let made = border_box_from_content(content: content, border_box_sizing: border_box, frame: frame);
+    return made;
+  }
+  return unknown;
+}
+
+fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> width: i32 reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The border-box width of context in its space (CSS 2.2 10.3): the width its parent imposes; else its width property; else, for a shrink-to-fit box, its intrinsic sizes clamped to the available space, min(max(min-content, available), max-content); else the available space less its margins; then clamped by min-width and max-width.";
+  let space = context^.space;
+  let style = context^.style;
+  let basis = space.basis_width;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis);
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: basis, frame: frame);
+  if space.forced_width >= 0_i32 {
+    return space.forced_width;
+  }
+  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  if specified >= 0_i32 {
+    let clamped = clamp_size(size: specified, minimum: minimum, maximum: maximum);
+    let made = imax(clamped, frame);
+    return made;
+  }
+  let margins = margin_edges(styles: styles, style: style, basis: basis);
+  let around = horizontal(edges: margins);
+  let room = space.available -sat around;
+  let base = if space.shrink {
+    let (least, most) = intrinsic_sizes(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let floor = imax(least, room);
+    give imin(floor, most);
+  } else {
+    give room;
+  }
+  let clamped = clamp_size(size: base, minimum: minimum, maximum: maximum);
+  let made = imax(clamped, frame);
+  return made;
+}
+
+fn used_height(context: &Context, styles: &Styles, content: i32) -> height: i32 reads(styles), reads(context) {
+  doc "The border-box height of context given the height of its laid-out content box: the height its parent imposes; else its height property when its percentage basis is known; else the content plus paddings and borders; then clamped by min-height and max-height.";
+  let space = context^.space;
+  let style = context^.style;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: space.basis_width);
+  let frame_border = vertical(edges: border);
+  let frame_padding = vertical(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let (minimum, maximum) = height_limits(styles: styles, style: style, basis: space.basis_height, frame: frame);
+  if space.forced_height >= 0_i32 {
+    return space.forced_height;
+  }
+  let specified = specified_height(styles: styles, style: style, basis: space.basis_height, frame: frame);
+  let base = if specified >= 0_i32 {
+    give specified;
+  } else {
+    give content +sat frame;
+  }
+  let clamped = clamp_size(size: base, minimum: minimum, maximum: maximum);
+  let made = imax(clamped, frame);
+  return made;
+}
+
+fn add_fragment(context: &Context, kind: u8, owner: u32, x: i32, y: i32, width: i32, height: i32) -> result: unit writes(context) {
+  doc "Appends a fragment of context, relative to its border box.";
+  let made = Fragment(kind: kind, owner: owner, x: x, y: y, width: width, height: height);
+  let pushed = push_item::<Fragment>(cell: &context^.fragments, value: made, ceiling: item_ceiling);
+  return unit;
+}
+
+fn add_own_fragment(context: &Context) -> result: unit writes(context) {
+  doc "Appends the fragment of context's own box, its border box at its origin, when an element or pseudo-element generates it.";
+  let style = context^.style;
+  if style.anonymous {
+    return unit;
+  }
+  if style.pseudo != no_pseudo {
+    return unit;
+  }
+  let width = context^.width;
+  let height = context^.height;
+  add_fragment(context: context, kind: placed_element, owner: style.element, x: 0_i32, y: 0_i32, width: width, height: height);
+  return unit;
+}
+
+fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The min-content and max-content border-box widths of context (Q56), computed on first request from its kind's content and kept: a specified width gives both, min-width and max-width clamp them, and paddings and borders are added to the content's.";
+  if context^.intrinsic_known {
+    return context^.min_content, context^.max_content;
+  }
+  let style = context^.style;
+  let basis = context^.space.basis_width;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis);
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: basis, frame: frame);
+  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  let skipped = specified >= 0_i32;
+  let (least_content, most_content) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
+  let content_high = imax(most_content, least_content);
+  let low_frame = least_content +sat frame;
+  let high_frame = content_high +sat frame;
+  let fixed = specified >= 0_i32;
+  let least = if fixed {
+    give specified;
+  } else {
+    give low_frame;
+  }
+  let most = if fixed {
+    give specified;
+  } else {
+    give high_frame;
+  }
+  let least_clamped = clamp_size(size: least, minimum: minimum, maximum: maximum);
+  let most_clamped = clamp_size(size: most, minimum: minimum, maximum: maximum);
+  set context^.min_content = least_clamped;
+  set context^.max_content = most_clamped;
+  set context^.intrinsic_known = True();
+  return least_clamped, most_clamped;
+}
+
+fn intrinsic_content(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, skip: Bool) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The content's intrinsic widths of context by its kind, zero when skip holds (a specified width replaces them).";
+  if skip {
+    return 0_i32, 0_i32;
+  }
+  if context^.kind == ctx_flex {
+    let (least, most) = intrinsic_flex(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    return least, most;
+  }
+  if context^.kind == ctx_grid {
+    let (least, most) = intrinsic_grid(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    return least, most;
+  }
+  if context^.kind == ctx_table {
+    let (least, most) = intrinsic_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    return least, most;
+  }
+  if context^.kind == ctx_replaced {
+    let (least, most) = intrinsic_replaced();
+    return least, most;
+  }
+  let (least, most) = intrinsic_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  return least, most;
+}
+
+fn lay_out_context(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out context in the space its parent wrote into it, by its kind, setting its border-box width and height, its baseline and its fragments; its parent then sets its position and margins.";
+  let cleared = context^.fragments.inner.len;
+  for (step in 0_u64..cleared) {
+    let length = context^.fragments.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &context^.fragments.inner);
+  }
+  if context^.kind == ctx_flex {
+    lay_out_flex(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  } else if context^.kind == ctx_grid {
+    lay_out_grid(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  } else if context^.kind == ctx_table {
+    lay_out_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  } else if context^.kind == ctx_replaced {
+    lay_out_replaced(context: context, styles: styles);
+  } else {
+    lay_out_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  }
+  return unit;
+}
+
+fn child_space(available: i32, basis_width: i32, basis_height: i32, shrink: Bool) -> made: Space pure {
+  doc "A space with no imposed size.";
+  return Space(available: available, basis_width: basis_width, basis_height: basis_height, forced_width: unknown, forced_height: unknown, shrink: shrink);
+}

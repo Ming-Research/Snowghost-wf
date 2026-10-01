@@ -1,0 +1,533 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+alias TextRun = pkg::layout::text::TextRun;
+alias shape_paragraph = pkg::layout::text::shape_paragraph;
+alias sizing_value = pkg::css::values::sizing_value;
+alias Sizing = pkg::css::values::Sizing;
+
+const transform_capitalize: u8 = 1_u8;
+
+const transform_uppercase: u8 = 2_u8;
+
+const transform_lowercase: u8 = 3_u8;
+
+struct Emit {
+  doc "The state of one paragraph's white-space processing: whether the last scalar emitted is a collapsible space, whether the walk is at the start of a line (the paragraph's start or after a forced break), whether the last scalar was a letter (for capitalize), and the run being built: its style, its start and whether one is open.";
+  last_space: Bool;
+  at_start: Bool;
+  after_letter: Bool;
+  run_style: StyleRef;
+  run_start: u64;
+  have_run: Bool;
+}
+
+fn same_style(first: StyleRef, second: StyleRef) -> same: Bool pure {
+  doc "Tells whether two style references name the same style.";
+  let element = first.element == second.element;
+  let pseudo = first.pseudo == second.pseudo;
+  let anonymous = eeq(first.anonymous, second.anonymous);
+  let both = band(element, pseudo);
+  let all = band(both, anonymous);
+  return all;
+}
+
+fn spacing_px(value: Sizing) -> px: f32 pure {
+  doc "The px of a computed letter-spacing or word-spacing: its length, or 0 for normal.";
+  if value.kind == sizing_value {
+    return value.value.px;
+  }
+  return 0.0_f32;
+}
+
+fn close_run(styles: &Styles, emit: &Emit, paragraph: &Paragraph) -> result: unit reads(styles), writes(emit), writes(paragraph) {
+  doc "Ends the open run at the paragraph's current length, recording it with its style's font group, spacing and wrapping, when it holds text.";
+  if emit^.have_run {
+  } else {
+    return unit;
+  }
+  let end = paragraph^.text.inner.len;
+  let start = emit^.run_start;
+  set emit^.have_run = False();
+  if end <= start {
+    return unit;
+  }
+  let small = end < 4294967295_u64;
+  if small {
+  } else {
+    return unit;
+  }
+  let style = emit^.run_style;
+  let text = text_of(styles: styles, style: style);
+  let font = font_index(styles: styles, style: style);
+  let white = text.white_space;
+  let nowrap = white == white_nowrap;
+  let pre = white == white_pre;
+  let unwrapped = bor(nowrap, pre);
+  let wraps = bnot(unwrapped);
+  let letter = spacing_px(value: text.letter_spacing);
+  let word = spacing_px(value: text.word_spacing);
+  let from = cvt::<u64, u32>(start);
+  let to = cvt::<u64, u32>(end);
+  let run = TextRun(start: from, end: to, font: font, letter_spacing: letter, word_spacing: word, wraps: wraps, word_break: text.word_break, overflow_wrap: text.overflow_wrap);
+  let pushed = push_item::<TextRun>(cell: &paragraph^.runs, value: run, ceiling: item_ceiling);
+  let listed = push_item::<StyleRef>(cell: &paragraph^.run_styles, value: style, ceiling: item_ceiling);
+  return unit;
+}
+
+fn put_scalar(styles: &Styles, emit: &Emit, paragraph: &Paragraph, value: u32, style: StyleRef) -> result: unit reads(styles), writes(emit), writes(paragraph) {
+  doc "Appends value to the paragraph's text in style's run, closing the open run first when style differs.";
+  if emit^.have_run {
+    let same = same_style(first: emit^.run_style, second: style);
+    if same {
+    } else {
+      close_run(styles: styles, emit: emit, paragraph: paragraph);
+    }
+  }
+  if emit^.have_run {
+  } else {
+    set emit^.run_style = style;
+    set emit^.run_start = paragraph^.text.inner.len;
+    set emit^.have_run = True();
+  }
+  let pushed = push_item::<u32>(cell: &paragraph^.text, value: value, ceiling: scalar_ceiling);
+  return unit;
+}
+
+fn is_letter(value: u32) -> letter: Bool pure {
+  doc "Tells whether value is an ASCII or Latin-1 letter or a letter of the Latin Extended, Greek or Cyrillic blocks, for capitalize.";
+  let upper_left = value >= 65_u32;
+  let upper_right = value <= 90_u32;
+  let upper = band(upper_left, upper_right);
+  let lower_left = value >= 97_u32;
+  let lower_right = value <= 122_u32;
+  let lower = band(lower_left, lower_right);
+  let latin_left = value >= 192_u32;
+  let latin_right = value <= 591_u32;
+  let latin = band(latin_left, latin_right);
+  let multiply_sign = value == 215_u32;
+  let divide = value == 247_u32;
+  let sign = bor(multiply_sign, divide);
+  let latin_letter_not = bnot(sign);
+  let latin_letter = band(latin, latin_letter_not);
+  let greek_left = value >= 880_u32;
+  let greek_right = value <= 1023_u32;
+  let greek = band(greek_left, greek_right);
+  let cyrillic_left = value >= 1024_u32;
+  let cyrillic_right = value <= 1279_u32;
+  let cyrillic = band(cyrillic_left, cyrillic_right);
+  let ascii = bor(upper, lower);
+  let other = bor(greek, cyrillic);
+  let some = bor(ascii, latin_letter);
+  let found = bor(some, other);
+  return found;
+}
+
+fn to_upper(value: u32) -> mapped: u32 pure {
+  doc "Maps value to upper case: ASCII, Latin-1, the paired Latin Extended-A letters, Greek and Cyrillic basic letters; others unchanged.";
+  let lower_left = value >= 97_u32;
+  let lower_right = value <= 122_u32;
+  let lower = band(lower_left, lower_right);
+  if lower {
+    return value - 32_u32;
+  }
+  let latin_left = value >= 224_u32;
+  let latin_right = value <= 254_u32;
+  let latin = band(latin_left, latin_right);
+  let divide = value == 247_u32;
+  let latin_letter_not = bnot(divide);
+  let latin_letter = band(latin, latin_letter_not);
+  if latin_letter {
+    return value - 32_u32;
+  }
+  if value == 255_u32 {
+    return 376_u32;
+  }
+  let extended_left = value >= 256_u32;
+  let extended_right = value <= 383_u32;
+  let extended = band(extended_left, extended_right);
+  if extended {
+    let odd_bits = iand(value, 1_u32);
+    let odd = odd_bits == 1_u32;
+    let paired_low = value <= 311_u32;
+    let paired_high = value >= 330_u32;
+    let paired = bor(paired_low, paired_high);
+    let even_pairs = band(paired, odd);
+    if even_pairs {
+      return value - 1_u32;
+    }
+    let middle_left = value >= 313_u32;
+    let middle_right = value <= 328_u32;
+    let middle = band(middle_left, middle_right);
+    let even = bnot(odd);
+    let middle_lower = band(middle, even);
+    if middle_lower {
+      return value - 1_u32;
+    }
+    return value;
+  }
+  let greek_left = value >= 945_u32;
+  let greek_right = value <= 969_u32;
+  let greek = band(greek_left, greek_right);
+  let final_sigma = value == 962_u32;
+  if final_sigma {
+    return 931_u32;
+  }
+  if greek {
+    return value - 32_u32;
+  }
+  let cyrillic_left = value >= 1072_u32;
+  let cyrillic_right = value <= 1103_u32;
+  let cyrillic = band(cyrillic_left, cyrillic_right);
+  if cyrillic {
+    return value - 32_u32;
+  }
+  let cyrillic_extra_left = value >= 1104_u32;
+  let cyrillic_extra_right = value <= 1119_u32;
+  let cyrillic_extra = band(cyrillic_extra_left, cyrillic_extra_right);
+  if cyrillic_extra {
+    return value - 80_u32;
+  }
+  return value;
+}
+
+fn to_lower(value: u32) -> mapped: u32 pure {
+  doc "Maps value to lower case over the ranges to_upper covers; others unchanged.";
+  let upper_left = value >= 65_u32;
+  let upper_right = value <= 90_u32;
+  let upper = band(upper_left, upper_right);
+  if upper {
+    return value + 32_u32;
+  }
+  let latin_left = value >= 192_u32;
+  let latin_right = value <= 222_u32;
+  let latin = band(latin_left, latin_right);
+  let multiply_sign = value == 215_u32;
+  let latin_letter_not = bnot(multiply_sign);
+  let latin_letter = band(latin, latin_letter_not);
+  if latin_letter {
+    return value + 32_u32;
+  }
+  if value == 376_u32 {
+    return 255_u32;
+  }
+  let extended_left = value >= 256_u32;
+  let extended_right = value <= 383_u32;
+  let extended = band(extended_left, extended_right);
+  if extended {
+    let even_bits = iand(value, 1_u32);
+    let even = even_bits == 0_u32;
+    let paired_low = value <= 311_u32;
+    let paired_high = value >= 330_u32;
+    let paired = bor(paired_low, paired_high);
+    let even_pairs = band(paired, even);
+    if even_pairs {
+      return value + 1_u32;
+    }
+    let middle_left = value >= 313_u32;
+    let middle_right = value <= 328_u32;
+    let middle = band(middle_left, middle_right);
+    let odd = bnot(even);
+    let middle_upper = band(middle, odd);
+    if middle_upper {
+      return value + 1_u32;
+    }
+    return value;
+  }
+  let greek_left = value >= 913_u32;
+  let greek_right = value <= 937_u32;
+  let greek = band(greek_left, greek_right);
+  if greek {
+    return value + 32_u32;
+  }
+  let cyrillic_left = value >= 1040_u32;
+  let cyrillic_right = value <= 1071_u32;
+  let cyrillic = band(cyrillic_left, cyrillic_right);
+  if cyrillic {
+    return value + 32_u32;
+  }
+  let cyrillic_extra_left = value >= 1024_u32;
+  let cyrillic_extra_right = value <= 1039_u32;
+  let cyrillic_extra = band(cyrillic_extra_left, cyrillic_extra_right);
+  if cyrillic_extra {
+    return value + 80_u32;
+  }
+  return value;
+}
+
+fn add_text_scalar(styles: &Styles, emit: &Emit, paragraph: &Paragraph, raw: u32, style: StyleRef) -> result: unit reads(styles), writes(emit), writes(paragraph) {
+  doc "Processes one scalar value of text in style as CSS Text 3's white-space processing and text-transform do: under normal, nowrap and pre-line, a space or tab collapses into a preceding collapsible space and is dropped at a line's start, and a line feed is a space under normal and nowrap; under pre, pre-wrap, pre-line and break-spaces a line feed is a forced line break (U+2028); every other scalar is transformed and appended.";
+  let text = text_of(styles: styles, style: style);
+  let white = text.white_space;
+  let normal = white == white_normal;
+  let nowrap = white == white_nowrap;
+  let pre_line = white == white_pre_line;
+  let flat = bor(normal, nowrap);
+  let collapsing = bor(flat, pre_line);
+  let value = if raw == 13_u32 {
+    give 10_u32;
+  } else if raw == 12_u32 {
+    give 32_u32;
+  } else {
+    give raw;
+  }
+  let feed = value == 10_u32;
+  let feed_as_space = band(feed, flat);
+  let newline_not = bnot(flat);
+  let newline = band(feed, newline_not);
+  if newline {
+    put_scalar(styles: styles, emit: emit, paragraph: paragraph, value: line_separator, style: style);
+    set emit^.last_space = False();
+    set emit^.at_start = True();
+    set emit^.after_letter = False();
+    return unit;
+  }
+  let space = value == 32_u32;
+  let tab = value == 9_u32;
+  let blank_pair = bor(space, tab);
+  let blank = bor(blank_pair, feed_as_space);
+  if blank {
+    if collapsing {
+      let skip = bor(emit^.at_start, emit^.last_space);
+      if skip {
+        return unit;
+      }
+      put_scalar(styles: styles, emit: emit, paragraph: paragraph, value: 32_u32, style: style);
+      set emit^.last_space = True();
+      set emit^.after_letter = False();
+      return unit;
+    }
+    put_scalar(styles: styles, emit: emit, paragraph: paragraph, value: value, style: style);
+    set emit^.last_space = False();
+    set emit^.at_start = False();
+    set emit^.after_letter = False();
+    return unit;
+  }
+  let transform = text.text_transform;
+  let letter = is_letter(value: value);
+  let mapped = if transform == transform_uppercase {
+    give to_upper(value: value);
+  } else if transform == transform_lowercase {
+    give to_lower(value: value);
+  } else if transform == transform_capitalize {
+    let first_not = bnot(emit^.after_letter);
+    let first = band(letter, first_not);
+    if first {
+      give to_upper(value: value);
+    } else {
+      give value;
+    }
+  } else {
+    give value;
+  }
+  put_scalar(styles: styles, emit: emit, paragraph: paragraph, value: mapped, style: style);
+  set emit^.last_space = False();
+  set emit^.at_start = False();
+  set emit^.after_letter = letter;
+  return unit;
+}
+
+fn add_bytes(styles: &Styles, emit: &Emit, paragraph: &Paragraph, bytes: &[u8], style: StyleRef) -> result: unit reads(styles), reads(bytes), writes(emit), writes(paragraph) {
+  doc "Decodes bytes as UTF-8, each ill-formed sequence as U+FFFD, and processes each scalar value with add_text_scalar.";
+  let count = bytes^.len;
+  let value = 0_u32;
+  let needed = 0_u32;
+  for (at in 0_u64..count) {
+    let byte = bytes^[at];
+    let wide = cvt::<u8, u32>(byte);
+    let continuation_bits = iand(wide, 192_u32);
+    let continuation = continuation_bits == 128_u32;
+    let pending = needed > 0_u32;
+    let continues = band(pending, continuation);
+    if continues {
+      let shifted = ishl(value, 6_u32);
+      let bits = iand(wide, 63_u32);
+      set value = ior(shifted, bits);
+      set needed = needed - 1_u32;
+      if needed == 0_u32 {
+        add_text_scalar(styles: styles, emit: emit, paragraph: paragraph, raw: value, style: style);
+      }
+    } else {
+      if pending {
+        add_text_scalar(styles: styles, emit: emit, paragraph: paragraph, raw: 65533_u32, style: style);
+        set needed = 0_u32;
+      }
+      let leads = start_byte(wide: wide);
+      if leads == 0_u32 {
+        add_text_scalar(styles: styles, emit: emit, paragraph: paragraph, raw: wide, style: style);
+      } else if leads == 4_u32 {
+        add_text_scalar(styles: styles, emit: emit, paragraph: paragraph, raw: 65533_u32, style: style);
+      } else {
+        set needed = leads;
+        let mask = if leads == 1_u32 {
+          give 31_u32;
+        } else if leads == 2_u32 {
+          give 15_u32;
+        } else {
+          give 7_u32;
+        }
+        set value = iand(wide, mask);
+      }
+    }
+  }
+  if needed > 0_u32 {
+    add_text_scalar(styles: styles, emit: emit, paragraph: paragraph, raw: 65533_u32, style: style);
+  }
+  return unit;
+}
+
+fn start_byte(wide: u32) -> continuations: u32 pure {
+  doc "The number of continuation bytes a UTF-8 byte announces: 0 for ASCII, 1 to 3 for a lead byte, 4 for a byte that starts no sequence.";
+  if wide < 128_u32 {
+    return 0_u32;
+  }
+  let two = iand(wide, 224_u32);
+  if two == 192_u32 {
+    return 1_u32;
+  }
+  let three = iand(wide, 240_u32);
+  if three == 224_u32 {
+    return 2_u32;
+  }
+  let four = iand(wide, 248_u32);
+  if four == 240_u32 {
+    return 3_u32;
+  }
+  return 4_u32;
+}
+
+fn add_mark(paragraph: &Paragraph, mark: Mark) -> result: unit writes(paragraph) {
+  doc "Appends mark to the paragraph's inline structure.";
+  let pushed = push_item::<Mark>(cell: &paragraph^.marks, value: mark, ceiling: item_ceiling);
+  return unit;
+}
+
+fn text_index(paragraph: &Paragraph) -> at: u32 reads(paragraph) {
+  doc "The paragraph's current text length as a text index.";
+  let length = paragraph^.text.inner.len;
+  let small = length < 4294967295_u64;
+  if small {
+    let made = cvt::<u64, u32>(length);
+    return made;
+  }
+  return 4294967294_u32;
+}
+
+fn prepare_paragraph(pieces: &[Piece], bytes: &[u8], generated: &[u8], styles: &Styles, fonts: &FontSet, picks: &FontPicks, paragraph: &Paragraph) -> ok: Bool reads(pieces), reads(bytes), reads(generated), reads(styles), reads(fonts), reads(picks), writes(paragraph) {
+  doc "Turns the paragraph's pieces into its text, runs, run styles and marks, then shapes its text; False when shaping refuses it.";
+  let total = pieces^.len;
+  let first = paragraph^.first;
+  let many = paragraph^.count;
+  let ahead = first <= total;
+  if ahead {
+  } else {
+    return False();
+  }
+  let room = total - first;
+  let fits = many <= room;
+  if fits {
+  } else {
+    return False();
+  }
+  let end = first + many;
+  let no = False();
+  let yes = True();
+  let emit = Emit(last_space: no, at_start: yes, after_letter: no, run_style: paragraph^.style, run_start: 0_u64, have_run: no);
+  let stored = bytes^.len;
+  let made = generated^.len;
+  for (at in first..end) {
+    let piece = pieces^[at];
+    match piece {
+      Bytes(start: from, end: to, style: owner, node: source) => {
+        let low = cvt::<u32, u64>(from);
+        let high = cvt::<u32, u64>(to);
+        let ordered = low <= high;
+        let inside = high <= stored;
+        let usable = band(ordered, inside);
+        if usable {
+          let begin = text_index(paragraph: paragraph);
+          add_bytes(styles: styles, emit: &emit, paragraph: paragraph, bytes: &bytes^[low..high], style: owner);
+          if source != no_index {
+            let finish = text_index(paragraph: paragraph);
+            let mark = Mark::Node(at: begin, end: finish, node: source);
+            add_mark(paragraph: paragraph, mark: mark);
+          }
+        }
+      }
+      Generated(start: from, end: to, style: owner) => {
+        let low = cvt::<u32, u64>(from);
+        let high = cvt::<u32, u64>(to);
+        let ordered = low <= high;
+        let inside = high <= made;
+        let usable = band(ordered, inside);
+        if usable {
+          add_bytes(styles: styles, emit: &emit, paragraph: paragraph, bytes: &generated^[low..high], style: owner);
+        }
+      }
+      Scalar(value: one, style: owner) => {
+        add_text_scalar(styles: styles, emit: &emit, paragraph: paragraph, raw: one, style: owner);
+        if one == line_separator {
+          set emit.at_start = True();
+          set emit.last_space = False();
+        }
+      }
+      Begin(style: owner) => {
+        let here = text_index(paragraph: paragraph);
+        let mark = Mark::Open(at: here, style: owner);
+        add_mark(paragraph: paragraph, mark: mark);
+      }
+      End(style: owner) => {
+        let here = text_index(paragraph: paragraph);
+        let mark = Mark::Close(at: here, style: owner);
+        add_mark(paragraph: paragraph, mark: mark);
+      }
+      Object(context: child, style: owner) => {
+        let here = text_index(paragraph: paragraph);
+        put_scalar(styles: styles, emit: &emit, paragraph: paragraph, value: object_mark, style: owner);
+        set emit.last_space = False();
+        set emit.at_start = False();
+        set emit.after_letter = False();
+        let mark = Mark::Atomic(at: here, context: child);
+        add_mark(paragraph: paragraph, mark: mark);
+      }
+    }
+  }
+  close_run(styles: styles, emit: &emit, paragraph: paragraph);
+  let length = paragraph^.text.inner.len;
+  if length == 0_u64 {
+    return True();
+  }
+  if length > 1073741824_u64 {
+    return False();
+  }
+  let runs = paragraph^.runs.inner.len;
+  match shape_paragraph(fonts: fonts, picks: picks, text: &paragraph^.text.inner[0_u64..length], runs: &paragraph^.runs.inner[0_u64..runs]) {
+    Ok(value: shaped) => {
+      set paragraph^.shaped = move shaped;
+      return True();
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+}
+
+fn prepare_context(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Prepares every paragraph of context in one counted loop, each iteration writing only its own paragraph, and then every child context, one per iteration of a second counted loop; False when any paragraph's shaping failed.";
+  let count = context^.paragraphs.inner.len;
+  let total = context^.pieces.inner.len;
+  let stored = document^.text.inner.len;
+  let made = styles^.generated_text.inner.len;
+  let ok = True();
+  for (i in 0_u64..count) {
+    let done = prepare_paragraph(pieces: &context^.pieces.inner[0_u64..total], bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i]);
+    set ok = band(ok, done);
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    let done = prepare_context(context: &context^.children.inner[k], document: document, styles: styles, fonts: fonts, picks: picks);
+    set ok = band(ok, done);
+  }
+  return ok;
+}
