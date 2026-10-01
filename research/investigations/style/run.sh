@@ -29,8 +29,8 @@
 # checkout's .github/run-check.pl), so no other heavy job shares the machine.
 #
 # UA replaces the user-agent sheet, a path relative to the repository, for a
-# diagnostic run such as the one with Chromium's table rule in
-# runs/ua-table-gray.txt.
+# diagnostic run such as the one in runs/ua-table-gray.txt, whose sheet is
+# renderer/style/ua.css followed by the line `table { border-color: gray; }`.
 #
 # The drivers are built with WHITEFOOTC (by default the pinned compiler's
 # gate build, as the Makefile builds it). POSIX sh plus node and sha256sum.
@@ -148,6 +148,7 @@ time_parts() {
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
 	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
 	echo "drivers: $(sha256sum <build/style_oracle_par | cut -c1-16) $(sha256sum <build/style_oracle | cut -c1-16)"
+	echo "runs: $runs, commit: $(git rev-parse --short HEAD)"
 	echo "page mode build reps T(0) T(REPS) per-run"
 	for page in ${1:-ecma262 html5 apollo11}; do
 		sheets=$(sheets_of "$page")

@@ -180,8 +180,10 @@ the parallelism rule of `AGENTS.md`, and none changes them.
 - **A custom property on a cycle of references is invalid**, fallback or
   not, and one that only refers to the cycle takes its fallback: when a
   round of substitution resolves nothing, the properties that reach
-  themselves through their `var()` references are dropped and the rounds go
-  on (checked against the reference by the cases page).
+  themselves through the references substitution follows are dropped and
+  the rounds go on. A reference counts only where substitution reads it: a
+  `var()` whose name has a value is not followed into its fallback, as the
+  reference does (both checked by the cases page).
 - **The custom-property sets are interned by their entries** as the eighth
   task beside the seven value groups, so equal sets declared apart get one
   identifier.
@@ -223,9 +225,8 @@ user-agent sheet (`renderer/style/ua.css`):
 | apollo11 | 11,845 | the four border colors 98.17% | font-family 99.24%, color 99.31% |
 
 Every page has the same element count in both. `tests/css/style-cases.html`,
-66 elements that exercise what the pages use little (`var()` fallbacks and
-cycles and their dependents, `calc()`, media query ranges, `oblique`, which
-the reference reports as `italic`, `@supports`, explicit `inherit`,
+67 elements that exercise what the pages use little (`var()` fallbacks and
+cycles and their dependents, `calc()`, media query ranges, `oblique`, `@supports`, explicit `inherit`,
 keyword font sizes with and without monospace), matches on every property
 but the border colors of its tables and their rows, the same rule's. With Chromium's rule
 `table { border-color: gray }` added to a copy of the sheet, and nothing else
@@ -259,6 +260,9 @@ The classes of mismatch, with their causes:
   the dimension properties (6, 10 and about 25 elements); an SVG `title`
   taken for an HTML one by the sheet's `title { display: none }` (1 on
   ecma262).
+- **Serialization, not computation:** the stage keeps `oblique` apart from
+  `italic`, and the driver writes both as `italic`, as the reference does,
+  so the comparison cannot tell them apart.
 - **Not explained:** 4 images of apollo11 whose width differs (`auto`
   against `250px`, `330px` against `325px`).
 
@@ -304,7 +308,8 @@ of a few hundredths is within the runs' noise.
   run, with seven tasks, 22 and 20 percent on ecma262 and html5. The bound
   of `design/vocabulary.md` is 15 percent, so the runs fall on both sides of
   it; from one worker to four it speeds up only 1.1 to 2.1 times on ecma262
-  and html5. Every run measures it as a difference of whole runs, so it
+  and html5 in the two later runs, and the first run measured it slower at
+  four workers. Every run measures it as a difference of whole runs, so it
   is timed alone next (`docs/todo.md`).
 
 ### Criterion 3: equal builds

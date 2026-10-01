@@ -2,7 +2,6 @@ alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Color = pkg::css::color::Color;
 alias ColorSpace = pkg::css::color::ColorSpace;
-alias ComponentList = pkg::css::syntax::ComponentList;
 alias ComponentRange = pkg::css::rules::ComponentRange;
 alias Declared = pkg::css::values::Declared;
 alias DeclarationStore = pkg::css::values::DeclarationStore;
@@ -13,7 +12,6 @@ alias FontGroup = pkg::css::values::FontGroup;
 alias FontMetrics = pkg::css::values::FontMetrics;
 alias LengthPercentage = pkg::css::values::LengthPercentage;
 alias Lengths = pkg::css::values::Lengths;
-alias MatchContext = pkg::css::selectors::MatchContext;
 alias NodeId = pkg::dom::NodeId;
 alias Sizing = pkg::css::values::Sizing;
 alias TextGroup = pkg::css::values::TextGroup;
@@ -24,7 +22,6 @@ alias compute_length = pkg::css::values::compute_length;
 alias declaration_store_new = pkg::css::values::declaration_store_new;
 alias keyword_bolder = pkg::css::values::keyword_bolder;
 alias keyword_lighter = pkg::css::values::keyword_lighter;
-alias keyword_normal = pkg::css::values::keyword_normal;
 alias lh_color = pkg::css::values::lh_color;
 alias lh_font_family = pkg::css::values::lh_font_family;
 alias lh_font_size = pkg::css::values::lh_font_size;
@@ -39,7 +36,6 @@ alias lh_text_transform = pkg::css::values::lh_text_transform;
 alias lh_visibility = pkg::css::values::lh_visibility;
 alias lh_white_space = pkg::css::values::lh_white_space;
 alias lh_word_spacing = pkg::css::values::lh_word_spacing;
-alias matching_specificity = pkg::css::selectors::matching_specificity;
 alias parse_component_values = pkg::css::syntax::parse_component_values;
 alias parse_pending_named = pkg::css::values::parse_pending_named;
 alias sizing_keyword = pkg::css::values::sizing_keyword;
@@ -744,7 +740,7 @@ fn own_listed(own: &Box<Slots<OwnCustom>>, name: u32) -> found: Bool reads(own) 
 }
 
 fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &AtomTable, position: u64, parent_set: u32) -> result: Result<u32, StyleError> reads(store), reads(cascade), reads(atoms), writes(state) {
-  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another: a value that refers to one still waiting, itself included, waits, and when a round resolves nothing, the values on a cycle of references are invalid and left out, so a value that only refers to them takes its fallback in the next round; one whose var() fails is left out too.";
+  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another: a value that refers to one still waiting, itself included, waits, and when a round resolves nothing, the values on a cycle of the references substitution follows are invalid and left out, so a value that only refers to them takes its fallback in the next round; one whose var() fails is left out too.";
   let own = box_slots_new::<OwnCustom>(capacity: 0_u64);
   collect_customs(own: &own, store: store, cascade: cascade, position: position);
   let own_count = own.inner.len;
@@ -858,7 +854,13 @@ fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &A
       }
     }
     if still == waiting {
-      invalidate_cycles(own: &own, store: store, atoms: atoms);
+      let current = state^.custom_entries.inner.len;
+      let entries_start = if first <= current {
+        give first;
+      } else {
+        give current;
+      }
+      invalidate_cycles(own: &own, store: store, atoms: atoms, entries: &state^.custom_entries.inner[entries_start..current]);
     }
   }
   let end = state^.custom_entries.inner.len;
@@ -1324,8 +1326,8 @@ fn push_index(cell: &Box<Slots<u64>>, value: u64) -> result: unit writes(cell) {
   return unit;
 }
 
-fn references_of(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, k: u64, out: &Box<Slots<u64>>) -> result: unit reads(own), reads(store), reads(atoms), writes(out) {
-  doc "Appends the positions of the waiting custom properties that own[k]'s value names in a var(), fallbacks included.";
+fn references_of(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, entries: &[CustomEntry], k: u64, out: &Box<Slots<u64>>) -> result: unit reads(own), reads(store), reads(atoms), reads(entries), writes(out) {
+  doc "Appends the positions of the waiting custom properties that own[k]'s value depends on as substitution reads it: a var() whose name is waiting is one; a var() whose name has a value is skipped with its fallback; the fallback of a var() whose name has none is read in turn.";
   let inside = k < own^.inner.len;
   if inside {
   } else {
@@ -1355,22 +1357,36 @@ fn references_of(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTab
     return unit;
   }
   let n = var_word.len;
-  for (at in start..end) {
+  let cursor = start;
+  let span = end - start;
+  for (step in 0_u64..span) {
+    let at = cursor;
+    if at >= end {
+      break;
+    }
+    let advance = at + 1_u64;
     let kind = component_kind(values: &store^.sheets.inner[sheet].values, at: at);
     if kind == c_function {
       let named = name_word(values: &store^.sheets.inner[sheet].values, at: at, list: &var_word[0_u64..n]);
       match named {
         Some(..) => {
-          let after = at + 1_u64;
-          let name_at_index = skip_space(values: &store^.sheets.inner[sheet].values, at: after, limit: end);
+          let name_at_index = skip_space(values: &store^.sheets.inner[sheet].values, at: advance, limit: end);
           if name_at_index < end {
             match var_name_atom(values: &store^.sheets.inner[sheet].values, at: name_at_index, atoms: atoms) {
               Some(value: name) => {
                 match pending_named(own: own, name: name) {
                   Some(value: target) => {
                     push_index(cell: out, value: target);
+                    set advance = sibling_after(values: &store^.sheets.inner[sheet].values, at: at, limit: end);
                   }
                   None() => {
+                    match find_custom(entries: entries, name: name) {
+                      Some(..) => {
+                        set advance = sibling_after(values: &store^.sheets.inner[sheet].values, at: at, limit: end);
+                      }
+                      None() => {
+                      }
+                    }
                   }
                 }
               }
@@ -1383,16 +1399,17 @@ fn references_of(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTab
         }
       }
     }
+    set cursor = advance;
   }
   return unit;
 }
 
-fn on_cycle(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, k: u64) -> cyclic: Bool reads(own), reads(store), reads(atoms) {
+fn on_cycle(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, entries: &[CustomEntry], k: u64) -> cyclic: Bool reads(own), reads(store), reads(atoms), reads(entries) {
   doc "True when following var() references among the waiting custom properties from own[k] leads back to own[k].";
   let count = own^.inner.len;
   let seen = box_array_filled::<u8>(count: count, value: 0_u8);
   let frontier = box_slots_new::<u64>(capacity: 0_u64);
-  references_of(own: own, store: store, atoms: atoms, k: k, out: &frontier);
+  references_of(own: own, store: store, atoms: atoms, entries: entries, k: k, out: &frontier);
   for (step in 0_u64..count) {
     let size = frontier.inner.len;
     if size == 0_u64 {
@@ -1408,7 +1425,7 @@ fn on_cycle(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, k
       if inside {
         if seen.inner[target] == 0_u8 {
           set seen.inner[target] = 1_u8;
-          references_of(own: own, store: store, atoms: atoms, k: target, out: &next);
+          references_of(own: own, store: store, atoms: atoms, entries: entries, k: target, out: &next);
         }
       }
     }
@@ -1417,14 +1434,14 @@ fn on_cycle(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, k
   return False();
 }
 
-fn invalidate_cycles(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable) -> result: unit reads(store), reads(atoms), writes(own) {
+fn invalidate_cycles(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, entries: &[CustomEntry]) -> result: unit reads(store), reads(atoms), reads(entries), writes(own) {
   doc "Marks invalid, as done without a value, every waiting custom property on a cycle of var() references; when none is, which no round that resolved nothing leaves, every waiting one.";
   let count = own^.inner.len;
   let cyclic = box_array_filled::<u8>(count: count, value: 0_u8);
   let any = False();
   for (k in 0_u64..count) {
     if own^.inner[k].state == state_pending {
-      let found = on_cycle(own: own, store: store, atoms: atoms, k: k);
+      let found = on_cycle(own: own, store: store, atoms: atoms, entries: entries, k: k);
       if found {
         set cyclic.inner[k] = 1_u8;
         set any = True();
