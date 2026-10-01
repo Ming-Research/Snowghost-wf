@@ -33,6 +33,17 @@ compiler and runtime (the `pipeline` decision in `design/`). Do not pick a
 coarse unit of parallel work or add an order the computation does not need;
 a sequential step names the dependency that forces it.
 
+**Design for parallelism first.** Every choice between alternatives, of a
+stage, an algorithm, a data structure or an interface, starts by writing
+out each candidate's dependencies: which work depends on which result and
+why, and which work is independent. The candidate with the shortest chain of
+true dependencies is preferred, and taking extra or duplicated work to
+shorten that chain is a valid trade. A recommendation that adds an order
+the algorithm does not need, such as a cache or table shared across
+elements, a sequential pass or a global counter, names the dependency that
+forces it or is not recommended. Measured speed decides between candidates
+of equal dependencies, not before.
+
 ## Authority and reading
 
 `design/` holds the decisions Snowghost is built on, each with its reason and

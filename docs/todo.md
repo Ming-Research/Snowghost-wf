@@ -20,15 +20,22 @@ example apart from the renderer code that exposed it
   and cannot prove them distinct, so the loop cannot run in parallel. It
   keeps the style stage's cascade a sequential pass in document order
   (`design/pipeline/style.md`), and the layout builder's map from node to
-  style index is the same scatter. mbbill/Whitefoot#203 adds range facts:
-  each pass derives its index arrays from the tree with loops whose
-  invariants state that a level lists distinct elements and that a parent
-  lies one level above its element, and a counted loop's `apart`
-  certificate proves two iterations disjoint from them. Style shape D in
-  the concurrency prototype is the cascade written that way
+  style index is the same scatter. Whitefoot's owner selected range facts
+  (candidate N of its unique-keys investigation) over an affine key that
+  only its container mints, and mbbill/Whitefoot#203 adds them: each pass
+  derives its index arrays from the tree with loops whose invariants state
+  that a level lists distinct elements and that a parent lies one level
+  above its element, and a counted loop's `apart` certificate proves two
+  iterations disjoint from them. Style shape D in the concurrency
+  prototype is the cascade written that way
   (`research/investigations/concurrency/DESIGN.md`, "Shape D: a proved level
-  cascade"). Reopen the cascade, and the layout builder's map, when that
-  pull request reaches Whitefoot's main and the pin moves.
+  cascade"). The real style stage's pass in document order is what a
+  rewrite compares against: it takes 0.164 s, 26 percent of the four-worker
+  stage, on ecma262 and 8 and 3 percent on html5 and apollo11
+  (`research/investigations/style/DESIGN.md`, criterion 2). Reopen that
+  pass, and the layout builder's map, when the pull request reaches
+  Whitefoot's main and the pin moves; `design/pipeline/style.md`'s first
+  decision reopens then.
 
 - **A parallel loop's body cannot bind an ordered result list.** Minimal
   example: a counted loop whose body is `let (value, known) = f(k);` followed
@@ -78,16 +85,6 @@ example apart from the renderer code that exposed it
   (mbbill/Whitefoot#196). Change: a window created without clearing.
   Reopen when that lands, to move the pin and measure again.
 
-- **No rounding conversion between float formats.** [OP-6]'s `cvt`
-  from f64 to f32 is defined only for a value exactly representable in
-  f32, and no operation rounds. `pkg::css::color` therefore narrows its
-  channels by IEEE 754 round-to-nearest-even computed from the bits
-  (`narrow_f32`, flushing results below f32's normal range to zero). A
-  minimal example: `let x = fdiv.strict(136.0_f64, 255.0_f64);` has no
-  total conversion to the nearest f32. Change: a total rounding conversion
-  for float destinations. Reopen when Whitefoot adds one; then replace
-  `narrow_f32`.
-
 ## Snowghost
 
 - **Shapes C and D and the cascade timing repeat one match.**
@@ -101,15 +98,19 @@ example apart from the renderer code that exposed it
   call `match_all` and `cascade_only`. Reopen with the next change to the
   match or when shape D replaces C in the pipeline, and time C again then,
   since its code changes.
-- **The selector oracle does not exercise the rule index or sibling
-  positions.** `tests/css/selectors_oracle.py` drives `selector_matches`,
-  which scans; `subject_key`, `name_hash`, `sibling_positions` and
-  `selector_matches_positioned` are checked only by the style prototype's
-  `check`, which compares shape C with shapes A and B on seven pages. Drive
-  `selector_matches_positioned` with `sibling_positions` in the oracle too,
-  and add cases that pin `subject_key` against `selector_matches` (ids and
-  classes in quirks mode, SVG and MathML names, duplicate attributes), when
-  either is used outside the prototype.
+- **The selector oracle does not exercise the rule index, sibling
+  positions or specificity.** `tests/css/selectors_oracle.py` drives
+  `selector_matches`, which scans; `subject_key`, `name_hash`,
+  `sibling_positions`, `selector_matches_positioned` and
+  `matching_specificity` are checked only end to end, by the style stage's
+  comparison with Chromium on three real pages
+  (`research/investigations/style/run.sh check`), where a wrong match or
+  specificity shows only as a wrong computed value. Drive
+  `matching_specificity` with `sibling_positions` in the oracle, with the
+  specificities Selectors Level 4's examples give, and add cases that pin
+  `subject_key` against `selector_matches` (ids and classes in quirks mode,
+  SVG and MathML names, duplicate attributes). Reopen now that
+  `pkg::style` uses them; it is the next selector change's first step.
 - **Passing sibling positions costs the scanning matcher about 13
   percent.** With the positions slice threaded through `list_matches`,
   `match_complex`, `compound_matches` and `instr_matches`, the style
@@ -121,16 +122,24 @@ example apart from the renderer code that exposed it
   the time goes, and if it is the extra parameter, give the positions to
   the nth helpers another way; reopen when `selector_matches` is on a hot
   path outside the prototype.
-- **The interning pass is measured only against the style stage before the
-  rule index.** The concurrency investigation's interning pass took 0.0365,
-  0.0296 and 0.0021 s on ecma262, html5 and apollo11, 4.6 percent at most of
-  the four-worker style stage then; against the stage with the rule index
-  and sibling positions (0.224, 0.180 and 0.202 s) it is about 16, 16 and 1
-  percent, above criterion 2's 15 percent bound on two pages, though the
-  two figures come from different runs. Measure the pass again against the
-  real style stage in one run; above the bound, measure interning split by
-  hash into per-partition tables, as criterion 2 prescribes. Reopen when
-  the real style stage computes values (`design/vocabulary.md`).
+- **Interning is timed only as a difference of whole runs.** Three runs on
+  the real style stage put the interning tasks at 10 to 22 percent of the
+  four-worker stage on ecma262 and html5 and under 8 percent on apollo11,
+  on both sides of the 15 percent bound of `design/vocabulary.md`, and
+  interning speeds up only 1.1 to 2.1 times with four workers on those two
+  (`research/investigations/style/DESIGN.md`, criterion 2). Change: time
+  interning alone with its own mode, and if it passes the bound, split each
+  table by hash into partitions interned in parallel, as criterion 2
+  prescribes. Reopen before the style stage is measured against another
+  engine.
+- **Matching costs more than the prototype's.** Matching takes 0.300,
+  0.366 and 0.179 s at four workers on ecma262, html5 and apollo11, against
+  0.224, 0.180 and 0.202 s for the prototype's whole shape C, with the same
+  index and shape; specificity accounts for at most 13 percent of it. The
+  user-agent sheet now holds 147 rules, against the prototype's display
+  rules, and the cost per rule offered is not measured. Change: count the
+  rules the index offers per element and the time per test, then decide.
+  Reopen with the interning item.
 - **Sibling positions are counted by one sequential walk of the whole
   document.** The table matching reads (`renderer/css/selectors/positions.wf`)
   shares its type counters across parents, an order the counts do not need:
@@ -155,6 +164,31 @@ example apart from the renderer code that exposed it
   bytes could be copied whole, which shortens parsing's chain without
   parallelism. The owner placed it after style. Reopen when parsing is the
   next sequential cost studied.
+
+- **The user-agent sheet's rules match every namespace, and only HTML
+  style elements are read.** `pkg::style::add_sheet` skips `@namespace`, so
+  `ua.css`'s `@namespace` for HTML does not restrict its rules: an SVG
+  `title` takes `title { display: none }` (one element of ecma262), and
+  `sheet_sources` lists only `style` elements in the HTML namespace, not
+  SVG's. Change: give a sheet's default namespace to the selector parser
+  and read SVG style elements. Reopen when an SVG-heavy page joins the
+  corpus.
+
+- **Component walking helpers are written twice.** `pkg::css::values`
+  (`tokens.wf`, `components.wf`) and `pkg::style` (`components.wf`) each
+  classify components, skip whitespace, find a sibling and compare an
+  identifier with a word list, because neither module can reach the
+  other's private functions. Change: make one set public in
+  `pkg::css::syntax`, next to the component list they read, and use it from
+  both. Reopen at the next change to either module's component handling.
+- **`pkg::proto::style` duplicates the rule index and traversal that
+  `pkg::style` now holds.** The prototype stays because the concurrency
+  investigation's measurements are reproduced with it and
+  `pkg::proto::layout` builds on it; `pkg::style`'s `cascade.wf` and
+  `traversal.wf` started as copies of its `index.wf` and `traversal.wf`.
+  Change: retire both prototypes, or point them at `pkg::style`, when the
+  layout stage is built on `pkg::style` and the concurrency investigation's
+  runs no longer need reproducing.
 
 - **No mechanical check for documents and artifacts.** `make check` does not
   refuse non-English text, personal filesystem paths or broken Markdown links
@@ -207,9 +241,18 @@ example apart from the renderer code that exposed it
   `color-mix()`, `light-dark()`, relative color syntax, `calc()` in
   channels and the Level 5 spaces (`device-cmyk()`, `@color-profile`
   spaces) parse as Invalid, and `color_functions_5.json` is not in the
-  oracle. Impact: pages using them lose the declaration. Change: extend
-  `ParsedColor` and the parser, and add the suite. Reopen when the style
-  system resolves colors, or a page in the corpus uses one.
+  oracle. Impact: pages using them lose the declaration; the style stage now
+  resolves colors, and the HTML Standard's user-agent sheet uses `Canvas`,
+  `CanvasText` and `ThreeDFace`, whose declarations are dropped, which no
+  element of the three real pages shows in its computed values. Change:
+  extend `ParsedColor` and the parser, and add the suite. Reopen when a
+  page in the corpus shows a system color or a Level 5 form in a mismatch.
+- **`narrow_f32` predates `cvt.nearest`.** `pkg::css::color` narrows its
+  channels from f64 to f32 by computing round-to-nearest-even from the
+  bits, because the pin it was written against had no rounding conversion;
+  the pin now has `cvt.nearest` ([OP-6]), which `pkg::css::values` uses.
+  Change: replace `narrow_f32` with `cvt.nearest::<f64, f32>` and rerun
+  `make oracle-css-color`. Reopen at the next change to `pkg::css::color`.
 - **pkg::text::normalization has NFC and NFD only.** NFKC and NFKD, and
   their NormalizationTest.txt invariants, are not implemented: IDNA needs
   NFC only. Change: add the compatibility decompositions to the generated

@@ -1,0 +1,886 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+const unit_words: Array<u8, 48> = "px em rem ex ch vw vh vmin vmax cm mm q in pt pc";
+
+const calc_names: Array<u8, 17> = "calc -webkit-calc";
+
+const max_calc_depth: u64 = 32_u64;
+
+struct Calc {
+  lengths: Lengths;
+  number: f64;
+  is_number: Bool;
+}
+
+struct Parsed {
+  value: Calc;
+  next: u64;
+}
+
+fn lengths_zero() -> made: Lengths pure {
+  doc "A length of zero in every unit.";
+  return Lengths(px: 0.0_f32, em: 0.0_f32, rem: 0.0_f32, ex: 0.0_f32, ch: 0.0_f32, vw: 0.0_f32, vh: 0.0_f32, vmin: 0.0_f32, vmax: 0.0_f32, percent: 0.0_f32);
+}
+
+fn lengths_add(first: Lengths, second: Lengths, sign: f32) -> sum: Lengths pure {
+  doc "first plus sign times second, unit by unit.";
+  let px = fmul.strict(second.px, sign);
+  let em = fmul.strict(second.em, sign);
+  let rem = fmul.strict(second.rem, sign);
+  let ex = fmul.strict(second.ex, sign);
+  let ch = fmul.strict(second.ch, sign);
+  let vw = fmul.strict(second.vw, sign);
+  let vh = fmul.strict(second.vh, sign);
+  let vmin = fmul.strict(second.vmin, sign);
+  let vmax = fmul.strict(second.vmax, sign);
+  let percent = fmul.strict(second.percent, sign);
+  let a = fadd.strict(first.px, px);
+  let b = fadd.strict(first.em, em);
+  let c = fadd.strict(first.rem, rem);
+  let d = fadd.strict(first.ex, ex);
+  let e = fadd.strict(first.ch, ch);
+  let f = fadd.strict(first.vw, vw);
+  let g = fadd.strict(first.vh, vh);
+  let h = fadd.strict(first.vmin, vmin);
+  let i = fadd.strict(first.vmax, vmax);
+  let j = fadd.strict(first.percent, percent);
+  return Lengths(px: a, em: b, rem: c, ex: d, ch: e, vw: f, vh: g, vmin: h, vmax: i, percent: j);
+}
+
+fn lengths_scale(value: Lengths, factor: f32) -> scaled: Lengths pure {
+  doc "value times factor, unit by unit.";
+  let zero = lengths_zero();
+  let scaled = lengths_add(first: zero, second: value, sign: factor);
+  return scaled;
+}
+
+fn lengths_negative(value: Lengths) -> negative: Bool pure {
+  doc "True when some part of value is below zero, which a property that refuses negative values rejects when the value is not a calc() expression.";
+  let a = flt(value.px, 0.0_f32);
+  let b = flt(value.em, 0.0_f32);
+  let c = flt(value.rem, 0.0_f32);
+  let d = flt(value.ex, 0.0_f32);
+  let e = flt(value.ch, 0.0_f32);
+  let f = flt(value.vw, 0.0_f32);
+  let g = flt(value.vh, 0.0_f32);
+  let h = flt(value.vmin, 0.0_f32);
+  let i = flt(value.vmax, 0.0_f32);
+  let j = flt(value.percent, 0.0_f32);
+  let ab = bor(a, b);
+  let cd = bor(c, d);
+  let ef = bor(e, f);
+  let gh = bor(g, h);
+  let ij = bor(i, j);
+  let first = bor(ab, cd);
+  let second = bor(ef, gh);
+  let both = bor(first, second);
+  let any = bor(both, ij);
+  return any;
+}
+
+fn narrow(value: f64) -> narrowed: f32 pure {
+  doc "Narrows a parsed number to f32, clamping to the finite range.";
+  let big = fgt(value, 3.0e38_f64);
+  if big {
+    return 3.0e38_f32;
+  }
+  let small = flt(value, -3.0e38_f64);
+  if small {
+    return -3.0e38_f32;
+  }
+  let narrowed = cvt.nearest::<f64, f32>(value);
+  return narrowed;
+}
+
+fn unit_lengths(values: &ComponentList, unit_name: Span, amount: f64) -> made: Option<Lengths> reads(values) {
+  doc "The lengths a dimension with this unit and amount names, absolute units converted to px, or None for a unit that is no length unit in scope.";
+  let (start, end) = text_of(values: values, span: unit_name);
+  let n = unit_words.len;
+  let found = find_word(list: &unit_words[0_u64..n], text: &values^.text.inner[start..end]);
+  let index = match found {
+    Some(value: i) => {
+      give i;
+    }
+    None() => {
+      return None<Lengths>();
+    }
+  }
+  let v = narrow(value: amount);
+  let z = 0.0_f32;
+  if index == 0_u64 {
+    let made_value = Lengths(px: v, em: z, rem: z, ex: z, ch: z, vw: z, vh: z, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 1_u64 {
+    let made_value = Lengths(px: z, em: v, rem: z, ex: z, ch: z, vw: z, vh: z, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 2_u64 {
+    let made_value = Lengths(px: z, em: z, rem: v, ex: z, ch: z, vw: z, vh: z, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 3_u64 {
+    let made_value = Lengths(px: z, em: z, rem: z, ex: v, ch: z, vw: z, vh: z, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 4_u64 {
+    let made_value = Lengths(px: z, em: z, rem: z, ex: z, ch: v, vw: z, vh: z, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 5_u64 {
+    let made_value = Lengths(px: z, em: z, rem: z, ex: z, ch: z, vw: v, vh: z, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 6_u64 {
+    let made_value = Lengths(px: z, em: z, rem: z, ex: z, ch: z, vw: z, vh: v, vmin: z, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 7_u64 {
+    let made_value = Lengths(px: z, em: z, rem: z, ex: z, ch: z, vw: z, vh: z, vmin: v, vmax: z, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  if index == 8_u64 {
+    let made_value = Lengths(px: z, em: z, rem: z, ex: z, ch: z, vw: z, vh: z, vmin: z, vmax: v, percent: z);
+    return Some<Lengths>(value: made_value);
+  }
+  let factor = if index == 9_u64 {
+    give 37.79527559055118_f64;
+  } else if index == 10_u64 {
+    give 3.779527559055118_f64;
+  } else if index == 11_u64 {
+    give 0.9448818897637795_f64;
+  } else if index == 12_u64 {
+    give 96.0_f64;
+  } else if index == 13_u64 {
+    give 1.3333333333333332_f64;
+  } else {
+    give 16.0_f64;
+  }
+  let px_wide = fmul.strict(amount, factor);
+  let px = narrow(value: px_wide);
+  let made_value = Lengths(px: px, em: z, rem: z, ex: z, ch: z, vw: z, vh: z, vmin: z, vmax: z, percent: z);
+  return Some<Lengths>(value: made_value);
+}
+
+fn is_calc_name(values: &ComponentList, name: Span) -> calc: Bool reads(values) {
+  doc "True for the function names calc and -webkit-calc.";
+  let (start, end) = text_of(values: values, span: name);
+  let n = calc_names.len;
+  let found = find_word(list: &calc_names[0_u64..n], text: &values^.text.inner[start..end]);
+  match found {
+    Some(..) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn calc_number(value: f64) -> made: Calc pure {
+  doc "A calc() operand that is a plain number.";
+  let zero = lengths_zero();
+  let yes = True();
+  return Calc(lengths: zero, number: value, is_number: yes);
+}
+
+fn calc_lengths(value: Lengths) -> made: Calc pure {
+  doc "A calc() operand that is a length or percentage.";
+  let no = False();
+  return Calc(lengths: value, number: 0.0_f64, is_number: no);
+}
+
+fn term_at(values: &ComponentList, at: u64, limit: u64, depth: u64) -> parsed: Option<Parsed> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Parses one operand of a calc() expression at at: a number, a percentage, a dimension with a length unit, a parenthesized sum or a nested calc().";
+  let next = sibling_after(values: values, at: at, limit: limit);
+  match values^.components.inner[at] {
+    Number(number: n) => {
+      let made = calc_number(value: n^.value);
+      let made_value = Parsed(value: made, next: next);
+      return Some<Parsed>(value: made_value);
+    }
+    Percentage(number: n) => {
+      let zero = lengths_zero();
+      let p = narrow(value: n^.value);
+      let percent = Lengths(px: zero.px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, percent: p);
+      let made = calc_lengths(value: percent);
+      let made_value = Parsed(value: made, next: next);
+      return Some<Parsed>(value: made_value);
+    }
+    Dimension(number: n, unit_name: u) => {
+      match unit_lengths(values: values, unit_name: u^, amount: n^.value) {
+        Some(value: l) => {
+          let made = calc_lengths(value: l);
+          let made_value = Parsed(value: made, next: next);
+          return Some<Parsed>(value: made_value);
+        }
+        None() => {
+          return None<Parsed>();
+        }
+      }
+    }
+    ParenthesisBlock(end: e) => {
+      let inner_start = at + 1_u64;
+      let inner = sum_in(values: values, start: inner_start, end: next, depth: depth);
+      match inner {
+        Some(value: v) => {
+          let made_value = Parsed(value: v, next: next);
+          return Some<Parsed>(value: made_value);
+        }
+        None() => {
+          return None<Parsed>();
+        }
+      }
+    }
+    Function(name: f, end: e) => {
+      let calc = is_calc_name(values: values, name: f^);
+      if calc {
+        let inner_start = at + 1_u64;
+        let inner = sum_in(values: values, start: inner_start, end: next, depth: depth);
+        match inner {
+          Some(value: v) => {
+            let made_value = Parsed(value: v, next: next);
+            return Some<Parsed>(value: made_value);
+          }
+          None() => {
+            return None<Parsed>();
+          }
+        }
+      }
+      return None<Parsed>();
+    }
+    Ident(..) => {
+      return None<Parsed>();
+    }
+    AtKeyword(..) => {
+      return None<Parsed>();
+    }
+    Hash(..) => {
+      return None<Parsed>();
+    }
+    QuotedString(..) => {
+      return None<Parsed>();
+    }
+    Url(..) => {
+      return None<Parsed>();
+    }
+    Delim(..) => {
+      return None<Parsed>();
+    }
+    UnicodeRange(..) => {
+      return None<Parsed>();
+    }
+    IncludeMatch() => {
+      return None<Parsed>();
+    }
+    DashMatch() => {
+      return None<Parsed>();
+    }
+    PrefixMatch() => {
+      return None<Parsed>();
+    }
+    SuffixMatch() => {
+      return None<Parsed>();
+    }
+    SubstringMatch() => {
+      return None<Parsed>();
+    }
+    Column() => {
+      return None<Parsed>();
+    }
+    Whitespace() => {
+      return None<Parsed>();
+    }
+    Cdo() => {
+      return None<Parsed>();
+    }
+    Cdc() => {
+      return None<Parsed>();
+    }
+    Colon() => {
+      return None<Parsed>();
+    }
+    Semicolon() => {
+      return None<Parsed>();
+    }
+    Comma() => {
+      return None<Parsed>();
+    }
+    BracketBlock(..) => {
+      return None<Parsed>();
+    }
+    BraceBlock(..) => {
+      return None<Parsed>();
+    }
+    Error(..) => {
+      return None<Parsed>();
+    }
+  }
+}
+
+fn delim_at(values: &ComponentList, at: u64) -> code: u32 reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "The code point of the delimiter at at, or 0 for any other component.";
+  match values^.components.inner[at] {
+    Delim(code_point: c) => {
+      return c^;
+    }
+    Ident(..) => {
+      return 0_u32;
+    }
+    Function(..) => {
+      return 0_u32;
+    }
+    AtKeyword(..) => {
+      return 0_u32;
+    }
+    Hash(..) => {
+      return 0_u32;
+    }
+    QuotedString(..) => {
+      return 0_u32;
+    }
+    Url(..) => {
+      return 0_u32;
+    }
+    Number(..) => {
+      return 0_u32;
+    }
+    Percentage(..) => {
+      return 0_u32;
+    }
+    Dimension(..) => {
+      return 0_u32;
+    }
+    UnicodeRange(..) => {
+      return 0_u32;
+    }
+    IncludeMatch() => {
+      return 0_u32;
+    }
+    DashMatch() => {
+      return 0_u32;
+    }
+    PrefixMatch() => {
+      return 0_u32;
+    }
+    SuffixMatch() => {
+      return 0_u32;
+    }
+    SubstringMatch() => {
+      return 0_u32;
+    }
+    Column() => {
+      return 0_u32;
+    }
+    Whitespace() => {
+      return 0_u32;
+    }
+    Cdo() => {
+      return 0_u32;
+    }
+    Cdc() => {
+      return 0_u32;
+    }
+    Colon() => {
+      return 0_u32;
+    }
+    Semicolon() => {
+      return 0_u32;
+    }
+    Comma() => {
+      return 0_u32;
+    }
+    ParenthesisBlock(..) => {
+      return 0_u32;
+    }
+    BracketBlock(..) => {
+      return 0_u32;
+    }
+    BraceBlock(..) => {
+      return 0_u32;
+    }
+    Error(..) => {
+      return 0_u32;
+    }
+  }
+}
+
+fn product_of(first: Calc, second: Calc, divide: Bool) -> product: Option<Calc> pure {
+  doc "Multiplies or divides two calc() operands where at least one is a number and the divisor is a nonzero number, as calc() keeps lengths linear.";
+  if divide {
+    if second.is_number {
+    } else {
+      return None<Calc>();
+    }
+    let zero = feq(second.number, 0.0_f64);
+    if zero {
+      return None<Calc>();
+    }
+    if first.is_number {
+      let q = fdiv.strict(first.number, second.number);
+      let made = calc_number(value: q);
+      return Some<Calc>(value: made);
+    }
+    let inverse = fdiv.strict(1.0_f64, second.number);
+    let factor = narrow(value: inverse);
+    let scaled = lengths_scale(value: first.lengths, factor: factor);
+    let made = calc_lengths(value: scaled);
+    return Some<Calc>(value: made);
+  }
+  if first.is_number {
+    if second.is_number {
+      let p = fmul.strict(first.number, second.number);
+      let made = calc_number(value: p);
+      return Some<Calc>(value: made);
+    }
+    let factor = narrow(value: first.number);
+    let scaled = lengths_scale(value: second.lengths, factor: factor);
+    let made = calc_lengths(value: scaled);
+    return Some<Calc>(value: made);
+  }
+  if second.is_number {
+    let factor = narrow(value: second.number);
+    let scaled = lengths_scale(value: first.lengths, factor: factor);
+    let made = calc_lengths(value: scaled);
+    return Some<Calc>(value: made);
+  }
+  return None<Calc>();
+}
+
+fn sum_in(values: &ComponentList, start: u64, end: u64, depth: u64) -> sum: Option<Calc> reads(values) {
+  doc "Parses the components [start, end) as a calc() sum of products, where + and - need whitespace on both sides and * and / do not. Recursion into parentheses and nested calc() stops at max_calc_depth.";
+  let limit = values^.components.inner.len;
+  let bounded = end <= limit;
+  if bounded {
+  } else {
+    return None<Calc>();
+  }
+  if depth >= max_calc_depth {
+    return None<Calc>();
+  }
+  let deeper = depth + 1_u64;
+  let total = calc_number(value: 0.0_f64);
+  let have_total = False();
+  let product = calc_number(value: 1.0_f64);
+  let have_product = False();
+  let pending_sign = 1.0_f64;
+  let pending_divide = False();
+  let expect_operand = True();
+  let cursor = start;
+  let span = if end > start {
+    give end - start;
+  } else {
+    give 0_u64;
+  }
+  for (step in 0_u64..span) {
+    let here = skip_space(values: values, at: cursor, limit: end);
+    if here >= end {
+      break;
+    }
+    if expect_operand {
+      match term_at(values: values, at: here, limit: end, depth: deeper) {
+        Some(value: parsed) => {
+          if have_product {
+            match product_of(first: product, second: parsed.value, divide: pending_divide) {
+              Some(value: p) => {
+                set product = p;
+              }
+              None() => {
+                return None<Calc>();
+              }
+            }
+          } else {
+            set product = parsed.value;
+            set have_product = True();
+          }
+          set cursor = parsed.next;
+          set expect_operand = False();
+        }
+        None() => {
+          return None<Calc>();
+        }
+      }
+    } else {
+      let code = delim_at(values: values, at: here);
+      let multiply = code == 42_u32;
+      let divide = code == 47_u32;
+      let plus = code == 43_u32;
+      let minus = code == 45_u32;
+      let scale = bor(multiply, divide);
+      let additive = bor(plus, minus);
+      if scale {
+        set pending_divide = divide;
+        set expect_operand = True();
+        set cursor = here + 1_u64;
+      } else if additive {
+        let folded = fold_sum(total: total, have_total: have_total, product: product, sign: pending_sign);
+        match folded {
+          Some(value: t) => {
+            set total = t;
+            set have_total = True();
+          }
+          None() => {
+            return None<Calc>();
+          }
+        }
+        set have_product = False();
+        set pending_divide = False();
+        if minus {
+          set pending_sign = -1.0_f64;
+        } else {
+          set pending_sign = 1.0_f64;
+        }
+        set expect_operand = True();
+        set cursor = here + 1_u64;
+      } else {
+        return None<Calc>();
+      }
+    }
+  }
+  if expect_operand {
+    return None<Calc>();
+  }
+  let last = fold_sum(total: total, have_total: have_total, product: product, sign: pending_sign);
+  return last;
+}
+
+fn fold_sum(total: Calc, have_total: Bool, product: Calc, sign: f64) -> sum: Option<Calc> pure {
+  doc "Adds sign times product to total; a sum must not mix plain numbers with lengths.";
+  if have_total {
+  } else {
+    if product.is_number {
+      let value = fmul.strict(product.number, sign);
+      let made = calc_number(value: value);
+      return Some<Calc>(value: made);
+    }
+    let factor = narrow(value: sign);
+    let scaled = lengths_scale(value: product.lengths, factor: factor);
+    let made = calc_lengths(value: scaled);
+    return Some<Calc>(value: made);
+  }
+  let mixed = bxor(total.is_number, product.is_number);
+  if mixed {
+    return None<Calc>();
+  }
+  if total.is_number {
+    let part = fmul.strict(product.number, sign);
+    let value = fadd.strict(total.number, part);
+    let made = calc_number(value: value);
+    return Some<Calc>(value: made);
+  }
+  let factor = narrow(value: sign);
+  let added = lengths_add(first: total.lengths, second: product.lengths, sign: factor);
+  let made = calc_lengths(value: added);
+  return Some<Calc>(value: made);
+}
+
+fn length_at(values: &ComponentList, at: u64, limit: u64, allow_percent: Bool, allow_negative: Bool) -> parsed: Option<Parsed> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Parses one <length> or <length-percentage> at at: a dimension with a length unit, a percentage when allowed, the number 0, or a calc() of lengths. A negative value outside calc() is refused when not allowed; a calc() result is clamped later.";
+  let next = sibling_after(values: values, at: at, limit: limit);
+  match values^.components.inner[at] {
+    Number(number: n) => {
+      let zero = feq(n^.value, 0.0_f64);
+      if zero {
+        let zero_lengths = lengths_zero();
+        let made = calc_lengths(value: zero_lengths);
+        let made_value = Parsed(value: made, next: next);
+        return Some<Parsed>(value: made_value);
+      }
+      return None<Parsed>();
+    }
+    Percentage(number: n) => {
+      if allow_percent {
+      } else {
+        return None<Parsed>();
+      }
+      let negative = flt(n^.value, 0.0_f64);
+      if negative {
+        if allow_negative {
+        } else {
+          return None<Parsed>();
+        }
+      }
+      let zero = lengths_zero();
+      let p = narrow(value: n^.value);
+      let percent = Lengths(px: zero.px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, percent: p);
+      let made = calc_lengths(value: percent);
+      let made_value = Parsed(value: made, next: next);
+      return Some<Parsed>(value: made_value);
+    }
+    Dimension(number: n, unit_name: u) => {
+      let negative = flt(n^.value, 0.0_f64);
+      if negative {
+        if allow_negative {
+        } else {
+          return None<Parsed>();
+        }
+      }
+      match unit_lengths(values: values, unit_name: u^, amount: n^.value) {
+        Some(value: l) => {
+          let made = calc_lengths(value: l);
+          let made_value = Parsed(value: made, next: next);
+          return Some<Parsed>(value: made_value);
+        }
+        None() => {
+          return None<Parsed>();
+        }
+      }
+    }
+    Function(name: f, end: e) => {
+      let calc = is_calc_name(values: values, name: f^);
+      if calc {
+      } else {
+        return None<Parsed>();
+      }
+      let inner_start = at + 1_u64;
+      match sum_in(values: values, start: inner_start, end: next, depth: 0_u64) {
+        Some(value: v) => {
+          if v.is_number {
+            let zero = feq(v.number, 0.0_f64);
+            if zero {
+              let zero_lengths = lengths_zero();
+              let made = calc_lengths(value: zero_lengths);
+              let made_value = Parsed(value: made, next: next);
+              return Some<Parsed>(value: made_value);
+            }
+            return None<Parsed>();
+          }
+          let has_percent = fne(v.lengths.percent, 0.0_f32);
+          if has_percent {
+            if allow_percent {
+            } else {
+              return None<Parsed>();
+            }
+          }
+          let made_value = Parsed(value: v, next: next);
+          return Some<Parsed>(value: made_value);
+        }
+        None() => {
+          return None<Parsed>();
+        }
+      }
+    }
+    Ident(..) => {
+      return None<Parsed>();
+    }
+    AtKeyword(..) => {
+      return None<Parsed>();
+    }
+    Hash(..) => {
+      return None<Parsed>();
+    }
+    QuotedString(..) => {
+      return None<Parsed>();
+    }
+    Url(..) => {
+      return None<Parsed>();
+    }
+    Delim(..) => {
+      return None<Parsed>();
+    }
+    UnicodeRange(..) => {
+      return None<Parsed>();
+    }
+    IncludeMatch() => {
+      return None<Parsed>();
+    }
+    DashMatch() => {
+      return None<Parsed>();
+    }
+    PrefixMatch() => {
+      return None<Parsed>();
+    }
+    SuffixMatch() => {
+      return None<Parsed>();
+    }
+    SubstringMatch() => {
+      return None<Parsed>();
+    }
+    Column() => {
+      return None<Parsed>();
+    }
+    Whitespace() => {
+      return None<Parsed>();
+    }
+    Cdo() => {
+      return None<Parsed>();
+    }
+    Cdc() => {
+      return None<Parsed>();
+    }
+    Colon() => {
+      return None<Parsed>();
+    }
+    Semicolon() => {
+      return None<Parsed>();
+    }
+    Comma() => {
+      return None<Parsed>();
+    }
+    ParenthesisBlock(..) => {
+      return None<Parsed>();
+    }
+    BracketBlock(..) => {
+      return None<Parsed>();
+    }
+    BraceBlock(..) => {
+      return None<Parsed>();
+    }
+    Error(..) => {
+      return None<Parsed>();
+    }
+  }
+}
+
+fn number_at(values: &ComponentList, at: u64, limit: u64) -> parsed: Option<Parsed> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Parses one <number> at at: a number component or a calc() whose result is a number.";
+  let next = sibling_after(values: values, at: at, limit: limit);
+  match values^.components.inner[at] {
+    Number(number: n) => {
+      let made = calc_number(value: n^.value);
+      let made_value = Parsed(value: made, next: next);
+      return Some<Parsed>(value: made_value);
+    }
+    Function(name: f, end: e) => {
+      let calc = is_calc_name(values: values, name: f^);
+      if calc {
+      } else {
+        return None<Parsed>();
+      }
+      let inner_start = at + 1_u64;
+      match sum_in(values: values, start: inner_start, end: next, depth: 0_u64) {
+        Some(value: v) => {
+          if v.is_number {
+            let made_value = Parsed(value: v, next: next);
+            return Some<Parsed>(value: made_value);
+          }
+          return None<Parsed>();
+        }
+        None() => {
+          return None<Parsed>();
+        }
+      }
+    }
+    Ident(..) => {
+      return None<Parsed>();
+    }
+    AtKeyword(..) => {
+      return None<Parsed>();
+    }
+    Hash(..) => {
+      return None<Parsed>();
+    }
+    QuotedString(..) => {
+      return None<Parsed>();
+    }
+    Url(..) => {
+      return None<Parsed>();
+    }
+    Delim(..) => {
+      return None<Parsed>();
+    }
+    Percentage(..) => {
+      return None<Parsed>();
+    }
+    Dimension(..) => {
+      return None<Parsed>();
+    }
+    UnicodeRange(..) => {
+      return None<Parsed>();
+    }
+    IncludeMatch() => {
+      return None<Parsed>();
+    }
+    DashMatch() => {
+      return None<Parsed>();
+    }
+    PrefixMatch() => {
+      return None<Parsed>();
+    }
+    SuffixMatch() => {
+      return None<Parsed>();
+    }
+    SubstringMatch() => {
+      return None<Parsed>();
+    }
+    Column() => {
+      return None<Parsed>();
+    }
+    Whitespace() => {
+      return None<Parsed>();
+    }
+    Cdo() => {
+      return None<Parsed>();
+    }
+    Cdc() => {
+      return None<Parsed>();
+    }
+    Colon() => {
+      return None<Parsed>();
+    }
+    Semicolon() => {
+      return None<Parsed>();
+    }
+    Comma() => {
+      return None<Parsed>();
+    }
+    ParenthesisBlock(..) => {
+      return None<Parsed>();
+    }
+    BracketBlock(..) => {
+      return None<Parsed>();
+    }
+    BraceBlock(..) => {
+      return None<Parsed>();
+    }
+    Error(..) => {
+      return None<Parsed>();
+    }
+  }
+}
+
+fn compute_length(lengths: Lengths, font_size: f32, ex: f32, ch: f32, environment: Environment) -> computed: LengthPercentage pure {
+  doc "Folds every absolute and font- or viewport-relative part into px and keeps the percentage.";
+  let w = fdiv.strict(environment.width, 1.0e2_f32);
+  let h = fdiv.strict(environment.height, 1.0e2_f32);
+  let small = if flt(w, h) {
+    give w;
+  } else {
+    give h;
+  }
+  let large = if flt(w, h) {
+    give h;
+  } else {
+    give w;
+  }
+  let a = fmul.strict(lengths.em, font_size);
+  let b = fmul.strict(lengths.rem, environment.root_font_size);
+  let c = fmul.strict(lengths.ex, ex);
+  let d = fmul.strict(lengths.ch, ch);
+  let e = fmul.strict(lengths.vw, w);
+  let f = fmul.strict(lengths.vh, h);
+  let g = fmul.strict(lengths.vmin, small);
+  let i = fmul.strict(lengths.vmax, large);
+  let s1 = fadd.strict(lengths.px, a);
+  let s2 = fadd.strict(s1, b);
+  let s3 = fadd.strict(s2, c);
+  let s4 = fadd.strict(s3, d);
+  let s5 = fadd.strict(s4, e);
+  let s6 = fadd.strict(s5, f);
+  let s7 = fadd.strict(s6, g);
+  let px = fadd.strict(s7, i);
+  let has_percent = fne(lengths.percent, 0.0_f32);
+  return LengthPercentage(px: px, percent: lengths.percent, has_percent: has_percent);
+}

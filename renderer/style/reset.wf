@@ -1,0 +1,656 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias BackgroundGroup = pkg::css::values::BackgroundGroup;
+alias BorderGroup = pkg::css::values::BorderGroup;
+alias BoxGroup = pkg::css::values::BoxGroup;
+alias Color = pkg::css::color::Color;
+alias ColorRef = pkg::css::values::ColorRef;
+alias ColorSpace = pkg::css::color::ColorSpace;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+alias Declared = pkg::css::values::Declared;
+alias Environment = pkg::css::values::Environment;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias SizeGroup = pkg::css::values::SizeGroup;
+alias Sizing = pkg::css::values::Sizing;
+alias SpacingGroup = pkg::css::values::SpacingGroup;
+alias compute_length = pkg::css::values::compute_length;
+alias keyword_auto = pkg::css::values::keyword_auto;
+alias keyword_none = pkg::css::values::keyword_none;
+alias keyword_normal = pkg::css::values::keyword_normal;
+alias lh_background_color = pkg::css::values::lh_background_color;
+alias lh_border_top_color = pkg::css::values::lh_border_top_color;
+alias lh_border_top_style = pkg::css::values::lh_border_top_style;
+alias lh_border_top_width = pkg::css::values::lh_border_top_width;
+alias lh_bottom = pkg::css::values::lh_bottom;
+alias lh_box_sizing = pkg::css::values::lh_box_sizing;
+alias lh_clear = pkg::css::values::lh_clear;
+alias lh_display = pkg::css::values::lh_display;
+alias lh_float = pkg::css::values::lh_float;
+alias lh_height = pkg::css::values::lh_height;
+alias lh_left = pkg::css::values::lh_left;
+alias lh_margin_top = pkg::css::values::lh_margin_top;
+alias lh_max_height = pkg::css::values::lh_max_height;
+alias lh_max_width = pkg::css::values::lh_max_width;
+alias lh_min_height = pkg::css::values::lh_min_height;
+alias lh_min_width = pkg::css::values::lh_min_width;
+alias lh_overflow_x = pkg::css::values::lh_overflow_x;
+alias lh_overflow_y = pkg::css::values::lh_overflow_y;
+alias lh_padding_top = pkg::css::values::lh_padding_top;
+alias lh_position = pkg::css::values::lh_position;
+alias lh_right = pkg::css::values::lh_right;
+alias lh_text_decoration_line = pkg::css::values::lh_text_decoration_line;
+alias lh_top = pkg::css::values::lh_top;
+alias lh_vertical_align = pkg::css::values::lh_vertical_align;
+alias lh_width = pkg::css::values::lh_width;
+alias lh_z_index = pkg::css::values::lh_z_index;
+alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_pending = pkg::css::values::parse_pending;
+alias sizing_auto = pkg::css::values::sizing_auto;
+alias sizing_keyword = pkg::css::values::sizing_keyword;
+alias sizing_none = pkg::css::values::sizing_none;
+alias sizing_normal = pkg::css::values::sizing_normal;
+alias sizing_value = pkg::css::values::sizing_value;
+alias wide_inherit = pkg::css::values::wide_inherit;
+
+const max_inherit_depth: u64 = 4096_u64;
+
+struct ResetValues {
+  box_group: BoxGroup;
+  size: SizeGroup;
+  spacing: SpacingGroup;
+  border: BorderGroup;
+  background: BackgroundGroup;
+  vertical_align: Sizing;
+  decoration: u8;
+}
+
+struct Applied {
+  found: Bool;
+  value: Declared;
+  size: f32;
+  ex: f32;
+  ch: f32;
+}
+
+fn not_applied() -> made: Applied pure {
+  doc "No declared value: the longhand takes its initial value.";
+  let no = False();
+  let placeholder = Declared::Keyword(keyword: 0_u8);
+  return Applied(found: no, value: placeholder, size: 16.0_f32, ex: 8.0_f32, ch: 8.0_f32);
+}
+
+fn pending_value(store: &RuleStore, inherited: &Inherited, atoms: &AtomTable, element: u64, pending: PendingRef, longhand: u8) -> declared: Option<Declared> reads(store), reads(inherited), reads(atoms) {
+  doc "Substitutes var() in a pending value against the element's custom properties in a buffer of its own and parses it with parse_pending.";
+  let set_id = if element < inherited^.sets.inner.len {
+    give inherited^.sets.inner[element];
+  } else {
+    give 0_u32;
+  }
+  let index = cvt::<u32, u64>(set_id);
+  let first = 0_u64;
+  let end = 0_u64;
+  let known = index < inherited^.custom_sets.inner.len;
+  if known {
+    let low = cvt::<u32, u64>(inherited^.custom_sets.inner[index].first);
+    let high = cvt::<u32, u64>(inherited^.custom_sets.inner[index].end);
+    let ordered = low <= high;
+    let inside = high <= inherited^.custom_entries.inner.len;
+    let usable = band(ordered, inside);
+    if usable {
+      set first = low;
+      set end = high;
+    }
+  }
+  let entries_length = inherited^.custom_entries.inner.len;
+  let ordered = first <= end;
+  let inside = end <= entries_length;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return None<Declared>();
+  }
+  let text_length = inherited^.custom_text.inner.len;
+  let scratch = box_slots_new::<u8>(capacity: 0_u64);
+  let substituted = substitute_pending(store: store, pending: pending, entries: &inherited^.custom_entries.inner[first..end], text: &inherited^.custom_text.inner[0_u64..text_length], atoms: atoms, out: &scratch);
+  if substituted {
+  } else {
+    return None<Declared>();
+  }
+  let size = scratch.inner.len;
+  if size > 16777216_u64 {
+    return None<Declared>();
+  }
+  let parsed = parse_component_values(source: &scratch.inner[0_u64..size]);
+  match move parsed {
+    Ok(value: list) => {
+      let count = list.components.inner.len;
+      let last = cvt.wrap::<u64, u32>(count);
+      let whole = ComponentRange(start: 0_u32, end: last);
+      let made = parse_pending(values: &list, range: whole, shorthand: pending.shorthand, longhand: longhand);
+      return made;
+    }
+    Err(..) => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn applied_value(store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, element: u64, longhand: u8) -> applied: Applied reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal) {
+  doc "The declared value that applies to a longhand that is not inherited, with the font size of the element it comes from: the element's own, or for inherit its nearest ancestor's that is not inherit, found by walking up; not found for no declaration, initial, unset, a value invalid at computed-value time, or an inherit that reaches the document.";
+  let count = traversal^.parents.inner.len;
+  let at = element;
+  for (step in 0_u64..max_inherit_depth) {
+    let inside = at < count;
+    if inside {
+    } else {
+      let made = not_applied();
+      return made;
+    }
+    let size = if at < inherited^.fonts.inner.len {
+      give inherited^.fonts.inner[at].size;
+    } else {
+      give 16.0_f32;
+    }
+    let declared = match winner_value(store: store, cascade: cascade, element: at, longhand: longhand) {
+      Some(value: d) => {
+        give d;
+      }
+      None() => {
+        let made = not_applied();
+        return made;
+      }
+    }
+    let resolved = match declared_pending(declared: declared) {
+      Some(value: pending) => {
+        let parsed = pending_value(store: store, inherited: inherited, atoms: atoms, element: at, pending: pending, longhand: longhand);
+        let inner = match parsed {
+          Some(value: v) => {
+            give v;
+          }
+          None() => {
+            let made = not_applied();
+            return made;
+          }
+        }
+        give inner;
+      }
+      None() => {
+        give declared;
+      }
+    }
+    match declared_wide(declared: resolved) {
+      Some(value: keyword) => {
+        if keyword == wide_inherit {
+          let parent = cvt::<u32, u64>(traversal^.parents.inner[at]);
+          let earlier = parent < at;
+          if earlier {
+            set at = parent;
+          } else {
+            let made = not_applied();
+            return made;
+          }
+        } else {
+          let made = not_applied();
+          return made;
+        }
+      }
+      None() => {
+        let yes = True();
+        let ex = if at < inherited^.ex.inner.len {
+          give inherited^.ex.inner[at];
+        } else {
+          give 8.0_f32;
+        }
+        let ch = if at < inherited^.ch.inner.len {
+          give inherited^.ch.inner[at];
+        } else {
+          give 8.0_f32;
+        }
+        return Applied(found: yes, value: resolved, size: size, ex: ex, ch: ch);
+      }
+    }
+  }
+  let made = not_applied();
+  return made;
+}
+
+fn keyword_reset(applied: Applied, initial: u8) -> keyword: u8 pure {
+  doc "A keyword longhand's computed keyword.";
+  if applied.found {
+    match declared_keyword(declared: applied.value) {
+      Some(value: k) => {
+        return k;
+      }
+      None() => {
+        return initial;
+      }
+    }
+  }
+  return initial;
+}
+
+fn lp_reset(applied: Applied, environment: Environment) -> computed: LengthPercentage pure {
+  doc "A length-percentage longhand: px with its percentage kept, zero initially.";
+  if applied.found {
+    match declared_lengths(declared: applied.value) {
+      Some(value: lengths) => {
+        let made = compute_length(lengths: lengths, font_size: applied.size, ex: applied.ex, ch: applied.ch, environment: environment);
+        return made;
+      }
+      None() => {
+      }
+    }
+  }
+  let made = lp_zero();
+  return made;
+}
+
+fn sizing_reset(applied: Applied, environment: Environment, initial: u8) -> computed: Sizing pure {
+  doc "A sizing longhand: auto, none, normal, a size keyword, or a length-percentage; initial is its initial kind.";
+  if applied.found {
+    match declared_keyword(declared: applied.value) {
+      Some(value: k) => {
+        if k == keyword_auto {
+          let made = sizing_kind(kind: sizing_auto);
+          return made;
+        }
+        if k == keyword_none {
+          let made = sizing_kind(kind: sizing_none);
+          return made;
+        }
+        if k == keyword_normal {
+          let made = sizing_kind(kind: sizing_normal);
+          return made;
+        }
+        let zero = lp_zero();
+        return Sizing(kind: sizing_keyword, keyword: k, value: zero);
+      }
+      None() => {
+      }
+    }
+    match declared_lengths(declared: applied.value) {
+      Some(value: lengths) => {
+        let computed = compute_length(lengths: lengths, font_size: applied.size, ex: applied.ex, ch: applied.ch, environment: environment);
+        return Sizing(kind: sizing_value, keyword: 0_u8, value: computed);
+      }
+      None() => {
+      }
+    }
+  }
+  if initial == sizing_value {
+    let made = sizing_px(px: 0.0_f32);
+    return made;
+  }
+  let made = sizing_kind(kind: initial);
+  return made;
+}
+
+fn width_reset(applied: Applied, environment: Environment, style: u8) -> width: f32 pure {
+  doc "A border width in px: zero when the side's style is none or hidden, 3px initially, a width between 0 and 1px taken as 1px and others rounded down to whole pixels.";
+  let hidden = style <= 1_u8;
+  if hidden {
+    return 0.0_f32;
+  }
+  let raw = if applied.found {
+    let lengths = declared_lengths(declared: applied.value);
+    let px = match lengths {
+      Some(value: l) => {
+        let computed = compute_length(lengths: l, font_size: applied.size, ex: applied.ex, ch: applied.ch, environment: environment);
+        give computed.px;
+      }
+      None() => {
+        give 3.0_f32;
+      }
+    }
+    give px;
+  } else {
+    give 3.0_f32;
+  }
+  let positive = fgt(raw, 0.0_f32);
+  if positive {
+  } else {
+    return 0.0_f32;
+  }
+  let thin = flt(raw, 1.0_f32);
+  if thin {
+    return 1.0_f32;
+  }
+  let floored = ffloor(raw);
+  return floored;
+}
+
+fn color_reset(applied: Applied, initial: ColorRef) -> color: ColorRef pure {
+  doc "A color longhand that is not inherited: a color or currentcolor, the initial value otherwise.";
+  if applied.found {
+    match declared_color(declared: applied.value) {
+      Some(value: reference) => {
+        return reference;
+      }
+      None() => {
+        return initial;
+      }
+    }
+  }
+  return initial;
+}
+
+fn blockified(display: u8) -> block: u8 pure {
+  doc "The block-level equivalent of a display keyword, numbered as display_words lists them: inline, inline-block, the table parts including table-caption, ruby, ruby-text and math become block, inline-table table, inline-flex flex, inline-grid grid and -webkit-inline-box -webkit-box.";
+  let inline = display == 0_u8;
+  let inline_block = display == 5_u8;
+  let simple = bor(inline, inline_block);
+  if simple {
+    return 1_u8;
+  }
+  if display == 8_u8 {
+    return 7_u8;
+  }
+  let parts_from = display >= 9_u8;
+  let parts_to = display <= 15_u8;
+  let parts = band(parts_from, parts_to);
+  if parts {
+    return 1_u8;
+  }
+  if display == 16_u8 {
+    return 1_u8;
+  }
+  if display == 18_u8 {
+    return 17_u8;
+  }
+  if display == 20_u8 {
+    return 19_u8;
+  }
+  let ruby_from = display >= 21_u8;
+  let ruby_to = display <= 23_u8;
+  let ruby = band(ruby_from, ruby_to);
+  if ruby {
+    return 1_u8;
+  }
+  if display == 25_u8 {
+    return 24_u8;
+  }
+  return display;
+}
+
+fn lays_out_items(display: u8) -> container: Bool pure {
+  doc "True for the flex and grid containers, whose children are blockified.";
+  let arg_1 = display >= 17_u8;
+  let arg_2 = display <= 20_u8;
+  let flex = band(arg_1, arg_2);
+  let arg_3 = display >= 24_u8;
+  let arg_4 = display <= 25_u8;
+  let boxes = band(arg_3, arg_4);
+  let either = bor(flex, boxes);
+  return either;
+}
+
+fn reset_element(store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, environment: Environment, element: u64) -> values: ResetValues reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal) {
+  doc "Computes one element's longhands that are not inherited.";
+  let display_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_display);
+  let declared_display = keyword_reset(applied: display_applied, initial: 0_u8);
+  let position_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_position);
+  let position = keyword_reset(applied: position_applied, initial: 0_u8);
+  let float_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_float);
+  let declared_float = keyword_reset(applied: float_applied, initial: 0_u8);
+  let arg_5 = position >= 2_u8;
+  let arg_6 = position <= 3_u8;
+  let absolute = band(arg_5, arg_6);
+  let float = if absolute {
+    give 0_u8;
+  } else {
+    give declared_float;
+  }
+  let parent = if element < traversal^.parents.inner.len {
+    give cvt::<u32, u64>(traversal^.parents.inner[element]);
+  } else {
+    give element;
+  }
+  let is_root = parent >= element;
+  let parent_display = if is_root {
+    give 1_u8;
+  } else {
+    let applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: parent, longhand: lh_display);
+    give keyword_reset(applied: applied, initial: 0_u8);
+  }
+  let floated = float != 0_u8;
+  let item = lays_out_items(display: parent_display);
+  let out_of_flow = bor(absolute, floated);
+  let lifted = bor(out_of_flow, item);
+  let blockify = bor(lifted, is_root);
+  let display = if blockify {
+    let block = blockified(display: declared_display);
+    let contents = block == 3_u8;
+    let contents_root = band(is_root, contents);
+    let lifted_display = if contents_root {
+      give 1_u8;
+    } else {
+      give block;
+    }
+    give lifted_display;
+  } else {
+    give declared_display;
+  }
+  let clear_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_clear);
+  let clear = keyword_reset(applied: clear_applied, initial: 0_u8);
+  let x_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_overflow_x);
+  let y_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_overflow_y);
+  let declared_x = keyword_reset(applied: x_applied, initial: 0_u8);
+  let declared_y = keyword_reset(applied: y_applied, initial: 0_u8);
+  let arg_7 = declared_x == 0_u8;
+  let arg_8 = declared_x == 2_u8;
+  let x_plain = bor(arg_7, arg_8);
+  let arg_9 = declared_y == 0_u8;
+  let arg_10 = declared_y == 2_u8;
+  let y_plain = bor(arg_9, arg_10);
+  let x_scrolls = bnot(x_plain);
+  let y_scrolls = bnot(y_plain);
+  let fix_x = band(x_plain, y_scrolls);
+  let fix_y = band(y_plain, x_scrolls);
+  let overflow_x = if fix_x {
+    let visible_x = declared_x == 0_u8;
+    let fixed_x = if visible_x {
+      give 4_u8;
+    } else {
+      give 1_u8;
+    }
+    give fixed_x;
+  } else {
+    give declared_x;
+  }
+  let overflow_y = if fix_y {
+    let visible_y = declared_y == 0_u8;
+    let fixed_y = if visible_y {
+      give 4_u8;
+    } else {
+      give 1_u8;
+    }
+    give fixed_y;
+  } else {
+    give declared_y;
+  }
+  let sizing_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_box_sizing);
+  let box_sizing = keyword_reset(applied: sizing_applied, initial: 0_u8);
+  let visibility = if element < inherited^.visibility.inner.len {
+    give inherited^.visibility.inner[element];
+  } else {
+    give 0_u8;
+  }
+  let z_applied = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_z_index);
+  let z_auto = True();
+  let z_index = 0_i32;
+  if z_applied.found {
+    match declared_integer(declared: z_applied.value) {
+      Some(value: n) => {
+        set z_auto = False();
+        set z_index = n;
+      }
+      None() => {
+      }
+    }
+  }
+  let box_group = BoxGroup(display: display, position: position, float: float, clear: clear, overflow_x: overflow_x, overflow_y: overflow_y, box_sizing: box_sizing, visibility: visibility, z_auto: z_auto, z_index: z_index);
+  let arg_11 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_width);
+  let width = sizing_reset(applied: arg_11, environment: environment, initial: sizing_auto);
+  let arg_12 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_height);
+  let height = sizing_reset(applied: arg_12, environment: environment, initial: sizing_auto);
+  let arg_13 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_min_width);
+  let min_width = sizing_reset(applied: arg_13, environment: environment, initial: sizing_auto);
+  let arg_14 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_min_height);
+  let min_height = sizing_reset(applied: arg_14, environment: environment, initial: sizing_auto);
+  let arg_15 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_max_width);
+  let max_width = sizing_reset(applied: arg_15, environment: environment, initial: sizing_none);
+  let arg_16 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_max_height);
+  let max_height = sizing_reset(applied: arg_16, environment: environment, initial: sizing_none);
+  let arg_17 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_top);
+  let top = sizing_reset(applied: arg_17, environment: environment, initial: sizing_auto);
+  let arg_18 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_right);
+  let right = sizing_reset(applied: arg_18, environment: environment, initial: sizing_auto);
+  let arg_19 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_bottom);
+  let bottom = sizing_reset(applied: arg_19, environment: environment, initial: sizing_auto);
+  let arg_20 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_left);
+  let left = sizing_reset(applied: arg_20, environment: environment, initial: sizing_auto);
+  let size = SizeGroup(width: width, height: height, min_width: min_width, min_height: min_height, max_width: max_width, max_height: max_height, top: top, right: right, bottom: bottom, left: left);
+  let margin_right_long = lh_margin_top + 1_u8;
+  let margin_bottom_long = lh_margin_top + 2_u8;
+  let margin_left_long = lh_margin_top + 3_u8;
+  let padding_right_long = lh_padding_top + 1_u8;
+  let padding_bottom_long = lh_padding_top + 2_u8;
+  let padding_left_long = lh_padding_top + 3_u8;
+  let arg_21 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_margin_top);
+  let margin_top = sizing_reset(applied: arg_21, environment: environment, initial: sizing_value);
+  let arg_22 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: margin_right_long);
+  let margin_right = sizing_reset(applied: arg_22, environment: environment, initial: sizing_value);
+  let arg_23 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: margin_bottom_long);
+  let margin_bottom = sizing_reset(applied: arg_23, environment: environment, initial: sizing_value);
+  let arg_24 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: margin_left_long);
+  let margin_left = sizing_reset(applied: arg_24, environment: environment, initial: sizing_value);
+  let arg_25 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_padding_top);
+  let padding_top = lp_reset(applied: arg_25, environment: environment);
+  let arg_26 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: padding_right_long);
+  let padding_right = lp_reset(applied: arg_26, environment: environment);
+  let arg_27 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: padding_bottom_long);
+  let padding_bottom = lp_reset(applied: arg_27, environment: environment);
+  let arg_28 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: padding_left_long);
+  let padding_left = lp_reset(applied: arg_28, environment: environment);
+  let spacing = SpacingGroup(margin_top: margin_top, margin_right: margin_right, margin_bottom: margin_bottom, margin_left: margin_left, padding_top: padding_top, padding_right: padding_right, padding_bottom: padding_bottom, padding_left: padding_left);
+  let yes = True();
+  let black = black_color();
+  let current = ColorRef(current: yes, color: black);
+  let style_right_long = lh_border_top_style + 1_u8;
+  let style_bottom_long = lh_border_top_style + 2_u8;
+  let style_left_long = lh_border_top_style + 3_u8;
+  let width_right_long = lh_border_top_width + 1_u8;
+  let width_bottom_long = lh_border_top_width + 2_u8;
+  let width_left_long = lh_border_top_width + 3_u8;
+  let color_right_long = lh_border_top_color + 1_u8;
+  let color_bottom_long = lh_border_top_color + 2_u8;
+  let color_left_long = lh_border_top_color + 3_u8;
+  let arg_29 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_border_top_style);
+  let top_style = keyword_reset(applied: arg_29, initial: 0_u8);
+  let arg_30 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: style_right_long);
+  let right_style = keyword_reset(applied: arg_30, initial: 0_u8);
+  let arg_31 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: style_bottom_long);
+  let bottom_style = keyword_reset(applied: arg_31, initial: 0_u8);
+  let arg_32 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: style_left_long);
+  let left_style = keyword_reset(applied: arg_32, initial: 0_u8);
+  let arg_33 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_border_top_width);
+  let top_width = width_reset(applied: arg_33, environment: environment, style: top_style);
+  let arg_34 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: width_right_long);
+  let right_width = width_reset(applied: arg_34, environment: environment, style: right_style);
+  let arg_35 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: width_bottom_long);
+  let bottom_width = width_reset(applied: arg_35, environment: environment, style: bottom_style);
+  let arg_36 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: width_left_long);
+  let left_width = width_reset(applied: arg_36, environment: environment, style: left_style);
+  let arg_37 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_border_top_color);
+  let top_color = color_reset(applied: arg_37, initial: current);
+  let arg_38 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: color_right_long);
+  let right_color = color_reset(applied: arg_38, initial: current);
+  let arg_39 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: color_bottom_long);
+  let bottom_color = color_reset(applied: arg_39, initial: current);
+  let arg_40 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: color_left_long);
+  let left_color = color_reset(applied: arg_40, initial: current);
+  let border = BorderGroup(top_width: top_width, right_width: right_width, bottom_width: bottom_width, left_width: left_width, top_style: top_style, right_style: right_style, bottom_style: bottom_style, left_style: left_style, top_color: top_color, right_color: right_color, bottom_color: bottom_color, left_color: left_color);
+  let no = False();
+  let space = ColorSpace::Rgb();
+  let clear_color = Color(space: space, first: 0.0_f32, second: 0.0_f32, third: 0.0_f32, alpha: 0.0_f32, missing: 0_u8);
+  let transparent = ColorRef(current: no, color: clear_color);
+  let arg_41 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_background_color);
+  let background_color = color_reset(applied: arg_41, initial: transparent);
+  let background = BackgroundGroup(color: background_color);
+  let arg_42 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_vertical_align);
+  let vertical_align = sizing_reset(applied: arg_42, environment: environment, initial: sizing_keyword);
+  let arg_43 = applied_value(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, element: element, longhand: lh_text_decoration_line);
+  let decoration = keyword_reset(applied: arg_43, initial: 0_u8);
+  return ResetValues(box_group: box_group, size: size, spacing: spacing, border: border, background: background, vertical_align: vertical_align, decoration: decoration);
+}
+
+fn reset_all(boxes: &[BoxGroup], sizes: &[SizeGroup], spacings: &[SpacingGroup], borders: &[BorderGroup], backgrounds: &[BackgroundGroup], aligns: &[Sizing], decorations: &[u8], store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> fits: Bool reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal), writes(boxes), writes(sizes), writes(spacings), writes(borders), writes(backgrounds), writes(aligns), writes(decorations) {
+  doc "The third part's loop: iteration i computes the element at preorder index i and writes only slot i of each output.";
+  let count = boxes^.len;
+  let same_sizes = sizes^.len == count;
+  let same_spacings = spacings^.len == count;
+  let same_borders = borders^.len == count;
+  let same_backgrounds = backgrounds^.len == count;
+  let same_aligns = aligns^.len == count;
+  let same_decorations = decorations^.len == count;
+  let first = band(same_sizes, same_spacings);
+  let second = band(same_borders, same_backgrounds);
+  let third = band(same_aligns, same_decorations);
+  let some = band(first, second);
+  let all = band(some, third);
+  if all {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    let values = reset_element(store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, environment: environment, element: i);
+    set boxes^[i] = values.box_group;
+    set sizes^[i] = values.size;
+    set spacings^[i] = values.spacing;
+    set borders^[i] = values.border;
+    set backgrounds^[i] = values.background;
+    set aligns^[i] = values.vertical_align;
+    set decorations^[i] = values.decoration;
+  }
+  return True();
+}
+
+fn reset_pass(store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Resets, StyleError> reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal) {
+  doc "Allocates the outputs and runs the third part's loop with the root font size the second part found.";
+  let count = traversal^.elements.inner.len;
+  let small = count <= 4294967294_u64;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Resets, StyleError>(error: failure);
+  }
+  let own_environment = Environment(width: environment.width, height: environment.height, root_font_size: inherited^.root_font_size, serif: environment.serif, sans: environment.sans, mono: environment.mono);
+  let blank = not_applied();
+  let arg_44 = True();
+  let initial_box = BoxGroup(display: 0_u8, position: 0_u8, float: 0_u8, clear: 0_u8, overflow_x: 0_u8, overflow_y: 0_u8, box_sizing: 0_u8, visibility: 0_u8, z_auto: arg_44, z_index: 0_i32);
+  let auto = sizing_kind(kind: sizing_auto);
+  let initial_size = SizeGroup(width: auto, height: auto, min_width: auto, min_height: auto, max_width: auto, max_height: auto, top: auto, right: auto, bottom: auto, left: auto);
+  let zero = lp_zero();
+  let zero_sizing = sizing_px(px: 0.0_f32);
+  let initial_spacing = SpacingGroup(margin_top: zero_sizing, margin_right: zero_sizing, margin_bottom: zero_sizing, margin_left: zero_sizing, padding_top: zero, padding_right: zero, padding_bottom: zero, padding_left: zero);
+  let black = black_color();
+  let arg_45 = True();
+  let current = ColorRef(current: arg_45, color: black);
+  let initial_border = BorderGroup(top_width: 0.0_f32, right_width: 0.0_f32, bottom_width: 0.0_f32, left_width: 0.0_f32, top_style: 0_u8, right_style: 0_u8, bottom_style: 0_u8, left_style: 0_u8, top_color: current, right_color: current, bottom_color: current, left_color: current);
+  let initial_background = BackgroundGroup(color: current);
+  let baseline = sizing_kind(kind: sizing_keyword);
+  let boxes = box_array_filled::<BoxGroup>(count: count, value: initial_box);
+  let sizes = box_array_filled::<SizeGroup>(count: count, value: initial_size);
+  let spacings = box_array_filled::<SpacingGroup>(count: count, value: initial_spacing);
+  let borders = box_array_filled::<BorderGroup>(count: count, value: initial_border);
+  let backgrounds = box_array_filled::<BackgroundGroup>(count: count, value: initial_background);
+  let aligns = box_array_filled::<Sizing>(count: count, value: baseline);
+  let decorations = box_array_filled::<u8>(count: count, value: 0_u8);
+  let fits = reset_all(boxes: &boxes.inner[0_u64..count], sizes: &sizes.inner[0_u64..count], spacings: &spacings.inner[0_u64..count], borders: &borders.inner[0_u64..count], backgrounds: &backgrounds.inner[0_u64..count], aligns: &aligns.inner[0_u64..count], decorations: &decorations.inner[0_u64..count], store: store, cascade: cascade, inherited: inherited, atoms: atoms, traversal: traversal, environment: own_environment);
+  if fits {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Resets, StyleError>(error: failure);
+  }
+  let made = Resets(boxes: move boxes, sizes: move sizes, spacings: move spacings, borders: move borders, backgrounds: move backgrounds, vertical_aligns: move aligns, decorations: move decorations);
+  return Ok<Resets, StyleError>(value: move made);
+}
