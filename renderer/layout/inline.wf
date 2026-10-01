@@ -24,6 +24,12 @@ const valign_text_bottom: u8 = 4_u8;
 
 const valign_middle: u8 = 5_u8;
 
+const valign_top: u8 = 6_u8;
+
+const valign_bottom: u8 = 7_u8;
+
+const no_group: u32 = 4294967295_u32;
+
 struct Measure {
   doc "A paragraph's horizontal measures in px for line breaking: each index's advance (an atomic inline's margin box), the decorations (margin, border and padding) of the inline boxes that open and that close at each position, and whether each index holds a collapsible space, which hangs at a line's end and is dropped at a line's start.";
   advances: Box<Array<f32>>;
@@ -43,12 +49,24 @@ struct Metrics {
 }
 
 struct OpenBox {
-  doc "An inline box open on a line: its style, its baseline's offset below the line's baseline, its metrics, where it started on this line (in px from the line's start, or a negative value when it continues from an earlier line), and whether it opened on this line.";
+  doc "An inline box open on a line: its style, its baseline's offset below the line's baseline, its metrics, where it started on this line (in px from the line's start, or a negative value when it continues from an earlier line), whether it opened on this line, the relative offset it and its ancestors give its contents, whether vertical-align top (1) or bottom (2) aligns it with the line box, and the index of the line's aligned group it belongs to (no_group when none).";
   style: StyleRef;
   shift: i32;
   metrics: Metrics;
   start: f32;
   began: Bool;
+  dx: i32;
+  dy: i32;
+  edge: u8;
+  group: u32;
+}
+
+struct Aligned {
+  doc "A subtree a line aligns with its top (edge 1) or bottom (edge 2) once the line's other boxes set its height (CSS 2.2 10.8): its extent above and below the line's baseline while its root sits on its parent's baseline.";
+  edge: u8;
+  low: i32;
+  high: i32;
+  filled: Bool;
 }
 
 fn px_of(raw: i32) -> px: f32 pure {
@@ -396,17 +414,20 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
 }
 
 struct Pending {
-  doc "A fragment a line produced before its baseline is known: its owner, its horizontal extent in px from the line's start, and its top and height in layout units relative to the line's baseline.";
+  doc "A fragment a line produced before its baseline is known: its owner, its horizontal extent in px from the line's start, its top and height in layout units relative to the line's baseline, the relative offset that moves it, and its aligned group.";
   kind: u8;
   owner: u32;
   from: f32;
   to: f32;
   top: i32;
   height: i32;
+  dx: i32;
+  dy: i32;
+  group: u32;
 }
 
 fn valign_shift(styles: &Styles, style: StyleRef, own: Metrics, parent: Metrics, parent_shift: i32) -> shift: i32 reads(styles) {
-  doc "The offset below the line's baseline of the baseline of a box styled style, whose parent box's baseline lies parent_shift below it: baseline keeps the parent's; sub lowers it by a fifth of the parent's font size plus 1px and super raises it by a third plus 1px; text-top and text-bottom align the box's line-height box with the parent's content area; middle centres the box on the parent's baseline raised by half its x-height; a length or percentage of the box's line height raises it. top and bottom are taken as baseline.";
+  doc "The offset below the line's baseline of the baseline of a box styled style, whose parent box's baseline lies parent_shift below it: baseline keeps the parent's; sub lowers it by a fifth of the parent's font size plus 1px and super raises it by a third plus 1px; text-top and text-bottom align the box's line-height box with the parent's content area; middle centres the box on the parent's baseline raised by half its x-height; a length or percentage of the box's line height raises it. top and bottom keep the parent's baseline until the line aligns their group with its top or bottom.";
   let text = text_of(styles: styles, style: style);
   let valign = text.vertical_align;
   if valign.kind == sizing_value {
@@ -457,9 +478,9 @@ fn shown_owner(style: StyleRef) -> shown: Bool pure {
   return both;
 }
 
-fn add_pending(list: &Box<Slots<Pending>>, kind: u8, owner: u32, from: f32, to: f32, top: i32, height: i32) -> result: unit writes(list) {
-  doc "Appends a pending fragment.";
-  let made = Pending(kind: kind, owner: owner, from: from, to: to, top: top, height: height);
+fn add_pending(list: &Box<Slots<Pending>>, kind: u8, owner: u32, from: f32, to: f32, top: i32, height: i32, held: OpenBox) -> result: unit writes(list) {
+  doc "Appends a pending fragment moved by held's relative offset and aligned with held's group.";
+  let made = Pending(kind: kind, owner: owner, from: from, to: to, top: top, height: height, dx: held.dx, dy: held.dy, group: held.group);
   let pushed = push_item::<Pending>(cell: list, value: made, ceiling: item_ceiling);
   return unit;
 }
@@ -493,8 +514,108 @@ fn inline_box_fragment(styles: &Styles, held: OpenBox, end: f32, closes: Bool, b
   let below_border = below +sat borders.bottom;
   let top = held.shift -sat above_border;
   let height = above_border +sat below_border;
-  add_pending(list: list, kind: placed_element, owner: style.element, from: from, to: to, top: top, height: height);
+  add_pending(list: list, kind: placed_element, owner: style.element, from: from, to: to, top: top, height: height, held: held);
   return unit;
+}
+
+fn valign_edge(styles: &Styles, style: StyleRef) -> edge: u8 reads(styles) {
+  doc "1 when style's vertical-align is top, 2 when bottom, otherwise 0.";
+  let text = text_of(styles: styles, style: style);
+  let valign = text.vertical_align;
+  if valign.kind == sizing_value {
+    return 0_u8;
+  }
+  if valign.keyword == valign_top {
+    return 1_u8;
+  }
+  if valign.keyword == valign_bottom {
+    return 2_u8;
+  }
+  return 0_u8;
+}
+
+fn join_group(aligned: &Box<Slots<Aligned>>, edge: u8, parent: u32) -> group: u32 writes(aligned) {
+  doc "The aligned group of a box whose parent is in group parent: the parent's, or a new group when the box itself is aligned by edge and its parent in none.";
+  if parent != no_group {
+    return parent;
+  }
+  if edge == 0_u8 {
+    return no_group;
+  }
+  let index = aligned^.inner.len;
+  if index < 4294967295_u64 {
+  } else {
+    return no_group;
+  }
+  let no = False();
+  let made = Aligned(edge: edge, low: 0_i32, high: 0_i32, filled: no);
+  let pushed = push_item::<Aligned>(cell: aligned, value: made, ceiling: item_ceiling);
+  if pushed {
+    let at = cvt::<u64, u32>(index);
+    return at;
+  }
+  return no_group;
+}
+
+fn extend_line(aligned: &Box<Slots<Aligned>>, group: u32, top: i32, bottom: i32, low: i32, high: i32) -> (low_out: i32, high_out: i32) writes(aligned) {
+  doc "Adds a box from top to bottom (below the line's baseline) to its aligned group's extent, or to the line's extent low to high when it is in none, and returns the line's extent.";
+  if group == no_group {
+    let lowest = imin(low, top);
+    let highest = imax(high, bottom);
+    return lowest, highest;
+  }
+  let at = cvt::<u32, u64>(group);
+  if at < aligned^.inner.len {
+    let first = aligned^.inner[at].low;
+    let last = aligned^.inner[at].high;
+    let started_low = imin(first, top);
+    let started_high = imax(last, bottom);
+    if aligned^.inner[at].filled {
+      set aligned^.inner[at].low = started_low;
+      set aligned^.inner[at].high = started_high;
+    } else {
+      set aligned^.inner[at].low = top;
+      set aligned^.inner[at].high = bottom;
+      set aligned^.inner[at].filled = True();
+    }
+  }
+  return low, high;
+}
+
+fn group_delta(aligned: &[Aligned], group: u32, low: i32, high: i32) -> delta: i32 reads(aligned) {
+  doc "How far a box of group moves down once the line spans low to high around its baseline: a top-aligned group's top meets the line's top, a bottom-aligned group's bottom the line's bottom.";
+  let at = cvt::<u32, u64>(group);
+  if at < aligned^.len {
+    let item = aligned^[at];
+    if item.edge == 1_u8 {
+      let made = low -sat item.low;
+      return made;
+    }
+    let made = high -sat item.high;
+    return made;
+  }
+  return 0_i32;
+}
+
+fn stack_offset(stack: &[OpenBox]) -> (dx: i32, dy: i32, group: u32) reads(stack) {
+  doc "The relative offset and aligned group of the innermost open inline box, or none.";
+  let depth = stack^.len;
+  if depth > 0_u64 {
+    let last = depth - 1_u64;
+    let held = stack^[last];
+    return held.dx, held.dy, held.group;
+  }
+  return 0_i32, 0_i32, no_group;
+}
+
+fn atomic_style(children: &[Context], child: u32) -> style: StyleRef reads(children) {
+  doc "The style of an atomic inline, or an anonymous one when child is out of range.";
+  let at = cvt::<u32, u64>(child);
+  if at < children^.len {
+    return children^[at].style;
+  }
+  let yes = True();
+  return StyleRef(element: no_index, pseudo: no_pseudo, anonymous: yes);
 }
 
 fn atomic_metrics(children: &[Context], child: u32) -> (ascent: i32, descent: i32) reads(children) {
@@ -514,7 +635,7 @@ fn atomic_metrics(children: &[Context], child: u32) -> (ascent: i32, descent: i3
 }
 
 fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, basis: i32) -> result: unit reads(sizes), reads(children), reads(styles), reads(fonts), reads(picks), writes(paragraph) {
-  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes) and its atomic inlines' positions, relative to the paragraph's origin, and its height.";
+  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes) and its atomic inlines' positions, relative to the paragraph's origin, and its height.";
   let lines = paragraph^.lines.inner.len;
   let full = paragraph^.text.inner.len;
   let count = imin(full, scalar_ceiling);
@@ -523,6 +644,9 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
   let shifts = box_array_filled::<i32>(count: positions, value: 0_i32);
   let text_tops = box_array_filled::<i32>(count: positions, value: 0_i32);
   let text_heights = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let moves_x = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let moves_y = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let groups = box_array_filled::<u32>(count: positions, value: no_group);
   let stack = box_slots_new::<OpenBox>(capacity: 8_u64);
   let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: paragraph^.style);
   let text = text_of(styles: styles, style: paragraph^.style);
@@ -552,18 +676,26 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
     let end = cvt::<u32, u64>(line.end);
     let pending = box_slots_new::<Pending>(capacity: 8_u64);
     let atomics = box_slots_new::<Atomic>(capacity: 0_u64);
-    let atomic_tops = box_slots_new::<i32>(capacity: 0_u64);
+    let atomic_groups = box_slots_new::<u32>(capacity: 0_u64);
+    let aligned = box_slots_new::<Aligned>(capacity: 0_u64);
     let low = 0_i32 -sat strut.ascent;
     let high = strut.descent;
     let open_count = stack.inner.len;
+    let parent_group = no_group;
     for (k in 0_u64..open_count) {
       let held = stack.inner[k];
-      set stack.inner[k].start = 0.0_f32;
-      set stack.inner[k].began = False();
+      let group = join_group(aligned: &aligned, edge: held.edge, parent: parent_group);
+      if k < stack.inner.len {
+        set stack.inner[k].start = 0.0_f32;
+        set stack.inner[k].began = False();
+        set stack.inner[k].group = group;
+      }
+      set parent_group = group;
       let box_top = held.shift -sat held.metrics.ascent;
       let box_bottom = held.shift +sat held.metrics.descent;
-      set low = imin(low, box_top);
-      set high = imax(high, box_bottom);
+      let (low_next, high_next) = extend_line(aligned: &aligned, group: group, top: box_top, bottom: box_bottom, low: low, high: high);
+      set low = low_next;
+      set high = high_next;
     }
     let x = 0.0_f32;
     let visible_end = end;
@@ -641,15 +773,23 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
             } else {
               give 0_i32;
             }
+            let stack_depth = stack.inner.len;
+            let (outer_dx, outer_dy, outer_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
             let own = box_metrics(styles: styles, fonts: fonts, picks: picks, style: owner);
             let shift = valign_shift(styles: styles, style: owner, own: own, parent: parent_metrics, parent_shift: parent_shift);
+            let (own_dx, own_dy) = relative_offset(styles: styles, style: owner, basis_width: basis, basis_height: unknown);
+            let edge = valign_edge(styles: styles, style: owner);
+            let group = join_group(aligned: &aligned, edge: edge, parent: outer_group);
             let began = True();
-            let opened = OpenBox(style: owner, shift: shift, metrics: own, start: x, began: began);
+            let moved_x = outer_dx +sat own_dx;
+            let moved_y = outer_dy +sat own_dy;
+            let opened = OpenBox(style: owner, shift: shift, metrics: own, start: x, began: began, dx: moved_x, dy: moved_y, edge: edge, group: group);
             let pushed = push_item::<OpenBox>(cell: &stack, value: opened, ceiling: 4096_u64);
             let box_top = shift -sat own.ascent;
             let box_bottom = shift +sat own.descent;
-            set low = imin(low, box_top);
-            set high = imax(high, box_bottom);
+            let (low_next, high_next) = extend_line(aligned: &aligned, group: group, top: box_top, bottom: box_bottom, low: low, high: high);
+            set low = low_next;
+            set high = high_next;
             let opening = open_at(sizes: sizes, at: p);
             set x = fadd.strict(x, opening);
           }
@@ -678,14 +818,34 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
             } else {
               give 0_i32;
             }
+            let parent_metrics = if depth > 0_u64 {
+              let last = depth - 1_u64;
+              give stack.inner[last].metrics;
+            } else {
+              give strut;
+            }
+            let stack_depth = stack.inner.len;
+            let (outer_dx, outer_dy, outer_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
             let (ascent, descent) = atomic_metrics(children: children, child: child);
-            let box_top = parent_shift -sat ascent;
-            let box_bottom = parent_shift +sat descent;
-            set low = imin(low, box_top);
-            set high = imax(high, box_bottom);
+            let child_style = atomic_style(children: children, child: child);
+            let own = Metrics(content_ascent: ascent, content_descent: descent, ascent: ascent, descent: descent, x_height: 0_i32, font_size: 0_i32);
+            let shift = valign_shift(styles: styles, style: child_style, own: own, parent: parent_metrics, parent_shift: parent_shift);
+            let edge = valign_edge(styles: styles, style: child_style);
+            let group = join_group(aligned: &aligned, edge: edge, parent: outer_group);
+            let box_top = shift -sat ascent;
+            let box_bottom = shift +sat descent;
+            let (low_next, high_next) = extend_line(aligned: &aligned, group: group, top: box_top, bottom: box_bottom, low: low, high: high);
+            set low = low_next;
+            set high = high_next;
+            let (own_dx, own_dy) = relative_offset(styles: styles, style: child_style, basis_width: basis, basis_height: unknown);
             let origin = units(px: x);
-            let placed = Atomic(context: child, x: origin, y: box_top);
+            let total_dx = outer_dx +sat own_dx;
+            let total_dy = outer_dy +sat own_dy;
+            let moved_x = origin +sat total_dx;
+            let moved_y = box_top +sat total_dy;
+            let placed = Atomic(context: child, x: moved_x, y: moved_y);
             let pushed = push_item::<Atomic>(cell: &atomics, value: placed, ceiling: item_ceiling);
+            let pushed_group = push_item::<u32>(cell: &atomic_groups, value: group, ceiling: item_ceiling);
           }
           Node(..) => {
           }
@@ -718,6 +878,18 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
           set text_tops.inner[p] = shift_here -sat metrics_here.content_ascent;
           set text_heights.inner[p] = metrics_here.content_ascent +sat metrics_here.content_descent;
         }
+        let stack_depth = stack.inner.len;
+        let (here_dx, here_dy, here_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
+        let inside_x = p < moves_x.inner.len;
+        let inside_y = p < moves_y.inner.len;
+        let inside_group = p < groups.inner.len;
+        let inside_moves = band(inside_x, inside_y);
+        let inside_all = band(inside_moves, inside_group);
+        if inside_all {
+          set moves_x.inner[p] = here_dx;
+          set moves_y.inner[p] = here_dy;
+          set groups.inner[p] = here_group;
+        }
         let advance = advance_at(sizes: sizes, at: p);
         set x = fadd.strict(x, advance);
       } else if p < positions {
@@ -738,6 +910,18 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       if shows {
         let no = False();
         inline_box_fragment(styles: styles, held: held, end: visible_x, closes: no, basis: basis, list: &pending);
+      }
+    }
+    let group_count = aligned.inner.len;
+    for (g in 0_u64..group_count) {
+      let item = aligned.inner[g];
+      let size = item.high -sat item.low;
+      if item.edge == 1_u8 {
+        let reach = low +sat size;
+        set high = imax(high, reach);
+      } else {
+        let reach = high -sat size;
+        set low = imin(low, reach);
       }
     }
     let baseline = 0_i32 -sat low;
@@ -767,9 +951,14 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       let item = pending.inner[k];
       let from = units(px: item.from);
       let to = units(px: item.to);
-      let x_from = line_x +sat from;
+      let x_line = line_x +sat from;
+      let x_from = x_line +sat item.dx;
       let width = to -sat from;
-      let y = line_top_baseline +sat item.top;
+      let group_total = aligned.inner.len;
+      let delta = group_delta(aligned: &aligned.inner[0_u64..group_total], group: item.group, low: low, high: high);
+      let y_line = line_top_baseline +sat item.top;
+      let y_moved = y_line +sat item.dy;
+      let y = y_moved +sat delta;
       let made = Fragment(kind: item.kind, owner: item.owner, x: x_from, y: y, width: width, height: item.height);
       let pushed = push_item::<Fragment>(cell: &paragraph^.fragments, value: made, ceiling: item_ceiling);
     }
@@ -787,10 +976,18 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       } else {
         give 0_i32;
       }
+      let atomic_group = if k < atomic_groups.inner.len {
+        give atomic_groups.inner[k];
+      } else {
+        give no_group;
+      }
+      let group_total = aligned.inner.len;
+      let delta = group_delta(aligned: &aligned.inner[0_u64..group_total], group: atomic_group, low: low, high: high);
       let left = line_x +sat placed.x;
       let ax = left +sat margin_left;
       let above = line_top_baseline +sat placed.y;
-      let ay = above +sat margin_top;
+      let raised = above +sat margin_top;
+      let ay = raised +sat delta;
       let moved = Atomic(context: placed.context, x: ax, y: ay);
       let pushed = push_item::<Atomic>(cell: &paragraph^.atomics, value: moved, ceiling: item_ceiling);
     }
@@ -813,9 +1010,29 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
               }
               let width = units_up(px: width_px);
               let above = text_tops.inner[from_index];
-              let y = line_top_baseline +sat above;
+              let move_x = if from_index < moves_x.inner.len {
+                give moves_x.inner[from_index];
+              } else {
+                give 0_i32;
+              }
+              let move_y = if from_index < moves_y.inner.len {
+                give moves_y.inner[from_index];
+              } else {
+                give 0_i32;
+              }
+              let text_group = if from_index < groups.inner.len {
+                give groups.inner[from_index];
+              } else {
+                give no_group;
+              }
+              let group_total = aligned.inner.len;
+              let delta = group_delta(aligned: &aligned.inner[0_u64..group_total], group: text_group, low: low, high: high);
+              let y_line = line_top_baseline +sat above;
+              let y_moved = y_line +sat move_y;
+              let y = y_moved +sat delta;
               let x_from = units(px: x0);
-              let x_line = line_x +sat x_from;
+              let x_start = line_x +sat x_from;
+              let x_line = x_start +sat move_x;
               let content = text_heights.inner[from_index];
               let made = Fragment(kind: placed_text, owner: source, x: x_line, y: y, width: width, height: content);
               let pushed = push_item::<Fragment>(cell: &paragraph^.fragments, value: made, ceiling: item_ceiling);
