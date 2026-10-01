@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-01 Record the shared vocabulary and the style and layout stages' shapes
+
+Nodes: vocabulary, pipeline/style, pipeline/layout
+
+Owner-approved: 2026-10-01, after the handoff of PR #23's decision cards Q36 to Q45, the owner wrote in Chinese that Q36, Q37, Q39, Q40, Q42, Q43 and Q44 were agreed, that Q45 must be recorded so that it is measured again when there are more real cases, that Q38 was fine once explained, and, after discussing a level-parallel cascade, chose C for Q41 and sent the Whitefoot capability to a separate investigation.
+
+Summary: The vocabulary tree records the document as an index-linked arena, layout lengths as 1/64-pixel fixed point, names as atoms with generated indices, document text as one UTF-8 byte arena with script's lone surrogates decided when script lands, and computed styles as interned groups, provisional on the real groups and on remeasuring the sequential interning pass, which the rule index brought to 14 to 16 percent of the faster style stage. The style tree records matching every element in one parallel loop in document order followed by a cascade pass in document order, which is to cascade each level in parallel once Whitefoot can prove writes through distinct indices disjoint, plus the rule index and the sibling-position table. The layout tree records the owned formatting-context tree with speculative line breaking, provisional until the incremental prototype decides the unit of invalidation, and the box tree built by a walk followed by a decoding loop, provisional until more real pages measure it. The grounds are the concurrency investigation's measurements, research/investigations/concurrency/DESIGN.md, and the revised proposal in research/investigations/vocabulary/DESIGN.md.
+
 ## 2026-09-29 Parallelize every stage by its true data dependencies
 
 Nodes: pipeline

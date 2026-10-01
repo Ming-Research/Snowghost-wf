@@ -11,6 +11,23 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
 
+- **A write through indices the program knows are distinct cannot be
+  proved disjoint.** Minimal example: a tree in an arena, each node's
+  children's indices kept in its own list, built in one pass in index
+  order, so every index appears in exactly one list; a counted loop over
+  one level's nodes writes `results[child]` for each of their children.
+  The writes never collide, but Whitefoot sees integers read from storage
+  and cannot prove them distinct, so the loop cannot run in parallel. It
+  keeps the style stage's cascade a sequential pass in document order
+  (`design/pipeline/style.md`), and the layout builder's map from node to
+  style index is the same scatter. The owner prefers a mechanism that
+  works for any container (array, hash map, arena), needs no restricted
+  container operations and costs nothing at run time; the candidate is an
+  affine key that only its container mints, so that two places hold two
+  different keys, studied in Whitefoot as its own investigation against
+  monotone containers and a built-in partition. Reopen the cascade when
+  Whitefoot settles it.
+
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
   `O_NOFOLLOW`, and `std::fs::open_read`, which follows links, takes a
@@ -68,6 +85,40 @@ example apart from the renderer code that exposed it
   the time goes, and if it is the extra parameter, give the positions to
   the nth helpers another way; reopen when `selector_matches` is on a hot
   path outside the prototype.
+- **The interning pass is measured only against the style stage before the
+  rule index.** The concurrency investigation's interning pass took 0.0365,
+  0.0296 and 0.0021 s on ecma262, html5 and apollo11, 4.6 percent at most of
+  the four-worker style stage then; against the stage with the rule index
+  and sibling positions (0.224, 0.180 and 0.202 s) it is about 16, 16 and 1
+  percent, above criterion 2's 15 percent bound on two pages, though the
+  two figures come from different runs. Measure the pass again against the
+  real style stage in one run; above the bound, measure interning split by
+  hash into per-partition tables, as criterion 2 prescribes. Reopen when
+  the real style stage computes values (`design/vocabulary.md`).
+- **Sibling positions are counted by one sequential walk of the whole
+  document.** The table matching reads (`renderer/css/selectors/positions.wf`)
+  shares its type counters across parents, an order the counts do not need:
+  one parent's children depend only on that parent's child list. Counting
+  each parent's children in a counted loop would run in parallel and, after
+  a change, recount only the parents whose children changed. The walk's own
+  time is not measured. Reopen when it is, or when style runs incrementally
+  (`design/pipeline/style.md`).
+- **Building the box tree as a walk then a decoding loop is measured on two
+  pages only.** On ecma262 and html5 it made the builder and layout together
+  1.08 and 1.24 times faster at four workers, short of the 1.5 sought, and
+  the sequential build 34 and 21 percent slower; the owner kept it because
+  what remains is under 1 percent of the four-worker pipeline
+  (`design/pipeline/layout.md`), and asked that it be measured again on
+  more real cases. Measure the real builder against decoding during the
+  walk, sequentially and at four workers, on every real page the first
+  milestone renders. Reopen when the real box tree builder exists.
+- **The tokenizer copies text one code point at a time.** `bytes_push` and
+  `push_codepoint` take 13 and 10 percent of html5's parse, and UTF-8
+  decoding 7 (the concurrency investigation's HTML parsing section): a text
+  token's bytes are decoded and pushed back singly where a run of plain
+  bytes could be copied whole, which shortens parsing's chain without
+  parallelism. The owner placed it after style. Reopen when parsing is the
+  next sequential cost studied.
 
 - **No mechanical check for documents and artifacts.** `make check` does not
   refuse non-English text, personal filesystem paths or broken Markdown links
