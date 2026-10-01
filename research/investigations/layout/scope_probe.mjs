@@ -17,7 +17,9 @@
 //   fonts       the replaced elements and form controls, and the platform
 //               fonts of about 1,500 sampled text nodes, by glyph count;
 //   generated   the ::before and ::after boxes with content, and the list
-//               markers.
+//               markers;
+//   families    the platform font Chromium draws a paragraph with for each of
+//               a fixed list of font-family names (PAGE is ignored).
 //
 // It is removed when the layout oracle (DESIGN.md, Oracle) reports these
 // figures itself. CHROMIUM and PLAYWRIGHT override the browser binary and
@@ -34,16 +36,24 @@ const WIDTHS_PAGE = `<!doctype html><body style="margin:0">
 <span id=c style="font:16px sans-serif">The quick brown fox jumps over the lazy dog</span><br>
 <span id=d style="font:13px monospace">The quick brown fox</span><br><span id=e style="font:16px serif">AVAWAVAW</span></body>`;
 
+const FAMILIES = ['Arial', 'Helvetica', 'Times New Roman', 'Times', 'Courier New', 'Courier', 'Georgia', 'Verdana', 'Segoe UI',
+  'IBM Plex Serif', 'Linux Libertine', 'Arial Plus', 'Droid Sans Fallback', 'DejaVu Serif', 'serif', 'sans-serif', 'monospace',
+  'system-ui', 'cursive', 'fantasy'];
+const GENERIC = new Set(['serif', 'sans-serif', 'monospace', 'system-ui', 'cursive', 'fantasy']);
+const FAMILIES_PAGE = '<!doctype html><body>' + FAMILIES.map((family, i) =>
+  `<p id=f${i} style="font-family:${GENERIC.has(family) ? family : `'${family}'`}">Hello</p>`).join('') + '</body>';
+
 const [mode, pagePath, ...mappings] = process.argv.slice(2);
-if (!['widths', 'shares', 'containers', 'fonts', 'generated'].includes(mode) || (mode !== 'widths' && !pagePath)) {
-  process.stderr.write('usage: scope_probe.mjs widths|shares|containers|fonts|generated PAGE.html [URL-SUFFIX=SHEET.css ...]\n');
+const pageless = mode === 'widths' || mode === 'families';
+if (!['widths', 'shares', 'containers', 'fonts', 'generated', 'families'].includes(mode) || (!pageless && !pagePath)) {
+  process.stderr.write('usage: scope_probe.mjs widths|shares|containers|fonts|generated|families PAGE.html [URL-SUFFIX=SHEET.css ...]\n');
   process.exit(2);
 }
 const sheets = mappings.map((mapping) => {
   const at = mapping.lastIndexOf('=');
   return { suffix: mapping.slice(0, at), body: readFileSync(mapping.slice(at + 1)) };
 }).sort((a, b) => b.suffix.length - a.suffix.length);
-const body = mode === 'widths' ? Buffer.from(WIDTHS_PAGE) : readFileSync(pagePath);
+const body = mode === 'widths' ? Buffer.from(WIDTHS_PAGE) : mode === 'families' ? Buffer.from(FAMILIES_PAGE) : readFileSync(pagePath);
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(PLAYWRIGHT);
@@ -153,6 +163,17 @@ if (mode === 'widths') {
     for (const font of result.fonts) fonts[font.familyName] = (fonts[font.familyName] || 0) + font.glyphCount;
   }
   out = { replaced, sampledTextNodes: sampled, glyphsByFont: fonts };
+} else if (mode === 'families') {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
+  const { root } = await cdp.send('DOM.getDocument', { depth: -1 });
+  out = {};
+  for (let i = 0; i < FAMILIES.length; i++) {
+    const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#f' + i });
+    const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
+    out[FAMILIES[i]] = fonts.map((font) => font.familyName).join(', ');
+  }
 } else {
   out = await page.evaluate(() => {
     const tally = { before: 0, after: 0, contentChars: 0, markersInside: 0, markersOutside: 0, common: {} };

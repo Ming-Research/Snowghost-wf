@@ -74,6 +74,20 @@ it:
   the glyphs; the rest fall back per character to DejaVu Sans, FreeSerif,
   FreeSans and WenQuanYi Zen Hei. The oracle refuses font requests, so
   ecma262's twelve `@font-face` rules load nothing.
+- **Family names.** Chromium on the oracle's host draws `serif`,
+  `sans-serif` and `monospace` with Liberation Serif, Liberation Sans and
+  DejaVu Sans Mono, and `system-ui` with DejaVu Sans; it accepts the
+  metric-compatible aliases Arial and Helvetica for Liberation Sans, Times
+  New Roman and Times for Liberation Serif, and Courier New and Courier for
+  Liberation Mono, but not fontconfig's other substitutes: Georgia,
+  Verdana, Segoe UI, IBM Plex Serif and Linux Libertine fall through to
+  the default, Liberation Serif, where `fc-match` names DejaVu Serif or
+  DejaVu Sans (`runs/families.txt`). The pages ask for IBM Plex, Linux
+  Libertine and Georgia among others, none installed.
+- **White space and alignment.** `white-space` is `nowrap` on 47,166,
+  13,633 and 3,349 elements and `pre` or `pre-wrap` on 1,946, 3,354 and 0;
+  `text-align` is `center`, `left` or `right` on 1,227, 11,399 and 3,378
+  elements and `justify` on none (the style oracle's Chromium dumps).
 - **Replaced elements and form controls** are few: 13, 28 and 96 images,
   SVG and video elements, inputs and buttons, most images sized by `width` and `height`
   attributes (the oracle refuses image requests).
@@ -87,7 +101,9 @@ it:
 **Inputs.** The document, its computed styles from `pkg::style`, the fonts
 installed on the oracle's host (the same files Snowghost reads), and one
 viewport of 1280 by 720 CSS pixels at scroll position zero. Scrollbars take
-no space, as in the oracle, whose browser runs with hidden scrollbars.
+no space, as in the oracle: Playwright launches headless Chromium with
+`--hide-scrollbars`, and ecma262's `body`, 1.27 million px tall, is 1280 px
+wide.
 
 **Boxes.** Box generation for `display` `block`, `inline`, `inline-block`,
 `flow-root`, `list-item`, `contents` and `none`, the table values, `flex`,
@@ -106,22 +122,22 @@ laid out in flow, where it stays at scroll position zero.
 font matching and per-character fallback; shaping with `pkg::font`; line
 breaking with `pkg::text::line_break` under `word-break: normal` and
 `overflow-wrap`; `letter-spacing`, `word-spacing`, `text-indent` and
-`text-align` (start, end, left, right, center, justify); line boxes from
+`text-align` (start, end, left, right, center, and justify, which no page
+uses); line boxes from
 `line-height` and `vertical-align` (CSS 2.2 10.8); inline boxes' horizontal
 margins, borders and padding; atomic inlines (`inline-block`, replaced
 elements, `inline-flex`, `inline-grid`, `inline-table`); `br`.
 
-**Fonts.** A `font-family` list is matched against the installed faces,
-with the metric-compatible aliases the oracle's host resolves (Arial,
-Helvetica and the like to Liberation Sans, Times New Roman to Liberation
-Serif, Courier New to Liberation Mono) and the generic families mapped to
-the host's defaults (serif to Liberation Serif, sans-serif to Liberation
-Sans, monospace to DejaVu Sans Mono), choosing weight and style by CSS
-Fonts 4's matching and synthesizing what no face provides; a character no
-face of the list maps falls back to the installed faces in a fixed order.
-This replaces the style stage's provisional `ex` and `ch` rule
-(`design/pipeline/style.md`) with the metrics of the font each element
-uses.
+**Fonts.** A `font-family` list is matched against the installed faces by
+name, with the metric-compatible aliases and generic families Chromium
+resolves on the oracle's host (What the measured pages use, Family names),
+an unmatched list ending at the default, Liberation Serif; weight and style
+are chosen by CSS Fonts 4's matching, synthesizing what no face provides;
+a character no face of the list maps falls back to the installed faces in a
+fixed order. This revises the style stage's provisional `ex` and `ch` rule
+(`design/pipeline/style.md`) to the metrics of the installed font each
+element uses; web fonts stay out of scope, so the rule stays provisional
+on them.
 
 **Replaced elements.** `img`, `video`, `svg` and `canvas` sized by CSS, by
 their `width` and `height` attributes as presentational hints, and by
@@ -191,10 +207,15 @@ conventions:
   `getClientRects`;
 - the document's scroll height.
 
-A Snowghost driver writes the same format. The comparison judges sizes and
-each box's position relative to its parent element's box, so one wrong
-height moves the boxes after it in their parent and no further; absolute
-positions are reported, not judged. It reports, per page and per measure,
+A Snowghost driver writes the same format. The comparison judges a
+block-level box by its size and its position relative to its parent
+element's box, so one wrong height moves the boxes after it in their parent
+and no further. Inline-level boxes and text fragments are judged by their
+number of fragments and each fragment's width: their positions inside a
+paragraph move with every earlier line break, which the fragment counts
+already judge, so they are reported, not judged, as absolute positions
+are. Inline elements are most elements: 128,809 of ecma262's 179,471,
+73,054 of html5's 117,179 and 8,342 of apollo11's 11,845. It reports, per page and per measure,
 the share of exact matches (1/64 px) and of matches within 1 px, and the
 most frequent mismatches with an example element.
 
@@ -202,11 +223,12 @@ most frequent mismatches with an example element.
 
 Proposed, to be recorded before any code:
 
-1. **Correctness.** On each real page, at least 99 percent of the elements
-   with a box match Chromium within 1 px in width, height and position
-   relative to their parent's box, at least 99 percent of the rendered text
-   nodes have Chromium's number of line fragments, and each class of
-   mismatch is listed with its cause. Elements in out-of-scope features
+1. **Correctness.** On each real page, at least 99 percent of the
+   block-level boxes match Chromium within 1 px in width, height and
+   position relative to their parent's box; at least 99 percent of the
+   inline elements and rendered text nodes have Chromium's number of
+   fragments, each fragment's width within 1 px; and each class of mismatch
+   is listed with its cause. Elements in out-of-scope features
    count in the denominators.
 2. **Speed.** The layout stage, from computed styles to the dumped boxes,
    runs at least 2 times faster at four workers than in the sequential build
@@ -235,4 +257,8 @@ Proposed, to be recorded before any code:
    oracle's browser has them and as overlay scrollbars behave; the
    alternative reserves 15 px beside every scroll container, as desktop
    Chromium does by default.
-4. **The criteria's bounds:** 99 percent, 1 px and a speedup of 2.
+4. **The criteria's bounds and measures:** 99 percent, 1 px and a speedup
+   of 2, with inline-level positions reported rather than judged. Judging
+   them relative to their parent as well would make criterion 1 require
+   every line break before them in the paragraph to match too, for most of
+   the elements.
