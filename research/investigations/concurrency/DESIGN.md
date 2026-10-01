@@ -1,14 +1,20 @@
 # Concurrency of the style and layout shapes
 
-Status: criteria recorded before any prototype runs. The style prototype is
-built, checked and measured: criteria 1 and 2 are answered and criterion 4
-is answered for the style shapes. The layout prototype is built and measured;
-its result retired the independent formatting context as the unit of
-parallel work (the `pipeline` tree's principle, approved 2026-09-29), which
-makes criterion 3's second branch moot. The rest here decides nothing; the
-results feed the vocabulary proposal
-(`research/investigations/vocabulary/DESIGN.md`) and, where they contradict
-it, an amendment beside the design tree.
+Status: closed. Its results fed the design tree and the vocabulary
+proposal: the owner approved the `pipeline` tree's principle of maximal
+parallelism along true data dependencies after the layout measurement, and
+ruled on the builder, parsing and style steps below as they were measured.
+The draft decisions it supports, matching in document order with a rule
+index and sibling positions, interning as a sequential post-pass, and the
+owned context tree with speculative line breaking, are in
+`design/pipeline/style.md`, `design/pipeline/layout.md` and
+`design/vocabulary.md`, awaiting the owner's ruling. Left open here:
+the unit of memoization and invalidation (below), which the first
+incremental prototype decides; copying runs of plain text whole in the
+tokenizer, which the owner placed after style; and counting sibling
+positions per parent, the candidate when the position pass's cost or
+incremental style needs it. The prototypes under `renderer/proto/` stay as
+the measurement drivers until the real style and layout stages replace them.
 
 ## Question
 
@@ -29,8 +35,8 @@ much parallelism that unit leaves on them.
 
 Two prototype drivers under `renderer/proto/`, registered in
 `renderer/modules.wfg` with their own entries. They exist only for this
-investigation and are deleted when its decisions land, with the numbers kept
-here. They reuse the finished modules: `pkg::html::tree_builder` builds the
+investigation and are deleted when the real style and layout stages replace
+them as measurement drivers, with the numbers kept here. They reuse the finished modules: `pkg::html::tree_builder` builds the
 document, `pkg::css::syntax`, `pkg::css::rules` and `pkg::css::selectors`
 parse and match the page's style sheets, and `pkg::text::line_break` finds
 break opportunities.
