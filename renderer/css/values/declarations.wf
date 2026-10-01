@@ -1,0 +1,1687 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias Color = pkg::css::color::Color;
+alias ColorSpace = pkg::css::color::ColorSpace;
+alias ParsedColor = pkg::css::color::ParsedColor;
+alias parse_color = pkg::css::color::parse_color;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias NumberKind = pkg::css::syntax::NumberKind;
+alias Span = pkg::css::syntax::Span;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+
+const shorthand_names: Array<u8, 168> = "margin padding border border-top border-right border-bottom border-left border-width border-style border-color font background overflow list-style text-decoration inset";
+
+const wide_words: Array<u8, 41> = "initial inherit unset revert revert-layer";
+
+const generic_words: Array<u8, 119> = "serif sans-serif monospace cursive fantasy system-ui ui-serif ui-sans-serif ui-monospace ui-rounded math emoji fangsong";
+
+const decoration_words: Array<u8, 42> = "none underline overline line-through blink";
+
+const border_width_words: Array<u8, 17> = "thin medium thick";
+
+const weight_words: Array<u8, 26> = "normal bold bolder lighter";
+
+const font_prefix_words: Array<u8, 162> = "normal italic oblique small-caps ultra-condensed extra-condensed condensed semi-condensed semi-expanded expanded extra-expanded ultra-expanded bold bolder lighter";
+
+const list_position_words: Array<u8, 14> = "inside outside";
+
+const var_word: Array<u8, 3> = "var";
+
+const none_word: Array<u8, 4> = "none";
+
+const size_auto_word: Array<u8, 4> = "auto";
+
+const disc_word: Array<u8, 4> = "disc";
+
+const sh_margin: u8 = 0_u8;
+
+const sh_padding: u8 = 1_u8;
+
+const sh_border: u8 = 2_u8;
+
+const sh_border_top: u8 = 3_u8;
+
+const sh_border_right: u8 = 4_u8;
+
+const sh_border_bottom: u8 = 5_u8;
+
+const sh_border_left: u8 = 6_u8;
+
+const sh_border_width: u8 = 7_u8;
+
+const sh_border_style: u8 = 8_u8;
+
+const sh_border_color: u8 = 9_u8;
+
+const sh_font: u8 = 10_u8;
+
+const sh_background: u8 = 11_u8;
+
+const sh_overflow: u8 = 12_u8;
+
+const sh_list_style: u8 = 13_u8;
+
+const sh_text_decoration: u8 = 14_u8;
+
+const sh_inset: u8 = 15_u8;
+
+enum ItemValue {
+  Value(value: Declared);
+  FamilyNames(start: u32, end: u32);
+  Name(start: u32, end: u32);
+}
+
+struct Item {
+  longhand: u8;
+  value: ItemValue;
+}
+
+struct NameRef {
+  start: u32;
+  end: u32;
+  generic: Bool;
+}
+
+struct Expansion {
+  items: Box<Slots<Item>>;
+  names: Box<Slots<NameRef>>;
+  text: Box<Slots<u8>>;
+}
+
+fn put<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: unit writes(cell) {
+  doc "Appends value to cell, doubling its capacity when full, and drops it past 2^31 entries.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 8_u64;
+    if small {
+      grow(cell: cell, capacity: 8_u64);
+    } else {
+      let limit = capacity < 2147483648_u64;
+      if limit {
+        let doubled = capacity + capacity;
+        grow(cell: cell, capacity: doubled);
+      } else {
+        return unit;
+      }
+    }
+  }
+  let room = cell^.inner.len < cell^.inner.cap;
+  if room {
+  } else {
+    return unit;
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return unit;
+}
+
+fn store_put<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: Result<unit, ValuesError> writes(cell) {
+  doc "Appends value to cell; TooLarge when cell already holds 2^32 - 1 entries.";
+  let length = cell^.inner.len;
+  let full = length >= 4294967295_u64;
+  if full {
+    let refusal = ValuesError::TooLarge();
+    return Err<unit, ValuesError>(error: refusal);
+  }
+  put::<T>(cell: cell, value: move value);
+  return Ok<unit, ValuesError>(value: unit);
+}
+
+fn expansion_new() -> made: Expansion pure {
+  doc "An expansion that holds no item, name or text.";
+  let items = box_slots_new::<Item>(capacity: 0_u64);
+  let names = box_slots_new::<NameRef>(capacity: 0_u64);
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  return Expansion(items: move items, names: move names, text: move text);
+}
+
+fn put_value(exp: &Expansion, longhand: u8, value: Declared) -> result: unit writes(exp) {
+  doc "Appends the declared value of longhand to the expansion.";
+  let wrapped = ItemValue::Value(value: value);
+  let item = Item(longhand: longhand, value: wrapped);
+  put::<Item>(cell: &exp^.items, value: item);
+  return unit;
+}
+
+fn to_u32(value: u64) -> narrowed: u32 pure {
+  doc "Narrows an index known to be below 2^32, clamping otherwise.";
+  let fits = value <= 4294967295_u64;
+  if fits {
+    let narrowed = cvt::<u64, u32>(value);
+    return narrowed;
+  }
+  return 4294967295_u32;
+}
+
+fn shorthand_code(name: &[u8]) -> found: Option<u8> reads(name) {
+  doc "The number of the shorthand named name, ASCII case-insensitively, or None.";
+  let n = shorthand_names.len;
+  let index = find_word(list: &shorthand_names[0_u64..n], text: name);
+  match index {
+    Some(value: i) => {
+      let small = i < 16_u64;
+      if small {
+        let code = cvt::<u64, u8>(i);
+        return Some<u8>(value: code);
+      }
+      return None<u8>();
+    }
+    None() => {
+      return None<u8>();
+    }
+  }
+}
+
+fn member_count(shorthand: u8) -> count: u64 pure {
+  doc "The number of longhands the shorthand sets; 1 for a longhand by itself.";
+  if shorthand == sh_border {
+    return 12_u64;
+  }
+  let sides_from = shorthand >= sh_border_top;
+  let sides_to = shorthand <= sh_border_left;
+  let side = band(sides_from, sides_to);
+  if side {
+    return 3_u64;
+  }
+  if shorthand == sh_font {
+    return 5_u64;
+  }
+  if shorthand == sh_background {
+    return 1_u64;
+  }
+  if shorthand == sh_overflow {
+    return 2_u64;
+  }
+  if shorthand == sh_list_style {
+    return 1_u64;
+  }
+  if shorthand == sh_text_decoration {
+    return 1_u64;
+  }
+  if shorthand == sh_inset {
+    return 4_u64;
+  }
+  let boxes = shorthand <= sh_border_color;
+  if boxes {
+    return 4_u64;
+  }
+  return 1_u64;
+}
+
+fn offset(base: u8, k: u64) -> longhand: u8 pure {
+  doc "base plus k, for k below 4.";
+  let small = k < 4_u64;
+  if small {
+    let step = cvt::<u64, u8>(k);
+    let sum = base +sat step;
+    return sum;
+  }
+  return base;
+}
+
+fn member(shorthand: u8, longhand: u8, k: u64) -> member: u8 pure {
+  doc "The longhand number k of the shorthand; longhand itself when shorthand names none.";
+  if shorthand == sh_margin {
+    let made = offset(base: lh_margin_top, k: k);
+    return made;
+  }
+  if shorthand == sh_padding {
+    let made = offset(base: lh_padding_top, k: k);
+    return made;
+  }
+  if shorthand == sh_inset {
+    let made = offset(base: lh_top, k: k);
+    return made;
+  }
+  if shorthand == sh_border_width {
+    let made = offset(base: lh_border_top_width, k: k);
+    return made;
+  }
+  if shorthand == sh_border_style {
+    let made = offset(base: lh_border_top_style, k: k);
+    return made;
+  }
+  if shorthand == sh_border_color {
+    let made = offset(base: lh_border_top_color, k: k);
+    return made;
+  }
+  if shorthand == sh_border {
+    let group = k / 4_u64;
+    let side = k % 4_u64;
+    if group == 0_u64 {
+      let made = offset(base: lh_border_top_width, k: side);
+      return made;
+    }
+    if group == 1_u64 {
+      let made = offset(base: lh_border_top_style, k: side);
+      return made;
+    }
+    let made = offset(base: lh_border_top_color, k: side);
+    return made;
+  }
+  let sides_from = shorthand >= sh_border_top;
+  let sides_to = shorthand <= sh_border_left;
+  let side = band(sides_from, sides_to);
+  if side {
+    let index = shorthand - sh_border_top;
+    let wide = cvt::<u8, u64>(index);
+    if k == 0_u64 {
+      let made = offset(base: lh_border_top_width, k: wide);
+      return made;
+    }
+    if k == 1_u64 {
+      let made = offset(base: lh_border_top_style, k: wide);
+      return made;
+    }
+    let made = offset(base: lh_border_top_color, k: wide);
+    return made;
+  }
+  if shorthand == sh_font {
+    if k == 0_u64 {
+      return lh_font_style;
+    }
+    if k == 1_u64 {
+      return lh_font_weight;
+    }
+    if k == 2_u64 {
+      return lh_font_size;
+    }
+    if k == 3_u64 {
+      return lh_line_height;
+    }
+    return lh_font_family;
+  }
+  if shorthand == sh_background {
+    return lh_background_color;
+  }
+  if shorthand == sh_overflow {
+    if k == 0_u64 {
+      return lh_overflow_x;
+    }
+    return lh_overflow_y;
+  }
+  if shorthand == sh_list_style {
+    return lh_list_style_type;
+  }
+  if shorthand == sh_text_decoration {
+    return lh_text_decoration_line;
+  }
+  return longhand;
+}
+
+fn has_var(values: &ComponentList, start: u64, end: u64) -> found: Bool reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "True when a var() function appears among the components from start to end, at any depth.";
+  let n = var_word.len;
+  for (at in start..end) {
+    match function_at(values: values, at: at) {
+      Some(value: name) => {
+        let (a, b) = text_of(values: values, span: name);
+        let same = same_lower(text: &values^.text.inner[a..b], word: &var_word[0_u64..n]);
+        if same {
+          return True();
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  return False();
+}
+
+fn word_at(values: &ComponentList, at: u64, list: &[u8]) -> found: Option<u64> reads(values), reads(list) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "The number of the identifier at at in list, ASCII case-insensitively, or None when at holds no identifier or one outside list.";
+  match ident_at(values: values, at: at) {
+    Some(value: name) => {
+      let (a, b) = text_of(values: values, span: name);
+      let found = find_word(list: list, text: &values^.text.inner[a..b]);
+      return found;
+    }
+    None() => {
+      return None<u64>();
+    }
+  }
+}
+
+fn wide_at(values: &ComponentList, start: u64, end: u64) -> wide: Option<u8> reads(values) contract {
+  requires start < end;
+  requires end <= values^.components.inner.len;
+} {
+  doc "The CSS-wide keyword the value from start to end is, revert and revert-layer read as unset, or None.";
+  let next = sibling_after(values: values, at: start, limit: end);
+  if next != end {
+    return None<u8>();
+  }
+  let n = wide_words.len;
+  let found = word_at(values: values, at: start, list: &wide_words[0_u64..n]);
+  match found {
+    Some(value: i) => {
+      if i == 0_u64 {
+        return Some<u8>(value: wide_initial);
+      }
+      if i == 1_u64 {
+        return Some<u8>(value: wide_inherit);
+      }
+      return Some<u8>(value: wide_unset);
+    }
+    None() => {
+      return None<u8>();
+    }
+  }
+}
+
+fn length_value(values: &ComponentList, at: u64, limit: u64, allow_percent: Bool, allow_negative: Bool) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "The single length or length-percentage from at to limit as a declared Length, or None.";
+  match length_at(values: values, at: at, limit: limit, allow_percent: allow_percent, allow_negative: allow_negative) {
+    Some(value: parsed) => {
+      if parsed.next != limit {
+        return None<Declared>();
+      }
+      let made = Declared::Length(value: parsed.value.lengths);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn keyword_value(longhand: u8, values: &ComponentList, at: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "The identifier at at as a keyword of the longhand's keyword list, or None.";
+  match ident_at(values: values, at: at) {
+    Some(value: name) => {
+      let (a, b) = text_of(values: values, span: name);
+      let found = keyword_lookup(longhand: longhand, text: &values^.text.inner[a..b]);
+      match found {
+        Some(value: k) => {
+          let made = Declared::Keyword(keyword: k);
+          return Some<Declared>(value: made);
+        }
+        None() => {
+          return None<Declared>();
+        }
+      }
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn ident_value(values: &ComponentList, at: u64, list: &[u8], code: u8) -> declared: Option<Declared> reads(values), reads(list) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "Keyword(code) when the identifier at at is the one word of list, otherwise None.";
+  let found = word_at(values: values, at: at, list: list);
+  match found {
+    Some(..) => {
+      let made = Declared::Keyword(keyword: code);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn color_value(values: &ComponentList, at: u64, limit: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "The color from at to limit as a declared color or currentcolor, or None.";
+  let low = to_u32(value: at);
+  let high = to_u32(value: limit);
+  let range = ComponentRange(start: low, end: high);
+  match parse_color(values: values, range: range) {
+    Ok(value: parsed) => {
+      match parsed {
+        CurrentColor() => {
+          let made = Declared::CurrentColor();
+          return Some<Declared>(value: made);
+        }
+        Value(color: c) => {
+          let made = Declared::ColorValue(color: c);
+          return Some<Declared>(value: made);
+        }
+      }
+    }
+    Err(..) => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn px_value(px: f32) -> declared: Declared pure {
+  doc "A declared length of px pixels.";
+  let zero = lengths_zero();
+  let lengths = Lengths(px: px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, percent: zero.percent);
+  let made = Declared::Length(value: lengths);
+  return made;
+}
+
+fn single_value(values: &ComponentList, at: u64, limit: u64, longhand: u8) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Parses the value from at to limit, one component value, under the longhand's grammar; font-family, list-style-type and text-decoration-line are parsed elsewhere and give None.";
+  let grammar = grammar_of(longhand: longhand);
+  if grammar == g_color {
+    let made = color_value(values: values, at: at, limit: limit);
+    return made;
+  }
+  let next = sibling_after(values: values, at: at, limit: limit);
+  if next != limit {
+    return None<Declared>();
+  }
+  let auto_n = 4_u64;
+  if grammar == g_keyword {
+    let made = keyword_value(longhand: longhand, values: values, at: at);
+    return made;
+  }
+  if grammar == g_z_index {
+    let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+    if auto_word {
+      let made = Declared::Keyword(keyword: keyword_auto);
+      return Some<Declared>(value: made);
+    }
+    match plain_number_at(values: values, at: at) {
+      Some(value: n) => {
+        match n.kind {
+          Integer() => {
+            let big = fgt(n.value, 2147483647.0_f64);
+            if big {
+              let made = Declared::Integer(value: 2147483647_i32);
+              return Some<Declared>(value: made);
+            }
+            let small = flt(n.value, -2147483648.0_f64);
+            if small {
+              let made = Declared::Integer(value: -2147483648_i32);
+              return Some<Declared>(value: made);
+            }
+            let fits = cvt.defined::<f64, i32>(n.value);
+            if fits {
+              let whole = cvt::<f64, i32>(n.value);
+              let made = Declared::Integer(value: whole);
+              return Some<Declared>(value: made);
+            }
+            return None<Declared>();
+          }
+          Number() => {
+            return None<Declared>();
+          }
+        }
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+  }
+  let yes = True();
+  let no = False();
+  if grammar == g_size {
+    let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+    if auto_word {
+      let made = Declared::Keyword(keyword: keyword_auto);
+      return Some<Declared>(value: made);
+    }
+    let keyword = keyword_value(longhand: longhand, values: values, at: at);
+    match keyword {
+      Some(value: k) => {
+        return Some<Declared>(value: k);
+      }
+      None() => {
+      }
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+    return made;
+  }
+  if grammar == g_max_size {
+    let none_n = none_word.len;
+    let none_value = ident_is(values: values, at: at, word: &none_word[0_u64..none_n]);
+    if none_value {
+      let made = Declared::Keyword(keyword: keyword_none);
+      return Some<Declared>(value: made);
+    }
+    let keyword = keyword_value(longhand: longhand, values: values, at: at);
+    match keyword {
+      Some(value: k) => {
+        return Some<Declared>(value: k);
+      }
+      None() => {
+      }
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+    return made;
+  }
+  let inset = grammar == g_inset;
+  let margin = grammar == g_margin;
+  let autoable = bor(inset, margin);
+  if autoable {
+    let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+    if auto_word {
+      let made = Declared::Keyword(keyword: keyword_auto);
+      return Some<Declared>(value: made);
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: yes);
+    return made;
+  }
+  if grammar == g_padding {
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+    return made;
+  }
+  if grammar == g_border_width {
+    let n = border_width_words.len;
+    let found = word_at(values: values, at: at, list: &border_width_words[0_u64..n]);
+    match found {
+      Some(value: i) => {
+        if i == 0_u64 {
+          let made = px_value(px: 1.0_f32);
+          return Some<Declared>(value: made);
+        }
+        if i == 1_u64 {
+          let made = px_value(px: 3.0_f32);
+          return Some<Declared>(value: made);
+        }
+        let made = px_value(px: 5.0_f32);
+        return Some<Declared>(value: made);
+      }
+      None() => {
+      }
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: no, allow_negative: no);
+    return made;
+  }
+  if grammar == g_font_size {
+    let keyword = keyword_value(longhand: longhand, values: values, at: at);
+    match keyword {
+      Some(value: k) => {
+        return Some<Declared>(value: k);
+      }
+      None() => {
+      }
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+    return made;
+  }
+  if grammar == g_font_weight {
+    let n = weight_words.len;
+    let found = word_at(values: values, at: at, list: &weight_words[0_u64..n]);
+    match found {
+      Some(value: i) => {
+        if i == 0_u64 {
+          let made = Declared::Number(value: 4.0e2_f32);
+          return Some<Declared>(value: made);
+        }
+        if i == 1_u64 {
+          let made = Declared::Number(value: 7.0e2_f32);
+          return Some<Declared>(value: made);
+        }
+        if i == 2_u64 {
+          let made = Declared::Keyword(keyword: keyword_bolder);
+          return Some<Declared>(value: made);
+        }
+        let made = Declared::Keyword(keyword: keyword_lighter);
+        return Some<Declared>(value: made);
+      }
+      None() => {
+      }
+    }
+    match number_at(values: values, at: at, limit: limit) {
+      Some(value: parsed) => {
+        let low = flt(parsed.value.number, 1.0_f64);
+        let high = fgt(parsed.value.number, 1.0e3_f64);
+        let outside = bor(low, high);
+        if outside {
+          return None<Declared>();
+        }
+        let weight = narrow(value: parsed.value.number);
+        let made = Declared::Number(value: weight);
+        return Some<Declared>(value: made);
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+  }
+  let spacing = grammar == g_spacing;
+  let line_height = grammar == g_line_height;
+  let normal_able = bor(spacing, line_height);
+  if normal_able {
+    let n = weight_words.len;
+    let found = word_at(values: values, at: at, list: &weight_words[0_u64..n]);
+    match found {
+      Some(value: i) => {
+        if i == 0_u64 {
+          let made = Declared::Keyword(keyword: keyword_normal);
+          return Some<Declared>(value: made);
+        }
+        return None<Declared>();
+      }
+      None() => {
+      }
+    }
+  }
+  if spacing {
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: no, allow_negative: yes);
+    return made;
+  }
+  if line_height {
+    match number_at(values: values, at: at, limit: limit) {
+      Some(value: parsed) => {
+        let negative = flt(parsed.value.number, 0.0_f64);
+        if negative {
+          return None<Declared>();
+        }
+        let factor = narrow(value: parsed.value.number);
+        let made = Declared::Number(value: factor);
+        return Some<Declared>(value: made);
+      }
+      None() => {
+      }
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+    return made;
+  }
+  if grammar == g_vertical_align {
+    let keyword = keyword_value(longhand: longhand, values: values, at: at);
+    match keyword {
+      Some(value: k) => {
+        return Some<Declared>(value: k);
+      }
+      None() => {
+      }
+    }
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: yes);
+    return made;
+  }
+  if grammar == g_length_percentage {
+    let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: yes);
+    return made;
+  }
+  return None<Declared>();
+}
+
+fn put_wide(exp: &Expansion, shorthand: u8, longhand: u8, keyword: u8) -> result: unit writes(exp) {
+  doc "Appends the CSS-wide keyword for every longhand the shorthand sets.";
+  let count = member_count(shorthand: shorthand);
+  for (k in 0_u64..count) {
+    let target = member(shorthand: shorthand, longhand: longhand, k: k);
+    let wide = Declared::Wide(keyword: keyword);
+    put_value(exp: exp, longhand: target, value: wide);
+  }
+  return unit;
+}
+
+fn expand_box(values: &ComponentList, start: u64, end: u64, shorthand: u8, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands one to four values, top, right, bottom and left, of margin, padding, border-width, border-style or border-color.";
+  let first = member(shorthand: shorthand, longhand: 0_u8, k: 0_u64);
+  let d0 = Declared::Keyword(keyword: 0_u8);
+  let d1 = Declared::Keyword(keyword: 0_u8);
+  let d2 = Declared::Keyword(keyword: 0_u8);
+  let d3 = Declared::Keyword(keyword: 0_u8);
+  let count = 0_u64;
+  let cursor = start;
+  for (step in 0_u64..5_u64) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    if count >= 4_u64 {
+      return False();
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let parsed = single_value(values: values, at: at, limit: next, longhand: first);
+    match parsed {
+      Some(value: v) => {
+        if count == 0_u64 {
+          set d0 = v;
+        } else if count == 1_u64 {
+          set d1 = v;
+        } else if count == 2_u64 {
+          set d2 = v;
+        } else {
+          set d3 = v;
+        }
+      }
+      None() => {
+        return False();
+      }
+    }
+    set count = count + 1_u64;
+    set cursor = next;
+  }
+  if count == 0_u64 {
+    return False();
+  }
+  let top_long = member(shorthand: shorthand, longhand: 0_u8, k: 0_u64);
+  let right_long = member(shorthand: shorthand, longhand: 0_u8, k: 1_u64);
+  let bottom_long = member(shorthand: shorthand, longhand: 0_u8, k: 2_u64);
+  let left_long = member(shorthand: shorthand, longhand: 0_u8, k: 3_u64);
+  put_value(exp: exp, longhand: top_long, value: d0);
+  if count == 1_u64 {
+    put_value(exp: exp, longhand: right_long, value: d0);
+    put_value(exp: exp, longhand: bottom_long, value: d0);
+    put_value(exp: exp, longhand: left_long, value: d0);
+    return True();
+  }
+  put_value(exp: exp, longhand: right_long, value: d1);
+  if count == 2_u64 {
+    put_value(exp: exp, longhand: bottom_long, value: d0);
+    put_value(exp: exp, longhand: left_long, value: d1);
+    return True();
+  }
+  put_value(exp: exp, longhand: bottom_long, value: d2);
+  if count == 3_u64 {
+    put_value(exp: exp, longhand: left_long, value: d1);
+    return True();
+  }
+  put_value(exp: exp, longhand: left_long, value: d3);
+  return True();
+}
+
+fn expand_border(values: &ComponentList, start: u64, end: u64, first_side: u64, side_count: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands a width, a style and a color in any order, each at most once and each defaulting to its initial value, onto side_count sides from first_side.";
+  let width = px_value(px: 3.0_f32);
+  let style = Declared::Keyword(keyword: 0_u8);
+  let color = Declared::CurrentColor();
+  let have_width = False();
+  let have_style = False();
+  let have_color = False();
+  let cursor = start;
+  for (step in 0_u64..4_u64) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    if step == 3_u64 {
+      return False();
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let taken = False();
+    if have_width {
+    } else {
+      match single_value(values: values, at: at, limit: next, longhand: lh_border_top_width) {
+        Some(value: v) => {
+          set width = v;
+          set have_width = True();
+          set taken = True();
+        }
+        None() => {
+        }
+      }
+    }
+    let style_free = bnot(have_style);
+    let untaken = bnot(taken);
+    let style_open = band(style_free, untaken);
+    if style_open {
+      match keyword_value(longhand: lh_border_top_style, values: values, at: at) {
+        Some(value: v) => {
+          set style = v;
+          set have_style = True();
+          set taken = True();
+        }
+        None() => {
+        }
+      }
+    }
+    let color_free = bnot(have_color);
+    let still_untaken = bnot(taken);
+    let color_open = band(color_free, still_untaken);
+    if color_open {
+      match color_value(values: values, at: at, limit: next) {
+        Some(value: v) => {
+          set color = v;
+          set have_color = True();
+          set taken = True();
+        }
+        None() => {
+        }
+      }
+    }
+    if taken {
+    } else {
+      return False();
+    }
+    set cursor = next;
+  }
+  let any_width = bor(have_width, have_style);
+  let any = bor(any_width, have_color);
+  if any {
+  } else {
+    return False();
+  }
+  for (k in 0_u64..side_count) {
+    let side = first_side +sat k;
+    let w = offset(base: lh_border_top_width, k: side);
+    let s = offset(base: lh_border_top_style, k: side);
+    let c = offset(base: lh_border_top_color, k: side);
+    put_value(exp: exp, longhand: w, value: width);
+    put_value(exp: exp, longhand: s, value: style);
+    put_value(exp: exp, longhand: c, value: color);
+  }
+  return True();
+}
+
+fn expand_overflow(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands overflow: one keyword for both axes or two, x then y.";
+  let x = Declared::Keyword(keyword: 0_u8);
+  let y = Declared::Keyword(keyword: 0_u8);
+  let count = 0_u64;
+  let cursor = start;
+  for (step in 0_u64..3_u64) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    if count >= 2_u64 {
+      return False();
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    match keyword_value(longhand: lh_overflow_x, values: values, at: at) {
+      Some(value: v) => {
+        if count == 0_u64 {
+          set x = v;
+          set y = v;
+        } else {
+          set y = v;
+        }
+      }
+      None() => {
+        return False();
+      }
+    }
+    set count = count + 1_u64;
+    set cursor = next;
+  }
+  if count == 0_u64 {
+    return False();
+  }
+  put_value(exp: exp, longhand: lh_overflow_x, value: x);
+  put_value(exp: exp, longhand: lh_overflow_y, value: y);
+  return True();
+}
+
+fn transparent() -> made: Declared pure {
+  doc "The declared color transparent, black with zero alpha.";
+  let space = ColorSpace::Rgb();
+  let color = Color(space: space, first: 0.0_f32, second: 0.0_f32, third: 0.0_f32, alpha: 0.0_f32, missing: 0_u8);
+  let made = Declared::ColorValue(color: color);
+  return made;
+}
+
+fn expand_background(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Takes the color of a background shorthand, transparent when it names none; its other components set longhands out of scope and are skipped.";
+  let color = transparent();
+  let cursor = start;
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    match color_value(values: values, at: at, limit: next) {
+      Some(value: v) => {
+        set color = v;
+      }
+      None() => {
+      }
+    }
+    set cursor = next;
+  }
+  put_value(exp: exp, longhand: lh_background_color, value: color);
+  return True();
+}
+
+fn put_text(exp: &Expansion, values: &ComponentList, span: Span, lower: Bool) -> result: unit reads(values), writes(exp) {
+  doc "Appends the text of span to the expansion's text, lowered ASCII when lower is true.";
+  let (a, b) = text_of(values: values, span: span);
+  for (k in a..b) {
+    let byte = values^.text.inner[k];
+    if lower {
+      let low = lower_byte(byte: byte);
+      put::<u8>(cell: &exp^.text, value: low);
+    } else {
+      put::<u8>(cell: &exp^.text, value: byte);
+    }
+  }
+  return unit;
+}
+
+fn put_name(exp: &Expansion, longhand: u8, from: u64) -> result: unit writes(exp) {
+  doc "Appends a Name item for the expansion's text from from to its end.";
+  let to = exp^.text.inner.len;
+  let a = to_u32(value: from);
+  let b = to_u32(value: to);
+  let name = ItemValue::Name(start: a, end: b);
+  let item = Item(longhand: longhand, value: name);
+  put::<Item>(cell: &exp^.items, value: item);
+  return unit;
+}
+
+fn put_word_text(exp: &Expansion, list: &[u8]) -> result: unit reads(list), writes(exp) {
+  doc "Appends list, one word, to the expansion's text.";
+  let n = list^.len;
+  for (k in 0_u64..n) {
+    let byte = list^[k];
+    put::<u8>(cell: &exp^.text, value: byte);
+  }
+  return unit;
+}
+
+fn expand_list_style(values: &ComponentList, start: u64, end: u64, shorthand: Bool, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Takes the list-style-type of a list-style shorthand, or of the longhand when shorthand is false: an identifier, lowered, or a string, quoted; none when only none is given, and disc when the shorthand names no type.";
+  let from = exp^.text.inner.len;
+  let have_type = False();
+  let nones = 0_u64;
+  let cursor = start;
+  let span = end -sat start;
+  let none_n = none_word.len;
+  let position_n = list_position_words.len;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    match string_at(values: values, at: at) {
+      Some(value: text) => {
+        if have_type {
+          return False();
+        }
+        put::<u8>(cell: &exp^.text, value: 34_u8);
+        let no = False();
+        put_text(exp: exp, values: values, span: text, lower: no);
+        put::<u8>(cell: &exp^.text, value: 34_u8);
+        set have_type = True();
+      }
+      None() => {
+        match ident_at(values: values, at: at) {
+          Some(value: name) => {
+            let none_value = ident_is(values: values, at: at, word: &none_word[0_u64..none_n]);
+            let position = word_at(values: values, at: at, list: &list_position_words[0_u64..position_n]);
+            let placed = match position {
+              Some(..) => {
+                give True();
+              }
+              None() => {
+                give False();
+              }
+            }
+            let other = bnot(shorthand);
+            let position_here = band(placed, shorthand);
+            if none_value {
+              set nones = nones +sat 1_u64;
+            } else if position_here {
+            } else {
+              if have_type {
+                return False();
+              }
+              let yes = True();
+              put_text(exp: exp, values: values, span: name, lower: yes);
+              set have_type = True();
+            }
+          }
+          None() => {
+            if shorthand {
+            } else {
+              return False();
+            }
+          }
+        }
+      }
+    }
+    set cursor = next;
+  }
+  if have_type {
+    put_name(exp: exp, longhand: lh_list_style_type, from: from);
+    return True();
+  }
+  if nones > 0_u64 {
+    put_word_text(exp: exp, list: &none_word[0_u64..none_n]);
+    put_name(exp: exp, longhand: lh_list_style_type, from: from);
+    return True();
+  }
+  if shorthand {
+    let disc_n = disc_word.len;
+    put_word_text(exp: exp, list: &disc_word[0_u64..disc_n]);
+    put_name(exp: exp, longhand: lh_list_style_type, from: from);
+    return True();
+  }
+  return False();
+}
+
+fn decoration_bit(index: u64) -> bit: u8 pure {
+  doc "The text-decoration-line bit of word number index of decoration_words; 0 for none.";
+  if index == 1_u64 {
+    return decoration_underline;
+  }
+  if index == 2_u64 {
+    return decoration_overline;
+  }
+  if index == 3_u64 {
+    return decoration_line_through;
+  }
+  if index == 4_u64 {
+    return decoration_blink;
+  }
+  return 0_u8;
+}
+
+fn expand_decoration(values: &ComponentList, start: u64, end: u64, shorthand: Bool, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Takes the text-decoration-line of a text-decoration shorthand, skipping its color, style and thickness, or parses the longhand when shorthand is false: none, or a set of line keywords each at most once.";
+  let bits = 0_u8;
+  let nones = 0_u64;
+  let lines = 0_u64;
+  let cursor = start;
+  let span = end -sat start;
+  let n = decoration_words.len;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    match word_at(values: values, at: at, list: &decoration_words[0_u64..n]) {
+      Some(value: i) => {
+        if i == 0_u64 {
+          set nones = nones +sat 1_u64;
+        } else {
+          let bit = decoration_bit(index: i);
+          let held = iand(bits, bit);
+          if held != 0_u8 {
+            return False();
+          }
+          set bits = ior(bits, bit);
+          set lines = lines +sat 1_u64;
+        }
+      }
+      None() => {
+        if shorthand {
+        } else {
+          return False();
+        }
+      }
+    }
+    set cursor = next;
+  }
+  let some_none = nones > 0_u64;
+  let some_line = lines > 0_u64;
+  let both = band(some_none, some_line);
+  if both {
+    return False();
+  }
+  if nones > 1_u64 {
+    return False();
+  }
+  let no_none = nones == 0_u64;
+  let no_line = lines == 0_u64;
+  let empty = band(no_none, no_line);
+  let longhand_only = bnot(shorthand);
+  let longhand_empty = band(empty, longhand_only);
+  if longhand_empty {
+    return False();
+  }
+  let made = Declared::Keyword(keyword: bits);
+  put_value(exp: exp, longhand: lh_text_decoration_line, value: made);
+  return True();
+}
+
+fn finish_family(exp: &Expansion, from: u64, idents: u64, quoted: Bool) -> valid: Bool writes(exp) {
+  doc "Closes one family name whose text runs from from to the end of the expansion's text; it is generic when it is one unquoted identifier among the generic names.";
+  let to = exp^.text.inner.len;
+  let empty = to <= from;
+  if empty {
+    return False();
+  }
+  let single = idents == 1_u64;
+  let unquoted = bnot(quoted);
+  let bare = band(single, unquoted);
+  let generic = if bare {
+    let n = generic_words.len;
+    let found = find_word(list: &generic_words[0_u64..n], text: &exp^.text.inner[from..to]);
+    let known = match found {
+      Some(..) => {
+        give True();
+      }
+      None() => {
+        give False();
+      }
+    }
+    give known;
+  } else {
+    give False();
+  }
+  let a = to_u32(value: from);
+  let b = to_u32(value: to);
+  let made = NameRef(start: a, end: b, generic: generic);
+  put::<NameRef>(cell: &exp^.names, value: made);
+  return True();
+}
+
+fn expand_families(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses a font-family list: names separated by commas, each a string or a run of identifiers joined by single spaces, generic names lowered.";
+  let first = exp^.names.inner.len;
+  let from = exp^.text.inner.len;
+  let idents = 0_u64;
+  let quoted = False();
+  let cursor = start;
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let kind = kind_of(component: values^.components.inner[at]);
+    if kind == k_comma {
+      let closed = finish_family(exp: exp, from: from, idents: idents, quoted: quoted);
+      if closed {
+      } else {
+        return False();
+      }
+      set from = exp^.text.inner.len;
+      set idents = 0_u64;
+      set quoted = False();
+    } else if kind == k_string {
+      let has_idents = idents > 0_u64;
+      let started = bor(quoted, has_idents);
+      if started {
+        return False();
+      }
+      match string_at(values: values, at: at) {
+        Some(value: text) => {
+          let no = False();
+          put_text(exp: exp, values: values, span: text, lower: no);
+        }
+        None() => {
+        }
+      }
+      set quoted = True();
+    } else if kind == k_ident {
+      if quoted {
+        return False();
+      }
+      if idents > 0_u64 {
+        put::<u8>(cell: &exp^.text, value: 32_u8);
+      }
+      match ident_at(values: values, at: at) {
+        Some(value: name) => {
+          let no = False();
+          put_text(exp: exp, values: values, span: name, lower: no);
+        }
+        None() => {
+        }
+      }
+      set idents = idents +sat 1_u64;
+    } else {
+      return False();
+    }
+    set cursor = next;
+  }
+  let closed = finish_family(exp: exp, from: from, idents: idents, quoted: quoted);
+  if closed {
+  } else {
+    return False();
+  }
+  let last = exp^.names.inner.len;
+  let a = to_u32(value: first);
+  let b = to_u32(value: last);
+  let names = ItemValue::FamilyNames(start: a, end: b);
+  let item = Item(longhand: lh_font_family, value: names);
+  put::<Item>(cell: &exp^.items, value: item);
+  return True();
+}
+
+fn expand_font(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands the font shorthand: optional style, weight, variant and stretch words or a weight number, then a size, an optional / and line-height, then the family list; the longhands it leaves out take their initial values.";
+  let style = Declared::Keyword(keyword: 0_u8);
+  let weight = Declared::Number(value: 4.0e2_f32);
+  let size = Declared::Keyword(keyword: 3_u8);
+  let line_height = Declared::Keyword(keyword: keyword_normal);
+  let have_size = False();
+  let cursor = start;
+  let n = font_prefix_words.len;
+  for (step in 0_u64..6_u64) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      return False();
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let prefix = word_at(values: values, at: at, list: &font_prefix_words[0_u64..n]);
+    match prefix {
+      Some(value: i) => {
+        if i == 1_u64 {
+          set style = Declared::Keyword(keyword: 1_u8);
+        } else if i == 2_u64 {
+          set style = Declared::Keyword(keyword: 2_u8);
+        } else if i == 13_u64 {
+          set weight = Declared::Number(value: 7.0e2_f32);
+        } else if i == 14_u64 {
+          set weight = Declared::Keyword(keyword: keyword_bolder);
+        } else if i == 15_u64 {
+          set weight = Declared::Keyword(keyword: keyword_lighter);
+        }
+        set cursor = next;
+      }
+      None() => {
+        let numeric = match plain_number_at(values: values, at: at) {
+          Some(value: number) => {
+            give Some<f64>(value: number.value);
+          }
+          None() => {
+            give None<f64>();
+          }
+        }
+        match numeric {
+          Some(value: amount) => {
+            let low = flt(amount, 1.0_f64);
+            let high = fgt(amount, 1.0e3_f64);
+            let outside = bor(low, high);
+            if outside {
+              return False();
+            }
+            let narrowed = narrow(value: amount);
+            set weight = Declared::Number(value: narrowed);
+            set cursor = next;
+          }
+          None() => {
+            match single_value(values: values, at: at, limit: next, longhand: lh_font_size) {
+              Some(value: v) => {
+                set size = v;
+                set have_size = True();
+                set cursor = next;
+                break;
+              }
+              None() => {
+                return False();
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if have_size {
+  } else {
+    return False();
+  }
+  let after = skip_space(values: values, at: cursor, limit: end);
+  if after >= end {
+    return False();
+  }
+  let code = match delim_code_at(values: values, at: after) {
+    Some(value: c) => {
+      give c;
+    }
+    None() => {
+      give 0_u32;
+    }
+  }
+  if code == 47_u32 {
+    let from = after + 1_u64;
+    let at = skip_space(values: values, at: from, limit: end);
+    if at >= end {
+      return False();
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    match single_value(values: values, at: at, limit: next, longhand: lh_line_height) {
+      Some(value: v) => {
+        set line_height = v;
+      }
+      None() => {
+        return False();
+      }
+    }
+    set cursor = next;
+  }
+  put_value(exp: exp, longhand: lh_font_style, value: style);
+  put_value(exp: exp, longhand: lh_font_weight, value: weight);
+  put_value(exp: exp, longhand: lh_font_size, value: size);
+  put_value(exp: exp, longhand: lh_line_height, value: line_height);
+  let families = expand_families(values: values, start: cursor, end: end, exp: exp);
+  return families;
+}
+
+fn expand(values: &ComponentList, start: u64, end: u64, shorthand: u8, longhand: u8, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses the value from start to end as the shorthand numbered shorthand, or as longhand when shorthand is 255, and appends its longhands' declared values to exp; false when the value is invalid.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return False();
+  }
+  let e = trim_end(values: values, start: s, end: end);
+  if e <= s {
+    return False();
+  }
+  match wide_at(values: values, start: s, end: e) {
+    Some(value: keyword) => {
+      put_wide(exp: exp, shorthand: shorthand, longhand: longhand, keyword: keyword);
+      return True();
+    }
+    None() => {
+    }
+  }
+  let yes = True();
+  let no = False();
+  if shorthand == 255_u8 {
+    let grammar = grammar_of(longhand: longhand);
+    if grammar == g_family {
+      let made = expand_families(values: values, start: s, end: e, exp: exp);
+      return made;
+    }
+    if grammar == g_list_style {
+      let made = expand_list_style(values: values, start: s, end: e, shorthand: no, exp: exp);
+      return made;
+    }
+    if grammar == g_decoration {
+      let made = expand_decoration(values: values, start: s, end: e, shorthand: no, exp: exp);
+      return made;
+    }
+    match single_value(values: values, at: s, limit: e, longhand: longhand) {
+      Some(value: v) => {
+        put_value(exp: exp, longhand: longhand, value: v);
+        return True();
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  if shorthand == sh_border {
+    let made = expand_border(values: values, start: s, end: e, first_side: 0_u64, side_count: 4_u64, exp: exp);
+    return made;
+  }
+  let sides_from = shorthand >= sh_border_top;
+  let sides_to = shorthand <= sh_border_left;
+  let side = band(sides_from, sides_to);
+  if side {
+    let index = shorthand - sh_border_top;
+    let wide = cvt::<u8, u64>(index);
+    let made = expand_border(values: values, start: s, end: e, first_side: wide, side_count: 1_u64, exp: exp);
+    return made;
+  }
+  if shorthand == sh_font {
+    let made = expand_font(values: values, start: s, end: e, exp: exp);
+    return made;
+  }
+  if shorthand == sh_background {
+    let made = expand_background(values: values, start: s, end: e, exp: exp);
+    return made;
+  }
+  if shorthand == sh_overflow {
+    let made = expand_overflow(values: values, start: s, end: e, exp: exp);
+    return made;
+  }
+  if shorthand == sh_list_style {
+    let made = expand_list_style(values: values, start: s, end: e, shorthand: yes, exp: exp);
+    return made;
+  }
+  if shorthand == sh_text_decoration {
+    let made = expand_decoration(values: values, start: s, end: e, shorthand: yes, exp: exp);
+    return made;
+  }
+  let made = expand_box(values: values, start: s, end: e, shorthand: shorthand, exp: exp);
+  return made;
+}
+
+fn intern_text(exp: &Expansion, start: u32, end: u32, atoms: &AtomTable) -> result: Result<Atom, ValuesError> reads(exp), writes(atoms) {
+  doc "Interns the expansion's text from start to end; a reversed, out-of-range or over-long span interns the empty name.";
+  let a = cvt::<u32, u64>(start);
+  let b = cvt::<u32, u64>(end);
+  let length = exp^.text.inner.len;
+  let low = 0_u64;
+  let high = 0_u64;
+  if a <= b {
+    if b <= length {
+      let width = b - a;
+      if width <= 65536_u64 {
+        set low = a;
+        set high = b;
+      }
+    }
+  }
+  if low > high {
+    set low = high;
+  }
+  if high > length {
+    set high = 0_u64;
+    set low = 0_u64;
+  }
+  let span = high - low;
+  if span > 65536_u64 {
+    set low = high;
+  }
+  let width = high - low;
+  let refusal = ValuesError::TooLarge();
+  if width <= 65536_u64 {
+    match atom_intern(table: atoms, name: &exp^.text.inner[low..high]) {
+      Ok(value: atom) => {
+        return Ok<Atom, ValuesError>(value: atom);
+      }
+      Err(..) => {
+        return Err<Atom, ValuesError>(error: refusal);
+      }
+    }
+  }
+  return Err<Atom, ValuesError>(error: refusal);
+}
+
+fn resolve(value: ItemValue, exp: &Expansion, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<Declared, ValuesError> reads(exp), writes(atoms), writes(store) {
+  doc "The declared value of an item, interning its names and appending a family list to store.";
+  match value {
+    Value(value: v) => {
+      return Ok<Declared, ValuesError>(value: v);
+    }
+    Name(start: a, end: b) => {
+      match intern_text(exp: exp, start: a, end: b, atoms: atoms) {
+        Ok(value: atom) => {
+          let made = Declared::ListStyle(name: atom);
+          return Ok<Declared, ValuesError>(value: made);
+        }
+        Err(error: e) => {
+          return Err<Declared, ValuesError>(error: e);
+        }
+      }
+    }
+    FamilyNames(start: a, end: b) => {
+      let first = store^.families.inner.len;
+      let low = cvt::<u32, u64>(a);
+      let high = cvt::<u32, u64>(b);
+      for (k in low..high) {
+        let inside = k < exp^.names.inner.len;
+        if inside {
+          let name = exp^.names.inner[k];
+          match intern_text(exp: exp, start: name.start, end: name.end, atoms: atoms) {
+            Ok(value: atom) => {
+              let family = Family(name: atom, generic: name.generic);
+              match store_put::<Family>(cell: &store^.families, value: family) {
+                Ok(..) => {
+                }
+                Err(error: e) => {
+                  return Err<Declared, ValuesError>(error: e);
+                }
+              }
+            }
+            Err(error: e) => {
+              return Err<Declared, ValuesError>(error: e);
+            }
+          }
+        }
+      }
+      let last = store^.families.inner.len;
+      let from = to_u32(value: first);
+      let to = to_u32(value: last);
+      let made = Declared::Families(start: from, end: to);
+      return Ok<Declared, ValuesError>(value: made);
+    }
+  }
+}
+
+fn value_bounds(values: &ComponentList, range: ComponentRange) -> (start: u64, end: u64) reads(values) contract {
+  ensures start <= end;
+  ensures end <= values^.components.inner.len;
+} {
+  doc "The bounds of range in values, empty when it is reversed or out of the list.";
+  let start = cvt::<u32, u64>(range.start);
+  let end = cvt::<u32, u64>(range.end);
+  let length = values^.components.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let usable = band(ordered, inside);
+  if usable {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn parse_declaration(values: &ComponentList, name: Span, range: ComponentRange, important: Bool, sheet: u32, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<u64, ValuesError> reads(values), writes(atoms), writes(store) {
+  doc "Looks the name up as a longhand, then as a shorthand, and appends the declarations its value gives.";
+  let (a, b) = text_of(values: values, span: name);
+  let long = longhand_of(name: &values^.text.inner[a..b]);
+  let shorthand = 255_u8;
+  let longhand = 0_u8;
+  match long {
+    Some(value: l) => {
+      set longhand = l;
+    }
+    None() => {
+      match shorthand_code(name: &values^.text.inner[a..b]) {
+        Some(value: code) => {
+          set shorthand = code;
+        }
+        None() => {
+          return Ok<u64, ValuesError>(value: 0_u64);
+        }
+      }
+    }
+  }
+  let (start, end) = value_bounds(values: values, range: range);
+  let variable = has_var(values: values, start: start, end: end);
+  if variable {
+    let count = member_count(shorthand: shorthand);
+    for (k in 0_u64..count) {
+      let target = member(shorthand: shorthand, longhand: longhand, k: k);
+      let pending = Declared::Pending(sheet: sheet, start: range.start, end: range.end, shorthand: shorthand);
+      let declaration = Declaration(longhand: target, important: important, value: pending);
+      match store_put::<Declaration>(cell: &store^.declarations, value: declaration) {
+        Ok(..) => {
+        }
+        Err(error: e) => {
+          return Err<u64, ValuesError>(error: e);
+        }
+      }
+    }
+    return Ok<u64, ValuesError>(value: count);
+  }
+  let exp = expansion_new();
+  let valid = expand(values: values, start: start, end: end, shorthand: shorthand, longhand: longhand, exp: &exp);
+  if valid {
+  } else {
+    return Ok<u64, ValuesError>(value: 0_u64);
+  }
+  let n = exp.items.inner.len;
+  for (k in 0_u64..n) {
+    let item = exp.items.inner[k];
+    match resolve(value: item.value, exp: &exp, atoms: atoms, store: store) {
+      Ok(value: v) => {
+        let declaration = Declaration(longhand: item.longhand, important: important, value: v);
+        match store_put::<Declaration>(cell: &store^.declarations, value: declaration) {
+          Ok(..) => {
+          }
+          Err(error: e) => {
+            return Err<u64, ValuesError>(error: e);
+          }
+        }
+      }
+      Err(error: e) => {
+        return Err<u64, ValuesError>(error: e);
+      }
+    }
+  }
+  return Ok<u64, ValuesError>(value: n);
+}
+
+fn parse_pending(values: &ComponentList, range: ComponentRange, shorthand: u8, longhand: u8) -> result: Option<Declared> reads(values) {
+  doc "Expands the substituted value locally and returns longhand's plain value.";
+  let (start, end) = value_bounds(values: values, range: range);
+  let exp = expansion_new();
+  let valid = expand(values: values, start: start, end: end, shorthand: shorthand, longhand: longhand, exp: &exp);
+  if valid {
+  } else {
+    return None<Declared>();
+  }
+  let n = exp.items.inner.len;
+  for (k in 0_u64..n) {
+    let item = exp.items.inner[k];
+    if item.longhand == longhand {
+      match item.value {
+        Value(value: v) => {
+          return Some<Declared>(value: v);
+        }
+        Name(..) => {
+          return None<Declared>();
+        }
+        FamilyNames(..) => {
+          return None<Declared>();
+        }
+      }
+    }
+  }
+  return None<Declared>();
+}
+
+fn parse_pending_named(values: &ComponentList, range: ComponentRange, shorthand: u8, longhand: u8, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<Option<Declared>, ValuesError> reads(values), writes(atoms), writes(store) {
+  doc "Expands the substituted value locally and resolves longhand's value, names included.";
+  let (start, end) = value_bounds(values: values, range: range);
+  let exp = expansion_new();
+  let valid = expand(values: values, start: start, end: end, shorthand: shorthand, longhand: longhand, exp: &exp);
+  if valid {
+  } else {
+    let invalid = None<Declared>();
+    return Ok<Option<Declared>, ValuesError>(value: invalid);
+  }
+  let n = exp.items.inner.len;
+  for (k in 0_u64..n) {
+    let item = exp.items.inner[k];
+    if item.longhand == longhand {
+      match resolve(value: item.value, exp: &exp, atoms: atoms, store: store) {
+        Ok(value: v) => {
+          let found = Some<Declared>(value: v);
+          return Ok<Option<Declared>, ValuesError>(value: found);
+        }
+        Err(error: e) => {
+          return Err<Option<Declared>, ValuesError>(error: e);
+        }
+      }
+    }
+  }
+  let nothing = None<Declared>();
+  return Ok<Option<Declared>, ValuesError>(value: nothing);
+}
