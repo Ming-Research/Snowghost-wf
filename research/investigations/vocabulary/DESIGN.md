@@ -92,9 +92,10 @@ where its draft decision stands.
    share storage and a style comparison is a comparison of identifiers.
    Inheritance copies an identifier. The style measurement's criterion 2
    adopted interning as one sequential pass after the style stage, which
-   cost at most 4.6 percent of the four-worker style stage then. The rule
-   index made that stage three times faster on ecma262 and html5 without
-   changing the pass, which is now about 14 to 16 percent of it, at the
+   cost at most 4.6 percent of the four-worker style stage then. With the
+   rule index and sibling positions the stage is 3.1 and 5.2 times faster
+   on ecma262 and html5, which makes the unchanged pass 14 to 16 percent of
+   it on those two pages and about 1 percent on apollo11, against the
    criterion's 15 percent bound, so the pass is measured again on the real
    style stage. The groups themselves are the proposal's and are revisited
    when real computed values replace the prototype's four placeholder
