@@ -62,7 +62,7 @@ values:
   inherited from the parent when no matched rule sets them; the groups stand
   in for the computed-value groups the vocabulary proposes interning.
 
-Three traversal shapes compute the same result, which the driver checks:
+Four traversal shapes compute the same result, which the driver checks:
 
 - **A, level order** (the vocabulary proposal): the elements of each tree
   level sit contiguously; one counted loop per level, iteration k writing
@@ -76,6 +76,14 @@ Three traversal shapes compute the same result, which the driver checks:
   preorder matches rules and writes each element's matched-rule summary to
   its own slot, since matching reads only the document. A sequential
   preorder pass then cascades and inherits.
+- **D, flat match then level cascade:** C's match, then a cascade one tree
+  level at a time whose loop writes each element's values at its preorder
+  index. A validating walk derives each element's depth, refusing a parent
+  that does not precede its element, and a second pass groups the elements
+  by depth into a `Segments` with each one's position in its level; the two
+  passes' loop invariants are the range facts that let Whitefoot prove two
+  iterations of a level disjoint (mbbill/Whitefoot#203). `cascade-c` and
+  `cascade-d` time C's and D's cascade alone, over one match.
 
 After the style pass, a sequential **intern post-pass** interns each group
 into a per-group hash table and replaces it by the table's index. It is
@@ -1039,6 +1047,62 @@ the pass could count per parent in parallel and, after a change, recount
 only the parents whose children changed. That form is not built or
 measured here; it is the candidate when the pass's cost or incremental
 style needs it.
+
+### Shape D: a proved level cascade
+
+Shape D (Prototypes) keeps C's match and cascades level by level, writing
+each element's values at its preorder index, so it needs no copy back into
+document order. Its level loop is parallel only because Whitefoot can now
+prove that two elements of one level are distinct and that a parent lies
+one level above its element: range facts and the `apart` certificate of
+mbbill/Whitefoot#203, whose derivation and limits are in that repository's
+`research/investigations/unique-keys/POINTWISE.md`. Built at Snowghost
+7358347 with `whitefootc` from Whitefoot 450fea25 (binary
+f356784b0ffc0ea9); the `whitefoot/` pin does not carry range facts, so the
+build sets `WHITEFOOTC`.
+
+- **Correctness.** `proto_style check` agrees on all six pages present on
+  this host, in the `--par` and the sequential build, with every checksum
+  equal to run 16's at 0c66df9 (`runs/22-style-check-7358347.txt`); check
+  compares A, B and D with C element by element. apollo11 is absent here.
+- **Permission.** `--par-ledger` permits D's level loop (`shapes.wf:296`,
+  one accumulator under `band`) and splits it; C's cascade loop stays
+  denied, as do D's depth walk, its grouping and its loop over levels, each
+  of which depends on what earlier iterations wrote
+  (`runs/24-style-ledger-7358347.txt`).
+- **Cost.** The style stage, C against D, and the cascade alone over one
+  match, `cascade-c` against `cascade-d`, the best of five runs under the
+  check lock on the four-processor development machine
+  (`runs/23-style-shape-d-7358347.txt`), seconds:
+
+| Page | C seq | C W4 | D seq | D W4 | cascade-c seq | cascade-c W4 | cascade-d seq | cascade-d W4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | 0.8067 | 0.2767 | 0.8300 | 0.2567 | 0.0415 | 0.0425 | 0.0517 | 0.0350 |
+| html5 | 0.6833 | 0.2167 | 0.6833 | 0.2133 | 0.0168 | 0.0168 | 0.0128 | 0.0062 |
+| flat | 0.0096 | 0.0045 | 0.0098 | 0.0040 | 0.0013 | 0.0013 | 0.0014 | 0.0008 |
+| unbalanced | 0.0048 | 0.0023 | 0.0049 | 0.0020 | 0.0006 | 0.0006 | 0.0007 | 0.0004 |
+
+  The deep and paragraph pages stay below the timer's resolution in every
+  build.
+
+- **What it shows.** At four workers D's cascade is 1.21 times faster than
+  C's on ecma262, 2.71 times on html5, 1.6 on flat and 1.5 on unbalanced.
+  The cascade is 5 percent of C's sequential style stage on ecma262 and
+  2.5 percent on html5, which matching dominates, and 13.5 and 12.5
+  percent on flat and unbalanced. Over the whole stage at four workers D saves 0.0005 s on
+  flat and 0.0003 s on unbalanced, about its cascade's gain; on the real
+  pages the difference, 0.020 s on ecma262 and 0.003 s on html5, is not
+  separated from run-to-run variation: an earlier run of the same sources,
+  with a compiler build differing only in the range judgment, gave C and D
+  both 0.2633 s on ecma262. D's sequential cascade is slower than C's on
+  ecma262 (0.0517 s against 0.0415 s) and faster on html5 (0.0128 s against
+  0.0168 s); D adds the depth walk and the grouping, both sequential, and
+  neither difference was attributed further.
+- **Port cost.** `cascade_level` takes `positions`, `depths` and `level`
+  only so its requirements can name them, and its call of
+  `cascade_element` moved into `cascade_into`, because Whitefoot's counted
+  permission refuses a loop body that binds an ordered result list; both
+  are recorded in Whitefoot's `docs/todo.md`.
 
 ### Whitefoot: an equality requirement over range lengths
 

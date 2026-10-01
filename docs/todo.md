@@ -20,13 +20,15 @@ example apart from the renderer code that exposed it
   and cannot prove them distinct, so the loop cannot run in parallel. It
   keeps the style stage's cascade a sequential pass in document order
   (`design/pipeline/style.md`), and the layout builder's map from node to
-  style index is the same scatter. The owner prefers a mechanism that
-  works for any container (array, hash map, arena), needs no restricted
-  container operations and costs nothing at run time; the candidate is an
-  affine key that only its container mints, so that two places hold two
-  different keys, studied in Whitefoot as its own investigation against
-  monotone containers and a built-in partition. Reopen the cascade when
-  Whitefoot settles it.
+  style index is the same scatter. mbbill/Whitefoot#203 adds range facts:
+  each pass derives its index arrays from the tree with loops whose
+  invariants state that a level lists distinct elements and that a parent
+  lies one level above its element, and a counted loop's `apart`
+  certificate proves two iterations disjoint from them. Style shape D in
+  the concurrency prototype is the cascade written that way
+  (`research/investigations/concurrency/DESIGN.md`, "Shape D: a proved level
+  cascade"). Reopen the cascade, and the layout builder's map, when that
+  pull request reaches Whitefoot's main and the pin moves.
 
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
