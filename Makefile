@@ -165,8 +165,9 @@ oracle-style: compiler
 	@sh $(ROOT)/research/investigations/style/run.sh check
 
 # Dumps Chromium's boxes and text fragments for the three real pages of the
-# concurrency investigation, the oracle of the layout stage
-# (research/investigations/layout), with tests/layout/layout_oracle.mjs. It
+# concurrency investigation and the focused case pages tests/layout/*-cases.html,
+# the oracle of the layout stage (research/investigations/layout), with
+# tests/layout/layout_oracle.mjs. It
 # needs what oracle-style-dump needs and stays out of `check`.
 LAYOUT_ORACLE := $(ORACLE)/layout
 oracle-layout-dump:
@@ -184,6 +185,11 @@ oracle-layout-dump:
 		'modules=site.styles&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-site.css' \
 		> $(LAYOUT_ORACLE)/apollo11.chromium.tsv.part
 	@mv $(LAYOUT_ORACLE)/apollo11.chromium.tsv.part $(LAYOUT_ORACLE)/apollo11.chromium.tsv
+	@cd $(ROOT) && for page in tests/layout/*-cases.html; do \
+		name=$$(basename $$page .html); \
+		$(NODE) tests/layout/layout_oracle.mjs dump $$page > $(LAYOUT_ORACLE)/$$name.chromium.tsv.part && \
+		mv $(LAYOUT_ORACLE)/$$name.chromium.tsv.part $(LAYOUT_ORACLE)/$$name.chromium.tsv || exit 1; \
+	done
 
 .PHONY: FORCE
 FORCE:
