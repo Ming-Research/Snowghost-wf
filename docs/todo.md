@@ -300,7 +300,7 @@ example apart from the renderer code that exposed it
 - **`word-break: break-all` is not Chromium's.** Blink also breaks before
   and after dash punctuation in break-all and does not break after a
   hyphen-minus before a non-ASCII letter; `pkg::layout::text` allows a break
-  between two letters or numbers only. Impact: 20 of the synthetic break
+  between two letters or numbers only. Impact: 21 of the synthetic break
   cases; no sampled page text uses break-all or keep-all. Change: measure
   Blink's break-all classes as the normal ASCII table was measured and
   encode them. Reopen when a page uses break-all.
