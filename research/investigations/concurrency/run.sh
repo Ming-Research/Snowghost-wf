@@ -5,8 +5,9 @@
 #                                sheets they load, each checked against its
 #                                pinned SHA-256
 #   run.sh synth                 writes the four synthetic pages
-#   run.sh check [PAGE...]       builds the style driver and runs its check
-#                                (A, B and C agree, the intern pass is sound)
+#   run.sh check [PAGE...]       builds the style and layout drivers and runs
+#                                their checks (A, B, C and D agree, the
+#                                intern pass is sound; L1, L2 and L3 agree)
 #   run.sh style [PAGE [REPS]]   builds the style driver and times the style
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
@@ -292,6 +293,17 @@ build_layout() {
 	(cd renderer && "$compiler" --graph modules.wfg --entry proto_layout -o ../build/proto_layout_seq)
 }
 
+# Names the compiler by its path, relative to the checkout when it lies
+# inside it, and its SHA-256 prefix, and the pinned checkout's revision when
+# the compiler is the pin's own build.
+compiler_line() {
+	line="compiler: ${compiler#"$root"/} $(sha256sum <"$compiler" | cut -c1-16)"
+	if [ "$compiler" = "$root/whitefoot/compiler/target/gate/whitefootc" ]; then
+		line="$line, whitefoot $(git -C "$root/whitefoot" rev-parse --short=8 HEAD)"
+	fi
+	echo "$line"
+}
+
 page_file() {
 	file=$data/$1.html
 	if [ ! -f "$file" ]; then
@@ -354,7 +366,8 @@ style() {
 	build
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
-	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	compiler_line
+	echo "runs: best of $runs"
 	echo "page shape build reps T(0) T(REPS) stage"
 	for page in $pages; do
 		file=$(page_file "$page")
@@ -386,7 +399,8 @@ layout() {
 	fi
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
-	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	compiler_line
+	echo "runs: best of $runs"
 	echo "drivers: $(sha256sum <build/proto_layout | cut -c1-16) $(sha256sum <build/proto_layout_seq | cut -c1-16)"
 	echo "page mode build reps T(0) T(REPS) stage"
 	for page in $pages; do
