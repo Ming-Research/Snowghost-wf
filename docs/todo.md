@@ -18,11 +18,12 @@ example apart from the renderer code that exposed it
   one level's nodes writes `results[child]` for each of their children.
   The writes never collide, but Whitefoot sees integers read from storage
   and cannot prove them distinct, so the loop cannot run in parallel. It
-  keeps the style stage's cascade a sequential pass in document order
-  (`design/pipeline/style.md`), and the layout builder's map from node to
-  style index is the same scatter. Whitefoot's owner selected range facts
-  (candidate N of its unique-keys investigation) over an affine key that
-  only its container mints, and mbbill/Whitefoot#203 adds them: each pass
+  keeps the style stage's pass in document order, which computes what the
+  parent decides, sequential (`design/pipeline/style.md`), and the layout
+  builder's map from node to style index is the same scatter. Whitefoot's
+  owner selected range facts (candidate N of its unique-keys investigation)
+  over an affine key that only its container mints, and
+  mbbill/Whitefoot#203 adds them: each pass
   derives its index arrays from the tree with loops whose invariants state
   that a level lists distinct elements and that a parent lies one level
   above its element, and a counted loop's `apart` certificate proves two
@@ -64,9 +65,10 @@ example apart from the renderer code that exposed it
   Minimal example: after a loop that derives each element's depth from its
   parent, a loop over the elements sets `owners[e]` to `e` or to
   `owners[parents[e]]` with the invariant
-  `depths[owners[e]] <= depths[e]` for every `e` already visited; that
-  invariant takes Whitefoot 12.5 s to check, and took 392.6 s when the
-  owners were written in the depth loop itself
+  `depths[owners[e]] <= depths[e]` for every `e` already visited. With
+  that invariant Whitefoot checks the program in 12.5 s against 0.84 s
+  without it, at 9208728e, and took 392.6 s at 9ea2818b with the owners
+  written in the depth loop itself
   (`research/investigations/unique-keys/owner_loop.wf` and POINTWISE.md's
   "Snowghost's inherited pass" in mbbill/Whitefoot#203). The real style
   stage's pass in document order needs that fact to run as a level loop:
@@ -103,6 +105,17 @@ example apart from the renderer code that exposed it
   Reopen when that lands, to move the pin and measure again.
 
 ## Snowghost
+
+- **Shape D derives the levels the traversal already holds.**
+  `level_index` in `renderer/proto/style/shapes.wf` repeats the depth walk
+  and a grouping by depth that `Walk` and `Levels` in
+  `renderer/proto/style/traversal.wf` already compute for shape A, and
+  shape D's cascade timing includes both. Impact: shape D pays for the walk
+  twice per stage, and the two derivations can drift apart. Change: state
+  `level_index`'s postconditions where the traversal builds its levels, so
+  the pipeline derives them once. Reopen when shape D replaces C in the
+  pipeline or the real stage's pass in document order becomes a level
+  loop.
 
 - **Shapes C and D and the cascade timing repeat one match.**
   `style_shape_c`, `style_shape_d` and `match_all` in

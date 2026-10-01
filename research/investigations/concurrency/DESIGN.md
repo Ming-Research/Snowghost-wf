@@ -1070,16 +1070,20 @@ empty.
 
 No criterion was written before these measurements, so they decide nothing:
 they show what the port costs and gains, and `design/pipeline/style.md`
-keeps the sequential cascade until that pull request reaches Whitefoot's
-main (`docs/todo.md`). Everything below was run at Snowghost 5a01982 with
-the pinned compiler, Whitefoot 4a58c4d8 (binary 719d9ad47d00fd81), on the
-four-processor development machine; runs 22 to 25 hold the same
-measurements at 414cd5e and a6d65c8, before `level_index` moved into a
-function of its own, with Whitefoot 145f6e9e.
+keeps the stage's pass in document order sequential until that pull
+request reaches Whitefoot's main (`docs/todo.md`). Everything below was run
+at Snowghost 5a01982 with the pinned compiler, Whitefoot 4a58c4d8 (binary
+719d9ad47d00fd81), on the four-processor development machine, except run
+25, which checked the ceiling page before and after a fix to
+`cascade_levels` and a negative control at 399661d with Whitefoot 145f6e9e.
+These figures are the prototype's cascade; the real stage's pass in
+document order, which a level loop would replace, is 26 percent of its
+four-worker stage on ecma262 (`research/investigations/style/DESIGN.md`,
+criterion 2).
 
 - **Correctness.** `run.sh check` agrees on all six pages present on this
   host, in the `--par` and the sequential build, with every checksum equal
-  to run 16's at 0c66df9 and run 22's, and on a page whose deepest element
+  to run 16's at 0c66df9, and on a page whose deepest element
   lies at `depth_ceiling` (`runs/26-style-check-5a01982.txt`); `check`
   compares A, B and D with C element by element. apollo11 is absent here.
   An earlier D refused that page, which the traversal and C accept; a D
@@ -1087,9 +1091,20 @@ function of its own, with Whitefoot 145f6e9e.
   (`runs/25-style-ceiling-and-control-399661d.txt`).
 - **The producer's facts.** `level_index` proves its `listed` and `up`
   postconditions at its `Some` return, and `cascade_levels` holds them in
-  the `Some` arm of its match; without the `listed` postcondition the call
-  of `cascade_level` is rejected, and without the grouping loop's `grouped`
-  invariant the return is (`runs/29-level-index-controls-5a01982.txt`).
+  the `Some` arm of its match. Each fact is needed: without the `listed` or
+  the `up` postcondition, or the length postcondition on `depths`, the call
+  of `cascade_level` is rejected; without the depth walk's `above`
+  invariant or the grouping's `grouped` invariant the return is, and
+  without the grouping's `fresh` invariant its backedge
+  (`runs/29-level-index-controls-5a01982.txt`). The loop invariants are
+  named `above` and `grouped`, not `up` and `listed`, because a range
+  fact's name shares one scope with the function's postconditions and the
+  same name is a collision (Whitefoot's TYPE-6).
+- **The index is derived again.** `level_index` repeats the depth walk and
+  a grouping by depth that `renderer/proto/style/traversal.wf`'s `Walk` and
+  `Levels` already hold for shape A, and `cascade-d` includes both; a
+  pipeline would derive the levels once and state the postconditions where
+  the traversal builds them (`docs/todo.md`).
 - **Permission.** `--par-ledger` permits D's level loop (`shapes.wf:296`,
   one accumulator under `band`) and splits it; C's cascade loop stays
   denied, as do `level_index`'s depth walk and grouping and
@@ -1107,9 +1122,7 @@ function of its own, with Whitefoot 145f6e9e.
 | unbalanced | 0.0042 | 0.0021 | 0.0042 | 0.0019 | 0.0006 | 0.0006 | 0.0006 | 0.0004 |
 
   The deep and paragraph pages stay below the timer's resolution in every
-  build. Run 23 measured the cascade before `level_index` became a
-  function, on another host (`Linux 6.18.44-fc-v50` against `fc-v51`), so
-  the two runs are not compared.
+  build.
 
 - **What it shows.** At four workers D's cascade is 1.19 times faster than
   C's on ecma262, 2.79 times on html5, 1.2 on flat and 1.5 on unbalanced;

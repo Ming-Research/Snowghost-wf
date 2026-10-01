@@ -378,7 +378,7 @@ best() {
 style() {
 	driver=proto_style
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
-		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh "$here/run.sh" style "$@"
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh research/investigations/concurrency/run.sh style "$@"
 	fi
 	build
 	pages=${1:-$real_pages $synthetic_pages}
@@ -409,7 +409,7 @@ style() {
 layout() {
 	driver=proto_layout
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
-		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh "$here/run.sh" layout "$@"
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh research/investigations/concurrency/run.sh layout "$@"
 	fi
 	if [ -z "${KEEP_BUILD:-}" ] || [ ! -x build/proto_layout ] || [ ! -x build/proto_layout_seq ]; then
 		build_layout
