@@ -7,8 +7,9 @@
 //   node scope_probe.mjs MODE PAGE.html [URL-SUFFIX=SHEET.css ...]
 //
 // MODE is one of
-//   widths      the widths of five fixed spans (PAGE is ignored), to see how
-//               Chromium rounds text advances;
+//   widths      the widths of seven fixed spans and two blocks (PAGE is
+//               ignored), to see how Chromium rounds text advances and
+//               computed lengths to 1/64 px;
 //   shares      each rendered text node's characters, classified by the
 //               nearest layout feature above it, and how many element boxes
 //               have a fractional edge;
@@ -34,7 +35,9 @@ const PAGE_URL = 'http://snowghost.test/page/index.html';
 const WIDTHS_PAGE = `<!doctype html><body style="margin:0">
 <span id=a style="font:16px serif">iiiiiiiiii</span><br><span id=b style="font:16px serif">i</span><br>
 <span id=c style="font:16px sans-serif">The quick brown fox jumps over the lazy dog</span><br>
-<span id=d style="font:13px monospace">The quick brown fox</span><br><span id=e style="font:16px serif">AVAWAVAW</span></body>`;
+<span id=d style="font:13px monospace">The quick brown fox</span><br><span id=e style="font:16px serif">AVAWAVAW</span><br>
+<span id=f style="font:17px serif">i</span><br><span id=g style="font:17px serif">iii</span>
+<div id=h style="width:100.01px;height:1px"></div><div id=i style="width:100.02px;height:1px"></div></body>`;
 
 const FAMILIES = ['Arial', 'Helvetica', 'Times New Roman', 'Times', 'Courier New', 'Courier', 'Georgia', 'Verdana', 'Segoe UI',
   'IBM Plex Serif', 'Linux Libertine', 'Arial Plus', 'Droid Sans Fallback', 'DejaVu Serif', 'serif', 'sans-serif', 'monospace',
@@ -75,7 +78,7 @@ await page.goto(PAGE_URL, { waitUntil: 'load' });
 
 let out;
 if (mode === 'widths') {
-  out = await page.evaluate(() => Object.fromEntries([...'abcde'].map((id) => [id, document.getElementById(id).getBoundingClientRect().width])));
+  out = await page.evaluate(() => Object.fromEntries([...'abcdefghi'].map((id) => [id, document.getElementById(id).getBoundingClientRect().width])));
 } else if (mode === 'shares') {
   out = await page.evaluate(() => {
     const kinds = {};

@@ -1,7 +1,9 @@
 # The layout stage for headless static rendering
 
-Status: a proposal of scope, oracle and criteria for the owner's approval;
-nothing below is decided and no layout code is written.
+Status: the owner approved the scope, the oracle and the criteria below on
+2026-10-01, with the four choices as recommended ("Owner rulings"). The
+interface choices Q51 to Q58 ("Interface choices") wait for the owner; no
+layout code is written.
 
 ## Question
 
@@ -93,7 +95,10 @@ it:
   attributes (the oracle refuses image requests).
 - **Text advances** are not rounded per glyph: ten `i`s of 16px serif are
   44.453125 px wide and one is 4.453125 px, so Chromium sums unrounded
-  advances and snaps the result to 1/64 px. 99.8 to 99.97 percent of
+  advances, and rounds the sum up to 1/64 px: one `i` of 17px serif,
+  4.7231 px unrounded, is 4.734375 px, and three, 14.1694 px, are
+  14.171875 px. A CSS length is truncated instead: a block of `width:
+  100.01px` is 100 px wide and one of `100.02px` 100.015625 px. 99.8 to 99.97 percent of
   element boxes have a fractional edge.
 
 ## Proposed scope
@@ -240,7 +245,7 @@ Proposed, to be recorded before any code:
 3. **Equality across builds.** The sequential and `--par` builds give
    byte-identical dumps.
 
-## Choices for the owner
+## Choices the owner ruled
 
 1. **One batch or two.** Recommended: one batch with flex, grid, tables
    and generated content, since flex and grid decide the main column's
@@ -262,3 +267,84 @@ Proposed, to be recorded before any code:
    them relative to their parent as well would make criterion 1 require
    every line break before them in the paragraph to match too, for most of
    the elements.
+
+## Interface choices
+
+Proposed for the owner as decision cards Q51 to Q58; each starts from the
+dependencies of its candidates.
+
+- **Q51, pseudo-element styles.** The first part of the style stage also
+  matches the rules whose subject ends in `::before` or `::after`, and the
+  stage computes each generated box's style with its element as parent, in
+  a sparse list in document order beside the elements' styles, instead of
+  pseudo-element slots for every element or interleaving the generated
+  boxes into the element index the oracle and every consumer use: a
+  generated box depends only on its element's matched rules and computed
+  style, so it joins the same loops, and most elements have none. The
+  style oracle dumps a row for each generated box whose `content` is not
+  `none`, from `getComputedStyle(element, pseudo)`.
+- **Q52, counters and quotes.** One pass in document order over only the
+  elements that reset, set or increment a counter, or whose generated
+  content reads one or a quote depth, instead of a parallel scan of counter
+  scopes: a counter's value is a true chain over those elements in document
+  order, and few elements take part: the pages' sheets write `counter()`
+  5, 4 and 10 times, and apollo11 renders 124 reference numbers with it.
+  List items, which increment the implicit `list-item` counter, join the
+  pass only when generated content reads that counter, since outside
+  markers take no space; ecma262 has 15,782 of them.
+- **Q53, text preparation.** One counted loop over paragraphs, each
+  iteration itemizing its own text by font, script and style, shaping each
+  item once with `pkg::font` and finding its break opportunities and its
+  min-content and max-content contributions, instead of a shaping cache
+  shared across paragraphs, which would order paragraphs that do not depend
+  on each other, as Q47 refused for `var()`; font lists are matched once
+  per interned font group, not per element. A line that ends inside a
+  shaped item keeps the item's advances without reshaping its edge, since
+  `pkg::font` reports no unsafe-to-break positions; a mismatch class it
+  causes reopens it.
+- **Q54, rounding to `LayoutUnit`.** A text fragment's width is the sum of
+  its glyphs' unrounded advances in logical order, rounded up once to
+  `LayoutUnit`, and a computed length is truncated toward zero when layout
+  reads it, as the reference does both (What the measured pages use, Text
+  advances), instead of rounding each glyph's advance, which drifts by up
+  to 1/128 px a glyph and moves line breaks, or rounding both to nearest,
+  which misses the exact-match tier by 1/64 px wherever the reference
+  rounds otherwise; the fixed summation order keeps the result independent
+  of the worker count.
+- **Q55, fragments relative to their context.** Each formatting context
+  writes its boxes, line boxes and text fragments with offsets from its
+  own border box, and its parent places it by one offset; absolute
+  positions exist only in the walk that dumps or paints, instead of
+  absolute positions written during layout, because a context's inside then
+  depends on its available size alone, so sibling contexts lay out
+  independently and moving a context touches none of its contents.
+- **Q56, intrinsic sizes on demand.** A context computes its min-content
+  and max-content sizes when a parent's algorithm needs them (flex, grid,
+  tables, floats, shrink-to-fit widths), its child contexts' in one counted
+  loop, and keeps them, instead of one bottom-up pass over every context,
+  which computes sizes that most block-level contexts never read; both keep
+  only the subtree dependency. The recursion goes one level per nested
+  context, with each context's children in a counted loop, not the halving
+  of sibling runs that `design/pipeline/style.md` refused for the runtime's
+  recursion budget.
+- **Q57, tables.** The automatic and fixed table layout of CSS Tables 3's
+  editor's draft, and where the draft leaves a step undefined, the
+  reference's behavior with each such step recorded, instead of CSS 2.2's
+  informative automatic layout, which leaves column widths to the
+  implementation.
+- **Q58, the style stage's new groups.** Four new interned groups: flex and
+  grid container, flex and grid item, table, and generated content, with
+  variable-length values (track lists, area names, content lists) as spans
+  into side stores like the family lists, instead of adding the properties
+  to the box group, which would make every element's box group differ by
+  values most elements leave initial and lose sharing. The table and
+  generated-content groups hold inherited and non-inherited properties
+  together, as the box group already holds `visibility`.
+
+## Owner rulings
+
+- **2026-10-01, scope, oracle and criteria,** written in Chinese after the
+  handoff of mbbill/Snowghost#27: one batch with flex, grid, tables and
+  generated content; font matching as Snowghost's own table equal to the
+  reference's resolution on its host; scrollbars that take no space; the
+  criteria's bounds and measures as proposed.
