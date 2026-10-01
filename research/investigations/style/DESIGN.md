@@ -1,7 +1,9 @@
 # The style stage for headless static rendering
 
-Status: scope, oracle and criteria proposed to the owner before any code;
-nothing here is decided.
+Status: the owner approved the scope, the oracle and the criteria below on
+2026-10-01, with flex, grid and generated content left for the second batch.
+The interfaces at the end are proposed for the owner's review before any
+module body is written.
 
 ## Question
 
@@ -119,3 +121,79 @@ Recorded before any code:
   and the style stage itself becomes `pkg::style`, grown from
   `renderer/proto/style` shape C. Their interfaces go to the owner before
   their bodies are written.
+
+## Proposed interfaces
+
+Three modules, with their main types and functions; property-by-property
+enums are elided.
+
+**`pkg::css::selectors`, one addition.**
+
+```
+public struct Specificity { public ids: u32; public classes: u32; public types: u32; }
+
+public fn matching_specificity(list: &SelectorList, document: &Document,
+    atoms: &AtomTable, element: NodeId, context: MatchContext,
+    positions: &Positions) -> result: Option<Specificity> ...
+```
+
+The highest specificity among the alternatives of `list` that `element`
+matches, under Selectors Level 4's rules for `:is()`, `:not()`, `:has()`
+and `:where()`; `None` when none matches. It replaces the boolean entry in
+the style stage, so matching and ordering take one pass over each rule.
+
+**`pkg::css::values`, new: declarations and computed values.**
+
+- `Longhand`, one variant per longhand in scope (55), and `CssWide`
+  (`Initial`, `Inherit`, `Unset`).
+- `parse_declaration(values, name, range, important, atoms, store)`: expands
+  one declaration, a shorthand into its longhands, into the store's
+  declared values, or records it invalid. A value holding `var()` is kept
+  as its component range, to be substituted and parsed per element.
+- `DeclarationStore`: the declared values of every rule, with side tables
+  for what has no fixed size (font-family lists, `calc()` trees, unresolved
+  ranges), each declaration naming its longhand, origin, importance and
+  position in the cascade.
+- Computed groups, the provisional groups of `design/vocabulary.md`:
+  `BoxGroup` (display, position, float, clear, overflow, box-sizing,
+  visibility, z-index), `SizeGroup` (the six sizes and four offsets),
+  `SpacingGroup` (margins and paddings), `BorderGroup` (widths, styles,
+  colors), `FontGroup` (family list, size, weight, style, line-height),
+  `TextGroup` (color and the text longhands), `BackgroundGroup` (color), and
+  `CustomGroup` (the custom properties an element inherits and sets).
+  Absolute lengths are `LayoutUnit`; a percentage, or a `calc()` mixing
+  one with a length, stays unresolved until layout knows its basis; colors
+  are resolved to sRGB with alpha.
+- `compute(declared, parent, root_font_size, environment)` for one element:
+  substitutes `var()`, resolves `em`, `rem`, viewport units and keywords, and
+  returns the element's groups.
+
+**`pkg::style`, new: the stage, grown from the prototype's shape C.**
+
+```
+public struct Environment { public width: LayoutUnit; public height: LayoutUnit; }
+public struct StyleSheetText { public origin: Origin; public text: TextSpan; public media: Option<TextSpan>; }
+public struct RuleStore { ... }       // selectors, declarations, rule index
+public struct Styles {
+  public readonly elements: Box<Array<ComputedStyle>>;   // document order
+  public readonly box: Box<Slots<BoxGroup>>; ...          // one table per group
+}
+
+public fn collect_sheets(document: &Document) -> sheets: ...   // <style> text, <link> hrefs, style attributes
+public fn build_rules(sheets, ua_sheet, environment, atoms) -> Result<RuleStore, StyleError>
+public fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTable,
+    environment: Environment) -> Result<Styles, StyleError>
+```
+
+- `collect_sheets` reports the `href` of each `<link rel=stylesheet>`; the
+  driver reads the files, since the renderer has no network
+  (`design/processes.md`), and the shell will supply them later.
+- `build_rules` evaluates `@media` and `@supports` against `Environment`
+  and the supported longhands, once per sheet, so matching never sees a
+  rule whose condition fails.
+- `compute_styles` is shape C: one parallel loop matches and orders each
+  element's declarations, one pass in document order cascades, computes and
+  inherits, and a sequential pass interns the groups.
+
+The decisions these carry are brought to the owner as cards with the
+interfaces.
