@@ -358,7 +358,8 @@ text oracle: `make oracle-text` draws 1,000 rendered text nodes at even
 steps from each page with their parents' computed font-family, size,
 weight, style, spacing and wrapping (one line of text after white-space
 processing and text-transform, at most 120 scalars), adds 24 spacing cases,
-204 break cases and 648 extents cases, measures them in Chromium with
+10 cases of synthetic styles and sizes, 204 break cases and 648 extents
+cases, measures them in Chromium with
 `tests/layout/text_oracle.mjs` and compares the `text_oracle` driver's
 results (`runs/text-compare.txt`).
 
@@ -368,6 +369,7 @@ results (`runs/text-compare.txt`).
 | html5 text | 1,000 | 999 | 1,000 |
 | apollo11 text | 1,000 | 998 | 1,000 |
 | spacing | 24 | 24 | 24 |
+| synthetic styles and sizes | 10 | 10 | 10 |
 | breaks | 204 | 198 | 183 |
 
 2,997 of the 3,000 page cases (99.9 percent) have Chromium's width
@@ -381,10 +383,12 @@ bold and italic) match. What the reference does, as measured:
   size truncated to 26.6, handed to HarfBuzz in 16.16, plus HarfBuzz's
   scaling of its positioning; the size is first quantized by Blink's font
   cache, `trunc(size * 100) / 100` in f32 (18.72 px draws at 18.71, 1197/64
-  in 26.6, not 1198/64). Within one page Chromium shares a face's platform
+  in 26.6, not 1198/64; without the quantization the synthetic cases at
+  18.72, 18.63 and 18.8 px would be 17/64 px wider). Within one page Chromium shares a face's platform
   data between nearby sizes, so the oracle measures each size in a page of
-  its own. Synthetic bold and synthetic oblique change no advance (Unifont,
-  IPAGothic and DejaVu Sans at 700 and italic).
+  its own. Synthetic bold and synthetic oblique change no advance (the
+  synthetic cases of Unifont, IPAGothic and DejaVu Sans at 700 and italic,
+  and of WenQuanYi Zen Hei drawn bold by fallback).
 - **Vertical metrics.** Ascent, descent and line gap scaled by the
   quantized size in f32 and each rounded half up; no pixel moves from the
   ascent to a descent rounded down. The baseline of a line with
