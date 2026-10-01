@@ -1,0 +1,475 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+alias atom_find = pkg::base::atom::atom_find;
+
+const var_word: Array<u8, 3> = "var";
+
+const comment_word: Array<u8, 4> = "/**/";
+
+const max_fallback_depth: u64 = 32_u64;
+
+const sub_ok: u8 = 0_u8;
+
+const sub_invalid: u8 = 1_u8;
+
+const sub_blocked: u8 = 2_u8;
+
+fn emit(out: &Box<Slots<u8>>, value: u8) -> result: unit writes(out) {
+  doc "Appends one byte to out, doubling its capacity when full, and drops it past 2^31 bytes.";
+  let length = out^.inner.len;
+  let capacity = out^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 64_u64;
+    if small {
+      grow(cell: out, capacity: 64_u64);
+    } else {
+      let limit = capacity < 2147483648_u64;
+      if limit {
+        let doubled = capacity + capacity;
+        grow(cell: out, capacity: doubled);
+      } else {
+        return unit;
+      }
+    }
+  }
+  let room = out^.inner.len < out^.inner.cap;
+  if room {
+    place_back(window: &out^.inner, value: value);
+  }
+  return unit;
+}
+
+fn emit_bytes(out: &Box<Slots<u8>>, bytes: &[u8]) -> result: unit reads(bytes), writes(out) {
+  doc "Appends bytes to out.";
+  let n = bytes^.len;
+  for (k in 0_u64..n) {
+    let byte = bytes^[k];
+    emit(out: out, value: byte);
+  }
+  return unit;
+}
+
+fn emit_span(out: &Box<Slots<u8>>, values: &ComponentList, span: Span) -> result: unit reads(values), writes(out) {
+  doc "Appends the text of span.";
+  let (a, b) = text_bounds(values: values, span: span);
+  emit_bytes(out: out, bytes: &values^.text.inner[a..b]);
+  return unit;
+}
+
+fn emit_code_point(out: &Box<Slots<u8>>, code: u32) -> result: unit writes(out) {
+  doc "Appends code as UTF-8.";
+  if code < 128_u32 {
+    let byte = cvt::<u32, u8>(code);
+    emit(out: out, value: byte);
+    return unit;
+  }
+  if code < 2048_u32 {
+    let high = ishr(code, 6_u32);
+    let low = iand(code, 63_u32);
+    let first = ior(high, 192_u32);
+    let second = ior(low, 128_u32);
+    let a = cvt.wrap::<u32, u8>(first);
+    let b = cvt.wrap::<u32, u8>(second);
+    emit(out: out, value: a);
+    emit(out: out, value: b);
+    return unit;
+  }
+  if code < 65536_u32 {
+    let top = ishr(code, 12_u32);
+    let middle_raw = ishr(code, 6_u32);
+    let middle = iand(middle_raw, 63_u32);
+    let low = iand(code, 63_u32);
+    let first = ior(top, 224_u32);
+    let second = ior(middle, 128_u32);
+    let third = ior(low, 128_u32);
+    let a = cvt.wrap::<u32, u8>(first);
+    let b = cvt.wrap::<u32, u8>(second);
+    let c = cvt.wrap::<u32, u8>(third);
+    emit(out: out, value: a);
+    emit(out: out, value: b);
+    emit(out: out, value: c);
+    return unit;
+  }
+  let top = ishr(code, 18_u32);
+  let upper_raw = ishr(code, 12_u32);
+  let upper = iand(upper_raw, 63_u32);
+  let middle_raw = ishr(code, 6_u32);
+  let middle = iand(middle_raw, 63_u32);
+  let low = iand(code, 63_u32);
+  let first = ior(top, 240_u32);
+  let second = ior(upper, 128_u32);
+  let third = ior(middle, 128_u32);
+  let fourth = ior(low, 128_u32);
+  let a = cvt.wrap::<u32, u8>(first);
+  let b = cvt.wrap::<u32, u8>(second);
+  let c = cvt.wrap::<u32, u8>(third);
+  let d = cvt.wrap::<u32, u8>(fourth);
+  emit(out: out, value: a);
+  emit(out: out, value: b);
+  emit(out: out, value: c);
+  emit(out: out, value: d);
+  return unit;
+}
+
+fn emit_string(out: &Box<Slots<u8>>, values: &ComponentList, span: Span) -> result: unit reads(values), writes(out) {
+  doc "Appends span as a double-quoted CSS string, escaping quotes, backslashes and line feeds.";
+  emit(out: out, value: 34_u8);
+  let (a, b) = text_bounds(values: values, span: span);
+  for (k in a..b) {
+    let byte = values^.text.inner[k];
+    let quote = byte == 34_u8;
+    let slash = byte == 92_u8;
+    let escaped = bor(quote, slash);
+    let feed = byte == 10_u8;
+    if escaped {
+      emit(out: out, value: 92_u8);
+      emit(out: out, value: byte);
+    } else if feed {
+      emit(out: out, value: 92_u8);
+      emit(out: out, value: 97_u8);
+      emit(out: out, value: 32_u8);
+    } else {
+      emit(out: out, value: byte);
+    }
+  }
+  emit(out: out, value: 34_u8);
+  return unit;
+}
+
+fn emit_component(out: &Box<Slots<u8>>, values: &ComponentList, at: u64) -> closer: u8 reads(values), writes(out) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "Appends the CSS text of the component at at: a function's name and opening parenthesis, a block's opening bracket, or the whole of any other component; returns the closing byte a function or block needs, or 0.";
+  match values^.components.inner[at] {
+    Ident(name: n) => {
+      emit_span(out: out, values: values, span: n^);
+      return 0_u8;
+    }
+    Function(name: n, end: e) => {
+      emit_span(out: out, values: values, span: n^);
+      emit(out: out, value: 40_u8);
+      return 41_u8;
+    }
+    AtKeyword(name: n) => {
+      emit(out: out, value: 64_u8);
+      emit_span(out: out, values: values, span: n^);
+      return 0_u8;
+    }
+    Hash(name: n, kind: k) => {
+      emit(out: out, value: 35_u8);
+      emit_span(out: out, values: values, span: n^);
+      return 0_u8;
+    }
+    QuotedString(value: v) => {
+      emit_string(out: out, values: values, span: v^);
+      return 0_u8;
+    }
+    Url(value: v) => {
+      emit(out: out, value: 117_u8);
+      emit(out: out, value: 114_u8);
+      emit(out: out, value: 108_u8);
+      emit(out: out, value: 40_u8);
+      emit_string(out: out, values: values, span: v^);
+      emit(out: out, value: 41_u8);
+      return 0_u8;
+    }
+    Delim(code_point: c) => {
+      emit_code_point(out: out, code: c^);
+      return 0_u8;
+    }
+    Number(number: n) => {
+      emit_span(out: out, values: values, span: n^.representation);
+      return 0_u8;
+    }
+    Percentage(number: n) => {
+      emit_span(out: out, values: values, span: n^.representation);
+      emit(out: out, value: 37_u8);
+      return 0_u8;
+    }
+    Dimension(number: n, unit_name: u) => {
+      emit_span(out: out, values: values, span: n^.representation);
+      emit_span(out: out, values: values, span: u^);
+      return 0_u8;
+    }
+    UnicodeRange(..) => {
+      return 0_u8;
+    }
+    IncludeMatch() => {
+      emit(out: out, value: 126_u8);
+      emit(out: out, value: 61_u8);
+      return 0_u8;
+    }
+    DashMatch() => {
+      emit(out: out, value: 124_u8);
+      emit(out: out, value: 61_u8);
+      return 0_u8;
+    }
+    PrefixMatch() => {
+      emit(out: out, value: 94_u8);
+      emit(out: out, value: 61_u8);
+      return 0_u8;
+    }
+    SuffixMatch() => {
+      emit(out: out, value: 36_u8);
+      emit(out: out, value: 61_u8);
+      return 0_u8;
+    }
+    SubstringMatch() => {
+      emit(out: out, value: 42_u8);
+      emit(out: out, value: 61_u8);
+      return 0_u8;
+    }
+    Column() => {
+      emit(out: out, value: 124_u8);
+      emit(out: out, value: 124_u8);
+      return 0_u8;
+    }
+    Whitespace() => {
+      emit(out: out, value: 32_u8);
+      return 0_u8;
+    }
+    Cdo() => {
+      return 0_u8;
+    }
+    Cdc() => {
+      return 0_u8;
+    }
+    Colon() => {
+      emit(out: out, value: 58_u8);
+      return 0_u8;
+    }
+    Semicolon() => {
+      emit(out: out, value: 59_u8);
+      return 0_u8;
+    }
+    Comma() => {
+      emit(out: out, value: 44_u8);
+      return 0_u8;
+    }
+    ParenthesisBlock(end: e) => {
+      emit(out: out, value: 40_u8);
+      return 41_u8;
+    }
+    BracketBlock(end: e) => {
+      emit(out: out, value: 91_u8);
+      return 93_u8;
+    }
+    BraceBlock(end: e) => {
+      emit(out: out, value: 123_u8);
+      return 125_u8;
+    }
+    Error(..) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn close_until(out: &Box<Slots<u8>>, closers: &Box<Slots<u64>>, at: u64) -> result: unit writes(out), writes(closers) {
+  doc "Pops and appends every pending closer whose container ends at or before at; each packed_entry is the container's end times 256 plus its closing byte.";
+  let depth = closers^.inner.len;
+  for (step in 0_u64..depth) {
+    let count = closers^.inner.len;
+    if count == 0_u64 {
+      return unit;
+    }
+    let top = count - 1_u64;
+    let packed_entry = closers^.inner[top];
+    let end = packed_entry / 256_u64;
+    if end > at {
+      return unit;
+    }
+    let byte_wide = packed_entry % 256_u64;
+    let byte = cvt::<u64, u8>(byte_wide);
+    let popped = take_back(window: &closers^.inner);
+    emit(out: out, value: byte);
+  }
+  return unit;
+}
+
+fn push_closer(closers: &Box<Slots<u64>>, packed_entry: u64) -> result: unit writes(closers) {
+  doc "Pushes a pending closer.";
+  let length = closers^.inner.len;
+  let capacity = closers^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 8_u64;
+    if small {
+      grow(cell: closers, capacity: 8_u64);
+    } else {
+      let limit = capacity < 1048576_u64;
+      if limit {
+        let doubled = capacity + capacity;
+        grow(cell: closers, capacity: doubled);
+      } else {
+        return unit;
+      }
+    }
+  }
+  let room = closers^.inner.len < closers^.inner.cap;
+  if room {
+    place_back(window: &closers^.inner, value: packed_entry);
+  }
+  return unit;
+}
+
+fn find_custom(entries: &[CustomEntry], name: u32) -> found: Option<u64> reads(entries) {
+  doc "The position in entries of the custom property whose name is the atom index name, the last one when several are, or None.";
+  let count = entries^.len;
+  for (step in 0_u64..count) {
+    let back = count - step;
+    let at = back - 1_u64;
+    if entries^[at].name.index == name {
+      return Some<u64>(value: at);
+    }
+  }
+  return None<u64>();
+}
+
+fn is_blocked(blocked: &[u32], name: u32) -> found: Bool reads(blocked) {
+  doc "True when name is among blocked.";
+  let count = blocked^.len;
+  for (k in 0_u64..count) {
+    if blocked^[k] == name {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn var_name_atom(values: &ComponentList, at: u64, atoms: &AtomTable) -> name: Option<u32> reads(values), reads(atoms) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "The atom index of the custom property named by the identifier at at, or None when it is no custom property name or was never declared.";
+  match name_at(values: values, at: at) {
+    Some(value: span) => {
+      let (a, b) = text_bounds(values: values, span: span);
+      let found = atom_find(table: atoms, name: &values^.text.inner[a..b]);
+      match found {
+        Some(value: atom) => {
+          return Some<u32>(value: atom.index);
+        }
+        None() => {
+          return None<u32>();
+        }
+      }
+    }
+    None() => {
+      return None<u32>();
+    }
+  }
+}
+
+fn substitute_var(values: &ComponentList, at: u64, end: u64, entries: &[CustomEntry], text: &[u8], blocked: &[u32], atoms: &AtomTable, out: &Box<Slots<u8>>, depth: u64) -> code: u8 reads(values), reads(entries), reads(text), reads(blocked), reads(atoms), writes(out) contract {
+  requires at < end;
+  requires end <= values^.components.inner.len;
+} {
+  doc "Substitutes the var() function at at: the custom property's text between empty comments, else its fallback substituted in turn; sub_invalid when neither exists and sub_blocked when the property is not yet computed.";
+  let inner_start = at + 1_u64;
+  let inner_end = sibling_after(values: values, at: at, limit: end);
+  let name_index = skip_space(values: values, at: inner_start, limit: inner_end);
+  if name_index >= inner_end {
+    return sub_invalid;
+  }
+  let name_kind = component_kind(values: values, at: name_index);
+  if name_kind != c_ident {
+    return sub_invalid;
+  }
+  let comment_n = comment_word.len;
+  match var_name_atom(values: values, at: name_index, atoms: atoms) {
+    Some(value: name) => {
+      let waiting = is_blocked(blocked: blocked, name: name);
+      if waiting {
+        return sub_blocked;
+      }
+      match find_custom(entries: entries, name: name) {
+        Some(value: found) => {
+          let present = found < entries^.len;
+          if present {
+          } else {
+            return sub_invalid;
+          }
+          let start = cvt::<u32, u64>(entries^[found].start);
+          let stop = cvt::<u32, u64>(entries^[found].end);
+          let ordered = start <= stop;
+          let inside = stop <= text^.len;
+          let usable = band(ordered, inside);
+          if usable {
+            emit_bytes(out: out, bytes: &comment_word[0_u64..comment_n]);
+            emit_bytes(out: out, bytes: &text^[start..stop]);
+            emit_bytes(out: out, bytes: &comment_word[0_u64..comment_n]);
+            return sub_ok;
+          }
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let after_name = sibling_after(values: values, at: name_index, limit: inner_end);
+  let comma = skip_space(values: values, at: after_name, limit: inner_end);
+  if comma >= inner_end {
+    return sub_invalid;
+  }
+  let comma_kind = component_kind(values: values, at: comma);
+  if comma_kind != c_comma {
+    return sub_invalid;
+  }
+  if depth >= max_fallback_depth {
+    return sub_invalid;
+  }
+  let fallback_start = comma + 1_u64;
+  let deeper = depth + 1_u64;
+  emit_bytes(out: out, bytes: &comment_word[0_u64..comment_n]);
+  let code = substitute(values: values, start: fallback_start, end: inner_end, entries: entries, text: text, blocked: blocked, atoms: atoms, out: out, depth: deeper);
+  emit_bytes(out: out, bytes: &comment_word[0_u64..comment_n]);
+  return code;
+}
+
+fn substitute(values: &ComponentList, start: u64, end: u64, entries: &[CustomEntry], text: &[u8], blocked: &[u32], atoms: &AtomTable, out: &Box<Slots<u8>>, depth: u64) -> code: u8 reads(values), reads(entries), reads(text), reads(blocked), reads(atoms), writes(out) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Appends the CSS text of the components from start to end with every var() substituted; sub_ok, or the first failure a var() reports.";
+  let closers = box_slots_new::<u64>(capacity: 0_u64);
+  let n = var_word.len;
+  let cursor = start;
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    let at = cursor;
+    if at >= end {
+      break;
+    }
+    close_until(out: out, closers: &closers, at: at);
+    let kind = component_kind(values: values, at: at);
+    let named_var = name_word(values: values, at: at, list: &var_word[0_u64..n]);
+    let is_var = match named_var {
+      Some(..) => {
+        give kind == c_function;
+      }
+      None() => {
+        give False();
+      }
+    }
+    if is_var {
+      let code = substitute_var(values: values, at: at, end: end, entries: entries, text: text, blocked: blocked, atoms: atoms, out: out, depth: depth);
+      if code != sub_ok {
+        return code;
+      }
+      set cursor = sibling_after(values: values, at: at, limit: end);
+    } else {
+      let closer = emit_component(out: out, values: values, at: at);
+      if closer != 0_u8 {
+        let container_end = sibling_after(values: values, at: at, limit: end);
+        let wide = cvt::<u8, u64>(closer);
+        let scaled = container_end *sat 256_u64;
+        let packed_entry = scaled +sat wide;
+        push_closer(closers: &closers, packed_entry: packed_entry);
+      }
+      set cursor = at + 1_u64;
+    }
+  }
+  let all = 18446744073709551615_u64;
+  close_until(out: out, closers: &closers, at: all);
+  return sub_ok;
+}

@@ -1,0 +1,1086 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Color = pkg::css::color::Color;
+alias ColorSpace = pkg::css::color::ColorSpace;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+alias Declared = pkg::css::values::Declared;
+alias DeclarationStore = pkg::css::values::DeclarationStore;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias Family = pkg::css::values::Family;
+alias FontGroup = pkg::css::values::FontGroup;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias Lengths = pkg::css::values::Lengths;
+alias MatchContext = pkg::css::selectors::MatchContext;
+alias NodeId = pkg::dom::NodeId;
+alias Sizing = pkg::css::values::Sizing;
+alias TextGroup = pkg::css::values::TextGroup;
+alias append_family = pkg::css::values::append_family;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias compute_length = pkg::css::values::compute_length;
+alias declaration_store_new = pkg::css::values::declaration_store_new;
+alias keyword_bolder = pkg::css::values::keyword_bolder;
+alias keyword_lighter = pkg::css::values::keyword_lighter;
+alias keyword_normal = pkg::css::values::keyword_normal;
+alias lh_color = pkg::css::values::lh_color;
+alias lh_font_family = pkg::css::values::lh_font_family;
+alias lh_font_size = pkg::css::values::lh_font_size;
+alias lh_font_style = pkg::css::values::lh_font_style;
+alias lh_font_weight = pkg::css::values::lh_font_weight;
+alias lh_letter_spacing = pkg::css::values::lh_letter_spacing;
+alias lh_line_height = pkg::css::values::lh_line_height;
+alias lh_list_style_type = pkg::css::values::lh_list_style_type;
+alias lh_text_align = pkg::css::values::lh_text_align;
+alias lh_text_indent = pkg::css::values::lh_text_indent;
+alias lh_text_transform = pkg::css::values::lh_text_transform;
+alias lh_visibility = pkg::css::values::lh_visibility;
+alias lh_white_space = pkg::css::values::lh_white_space;
+alias lh_word_spacing = pkg::css::values::lh_word_spacing;
+alias matching_specificity = pkg::css::selectors::matching_specificity;
+alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_pending_named = pkg::css::values::parse_pending_named;
+alias sizing_keyword = pkg::css::values::sizing_keyword;
+alias sizing_normal = pkg::css::values::sizing_normal;
+alias sizing_number = pkg::css::values::sizing_number;
+alias sizing_value = pkg::css::values::sizing_value;
+alias wide_initial = pkg::css::values::wide_initial;
+
+const initial_family_name: Array<u8, 15> = "Times New Roman";
+
+const disc_name: Array<u8, 4> = "disc";
+
+const monospace_name: Array<u8, 9> = "monospace";
+
+const strict_sizes: Array<f32, 8> =[9.0_f32, 10.0_f32, 13.0_f32, 16.0_f32, 18.0_f32, 24.0_f32, 32.0_f32, 48.0_f32];
+
+const fixed_sizes: Array<f32, 8> =[9.0_f32, 9.0_f32, 10.0_f32, 13.0_f32, 16.0_f32, 20.0_f32, 26.0_f32, 40.0_f32];
+
+const state_pending: u8 = 0_u8;
+
+const state_done: u8 = 1_u8;
+
+struct OwnCustom {
+  name: u32;
+  declaration: u32;
+  key: u64;
+  state: u8;
+}
+
+fn black_color() -> made: Color pure {
+  doc "Opaque black in the Rgb space.";
+  let space = ColorSpace::Rgb();
+  return Color(space: space, first: 0.0_f32, second: 0.0_f32, third: 0.0_f32, alpha: 1.0_f32, missing: 0_u8);
+}
+
+fn lp_zero() -> made: LengthPercentage pure {
+  doc "A length of zero with no percentage.";
+  let no = False();
+  return LengthPercentage(px: 0.0_f32, percent: 0.0_f32, has_percent: no);
+}
+
+fn sizing_kind(kind: u8) -> made: Sizing pure {
+  doc "A sizing value of the given kind with no length.";
+  let zero = lp_zero();
+  return Sizing(kind: kind, keyword: 0_u8, value: zero);
+}
+
+fn sizing_px(px: f32) -> made: Sizing pure {
+  doc "A sizing value of px pixels.";
+  let no = False();
+  let value = LengthPercentage(px: px, percent: 0.0_f32, has_percent: no);
+  return Sizing(kind: sizing_value, keyword: 0_u8, value: value);
+}
+
+fn winner_value(store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8) -> declared: Option<Declared> reads(store), reads(cascade) {
+  doc "The winning declared value of longhand for the element at preorder index element, or None when no declaration sets it.";
+  let wide = cvt::<u8, u64>(longhand);
+  let base = element *sat 55_u64;
+  let at = base +sat wide;
+  let total = cascade^.winners.inner.len;
+  let inside = at < total;
+  if inside {
+  } else {
+    return None<Declared>();
+  }
+  let one_based = cvt::<u32, u64>(cascade^.winners.inner[at]);
+  if one_based == 0_u64 {
+    return None<Declared>();
+  }
+  let index = one_based - 1_u64;
+  let count = store^.declared.declarations.inner.len;
+  let known = index < count;
+  if known {
+    let value = store^.declared.declarations.inner[index].value;
+    return Some<Declared>(value: value);
+  }
+  return None<Declared>();
+}
+
+fn substitute_pending(store: &RuleStore, pending: PendingRef, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable, out: &Box<Slots<u8>>) -> substituted: Bool reads(store), reads(entries), reads(text), reads(atoms), writes(out) {
+  doc "Writes the pending value's text with var() substituted to out; false when the sheet is unknown or a var() fails.";
+  let sheet = cvt::<u32, u64>(pending.sheet);
+  let sheets = store^.sheets.inner.len;
+  let known = sheet < sheets;
+  if known {
+  } else {
+    return False();
+  }
+  let start = cvt::<u32, u64>(pending.start);
+  let end = cvt::<u32, u64>(pending.end);
+  let length = store^.sheets.inner[sheet].values.components.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return False();
+  }
+  let blocked = box_slots_new::<u32>(capacity: 0_u64);
+  let code = substitute(values: &store^.sheets.inner[sheet].values, start: start, end: end, entries: entries, text: text, blocked: &blocked.inner[0_u64..0_u64], atoms: atoms, out: out, depth: 0_u64);
+  let ok = code == sub_ok;
+  return ok;
+}
+
+fn resolve_named(store: &RuleStore, pending: PendingRef, longhand: u8, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable, named: &DeclarationStore) -> result: Result<Option<Declared>, StyleError> reads(store), reads(entries), reads(text), writes(atoms), writes(named) {
+  doc "Substitutes var() in a pending value and parses it for longhand with parse_pending_named; None when it is invalid at computed-value time.";
+  let scratch = box_slots_new::<u8>(capacity: 0_u64);
+  let substituted = substitute_pending(store: store, pending: pending, entries: entries, text: text, atoms: atoms, out: &scratch);
+  if substituted {
+  } else {
+    let arg_1 = None<Declared>();
+    return Ok<Option<Declared>, StyleError>(value: arg_1);
+  }
+  let size = scratch.inner.len;
+  let small = size <= 16777216_u64;
+  if small {
+  } else {
+    let arg_2 = None<Declared>();
+    return Ok<Option<Declared>, StyleError>(value: arg_2);
+  }
+  let parsed = parse_component_values(source: &scratch.inner[0_u64..size]);
+  match move parsed {
+    Ok(value: list) => {
+      let count = list.components.inner.len;
+      let last = cvt.wrap::<u64, u32>(count);
+      let whole = ComponentRange(start: 0_u32, end: last);
+      match parse_pending_named(values: &list, range: whole, shorthand: pending.shorthand, longhand: longhand, atoms: atoms, store: named) {
+        Ok(value: found) => {
+          return Ok<Option<Declared>, StyleError>(value: found);
+        }
+        Err(..) => {
+          let failure = StyleError::TooLarge();
+          return Err<Option<Declared>, StyleError>(error: failure);
+        }
+      }
+    }
+    Err(..) => {
+      let arg_3 = None<Declared>();
+      return Ok<Option<Declared>, StyleError>(value: arg_3);
+    }
+  }
+}
+
+fn inherited_declared(store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable, named: &DeclarationStore) -> result: Result<Option<Declared>, StyleError> reads(store), reads(cascade), reads(entries), reads(text), writes(atoms), writes(named) {
+  doc "The element's declared value of an inherited longhand with var() substituted: None when it inherits, through no declaration, inherit, unset or a value invalid at computed-value time; Wide(initial) for initial.";
+  match winner_value(store: store, cascade: cascade, element: element, longhand: longhand) {
+    Some(value: declared) => {
+      match declared_pending(declared: declared) {
+        Some(value: pending) => {
+          let resolved = propagate resolve_named(store: store, pending: pending, longhand: longhand, entries: entries, text: text, atoms: atoms, named: named);
+          match resolved {
+            Some(value: inner) => {
+              let inherits = inherits_value(declared: inner);
+              if inherits {
+                let arg_4 = None<Declared>();
+                return Ok<Option<Declared>, StyleError>(value: arg_4);
+              }
+              return Ok<Option<Declared>, StyleError>(value: resolved);
+            }
+            None() => {
+              let arg_5 = None<Declared>();
+              return Ok<Option<Declared>, StyleError>(value: arg_5);
+            }
+          }
+        }
+        None() => {
+          let inherits = inherits_value(declared: declared);
+          if inherits {
+            let arg_6 = None<Declared>();
+            return Ok<Option<Declared>, StyleError>(value: arg_6);
+          }
+          let arg_7 = Some<Declared>(value: declared);
+          return Ok<Option<Declared>, StyleError>(value: arg_7);
+        }
+      }
+    }
+    None() => {
+      let arg_8 = None<Declared>();
+      return Ok<Option<Declared>, StyleError>(value: arg_8);
+    }
+  }
+}
+
+fn inherits_value(declared: Declared) -> inherits: Bool pure {
+  doc "True for inherit and unset, which an inherited longhand takes from its parent.";
+  match declared_wide(declared: declared) {
+    Some(value: keyword) => {
+      let initial = keyword == wide_initial;
+      let other = bnot(initial);
+      return other;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn is_initial(declared: Declared) -> initial: Bool pure {
+  doc "True for the CSS-wide keyword initial.";
+  match declared_wide(declared: declared) {
+    Some(value: keyword) => {
+      let made = keyword == wide_initial;
+      return made;
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn initial_font(state: &Inherited) -> made: FontGroup reads(state) {
+  doc "The initial font: the initial family, 16px, weight 400, normal style and line-height.";
+  let start = state^.initial_family;
+  let end = start +sat 1_u32;
+  let normal = sizing_kind(kind: sizing_normal);
+  return FontGroup(families_start: start, families_end: end, size: 16.0_f32, weight: 4.0e2_f32, style: 0_u8, line_height: normal);
+}
+
+fn initial_text(state: &Inherited) -> made: TextGroup reads(state) {
+  doc "The initial text values: black, start, no indent, transform or spacing, normal white space, baseline, no decoration and disc markers.";
+  let black = black_color();
+  let zero = lp_zero();
+  let normal = sizing_kind(kind: sizing_normal);
+  let baseline = sizing_kind(kind: sizing_keyword);
+  return TextGroup(color: black, text_align: 0_u8, text_indent: zero, text_transform: 0_u8, white_space: 0_u8, letter_spacing: normal, word_spacing: normal, vertical_align: baseline, decoration_line: 0_u8, list_style_type: state^.disc);
+}
+
+fn monospace_only(named: &DeclarationStore, start: u32, end: u32, monospace: Atom) -> only: Bool reads(named) {
+  doc "True when the family list is the generic monospace alone.";
+  let a = cvt::<u32, u64>(start);
+  let b = cvt::<u32, u64>(end);
+  let single = a +sat 1_u64;
+  if single != b {
+    return False();
+  }
+  let inside = a < named^.families.inner.len;
+  if inside {
+  } else {
+    return False();
+  }
+  let family = named^.families.inner[a];
+  let same = family.name.index == monospace.index;
+  let both = band(same, family.generic);
+  return both;
+}
+
+fn keyword_size(keyword: u64, monospace: Bool) -> size: f32 pure {
+  doc "The font size of an absolute-size keyword, from the table for a 16px or, for monospace alone, a 13px medium.";
+  let index = if keyword < 8_u64 {
+    give keyword;
+  } else {
+    give 3_u64;
+  }
+  if monospace {
+    return fixed_sizes[index];
+  }
+  return strict_sizes[index];
+}
+
+fn resolve_px(lengths: Lengths, basis: f32, environment: Environment) -> px: f32 pure {
+  doc "A length or percentage against basis for em and percent, as px.";
+  let computed = compute_length(lengths: lengths, font_size: basis, environment: environment);
+  let share = fmul.strict(basis, computed.percent);
+  let part = fdiv.strict(share, 1.0e2_f32);
+  let px = fadd.strict(computed.px, part);
+  return px;
+}
+
+fn font_size_of(declared: Option<Declared>, parent_size: f32, parent_keyword: u8, monospace: Bool, environment: Environment) -> (size: f32, keyword: u8) pure {
+  doc "Computes font-size: an absolute keyword from the table, larger and smaller as 1.2 times and divided by 1.2, a length or percentage against the parent's size; an inherited size that came from a keyword is looked up again for this element's family.";
+  match declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        let size = keyword_size(keyword: 3_u64, monospace: monospace);
+        return size, 4_u8;
+      }
+      match declared_keyword(declared: d) {
+        Some(value: k) => {
+          let wide = cvt::<u8, u64>(k);
+          if wide < 8_u64 {
+            let size = keyword_size(keyword: wide, monospace: monospace);
+            let one_based = k +sat 1_u8;
+            return size, one_based;
+          }
+          if wide == 8_u64 {
+            let size = fmul.strict(parent_size, 1.2_f32);
+            return size, 0_u8;
+          }
+          let size = fdiv.strict(parent_size, 1.2_f32);
+          return size, 0_u8;
+        }
+        None() => {
+        }
+      }
+      match declared_lengths(declared: d) {
+        Some(value: lengths) => {
+          let size = resolve_px(lengths: lengths, basis: parent_size, environment: environment);
+          let negative = flt(size, 0.0_f32);
+          if negative {
+            return 0.0_f32, 0_u8;
+          }
+          return size, 0_u8;
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  if parent_keyword != 0_u8 {
+    let wide = cvt::<u8, u64>(parent_keyword);
+    let index = wide - 1_u64;
+    let size = keyword_size(keyword: index, monospace: monospace);
+    return size, parent_keyword;
+  }
+  return parent_size, 0_u8;
+}
+
+fn weight_of(declared: Option<Declared>, parent: f32) -> weight: f32 pure {
+  doc "Computes font-weight: a number, or bolder and lighter relative to the parent's weight.";
+  match declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        return 4.0e2_f32;
+      }
+      match declared_number(declared: d) {
+        Some(value: n) => {
+          return n;
+        }
+        None() => {
+        }
+      }
+      match declared_keyword(declared: d) {
+        Some(value: k) => {
+          if k == keyword_bolder {
+            let light = flt(parent, 3.5e2_f32);
+            if light {
+              return 4.0e2_f32;
+            }
+            let regular = flt(parent, 5.5e2_f32);
+            if regular {
+              return 7.0e2_f32;
+            }
+            let bold = flt(parent, 9.0e2_f32);
+            if bold {
+              return 9.0e2_f32;
+            }
+            return parent;
+          }
+          if k == keyword_lighter {
+            let thin = flt(parent, 1.0e2_f32);
+            if thin {
+              return parent;
+            }
+            let regular = flt(parent, 5.5e2_f32);
+            if regular {
+              return 1.0e2_f32;
+            }
+            let bold = flt(parent, 7.5e2_f32);
+            if bold {
+              return 4.0e2_f32;
+            }
+            return 7.0e2_f32;
+          }
+          return parent;
+        }
+        None() => {
+          return parent;
+        }
+      }
+    }
+    None() => {
+      return parent;
+    }
+  }
+}
+
+fn keyword_or(declared: Option<Declared>, parent: u8, initial: u8) -> keyword: u8 pure {
+  doc "A keyword longhand: its keyword, the initial value for initial, otherwise the parent's.";
+  match declared {
+    Some(value: d) => {
+      let reset = is_initial(declared: d);
+      if reset {
+        return initial;
+      }
+      match declared_keyword(declared: d) {
+        Some(value: k) => {
+          return k;
+        }
+        None() => {
+          return parent;
+        }
+      }
+    }
+    None() => {
+      return parent;
+    }
+  }
+}
+
+fn line_height_of(declared: Option<Declared>, parent: Sizing, size: f32, environment: Environment) -> line_height: Sizing pure {
+  doc "Computes line-height: normal, a number, or a length or percentage of the element's own font size as px.";
+  match declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        let made = sizing_kind(kind: sizing_normal);
+        return made;
+      }
+      match declared_keyword(declared: d) {
+        Some(..) => {
+          let made = sizing_kind(kind: sizing_normal);
+          return made;
+        }
+        None() => {
+        }
+      }
+      match declared_number(declared: d) {
+        Some(value: n) => {
+          let no = False();
+          let value = LengthPercentage(px: n, percent: 0.0_f32, has_percent: no);
+          let made = Sizing(kind: sizing_number, keyword: 0_u8, value: value);
+          return made;
+        }
+        None() => {
+        }
+      }
+      match declared_lengths(declared: d) {
+        Some(value: lengths) => {
+          let px = resolve_px(lengths: lengths, basis: size, environment: environment);
+          let made = sizing_px(px: px);
+          return made;
+        }
+        None() => {
+          return parent;
+        }
+      }
+    }
+    None() => {
+      return parent;
+    }
+  }
+}
+
+fn spacing_of(declared: Option<Declared>, parent: Sizing, size: f32, environment: Environment) -> spacing: Sizing pure {
+  doc "Computes letter-spacing or word-spacing: normal or a length as px.";
+  match declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        let made = sizing_kind(kind: sizing_normal);
+        return made;
+      }
+      match declared_lengths(declared: d) {
+        Some(value: lengths) => {
+          let px = resolve_px(lengths: lengths, basis: size, environment: environment);
+          let made = sizing_px(px: px);
+          return made;
+        }
+        None() => {
+          let made = sizing_kind(kind: sizing_normal);
+          return made;
+        }
+      }
+    }
+    None() => {
+      return parent;
+    }
+  }
+}
+
+fn indent_of(declared: Option<Declared>, parent: LengthPercentage, size: f32, environment: Environment) -> indent: LengthPercentage pure {
+  doc "Computes text-indent: a length as px with its percentage kept.";
+  match declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        let made = lp_zero();
+        return made;
+      }
+      match declared_lengths(declared: d) {
+        Some(value: lengths) => {
+          let made = compute_length(lengths: lengths, font_size: size, environment: environment);
+          return made;
+        }
+        None() => {
+          return parent;
+        }
+      }
+    }
+    None() => {
+      return parent;
+    }
+  }
+}
+
+fn color_of(declared: Option<Declared>, parent: Color) -> color: Color pure {
+  doc "Computes color: a color, the parent's for currentcolor, black for initial.";
+  match declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        let made = black_color();
+        return made;
+      }
+      match declared_color(declared: d) {
+        Some(value: reference) => {
+          if reference.current {
+            return parent;
+          }
+          return reference.color;
+        }
+        None() => {
+          return parent;
+        }
+      }
+    }
+    None() => {
+      return parent;
+    }
+  }
+}
+
+fn align_of(declared: Option<Declared>, parent: u8) -> align: u8 pure {
+  doc "Computes text-align: a keyword, with match-parent taking the parent's value and its start and end as left and right.";
+  let made = keyword_or(declared: declared, parent: parent, initial: 0_u8);
+  if made == 6_u8 {
+    if parent == 0_u8 {
+      return 2_u8;
+    }
+    if parent == 1_u8 {
+      return 3_u8;
+    }
+    return parent;
+  }
+  return made;
+}
+
+fn add_own(own: &Box<Slots<OwnCustom>>, name: u32, declaration: u32, key: u64) -> result: unit writes(own) {
+  doc "Keeps declaration as the element's value of the custom property name when its key is at least the one kept so far.";
+  let count = own^.inner.len;
+  for (k in 0_u64..count) {
+    if own^.inner[k].name == name {
+      let kept = own^.inner[k].key;
+      if key >= kept {
+        set own^.inner[k].declaration = declaration;
+        set own^.inner[k].key = key;
+      }
+      return unit;
+    }
+  }
+  let made = OwnCustom(name: name, declaration: declaration, key: key, state: state_pending);
+  let length = own^.inner.len;
+  let capacity = own^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 8_u64;
+    if small {
+      grow(cell: own, capacity: 8_u64);
+    } else {
+      let limit = capacity < 1048576_u64;
+      if limit {
+        let doubled = capacity + capacity;
+        grow(cell: own, capacity: doubled);
+      } else {
+        return unit;
+      }
+    }
+  }
+  let room = own^.inner.len < own^.inner.cap;
+  if room {
+    place_back(window: &own^.inner, value: made);
+  }
+  return unit;
+}
+
+fn offer_customs(own: &Box<Slots<OwnCustom>>, store: &RuleStore, first: u32, end: u32, packed: u64) -> result: unit reads(store), writes(own) {
+  doc "Offers the custom declarations from first to end.";
+  let low = cvt::<u32, u64>(first);
+  let high = cvt::<u32, u64>(end);
+  let total = store^.customs.inner.len;
+  let ordered = low <= high;
+  let inside = high <= total;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return unit;
+  }
+  for (c in low..high) {
+    let declaration = store^.customs.inner[c];
+    let layer = layer_of(origin: declaration.origin, important: declaration.important);
+    let key = cascade_key(layer: layer, packed: packed, declaration: c);
+    let index = cvt.wrap::<u64, u32>(c);
+    add_own(own: own, name: declaration.name.index, declaration: index, key: key);
+  }
+  return unit;
+}
+
+fn collect_customs(own: &Box<Slots<OwnCustom>>, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, element: NodeId, position: u64) -> result: unit reads(store), reads(cascade), reads(document), reads(atoms), writes(own) {
+  doc "Collects the winning custom declarations of the element from the custom-property rules the first part found matching and from its style attribute.";
+  let words = cascade^.custom_words;
+  let base = position *sat words;
+  let rules = store^.custom_rules.inner.len;
+  let none = None<NodeId>();
+  let context = MatchContext(target: none, scope: none);
+  for (w in 0_u64..words) {
+    let at = base +sat w;
+    let inside = at < cascade^.custom_bits.inner.len;
+    if inside {
+      let bits = cascade^.custom_bits.inner[at];
+      if bits != 0_u64 {
+        for (b in 0_u64..64_u64) {
+          let shift = cvt::<u64, u32>(b);
+          let mask = ishl(1_u64, shift);
+          let set_bit = iand(bits, mask);
+          if set_bit != 0_u64 {
+            let scaled = w *sat 64_u64;
+            let slot = scaled +sat b;
+            let known = slot < rules;
+            if known {
+              let rule = cvt::<u32, u64>(store^.custom_rules.inner[slot]);
+              let listed_rule = rule < store^.rules.inner.len;
+              if listed_rule {
+                let matched = matching_specificity(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context, positions: &cascade^.positions);
+                match matched {
+                  Some(value: specificity) => {
+                    let packed = pack_specificity(specificity: specificity);
+                    let first = store^.rules.inner[rule].custom_first;
+                    let end = store^.rules.inner[rule].custom_end;
+                    offer_customs(own: own, store: store, first: first, end: end, packed: packed);
+                  }
+                  None() => {
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  match attribute_style_of(store: store, element: position) {
+    Some(value: record) => {
+      let inside = record < store^.attributes.inner.len;
+      if inside {
+        let first = store^.attributes.inner[record].custom_first;
+        let end = store^.attributes.inner[record].custom_end;
+        offer_customs(own: own, store: store, first: first, end: end, packed: attribute_specificity);
+      }
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn push_entry(state: &Inherited, entry_value: CustomEntry) -> result: Result<unit, StyleError> writes(state) {
+  doc "Appends one custom-property entry.";
+  let placed = propagate push::<CustomEntry>(cell: &state^.custom_entries, value: entry_value, ceiling: 4294967295_u64);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn own_listed(own: &Box<Slots<OwnCustom>>, name: u32) -> found: Bool reads(own) {
+  doc "True when the element declares the custom property name.";
+  let count = own^.inner.len;
+  for (k in 0_u64..count) {
+    if own^.inner[k].name == name {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, element: NodeId, position: u64, parent_set: u32) -> result: Result<u32, StyleError> reads(store), reads(cascade), reads(document), reads(atoms), writes(state) {
+  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another; a value still waiting after as many rounds as there are values is in a cycle and is left out, as is one whose var() fails.";
+  let own = box_slots_new::<OwnCustom>(capacity: 0_u64);
+  collect_customs(own: &own, store: store, cascade: cascade, document: document, atoms: atoms, element: element, position: position);
+  let own_count = own.inner.len;
+  if own_count == 0_u64 {
+    return Ok<u32, StyleError>(value: parent_set);
+  }
+  let first = state^.custom_entries.inner.len;
+  let sets = state^.custom_sets.inner.len;
+  let parent_wide = cvt::<u32, u64>(parent_set);
+  let parent_known = parent_wide < sets;
+  if parent_known {
+    let from = cvt::<u32, u64>(state^.custom_sets.inner[parent_wide].first);
+    let to = cvt::<u32, u64>(state^.custom_sets.inner[parent_wide].end);
+    let ordered = from <= to;
+    let inside = to <= state^.custom_entries.inner.len;
+    let usable = band(ordered, inside);
+    if usable {
+      for (k in from..to) {
+        let present = k < state^.custom_entries.inner.len;
+        if present {
+          let inherited_entry = state^.custom_entries.inner[k];
+          let overridden = own_listed(own: &own, name: inherited_entry.name.index);
+          if overridden {
+          } else {
+            let copied = propagate push_entry(state: state, entry_value: inherited_entry);
+          }
+        }
+      }
+    }
+  }
+  let rounds = own_count +sat 1_u64;
+  for (round in 0_u64..rounds) {
+    let blocked = box_slots_new::<u32>(capacity: 0_u64);
+    for (k in 0_u64..own_count) {
+      let inside = k < own.inner.len;
+      if inside {
+        if own.inner[k].state == state_pending {
+          let pushed = propagate push::<u32>(cell: &blocked, value: own.inner[k].name, ceiling: 4294967295_u64);
+        }
+      }
+    }
+    let waiting = blocked.inner.len;
+    if waiting == 0_u64 {
+      break;
+    }
+    for (k in 0_u64..own_count) {
+      let inside = k < own.inner.len;
+      if inside {
+        if own.inner[k].state == state_pending {
+          let index = cvt::<u32, u64>(own.inner[k].declaration);
+          let known = index < store^.customs.inner.len;
+          if known {
+            let declaration = store^.customs.inner[index];
+            let scratch = box_slots_new::<u8>(capacity: 0_u64);
+            let sheet = cvt::<u32, u64>(declaration.sheet);
+            let start = cvt::<u32, u64>(declaration.start);
+            let end = cvt::<u32, u64>(declaration.end);
+            let code = if sheet < store^.sheets.inner.len {
+              let length = store^.sheets.inner[sheet].values.components.inner.len;
+              let ordered = start <= end;
+              let fits = end <= length;
+              let usable = band(ordered, fits);
+              if usable {
+                let current = state^.custom_entries.inner.len;
+                let entries_start = if first <= current {
+                  give first;
+                } else {
+                  give current;
+                }
+                let text_length = state^.custom_text.inner.len;
+                let others = box_slots_new::<u32>(capacity: 0_u64);
+                let blocked_count = blocked.inner.len;
+                for (b in 0_u64..blocked_count) {
+                  let name = blocked.inner[b];
+                  if name != own.inner[k].name {
+                    let kept = propagate push::<u32>(cell: &others, value: name, ceiling: 4294967295_u64);
+                  }
+                }
+                let others_count = others.inner.len;
+                give substitute(values: &store^.sheets.inner[sheet].values, start: start, end: end, entries: &state^.custom_entries.inner[entries_start..current], text: &state^.custom_text.inner[0_u64..text_length], blocked: &others.inner[0_u64..others_count], atoms: atoms, out: &scratch, depth: 0_u64);
+              } else {
+                give sub_invalid;
+              }
+            } else {
+              give sub_invalid;
+            }
+            if code == sub_blocked {
+            } else if code == sub_ok {
+              let text_start = state^.custom_text.inner.len;
+              let size = scratch.inner.len;
+              for (b in 0_u64..size) {
+                let byte = scratch.inner[b];
+                emit(out: &state^.custom_text, value: byte);
+              }
+              let text_end = state^.custom_text.inner.len;
+              let a = cvt.wrap::<u64, u32>(text_start);
+              let z = cvt.wrap::<u64, u32>(text_end);
+              let name_atom = Atom(index: own.inner[k].name);
+              let made = CustomEntry(name: name_atom, start: a, end: z);
+              let added = propagate push_entry(state: state, entry_value: made);
+              set own.inner[k].state = state_done;
+            } else {
+              set own.inner[k].state = state_done;
+            }
+          } else {
+            set own.inner[k].state = state_done;
+          }
+        }
+      }
+    }
+  }
+  let end = state^.custom_entries.inner.len;
+  let a = cvt.wrap::<u64, u32>(first);
+  let z = cvt.wrap::<u64, u32>(end);
+  let made = CustomSet(first: a, end: z);
+  let id = cvt.wrap::<u64, u32>(state^.custom_sets.inner.len);
+  let placed = propagate push::<CustomSet>(cell: &state^.custom_sets, value: made, ceiling: 4294967295_u64);
+  return Ok<u32, StyleError>(value: id);
+}
+
+fn set_bounds(state: &Inherited, set_id: u32) -> (first: u64, end: u64) reads(state) contract {
+  ensures first <= end;
+  ensures end <= state^.custom_entries.inner.len;
+} {
+  doc "The entry range of a custom-property set, empty for an unknown set.";
+  let index = cvt::<u32, u64>(set_id);
+  let known = index < state^.custom_sets.inner.len;
+  if known {
+  } else {
+    return 0_u64, 0_u64;
+  }
+  let first = cvt::<u32, u64>(state^.custom_sets.inner[index].first);
+  let end = cvt::<u32, u64>(state^.custom_sets.inner[index].end);
+  let ordered = first <= end;
+  let inside = end <= state^.custom_entries.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    return first, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn declared_inherited(state: &Inherited, store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8, set_id: u32, atoms: &AtomTable) -> result: Result<Option<Declared>, StyleError> reads(store), reads(cascade), writes(state), writes(atoms) {
+  doc "inherited_declared against the element's custom-property set.";
+  let (first, end) = set_bounds(state: state, set_id: set_id);
+  let text_length = state^.custom_text.inner.len;
+  let made = propagate inherited_declared(store: store, cascade: cascade, element: element, longhand: longhand, entries: &state^.custom_entries.inner[first..end], text: &state^.custom_text.inner[0_u64..text_length], atoms: atoms, named: &state^.named);
+  return Ok<Option<Declared>, StyleError>(value: made);
+}
+
+fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, position: u64) -> result: Result<unit, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(state), writes(atoms) {
+  doc "Computes one element's custom properties, font and inherited text values from its parent's, which preorder has already computed.";
+  let count = traversal^.elements.inner.len;
+  let inside = position < count;
+  let listed_parent = position < traversal^.parents.inner.len;
+  let known = band(inside, listed_parent);
+  if known {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  let element = traversal^.elements.inner[position];
+  let parent = cvt::<u32, u64>(traversal^.parents.inner[position]);
+  let has_parent = parent < position;
+  let sized = position < state^.fonts.inner.len;
+  let texts_sized = position < state^.texts.inner.len;
+  let flags_sized = position < state^.visibility.inner.len;
+  let keywords_sized = position < state^.font_keywords.inner.len;
+  let sets_sized = position < state^.sets.inner.len;
+  let some_sized = band(sized, texts_sized);
+  let more_sized = band(flags_sized, keywords_sized);
+  let all_some = band(some_sized, more_sized);
+  let all_sized = band(all_some, sets_sized);
+  if all_sized {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  let parent_font = initial_font(state: state);
+  let parent_text = initial_text(state: state);
+  let parent_visibility = 0_u8;
+  let parent_keyword = 4_u8;
+  let parent_set = 0_u32;
+  if has_parent {
+    set parent_font = state^.fonts.inner[parent];
+    set parent_text = state^.texts.inner[parent];
+    set parent_visibility = state^.visibility.inner[parent];
+    set parent_keyword = state^.font_keywords.inner[parent];
+    set parent_set = state^.sets.inner[parent];
+  }
+  let set_id = propagate custom_set(state: state, store: store, cascade: cascade, document: document, atoms: atoms, element: element, position: position, parent_set: parent_set);
+  let sets_room = position < state^.sets.inner.len;
+  if sets_room {
+    set state^.sets.inner[position] = set_id;
+  }
+  let family = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_family, set_id: set_id, atoms: atoms);
+  let families_start = parent_font.families_start;
+  let families_end = parent_font.families_end;
+  match family {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        set families_start = state^.initial_family;
+        set families_end = state^.initial_family +sat 1_u32;
+      }
+      match declared_families(declared: d) {
+        Some(value: range) => {
+          set families_start = range.start;
+          set families_end = range.end;
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let monospace = monospace_only(named: &state^.named, start: families_start, end: families_end, monospace: state^.monospace);
+  let size_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_size, set_id: set_id, atoms: atoms);
+  let size_environment = if has_parent {
+    give Environment(width: environment.width, height: environment.height, root_font_size: state^.root_font_size);
+  } else {
+    give environment;
+  }
+  let (size, size_keyword) = font_size_of(declared: size_declared, parent_size: parent_font.size, parent_keyword: parent_keyword, monospace: monospace, environment: size_environment);
+  if has_parent {
+  } else {
+    set state^.root_font_size = size;
+  }
+  let own_environment = Environment(width: environment.width, height: environment.height, root_font_size: state^.root_font_size);
+  let weight_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_weight, set_id: set_id, atoms: atoms);
+  let weight = weight_of(declared: weight_declared, parent: parent_font.weight);
+  let style_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_style, set_id: set_id, atoms: atoms);
+  let style = keyword_or(declared: style_declared, parent: parent_font.style, initial: 0_u8);
+  let line_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_line_height, set_id: set_id, atoms: atoms);
+  let line_height = line_height_of(declared: line_declared, parent: parent_font.line_height, size: size, environment: own_environment);
+  let font = FontGroup(families_start: families_start, families_end: families_end, size: size, weight: weight, style: style, line_height: line_height);
+  let color_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_color, set_id: set_id, atoms: atoms);
+  let color = color_of(declared: color_declared, parent: parent_text.color);
+  let align_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_align, set_id: set_id, atoms: atoms);
+  let align = align_of(declared: align_declared, parent: parent_text.text_align);
+  let indent_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_indent, set_id: set_id, atoms: atoms);
+  let indent = indent_of(declared: indent_declared, parent: parent_text.text_indent, size: size, environment: own_environment);
+  let transform_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_transform, set_id: set_id, atoms: atoms);
+  let transform = keyword_or(declared: transform_declared, parent: parent_text.text_transform, initial: 0_u8);
+  let white_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_white_space, set_id: set_id, atoms: atoms);
+  let white = keyword_or(declared: white_declared, parent: parent_text.white_space, initial: 0_u8);
+  let letter_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_letter_spacing, set_id: set_id, atoms: atoms);
+  let letter = spacing_of(declared: letter_declared, parent: parent_text.letter_spacing, size: size, environment: own_environment);
+  let word_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_word_spacing, set_id: set_id, atoms: atoms);
+  let word = spacing_of(declared: word_declared, parent: parent_text.word_spacing, size: size, environment: own_environment);
+  let list_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_list_style_type, set_id: set_id, atoms: atoms);
+  let list_style = parent_text.list_style_type;
+  match list_declared {
+    Some(value: d) => {
+      let initial = is_initial(declared: d);
+      if initial {
+        set list_style = state^.disc;
+      }
+      match declared_list_style(declared: d) {
+        Some(value: name) => {
+          set list_style = name;
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  let visibility_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_visibility, set_id: set_id, atoms: atoms);
+  let visibility = keyword_or(declared: visibility_declared, parent: parent_visibility, initial: 0_u8);
+  let baseline = sizing_kind(kind: sizing_keyword);
+  let text = TextGroup(color: color, text_align: align, text_indent: indent, text_transform: transform, white_space: white, letter_spacing: letter, word_spacing: word, vertical_align: baseline, decoration_line: 0_u8, list_style_type: list_style);
+  let fonts_room = position < state^.fonts.inner.len;
+  let texts_room = position < state^.texts.inner.len;
+  let flags_room = position < state^.visibility.inner.len;
+  let keywords_room = position < state^.font_keywords.inner.len;
+  let first_rooms = band(fonts_room, texts_room);
+  let second_rooms = band(flags_room, keywords_room);
+  let rooms = band(first_rooms, second_rooms);
+  if rooms {
+    set state^.fonts.inner[position] = font;
+    set state^.font_keywords.inner[position] = size_keyword;
+    set state^.texts.inner[position] = text;
+    set state^.visibility.inner[position] = visibility;
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn intern_name(atoms: &AtomTable, name: &[u8]) -> result: Result<Atom, StyleError> reads(name), writes(atoms) {
+  doc "Interns a short constant name.";
+  let size = name^.len;
+  if size > 65536_u64 {
+    let failure = StyleError::TooLarge();
+    return Err<Atom, StyleError>(error: failure);
+  }
+  match atom_intern(table: atoms, name: name) {
+    Ok(value: atom) => {
+      return Ok<Atom, StyleError>(value: atom);
+    }
+    Err(..) => {
+      let failure = StyleError::TooLarge();
+      return Err<Atom, StyleError>(error: failure);
+    }
+  }
+}
+
+fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Inherited, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(atoms) {
+  doc "Copies the store's family lists, adds the initial family, and computes every element in preorder.";
+  let count = traversal^.elements.inner.len;
+  let small = count <= 4294967294_u64;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Inherited, StyleError>(error: failure);
+  }
+  let named = declaration_store_new();
+  let family_count = store^.declared.families.inner.len;
+  for (k in 0_u64..family_count) {
+    let family = store^.declared.families.inner[k];
+    match append_family(store: &named, family: family) {
+      Ok(..) => {
+      }
+      Err(..) => {
+        let failure = StyleError::TooLarge();
+        return Err<Inherited, StyleError>(error: failure);
+      }
+    }
+  }
+  let initial_n = initial_family_name.len;
+  let disc_n = disc_name.len;
+  let monospace_n = monospace_name.len;
+  let initial_atom = propagate intern_name(atoms: atoms, name: &initial_family_name[0_u64..initial_n]);
+  let disc = propagate intern_name(atoms: atoms, name: &disc_name[0_u64..disc_n]);
+  let monospace = propagate intern_name(atoms: atoms, name: &monospace_name[0_u64..monospace_n]);
+  let initial_index = cvt.wrap::<u64, u32>(named.families.inner.len);
+  let no = False();
+  let initial_family = Family(name: initial_atom, generic: no);
+  match append_family(store: &named, family: initial_family) {
+    Ok(..) => {
+    }
+    Err(..) => {
+      let failure = StyleError::TooLarge();
+      return Err<Inherited, StyleError>(error: failure);
+    }
+  }
+  let normal = sizing_kind(kind: sizing_normal);
+  let blank_font = FontGroup(families_start: initial_index, families_end: initial_index, size: 16.0_f32, weight: 4.0e2_f32, style: 0_u8, line_height: normal);
+  let black = black_color();
+  let zero = lp_zero();
+  let baseline = sizing_kind(kind: sizing_keyword);
+  let blank_text = TextGroup(color: black, text_align: 0_u8, text_indent: zero, text_transform: 0_u8, white_space: 0_u8, letter_spacing: normal, word_spacing: normal, vertical_align: baseline, decoration_line: 0_u8, list_style_type: disc);
+  let fonts = box_array_filled::<FontGroup>(count: count, value: blank_font);
+  let texts = box_array_filled::<TextGroup>(count: count, value: blank_text);
+  let visibility = box_array_filled::<u8>(count: count, value: 0_u8);
+  let font_keywords = box_array_filled::<u8>(count: count, value: 0_u8);
+  let sets = box_array_filled::<u32>(count: count, value: 0_u32);
+  let custom_sets = box_slots_new::<CustomSet>(capacity: 0_u64);
+  let empty = CustomSet(first: 0_u32, end: 0_u32);
+  let first_set = propagate push::<CustomSet>(cell: &custom_sets, value: empty, ceiling: 4294967295_u64);
+  let custom_entries = box_slots_new::<CustomEntry>(capacity: 0_u64);
+  let custom_text = box_slots_new::<u8>(capacity: 0_u64);
+  let state = Inherited(fonts: move fonts, texts: move texts, visibility: move visibility, font_keywords: move font_keywords, sets: move sets, custom_sets: move custom_sets, custom_entries: move custom_entries, custom_text: move custom_text, named: move named, initial_family: initial_index, disc: disc, monospace: monospace, root_font_size: environment.root_font_size);
+  for (position in 0_u64..count) {
+    let done = propagate inherit_element(state: &state, store: store, cascade: cascade, document: document, atoms: atoms, traversal: traversal, environment: environment, position: position);
+  }
+  return Ok<Inherited, StyleError>(value: move state);
+}
