@@ -86,7 +86,7 @@ example apart from the renderer code that exposed it
   the real style stage put the interning tasks at 10 to 22 percent of the
   four-worker stage on ecma262 and html5 and under 8 percent on apollo11,
   on both sides of the 15 percent bound of `design/vocabulary.md`, and
-  interning hardly speeds up with workers
+  interning speeds up only 1.1 to 2.1 times with four workers on those two
   (`research/investigations/style/DESIGN.md`, criterion 2). Change: time
   interning alone with its own mode, and if it passes the bound, split each
   table by hash into partitions interned in parallel, as criterion 2

@@ -28,6 +28,10 @@
 # the Whitefoot check lock, taken with RUN_CHECK (by default the pinned
 # checkout's .github/run-check.pl), so no other heavy job shares the machine.
 #
+# UA replaces the user-agent sheet, a path relative to the repository, for a
+# diagnostic run such as the one with Chromium's table rule in
+# runs/ua-table-gray.txt.
+#
 # The drivers are built with WHITEFOOTC (by default the pinned compiler's
 # gate build, as the Makefile builds it). POSIX sh plus node and sha256sum.
 
@@ -40,7 +44,7 @@ cd "$root"
 data=build/research/concurrency
 oracle=build/oracle/style
 out=build/research/style
-ua=renderer/style/ua.css
+ua=${UA:-renderer/style/ua.css}
 compiler=${WHITEFOOTC:-$root/whitefoot/compiler/target/gate/whitefootc}
 lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
 runs=${RUNS:-5}

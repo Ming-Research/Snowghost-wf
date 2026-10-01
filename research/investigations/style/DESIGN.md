@@ -177,9 +177,11 @@ the parallelism rule of `AGENTS.md`, and none changes them.
   order matches nothing again, picks the winning value per name, substitutes `var()` in it against
   the parent's set and the element's own, and shares the parent's set when
   the element declares none.
-- **A custom property that refers to itself, or to one that refers back to
-  it, is invalid**, fallback or not: it waits on itself until the rounds run
-  out.
+- **A custom property on a cycle of references is invalid**, fallback or
+  not, and one that only refers to the cycle takes its fallback: when a
+  round of substitution resolves nothing, the properties that reach
+  themselves through their `var()` references are dropped and the rounds go
+  on (checked against the reference by the cases page).
 - **The custom-property sets are interned by their entries** as the eighth
   task beside the seven value groups, so equal sets declared apart get one
   identifier.
@@ -204,9 +206,10 @@ the parallelism rule of `AGENTS.md`, and none changes them.
 
 ## Results
 
-Measured at Snowghost commit of this change with the pinned compiler, against
-the Chromium dumps of `make oracle-style-dump`; `run.sh check` reproduces
-criteria 1 and 3, `run.sh time` criterion 2.
+Criteria 1 and 3 as `run.sh check` reports them at commit 29fbdd8 and after,
+with the pinned compiler, against the Chromium dumps of
+`make oracle-style-dump`; criterion 2 from `run.sh time` at the commits
+named there.
 
 ### Criterion 1: matching Chromium
 
@@ -220,13 +223,15 @@ user-agent sheet (`renderer/style/ua.css`):
 | apollo11 | 11,845 | the four border colors 98.17% | font-family 99.24%, color 99.31% |
 
 Every page has the same element count in both. `tests/css/style-cases.html`,
-65 elements that exercise what the pages use little (`var()` fallbacks and
-cycles, `calc()`, media query ranges, `@supports`, explicit `inherit`,
+66 elements that exercise what the pages use little (`var()` fallbacks and
+cycles and their dependents, `calc()`, media query ranges, `oblique`, which
+the reference reports as `italic`, `@supports`, explicit `inherit`,
 keyword font sizes with and without monospace), matches on every property
 but the border colors of its tables and their rows, the same rule's. With Chromium's rule
 `table { border-color: gray }` added to a copy of the sheet, and nothing else
-changed, every property matches on at least 99 percent of the elements of
-every page (html5's border colors 100%, apollo11's 99.31%), so that rule
+changed (`runs/ua-table-gray.txt`, `UA=... run.sh check`), every property
+matches on at least 99 percent of the elements of every page and of the
+cases page (html5's border colors 100%, apollo11's 99.31%), so that rule
 accounts for the failures.
 
 The classes of mismatch, with their causes:
@@ -259,11 +264,12 @@ The classes of mismatch, with their causes:
 
 ### Criterion 2: speed
 
-Per-run times in seconds, the best of three runs, on a 4-processor Linux
-host, measured on this change's final code (`runs/time-parts.txt`, written
-by `run.sh time`). Each part is the difference between the mode that ends
-with it and the one before, so a part of a few hundredths is within the
-runs' noise; one comes out negative.
+Per-run times in seconds, the best of three runs (`RUNS=3`), on a 4-processor
+Linux host, measured at commit d0e70c6 (`runs/time-parts.txt`, written by
+`run.sh time`); the code after it changed only the order of the interning
+calls and the handling of custom-property cycles. Each part is the
+difference between the mode that ends with it and the one before, so a part
+of a few hundredths is within the runs' noise.
 
 | Page | Build | Matching | Pass in document order | Third part | Interning | Stage |
 |---|---|---:|---:|---:|---:|---:|
@@ -293,12 +299,12 @@ runs' noise; one comes out negative.
   unique-keys investigation is made (`docs/todo.md`).
 - **Interning**, the eight tasks, is 14, 12 and 2 percent of the four-worker
   stage in that run; with the eight calls made adjacent so the compiler
-  pairs all of them, a run of the last two modes gave 10, 17 and 7 percent
+  pairs all of them (commit 29fbdd8), a run of the last two modes gave 10, 17 and 7 percent
   (0.062, 0.090 and 0.016 s, `runs/time-interning-final.txt`), and the first
   run, with seven tasks, 22 and 20 percent on ecma262 and html5. The bound
   of `design/vocabulary.md` is 15 percent, so the runs fall on both sides of
-  it; at one worker interning is 8, 8 and 3 percent and it hardly speeds up
-  with workers. Every run measures it as a difference of whole runs, so it
+  it; from one worker to four it speeds up only 1.1 to 2.1 times on ecma262
+  and html5. Every run measures it as a difference of whole runs, so it
   is timed alone next (`docs/todo.md`).
 
 ### Criterion 3: equal builds
@@ -306,10 +312,11 @@ runs' noise; one comes out negative.
 The sequential and `--par` builds wrote byte-identical dumps of all three
 pages and of the cases page. The compiler's parallelism ledger, which
 `run.sh check` writes to `build/research/style/ledger.txt` and summarizes,
-splits the first part's loop and the third part's loop into independent maps
-and admits the eight interning calls as parallel pairs; whether they run in
-parallel is another matter, since interning measures no faster at four
-workers than at one (criterion 2).
+splits the first part's loop (under a `band` of its results) and the third
+part's loop (an independent map) and admits the eight interning calls as
+parallel pairs; interning speeds up only 1.1 to 2.1 times from one worker to
+four on ecma262 and html5 (criterion 2), so how much of that parallelism the runtime uses is not
+known.
 
 ## Open for the owner
 

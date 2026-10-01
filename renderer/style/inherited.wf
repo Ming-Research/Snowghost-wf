@@ -744,7 +744,7 @@ fn own_listed(own: &Box<Slots<OwnCustom>>, name: u32) -> found: Bool reads(own) 
 }
 
 fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &AtomTable, position: u64, parent_set: u32) -> result: Result<u32, StyleError> reads(store), reads(cascade), reads(atoms), writes(state) {
-  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another; a value that refers to one still waiting, itself included, waits, so a value still waiting after as many rounds as there are values is in a cycle and is left out, as is one whose var() fails.";
+  doc "The element's custom-property set: its parent's when it declares none, otherwise a new set of the parent's entries it does not override and its own values with var() substituted, in rounds so that one may refer to another: a value that refers to one still waiting, itself included, waits, and when a round resolves nothing, the values on a cycle of references are invalid and left out, so a value that only refers to them takes its fallback in the next round; one whose var() fails is left out too.";
   let own = box_slots_new::<OwnCustom>(capacity: 0_u64);
   collect_customs(own: &own, store: store, cascade: cascade, position: position);
   let own_count = own.inner.len;
@@ -775,7 +775,8 @@ fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &A
       }
     }
   }
-  let rounds = own_count +sat 1_u64;
+  let twice = own_count *sat 2_u64;
+  let rounds = twice +sat 2_u64;
   for (round in 0_u64..rounds) {
     let blocked = box_slots_new::<u32>(capacity: 0_u64);
     for (k in 0_u64..own_count) {
@@ -846,6 +847,18 @@ fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &A
           }
         }
       }
+    }
+    let still = 0_u64;
+    for (k in 0_u64..own_count) {
+      let inside = k < own.inner.len;
+      if inside {
+        if own.inner[k].state == state_pending {
+          set still = still +sat 1_u64;
+        }
+      }
+    }
+    if still == waiting {
+      invalidate_cycles(own: &own, store: store, atoms: atoms);
     }
   }
   let end = state^.custom_entries.inner.len;
@@ -1270,4 +1283,163 @@ fn font_units(metrics: FontMetrics, size: f32) -> (ex: f32, ch: f32) pure {
   }
   let ch = fmul.strict(metrics.zero_advance, size);
   return ex, ch;
+}
+
+fn pending_named(own: &Box<Slots<OwnCustom>>, name: u32) -> found: Option<u64> reads(own) {
+  doc "The position among own of the waiting custom property named name, or None.";
+  let count = own^.inner.len;
+  for (k in 0_u64..count) {
+    let waiting = own^.inner[k].state == state_pending;
+    let named = own^.inner[k].name == name;
+    let both = band(waiting, named);
+    if both {
+      return Some<u64>(value: k);
+    }
+  }
+  return None<u64>();
+}
+
+fn push_index(cell: &Box<Slots<u64>>, value: u64) -> result: unit writes(cell) {
+  doc "Appends one index to a list that stays below 2^20 entries.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 8_u64;
+    if small {
+      grow(cell: cell, capacity: 8_u64);
+    } else {
+      let limit = capacity < 1048576_u64;
+      if limit {
+        let doubled = capacity + capacity;
+        grow(cell: cell, capacity: doubled);
+      } else {
+        return unit;
+      }
+    }
+  }
+  let room = cell^.inner.len < cell^.inner.cap;
+  if room {
+    place_back(window: &cell^.inner, value: value);
+  }
+  return unit;
+}
+
+fn references_of(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, k: u64, out: &Box<Slots<u64>>) -> result: unit reads(own), reads(store), reads(atoms), writes(out) {
+  doc "Appends the positions of the waiting custom properties that own[k]'s value names in a var(), fallbacks included.";
+  let inside = k < own^.inner.len;
+  if inside {
+  } else {
+    return unit;
+  }
+  let index = cvt::<u32, u64>(own^.inner[k].declaration);
+  let known = index < store^.customs.inner.len;
+  if known {
+  } else {
+    return unit;
+  }
+  let declaration = store^.customs.inner[index];
+  let sheet = cvt::<u32, u64>(declaration.sheet);
+  let listed = sheet < store^.sheets.inner.len;
+  if listed {
+  } else {
+    return unit;
+  }
+  let start = cvt::<u32, u64>(declaration.start);
+  let end = cvt::<u32, u64>(declaration.end);
+  let length = store^.sheets.inner[sheet].values.components.inner.len;
+  let ordered = start <= end;
+  let fits = end <= length;
+  let usable = band(ordered, fits);
+  if usable {
+  } else {
+    return unit;
+  }
+  let n = var_word.len;
+  for (at in start..end) {
+    let kind = component_kind(values: &store^.sheets.inner[sheet].values, at: at);
+    if kind == c_function {
+      let named = name_word(values: &store^.sheets.inner[sheet].values, at: at, list: &var_word[0_u64..n]);
+      match named {
+        Some(..) => {
+          let after = at + 1_u64;
+          let name_at_index = skip_space(values: &store^.sheets.inner[sheet].values, at: after, limit: end);
+          if name_at_index < end {
+            match var_name_atom(values: &store^.sheets.inner[sheet].values, at: name_at_index, atoms: atoms) {
+              Some(value: name) => {
+                match pending_named(own: own, name: name) {
+                  Some(value: target) => {
+                    push_index(cell: out, value: target);
+                  }
+                  None() => {
+                  }
+                }
+              }
+              None() => {
+              }
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn on_cycle(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable, k: u64) -> cyclic: Bool reads(own), reads(store), reads(atoms) {
+  doc "True when following var() references among the waiting custom properties from own[k] leads back to own[k].";
+  let count = own^.inner.len;
+  let seen = box_array_filled::<u8>(count: count, value: 0_u8);
+  let frontier = box_slots_new::<u64>(capacity: 0_u64);
+  references_of(own: own, store: store, atoms: atoms, k: k, out: &frontier);
+  for (step in 0_u64..count) {
+    let size = frontier.inner.len;
+    if size == 0_u64 {
+      return False();
+    }
+    let next = box_slots_new::<u64>(capacity: 0_u64);
+    for (f in 0_u64..size) {
+      let target = frontier.inner[f];
+      if target == k {
+        return True();
+      }
+      let inside = target < seen.inner.len;
+      if inside {
+        if seen.inner[target] == 0_u8 {
+          set seen.inner[target] = 1_u8;
+          references_of(own: own, store: store, atoms: atoms, k: target, out: &next);
+        }
+      }
+    }
+    set frontier = move next;
+  }
+  return False();
+}
+
+fn invalidate_cycles(own: &Box<Slots<OwnCustom>>, store: &RuleStore, atoms: &AtomTable) -> result: unit reads(store), reads(atoms), writes(own) {
+  doc "Marks invalid, as done without a value, every waiting custom property on a cycle of var() references; when none is, which no round that resolved nothing leaves, every waiting one.";
+  let count = own^.inner.len;
+  let cyclic = box_array_filled::<u8>(count: count, value: 0_u8);
+  let any = False();
+  for (k in 0_u64..count) {
+    if own^.inner[k].state == state_pending {
+      let found = on_cycle(own: own, store: store, atoms: atoms, k: k);
+      if found {
+        set cyclic.inner[k] = 1_u8;
+        set any = True();
+      }
+    }
+  }
+  for (k in 0_u64..count) {
+    let pending = own^.inner[k].state == state_pending;
+    let marked = cyclic.inner[k] == 1_u8;
+    let unmarked_stall = bnot(any);
+    let drop_it = bor(marked, unmarked_stall);
+    let both = band(pending, drop_it);
+    if both {
+      set own^.inner[k].state = state_done;
+    }
+  }
+  return unit;
 }
