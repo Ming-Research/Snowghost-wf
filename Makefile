@@ -2,6 +2,7 @@
 # before it merges into main; CI runs the same targets.
 
 PY ?= python3
+NODE ?= node
 
 # Every path is relative to this Makefile, so each target works from any
 # working directory.
@@ -20,7 +21,8 @@ DESIGN_REVIEW_BASE ?= origin/main
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
-	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties
+	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
+	oracle-style-dump oracle-style
 
 check: compiler renderer dom-selftest design-lint
 
@@ -126,6 +128,41 @@ SPEED_SET = $(sort $(wildcard $(ORACLE)/png-speed/*.png))
 oracle-png-speed: $(BUILD)/png_oracle $(BUILD)/png-reference
 	@cd $(ROOT) && echo libpng: && time -p $(BUILD)/png-reference time 3 $(SPEED_SET:$(ROOT)/%=%)
 	@cd $(ROOT) && echo whitefoot: && time -p $(BUILD)/png_oracle time 3 $(SPEED_SET:$(ROOT)/%=%)
+
+# Dumps Chromium's computed values of the style stage's longhands for the
+# three real pages of the concurrency investigation and for
+# tests/css/style-cases.html, the oracle of the style
+# stage (research/investigations/style). It needs Chromium and Playwright
+# (tests/css/style_oracle.mjs names their paths) and the pages fetched by
+# research/investigations/concurrency/run.sh fetch; it stays out of `check`.
+STYLE_PAGES := $(BUILD)/research/concurrency
+STYLE_ORACLE := $(ORACLE)/style
+oracle-style-dump:
+	@mkdir -p $(STYLE_ORACLE)
+	@cd $(ROOT) && $(NODE) tests/css/style_oracle.mjs dump $(STYLE_PAGES)/ecma262.html \
+		assets/css/ecmarkup.css=$(STYLE_PAGES)/ecma262-ecmarkup.css \
+		assets/css/print.css=$(STYLE_PAGES)/ecma262-print.css \
+		> $(STYLE_ORACLE)/ecma262.chromium.tsv.part
+	@mv $(STYLE_ORACLE)/ecma262.chromium.tsv.part $(STYLE_ORACLE)/ecma262.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/css/style_oracle.mjs dump $(STYLE_PAGES)/html5.html \
+		> $(STYLE_ORACLE)/html5.chromium.tsv.part
+	@mv $(STYLE_ORACLE)/html5.chromium.tsv.part $(STYLE_ORACLE)/html5.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/css/style_oracle.mjs dump $(STYLE_PAGES)/apollo11.html \
+		'wikibase.client.init&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-modules.css' \
+		'modules=site.styles&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-site.css' \
+		> $(STYLE_ORACLE)/apollo11.chromium.tsv.part
+	@mv $(STYLE_ORACLE)/apollo11.chromium.tsv.part $(STYLE_ORACLE)/apollo11.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/css/style_oracle.mjs dump tests/css/style-cases.html \
+		> $(STYLE_ORACLE)/cases.chromium.tsv.part
+	@mv $(STYLE_ORACLE)/cases.chromium.tsv.part $(STYLE_ORACLE)/cases.chromium.tsv
+
+# Builds the style_oracle driver sequentially and with --par, dumps the three
+# real pages with both, requires the two dumps to be identical and compares
+# them with Chromium's from oracle-style-dump (research/investigations/style);
+# it fails while a page misses the 99 percent criterion. It stays out of
+# `check` for the same reasons.
+oracle-style: compiler
+	@sh $(ROOT)/research/investigations/style/run.sh check
 
 .PHONY: FORCE
 FORCE:

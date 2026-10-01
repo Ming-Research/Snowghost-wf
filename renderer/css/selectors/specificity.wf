@@ -1,0 +1,344 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+
+fn specificity_zero() -> made: Specificity pure {
+  doc "The specificity of a selector with no simple selector that counts.";
+  return Specificity(ids: 0_u32, classes: 0_u32, types: 0_u32);
+}
+
+fn specificity_sum(first: Specificity, second: Specificity) -> sum: Specificity pure {
+  doc "Adds two specificities column by column, saturating each column.";
+  let ids = first.ids +sat second.ids;
+  let classes = first.classes +sat second.classes;
+  let types = first.types +sat second.types;
+  return Specificity(ids: ids, classes: classes, types: types);
+}
+
+fn specificity_exceeds(first: Specificity, second: Specificity) -> exceeds: Bool pure {
+  doc "True when first is greater than second, comparing ids, then classes, then types.";
+  if first.ids != second.ids {
+    let greater = first.ids > second.ids;
+    return greater;
+  }
+  if first.classes != second.classes {
+    let greater = first.classes > second.classes;
+    return greater;
+  }
+  let greater = first.types > second.types;
+  return greater;
+}
+
+fn specificity_larger(first: Specificity, second: Specificity) -> larger: Specificity pure {
+  doc "Returns the greater of two specificities.";
+  let first_wins = specificity_exceeds(first: first, second: second);
+  if first_wins {
+    return first;
+  }
+  return second;
+}
+
+fn one_class() -> made: Specificity pure {
+  doc "The specificity of one class, attribute or pseudo-class selector.";
+  return Specificity(ids: 0_u32, classes: 1_u32, types: 0_u32);
+}
+
+fn list_specificity(list: &SelectorList, alt_start: u32, alt_end: u32, depth: u64) -> result: Specificity reads(list) {
+  doc "The greatest specificity among the complex selectors of the alternatives [alt_start, alt_end), as Selectors Level 4 gives the argument of :is(), :not() and :nth-child(An+B of S). An alternative that never matches, one ending in a pseudo-element, does not count. depth counts the nested lists above this one; the parser refuses nesting deeper than max_nesting_depth, and a deeper list counts as zero.";
+  let best = specificity_zero();
+  if depth > max_nesting_depth {
+    return best;
+  }
+  let bounded = depth;
+  let start_wide = cvt::<u32, u64>(alt_start);
+  let end_wide = cvt::<u32, u64>(alt_end);
+  for (i in start_wide..end_wide) {
+    let order_in_bounds = i < list^.alt_order.inner.len;
+    if order_in_bounds {
+      let actual = list^.alt_order.inner[i];
+      let actual_wide = cvt::<u32, u64>(actual);
+      let in_bounds = actual_wide < list^.alts.inner.len;
+      if in_bounds {
+        let alt = list^.alts.inner[actual_wide];
+        if alt.never_matches {
+        } else {
+          let own = complex_specificity(list: list, comp_start: alt.compound_start, comp_end: alt.compound_end, depth: bounded);
+          set best = specificity_larger(first: best, second: own);
+        }
+      }
+    }
+  }
+  return best;
+}
+
+fn complex_specificity(list: &SelectorList, comp_start: u32, comp_end: u32, depth: u64) -> result: Specificity reads(list) contract {
+  requires depth <= 64_u64;
+} {
+  doc "The specificity of one complex selector: the sum over its compounds of their simple selectors' specificities.";
+  let total = specificity_zero();
+  let start_wide = cvt::<u32, u64>(comp_start);
+  let end_wide = cvt::<u32, u64>(comp_end);
+  for (i in start_wide..end_wide) {
+    let order_in_bounds = i < list^.compound_order.inner.len;
+    if order_in_bounds {
+      let actual = list^.compound_order.inner[i];
+      let actual_wide = cvt::<u32, u64>(actual);
+      let in_bounds = actual_wide < list^.compounds.inner.len;
+      if in_bounds {
+        let compound = list^.compounds.inner[actual_wide];
+        let simple_start = cvt::<u32, u64>(compound.simple_start);
+        let simple_end = cvt::<u32, u64>(compound.simple_end);
+        for (k in simple_start..simple_end) {
+          let k_in_bounds = k < list^.instr_order.inner.len;
+          if k_in_bounds {
+            let actual_k = list^.instr_order.inner[k];
+            let actual_k_wide = cvt::<u32, u64>(actual_k);
+            let instr_in_bounds = actual_k_wide < list^.instrs.inner.len;
+            if instr_in_bounds {
+              let instr = list^.instrs.inner[actual_k_wide];
+              let own = instr_specificity(list: list, instr: instr, depth: depth);
+              set total = specificity_sum(first: total, second: own);
+            }
+          }
+        }
+      }
+    }
+  }
+  return total;
+}
+
+fn instr_specificity(list: &SelectorList, instr: Instr, depth: u64) -> result: Specificity reads(list) contract {
+  requires depth <= 64_u64;
+} {
+  doc "The specificity of one compiled simple selector under Selectors Level 4: an id counts in the first column; a class, an attribute selector and a pseudo-class in the second; a type selector in the third; the universal selector and :where() count nothing; :is() and :not() count their most specific argument; :nth-child(An+B of S) and :nth-last-child(An+B of S) count one pseudo-class and their most specific S.";
+  let next = depth + 1_u64;
+  match instr {
+    Universal(ns: n) => {
+      let made = specificity_zero();
+      return made;
+    }
+    Type(ns: n, exact: e, lower: l) => {
+      return Specificity(ids: 0_u32, classes: 0_u32, types: 1_u32);
+    }
+    Id(exact: e, lower: l) => {
+      return Specificity(ids: 1_u32, classes: 0_u32, types: 0_u32);
+    }
+    Not(alt_start: s, alt_end: e) => {
+      let inner = list_specificity(list: list, alt_start: s, alt_end: e, depth: next);
+      return inner;
+    }
+    Is(alt_start: s, alt_end: e) => {
+      let inner = list_specificity(list: list, alt_start: s, alt_end: e, depth: next);
+      return inner;
+    }
+    Where(alt_start: s, alt_end: e) => {
+      let made = specificity_zero();
+      return made;
+    }
+    NthChild(a: av, b: bv, of_start: s, of_end: e) => {
+      let base = one_class();
+      if s == no_of_clause {
+        return base;
+      }
+      let inner = list_specificity(list: list, alt_start: s, alt_end: e, depth: next);
+      let total = specificity_sum(first: base, second: inner);
+      return total;
+    }
+    NthLastChild(a: av, b: bv, of_start: s, of_end: e) => {
+      let base = one_class();
+      if s == no_of_clause {
+        return base;
+      }
+      let inner = list_specificity(list: list, alt_start: s, alt_end: e, depth: next);
+      let total = specificity_sum(first: base, second: inner);
+      return total;
+    }
+    Class(exact: e, lower: l) => {
+      let made = one_class();
+      return made;
+    }
+    AttrPresence(ns: n, exact: e, lower: l) => {
+      let made = one_class();
+      return made;
+    }
+    AttrMatch(ns: n, exact: e, lower: l, op: o, value_exact: ve, value_lower: vl, case: c, default_ci: d) => {
+      let made = one_class();
+      return made;
+    }
+    Root() => {
+      let made = one_class();
+      return made;
+    }
+    Empty() => {
+      let made = one_class();
+      return made;
+    }
+    FirstChild() => {
+      let made = one_class();
+      return made;
+    }
+    LastChild() => {
+      let made = one_class();
+      return made;
+    }
+    OnlyChild() => {
+      let made = one_class();
+      return made;
+    }
+    FirstOfType() => {
+      let made = one_class();
+      return made;
+    }
+    LastOfType() => {
+      let made = one_class();
+      return made;
+    }
+    OnlyOfType() => {
+      let made = one_class();
+      return made;
+    }
+    NthOfType(a: av, b: bv) => {
+      let made = one_class();
+      return made;
+    }
+    NthLastOfType(a: av, b: bv) => {
+      let made = one_class();
+      return made;
+    }
+    Link() => {
+      let made = one_class();
+      return made;
+    }
+    AnyLink() => {
+      let made = one_class();
+      return made;
+    }
+    Visited() => {
+      let made = one_class();
+      return made;
+    }
+    Checked() => {
+      let made = one_class();
+      return made;
+    }
+    Enabled() => {
+      let made = one_class();
+      return made;
+    }
+    Disabled() => {
+      let made = one_class();
+      return made;
+    }
+    Lang(arg: g) => {
+      let made = one_class();
+      return made;
+    }
+    Target() => {
+      let made = one_class();
+      return made;
+    }
+    Scope() => {
+      let made = one_class();
+      return made;
+    }
+    Defined() => {
+      let made = one_class();
+      return made;
+    }
+    Hover() => {
+      let made = one_class();
+      return made;
+    }
+    Active() => {
+      let made = one_class();
+      return made;
+    }
+    Focus() => {
+      let made = one_class();
+      return made;
+    }
+    FocusWithin() => {
+      let made = one_class();
+      return made;
+    }
+    FocusVisible() => {
+      let made = one_class();
+      return made;
+    }
+  }
+}
+
+fn matching_specificity(list: &SelectorList, document: &Document, atoms: &AtomTable, element: NodeId, context: MatchContext, positions: &Positions) -> result: Option<Specificity> reads(list), reads(document), reads(atoms), reads(positions) {
+  doc "The greatest specificity among the top-level alternatives of list that element matches, reading positions where it covers a count, or None when it matches none.";
+  let length = positions^.table.inner.len;
+  let start_wide = cvt::<u32, u64>(list^.top_start);
+  let end_wide = cvt::<u32, u64>(list^.top_end);
+  let found = False();
+  let best = specificity_zero();
+  for (i in start_wide..end_wide) {
+    let order_in_bounds = i < list^.alt_order.inner.len;
+    if order_in_bounds {
+      let actual = list^.alt_order.inner[i];
+      let actual_wide = cvt::<u32, u64>(actual);
+      let in_bounds = actual_wide < list^.alts.inner.len;
+      if in_bounds {
+        let alt = list^.alts.inner[actual_wide];
+        if alt.never_matches {
+        } else {
+          let m = match_complex(list: list, document: document, atoms: atoms, positions: &positions^.table.inner[0_u64..length], comp_start: alt.compound_start, comp_end: alt.compound_end, target: element, context: context);
+          if m {
+            let own = complex_specificity(list: list, comp_start: alt.compound_start, comp_end: alt.compound_end, depth: 0_u64);
+            if found {
+              set best = specificity_larger(first: best, second: own);
+            } else {
+              set best = own;
+              set found = True();
+            }
+          }
+        }
+      }
+    }
+  }
+  if found {
+    return Some<Specificity>(value: best);
+  }
+  return None<Specificity>();
+}
+
+fn uniform_specificity(list: &SelectorList) -> result: Option<Specificity> reads(list) {
+  doc "The specificity every top-level alternative of list that can match has, or None when two of them differ or none can match.";
+  let start_wide = cvt::<u32, u64>(list^.top_start);
+  let end_wide = cvt::<u32, u64>(list^.top_end);
+  let found = False();
+  let shared = specificity_zero();
+  for (i in start_wide..end_wide) {
+    let order_in_bounds = i < list^.alt_order.inner.len;
+    if order_in_bounds {
+      let actual = list^.alt_order.inner[i];
+      let actual_wide = cvt::<u32, u64>(actual);
+      let in_bounds = actual_wide < list^.alts.inner.len;
+      if in_bounds {
+        let alt = list^.alts.inner[actual_wide];
+        if alt.never_matches {
+        } else {
+          let own = complex_specificity(list: list, comp_start: alt.compound_start, comp_end: alt.compound_end, depth: 0_u64);
+          if found {
+            let more = specificity_exceeds(first: own, second: shared);
+            let less = specificity_exceeds(first: shared, second: own);
+            let differs = bor(more, less);
+            if differs {
+              return None<Specificity>();
+            }
+          } else {
+            set shared = own;
+            set found = True();
+          }
+        }
+      }
+    }
+  }
+  if found {
+    return Some<Specificity>(value: shared);
+  }
+  return None<Specificity>();
+}

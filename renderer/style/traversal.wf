@@ -1,0 +1,312 @@
+alias Document = pkg::dom::Document;
+alias Links = pkg::dom::Links;
+alias NodeId = pkg::dom::NodeId;
+
+const depth_ceiling: u64 = 4096_u64;
+
+const element_ceiling: u64 = 4294967294_u64;
+
+const node_ceiling: u64 = 4294967296_u64;
+
+const unvisited: u32 = 4294967295_u32;
+
+enum Step {
+  Next(node: NodeId);
+  Done();
+  Broken();
+}
+
+struct Walk {
+  elements: Box<Slots<NodeId>>;
+  parents: Box<Slots<u32>>;
+  depths: Box<Slots<u32>>;
+  deepest: u64;
+}
+
+fn inconsistent<T: drop>() -> result: Result<T, StyleError> pure {
+  doc "Returns the Inconsistent refusal.";
+  let failure = StyleError::Inconsistent();
+  return Err<T, StyleError>(error: failure);
+}
+
+fn push<T: drop>(cell: &Box<Slots<T>>, value: T, ceiling: u64) -> result: Result<unit, StyleError> writes(cell) contract {
+  requires ceiling <= 4294967296_u64;
+} {
+  doc "Appends value to cell. A full cell grows to 8 slots, or doubles while its capacity is below ceiling, so its capacity never passes twice ceiling; TooLarge when a full cell has reached ceiling.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length < capacity {
+    place_back(window: &cell^.inner, value: move value);
+    return Ok<unit, StyleError>(value: unit);
+  }
+  if capacity >= ceiling {
+    let refusal = StyleError::TooLarge();
+    return Err<unit, StyleError>(error: refusal);
+  }
+  if capacity < 8_u64 {
+    grow(cell: cell, capacity: 8_u64);
+  } else {
+    let doubled = capacity + capacity;
+    grow(cell: cell, capacity: doubled);
+  }
+  place_back(window: &cell^.inner, value: move value);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn build_traversal(document: &Document) -> result: Result<Traversal, StyleError> reads(document) {
+  doc "Walks the elements and gives each element whose parent is the document the number of elements as its parent.";
+  let walk = propagate walk_elements(document: document);
+  let Walk(elements: elements, parents: parents, depths: depths, deepest: deepest) = move walk;
+  let count = elements.inner.len;
+  let listed = parents.inner.len;
+  let aligned = listed == count;
+  if aligned {
+  } else {
+    return inconsistent::<Traversal>();
+  }
+  let small = count <= element_ceiling;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Traversal, StyleError>(error: failure);
+  }
+  let document_slot = cvt::<u64, u32>(count);
+  for (at in 0_u64..count) {
+    let raw = parents.inner[at];
+    if raw == unvisited {
+      set parents.inner[at] = document_slot;
+    }
+  }
+  let made = Traversal(elements: move elements, parents: move parents);
+  return Ok<Traversal, StyleError>(value: move made);
+}
+
+fn links_of(document: &Document, node: NodeId) -> links: Option<Links> reads(document) {
+  doc "Returns the links of node, or None when it names no node.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+    let links = document^.nodes.inner[index].links;
+    return Some<Links>(value: links);
+  }
+  return None<Links>();
+}
+
+fn is_element(document: &Document, node: NodeId) -> element: Bool reads(document) {
+  doc "Tells whether node names an Element node.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+  } else {
+    return False();
+  }
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Element(..) => {
+      return True();
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return False();
+}
+
+fn first_step(links: Links) -> step: Step pure {
+  doc "Returns the step to the first child that links name, or Done when there is none.";
+  match links.first_child {
+    Some(value: child) => {
+      return Step::Next(node: child);
+    }
+    None() => {
+      return Step::Done();
+    }
+  }
+}
+
+fn step_after(document: &Document, node: NodeId) -> step: Step reads(document) {
+  doc "Returns the node after the subtree of node in tree order: the next sibling of node or of its nearest ancestor that has one, Done when the climb reaches the document root, and Broken when a node has no parent before that. The climb takes at most one step per node.";
+  let count = document^.nodes.inner.len;
+  let at = node;
+  for (up in 0_u64..count) {
+    let links = match links_of(document: document, node: at) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return Step::Broken();
+      }
+    }
+    match links.next_sibling {
+      Some(value: sibling) => {
+        return Step::Next(node: sibling);
+      }
+      None() => {
+      }
+    }
+    let parent = match links.parent {
+      Some(value: holder) => {
+        give holder;
+      }
+      None() => {
+        return Step::Broken();
+      }
+    }
+    if parent.index == 0_u32 {
+      return Step::Done();
+    }
+    set at = parent;
+  }
+  return Step::Broken();
+}
+
+fn walk_elements(document: &Document) -> result: Result<Walk, StyleError> reads(document) {
+  doc "Visits the document tree in tree order from the document root, through first children and next siblings, and lists each Element node with its parent element's preorder index, unvisited for a parent that is the document root, and its depth. The walk takes at most one step per node; Inconsistent when it would take more, visits an element twice or meets an element whose parent is neither the document root nor an element visited before it; TooDeep past depth_ceiling.";
+  let nodes = document^.nodes.inner.len;
+  let small = nodes <= node_ceiling;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Walk, StyleError>(error: failure);
+  }
+  let order = box_array_filled::<u32>(count: nodes, value: unvisited);
+  let elements = box_slots_new::<NodeId>(capacity: 0_u64);
+  let parents = box_slots_new::<u32>(capacity: 0_u64);
+  let depths = box_slots_new::<u32>(capacity: 0_u64);
+  let deepest = 0_u64;
+  let root = NodeId(index: 0_u32);
+  let root_links = match links_of(document: document, node: root) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return inconsistent::<Walk>();
+    }
+  }
+  let current = first_step(links: root_links);
+  for (step in 0_u64..nodes) {
+    let node = match current {
+      Next(node: visited) => {
+        give visited;
+      }
+      Done() => {
+        let walked = Walk(elements: move elements, parents: move parents, depths: move depths, deepest: deepest);
+        return Ok<Walk, StyleError>(value: move walked);
+      }
+      Broken() => {
+        return inconsistent::<Walk>();
+      }
+    }
+    let links = match links_of(document: document, node: node) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return inconsistent::<Walk>();
+      }
+    }
+    let element = is_element(document: document, node: node);
+    if element {
+      let index = cvt::<u32, u64>(node.index);
+      let known = index < order.inner.len;
+      if known {
+      } else {
+        return inconsistent::<Walk>();
+      }
+      let seen = order.inner[index] != unvisited;
+      if seen {
+        return inconsistent::<Walk>();
+      }
+      let position = elements.inner.len;
+      let room = position < element_ceiling;
+      if room {
+      } else {
+        let failure = StyleError::TooLarge();
+        return Err<Walk, StyleError>(error: failure);
+      }
+      let holder = match links.parent {
+        Some(value: found) => {
+          give found;
+        }
+        None() => {
+          return inconsistent::<Walk>();
+        }
+      }
+      let parent_index = cvt::<u32, u64>(holder.index);
+      let at_root = parent_index == 0_u64;
+      let parent_position = if at_root {
+        give unvisited;
+      } else {
+        let listed = parent_index < order.inner.len;
+        if listed {
+        } else {
+          return inconsistent::<Walk>();
+        }
+        give order.inner[parent_index];
+      }
+      let depth = if at_root {
+        give 0_u64;
+      } else {
+        let wide = cvt::<u32, u64>(parent_position);
+        let measured = wide < depths.inner.len;
+        if measured {
+        } else {
+          return inconsistent::<Walk>();
+        }
+        let above = cvt::<u32, u64>(depths.inner[wide]);
+        let bounded = above < depth_ceiling;
+        if bounded {
+        } else {
+          let failure = StyleError::TooLarge();
+          return Err<Walk, StyleError>(error: failure);
+        }
+        give above + 1_u64;
+      }
+      let shallow = depth <= depth_ceiling;
+      if shallow {
+      } else {
+        let failure = StyleError::TooLarge();
+        return Err<Walk, StyleError>(error: failure);
+      }
+      let narrow_position = cvt::<u64, u32>(position);
+      let narrow_depth = cvt::<u64, u32>(depth);
+      set order.inner[index] = narrow_position;
+      let placed = propagate push::<NodeId>(cell: &elements, value: node, ceiling: node_ceiling);
+      let linked = propagate push::<u32>(cell: &parents, value: parent_position, ceiling: node_ceiling);
+      let deep = propagate push::<u32>(cell: &depths, value: narrow_depth, ceiling: node_ceiling);
+      set deepest = imax(deepest, depth);
+    }
+    match first_step(links: links) {
+      Next(node: child) => {
+        set current = Step::Next(node: child);
+      }
+      Done() => {
+        set current = step_after(document: document, node: node);
+      }
+      Broken() => {
+        return inconsistent::<Walk>();
+      }
+    }
+  }
+  match current {
+    Next(node: visited) => {
+      return inconsistent::<Walk>();
+    }
+    Done() => {
+      let walked = Walk(elements: move elements, parents: move parents, depths: move depths, deepest: deepest);
+      return Ok<Walk, StyleError>(value: move walked);
+    }
+    Broken() => {
+      return inconsistent::<Walk>();
+    }
+  }
+}
