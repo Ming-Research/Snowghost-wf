@@ -158,8 +158,9 @@ oracle-style-dump:
 
 # Builds the style_oracle driver sequentially and with --par, dumps the three
 # real pages with both, requires the two dumps to be identical and compares
-# them with Chromium's from oracle-style-dump (research/investigations/style).
-# It stays out of `check` for the same reasons.
+# them with Chromium's from oracle-style-dump (research/investigations/style);
+# it fails while a page misses the 99 percent criterion. It stays out of
+# `check` for the same reasons.
 oracle-style: compiler
 	@sh $(ROOT)/research/investigations/style/run.sh check
 

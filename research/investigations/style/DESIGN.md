@@ -6,8 +6,9 @@ and the interfaces' choices Q46 to Q50 the same day. The stage is written
 (`pkg::css::values`, `pkg::style`, the `style_oracle` driver) and measured
 below; criterion 1 holds on ecma262 and fails on html5 and apollo11 on the
 border colors alone, which trace to one rule of Chromium's user-agent sheet
-that the HTML Standard does not have. Two choices wait for the owner: that
-rule, and how `ex` and `ch` are resolved.
+that the HTML Standard does not have. Three choices wait for the owner
+("Open for the owner" below): that rule, how `ex` and `ch` are resolved, and
+where lengths become `LayoutUnit`.
 
 ## Question
 
@@ -57,7 +58,9 @@ the `style` attribute's place; `@media` with the Media Queries Level 4
 features the viewport answers; `@supports` answered by the properties and
 values the stage implements; custom properties with `var()` substitution,
 fallbacks and cycle detection; `calc()` over lengths and percentages;
-`initial`, `inherit` and `unset`; shorthands expanded to longhands.
+`initial`, `inherit` and `unset`, with `revert` and `revert-layer` taken as
+`unset` since there is no user origin and no layer; shorthands expanded to
+longhands.
 Pseudo-classes that depend on interaction (`:hover`, `:focus`) never match.
 
 **Properties.** The longhands block and inline layout and the painting of
@@ -129,7 +132,8 @@ The modules' interfaces are their `module.wfm` files; in short:
   (Q46).
 - **`pkg::css::values`** holds the 55 longhands as `lh_*` numbers, the
   `Declared` value of a declaration, a `DeclarationStore` of declarations and
-  family names, and the seven computed groups of `design/vocabulary.md`.
+  family names, and the seven value groups of `design/vocabulary.md`; the
+  eighth, the custom properties, is `pkg::style`'s set of each element.
   `parse_declaration` expands a longhand or one of the shorthands in scope,
   `inset` added for the user-agent sheet's `[popover]` rule, and records a
   value holding `var()` as `Pending`, its sheet and component range.
@@ -150,7 +154,7 @@ The modules' interfaces are their `module.wfm` files; in short:
 
 ## How the three parts keep only true dependencies
 
-Written while implementing Q47 and Q50; each follows from those rulings and
+Each follows from Q47 and Q50 and
 the parallelism rule of `AGENTS.md`, and none changes them.
 
 - **Fixed output per element in the parallel loops.** An iteration of a
@@ -167,10 +171,18 @@ the parallelism rule of `AGENTS.md`, and none changes them.
   is the same, as both loops are parallel.
 - **Custom properties are chosen in the pass in document order.** They are
   inherited and their number per element is not bounded, so the first loop
-  records only which custom-property rules matched; the pass in document
-  order picks the winning value per name, substitutes `var()` in it against
+  records, per element, the specificity with which each rule that sets
+  custom properties matched, one word per such rule, so its memory grows with
+  elements times those rules; the pass in document
+  order matches nothing again, picks the winning value per name, substitutes `var()` in it against
   the parent's set and the element's own, and shares the parent's set when
   the element declares none.
+- **A custom property that refers to itself, or to one that refers back to
+  it, is invalid**, fallback or not: it waits on itself until the rounds run
+  out.
+- **The custom-property sets are interned by their entries** as the eighth
+  task beside the seven value groups, so equal sets declared apart get one
+  identifier.
 - **`var()` in a value is substituted on text.** The value's components are
   written back as CSS text with the custom property's text in place of each
   `var()`, an empty comment on either side so no two tokens merge, and the
@@ -207,7 +219,11 @@ user-agent sheet (`renderer/style/ua.css`):
 | html5 | 117,179 | border-top, -right and -left-color 96.71% | line-height 99.81% |
 | apollo11 | 11,845 | the four border colors 98.17% | font-family 99.24%, color 99.31% |
 
-Every page has the same element count in both. With Chromium's rule
+Every page has the same element count in both. `tests/css/style-cases.html`,
+65 elements that exercise what the pages use little (`var()` fallbacks and
+cycles, `calc()`, media query ranges, `@supports`, explicit `inherit`,
+keyword font sizes with and without monospace), matches on every property
+but the border colors of its tables and their rows, the same rule's. With Chromium's rule
 `table { border-color: gray }` added to a copy of the sheet, and nothing else
 changed, every property matches on at least 99 percent of the elements of
 every page (html5's border colors 100%, apollo11's 99.31%), so that rule
@@ -244,47 +260,87 @@ The classes of mismatch, with their causes:
 ### Criterion 2: speed
 
 Per-run times in seconds, the best of three runs, on a 4-processor Linux
-host (`runs/time-parts.txt`, written by `run.sh time`). Each part is the
-difference between the mode that ends with it and the one before, so a part
-of a few hundredths is within the runs' noise; some come out negative.
+host, measured on this change's final code (`runs/time-parts.txt`, written
+by `run.sh time`). Each part is the difference between the mode that ends
+with it and the one before, so a part of a few hundredths is within the
+runs' noise; one comes out negative.
 
 | Page | Build | Matching | Pass in document order | Third part | Interning | Stage |
 |---|---|---:|---:|---:|---:|---:|
-| ecma262 | 4 workers | 0.320 | 0.158 | 0.052 | 0.146 | 0.676 |
-| ecma262 | sequential | 1.118 | 0.116 | 0.128 | 0.136 | 1.498 |
-| html5 | 4 workers | 0.394 | 0.042 | 0.010 | 0.114 | 0.560 |
-| html5 | sequential | 1.302 | 0.106 | 0.028 | 0.086 | 1.522 |
-| apollo11 | 4 workers | 0.195 | 0.016 | 0.007 | 0.003 | 0.221 |
-| apollo11 | sequential | 0.732 | 0.004 | 0.014 | -0.025 | 0.725 |
+| ecma262 | 4 workers | 0.300 | 0.164 | 0.080 | 0.088 | 0.632 |
+| ecma262 | sequential | 1.102 | 0.170 | 0.140 | 0.104 | 1.516 |
+| html5 | 4 workers | 0.366 | 0.040 | 0.038 | 0.060 | 0.504 |
+| html5 | sequential | 1.328 | 0.048 | 0.088 | 0.012 | 1.476 |
+| apollo11 | 4 workers | 0.179 | 0.007 | 0.014 | 0.005 | 0.205 |
+| apollo11 | sequential | 0.712 | 0.014 | 0.004 | 0.015 | 0.745 |
 
 - **Against the prototype's shape C** (0.224, 0.180 and 0.202 s at four
-  workers), the stage takes 3.0, 3.1 and 1.1 times as long. The prototype
+  workers), the stage takes 2.8, 2.8 and 1.0 times as long. The prototype
   parsed four keywords and stored the rest as hashes, without specificity,
   `!important`, `var()` or computed values; its matching was the same
-  shape and index. Matching alone now takes 0.320, 0.394 and 0.195 s. It
-  scales 3.5, 3.4 and 3.8 times from one worker to four.
-- **Static specificity.** Matching a rule whose alternatives share one
-  specificity with the boolean matcher, and reading that specificity from
-  the rule, left every dump unchanged and made matching at four workers
-  4, 13 and 5 percent faster (0.306, 0.344 and 0.185 s,
-  `runs/time-uniform-specificity.txt`), so the rest of matching's cost
-  over the prototype's is not the specificity; it is not attributed yet.
-- **The pass in document order** is 23 percent of the four-worker stage on
-  ecma262 and 7 percent on the other two. On ecma262 that is the large share
-  criterion 2 names, so the cascade pass's case for Whitefoot's
+  shape and index. Matching scales 3.7, 3.6 and 3.9 times from one worker
+  to four.
+- **Static specificity.** A first run, before the last changes
+  (`runs/time-parts-first.txt`), took 0.320, 0.394 and 0.195 s to match at
+  four workers. Matching a rule whose alternatives share one specificity
+  with the boolean matcher, and reading that specificity from the rule, left
+  every dump unchanged and gave 0.306, 0.344 and 0.185 s
+  (`runs/time-uniform-specificity.txt`), so specificity is not most of
+  matching's cost over the prototype's; the rest is not attributed yet.
+- **The pass in document order** is 26 percent of the four-worker stage on
+  ecma262 and 8 and 3 percent on html5 and apollo11. On ecma262 that is the
+  large share criterion 2 names, so the cascade pass's case for Whitefoot's
   unique-keys investigation is made (`docs/todo.md`).
-- **Interning** is 22 and 20 percent of the four-worker stage on ecma262 and
-  html5, above the 15 percent bound of `design/vocabulary.md`, though only
-  4 and 5 percent at one worker; why it grows with workers is not known.
-  The bound's next step, interning split by hash into per-partition tables,
-  is recorded in `docs/todo.md`.
+- **Interning**, the eight tasks, is 14, 12 and 2 percent of the four-worker
+  stage in that run; with the eight calls made adjacent so the compiler
+  pairs all of them, a run of the last two modes gave 10, 17 and 7 percent
+  (0.062, 0.090 and 0.016 s, `runs/time-interning-final.txt`), and the first
+  run, with seven tasks, 22 and 20 percent on ecma262 and html5. The bound
+  of `design/vocabulary.md` is 15 percent, so the runs fall on both sides of
+  it; at one worker interning is 8, 8 and 3 percent and it hardly speeds up
+  with workers. Every run measures it as a difference of whole runs, so it
+  is timed alone next (`docs/todo.md`).
 
 ### Criterion 3: equal builds
 
 The sequential and `--par` builds wrote byte-identical dumps of all three
-pages. The compiler's parallelism ledger splits the first part's loop and the
-third part's loop into independent maps and runs the seven interning calls
-as parallel pairs.
+pages and of the cases page. The compiler's parallelism ledger, which
+`run.sh check` writes to `build/research/style/ledger.txt` and summarizes,
+splits the first part's loop and the third part's loop into independent maps
+and admits the eight interning calls as parallel pairs; whether they run in
+parallel is another matter, since interning measures no faster at four
+workers than at one (criterion 2).
+
+## Open for the owner
+
+- **Chromium's `table { border-color: gray }`.** With the HTML Standard's
+  sheet, html5 and apollo11 fail criterion 1 on the border colors alone,
+  and with this one rule added both pass (criterion 1 above). Keeping the
+  Standard's sheet records the difference, as the scope says; adding the
+  rule makes the stage match the reference on every page.
+- **`ex` and `ch`.** Taken as half an em, as CSS allows without font
+  metrics, they put 13,306 of ecma262's 179,471 elements (7.4 percent) off
+  in `margin-right`, by up to 15 percent (`runs/ex-half-em.txt`). The
+  reference resolves them from the x-height and the zero's advance of the
+  first available font: for ecma262's `emu-nt` at 18px, Liberation Serif's
+  OS/2 x-height of 940 of 2,048 units gives 0.5ex = 4.13086px, the value it
+  reports. The stage now takes them from the first generic family of each
+  element's list as the environment's default fonts measure it (Liberation
+  Serif 940 and 1,024 units, Liberation Sans 1,082 and 1,139, DejaVu Sans
+  Mono 1,120, its x glyph's height as it has no OS/2 x-height, rounded up to
+  whole pixels as the reference does, and 1,233, read from the fonts'
+  `OS/2`, `glyf` and `hmtx` tables), which gives 100 percent on those
+  margins; the decision is in `design/pipeline/style.md`, provisional until
+  the font stage matches families. The metrics are those of the reference's
+  host, so this criterion's result for `ex` and `ch` is tuned to it.
+- **Where lengths become `LayoutUnit`.** `design/vocabulary.md` rounds a CSS
+  length to 1/64 of a pixel once, at computed-value time. The stage keeps
+  computed lengths as `f32` pixels: the reference's `computedStyleMap`
+  reports them unrounded (4.13086px), and percentages and `calc()` with
+  them already wait for layout (Q49), so layout reads every length anyway.
+  The proposal is to round when layout reads a computed length, the one
+  rounding the decision asks for, moved to layout's input; until the owner
+  decides, the stage departs from the decision there.
 
 ## Owner rulings
 
@@ -303,6 +359,5 @@ as parallel pairs.
   - Q50: the stage in three parts, the pass in document order holding only
     what depends on the parent.
   The tree records Q47, Q48, Q49 and Q50 in `design/pipeline/style.md` and
-  `design/vocabulary.md`; their log entry is written with the stage's
-  completion. The owner also asked that `AGENTS.md` require every design
+  `design/vocabulary.md`. The owner also asked that `AGENTS.md` require every design
   choice to start from its candidates' dependencies (mbbill/Snowghost#25).

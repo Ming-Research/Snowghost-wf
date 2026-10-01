@@ -4,8 +4,11 @@
 #   run.sh check [PAGE...]      builds the style_oracle driver sequentially
 #                               and with --par, dumps every page with both,
 #                               requires the two dumps to be byte-identical
-#                               (criterion 3) and compares the dump with
-#                               Chromium's (criterion 1)
+#                               (criterion 3), compares the dump with
+#                               Chromium's (criterion 1) and prints the
+#                               parallelism ledger's lines for the stage's
+#                               loops and interning calls; it exits with 1
+#                               when a page misses criterion 1 or 3
 #   run.sh time [PAGE [REPS]]   builds both drivers and times the stage's
 #                               parts on every page, or on PAGE (criterion 2)
 #
@@ -78,7 +81,7 @@ reps_of() {
 
 build() {
 	mkdir -p "$out"
-	(cd renderer && "$compiler" --par --graph modules.wfg --entry style_oracle -o ../build/style_oracle_par)
+	(cd renderer && "$compiler" --par --par-ledger --graph modules.wfg --entry style_oracle -o ../build/style_oracle_par) >"$out/ledger.txt"
 	(cd renderer && "$compiler" --graph modules.wfg --entry style_oracle -o ../build/style_oracle)
 }
 
@@ -98,6 +101,8 @@ check() {
 		echo "$page: against Chromium"
 		node tests/css/style_oracle.mjs compare "$oracle/$page.chromium.tsv" "$out/$page.seq.tsv" || status=1
 	done
+	echo "parallelism ledger ($out/ledger.txt):"
+	grep -E 'PAR split +style\.|pair\(intern_[a-z_]*, intern_[a-z_]*\)' "$out/ledger.txt" || true
 	return $status
 }
 

@@ -26,8 +26,8 @@ example apart from the renderer code that exposed it
   affine key that only its container mints, so that two places hold two
   different keys, studied in Whitefoot as its own investigation against
   monotone containers and a built-in partition. The real style stage's
-  pass in document order takes 0.158 s, 23 percent of the four-worker stage,
-  on ecma262 and 7 percent on html5 and apollo11
+  pass in document order takes 0.164 s, 26 percent of the four-worker stage,
+  on ecma262 and 8 and 3 percent on html5 and apollo11
   (`research/investigations/style/DESIGN.md`, criterion 2). Reopen the
   cascade when Whitefoot settles it.
 
@@ -82,18 +82,18 @@ example apart from the renderer code that exposed it
   the time goes, and if it is the extra parameter, give the positions to
   the nth helpers another way; reopen when `selector_matches` is on a hot
   path outside the prototype.
-- **Interning passes its bound at four workers.** On the real style stage
-  the seven interning tasks take 0.146 and 0.114 s of the four-worker stage
-  on ecma262 and html5, 22 and 20 percent, against 4 and 5 percent at one
-  worker and the 15 percent bound of `design/vocabulary.md`
-  (`research/investigations/style/DESIGN.md`, criterion 2). Why it grows
-  with workers is not known; the parts are differences of whole runs.
-  Change: time interning alone with its own mode, then, if it stays above
-  the bound, split each table by hash into partitions interned in parallel,
-  as criterion 2 prescribes. Reopen before the style stage is measured
-  against another engine.
-- **Matching costs more than the prototype's.** Matching takes 0.306,
-  0.344 and 0.185 s at four workers on ecma262, html5 and apollo11, against
+- **Interning is timed only as a difference of whole runs.** Three runs on
+  the real style stage put the interning tasks at 10 to 22 percent of the
+  four-worker stage on ecma262 and html5 and under 8 percent on apollo11,
+  on both sides of the 15 percent bound of `design/vocabulary.md`, and
+  interning hardly speeds up with workers
+  (`research/investigations/style/DESIGN.md`, criterion 2). Change: time
+  interning alone with its own mode, and if it passes the bound, split each
+  table by hash into partitions interned in parallel, as criterion 2
+  prescribes. Reopen before the style stage is measured against another
+  engine.
+- **Matching costs more than the prototype's.** Matching takes 0.300,
+  0.366 and 0.179 s at four workers on ecma262, html5 and apollo11, against
   0.224, 0.180 and 0.202 s for the prototype's whole shape C, with the same
   index and shape; specificity accounts for at most 13 percent of it. The
   user-agent sheet now holds 147 rules, against the prototype's display
@@ -124,6 +124,15 @@ example apart from the renderer code that exposed it
   bytes could be copied whole, which shortens parsing's chain without
   parallelism. The owner placed it after style. Reopen when parsing is the
   next sequential cost studied.
+
+- **The user-agent sheet's rules match every namespace, and only HTML
+  style elements are read.** `pkg::style::add_sheet` skips `@namespace`, so
+  `ua.css`'s `@namespace` for HTML does not restrict its rules: an SVG
+  `title` takes `title { display: none }` (one element of ecma262), and
+  `sheet_sources` lists only `style` elements in the HTML namespace, not
+  SVG's. Change: give a sheet's default namespace to the selector parser
+  and read SVG style elements. Reopen when an SVG-heavy page joins the
+  corpus.
 
 - **Component walking helpers are written twice.** `pkg::css::values`
   (`tokens.wf`, `components.wf`) and `pkg::style` (`components.wf`) each
