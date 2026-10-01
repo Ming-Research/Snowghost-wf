@@ -385,6 +385,37 @@ fn flex_scrolls(styles: &Styles, style: StyleRef, row: Bool) -> scrolling: Bool 
   return made;
 }
 
+fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(styles), reads(child) {
+  doc "The border-box height an item's content needs, its automatic height, as the lowest bottom edge of its laid-out child contexts (with their bottom margins), paragraphs and block boxes below its paddings and borders, plus them; an approximation that sees no margin collapsing through the item's edges. A column item with a given height needs it for its automatic minimum size, where the laid-out height is the given one.";
+  let style = child^.style;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: child^.space.basis_width);
+  let top_frame = border.top +sat padding.top;
+  let frame_border = vertical(edges: border);
+  let frame_padding = vertical(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let bottom = top_frame;
+  let children = child^.children.inner.len;
+  for (c in 0_u64..children) {
+    let below = child^.children.inner[c].y +sat child^.children.inner[c].height;
+    let edge = below +sat child^.children.inner[c].margin_bottom;
+    set bottom = imax(bottom, edge);
+  }
+  let paragraphs = child^.paragraphs.inner.len;
+  for (p in 0_u64..paragraphs) {
+    let edge = child^.paragraphs.inner[p].top +sat child^.paragraphs.inner[p].height;
+    set bottom = imax(bottom, edge);
+  }
+  let blocks = child^.blocks.inner.len;
+  for (b in 0_u64..blocks) {
+    let edge = child^.blocks.inner[b].y +sat child^.blocks.inner[b].height;
+    set bottom = imax(bottom, edge);
+  }
+  let inner = bottom -sat top_frame;
+  let made = inner +sat frame;
+  return made;
+}
+
 fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
   doc "Gives one child of a flex container its space and, for a flex item, everything the flex algorithm needs of it before flexing (CSS Flexbox 9.2 and 9.3): its margins, paddings, borders and flex factors in the container's axes, its flex base size from flex-basis, width or height, or its content (in a column by laying it out at its cross size, which is kept as its natural layout), its minimum and maximum main sizes with the automatic minimum of 4.5, its hypothetical main size, its cross limits and its alignment. It reads and writes only this child and this item, so a counted loop runs it for every child.";
   let style = child^.style;
@@ -555,8 +586,13 @@ fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
       set child^.space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: natural_forced, forced_height: unknown, shrink: yes);
       lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
       set natural_main = child^.height;
-      set content_least = child^.height;
-      set content_most = child^.height;
+      let content_height = if spec_known {
+        give flex_content_height(child: child, styles: styles);
+      } else {
+        give child^.height;
+      }
+      set content_least = content_height;
+      set content_most = content_height;
     }
   }
   let base_content = if row {
@@ -1280,12 +1316,65 @@ fn flex_shift(styles: &Styles, style: StyleRef, basis_width: i32, basis_height: 
   return FlexOffset(dx: dx, dy: dy);
 }
 
+fn flex_static(child: &Context, styles: &Styles, setup: FlexBox, main_total: i32, cross_total: i32) -> spot: FlexOffset reads(styles), reads(child) {
+  doc "The static position of an absolutely positioned child of a flex container (CSS Flexbox 4.1): where its margin box would sit as the only flex item, justified along the main axis by justify-content and aligned along the cross axis by its align-self, as the offset of its border box from the content box's origin.";
+  let group = item_of(styles: styles, style: child^.style);
+  let wanted = if group.align_self == align_auto {
+    give setup.align_items;
+  } else {
+    give group.align_self;
+  }
+  let place_cross = flex_place(value: wanted, reversed: setup.wrap_reverse);
+  let main_size = if setup.row {
+    give child^.width;
+  } else {
+    give child^.height;
+  }
+  let cross_size = if setup.row {
+    give child^.height;
+  } else {
+    give child^.width;
+  }
+  let margin_across = child^.margin_left +sat child^.margin_right;
+  let margin_down = child^.margin_top +sat child^.margin_bottom;
+  let main_margins = flex_axis_i32(row: setup.row, horizontal_value: margin_across, vertical_value: margin_down);
+  let cross_margins = flex_axis_i32(row: setup.row, horizontal_value: margin_down, vertical_value: margin_across);
+  let main_used = main_size +sat main_margins;
+  let cross_used = cross_size +sat cross_margins;
+  let main_free = main_total -sat main_used;
+  let cross_free = cross_total -sat cross_used;
+  let main_logical = if setup.justify_content == flex_at_end {
+    give main_free;
+  } else if setup.justify_content == flex_at_center {
+    give main_free / 2_i32;
+  } else {
+    give 0_i32;
+  }
+  let cross_logical = if place_cross == flex_at_end {
+    give cross_free;
+  } else if place_cross == flex_at_center {
+    give cross_free / 2_i32;
+  } else {
+    give 0_i32;
+  }
+  let main_mirrored = main_free -sat main_logical;
+  let cross_mirrored = cross_free -sat cross_logical;
+  let main_offset = flex_pick(flip: setup.reverse, first: main_logical, second: main_mirrored);
+  let cross_offset = flex_pick(flip: setup.wrap_reverse, first: cross_logical, second: cross_mirrored);
+  let across = flex_axis_i32(row: setup.row, horizontal_value: main_offset, vertical_value: cross_offset);
+  let down = flex_axis_i32(row: setup.row, horizontal_value: cross_offset, vertical_value: main_offset);
+  let dx = across +sat child^.margin_left;
+  let dy = down +sat child^.margin_top;
+  return FlexOffset(dx: dx, dy: dy);
+}
+
 fn flex_position(child: &Context, item: &FlexItem, styles: &Styles, setup: FlexBox, content_left: i32, content_top: i32, main_total: i32, cross_total: i32) -> result: unit reads(styles), reads(item), writes(child) {
   doc "Sets the offset of one child's border box from the container's border box: a flex item at its main and cross positions, mirrored along an axis that runs against the writing direction and moved by its relative offset; an absolutely positioned child at the content box's origin, its static position. It reads and writes only this child and this item.";
   if item^.active {
   } else {
-    set child^.x = content_left;
-    set child^.y = content_top;
+    let spot = flex_static(child: child, styles: styles, setup: setup, main_total: main_total, cross_total: cross_total);
+    set child^.x = content_left +sat spot.dx;
+    set child^.y = content_top +sat spot.dy;
     return unit;
   }
   let main_size = if setup.row {
