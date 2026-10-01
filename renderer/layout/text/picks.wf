@@ -1,0 +1,344 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Family = pkg::css::values::Family;
+alias FontGroup = pkg::css::values::FontGroup;
+alias face_metrics = pkg::font::face_metrics;
+alias glyph_advance = pkg::font::glyph_advance;
+alias nominal_glyph = pkg::font::nominal_glyph;
+
+struct AdvanceScale {
+  doc "How the reference turns a face's advances in font units into px at one size: x_scale is FreeType's 16.16 scale of font units to 26.6 px for the size truncated to 1/64 px, which gives a glyph's linear advance, and kern_mult is HarfBuzz's multiplier of a positioning adjustment in font units to 16.16 px, (size in 16.16 << 16) / units per em.";
+  x_scale: i64;
+  kern_mult: i64;
+}
+
+const size_ceiling: f32 = 1.0e4_f32;
+
+const delta_ceiling: i64 = 1048576_i64;
+
+const delta_floor: i64 = -1048576_i64;
+
+fn quantized_size(size: f32) -> result: f32 pure {
+  doc "Returns the size the reference draws text of size px with: its font platform data is keyed by the size times 100 truncated, and the face is created at that key divided by 100, all in f32; a size outside 0 to size_ceiling, or NaN, is clamped into it.";
+  let positive = fgt(size, 0.0_f32);
+  let bounded = fle(size, size_ceiling);
+  let usable = band(positive, bounded);
+  if usable {
+    let hundred = fmul.strict(size, 1.0e2_f32);
+    let truncated = ftrunc(hundred);
+    let quantized = fdiv.strict(truncated, 1.0e2_f32);
+    return quantized;
+  }
+  let large = fgt(size, size_ceiling);
+  if large {
+    return size_ceiling;
+  }
+  return 0.0_f32;
+}
+
+fn whole_f32(value: f32) -> result: i64 pure {
+  doc "Returns value, a whole number of at most 2^40 in magnitude, as i64, and 0 for any other value.";
+  match cvt.checked::<f32, i64>(value) {
+    Ok(value: whole) => {
+      let low = whole >= -1099511627776_i64;
+      let high = whole <= 1099511627776_i64;
+      let inside = band(low, high);
+      if inside {
+        return whole;
+      }
+      return 0_i64;
+    }
+    Err(error: refusal) => {
+      return 0_i64;
+    }
+  }
+}
+
+fn advance_scale(size: f32, units_per_em: u16) -> result: AdvanceScale pure {
+  doc "Computes the scale of a face of units_per_em at size px as the reference sets it up: Skia passes FreeType the quantized size truncated to 26.6, FreeType's x_scale is FT_DivFix of it by units per em, rounded, and Blink gives HarfBuzz the quantized size in 16.16, truncated.";
+  let upem = cvt::<u16, i64>(units_per_em);
+  if upem <= 0_i64 {
+    let none = AdvanceScale(x_scale: 0_i64, kern_mult: 0_i64);
+    return none;
+  }
+  let quantized = quantized_size(size: size);
+  let scaled26 = fmul.strict(quantized, 64.0_f32);
+  let truncated26 = ftrunc(scaled26);
+  let size26 = whole_f32(value: truncated26);
+  let scaled16 = fmul.strict(quantized, 65536.0_f32);
+  let truncated16 = ftrunc(scaled16);
+  let size16 = whole_f32(value: truncated16);
+  let half = upem / 2_i64;
+  let shifted26 = size26 *wrap 65536_i64;
+  let rounded26 = shifted26 +wrap half;
+  let x_scale = rounded26 / upem;
+  let shifted16 = size16 *wrap 65536_i64;
+  let kern_mult = shifted16 / upem;
+  let made = AdvanceScale(x_scale: x_scale, kern_mult: kern_mult);
+  return made;
+}
+
+fn glyph_px(scale: AdvanceScale, nominal: u16, shaped: i32) -> result: f32 pure {
+  doc "Returns the advance in px the reference gives a glyph whose hmtx advance is nominal and whose shaped advance, after positioning, is shaped, both in font units: Skia's linear advance, FreeType's FT_MulDiv of the nominal advance by x_scale over 64 rounded, as Blink's callback hands it to HarfBuzz (16.16, truncated from Skia's f32), plus HarfBuzz's scaling of the positioning adjustment, (adjustment * kern_mult + 32768) >> 16, converted to f32 and divided by 65536. A glyph whose shaped advance is 0 (a mark the shaper zeroed) advances 0.";
+  if shaped == 0_i32 {
+    return 0.0_f32;
+  }
+  let units = cvt::<u16, i64>(nominal);
+  let product = units *wrap scale.x_scale;
+  let biased = product +wrap 32_i64;
+  let linear = biased / 64_i64;
+  let skia = cvt.nearest::<i64, f32>(linear);
+  let handed = whole_f32(value: skia);
+  let shaped64 = cvt::<i32, i64>(shaped);
+  let raw_delta = shaped64 -wrap units;
+  let low_delta = imax(raw_delta, delta_floor);
+  let delta = imin(low_delta, delta_ceiling);
+  let scaled = delta *wrap scale.kern_mult;
+  let biased_kern = scaled +wrap 32768_i64;
+  let kern = ishr.wrap(biased_kern, 16_u32);
+  let position = handed +wrap kern;
+  let wide = cvt.nearest::<i64, f32>(position);
+  let px = fdiv.strict(wide, 65536.0_f32);
+  return px;
+}
+
+fn nominal_px(fonts: &FontSet, face: u64, scalar: u32, size: f32) -> result: f32 reads(fonts) {
+  doc "Returns the advance in px of the glyph face maps scalar to, unshaped, at size px; 0 for a face outside the set.";
+  let count = fonts^.faces.inner.len;
+  if face < count {
+    let glyph = nominal_glyph(face: &fonts^.faces.inner[face].face, scalar: scalar);
+    let nominal = glyph_advance(face: &fonts^.faces.inner[face].face, glyph: glyph);
+    let metrics = face_metrics(face: &fonts^.faces.inner[face].face);
+    let scale = advance_scale(size: size, units_per_em: metrics.units_per_em);
+    let shaped = cvt::<u16, i32>(nominal);
+    let px = glyph_px(scale: scale, nominal: nominal, shaped: shaped);
+    return px;
+  }
+  return 0.0_f32;
+}
+
+fn round_half_up(value: f32) -> result: f32 pure {
+  doc "Rounds value to a whole number as Skia's SkScalarRoundToScalar does, floor(value + 0.5) in f32.";
+  let raised = fadd.strict(value, 0.5_f32);
+  let rounded = ffloor(raised);
+  return rounded;
+}
+
+fn face_extents(fonts: &FontSet, face: u32, size: f32, synthetic_bold: Bool) -> extents: FontExtents reads(fonts) {
+  doc "Scales the face's vertical metrics by the quantized size in f32 as Skia does (units / units per em, times the size) and rounds ascent, descent and line gap half up; when the rounded descent is below the unrounded one and the rounded ascent is at least 1, moves 1 px from the ascent to the descent, as Blink does on Linux with subpixel positioning. The x-height is the OS/2 sxHeight scaled, or 0.56 times the rounded ascent, Blink's fallback, for a face whose OS/2 table has none; Skia measures the hinted x glyph instead, which this does not reproduce. Synthetic bold changes no metric or advance in the reference, so synthetic_bold is not read.";
+  let index = cvt::<u32, u64>(face);
+  let count = fonts^.faces.inner.len;
+  if index >= count {
+    let zeros = FontExtents(ascent: 0.0_f32, descent: 0.0_f32, line_gap: 0.0_f32, x_height: 0.0_f32, zero_advance: 0.0_f32, space_advance: 0.0_f32);
+    return zeros;
+  }
+  let metrics = face_metrics(face: &fonts^.faces.inner[index].face);
+  let upem = cvt::<u16, f32>(metrics.units_per_em);
+  let quantized = quantized_size(size: size);
+  let ascender = cvt::<i16, f32>(metrics.hhea_ascender);
+  let descender = cvt::<i16, f32>(metrics.hhea_descender);
+  let gap = cvt::<i16, f32>(metrics.hhea_line_gap);
+  if metrics.use_typo_metrics {
+    set ascender = cvt::<i16, f32>(metrics.typo_ascender);
+    set descender = cvt::<i16, f32>(metrics.typo_descender);
+    set gap = cvt::<i16, f32>(metrics.typo_line_gap);
+  }
+  let ascent_em = fdiv.strict(ascender, upem);
+  let descent_units = fneg(descender);
+  let descent_em = fdiv.strict(descent_units, upem);
+  let gap_em = fdiv.strict(gap, upem);
+  let ascent_raw = fmul.strict(ascent_em, quantized);
+  let descent_raw = fmul.strict(descent_em, quantized);
+  let gap_raw = fmul.strict(gap_em, quantized);
+  let ascent = round_half_up(value: ascent_raw);
+  let descent = round_half_up(value: descent_raw);
+  let line_gap = round_half_up(value: gap_raw);
+  let rounded_down = flt(descent, descent_raw);
+  let room = fge(ascent, 1.0_f32);
+  let borrow = band(rounded_down, room);
+  let final_ascent = ascent;
+  let final_descent = descent;
+  if borrow {
+    set final_ascent = fsub.strict(ascent, 1.0_f32);
+    set final_descent = fadd.strict(descent, 1.0_f32);
+  }
+  let x_units = fonts^.faces.inner[index].x_height;
+  let has_x = x_units > 0_i16;
+  let x_height = fmul.strict(final_ascent, 0.56_f32);
+  if has_x {
+    let x_float = cvt::<i16, f32>(x_units);
+    let x_em = fdiv.strict(x_float, upem);
+    set x_height = fmul.strict(x_em, quantized);
+  }
+  let zero_advance = nominal_px(fonts: fonts, face: index, scalar: 48_u32, size: size);
+  let space_advance = nominal_px(fonts: fonts, face: index, scalar: 32_u32, size: size);
+  let extents = FontExtents(ascent: final_ascent, descent: final_descent, line_gap: line_gap, x_height: x_height, zero_advance: zero_advance, space_advance: space_advance);
+  return extents;
+}
+
+fn chain_holds(chain: &Box<Slots<u32>>, face: u32) -> result: Bool reads(chain) {
+  doc "Tells whether chain already lists face.";
+  let length = chain^.inner.len;
+  for (index in 0_u64..length) {
+    let listed = chain^.inner[index];
+    if listed == face {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn chain_add(chain: &Box<Slots<u32>>, face: u32) -> result: unit writes(chain) {
+  doc "Appends face to chain when chain has room and does not list it yet; group_chain sizes chain for every face of the set.";
+  let listed = chain_holds(chain: chain, face: face);
+  let room = chain^.inner.len < chain^.inner.cap;
+  let fresh = bnot(listed);
+  let add = band(room, fresh);
+  if add {
+    place_back(window: &chain^.inner, value: face);
+  }
+  return unit;
+}
+
+fn group_chain(fonts: &FontSet, group: FontGroup, families: &[Family], atoms: &AtomTable) -> chain: Box<Slots<u32>> reads(fonts), reads(families), reads(atoms) {
+  doc "Returns the faces that draw text of group in priority order: the face each entry of its family list resolves to and matches, in list order and without repeats, then Liberation Serif's when the list resolved to none, then every remaining face of the set in the order it was added. It depends on group alone, so the groups' chains are independent of one another.";
+  let count = fonts^.faces.inner.len;
+  let fits = count < face_limit;
+  let capacity = 0_u64;
+  if fits {
+    set capacity = count;
+  }
+  let chain = box_slots_new::<u32>(capacity: capacity);
+  let start = cvt::<u32, u64>(group.families_start);
+  let listed_end = cvt::<u32, u64>(group.families_end);
+  let available = families^.len;
+  let end = imin(listed_end, available);
+  let resolved = False();
+  let empty = &serif_word[0_u64..0_u64];
+  for (position in start..end) {
+    let family = families^[position];
+    let atom = cvt::<u32, u64>(family.name.index);
+    let atom_count = atoms^.spans.inner.len;
+    if atom < atom_count {
+      let span = atoms^.spans.inner[atom];
+      let name_start = cvt::<u32, u64>(span.start);
+      let name_end = cvt::<u32, u64>(span.end);
+      let text_length = atoms^.text.inner.len;
+      let ordered = name_start <= name_end;
+      let inside = name_end <= text_length;
+      let valid = band(ordered, inside);
+      if valid {
+        let name = &atoms^.text.inner[name_start..name_end];
+        let code = resolve_family(name: name, generic: family.generic);
+        let known = code != no_family;
+        if known {
+          let face = match_family(fonts: fonts, code: code, name: name, weight: group.weight, style: group.style);
+          let found = face != no_face;
+          if found {
+            set resolved = True();
+            chain_add(chain: &chain, face: face);
+          }
+        }
+      }
+    }
+  }
+  if resolved {
+  } else {
+    let default_face = match_family(fonts: fonts, code: liberation_serif, name: empty, weight: group.weight, style: group.style);
+    let found = default_face != no_face;
+    if found {
+      chain_add(chain: &chain, face: default_face);
+    }
+  }
+  for (index in 0_u64..capacity) {
+    let face = cvt::<u64, u32>(index);
+    chain_add(chain: &chain, face: face);
+  }
+  return move chain;
+}
+
+fn pick_fonts(fonts: &FontSet, groups: &[FontGroup], families: &[Family], atoms: &AtomTable) -> result: Result<FontPicks, TextError> reads(fonts), reads(groups), reads(families), reads(atoms) {
+  doc "Gives every group a region of chain as long as the set has faces, at the group's index times that stride, so that no group's span depends on another's chain; each group's choice and its region are written by its own iteration.";
+  let count = groups^.len;
+  let stride = fonts^.faces.inner.len;
+  let few_groups = count < entry_limit;
+  let few_faces = stride < face_limit;
+  let small = band(few_groups, few_faces);
+  if small {
+  } else {
+    let too_large = TextError::TooLarge();
+    return Err<FontPicks, TextError>(error: too_large);
+  }
+  let total = count * stride;
+  if total > entry_limit {
+    let too_large = TextError::TooLarge();
+    return Err<FontPicks, TextError>(error: too_large);
+  }
+  let chain = box_slots_new::<u32>(capacity: total);
+  for (
+    index in 0_u64..total,
+    invariant filled: chain.inner.len == index
+  ) {
+    place_back(window: &chain.inner, value: 0_u32);
+  }
+  let choices = box_slots_new::<FontChoice>(capacity: count);
+  for (
+    index in 0_u64..count,
+    invariant chosen: choices.inner.len == index
+  ) {
+    let group = groups^[index];
+    let own = group_chain(fonts: fonts, group: group, families: families, atoms: atoms);
+    let base = index * stride;
+    let length = own.inner.len;
+    let listed = imin(length, stride);
+    let region_end = base + listed;
+    let chain_length = chain.inner.len;
+    for (offset in 0_u64..listed) {
+      let at = base + offset;
+      let inside = at < chain_length;
+      let held = offset < own.inner.len;
+      let writable = band(inside, held);
+      if writable {
+        let face = own.inner[offset];
+        set chain.inner[at] = face;
+      }
+    }
+    let first = cvt.wrap::<u64, u32>(base);
+    let end = cvt.wrap::<u64, u32>(region_end);
+    let italic = group.style != 0_u8;
+    let choice = FontChoice(first: first, end: end, size: group.size, weight: group.weight, italic: italic);
+    place_back(window: &choices.inner, value: choice);
+  }
+  let picks = FontPicks(choices: move choices, chain: move chain);
+  return Ok<FontPicks, TextError>(value: move picks);
+}
+
+fn primary_face(fonts: &FontSet, picks: &FontPicks, font: u32) -> face: u32 reads(fonts), reads(picks) {
+  doc "Walks font's span of chain for the first face that maps U+0020; the span's first face when none does, and 0 for a font outside picks or an empty span.";
+  let index = cvt::<u32, u64>(font);
+  let count = picks^.choices.inner.len;
+  if index >= count {
+    return 0_u32;
+  }
+  let choice = picks^.choices.inner[index];
+  let first = cvt::<u32, u64>(choice.first);
+  let listed_end = cvt::<u32, u64>(choice.end);
+  let chain_length = picks^.chain.inner.len;
+  let end = imin(listed_end, chain_length);
+  let faces = fonts^.faces.inner.len;
+  for (position in first..end) {
+    let face = picks^.chain.inner[position];
+    let face_index = cvt::<u32, u64>(face);
+    if face_index < faces {
+      let glyph = nominal_glyph(face: &fonts^.faces.inner[face_index].face, scalar: space_scalar);
+      let mapped = glyph != 0_u16;
+      if mapped {
+        return face;
+      }
+    }
+  }
+  if first < end {
+    let face = picks^.chain.inner[first];
+    return face;
+  }
+  return 0_u32;
+}
