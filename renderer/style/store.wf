@@ -1,0 +1,945 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias Links = pkg::dom::Links;
+alias NodeId = pkg::dom::NodeId;
+alias RuleItem = pkg::css::rules::RuleItem;
+alias RuleItems = pkg::css::rules::RuleItems;
+alias Span = pkg::css::syntax::Span;
+alias TextSpan = pkg::dom::TextSpan;
+alias atom_href = pkg::base::static_atoms::atom_href;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias atom_link = pkg::base::static_atoms::atom_link;
+alias atom_media = pkg::base::static_atoms::atom_media;
+alias atom_rel = pkg::base::static_atoms::atom_rel;
+alias atom_style = pkg::base::static_atoms::atom_style;
+alias atom_type = pkg::base::static_atoms::atom_type;
+alias declaration_store_new = pkg::css::values::declaration_store_new;
+alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_declaration = pkg::css::values::parse_declaration;
+alias parse_declaration_list = pkg::css::rules::parse_declaration_list;
+alias parse_one_declaration = pkg::css::rules::parse_one_declaration;
+alias parse_rule_list = pkg::css::rules::parse_rule_list;
+alias parse_selector_list = pkg::css::selectors::parse_selector_list;
+alias parse_stylesheet = pkg::css::rules::parse_stylesheet;
+
+const rule_ceiling: u64 = 4194304_u64;
+
+const nesting_ceiling: u64 = 16777216_u64;
+
+const sheet_ceiling: u64 = 16777216_u64;
+
+const no_slot: u32 = 4294967295_u32;
+
+const group_words: Array<u8, 14> = "media supports";
+
+const stylesheet_word: Array<u8, 10> = "stylesheet";
+
+const alternate_word: Array<u8, 9> = "alternate";
+
+const css_type_word: Array<u8, 8> = "text/css";
+
+const selector_word: Array<u8, 8> = "selector";
+
+const max_supports_depth: u64 = 16_u64;
+
+struct Pending {
+  items: RuleItems;
+  next: u64;
+}
+
+struct Added {
+  first: u32;
+  end: u32;
+  custom_first: u32;
+  custom_end: u32;
+}
+
+fn narrow_index(value: u64) -> narrowed: u32 pure {
+  doc "value as a u32, clamped to the largest u32.";
+  let fits = value <= 4294967295_u64;
+  if fits {
+    let narrowed = cvt::<u64, u32>(value);
+    return narrowed;
+  }
+  return 4294967295_u32;
+}
+
+fn too_large<T: drop>() -> result: Result<T, StyleError> pure {
+  doc "Returns the TooLarge refusal.";
+  let failure = StyleError::TooLarge();
+  return Err<T, StyleError>(error: failure);
+}
+
+fn rule_store_new() -> made: RuleStore pure {
+  doc "Returns an empty store.";
+  let sheets = box_slots_new::<Sheet>(capacity: 0_u64);
+  let rules = box_slots_new::<Rule>(capacity: 0_u64);
+  let declared = declaration_store_new();
+  let customs = box_slots_new::<CustomDeclaration>(capacity: 0_u64);
+  let custom_rules = box_slots_new::<u32>(capacity: 0_u64);
+  let attributes = box_slots_new::<AttributeStyle>(capacity: 0_u64);
+  return RuleStore(sheets: move sheets, rules: move rules, declared: move declared, customs: move customs, custom_rules: move custom_rules, attributes: move attributes);
+}
+
+fn rule_count(store: &RuleStore) -> count: u64 reads(store) {
+  doc "Returns the number of rules.";
+  return store^.rules.inner.len;
+}
+
+fn add_sheet(store: &RuleStore, source: &[u8], origin: u8, environment: Environment, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(source), writes(store), writes(atoms) contract {
+  requires source^.len <= 16777216_u64;
+} {
+  doc "Tokenizes source, parses it as a stylesheet, adds its rules and keeps its component values as the store's next sheet.";
+  let parsed = parse_component_values(source: source);
+  let list = match move parsed {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(..) => {
+      return too_large::<unit>();
+    }
+  }
+  let count = list.components.inner.len;
+  let fits = count <= 4294967295_u64;
+  if fits {
+  } else {
+    return too_large::<unit>();
+  }
+  let last = cvt::<u64, u32>(count);
+  let whole = ComponentRange(start: 0_u32, end: last);
+  let top = parse_stylesheet(values: &list, range: whole);
+  let items = match move top {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(..) => {
+      return too_large::<unit>();
+    }
+  }
+  let sheet = narrow_index(value: store^.sheets.inner.len);
+  let walked = propagate walk_rules(store: store, list: &list, items: move items, sheet: sheet, origin: origin, environment: environment, atoms: atoms);
+  let kept = Sheet(values: move list);
+  let placed = propagate push::<Sheet>(cell: &store^.sheets, value: move kept, ceiling: rule_ceiling);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn walk_rules(store: &RuleStore, list: &ComponentList, items: RuleItems, sheet: u32, origin: u8, environment: Environment, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds the style rules of items in source order, descending into each @media and @supports block whose condition holds. An explicit stack holds the rule lists still being read, the innermost on top.";
+  let stack = box_slots_new::<Pending>(capacity: 0_u64);
+  let first = Pending(items: move items, next: 0_u64);
+  let started = propagate push::<Pending>(cell: &stack, value: move first, ceiling: nesting_ceiling);
+  loop @lists {
+    let depth = stack.inner.len;
+    if depth == 0_u64 {
+      break @lists;
+    }
+    let top = depth - 1_u64;
+    let position = stack.inner[top].next;
+    let count = stack.inner[top].items.items.inner.len;
+    let more = position < count;
+    if more {
+      let item = stack.inner[top].items.items.inner[position];
+      let next = position + 1_u64;
+      set stack.inner[top].next = next;
+      let nested = propagate take_item(store: store, list: list, item: item, sheet: sheet, origin: origin, environment: environment, atoms: atoms);
+      match move nested {
+        Some(value: inner) => {
+          let frame = Pending(items: move inner, next: 0_u64);
+          let pushed = propagate push::<Pending>(cell: &stack, value: move frame, ceiling: nesting_ceiling);
+        }
+        None() => {
+        }
+      }
+    } else {
+      let finished = take_back(window: &stack.inner);
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn range_bounds(list: &ComponentList, range: ComponentRange) -> (start: u64, end: u64) reads(list) contract {
+  ensures start <= end;
+  ensures end <= list^.components.inner.len;
+} {
+  doc "The bounds of range in list, empty when it is reversed or outside the list.";
+  let start = cvt::<u32, u64>(range.start);
+  let end = cvt::<u32, u64>(range.end);
+  let length = list^.components.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let usable = band(ordered, inside);
+  if usable {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn take_item(store: &RuleStore, list: &ComponentList, item: RuleItem, sheet: u32, origin: u8, environment: Environment, atoms: &AtomTable) -> result: Result<Option<RuleItems>, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds item when it is a style rule, and returns the rule list of an @media or @supports block whose condition holds for the caller to read next; every other item adds nothing.";
+  let none = None<RuleItems>();
+  match item {
+    QualifiedRule(prelude: selectors, block: body) => {
+      let added = propagate add_rule(store: store, list: list, prelude: selectors, block: body, sheet: sheet, origin: origin, atoms: atoms);
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+    AtRule(name: rule_name, prelude: condition, block: body) => {
+      let (a, b) = text_bounds(values: list, span: rule_name);
+      let n = group_words.len;
+      let group = word_index(list: &group_words[0_u64..n], text: &list^.text.inner[a..b]);
+      let (start, end) = range_bounds(list: list, range: condition);
+      let holds = match group {
+        Some(value: i) => {
+          if i == 0_u64 {
+            give media_list_holds(values: list, start: start, end: end, environment: environment);
+          } else {
+            give supports_condition(values: list, start: start, end: end, depth: 0_u64, atoms: atoms);
+          }
+        }
+        None() => {
+          give False();
+        }
+      }
+      if holds {
+        match body {
+          Some(value: contents) => {
+            let parsed = parse_rule_list(values: list, range: contents);
+            match move parsed {
+              Ok(value: inner) => {
+                let found = Some<RuleItems>(value: move inner);
+                return Ok<Option<RuleItems>, StyleError>(value: move found);
+              }
+              Err(..) => {
+                return too_large::<Option<RuleItems>>();
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+    Declaration(..) => {
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+    Invalid() => {
+      return Ok<Option<RuleItems>, StyleError>(value: move none);
+    }
+  }
+}
+
+fn is_custom_name(list: &ComponentList, name: Span) -> custom: Bool reads(list) {
+  doc "True when the name starts with two hyphens.";
+  let (a, b) = text_bounds(values: list, span: name);
+  let width = b - a;
+  if width < 2_u64 {
+    return False();
+  }
+  let second = a + 1_u64;
+  let first_dash = list^.text.inner[a] == 45_u8;
+  let second_dash = list^.text.inner[second] == 45_u8;
+  let both = band(first_dash, second_dash);
+  return both;
+}
+
+fn supports_declaration(values: &ComponentList, start: u64, end: u64, atoms: &AtomTable) -> holds: Bool reads(values), writes(atoms) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "An @supports declaration test: true for a custom property and for a declaration parse_declaration accepts.";
+  let low = narrow_index(value: start);
+  let high = narrow_index(value: end);
+  let range = ComponentRange(start: low, end: high);
+  match parse_one_declaration(values: values, range: range) {
+    Ok(value: item) => {
+      match item {
+        Declaration(name: declared_name, value: declared_value, important: flagged) => {
+          let custom = is_custom_name(list: values, name: declared_name);
+          if custom {
+            return True();
+          }
+          let scratch = declaration_store_new();
+          match parse_declaration(values: values, name: declared_name, range: declared_value, important: flagged, sheet: 0_u32, atoms: atoms, store: &scratch) {
+            Ok(value: count) => {
+              let some = count > 0_u64;
+              return some;
+            }
+            Err(..) => {
+              return False();
+            }
+          }
+        }
+        QualifiedRule(..) => {
+          return False();
+        }
+        AtRule(..) => {
+          return False();
+        }
+        Invalid() => {
+          return False();
+        }
+      }
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+}
+
+fn supports_in_parens(values: &ComponentList, at: u64, end: u64, depth: u64, atoms: &AtomTable) -> holds: Bool reads(values), writes(atoms) contract {
+  requires at < end;
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates a parenthesized supports condition or declaration, or a selector() function; any other function is false.";
+  let inner_start = at + 1_u64;
+  let inner_end = sibling_after(values: values, at: at, limit: end);
+  let kind = component_kind(values: values, at: at);
+  if kind == c_function {
+    let n = selector_word.len;
+    let named = name_word(values: values, at: at, list: &selector_word[0_u64..n]);
+    match named {
+      Some(..) => {
+        let low = narrow_index(value: inner_start);
+        let high = narrow_index(value: inner_end);
+        let range = ComponentRange(start: low, end: high);
+        match parse_selector_list(values: values, range: range, atoms: atoms) {
+          Ok(..) => {
+            return True();
+          }
+          Err(..) => {
+            return False();
+          }
+        }
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  if kind != c_paren {
+    return False();
+  }
+  if depth >= max_supports_depth {
+    return False();
+  }
+  let first = skip_space(values: values, at: inner_start, limit: inner_end);
+  if first >= inner_end {
+    return False();
+  }
+  let first_kind = component_kind(values: values, at: first);
+  let nested_paren = first_kind == c_paren;
+  let nested_function = first_kind == c_function;
+  let not_n = not_word.len;
+  let negation = name_word(values: values, at: first, list: &not_word[0_u64..not_n]);
+  let starts_not = match negation {
+    Some(..) => {
+      give first_kind == c_ident;
+    }
+    None() => {
+      give False();
+    }
+  }
+  let either = bor(nested_paren, nested_function);
+  let nested = bor(either, starts_not);
+  if nested {
+    let deeper = depth + 1_u64;
+    let made = supports_condition(values: values, start: inner_start, end: inner_end, depth: deeper, atoms: atoms);
+    return made;
+  }
+  let made = supports_declaration(values: values, start: inner_start, end: inner_end, atoms: atoms);
+  return made;
+}
+
+fn supports_condition(values: &ComponentList, start: u64, end: u64, depth: u64, atoms: &AtomTable) -> holds: Bool reads(values), writes(atoms) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates an @supports condition: not and one operand, or operands joined all by and or all by or; a condition that does not parse is false.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return False();
+  }
+  let not_n = not_word.len;
+  let and_n = and_word.len;
+  let or_n = or_word.len;
+  let leading = name_word(values: values, at: s, list: &not_word[0_u64..not_n]);
+  let first_kind = component_kind(values: values, at: s);
+  let starts_not = match leading {
+    Some(..) => {
+      give first_kind == c_ident;
+    }
+    None() => {
+      give False();
+    }
+  }
+  if starts_not {
+    let next = sibling_after(values: values, at: s, limit: end);
+    let operand = skip_space(values: values, at: next, limit: end);
+    if operand >= end {
+      return False();
+    }
+    let inner = supports_in_parens(values: values, at: operand, end: end, depth: depth, atoms: atoms);
+    let after = sibling_after(values: values, at: operand, limit: end);
+    let rest = skip_space(values: values, at: after, limit: end);
+    if rest < end {
+      return False();
+    }
+    let made = bnot(inner);
+    return made;
+  }
+  let result = True();
+  let connector = 0_u8;
+  let cursor = s;
+  let span = end -sat s;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      return False();
+    }
+    let value = supports_in_parens(values: values, at: at, end: end, depth: depth, atoms: atoms);
+    if step == 0_u64 {
+      set result = value;
+    } else if connector == 1_u8 {
+      set result = band(result, value);
+    } else {
+      set result = bor(result, value);
+    }
+    let after = sibling_after(values: values, at: at, limit: end);
+    let word = skip_space(values: values, at: after, limit: end);
+    if word >= end {
+      return result;
+    }
+    let is_and = name_word(values: values, at: word, list: &and_word[0_u64..and_n]);
+    let is_or = name_word(values: values, at: word, list: &or_word[0_u64..or_n]);
+    let code = 0_u8;
+    match is_and {
+      Some(..) => {
+        set code = 1_u8;
+      }
+      None() => {
+        match is_or {
+          Some(..) => {
+            set code = 2_u8;
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    if code == 0_u8 {
+      return False();
+    }
+    let started = connector != 0_u8;
+    let different = connector != code;
+    let mixed = band(started, different);
+    if mixed {
+      return False();
+    }
+    set connector = code;
+    set cursor = word + 1_u64;
+  }
+  return False();
+}
+
+fn add_declarations(store: &RuleStore, list: &ComponentList, items: &RuleItems, sheet: u32, origin: u8, atoms: &AtomTable) -> result: Result<Added, StyleError> reads(list), reads(items), writes(store), writes(atoms) {
+  doc "Adds the declarations among items: custom properties to the store's custom declarations with their value ranges, and every other declaration through parse_declaration; returns the ranges they take.";
+  let first = store^.declared.declarations.inner.len;
+  let custom_first = store^.customs.inner.len;
+  let count = items^.items.inner.len;
+  for (at in 0_u64..count) {
+    let item = items^.items.inner[at];
+    match item {
+      Declaration(name: declared_name, value: declared_value, important: flagged) => {
+        let custom = is_custom_name(list: list, name: declared_name);
+        if custom {
+          let (a, b) = text_bounds(values: list, span: declared_name);
+          let width = b - a;
+          if width <= 65536_u64 {
+            let interned = atom_intern(table: atoms, name: &list^.text.inner[a..b]);
+            match interned {
+              Ok(value: atom) => {
+                let declaration = CustomDeclaration(name: atom, sheet: sheet, start: declared_value.start, end: declared_value.end, important: flagged, origin: origin);
+                let placed = propagate push::<CustomDeclaration>(cell: &store^.customs, value: declaration, ceiling: 4294967295_u64);
+              }
+              Err(..) => {
+                return too_large::<Added>();
+              }
+            }
+          }
+        } else {
+          match parse_declaration(values: list, name: declared_name, range: declared_value, important: flagged, sheet: sheet, atoms: atoms, store: &store^.declared) {
+            Ok(..) => {
+            }
+            Err(..) => {
+              return too_large::<Added>();
+            }
+          }
+        }
+      }
+      QualifiedRule(..) => {
+      }
+      AtRule(..) => {
+      }
+      Invalid() => {
+      }
+    }
+  }
+  let end = store^.declared.declarations.inner.len;
+  let custom_end = store^.customs.inner.len;
+  let a = narrow_index(value: first);
+  let b = narrow_index(value: end);
+  let c = narrow_index(value: custom_first);
+  let d = narrow_index(value: custom_end);
+  let made = Added(first: a, end: b, custom_first: c, custom_end: d);
+  return Ok<Added, StyleError>(value: made);
+}
+
+fn add_rule(store: &RuleStore, list: &ComponentList, prelude: ComponentRange, block: ComponentRange, sheet: u32, origin: u8, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(list), writes(store), writes(atoms) {
+  doc "Adds one style rule: its selector list, skipping the rule when the prelude is invalid, and its declarations.";
+  let parsed = parse_selector_list(values: list, range: prelude, atoms: atoms);
+  let selectors = match move parsed {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(error: failure) => {
+      match failure {
+        Invalid() => {
+          return Ok<unit, StyleError>(value: unit);
+        }
+        TooLarge() => {
+          return too_large::<unit>();
+        }
+      }
+    }
+  }
+  let declarations = parse_declaration_list(values: list, range: block);
+  let items = match move declarations {
+    Ok(value: made) => {
+      give move made;
+    }
+    Err(..) => {
+      return too_large::<unit>();
+    }
+  }
+  let added = propagate add_declarations(store: store, list: list, items: &items, sheet: sheet, origin: origin, atoms: atoms);
+  let rule_index = narrow_index(value: store^.rules.inner.len);
+  let has_customs = added.custom_end > added.custom_first;
+  let slot = if has_customs {
+    give narrow_index(value: store^.custom_rules.inner.len);
+  } else {
+    give no_slot;
+  }
+  if has_customs {
+    let listed = propagate push::<u32>(cell: &store^.custom_rules, value: rule_index, ceiling: rule_ceiling);
+  }
+  let rule = Rule(selectors: move selectors, origin: origin, first: added.first, end: added.end, custom_first: added.custom_first, custom_end: added.custom_end, custom_slot: slot);
+  let placed = propagate push::<Rule>(cell: &store^.rules, value: move rule, ceiling: rule_ceiling);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn element_name(document: &Document, node: NodeId) -> (html: Bool, local: u32) reads(document) {
+  doc "Whether node is an element in the HTML namespace, and its local name's atom index, or 4294967295 for no element.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+  } else {
+    return False(), 4294967295_u32;
+  }
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Element(namespace: space, local_name: local, attributes: list, template_contents: held) => {
+      let html = match space^ {
+        Html() => {
+          give True();
+        }
+        Svg() => {
+          give False();
+        }
+        MathMl() => {
+          give False();
+        }
+      }
+      return html, local^.index;
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return False(), 4294967295_u32;
+}
+
+fn attribute_of(document: &Document, node: NodeId, name: u32) -> value: Option<TextSpan> reads(document) {
+  doc "The value of node's first attribute in no namespace whose name is the atom index name, or None.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+  } else {
+    return None<TextSpan>();
+  }
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Element(namespace: space, local_name: local, attributes: attrs, template_contents: held) => {
+      let total = attrs^.inner.len;
+      for (k in 0_u64..total) {
+        let attribute = attrs^.inner[k];
+        let plain = match attribute.namespace {
+          NoNamespace() => {
+            give True();
+          }
+          XLink() => {
+            give False();
+          }
+          Xml() => {
+            give False();
+          }
+          XmlNs() => {
+            give False();
+          }
+        }
+        let named = attribute.name.index == name;
+        let both = band(plain, named);
+        if both {
+          return Some<TextSpan>(value: attribute.value);
+        }
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return None<TextSpan>();
+}
+
+fn is_space_byte(byte: u8) -> space: Bool pure {
+  doc "ASCII whitespace: space, tab, line feed, form feed and carriage return.";
+  let blank = byte == 32_u8;
+  let tab = byte == 9_u8;
+  let feed = byte == 10_u8;
+  let form = byte == 12_u8;
+  let carriage = byte == 13_u8;
+  let first = bor(blank, tab);
+  let second = bor(feed, form);
+  let some = bor(first, second);
+  let space = bor(some, carriage);
+  return space;
+}
+
+fn has_token(document: &Document, span: TextSpan, word: &[u8]) -> found: Bool reads(document), reads(word) {
+  doc "True when one whitespace-separated token of the document text span equals word ASCII case-insensitively.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = document^.text.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return False();
+  }
+  let token_start = start;
+  let in_token = False();
+  let stop = end +sat 1_u64;
+  for (at in start..stop) {
+    let boundary = at >= end;
+    let space = if boundary {
+      give True();
+    } else {
+      give is_space_byte(byte: document^.text.inner[at]);
+    }
+    if space {
+      let arg_1 = token_start <= at;
+      let closes = band(in_token, arg_1);
+      let fits = at <= length;
+      let readable = band(closes, fits);
+      if readable {
+        let found = word_index(list: word, text: &document^.text.inner[token_start..at]);
+        match found {
+          Some(..) => {
+            return True();
+          }
+          None() => {
+          }
+        }
+      }
+      set in_token = False();
+    } else if in_token {
+    } else {
+      set token_start = at;
+      set in_token = True();
+    }
+  }
+  return False();
+}
+
+fn sheet_sources(document: &Document, traversal: &Traversal) -> made: Box<Slots<SheetSource>> reads(document), reads(traversal) {
+  doc "Lists the HTML style elements and the stylesheet links in preorder.";
+  let sources = box_slots_new::<SheetSource>(capacity: 0_u64);
+  let count = traversal^.elements.inner.len;
+  let sheet_n = stylesheet_word.len;
+  let alternate_n = alternate_word.len;
+  for (at in 0_u64..count) {
+    let node = traversal^.elements.inner[at];
+    let (html, local) = element_name(document: document, node: node);
+    if html {
+      if local == atom_style {
+        let source = SheetSource::StyleElement(node: node);
+        let pushed = push::<SheetSource>(cell: &sources, value: source, ceiling: rule_ceiling);
+      } else if local == atom_link {
+        let rel = attribute_of(document: document, node: node, name: atom_rel);
+        let href = attribute_of(document: document, node: node, name: atom_href);
+        match rel {
+          Some(value: rel_span) => {
+            let sheet = has_token(document: document, span: rel_span, word: &stylesheet_word[0_u64..sheet_n]);
+            let alternate = has_token(document: document, span: rel_span, word: &alternate_word[0_u64..alternate_n]);
+            let preferred = bnot(alternate);
+            let applies = band(sheet, preferred);
+            if applies {
+              match href {
+                Some(value: href_span) => {
+                  let media = attribute_of(document: document, node: node, name: atom_media);
+                  let source = SheetSource::Link(node: node, href: href_span, media: media);
+                  let pushed = push::<SheetSource>(cell: &sources, value: source, ceiling: rule_ceiling);
+                }
+                None() => {
+                }
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return move sources;
+}
+
+fn css_type(document: &Document, node: NodeId) -> allowed: Bool reads(document) {
+  doc "True when node has no type attribute, an empty one, or text/css ASCII case-insensitively.";
+  match attribute_of(document: document, node: node, name: atom_type) {
+    Some(value: span) => {
+      let start = cvt::<u32, u64>(span.start);
+      let end = cvt::<u32, u64>(span.end);
+      if start == end {
+        return True();
+      }
+      let n = css_type_word.len;
+      let found = has_token(document: document, span: span, word: &css_type_word[0_u64..n]);
+      return found;
+    }
+    None() => {
+      return True();
+    }
+  }
+}
+
+fn add_style_element(store: &RuleStore, document: &Document, node: NodeId, environment: Environment, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), writes(store), writes(atoms) {
+  doc "Adds the style element's text as an author sheet when its media and type allow.";
+  let typed = css_type(document: document, node: node);
+  if typed {
+  } else {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  match attribute_of(document: document, node: node, name: atom_media) {
+    Some(value: span) => {
+      let holds = media_holds(document: document, span: span, environment: environment);
+      if holds {
+      } else {
+        return Ok<unit, StyleError>(value: unit);
+      }
+    }
+    None() => {
+    }
+  }
+  let text = propagate element_text(document: document, node: node);
+  let length = text.inner.len;
+  let small = length <= sheet_ceiling;
+  if small {
+  } else {
+    return too_large::<unit>();
+  }
+  let added = propagate add_sheet(store: store, source: &text.inner[0_u64..length], origin: origin_author, environment: environment, atoms: atoms);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn add_style_attributes(store: &RuleStore, document: &Document, traversal: &Traversal, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(store), writes(atoms) {
+  doc "Parses each element's style attribute as a declaration list and records it for that element, in preorder.";
+  let count = traversal^.elements.inner.len;
+  for (at in 0_u64..count) {
+    let node = traversal^.elements.inner[at];
+    match attribute_of(document: document, node: node, name: atom_style) {
+      Some(value: span) => {
+        let start = cvt::<u32, u64>(span.start);
+        let end = cvt::<u32, u64>(span.end);
+        let length = document^.text.inner.len;
+        let ordered = start <= end;
+        let inside = end <= length;
+        let usable = band(ordered, inside);
+        if usable {
+          let width = end - start;
+          if width <= sheet_ceiling {
+            let parsed = parse_component_values(source: &document^.text.inner[start..end]);
+            match move parsed {
+              Ok(value: list) => {
+                let total = list.components.inner.len;
+                let last = narrow_index(value: total);
+                let whole = ComponentRange(start: 0_u32, end: last);
+                let declarations = parse_declaration_list(values: &list, range: whole);
+                match move declarations {
+                  Ok(value: items) => {
+                    let sheet = narrow_index(value: store^.sheets.inner.len);
+                    let added = propagate add_declarations(store: store, list: &list, items: &items, sheet: sheet, origin: origin_author, atoms: atoms);
+                    let kept = Sheet(values: move list);
+                    let placed = propagate push::<Sheet>(cell: &store^.sheets, value: move kept, ceiling: rule_ceiling);
+                    let element = narrow_index(value: at);
+                    let record = AttributeStyle(element: element, first: added.first, end: added.end, custom_first: added.custom_first, custom_end: added.custom_end);
+                    let recorded = propagate push::<AttributeStyle>(cell: &store^.attributes, value: record, ceiling: 4294967295_u64);
+                  }
+                  Err(..) => {
+                    return too_large::<unit>();
+                  }
+                }
+              }
+              Err(..) => {
+                return too_large::<unit>();
+              }
+            }
+          }
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn node_links(document: &Document, node: NodeId) -> links: Option<Links> reads(document) {
+  doc "Returns the links of node, or None when it names no node.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+    let links = document^.nodes.inner[index].links;
+    return Some<Links>(value: links);
+  }
+  return None<Links>();
+}
+
+fn text_span_of(document: &Document, node: NodeId) -> span: Option<TextSpan> reads(document) {
+  doc "Returns the data span of node when it is a Text node, and None otherwise.";
+  let index = cvt::<u32, u64>(node.index);
+  let count = document^.nodes.inner.len;
+  let known = index < count;
+  if known {
+  } else {
+    return None<TextSpan>();
+  }
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Text(data: span) => {
+      return Some<TextSpan>(value: span^);
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Element(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return None<TextSpan>();
+}
+
+fn element_text(document: &Document, node: NodeId) -> result: Result<Box<Slots<u8>>, StyleError> reads(document) {
+  doc "Returns the concatenated data of node's Text children, in order. The walk along next-sibling links takes at most one step per node; Inconsistent when it would take more, and TooLarge past sheet_ceiling bytes.";
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  let links = match node_links(document: document, node: node) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      let failure = StyleError::Inconsistent();
+      return Err<Box<Slots<u8>>, StyleError>(error: failure);
+    }
+  }
+  let cursor = links.first_child;
+  let count = document^.nodes.inner.len;
+  for (step in 0_u64..count) {
+    let child = match cursor {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return Ok<Box<Slots<u8>>, StyleError>(value: move text);
+      }
+    }
+    match text_span_of(document: document, node: child) {
+      Some(value: span) => {
+        let appended = propagate append_span(text: &text, document: document, span: span);
+      }
+      None() => {
+      }
+    }
+    let child_links = match node_links(document: document, node: child) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        let failure = StyleError::Inconsistent();
+        return Err<Box<Slots<u8>>, StyleError>(error: failure);
+      }
+    }
+    set cursor = child_links.next_sibling;
+  }
+  match cursor {
+    Some(value: found) => {
+      let failure = StyleError::Inconsistent();
+      return Err<Box<Slots<u8>>, StyleError>(error: failure);
+    }
+    None() => {
+      return Ok<Box<Slots<u8>>, StyleError>(value: move text);
+    }
+  }
+}
+
+fn append_span(text: &Box<Slots<u8>>, document: &Document, span: TextSpan) -> result: Result<unit, StyleError> reads(document), writes(text) {
+  doc "Appends the document text span names to text; Inconsistent when the span lies outside the document's text.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = document^.text.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  for (at in start..end) {
+    let byte = document^.text.inner[at];
+    let pushed = propagate push::<u8>(cell: text, value: byte, ceiling: sheet_ceiling);
+  }
+  return Ok<unit, StyleError>(value: unit);
+}

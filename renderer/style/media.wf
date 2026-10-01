@@ -1,0 +1,884 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias TextSpan = pkg::dom::TextSpan;
+alias ComponentRange = pkg::css::rules::ComponentRange;
+alias Lengths = pkg::css::values::Lengths;
+alias compute_length = pkg::css::values::compute_length;
+alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_length = pkg::css::values::parse_length;
+
+const media_types: Array<u8, 10> = "all screen";
+
+const not_word: Array<u8, 3> = "not";
+
+const only_word: Array<u8, 4> = "only";
+
+const and_word: Array<u8, 3> = "and";
+
+const or_word: Array<u8, 2> = "or";
+
+const feature_words: Array<u8, 327> = "width height aspect-ratio orientation resolution -webkit-device-pixel-ratio color monochrome color-index grid hover any-hover pointer any-pointer prefers-color-scheme prefers-reduced-motion prefers-contrast scripting update forced-colors inverted-colors dynamic-range display-mode device-width device-height device-aspect-ratio";
+
+const resolution_units: Array<u8, 15> = "dppx x dpi dpcm";
+
+const max_condition_depth: u64 = 16_u64;
+
+const f_unknown: u64 = 99_u64;
+
+fn word_slice_is(text: &[u8], start: u64, word: &[u8]) -> same: Bool reads(text), reads(word) {
+  doc "True when text holds word, ASCII case-insensitively, from start.";
+  let size = word^.len;
+  let length = text^.len;
+  let end = start +sat size;
+  if end > length {
+    return False();
+  }
+  for (k in 0_u64..size) {
+    let index = start +sat k;
+    let inside = index < length;
+    if inside {
+      let a = lower_byte(byte: text^[index]);
+      if a != word^[k] {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn feature_of(text: &[u8]) -> (feature: u64, prefix: u8) reads(text) {
+  doc "The number of the media feature text names in feature_words, after a min- or max- prefix (prefix 1 or 2, else 0), or f_unknown.";
+  let length = text^.len;
+  let prefix = 0_u8;
+  let from = 0_u64;
+  let long = length > 4_u64;
+  if long {
+    let dash = text^[3_u64] == 45_u8;
+    let m = lower_byte(byte: text^[0_u64]);
+    let second = lower_byte(byte: text^[1_u64]);
+    let third = lower_byte(byte: text^[2_u64]);
+    let starts_m = m == 109_u8;
+    let min_i = second == 105_u8;
+    let min_n = third == 110_u8;
+    let max_a = second == 97_u8;
+    let max_x = third == 120_u8;
+    let min_pair = band(min_i, min_n);
+    let max_pair = band(max_a, max_x);
+    let min_head = band(starts_m, min_pair);
+    let max_head = band(starts_m, max_pair);
+    let is_min = band(min_head, dash);
+    let is_max = band(max_head, dash);
+    if is_min {
+      set prefix = 1_u8;
+      set from = 4_u64;
+    } else if is_max {
+      set prefix = 2_u8;
+      set from = 4_u64;
+    }
+  }
+  let n = feature_words.len;
+  let found = word_index(list: &feature_words[0_u64..n], text: &text^[from..length]);
+  match found {
+    Some(value: i) => {
+      return i, prefix;
+    }
+    None() => {
+      return f_unknown, prefix;
+    }
+  }
+}
+
+fn numeric_feature(feature: u64) -> numeric: Bool pure {
+  doc "True for the media features whose values are numbers, lengths, ratios or resolutions.";
+  let early = feature <= 2_u64;
+  let arg_1 = feature >= 4_u64;
+  let arg_2 = feature <= 9_u64;
+  let resolution_to_grid = band(arg_1, arg_2);
+  let arg_3 = feature >= 23_u64;
+  let arg_4 = feature <= 25_u64;
+  let device = band(arg_3, arg_4);
+  let either = bor(early, resolution_to_grid);
+  let all = bor(either, device);
+  return all;
+}
+
+fn environment_value(feature: u64, environment: Environment) -> value: f64 pure {
+  doc "The environment's value of a numeric media feature.";
+  let width = cvt::<f32, f64>(environment.width);
+  let height = cvt::<f32, f64>(environment.height);
+  let is_width = feature == 0_u64;
+  let is_device_width = feature == 23_u64;
+  let either_width = bor(is_width, is_device_width);
+  if either_width {
+    return width;
+  }
+  let is_height = feature == 1_u64;
+  let is_device_height = feature == 24_u64;
+  let either_height = bor(is_height, is_device_height);
+  if either_height {
+    return height;
+  }
+  let is_ratio = feature == 2_u64;
+  let is_device_ratio = feature == 25_u64;
+  let either_ratio = bor(is_ratio, is_device_ratio);
+  if either_ratio {
+    let positive = fgt(height, 0.0_f64);
+    if positive {
+      let ratio = fdiv.strict(width, height);
+      return ratio;
+    }
+    return 0.0_f64;
+  }
+  let is_resolution = feature == 4_u64;
+  let is_ratio_px = feature == 5_u64;
+  let either_resolution = bor(is_resolution, is_ratio_px);
+  if either_resolution {
+    return 1.0_f64;
+  }
+  if feature == 6_u64 {
+    return 8.0_f64;
+  }
+  return 0.0_f64;
+}
+
+fn discrete_word(feature: u64) -> word: u64 pure {
+  doc "The index in discrete_values of the environment's value of a discrete media feature.";
+  if feature == 3_u64 {
+    return 0_u64;
+  }
+  let arg_5 = feature >= 10_u64;
+  let arg_6 = feature <= 11_u64;
+  let hover = band(arg_5, arg_6);
+  if hover {
+    return 1_u64;
+  }
+  let arg_7 = feature >= 12_u64;
+  let arg_8 = feature <= 13_u64;
+  let pointer = band(arg_7, arg_8);
+  if pointer {
+    return 2_u64;
+  }
+  if feature == 14_u64 {
+    return 3_u64;
+  }
+  let arg_9 = feature >= 15_u64;
+  let arg_10 = feature <= 16_u64;
+  let preference = band(arg_9, arg_10);
+  if preference {
+    return 4_u64;
+  }
+  if feature == 18_u64 {
+    return 6_u64;
+  }
+  if feature == 21_u64 {
+    return 7_u64;
+  }
+  if feature == 22_u64 {
+    return 8_u64;
+  }
+  return 5_u64;
+}
+
+const discrete_values: Array<u8, 67> = "landscape hover fine light no-preference none fast standard browser";
+
+fn boolean_feature(feature: u64, environment: Environment) -> holds: Bool pure {
+  doc "A media feature in a boolean context: true unless its value is zero, none or no-preference.";
+  let numeric = numeric_feature(feature: feature);
+  if numeric {
+    let value = environment_value(feature: feature, environment: environment);
+    let zero = feq(value, 0.0_f64);
+    let nonzero = bnot(zero);
+    return nonzero;
+  }
+  let word = discrete_word(feature: feature);
+  let arg_11 = word >= 4_u64;
+  let arg_12 = word <= 5_u64;
+  let off = band(arg_11, arg_12);
+  let on = bnot(off);
+  return on;
+}
+
+fn feature_value(values: &ComponentList, start: u64, end: u64, feature: u64, environment: Environment) -> value: Option<f64> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses the value from start to end of a numeric media feature: a length in px, a ratio, a resolution in dppx, or a number.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return None<f64>();
+  }
+  let arg_13 = feature <= 1_u64;
+  let arg_15 = feature >= 23_u64;
+  let arg_16 = feature <= 24_u64;
+  let arg_14 = band(arg_15, arg_16);
+  let length_like = bor(arg_13, arg_14);
+  if length_like {
+    let low = cvt.wrap::<u64, u32>(s);
+    let high = cvt.wrap::<u64, u32>(end);
+    let range = ComponentRange(start: low, end: high);
+    let no = False();
+    let yes = True();
+    match parse_length(values: values, range: range, allow_percent: no, allow_negative: yes) {
+      Some(value: l) => {
+        let computed = compute_length(lengths: l, font_size: 16.0_f32, environment: environment);
+        let px = cvt::<f32, f64>(computed.px);
+        return Some<f64>(value: px);
+      }
+      None() => {
+        return None<f64>();
+      }
+    }
+  }
+  let next = sibling_after(values: values, at: s, limit: end);
+  if feature == 4_u64 {
+    match unit_at(values: values, at: s) {
+      Some(value: unit_name) => {
+        let (a, b) = text_bounds(values: values, span: unit_name);
+        let n = resolution_units.len;
+        let found = word_index(list: &resolution_units[0_u64..n], text: &values^.text.inner[a..b]);
+        match numeric_at(values: values, at: s) {
+          Some(value: number) => {
+            match found {
+              Some(value: i) => {
+                if i <= 1_u64 {
+                  return Some<f64>(value: number.value);
+                }
+                if i == 2_u64 {
+                  let dppx = fdiv.strict(number.value, 96.0_f64);
+                  return Some<f64>(value: dppx);
+                }
+                let per_inch = fmul.strict(number.value, 2.54_f64);
+                let dppx = fdiv.strict(per_inch, 96.0_f64);
+                return Some<f64>(value: dppx);
+              }
+              None() => {
+                return None<f64>();
+              }
+            }
+          }
+          None() => {
+            return None<f64>();
+          }
+        }
+      }
+      None() => {
+        return None<f64>();
+      }
+    }
+  }
+  let kind = component_kind(values: values, at: s);
+  if kind != c_number {
+    return None<f64>();
+  }
+  let first = match numeric_at(values: values, at: s) {
+    Some(value: number) => {
+      give number.value;
+    }
+    None() => {
+      give 0.0_f64;
+    }
+  }
+  let arg_17 = feature == 2_u64;
+  let arg_18 = feature == 25_u64;
+  let ratio = bor(arg_17, arg_18);
+  if ratio {
+    let slash_at = skip_space(values: values, at: next, limit: end);
+    if slash_at >= end {
+      return Some<f64>(value: first);
+    }
+    let code = delim_at(values: values, at: slash_at);
+    if code != 47_u32 {
+      return None<f64>();
+    }
+    let after = slash_at + 1_u64;
+    let second_at = skip_space(values: values, at: after, limit: end);
+    if second_at >= end {
+      return None<f64>();
+    }
+    match numeric_at(values: values, at: second_at) {
+      Some(value: number) => {
+        let positive = fgt(number.value, 0.0_f64);
+        if positive {
+          let quotient = fdiv.strict(first, number.value);
+          return Some<f64>(value: quotient);
+        }
+        return None<f64>();
+      }
+      None() => {
+        return None<f64>();
+      }
+    }
+  }
+  return Some<f64>(value: first);
+}
+
+fn compare(left: f64, operator: u8, right: f64) -> holds: Bool pure {
+  doc "left operator right for the comparison codes 1 <, 2 <=, 3 >, 4 >=, 5 =.";
+  if operator == 1_u8 {
+    let made = flt(left, right);
+    return made;
+  }
+  if operator == 2_u8 {
+    let made = fle(left, right);
+    return made;
+  }
+  if operator == 3_u8 {
+    let made = fgt(left, right);
+    return made;
+  }
+  if operator == 4_u8 {
+    let made = fge(left, right);
+    return made;
+  }
+  let made = feq(left, right);
+  return made;
+}
+
+fn flip(operator: u8) -> flipped: u8 pure {
+  doc "The comparison with its operands exchanged.";
+  if operator == 1_u8 {
+    return 3_u8;
+  }
+  if operator == 2_u8 {
+    return 4_u8;
+  }
+  if operator == 3_u8 {
+    return 1_u8;
+  }
+  if operator == 4_u8 {
+    return 2_u8;
+  }
+  return operator;
+}
+
+fn operator_at(values: &ComponentList, at: u64, end: u64) -> (operator: u8, next: u64) reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Reads a range comparison <, <=, >, >= or = at at, returning its code and the index after it, or code 0.";
+  if at >= end {
+    return 0_u8, at;
+  }
+  let code = delim_at(values: values, at: at);
+  let one = at + 1_u64;
+  let equals_next = if one < end {
+    let following = delim_at(values: values, at: one);
+    give following == 61_u32;
+  } else {
+    give False();
+  }
+  let two = at +sat 2_u64;
+  if code == 60_u32 {
+    if equals_next {
+      return 2_u8, two;
+    }
+    return 1_u8, one;
+  }
+  if code == 62_u32 {
+    if equals_next {
+      return 4_u8, two;
+    }
+    return 3_u8, one;
+  }
+  if code == 61_u32 {
+    return 5_u8, one;
+  }
+  return 0_u8, at;
+}
+
+fn feature_name(values: &ComponentList, at: u64) -> (feature: u64, prefix: u8) reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "The media feature the identifier at at names, or f_unknown.";
+  let kind = component_kind(values: values, at: at);
+  if kind != c_ident {
+    return f_unknown, 0_u8;
+  }
+  match name_at(values: values, at: at) {
+    Some(value: name) => {
+      let (a, b) = text_bounds(values: values, span: name);
+      let (feature, prefix) = feature_of(text: &values^.text.inner[a..b]);
+      return feature, prefix;
+    }
+    None() => {
+      return f_unknown, 0_u8;
+    }
+  }
+}
+
+fn value_end(values: &ComponentList, start: u64, end: u64) -> stop: u64 reads(values) contract {
+  requires end <= values^.components.inner.len;
+  ensures stop <= end;
+} {
+  doc "The index of the first range comparison delimiter at or after start, or end.";
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    let at = start +sat step;
+    let inside = at < end;
+    if inside {
+      let code = delim_at(values: values, at: at);
+      let less = code == 60_u32;
+      let more = code == 62_u32;
+      let same = code == 61_u32;
+      let either = bor(less, more);
+      let any = bor(either, same);
+      if any {
+        return at;
+      }
+    }
+  }
+  return end;
+}
+
+fn feature_holds(values: &ComponentList, start: u64, end: u64, environment: Environment) -> holds: Option<Bool> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates the contents of one media feature's parentheses: name: value, a bare name, or the range forms name op value, value op name and value op name op value; None for an unknown feature or a form that does not parse.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return None<Bool>();
+  }
+  let next = sibling_after(values: values, at: s, limit: end);
+  let after = skip_space(values: values, at: next, limit: end);
+  let (feature, prefix) = feature_name(values: values, at: s);
+  let named = feature != f_unknown;
+  if named {
+    if after >= end {
+      if prefix != 0_u8 {
+        return None<Bool>();
+      }
+      let made = boolean_feature(feature: feature, environment: environment);
+      return Some<Bool>(value: made);
+    }
+    let kind = component_kind(values: values, at: after);
+    if kind == c_colon {
+      let value_start = after + 1_u64;
+      let numeric = numeric_feature(feature: feature);
+      if numeric {
+        match feature_value(values: values, start: value_start, end: end, feature: feature, environment: environment) {
+          Some(value: wanted) => {
+            let actual = environment_value(feature: feature, environment: environment);
+            let operator = if prefix == 1_u8 {
+              give 4_u8;
+            } else if prefix == 2_u8 {
+              give 2_u8;
+            } else {
+              give 5_u8;
+            }
+            let made = compare(left: actual, operator: operator, right: wanted);
+            return Some<Bool>(value: made);
+          }
+          None() => {
+            return None<Bool>();
+          }
+        }
+      }
+      if prefix != 0_u8 {
+        return None<Bool>();
+      }
+      let word_at_value = skip_space(values: values, at: value_start, limit: end);
+      if word_at_value >= end {
+        return None<Bool>();
+      }
+      let n = discrete_values.len;
+      let found = name_word(values: values, at: word_at_value, list: &discrete_values[0_u64..n]);
+      let expected = discrete_word(feature: feature);
+      match found {
+        Some(value: i) => {
+          let made = i == expected;
+          return Some<Bool>(value: made);
+        }
+        None() => {
+          let arg_19 = False();
+          return Some<Bool>(value: arg_19);
+        }
+      }
+    }
+    if prefix != 0_u8 {
+      return None<Bool>();
+    }
+    let numeric = numeric_feature(feature: feature);
+    if numeric {
+    } else {
+      return None<Bool>();
+    }
+    let (operator, value_start) = operator_at(values: values, at: after, end: end);
+    if operator == 0_u8 {
+      return None<Bool>();
+    }
+    match feature_value(values: values, start: value_start, end: end, feature: feature, environment: environment) {
+      Some(value: wanted) => {
+        let actual = environment_value(feature: feature, environment: environment);
+        let made = compare(left: actual, operator: operator, right: wanted);
+        return Some<Bool>(value: made);
+      }
+      None() => {
+        return None<Bool>();
+      }
+    }
+  }
+  let first_end = value_end(values: values, start: s, end: end);
+  let (operator, name_start) = operator_at(values: values, at: first_end, end: end);
+  if operator == 0_u8 {
+    return None<Bool>();
+  }
+  let name_at_index = skip_space(values: values, at: name_start, limit: end);
+  if name_at_index >= end {
+    return None<Bool>();
+  }
+  let (middle, middle_prefix) = feature_name(values: values, at: name_at_index);
+  let known = middle != f_unknown;
+  let plain = middle_prefix == 0_u8;
+  let usable = band(known, plain);
+  if usable {
+  } else {
+    return None<Bool>();
+  }
+  let numeric = numeric_feature(feature: middle);
+  if numeric {
+  } else {
+    return None<Bool>();
+  }
+  let actual = environment_value(feature: middle, environment: environment);
+  let left = match feature_value(values: values, start: s, end: first_end, feature: middle, environment: environment) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return None<Bool>();
+    }
+  }
+  let flipped = flip(operator: operator);
+  let first_holds = compare(left: actual, operator: flipped, right: left);
+  let name_next = sibling_after(values: values, at: name_at_index, limit: end);
+  let rest = skip_space(values: values, at: name_next, limit: end);
+  if rest >= end {
+    return Some<Bool>(value: first_holds);
+  }
+  let (second_operator, second_start) = operator_at(values: values, at: rest, end: end);
+  if second_operator == 0_u8 {
+    return None<Bool>();
+  }
+  match feature_value(values: values, start: second_start, end: end, feature: middle, environment: environment) {
+    Some(value: right) => {
+      let second_holds = compare(left: actual, operator: second_operator, right: right);
+      let both = band(first_holds, second_holds);
+      return Some<Bool>(value: both);
+    }
+    None() => {
+      return None<Bool>();
+    }
+  }
+}
+
+fn in_parens(values: &ComponentList, at: u64, end: u64, depth: u64, environment: Environment) -> holds: Option<Bool> reads(values) contract {
+  requires at < end;
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates the parenthesis block at at: a nested condition or one media feature.";
+  let kind = component_kind(values: values, at: at);
+  if kind != c_paren {
+    return None<Bool>();
+  }
+  if depth >= max_condition_depth {
+    return None<Bool>();
+  }
+  let inner_start = at + 1_u64;
+  let inner_end = sibling_after(values: values, at: at, limit: end);
+  let first = skip_space(values: values, at: inner_start, limit: inner_end);
+  if first >= inner_end {
+    return None<Bool>();
+  }
+  let first_kind = component_kind(values: values, at: first);
+  let n = not_word.len;
+  let negation = name_word(values: values, at: first, list: &not_word[0_u64..n]);
+  let is_not = match negation {
+    Some(..) => {
+      give first_kind == c_ident;
+    }
+    None() => {
+      give False();
+    }
+  }
+  let arg_20 = first_kind == c_paren;
+  let nested = bor(arg_20, is_not);
+  let deeper = depth + 1_u64;
+  if nested {
+    let made = media_condition(values: values, start: inner_start, end: inner_end, depth: deeper, environment: environment);
+    return made;
+  }
+  let made = feature_holds(values: values, start: inner_start, end: inner_end, environment: environment);
+  return made;
+}
+
+fn media_condition(values: &ComponentList, start: u64, end: u64, depth: u64, environment: Environment) -> holds: Option<Bool> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates a media condition from start to end: not and one parenthesized condition, or parenthesized conditions joined all by and or all by or.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return None<Bool>();
+  }
+  let not_n = not_word.len;
+  let and_n = and_word.len;
+  let or_n = or_word.len;
+  let leading = name_word(values: values, at: s, list: &not_word[0_u64..not_n]);
+  let starts_not = match leading {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give False();
+    }
+  }
+  if starts_not {
+    let next = sibling_after(values: values, at: s, limit: end);
+    let operand = skip_space(values: values, at: next, limit: end);
+    if operand >= end {
+      return None<Bool>();
+    }
+    match in_parens(values: values, at: operand, end: end, depth: depth, environment: environment) {
+      Some(value: inner) => {
+        let after = sibling_after(values: values, at: operand, limit: end);
+        let rest = skip_space(values: values, at: after, limit: end);
+        if rest < end {
+          return None<Bool>();
+        }
+        let made = bnot(inner);
+        return Some<Bool>(value: made);
+      }
+      None() => {
+        return None<Bool>();
+      }
+    }
+  }
+  let result = True();
+  let connector = 0_u8;
+  let cursor = s;
+  let span = end -sat s;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: cursor, limit: end);
+    if at >= end {
+      return None<Bool>();
+    }
+    let value = match in_parens(values: values, at: at, end: end, depth: depth, environment: environment) {
+      Some(value: v) => {
+        give v;
+      }
+      None() => {
+        return None<Bool>();
+      }
+    }
+    if step == 0_u64 {
+      set result = value;
+    } else if connector == 1_u8 {
+      set result = band(result, value);
+    } else {
+      set result = bor(result, value);
+    }
+    let after = sibling_after(values: values, at: at, limit: end);
+    let word = skip_space(values: values, at: after, limit: end);
+    if word >= end {
+      return Some<Bool>(value: result);
+    }
+    let is_and = name_word(values: values, at: word, list: &and_word[0_u64..and_n]);
+    let is_or = name_word(values: values, at: word, list: &or_word[0_u64..or_n]);
+    let code = match is_and {
+      Some(..) => {
+        give 1_u8;
+      }
+      None() => {
+        let alternative = match is_or {
+          Some(..) => {
+            give 2_u8;
+          }
+          None() => {
+            give 0_u8;
+          }
+        }
+        give alternative;
+      }
+    }
+    if code == 0_u8 {
+      return None<Bool>();
+    }
+    let arg_21 = connector != 0_u8;
+    let arg_22 = connector != code;
+    let mixed = band(arg_21, arg_22);
+    if mixed {
+      return None<Bool>();
+    }
+    set connector = code;
+    set cursor = word + 1_u64;
+  }
+  return None<Bool>();
+}
+
+fn media_query(values: &ComponentList, start: u64, end: u64, environment: Environment) -> holds: Bool reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates one media query: a media condition, or an optional not or only, a media type and an optional and with a condition; a query that does not parse is false.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return False();
+  }
+  let kind = component_kind(values: values, at: s);
+  if kind == c_paren {
+    let made = media_condition(values: values, start: s, end: end, depth: 0_u64, environment: environment);
+    match made {
+      Some(value: v) => {
+        return v;
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  if kind != c_ident {
+    return False();
+  }
+  let not_n = not_word.len;
+  let only_n = only_word.len;
+  let negated = name_word(values: values, at: s, list: &not_word[0_u64..not_n]);
+  let only = name_word(values: values, at: s, list: &only_word[0_u64..only_n]);
+  let invert = match negated {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give False();
+    }
+  }
+  let skip_first = match only {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give invert;
+    }
+  }
+  let type_at = if skip_first {
+    let next = sibling_after(values: values, at: s, limit: end);
+    give skip_space(values: values, at: next, limit: end);
+  } else {
+    give s;
+  }
+  if type_at >= end {
+    return False();
+  }
+  let type_kind = component_kind(values: values, at: type_at);
+  if invert {
+    if type_kind == c_paren {
+      let made = media_condition(values: values, start: s, end: end, depth: 0_u64, environment: environment);
+      match made {
+        Some(value: v) => {
+          return v;
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
+  }
+  if type_kind != c_ident {
+    return False();
+  }
+  let types_n = media_types.len;
+  let matched_type = name_word(values: values, at: type_at, list: &media_types[0_u64..types_n]);
+  let type_holds = match matched_type {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give False();
+    }
+  }
+  let after_type = sibling_after(values: values, at: type_at, limit: end);
+  let rest = skip_space(values: values, at: after_type, limit: end);
+  let holds = type_holds;
+  if rest < end {
+    let and_n = and_word.len;
+    let joined = name_word(values: values, at: rest, list: &and_word[0_u64..and_n]);
+    match joined {
+      Some(..) => {
+        let condition_start = rest + 1_u64;
+        let condition = media_condition(values: values, start: condition_start, end: end, depth: 0_u64, environment: environment);
+        match condition {
+          Some(value: v) => {
+            set holds = band(type_holds, v);
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  if invert {
+    let made = bnot(holds);
+    return made;
+  }
+  return holds;
+}
+
+fn media_list_holds(values: &ComponentList, start: u64, end: u64, environment: Environment) -> holds: Bool reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Evaluates a comma-separated media query list: true when it is empty or when some query holds.";
+  let s = skip_space(values: values, at: start, limit: end);
+  if s >= end {
+    return True();
+  }
+  let query_start = s;
+  let cursor = s;
+  let span = end -sat s;
+  for (step in 0_u64..span) {
+    let at = cursor;
+    if at >= end {
+      break;
+    }
+    let kind = component_kind(values: values, at: at);
+    if kind == c_comma {
+      let one = media_query(values: values, start: query_start, end: at, environment: environment);
+      if one {
+        return True();
+      }
+      set query_start = at + 1_u64;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    set cursor = next;
+  }
+  let last = media_query(values: values, start: query_start, end: end, environment: environment);
+  return last;
+}
+
+fn media_holds(document: &Document, span: TextSpan, environment: Environment) -> holds: Bool reads(document) {
+  doc "Tokenizes the attribute value and evaluates it as a media query list.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let length = document^.text.inner.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return False();
+  }
+  let width = end - start;
+  if width > 16777216_u64 {
+    return False();
+  }
+  let parsed = parse_component_values(source: &document^.text.inner[start..end]);
+  match move parsed {
+    Ok(value: list) => {
+      let count = list.components.inner.len;
+      let made = media_list_holds(values: &list, start: 0_u64, end: count, environment: environment);
+      return made;
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+}

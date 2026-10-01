@@ -29,8 +29,9 @@ style sheets and `<style>` elements (`build/research/concurrency/`):
 
 - apollo11's module sheet holds 757 `var()` and 213 `calc()` uses, 74
   `@media` and 118 `@supports` rules; ecma262's sheets hold 89 `var()`.
-- No sheet uses `@layer`, `@import` or `@container`; ecma262 declares 12
-  `@font-face` rules.
+- No sheet uses `@layer` or `@container`; ecma262 declares 12 `@font-face`
+  rules, and two `@import` rules of highlight.js themes from a `<style>`
+  element, which the oracle refuses to load and the stage skips.
 - ecma262's `print.css` applies only to `media=print`, which the prototype
   applied as if it held.
 - Flex layout appears on ecma262 (its sidebar) and apollo11 (menus and
@@ -205,6 +206,43 @@ public fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTab
   document order for the font size and inherited longhands, which children
   read, and per element in the second loop for every other longhand, with
   no cache shared across elements.
+
+## How the three parts keep only true dependencies
+
+Written while implementing Q47 and Q50; each follows from those rulings and
+the parallelism rule of `AGENTS.md`, and none changes them.
+
+- **Fixed output per element in the parallel loops.** An iteration of a
+  parallel loop writes only its own slot, so the first loop writes, per
+  element, the winning declaration of each of the 55 longhands (55 `u32`)
+  and one bit per rule that sets custom properties. Matched rules are not
+  sorted: each declaration carries a key of origin and importance,
+  specificity and declaration order, and the larger key wins, so the order
+  in which the rule index offers candidates does not matter.
+- **Custom properties are chosen in the pass in document order.** They are
+  inherited and their number per element is not bounded, so the first loop
+  records only which custom-property rules matched; the pass in document
+  order picks the winning value per name, substitutes `var()` in it against
+  the parent's set and the element's own, and shares the parent's set when
+  the element declares none.
+- **`var()` in a value is substituted on text.** The value's components are
+  written back as CSS text with the custom property's text in place of each
+  `var()`, an empty comment on either side so no two tokens merge, and the
+  result is tokenized again by `pkg::css::syntax`. The parallel loop does
+  this in a buffer of its own iteration and reads the custom-property sets
+  only.
+- **`parse_pending` reads nothing shared.** Only `font-family` and
+  `list-style-type` give names that must be interned, and both are
+  inherited, so they are parsed by `parse_pending_named` in the pass in
+  document order; every other longhand is parsed by `parse_pending`, whose
+  effects are reads of its own value only.
+- **Explicit `inherit` on a longhand that is not inherited** (such as
+  `border-color: inherit`) needs the parent's computed value, which the
+  second parallel loop computes at the same time. The element computes it
+  again by walking up its ancestors' winning declarations instead: duplicated
+  work that adds no order between elements.
+- **Blockification** of a flex or grid container's children reads the
+  parent's `display` the same way, from the parent's winning declaration.
 
 ## Owner rulings
 
