@@ -1,0 +1,410 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Face = pkg::font::Face;
+alias FaceMetrics = pkg::font::FaceMetrics;
+alias Family = pkg::css::values::Family;
+alias FontGroup = pkg::css::values::FontGroup;
+alias face_metrics = pkg::font::face_metrics;
+alias load_face = pkg::font::load_face;
+alias nominal_glyph = pkg::font::nominal_glyph;
+
+const face_limit: u64 = 2147483648_u64;
+
+const entry_limit: u64 = 2147483648_u64;
+
+const name_limit: u64 = 65536_u64;
+
+const os2_tag: u32 = 1330851634_u32;
+
+const os2_x_height_offset: u64 = 86_u64;
+
+const os2_x_height_end: u64 = 88_u64;
+
+const directory_header_size: u64 = 12_u64;
+
+const table_record_size: u64 = 16_u64;
+
+const no_family: u8 = 0_u8;
+
+const own_name: u8 = 255_u8;
+
+const liberation_serif: u8 = 1_u8;
+
+const liberation_sans: u8 = 2_u8;
+
+const liberation_mono: u8 = 3_u8;
+
+const dejavu_sans: u8 = 4_u8;
+
+const dejavu_sans_mono: u8 = 5_u8;
+
+const liberation_serif_name: Array<u8, 16> = "Liberation Serif";
+
+const liberation_sans_name: Array<u8, 15> = "Liberation Sans";
+
+const liberation_mono_name: Array<u8, 15> = "Liberation Mono";
+
+const dejavu_sans_name: Array<u8, 11> = "DejaVu Sans";
+
+const dejavu_sans_mono_name: Array<u8, 16> = "DejaVu Sans Mono";
+
+const serif_word: Array<u8, 5> = "serif";
+
+const sans_serif_word: Array<u8, 10> = "sans-serif";
+
+const monospace_word: Array<u8, 9> = "monospace";
+
+const system_ui_word: Array<u8, 9> = "system-ui";
+
+const cursive_word: Array<u8, 7> = "cursive";
+
+const fantasy_word: Array<u8, 7> = "fantasy";
+
+const arial_word: Array<u8, 5> = "arial";
+
+const helvetica_word: Array<u8, 9> = "helvetica";
+
+const times_new_roman_word: Array<u8, 15> = "times new roman";
+
+const times_word: Array<u8, 5> = "times";
+
+const courier_new_word: Array<u8, 11> = "courier new";
+
+const courier_word: Array<u8, 7> = "courier";
+
+const space_scalar: u32 = 32_u32;
+
+const no_face: u32 = 4294967295_u32;
+
+fn font_set_new() -> made: FontSet pure {
+  doc "Returns a set whose face list is empty.";
+  let faces = box_slots_new::<FontFace>(capacity: 0_u64);
+  let made = FontSet(faces: move faces);
+  return move made;
+}
+
+fn shaped_empty() -> made: ShapedText pure {
+  doc "Returns empty advances, breaks and clusters and no segment.";
+  let advances = box_array_filled::<f32>(count: 0_u64, value: 0.0_f32);
+  let breaks = box_array_filled::<u8>(count: 0_u64, value: 0_u8);
+  let clusters = box_array_filled::<u8>(count: 0_u64, value: 0_u8);
+  let segments = box_slots_new::<FaceSegment>(capacity: 0_u64);
+  let made = ShapedText(advances: move advances, breaks: move breaks, clusters: move clusters, segments: move segments);
+  return move made;
+}
+
+fn font_set_add(fonts: &FontSet, family: &[u8], weight: u16, italic: Bool, data: &[u8]) -> result: Result<unit, TextError> reads(family), reads(data), writes(fonts) contract {
+  requires data^.len <= 268435456_u64;
+} {
+  doc "Loads the face, copies the family name and the OS/2 x-height beside it, and appends it to the set's faces, doubling their capacity when full.";
+  let count = fonts^.faces.inner.len;
+  if count >= face_limit {
+    let too_large = TextError::TooLarge();
+    return Err<unit, TextError>(error: too_large);
+  }
+  match load_face(data: data) {
+    Ok(value: face) => {
+      let length = family^.len;
+      if length > name_limit {
+        let invalid = TextError::Invalid();
+        return Err<unit, TextError>(error: invalid);
+      }
+      let name = box_slots_new::<u8>(capacity: length);
+      for (
+        index in 0_u64..length,
+        invariant copied: name.inner.len == index
+      ) {
+        let byte = family^[index];
+        place_back(window: &name.inner, value: byte);
+      }
+      let x_height = os2_x_height(data: data);
+      let added = FontFace(face: move face, family: move name, weight: weight, italic: italic, x_height: x_height);
+      push_face(cell: &fonts^.faces, value: move added);
+      return Ok<unit, TextError>(value: unit);
+    }
+    Err(error: refusal) => {
+      let invalid = TextError::Invalid();
+      return Err<unit, TextError>(error: invalid);
+    }
+  }
+}
+
+fn push_face(cell: &Box<Slots<FontFace>>, value: FontFace) -> result: unit writes(cell) {
+  doc "Appends value to cell, growing a full cell to twice its capacity, or to 8, within face_limit; font_set_add refuses a face before the cell reaches face_limit, so the value is always placed.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let doubled = capacity +sat capacity;
+    let wanted = imax(doubled, 8_u64);
+    if wanted <= face_limit {
+      if wanted > capacity {
+        grow(cell: cell, capacity: wanted);
+      }
+    }
+  }
+  let room = cell^.inner.len < cell^.inner.cap;
+  if room {
+    place_back(window: &cell^.inner, value: move value);
+  } else {
+    release_face(value: move value);
+  }
+  return unit;
+}
+
+fn release_face(value: FontFace) -> result: unit pure {
+  doc "Drops a face that a full cell at the largest capacity cannot take; face_limit keeps the set far below that capacity.";
+  let FontFace(face: face, family: name, weight: unused_weight, italic: unused_italic, x_height: unused_height) = move value;
+  return unit;
+}
+
+fn read_be16(data: &[u8], at: u64) -> result: u16 reads(data) {
+  doc "Returns the big-endian u16 at at, or 0 when it does not lie within data.";
+  let length = data^.len;
+  if at < length {
+    let room = length - at;
+    if room >= 2_u64 {
+      let next = at + 1_u64;
+      let high = cvt::<u8, u16>(data^[at]);
+      let low = cvt::<u8, u16>(data^[next]);
+      let shifted = ishl(high, 8_u32);
+      let value = ior(shifted, low);
+      return value;
+    }
+  }
+  return 0_u16;
+}
+
+fn read_be32(data: &[u8], at: u64) -> result: u32 reads(data) {
+  doc "Returns the big-endian u32 at at, or 0 when it does not lie within data.";
+  let at2 = at +sat 2_u64;
+  let high = read_be16(data: data, at: at);
+  let low = read_be16(data: data, at: at2);
+  let wide_high = cvt::<u16, u32>(high);
+  let wide_low = cvt::<u16, u32>(low);
+  let shifted = ishl(wide_high, 16_u32);
+  let value = ior(shifted, wide_low);
+  return value;
+}
+
+fn os2_x_height(data: &[u8]) -> result: i16 reads(data) {
+  doc "Returns sxHeight from the OS/2 table of the sfnt data, or 0 when the table is absent, older than version 2 or too short to hold it: the x-height the reference takes from the table before measuring the x glyph.";
+  let count = read_be16(data: data, at: 4_u64);
+  let tables = cvt::<u16, u64>(count);
+  for (index in 0_u64..tables) {
+    let offset = index * table_record_size;
+    let record = directory_header_size + offset;
+    let tag = read_be32(data: data, at: record);
+    let found = tag == os2_tag;
+    if found {
+      let start_at = record + 8_u64;
+      let length_at = record + 12_u64;
+      let start32 = read_be32(data: data, at: start_at);
+      let length32 = read_be32(data: data, at: length_at);
+      let start = cvt::<u32, u64>(start32);
+      let length = cvt::<u32, u64>(length32);
+      let version = read_be16(data: data, at: start);
+      let recent = version >= 2_u16;
+      let long_enough = length >= os2_x_height_end;
+      let usable = band(recent, long_enough);
+      if usable {
+        let at = start + os2_x_height_offset;
+        let bits = read_be16(data: data, at: at);
+        let value = reinterpret::<u16, i16>(bits);
+        return value;
+      }
+      return 0_i16;
+    }
+  }
+  return 0_i16;
+}
+
+fn face_count(fonts: &FontSet) -> count: u64 reads(fonts) {
+  doc "Returns the length of the set's face list.";
+  let count = fonts^.faces.inner.len;
+  return count;
+}
+
+fn lower_ascii(byte: u8) -> result: u8 pure {
+  doc "Returns byte with an ASCII uppercase letter lowered.";
+  let upper_low = byte >= 65_u8;
+  let upper_high = byte <= 90_u8;
+  let upper = band(upper_low, upper_high);
+  if upper {
+    let lowered = byte + 32_u8;
+    return lowered;
+  }
+  return byte;
+}
+
+fn same_name(first: &[u8], second: &[u8]) -> result: Bool reads(first), reads(second) {
+  doc "Tells whether two names are equal ignoring ASCII case.";
+  let length = first^.len;
+  let other = second^.len;
+  if length != other {
+    return False();
+  }
+  for (index in 0_u64..length) {
+    let left = lower_ascii(byte: first^[index]);
+    let right = lower_ascii(byte: second^[index]);
+    let differ = left != right;
+    if differ {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn family_matches(family: &[u8], code: u8, name: &[u8]) -> result: Bool reads(family), reads(name) {
+  doc "Tells whether a face's family is the one a resolution code names, name itself for own_name, ignoring ASCII case; no family matches no_family.";
+  if code == own_name {
+    let same = same_name(first: family, second: name);
+    return same;
+  }
+  if code == liberation_serif {
+    let same = same_name(first: family, second: &liberation_serif_name[0_u64..16_u64]);
+    return same;
+  }
+  if code == liberation_sans {
+    let same = same_name(first: family, second: &liberation_sans_name[0_u64..15_u64]);
+    return same;
+  }
+  if code == liberation_mono {
+    let same = same_name(first: family, second: &liberation_mono_name[0_u64..15_u64]);
+    return same;
+  }
+  if code == dejavu_sans {
+    let same = same_name(first: family, second: &dejavu_sans_name[0_u64..11_u64]);
+    return same;
+  }
+  if code == dejavu_sans_mono {
+    let same = same_name(first: family, second: &dejavu_sans_mono_name[0_u64..16_u64]);
+    return same;
+  }
+  return False();
+}
+
+fn resolve_family(name: &[u8], generic: Bool) -> result: u8 reads(name) {
+  doc "Resolves one font-family entry as the reference does on its host (research/investigations/layout/runs/families.txt): a generic name to its default family or to nothing, a metric-compatible alias to its Liberation family, and any other name to itself, as own_name.";
+  if generic {
+    let serif = same_name(first: name, second: &serif_word[0_u64..5_u64]);
+    let cursive = same_name(first: name, second: &cursive_word[0_u64..7_u64]);
+    let fantasy = same_name(first: name, second: &fantasy_word[0_u64..7_u64]);
+    let decorative = bor(cursive, fantasy);
+    let serif_like = bor(serif, decorative);
+    if serif_like {
+      return liberation_serif;
+    }
+    let sans = same_name(first: name, second: &sans_serif_word[0_u64..10_u64]);
+    if sans {
+      return liberation_sans;
+    }
+    let mono = same_name(first: name, second: &monospace_word[0_u64..9_u64]);
+    if mono {
+      return dejavu_sans_mono;
+    }
+    let system = same_name(first: name, second: &system_ui_word[0_u64..9_u64]);
+    if system {
+      return dejavu_sans;
+    }
+    return no_family;
+  }
+  let arial = same_name(first: name, second: &arial_word[0_u64..5_u64]);
+  let helvetica = same_name(first: name, second: &helvetica_word[0_u64..9_u64]);
+  let sans_alias = bor(arial, helvetica);
+  if sans_alias {
+    return liberation_sans;
+  }
+  let roman = same_name(first: name, second: &times_new_roman_word[0_u64..15_u64]);
+  let times_name = same_name(first: name, second: &times_word[0_u64..5_u64]);
+  let serif_alias = bor(roman, times_name);
+  if serif_alias {
+    return liberation_serif;
+  }
+  let courier_new = same_name(first: name, second: &courier_new_word[0_u64..11_u64]);
+  let courier = same_name(first: name, second: &courier_word[0_u64..7_u64]);
+  let mono_alias = bor(courier_new, courier);
+  if mono_alias {
+    return liberation_mono;
+  }
+  return own_name;
+}
+
+fn style_rank(face_italic: Bool, style: u8) -> result: f32 pure {
+  doc "Ranks a face's slope for a requested font-style as CSS Fonts 4's matching orders them: the requested slope first (italic and oblique faces alike for italic or oblique, upright ones for normal), the other second.";
+  let wants_slope = style != 0_u8;
+  let mismatch = bxor(face_italic, wants_slope);
+  if mismatch {
+    return 1.0e4_f32;
+  }
+  return 0.0_f32;
+}
+
+fn weight_rank(face_weight: u16, wanted: f32) -> result: f32 pure {
+  doc "Ranks a face's weight for a requested weight as CSS Fonts 4's matching orders them, lower first: for a request from 400 to 500, the weights from it up to 500 ascending, then those below it descending, then those above 500 ascending; below 400, the weights at or below it descending, then those above ascending; above 500, the weights at or above it ascending, then those below descending.";
+  let weight = cvt::<u16, f32>(face_weight);
+  let above = fsub.strict(weight, wanted);
+  let below = fsub.strict(wanted, weight);
+  let low_end = fge(wanted, 4.0e2_f32);
+  let high_end = fle(wanted, 5.0e2_f32);
+  let middle = band(low_end, high_end);
+  if middle {
+    let at_least = fge(weight, wanted);
+    let at_most = fle(weight, 5.0e2_f32);
+    let between = band(at_least, at_most);
+    if between {
+      return above;
+    }
+    let lighter = flt(weight, wanted);
+    if lighter {
+      let ranked = fadd.strict(below, 1.0e3_f32);
+      return ranked;
+    }
+    let beyond = fsub.strict(weight, 5.0e2_f32);
+    let ranked = fadd.strict(beyond, 2.0e3_f32);
+    return ranked;
+  }
+  let light = flt(wanted, 4.0e2_f32);
+  if light {
+    let not_heavier = fle(weight, wanted);
+    if not_heavier {
+      return below;
+    }
+    let ranked = fadd.strict(above, 1.0e3_f32);
+    return ranked;
+  }
+  let not_lighter = fge(weight, wanted);
+  if not_lighter {
+    return above;
+  }
+  let ranked = fadd.strict(below, 1.0e3_f32);
+  return ranked;
+}
+
+fn match_family(fonts: &FontSet, code: u8, name: &[u8], weight: f32, style: u8) -> result: u32 reads(fonts), reads(name) {
+  doc "Returns the face of the family a resolution code names (name itself for own_name) that CSS Fonts 4's matching chooses for weight and style, the earliest added among equals, or no_face when the set holds no face of that family.";
+  let count = fonts^.faces.inner.len;
+  let best = no_face;
+  let best_rank = 0.0_f32;
+  for (index in 0_u64..count) {
+    let fits = index < face_limit;
+    if fits {
+      let length = fonts^.faces.inner[index].family.inner.len;
+      let family = &fonts^.faces.inner[index].family.inner[0_u64..length];
+      let same = family_matches(family: family, code: code, name: name);
+      if same {
+        let face_italic = fonts^.faces.inner[index].italic;
+        let face_weight = fonts^.faces.inner[index].weight;
+        let slope = style_rank(face_italic: face_italic, style: style);
+        let heaviness = weight_rank(face_weight: face_weight, wanted: weight);
+        let rank = fadd.strict(slope, heaviness);
+        let first = best == no_face;
+        let better = flt(rank, best_rank);
+        let chosen = bor(first, better);
+        if chosen {
+          set best = cvt::<u64, u32>(index);
+          set best_rank = rank;
+        }
+      }
+    }
+  }
+  return best;
+}

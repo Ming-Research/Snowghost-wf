@@ -264,3 +264,61 @@ example apart from the renderer code that exposed it
   its other lookups here. Change: validate per lookup and ignore only the
   failing lookup, matching HarfBuzz's neutering. Reopen when a real web
   font with a partly broken layout table renders differently from Chrome.
+
+- **Emoji presentation is not given to a color emoji face.** Chromium draws
+  a character whose Emoji_Presentation is Yes (U+231B, U+1F600) with Noto
+  Color Emoji ahead of the font-family list; `pkg::layout::text` draws it
+  with the first face of the chain that maps it (DejaVu Sans for U+1F600,
+  FreeSerif for U+231B), so the advance differs. Impact: 1 of the 3,000
+  text cases drawn from the three pages (html5's U+231B) and the synthetic
+  emoji cases (research/investigations/layout/DESIGN.md, "Text preparation
+  results"). Change: Emoji_Presentation in `pkg::text::properties` from
+  emoji-data.txt, a mark on color faces (CBDT, sbix or COLR) in `FontSet`,
+  and itemizing emoji-presentation sequences, and characters followed by
+  U+FE0F, to the first color face. Reopen when a page that renders emoji
+  joins the corpus.
+- **Indic and other complex scripts are shaped as Common.** `pkg::font`
+  shapes Latin, Greek, Cyrillic and Common only, so Devanagari's reordering
+  and conjuncts and Tamil's are missing: two of apollo11's language links
+  (हिन्दी and தமிழ், in FreeSans) are 0.33 and 0.08 px wider than in
+  Chromium. Change: HarfBuzz's Indic shaper in `pkg::font` and the script
+  in `pkg::layout::text`'s itemizer. Reopen when such text is in scope.
+- **Fallback for bold or italic text skips the generic's own family.** For
+  a bold or italic group whose first family is `serif` (or `monospace`),
+  Chromium tries fontconfig's face for that generic name at normal style
+  (DejaVu Serif, DejaVu Sans Mono) before its global fallback order
+  (`research/investigations/layout/runs/text-fallback.txt`: bold `serif`
+  draws U+2200 with DejaVu Serif, regular `serif` with DejaVu Sans);
+  `pick_fonts` follows the fixed order of the set, as its interface says.
+  Chromium also picks a run's fallback face by the run's first unmapped
+  character and keeps it for later characters it maps, where
+  `pkg::layout::text` decides per character. Impact: none of the sampled
+  page text (its first families are IBM Plex Serif and sans-serif). Change:
+  a per-group fallback prefix in `pick_fonts`, with the interface's doc.
+  Reopen when bold or italic serif text with symbols outside Liberation is
+  measured.
+- **`word-break: break-all` is not Chromium's.** Blink also breaks before
+  and after dash punctuation in break-all and does not break after a
+  hyphen-minus before a non-ASCII letter; `pkg::layout::text` allows a break
+  between two letters or numbers only. Impact: 21 of the synthetic break
+  cases; no sampled page text uses break-all or keep-all. Change: measure
+  Blink's break-all classes as the normal ASCII table was measured and
+  encode them. Reopen when a page uses break-all.
+- **The x-height of a face without OS/2 sxHeight is approximated.** Skia
+  measures the hinted x glyph for DejaVu and WenQuanYi (OS/2 version 1),
+  giving whole pixels; `face_extents` returns 0.56 times the rounded
+  ascent, Blink's own fallback, so `ex` lengths and `vertical-align:
+  middle` on DejaVu text differ by up to about 1 px. Change: the x glyph's
+  bounding box from glyf with the autohinter's rounding, or a measured
+  table. Reopen when ex units on DejaVu text move a measured box.
+- **Letter-spacing does not turn ligatures off.** Chromium disables
+  liga, clig, dlig, hlig and calt when letter-spacing is not 0;
+  `pkg::font::shape_run` takes no feature settings. The installed Liberation
+  faces have no such ligatures, so no measured case differs. Change: a
+  feature parameter in `shape_run`. Reopen when a face with ligatures is
+  drawn with letter-spacing.
+- **A tab gets no advance from text preparation.** `shape_paragraph` treats
+  U+0009 as a control of advance 0; its width depends on its position and
+  `tab-size`, which only line layout knows. The layout stage must give each
+  preserved tab its tab stop. Reopen with `white-space: pre` text that holds
+  tabs.

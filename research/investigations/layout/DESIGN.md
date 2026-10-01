@@ -350,3 +350,88 @@ recommended; each starts from the dependencies of its candidates.
   criteria's bounds and measures as proposed.
 - **2026-10-01, Q51 to Q58,** written in Chinese: all as recommended, and
   start the implementation.
+
+## Text preparation results
+
+`pkg::layout::text` (Q53, Q54) against Chromium 141 on this host, with the
+text oracle: `make oracle-text` draws 1,000 rendered text nodes at even
+steps from each page with their parents' computed font-family, size,
+weight, style, spacing and wrapping (one line of text after white-space
+processing and text-transform, at most 120 scalars), adds 24 spacing cases,
+10 cases of synthetic styles and sizes, 204 break cases and 648 extents
+cases, measures them in Chromium with
+`tests/layout/text_oracle.mjs` and compares the `text_oracle` driver's
+results (`runs/text-compare.txt`).
+
+| Cases | Count | Width exact at 1/64 px | Breaks equal |
+|---|---:|---:|---:|
+| ecma262 text | 1,000 | 1,000 | 1,000 |
+| html5 text | 1,000 | 999 | 1,000 |
+| apollo11 text | 1,000 | 998 | 1,000 |
+| spacing | 24 | 24 | 24 |
+| synthetic styles and sizes | 10 | 10 | 10 |
+| breaks | 204 | 198 | 183 |
+
+2,997 of the 3,000 page cases (99.9 percent) have Chromium's width
+exactly, against the 99 percent sought, and the ascent plus descent, the
+line height and the baseline of all 648 extents cases (Liberation Serif,
+Sans and Mono, DejaVu Sans Mono, Sans and Serif, FreeSerif, FreeSans,
+FreeMono, IPAGothic, Unifont and Loma at 18 sizes from 8 to 48 px, regular,
+bold and italic) match. What the reference does, as measured:
+
+- **Advances.** A glyph's advance is FreeType's linear advance for the
+  size truncated to 26.6, handed to HarfBuzz in 16.16, plus HarfBuzz's
+  scaling of its positioning; the size is first quantized by Blink's font
+  cache, `trunc(size * 100) / 100` in f32 (18.72 px draws at 18.71, 1197/64
+  in 26.6, not 1198/64; the synthetic cases at 18.72, 18.63 and 18.8 px,
+  whose 26.6 sizes the quantization lowers by 1/64, match). Within one page Chromium shares a face's platform
+  data between nearby sizes, so the oracle measures each size in a page of
+  its own. Synthetic bold and synthetic oblique change no advance (the
+  synthetic cases of Unifont, IPAGothic and DejaVu Sans at 700 and italic,
+  and of WenQuanYi Zen Hei drawn bold by fallback).
+- **Vertical metrics.** Ascent, descent and line gap scaled by the
+  quantized size in f32 and each rounded half up; no pixel moves from the
+  ascent to a descent rounded down. The baseline of a line with
+  line-height normal is the ascent plus half the line gap rounded down.
+- **Family names and fallback.** As `runs/families.txt` records, and
+  `ui-serif`, `ui-sans-serif`, `ui-monospace`, `ui-rounded`, `math`,
+  `emoji` and `fangsong` resolve to nothing; named faces match ASCII
+  case-insensitively, but Noto Color Emoji and OpenSymbol are never
+  matched by name. A character no listed face maps falls back through
+  fontconfig's sort of `:lang=en-us:scalable=true` (DejaVu Sans, DejaVu
+  Sans Bold, WenQuanYi Zen Hei, Loma, IPAGothic, FreeSans, FreeSerif,
+  FreeMono, OpenSymbol, DejaVu Serif, Liberation Serif, the Unifont faces,
+  Noto Color Emoji), the regular face drawn with synthetic bold for bold
+  text (`runs/text-fallback.txt`); `pkg::oracle::fonts` adds the faces in
+  that order. For bold or italic text whose first family is a generic name,
+  Chromium first tries fontconfig's face for that name (`serif` is DejaVu
+  Serif there), which the fixed order does not model.
+- **Scripts.** A run with no letters is shaped as Latin, the script of the
+  content language: Liberation Sans kerns only under `latn`, and "6.5.11.1"
+  is 1.19 px narrower so.
+- **Break opportunities.** Blink's line breaker allows a break after a
+  space or tab before anything else, and between two ASCII scalars (or
+  U+00A0) only where its ASCII table does (`runs/text-ascii-breaks.txt`:
+  after `-` and `?` before most scalars, and before `(`, `<`, `[` and `{`
+  after most other punctuation), so "ISO/IEC", "and/or" and "<!DOCTYPE" have no opportunity
+  inside where UAX #14 has one; elsewhere UAX #14 applies. An emergency
+  break of `overflow-wrap` is never before a space, and `word-break:
+  break-word` is `normal` with `overflow-wrap: anywhere`.
+
+Each mismatch class, with its cause (`docs/todo.md` holds the changes):
+
+- **Emoji presentation** (html5's U+231B, and the 6 synthetic emoji cases):
+  Chromium draws an Emoji_Presentation character with Noto Color Emoji
+  ahead of the family list; `pkg::layout::text` takes the first face that
+  maps it.
+- **Indic shaping** (2 of apollo11's language links, in Devanagari and
+  Tamil): `pkg::font` shapes these scripts as Common, without HarfBuzz's
+  Indic shaper; 0.33 and 0.08 px.
+- **`word-break: break-all`** (21 synthetic cases, no page text): Blink also
+  breaks around dash punctuation and does not break after a hyphen-minus
+  before a non-ASCII letter.
+- **x-height**, reported but not judged: 481 of 648 extents cases match.
+  DejaVu's faces have no OS/2 sxHeight, and Skia measures the hinted x
+  glyph (whole pixels, the unhinted 4.375 px at 8 px under synthetic
+  oblique), where `face_extents` returns 0.56 times the ascent; five
+  FreeSerif and FreeSans cases differ by 1/64 px in ten x-heights.
