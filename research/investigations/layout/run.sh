@@ -4,16 +4,27 @@
 #   run.sh check [PAGE...]      builds the layout_oracle driver sequentially
 #                               and with --par, dumps every page with both,
 #                               requires the two dumps to be byte-identical
-#                               (criterion 3), compares the dump with
+#                               (criterion 3), judges the dump against
 #                               Chromium's (criterion 1) and prints the
 #                               parallelism ledger's lines for the stage's
 #                               loops; it exits with 1 when the dumps differ,
-#                               a real page misses the criterion or a page's
-#                               structure differs from Chromium's (a case
-#                               page, which also probes known gaps, may
-#                               miss the criterion)
+#                               a real page's comparison exits non-zero or a
+#                               case page's structure differs from Chromium's
+#                               (compare exits 3) or matches fewer boxes or
+#                               text nodes than its floor
+#   run.sh judge [PAGE...]      judges the dumps already in build/research/
+#                               layout against Chromium's, as check does,
+#                               without building or dumping
 #   run.sh time [PAGE [REPS]]   builds both drivers and times the stage's
 #                               parts on every page, or on PAGE (criterion 2)
+#
+# A real page (ecma262, html5, apollo11) must meet the criterion: compare
+# exits 0. A case page (tests/layout/*-cases.html) also probes known gaps, so
+# it may miss the criterion, but it must not regress: the table in
+# case_floors holds the least number of matched block-level boxes,
+# inline-level boxes and text nodes compare reports for each case page, the
+# counts when the table was last set. Raise a floor in the change that raises
+# the count; lowering one is a decision about the stage.
 #
 # PAGE is one of ecma262, html5 and apollo11, the real pages of the
 # concurrency investigation, or the name of a case page
@@ -99,6 +110,73 @@ build() {
 	(cd renderer && "$compiler" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle)
 }
 
+# The least matched counts of block-level boxes, inline-level boxes and text
+# nodes of each case page, as compare prints them ("93/99": matched/judged).
+case_floors() {
+	case $1 in
+	columns-cases) echo "93 2 65" ;;
+	flex-cases) echo "259 2 25" ;;
+	flow-cases) echo "219 145 294" ;;
+	grid-cases) echo "286 2 198" ;;
+	table-cases) echo "694 29 306" ;;
+	*) echo "" ;;
+	esac
+}
+
+# Judges the dump of one page against Chromium's: compare's output is shown
+# and kept in $out/PAGE.compare.txt; the page fails when compare exits with
+# other than 0, when a case page's compare exits with other than 0 or 1 (3 is
+# a structure that differs), or when a case page's matched count of a measure
+# is below its floor.
+judge_page() {
+	page=$1
+	echo "$page: against Chromium"
+	judged=0
+	node tests/layout/layout_oracle.mjs compare "$oracle/$page.chromium.tsv" "$out/$page.seq.tsv" >"$out/$page.compare.txt" || judged=$?
+	cat "$out/$page.compare.txt"
+	case $page in
+	*-cases)
+		floors=$(case_floors "$page")
+		if [ -z "$floors" ]; then
+			echo "$page: FAIL, no floor in case_floors" >&2
+			return 1
+		fi
+		if [ "$judged" -gt 1 ]; then
+			echo "$page: FAIL, compare exited $judged (3: the structure differs from Chromium's)" >&2
+			return 1
+		fi
+		matched=$(awk '
+			/^block-level boxes: / { split($3, n, "/"); blocks = n[1] }
+			/^inline-level boxes: / { split($3, n, "/"); inlines = n[1] }
+			/^text nodes: / { split($3, n, "/"); texts = n[1] }
+			END { print blocks + 0, inlines + 0, texts + 0 }' "$out/$page.compare.txt")
+		set -- $floors
+		floor_blocks=$1 floor_inlines=$2 floor_texts=$3
+		set -- $matched
+		failed=0
+		if [ "$1" -lt "$floor_blocks" ]; then
+			echo "$page: FAIL, $1 block-level boxes match, floor $floor_blocks" >&2
+			failed=1
+		fi
+		if [ "$2" -lt "$floor_inlines" ]; then
+			echo "$page: FAIL, $2 inline-level boxes match, floor $floor_inlines" >&2
+			failed=1
+		fi
+		if [ "$3" -lt "$floor_texts" ]; then
+			echo "$page: FAIL, $3 text nodes match, floor $floor_texts" >&2
+			failed=1
+		fi
+		return $failed
+		;;
+	*)
+		if [ "$judged" -ne 0 ]; then
+			echo "$page: FAIL, compare exited $judged" >&2
+			return 1
+		fi
+		;;
+	esac
+}
+
 check() {
 	build
 	status=0
@@ -112,14 +190,7 @@ check() {
 			echo "$page: sequential and --par dumps differ" >&2
 			status=1
 		fi
-		echo "$page: against Chromium"
-		judged=0
-		node tests/layout/layout_oracle.mjs compare "$oracle/$page.chromium.tsv" "$out/$page.seq.tsv" || judged=$?
-		case $page:$judged in
-		*:0) ;;
-		*-cases:1) ;;
-		*) status=1 ;;
-		esac
+		judge_page "$page" || status=1
 	done
 	echo "parallelism ledger ($out/ledger.txt):"
 	grep -E '^PAR split +layout\.' "$out/ledger.txt" || true
@@ -191,12 +262,20 @@ check)
 	shift
 	check "$@"
 	;;
+judge)
+	shift
+	status=0
+	for page in ${*:-$pages}; do
+		judge_page "$page" || status=1
+	done
+	exit $status
+	;;
 time)
 	shift
 	time_parts "$@"
 	;;
 *)
-	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]]" >&2
+	echo "usage: run.sh check [PAGE...] | judge [PAGE...] | time [PAGE [REPS]]" >&2
 	exit 2
 	;;
 esac
