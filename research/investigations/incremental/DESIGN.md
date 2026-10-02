@@ -11,7 +11,7 @@ The owner's framing, after the layout stage (mbbill/Snowghost#27), restated
 in English: Chrome's pipeline supports incrementality poorly. Each stage is
 hand-tuned for what may be reused, and its layering and tiling are hacks
 around that, so changing one pixel repaints a tile. Incrementality is a
-question of data coupling. What is not coupled to a change need not be
+question of data coupling: what is not coupled to a change need not be
 computed, and in Whitefoot uncoupled work is also provably parallel.
 End-to-end parallelism therefore does not mean running Chrome's stages
 concurrently. It means one local change flows through style, layout, paint
@@ -21,96 +21,138 @@ change that affects the whole page still recomputes the whole page.
 This record is a research tree, not a plan. It maps the approaches, what
 each needs, what is established, what was measured here, what looks
 promising, what is hard, and the experiments that would decide between
-them. `design/pipeline.md` already decides that every stage is incremental
-and parallel end to end, and that each stage is a pure function memoized by
-its inputs. This tree is what that decision needs before it can be built.
+them. `design/pipeline.md` decides that every stage is incremental and
+parallel end to end and that each stage is a pure function memoized by its
+inputs. This tree is what that decision needs before it can be built, and
+it finds one place where the decision claims more than the language gives
+(5.1).
 
 ## How to read the tree
 
-Each node carries one status:
+Every node carries exactly one of these statuses, so the tree can be
+filtered by them:
 
-- **measured:** observed on the three real pages or in this repository's
-  code, with the record named;
-- **established:** shipped or published practice, with the system named;
-- **promising:** consistent with the measurements and with Whitefoot's
-  rules, but not yet built or measured here;
-- **uncertain:** plausible, with an open question that decides it;
-- **hard:** possible, at a cost or with an obstacle stated;
-- **dead end:** excluded by an argument or a measurement given in the node.
+| Status | Meaning |
+|---|---|
+| **measured** | observed on the three real pages or in this repository, with the record named |
+| **established** | shipped or published practice, with the system named |
+| **promising** | consistent with the measurements and with Whitefoot's rules, not yet built or measured here |
+| **uncertain** | plausible, with an open question or a measurement that decides it |
+| **hard** | possible, at a cost or past an obstacle stated in the node |
+| **unlikely** | argued against, but the argument rests on an unmeasured constant or a recalled source |
+| **dead end** | excluded by an argument or a measurement given in the node |
 
-The five branch notes under `notes/` hold the detail and their own sources:
+A node that holds for some cases and not others is split into the cases.
 
-- `notes/theory.md`: incremental computation families and Whitefoot's
-  language rules;
-- `notes/architecture.md`: units, couplings, execution models and the
-  evolution of the current code;
-- `notes/engines.md`: what Blink, Gecko, WebRender, Servo and UI toolkits
-  do, mechanism by mechanism;
-- `notes/fanout.md`: the census of how far edits propagate in Chromium on
-  the three pages;
-- `notes/raster.md`: from changed content to pixels without tiles.
+**Where the detail lives.** The tree is drawn from five explorations under
+`notes/`:
 
-Each note marks what its author fetched, measured or recalled from memory.
-A recalled claim is a lead, not evidence. The census scripts and their
-aggregates are in `census/`.
+- `theory.md`: incremental computation families and Whitefoot's language
+  rules;
+- `architecture.md`: units, couplings, execution models and the current
+  code's evolution;
+- `engines.md`: what Blink, Gecko, WebRender, Servo and UI toolkits do;
+- `fanout.md`: the census in Chromium of how far edits propagate on the
+  three pages;
+- `raster.md`: from changed content to pixels without tiles.
+
+`notes/critique.md` is a separate critique of this tree's first draft,
+which this version answers.
+
+**How to treat the notes' claims.** Each note marks what its author
+fetched, measured or recalled. A recalled claim is a lead, not evidence;
+nodes below that rest on one say "recalled". The notes refer to a shared
+brief, `context.md`, whose content is the Question above; it is not kept.
+
+**The census material.** `census/` holds the census's scripts and
+aggregated results, and a CPU micro-benchmark. The census's raw per-edit
+JSON is not kept, since its aggregates are.
 
 ## The budget
 
-These are the numbers every branch below has to meet.
+These are the numbers every branch has to meet.
 
-- **Full recompute is about 50 frames.** html5's style stage takes 0.18 s
-  and its layout stage 0.59 s at four workers
-  (`research/investigations/layout/DESIGN.md`, Layout results;
-  `research/investigations/concurrency/DESIGN.md`, Shape D). That is about
-  0.8 s, against 16.7 ms for a 60 Hz frame and 4.2 ms at 240 Hz. Parallelism
-  alone cannot make full recomputation an interactive path. (measured)
-- **A frame where nothing changed must cost almost nothing.** Checking
-  120,000 memoized units at 100 ns each costs 12 ms. One scan of a dense
-  version array costs about 1 ms. Anything else must be push-based: the
-  write marks what it dirties (`notes/theory.md` §0; arithmetic, with the
-  per-unit constants an estimate).
-- **Dynamic dependency tracing is affordable per formatting context or
-  paragraph, not per box.** At about 100 ns to 1 µs per recorded edge, per
-  box tracing costs as much as the work it saves (`notes/theory.md` §0;
-  order of magnitude from memory). How many contexts and paragraphs the
-  pages have is the first number experiment X1 records.
+- **A full recompute costs about 50 frames.** status: measured.
+  - html5's layout stage takes 0.59 s at four workers
+    (`research/investigations/layout/runs/time-parts.txt`).
+  - Its style stage takes 0.18 s in the prototype's shape C
+    (`research/investigations/concurrency/DESIGN.md`, Shape D); the real
+    style stage is of the same order.
+  - That is about 0.8 s, against 16.7 ms for a 60 Hz frame and 4.2 ms at
+    240 Hz.
+  - Parallelism alone cannot make full recomputation an interactive path.
+- **The unit counts.** status: measured. The real layout stage
+  (`research/investigations/layout/runs/time-parts.txt`):
+
+  | Page | Formatting contexts | Paragraphs |
+  |---|---:|---:|
+  | ecma262 | 10,217 | 57,514 |
+  | html5 | 13,843 | 60,868 |
+  | apollo11 | 1,113 | 2,569 |
+
+  One block formatting context holds most of each page's text
+  (`research/investigations/concurrency/DESIGN.md`). html5's dominant one
+  holds 20,919 paragraphs (`notes/architecture.md` §0).
+- **A frame in which nothing changed must cost almost nothing.** status:
+  arithmetic, with recalled constants.
+  - Checking 120,000 memoized units at 100 ns each costs 12 ms.
+  - One scan of a dense version array costs about 1 ms.
+  - Anything else must be push-based: the write marks what it dirties, or
+    the change arrives as an edit list (3.9). See `notes/theory.md` §0.
+- **Dynamic dependency tracing.** status: uncertain, one measurement
+  away.
+  - The arithmetic: at a recalled 100 ns to 1 µs per recorded edge and
+    about ten edges per unit, tracing a full build of html5 would cost
+    14 to 140 ms per context and 61 to 610 ms per paragraph.
+  - Against the 0.8 s full build, that is 2 to 17 percent at context grain
+    and 8 to 76 percent at paragraph grain. `notes/theory.md` takes 5
+    percent as the acceptable bookkeeping share.
+  - Which end of the constant is true decides whether recorded reads (3.3)
+    are affordable at context grain. Experiment X12 measures it.
 
 ## What the census measured
 
 `notes/fanout.md` applied 14 kinds of edit to the three pages in Chromium:
 
 - 375 edits on apollo11, and 16 and 12 per kind on html5 and ecma262;
-- a cheaper census of ancestor heights with 300 edits per kind per page.
+- a census of ancestor heights with 300 edits per kind per page;
+- per edit, a diff of 26 of the 50 compared longhands and of every
+  element's rectangles.
 
-For each edit it diffed every element's computed style and rectangles.
-(measured; the limits are in its §0)
+Edit targets were uniform over elements, so mostly leaves. Pseudo-elements
+and markers were invisible, class edits were no-ops in 42 to 88 percent of
+samples, and every edit was a single edit on a loaded page. Its §0 lists
+these limits. The findings:
 
 - **Style stays in the edited subtree.** In 405 of 406 samples the style
-  change stayed inside the edited element's subtree. A leaf color or font
-  size change restyles 1 to 2 elements; a container-level one restyles 64
-  to 137 at the median.
+  change did not leave the edited element's subtree. A leaf color or font
+  size change restyles 1 to 2 elements, a container-level one 64 to 137 at
+  the median. Selector couplings across the tree (siblings, `:has()`)
+  occurred once and are not characterized.
 - **A word edit almost never changes an ancestor's height.** 88 to 94
-  percent of single-word insertions change no ancestor's height (12 percent
-  on apollo11, 6 percent on ecma262 and html5).
-- **When a height changes, absolute positions move but little else
-  changes.**
-  - A 12-word insertion moves a median of 4,415 boxes on apollo11 and
-    54,842 on ecma262.
-  - Measured as translation roots relative to the containing block, the same
-    edits leave 40 and 33 boxes to change.
-  - Across the kinds that move many boxes, 96 to 100 percent of the movement
-    is an ancestor's translation.
-- **Offsets relative to the parent are not enough on flat pages.**
-  html5's `body` has 3,545 block children. Removing one `dd` moves 117,137
-  boxes. It needs 3,560 offset rewrites with offsets relative to the parent,
-  and 1 with each box anchored to the end of the preceding sibling.
+  percent of single-word insertions change no ancestor's height (12
+  percent on apollo11, 6 percent on ecma262 and html5).
+- **Absolute positions move in bulk, but it is almost all translation.**
+  A 12-word insertion moves a median of 4,415 boxes on apollo11 and 54,842
+  on ecma262, almost all as a translation of whole subtrees. Relative to
+  the nearest block ancestor, the edits have a median of 40 and 33
+  translation roots. Across the kinds that move many boxes, 96 to 100
+  percent of the movement is an ancestor's translation.
+- **Offsets relative to the parent do not suffice on flat pages.** html5's
+  `body` has 3,545 block children, and removing one `dd` moves 117,137
+  boxes.
+  - Offsets relative to the nearest block ancestor need 3,560 rewrites.
+  - Offsets anchored to the preceding sibling's end need 1.
+  - Offsets relative to the formatting context, Snowghost's Q55, would
+    need more than the parent-relative count. A block is not a context, and
+    html5's dominant context holds 20,919 paragraphs. The census did not
+    measure that scheme.
 - **Some edits are not local at all.**
   - Changing a container's inline size resizes 2,205 elements at p90 on
     apollo11's article body and leaves 86 percent of the nodes dirty.
-  - An inherited font change on a container restyles 89 to 137 elements and
-    resizes 91 to 151 at the median.
-- **Couplings that reach siblings rather than only ancestors or
-  descendants:**
+  - An inherited font change on a container restyles 89 to 137 elements
+    and resizes 91 to 151 at the median.
+- **Couplings that reach siblings, not only ancestors or descendants:**
   - table column widths;
   - flex and grid stretch;
   - shrink-to-fit up through inline ancestors: one word edit changes some
@@ -118,6 +160,13 @@ For each edit it diffed every element's computed style and rectangles.
     to 2 ancestors;
   - counters: an item inserted into apollo11's reference list renumbers a
     median of 147 following items.
+- **Edits the census did not apply:**
+  - the parser appending during load;
+  - a font or an image arriving;
+  - animations of layout properties;
+  - `:hover`, focus, selection and the caret.
+
+  Experiment X8 covers the first two; the others are open (1.11).
 
 ## The tree
 
@@ -127,86 +176,119 @@ The census and `notes/architecture.md` §2 separate couplings CSS imposes
 from couplings the representation adds. Only the first kind is
 unavoidable.
 
-1.1 **Inheritance and selectors.** Status: measured local, established
-mechanisms.
-- **Scope.** A style change stays in the edited subtree, as the census
-  shows.
-- **Finding what to restyle.** This is a static analysis of the sheet:
-  Blink's invalidation sets and Stylo's invalidation map. Both are
-  established and over-approximate; `:has()`, sibling combinators and
-  `:nth-*` widen them (`notes/engines.md` §1.1–1.2).
-- **What replaces the hand-written bridge.** The bridge between "which
-  style changed" and "which stage reruns" is Blink's style diff or Gecko's
-  change hints. It can become each stage keyed by its own value groups,
-  which Snowghost's interned groups already are. Status: promising.
+1.1 **Inheritance and selectors.**
+- **Locality.** status: measured, within the census's limits above. A
+  style change stays in the edited subtree for leaf-weighted single edits
+  over 26 longhands.
+- **Finding what to restyle.** status: established. This is a static
+  analysis of the sheet: Blink's invalidation sets, and Stylo's
+  invalidation map (recalled). Both over-approximate, more so with
+  `:has()`, sibling combinators and `:nth-*` (`notes/engines.md`
+  §1.1–1.2).
+- **Deriving those tables from the compiler.** status: uncertain. The
+  invalidation set of a rule is what the matcher reads for it
+  (`notes/engines.md` §1.1). If Whitefoot could reflect a function's effect
+  row, or a finer read set, into data, the reverse index from element
+  features to rules would come from the compiler instead of a second
+  hand-written table.
+  - The same holds between stages. "Which style changes affect layout" is
+    the union of the layout functions' read sets, where Blink keeps a
+    hand-written style diff and Gecko change hints.
+  - The open question is whether the spec lets a row be reflected; it names
+    rows as checked, not as values.
+- **Stage keys from value groups.** status: promising. Each stage keyed
+  by the interned value groups it reads, which Snowghost's computed styles
+  already are, replaces the hand-written bridge.
 
-1.2 **Line breaking inside a paragraph.** Status: measured local. Most word
-edits end at the paragraph, since its height, line count and widths stay the
-same. The paragraph's line-breaking output is the first boundary at which a
-rerun can stop (`notes/fanout.md` §5). Text preparation is 60 to 67 percent
-of the layout stage on the large pages, and it runs per paragraph.
+1.2 **Line breaking inside a paragraph.** status: measured local.
+- **Why it matters.** Most word edits end at the paragraph, since its
+  height, line count and widths stay the same. Text preparation is 60 to 67
+  percent of the layout stage and runs per paragraph.
+- **Consequence.** The paragraph's line-breaking output is the first
+  boundary at which a rerun can stop (`notes/fanout.md` §5).
 
-1.3 **Heights pushing the content after them.** Status: measured; the
-coupling that dominates in absolute terms, and representational in
-almost all of its extent.
-- **Context-relative positions.** These are Snowghost's Q55. They confine
-  the coupling to the formatting context.
-- **Flat contexts.** On flat contexts the cost is O(siblings) unless the
-  offsets themselves become incremental. Three candidates, none measured:
-  - each box anchored to its preceding sibling's end, a chain;
-  - a balanced tree of offsets, as Zed's SumTree keeps sums over a
-    sequence;
-  - sending flow sizes and letting the consumer take prefix sums
-    (`notes/raster.md` §6).
-- **Decided by:** experiment X3.
+1.3 **Heights pushing the content after them.** status: measured; the
+coupling that dominates in absolute terms, and representational in almost
+all of its extent.
+- **Context-relative positions (Q55).** These confine the coupling to the
+  formatting context, but a rewrite inside a context is O(siblings in the
+  context), which is large in flat contexts.
+- **Making offsets themselves incremental.** Three candidates, none
+  measured:
+  - **Sibling anchoring:** each box anchored to its preceding sibling's
+    end. It reduces html5's removal to 1 rewrite, but turns a position
+    query into a walk.
+  - **Summary tree:** a balanced tree of offsets (3.8).
+  - **Prefix sums at the consumer:** flow sizes sent instead, with the
+    consumer taking prefix sums (`notes/raster.md` §6).
+- **Decided by:** experiment X3, on Snowghost's own output.
 
-1.4 **Inline size down, and inherited fonts.** Status: measured
+1.4 **Inline size down, and inherited fonts.** status: measured
 non-local.
 - **What happens.** A container's width change re-wraps every paragraph
   inside it, and an inherited font change reaches every descendant.
-- **What is left.** Width-keyed reuse can help only where a paragraph's
-  breaks are the same over a range of widths. Experiment X4 measures how
-  often that holds.
-- **Otherwise.** These edits are full-subtree work. Their speed has to come
-  from parallelism over independent subtrees, which the stages already have.
+- **What might be saved.** Width-keyed reuse saves work only where a
+  paragraph's breaks hold over a range of widths. Experiment X4 measures
+  how often.
+- **Otherwise.** These are full-subtree work: their speed comes from
+  parallelism, or from progressive delivery (4.6), not from
+  incrementality.
 
 1.5 **Siblings coupled through their container: tables, flex, grid.**
-Status: measured, bounded. A cell or item change can resize its siblings
-through column widths or stretch. Treat the container as one work item,
-with the container's line or track sizes as its internal key.
+status: measured, bounded. A cell or item change can resize its siblings
+through column widths or stretch. The container is one work item, with its
+track or line sizes as its internal key.
 
-1.6 **Chains in document order.** Status: promising for checkpoints;
-speculation for counters.
+1.6 **Chains in document order.**
 - **The chains:**
   - inherited values;
-  - counters and quotes, which the box tree builder now resolves in its
-    walk (Q63);
+  - counters and quotes, which the box tree builder resolves in its walk
+    (Q63);
   - sibling positions for `:nth-*`;
-  - the block pass's running height and margin strut.
-- **The idea.** Checkpoint the chain's state at unit boundaries, so that a
-  rerun starts from the entry state and stops where the exit state equals
-  the stored one (`notes/architecture.md` §5, invariant 5).
-- **What breaks it.**
-  - Counters read far ahead: 147 renumbered items is paint-sized fan-out.
-  - `:nth-last-*`, which counts from the end.
+  - the block pass's running height and margin strut;
+  - the document's scroll extent.
+- **Checkpoints.** status: promising. A rerun starts from the chain's
+  stored state at a unit's entry and stops where the exit state equals the
+  stored one (`notes/architecture.md` §5, invariant 5).
+- **Summary trees.** status: promising for associative folds, hard for
+  the rest. A checkpointed chain is a prefix fold; keeping it as a summary
+  tree gives O(log n) updates (3.8). That holds for heights, counters,
+  `:nth-child` and scroll extent. Margin collapsing, `clear`, floats and
+  `:nth-last-*` under insertion are not plainly associative.
 
-1.7 **Floats, percentages, multi-column, absolute positioning.** Status:
+1.7 **Containment declared by the page.** status: established. CSS
+`contain` and `content-visibility` declare the boundaries this tree looks
+for (`notes/engines.md` §2.1.2).
+- **Why implement it.** The renderer must implement them for their
+  semantics anyway. Each such box is then a cutoff and a parallel boundary
+  at no extra design cost.
+- **Their limit.** They are declared by authors, so they cannot be the
+  mechanism on pages without them, such as the three measured here.
+
+1.8 **Floats, percentages, multi-column, absolute positioning.** status:
 uncertain.
-- **Floats and percentages.** These were present on the pages but the
-  census did not isolate them.
-- **Floats specifically.**
-  - The layout prototype's speculative line breaking re-broke 0 of
-    32,684 and 4 of 770 paragraphs.
-  - That bounds the cost of speculation, not of an incremental
-    re-fill.
-  - Source: `research/investigations/concurrency/DESIGN.md`.
-- **Multi-column.** This is coupled across the whole container.
-- **Absolute positioning.** This couples a box to a distant containing
-  block.
+- **Floats and percentages.** They were present on the pages, but the
+  census could not isolate them.
+- **Floats specifically.** The prototype's speculative line breaking
+  re-broke 0 of 32,684 and 4 of 770 paragraphs
+  (`research/investigations/concurrency/DESIGN.md`). That bounds the cost of
+  speculation, not of an incremental re-fill.
+- **Multi-column.** It couples the whole container.
+- **Absolute positioning.** It couples a box to a distant containing block.
 
-1.8 **Representational couplings in the current code.** Status: measured
-in the code. Each has a replacement (`notes/architecture.md` §2.12,
-§4):
+1.9 **Cycles in the dependency graph.**
+- **Stratification.** status: promising as the stated rule. Container
+  queries and `:has()` would make the graph cyclic, but CSS stratifies them
+  itself: a container query requires containment, which cuts the edge from
+  the container's layout to its descendants' style. Evaluating strata in
+  order, with any fixpoint only inside one, is the database discipline for
+  the same problem.
+- **A fixpoint inside a stratum.** status: hard, for termination and
+  cost.
+
+1.10 **Representational couplings in the current code.** status:
+measured in the code. Each has a replacement (`notes/architecture.md`
+§2.12, §4):
 - style arrays indexed by preorder position, which an insertion renumbers;
 - `Fragment.owner`, a preorder index for elements but a `NodeId` for text;
 - placement by one global walk;
@@ -215,38 +297,47 @@ in the code. Each has a replacement (`notes/architecture.md` §2.12,
 - append-only shared stores, such as custom properties and the resolved
   list.
 
+1.11 **Edits of time rather than of content.** Animations of layout
+properties change the same key every frame, so both the bookkeeping floor
+and 1.4's full-subtree cost are paid per frame.
+- **Animated layout properties.** status: hard, by 1.4.
+- **`:hover`, focus and the caret.** status: uncertain. These are mostly
+  paint-only and are the most frequent edits of all.
+
 ### 2. Units and identity
 
-2.1 **The unit differs by stage.** Status: promising.
+2.1 **The unit differs by stage.** status: promising.
 
-| Stage | Unit |
-|---|---|
-| style | the styled node |
-| layout | the formatting context, and inside it the paragraph |
-| paint | a chunk per context and paint phase |
+| Stage | Unit | Cheapest cutoff |
+|---|---|---|
+| style | the styled node | interned group ids unchanged |
+| box tree | the styled node's box | only the structure-affecting groups are read (Servo's box damage) |
+| text preparation | the paragraph | text and font groups unchanged |
+| layout | the formatting context, and the paragraph inside it | the available space and inputs unchanged; the output size unchanged |
+| paint | a chunk per context and paint phase | content hash unchanged |
+| scene | the chunk's node in the shell | identity and hash unchanged |
 
-- **Why not the context alone.** One block formatting context holds 85 to
-  95 percent of each page's text (concurrency investigation). So reuse
-  inside a context, at paragraph or block grain, decides most of the gain.
-- **Derived identities.** Fragments, lines and chunks take their identity
-  from their unit; only nodes and contexts need identities of their own
-  (`notes/architecture.md` §1.1).
+`notes/architecture.md` §1.1 has the full mapping. Fragments, lines and
+chunks take their identity from their unit; only nodes and contexts need
+identities of their own.
 
-2.2 **Stable identity.** Status: promising. There are three schemes
-(`notes/architecture.md` §1.2):
-- renumbering preorder after each change;
-- `NodeId` plus a generation;
-- content keys, which can recognize a moved subtree.
+2.2 **Stable identity.** Four schemes, each status: uncertain until
+experiment X2:
+- **Renumbering preorder after each change.** Cheap to read, but O(n) per
+  structural edit.
+- **`NodeId` plus a generation.** Stable, but needs per-node storage that
+  is not in preorder.
+- **Content keys.** These can recognize a moved subtree.
+- **Order-maintenance labels.** Labels with gaps keep document order
+  comparable under insertion (Dietz and Sleator; recalled;
+  `notes/architecture.md` §1.2, `notes/raster.md` §6).
 
-The recommended combination is `NodeId` with a generation for nodes and the
-owned tree's path for contexts. Experiment X2 decides how per-node style
-storage is laid out under it.
-
-2.3 **Complete, value-shaped keys with equality cutoff.** Status:
-established in Salsa and LayoutNG's constraint-space cache.
-- **The idea.** Every unit stores its inputs as values and reruns only when
-  one differs. A rerun whose output equals the old one stops the
-  propagation, which is early cutoff.
+2.3 **Complete, value-shaped keys with equality cutoff.** status:
+established in Salsa and LayoutNG's constraint-space cache (both recalled
+in part).
+- **The idea.** Every unit stores its inputs as values and reruns only
+  when one differs. A rerun whose output equals the old one stops the
+  propagation.
 - **Hidden inputs to keep out of the dark:**
   - the viewport, `rem` and loaded fonts;
   - image sizes;
@@ -256,296 +347,414 @@ established in Salsa and LayoutNG's constraint-space cache.
   Each must be in the key or versioned (`notes/architecture.md` §5,
   invariant 2).
 
-### 3. How results are reused: the families of incremental computation
+### 3. How results are reused: families of incremental computation
 
-From `notes/theory.md` §1:
+From `notes/theory.md` §1, `notes/architecture.md` §3.e and the critique:
 
-3.1 **Explicit keys and versions as data.** Status: promising; the family
-that fits Whitefoot.
-- **The mechanism.** Salsa-style memoization with arenas, generations and
-  change ticks: indices into arenas, versions stored as integers, interned
-  ids as cheap equality.
-- **Push-based dirtying.** Done with ticks, it keeps no-change frames
-  cheap.
+3.1 **Explicit keys with versions as data.** status: promising; the
+family that fits Whitefoot.
+- **The mechanism.** Memoization in Salsa's style over arenas with
+  generations and change ticks: indices into arenas, versions as integers,
+  interned ids as cheap equality.
+- **Push-based dirtying.** Done with ticks, it keeps a no-change frame
+  near free.
 
-3.2 **Traced dependency graphs (self-adjusting computation, Adapton).**
-Status: dead end at box grain.
-- **Cost:** the budget's arithmetic excludes per-box traces.
-- **Representation:** Whitefoot stores no references, which excludes the
+3.2 **Attribute grammars.** status: established as theory, promising as
+the frame for this tree.
+- **The theory.** A tree of nodes whose attributes flow down (inherited
+  style, available space) and up (sizes, intrinsic sizes).
+- **What it gives.** Optimal incremental re-evaluation follows from the
+  dependencies (Demers, Reps and Teitelbaum, 1981), and the parallel
+  schedule can be derived (Meyerovich and Bodík, 2010).
+- **Why it is the frame.** It is the formal statement of the owner's
+  "incrementality falls out of data dependencies"
+  (`notes/architecture.md` §3.e1).
+
+3.3 **Recorded reads for the long edges, at context grain.** status:
+uncertain, decided by X12.
+- **The idea.** Static edges follow the owned tree. Only the few couplings
+  that leave it record their reads dynamically, per context: floats
+  crossing blocks, counters read far ahead, an absolute box's containing
+  block.
+- **Who lands here.** Two notes do:
+  - `notes/architecture.md` §3.b: "where I would land";
+  - `notes/theory.md` §4.2.
+- **Related idea.** LayoutNG-style validity predicates are related
+  (`notes/engines.md` §2.1.3, recalled).
+
+3.4 **Traced dependency graphs per box (self-adjusting computation,
+Adapton).** status: unlikely.
+- **Cost.** At box grain the budget's arithmetic excludes them, but that
+  arithmetic rests on a recalled per-edge constant.
+- **Representation.** Whitefoot stores no references, which excludes the
   thunk graphs they rely on.
-- **What survives:** demand-driven evaluation (3.6, 4.4).
+- **What survives.** Demand-driven evaluation (4.4) and recorded reads at
+  coarse grain (3.3).
 
-3.3 **Differential and timely dataflow.** Status: uncertain.
-- **For selector matching:** promising as a model, where a sheet change is
-  a delta over (rule, element) pairs.
-- **Elsewhere:** hard.
+3.5 **Differential and timely dataflow.**
+- **Selector matching.** status: uncertain. A sheet change becomes a delta
+  over (rule, element) pairs.
+- **Elsewhere.** status: hard.
 
-3.4 **Derivatives of functions (incremental λ-calculus).** Status:
-uncertain in general. Its useful special case is a delta API for one
-function, such as re-breaking a paragraph from the changed line onward,
-which LayoutNG's line reuse does (`notes/engines.md` §2.1, from memory).
+3.6 **Derivatives of functions (incremental λ-calculus).**
+- **In general.** status: uncertain.
+- **One function's delta API.** status: promising. Re-breaking a
+  paragraph from the changed line onward, as LayoutNG's line reuse does
+  (recalled), is the useful special case.
 
-3.5 **Signals and reactive frameworks.** Status: dead end at renderer
-scale. Subscriber lists per value cost the per-box bookkeeping 3.2 excludes.
-They remain a fine mental model for the graph of stages.
+3.7 **Signals and reactive frameworks.** status: unlikely at renderer
+scale. A subscriber list per value costs the per-box bookkeeping that 3.4's
+arithmetic weighs against. It stays a mental model for the graph of stages.
 
-3.6 **Reconciliation at the output boundary.** Status: established in
-React and WebRender's interning. Compare the new chunk list with the old by
-identity and hash, and send only the difference.
+3.8 **Monoid summary trees.** status: promising for associative folds.
+- **The idea.** A sequence kept as a balanced tree whose nodes store an
+  associative summary of their range, as Zed's SumTree does for text
+  (recalled). Updates and prefix queries cost O(log n), and a parallel scan
+  computes the same fold.
+- **What it would unify.** Every chain in document order whose fold is
+  associative (1.6), and the flat-context offsets of 1.3.
+- **Where it is hard.** Folds that are not plainly associative: margin
+  collapsing, `clear`, floats.
 
-3.7 **Pointer-based persistent structures.** Status: dead end in
-Whitefoot. The language has single-owner boxes and no stored references, so
-hash-consed DAGs, HAMTs and ropes with shared nodes cannot be represented.
-Arenas with generations (3.1) take their place; Whitefoot's spec names
-generations as data ([OP-13]).
+3.9 **Edit lists as stage interfaces.** Each stage's input and output is
+a list of edits:
+- style emits "these nodes' groups changed";
+- the box tree emits "these pieces were replaced";
+- layout emits "these fragments moved by δ";
+- paint emits chunk operations.
+
+Zed's display map propagates edits through its layers this way (recalled,
+`notes/engines.md` §5.5). An empty list makes the no-change frame free
+without scanning versions.
+- **Sequence-shaped stages (text, box tree, paint order).** status:
+  promising.
+- **Layout.** status: hard. Its output delta is not a function of its
+  input delta alone.
+
+3.10 **Reconciliation at the output boundary.** status: established, in
+React and in WebRender's interning (recalled). Compare the new chunk list
+with the old by identity and hash, and send only the difference.
+
+3.11 **Persistence.**
+- **Pointer sharing:** hash-consed DAGs, HAMTs, ropes with shared nodes.
+  status: dead end in Whitefoot. Single-owner boxes and no stored
+  references cannot represent shared nodes.
+- **Versioned slots:** fat-node persistence, like MVCC. status:
+  promising, unmeasured.
+  - **The idea.** A `Slots` whose element holds (version, value) pairs. A
+    reader at version v takes the last pair at or below v, so no reference
+    is stored (`notes/architecture.md` §3.e2).
+  - **What it would provide:** the document snapshot frame pipelining needs
+    (4.5), the old state style invalidation compares against, and the old
+    bounds damage needs (7.2).
+  - **Its cost:** a version list per slot and a reclamation sweep.
 
 ### 4. Execution models: concurrency across stage boundaries
 
 From `notes/architecture.md` §3 and `notes/theory.md` §2.4–2.5:
 
 4.1 **One task per subtree, running style, layout and paint together.**
-Status: promising; the natural fit.
-- **The model.** An independent context runs style, intrinsic sizes,
-  layout and paint for its subtree as one recursion over the owned context
-  tree.
-- **Concurrency.** Sibling subtrees run concurrently, so stages overlap
-  across contexts without a scheduler.
-- **Why Whitefoot proves it without new facts.**
-  - recursion over `children[i]` is an affine element write (PAR-2);
-  - the rows are per context.
-- **Cutoffs.** These are value comparisons on data the code already
-  stores: `Space`, interned ids, `intrinsic_known`.
-- **The constraint.** Only the available space and inherited ids may go
-  down, and only sizes may come up: the attribute-grammar discipline of
-  `notes/architecture.md` §3.e1.
+- **Scattered edits.** status: promising.
+  - Sibling subtrees run concurrently, so stages overlap across contexts
+    without a scheduler.
+  - Whitefoot proves this without new facts: recursion over `children[i]`
+    is an affine element write (PAR-2), and the rows are per context.
+- **One local edit.** status: no gain from cross-stage overlap.
+  - With one dirty context, style, layout and paint form a sequential
+    chain, so latency is the chain's length.
+  - If writing to the shell waits, chunks ship at the frame's end
+    (`notes/architecture.md` §3.a).
+  - The gain over staged passes is overlap across siblings.
+- **Cutoffs.** These compare data the code already stores (`Space`,
+  interned ids, `intrinsic_known`), under the attribute-grammar discipline
+  of 3.2.
 
-4.2 **A dataflow graph of keyed nodes with change propagation.** Status:
-hard in its general form.
-- **Proof cost.** Writing results at dirty indices needs a distinctness
-  fact derived each frame and an `apart` certificate. Shape D showed both
-  can be done, at a proof cost.
-- **What 4.1 avoids.** The flat loop over a dirty list is exactly the step
-  4.1's recursion makes unnecessary.
+4.2 **A dataflow graph of keyed nodes.** status: hard in its general form.
+- **The proof cost.** Writing results at dirty indices needs a
+  distinctness fact derived each frame and an `apart` certificate. Shape D
+  showed both are possible, at a proof cost.
+- **The hybrid.** 4.1 plus recorded reads for the long edges (3.3) sits
+  between 4.1 and this model.
 
-4.3 **Staged passes over a dirty frontier.** Status: established; this is
-Blink's lifecycle. It is the control that 4.1 must beat (experiment X6).
+4.3 **Staged passes over a dirty frontier.** status: established; this is
+Blink's lifecycle. It is the control the others must beat (X6).
 
-4.4 **Demand-driven: pull from the frame.** Status: uncertain.
-- **Strong for:** paint, and very long documents, where only the viewport
-  and a margin around it need painting.
-- **Weak for:** layout, whose positions depend on everything before them.
-- **Open question.** Whole-page paint with culling in the shell, or
+4.4 **Demand-driven: pull from the frame.** status: uncertain.
+- **Where it is strong.** For paint, and for very long documents, where
+  only the viewport and a margin around it need painting.
+- **Where it is weak.** For layout, whose positions depend on everything
+  before them.
+- **What it decides.** Whole-page paint with culling in the shell, or
   viewport-dependent paint on request (`notes/raster.md` §6, D4b), decides
-  whether the shell needs a channel back to the renderer.
+  whether the shell needs a channel back to the renderer (X9).
 
-4.5 **Pipelining frames over snapshots, and optimistic speculation across
-stages.** Status: uncertain.
-- **Script.** Frame pipelining needs snapshots of the document while script
-  runs, which Whitefoot does not yet offer.
-- **Speculation.** It pays only where a misprediction is found early and
-  fixed locally, as floats were (`notes/architecture.md` §3.e2–e3).
+4.5 **Spawned stage contexts passing owned deltas.** status: uncertain.
+- **The model.** Stages run as spawned contexts and pass owned edit
+  lists (3.9) through shared queues. This is the cross-stage form
+  Whitefoot's rules admit: a spawn takes values only ([WAIT-3])
+  (`notes/theory.md` §2.5).
+- **What decides it.** It overlaps stages for a stream of edits, not for
+  one. Experiment X7 decides whether that beats the sequential chain.
+
+4.6 **Progressive and anytime delivery for whole-page changes.** status:
+promising for loading and for whole-page edits; needs a design.
+- **The problem.** A container-width or root font-size change costs about
+  50 frames, and parallelism cannot reach 16 ms from 0.8 s.
+- **The options.**
+  - viewport-first layout with estimates (`notes/architecture.md` §3.d,
+    E7);
+  - priority lanes and interruptible work, as React's Fiber does
+    (recalled);
+  - a frame-miss policy (`notes/raster.md` §3.4).
+
+4.7 **Frame pipelining and optimistic speculation across stages.**
+- **Frame pipelining.** status: uncertain. Overlapping frames needs a
+  snapshot of the document while script runs, which versioned slots
+  (3.11) could provide.
+- **Speculation.** status: promising only where a misprediction is found
+  early and fixed locally, as floats were (`notes/architecture.md`
+  §3.e2–e3).
+
+4.8 **Script's synchronous queries as path flushes.** status: uncertain.
+- **The problem.** `offsetWidth` after a mutation forces layout.
+  Flushing only the path from the queried box to the root is a pull, the
+  reverse of 4.1's push.
+- **The answer.** No engine is known to do less than a stage flush
+  (recalled, `notes/architecture.md` §5, invariant 9). It needs script, so
+  it is design-only today, but the execution model should not foreclose it.
+
+4.9 **Layout on the GPU.**
+- **The whole stage.** status: unlikely. Shaping, floats and tables are
+  data-dependent control flow with no GPU form. Meyerovich's GPU layout
+  work, recalled and unchecked, ran attribute-grammar schedules on the
+  GPU.
+- **Placement in flat contexts and glyph positioning.** status:
+  uncertain. Both are prefix sums, which the GPU scans well. It is decided
+  by whether the CPU prefix scan (3.8) is ever the bottleneck.
 
 ### 5. Whitefoot: what it gives, and what it would need
 
 From `notes/theory.md` §2 and `notes/architecture.md` §6:
 
-5.1 **The effect row as a memoization key.** Status: established in part.
-- **Complete in places.** Rows are checked both ways ([EFF-2]); there are
-  no globals or function values ([FN-5]); host outcomes come only through
-  waiting calls. So the places a function can read are exactly its row and
-  its by-value arguments.
-- **Not complete in values.** Nothing records whether a read place changed,
-  so the pipeline decision's "the compiler proves the memoization key
-  complete" holds for places, not for versions.
-- **The deduplication licence.** [EFF-3]'s licence to deduplicate calls
-  needs a pure function that allocates nothing, which no stage result is.
+5.1 **The effect row as a memoization key.**
+- **Complete in places.** status: established by the spec.
+  - Rows are checked both ways ([EFF-2]), and there are no globals or
+    function values ([FN-5]). Host outcomes come only through waiting
+    calls.
+  - So the places a function can read are exactly its row and its
+    by-value arguments.
+- **Complete in values.** status: dead end as stated. Nothing records
+  whether a read place changed, so the claim in `design/pipeline.md` that
+  "the compiler then proves the memoization key complete" holds for places,
+  not for versions.
+- **Where the claim also fails.** For the DOM arena, read through
+  `&Document`, the row names the whole arena (`notes/architecture.md`
+  §1.3).
+- **Deduplication.** [EFF-3]'s licence to deduplicate calls needs a pure
+  function that allocates nothing, which no stage result is.
 - **Practice that follows: pass the inputs, not the world.** Pass
-  `&styles^.groups[k]` rather than `&styles`, so the row names the element's
-  path.
+  `&styles^.groups[k]` rather than `&styles`, so the row names the
+  element's path.
+- **The design tree.** It should record the decision's actual reach. This
+  is the one design-tree matter the research raises (Open questions).
 
-5.2 **Equality for cutoff.** Status: gap with a route. Whitefoot has no
-aggregate equality. The routes are:
+5.2 **Equality for cutoff.** status: hard, with a route. Whitefoot has no
+aggregate equality. The routes:
 - the integer and interned-id comparisons the cheap cutoffs need;
 - an interface-supplied `eq`;
-- a derived structural equality as a future language decision.
+- a derived structural equality, as a future language decision.
 
-5.3 **Versions the compiler maintains.** Status: proposal, gated on
-experiment X2.
+5.3 **Versions the compiler maintains.** status: uncertain, decided by
+X11.
 - **The mechanism.** A `tracked` storage root whose version the compiler
   bumps at every write its rows already know, and a `memo fn` that reruns
   when the version of a path it reads moved.
-- **First step.** Ticks written as library code come first; the language
-  mechanism needs measured grounds and a decision card.
+- **First step.** Ticks written as library code come first. X11 tests
+  whether the byte-identity oracle catches a forgotten bump. The language
+  mechanism needs that ground and a decision card.
 
-5.4 **Parallel work over a dirty set.** Status: feasible today in two
-shapes.
-- **Recursion from the root.** Pull from the root over the owned tree,
-  descending only where a subtree's maximum tick moved. It needs no
-  certificate, and the frontier is an antichain by construction.
-- **Flat loop.** A loop over a dirty list needs the per-frame distinctness
-  fact.
+5.4 **Parallel work over a dirty set.** Three shapes:
+- **Recursion from the root.** status: promising.
+  - It descends only where a subtree's maximum tick moved, needs no
+    certificate, and its frontier is an antichain by construction.
+  - Its cost is O(dirty × depth × width) for the tick checks. Widths are
+    3,545 on html5's `body`, 297 on apollo11 and 122 on ecma262, so tens of
+    microseconds.
+- **A flat loop over a dirty list.** status: hard. It needs the per-frame
+  distinctness fact (4.2).
+- **Spineless traversal.** status: uncertain. A priority queue over dirty
+  nodes with order maintenance, instead of walking the spine from the root
+  ("Spineless Traversal for Layout Invalidation", arXiv 2411.10659; cited
+  by `notes/architecture.md` §3.e, not re-read).
 
-5.5 **Concurrency across stages.** Status: hard as scheduled concurrency,
-promising as emergent concurrency.
+5.5 **Concurrency across stages.** status: hard as scheduled concurrency,
+promising as emergent concurrency (4.1).
 - **Spawns.** These take values only ([WAIT-3]), so stages cannot share a
-  reference.
-- **What works.** Stages overlap through PAR-1 and PAR-2 when each stage's
-  outputs are partitioned like its work.
-- **Waiting writes.** If writing to the shell's shared memory waits, chunks
-  must be batched at the end of the frame.
+  reference; 4.5 is the scheduled form.
+- **Waiting writes.** If writing to the shell's shared memory waits,
+  chunks are batched at the frame's end.
 
-5.6 **Range facts as a property of a container.** Status: wanted; already
-in `docs/todo.md`. A `Slots` whose invariant says its entries are distinct,
-usable by every loop over it without deriving the fact again.
+5.6 **Range facts as a property of a container.** status: promising;
+already in `docs/todo.md`. A `Slots` whose invariant says its entries are
+distinct, usable by every loop over it without deriving the fact again.
 
 ### 6. The paint boundary
 
-`notes/architecture.md` §8, `notes/engines.md` §3 and §7.4, and
-`notes/raster.md` §6 converge here. The recommendation is to fix this
-boundary before paint is written.
+`notes/architecture.md` §8, `notes/engines.md` §3 and §7.4 and
+`notes/raster.md` §6 converge on these properties. Each holds under either
+answer to 4.4.
 
-6.1 **Chunks per context and paint phase.** Status: promising.
-- **Coordinates.** Each chunk is in its context's coordinates.
-- **Identity.** Each chunk has a stable identity and a content hash.
-- **Stacking.** A stacking context is an order list of references to
-  chunks.
+6.1 **Order and properties apart from content.** status: established in
+the separation, promising in this form.
+- **Chunks.** Each chunk is in its context's coordinates, with a stable
+  identity and a content hash.
+- **Stacking.** A stacking context is an order list of chunk references.
 - **Properties.** Transform, clip, effect and scroll live in a property
-  tree, so a change to one of them rewrites one node and no content.
-- **Precedent.** Blink's paint chunks and property trees are the
-  established precedent for separating order and properties from content;
-  their layerization is the heuristic part not to copy.
+  tree, so a change to one rewrites one node and no content.
+- **Precedent.** Blink's paint chunks and property trees establish the
+  separation; their layerization is the heuristic part (`notes/engines.md`
+  §3.2–3.3).
 
-6.2 **Deltas to the shell.** Status: promising.
-- **What is sent.** Only changed chunks, plus order lists and property
-  nodes, through shared memory with epoch acknowledgement.
-- **What the cost is.** On the CPU side the cost of a reflow is the bytes
-  crossing the boundary, not time. On a synthetic 250,000-chunk scene, a
-  spatial index answers a viewport query in under 1 µs. Rewriting 245,000
-  absolute positions takes 0.2 ms, against 0.04 µs on a tree of relative
-  offsets (`notes/raster.md` §1; measured on the CPU, scene size assumed).
+6.2 **Deltas to the shell.** status: promising.
+- **What is sent.** Only changed chunks, order lists and property nodes,
+  through shared memory with epoch acknowledgement.
+- **What the CPU measured, on a synthetic scene of 250,000 chunks.** The
+  scene size is an assumption (`notes/raster.md` §1).
+  - The cost of a reflow is the bytes crossing the boundary.
+  - A spatial index answers a viewport query in under 1 µs.
+  - Rewriting 245,000 absolute positions takes 0.2 ms, against 0.04 µs on
+    a tree of relative offsets.
 
 ### 7. From changed content to pixels
 
 From `notes/raster.md` and `notes/engines.md` §4 and §6. This container
-has no GPU, so every GPU figure in this section is cited or derived, not
-measured.
+has no GPU, so every GPU figure here is cited or derived.
 
-7.1 **Redrawing the whole scene on the GPU every frame.** Status:
-established as a legitimate control.
-- **Who does it.** Zed's GPUI, Vello-based Masonry and early WebRender.
-- **Its limit.** Power, memory bandwidth, weak GPUs and 4K at 240 Hz, not
-  frame time on a discrete GPU.
+7.1 **Redrawing the whole scene on the GPU every frame.** status:
+established as a control.
+- **Who does it.** Zed's GPUI, Vello-based Masonry and early WebRender,
+  all recalled.
+- **Its limit.** Power, memory bandwidth, weak GPUs and 4K at 240 Hz,
+  rather than frame time on a discrete GPU.
 
 7.2 **Redrawing exactly the damaged region from a retained scene.**
-Status: promising.
+status: promising.
 - **The mechanism.** The damage is the union of the old and new bounds of
-  the changed chunks. Scissor to it, find the chunks that intersect it with
-  a spatial index, and redraw only those.
-- **Precedent.** WebRender already scissors to dirty rectangles smaller
-  than a tile.
+  the changed chunks. Scissor to it, find the intersecting chunks with a
+  spatial index, and redraw only those.
+- **Precedent.** WebRender scissors to dirty rectangles smaller than a
+  tile (recalled).
 
-7.3 **Tiles and layers as the unit of invalidation.** Status: dead end for
-this goal.
-- **Why.** They are a hand-placed partition, as in Chrome's cc and viz
-  union damage.
-- **What they provided, and what replaces it.**
-  - Memory bounds and raster threading must be provided some other way.
-  - Pixel caches pay only for subtrees that are expensive to draw (filters,
-    shadows, deep overdraw), promoted by measured cost with hysteresis.
-  - Offscreen groups the semantics require (opacity, blend modes, filters)
-    stay as nodes of a render graph, not persistent layers.
+7.3 **Tiles and layers.**
+- **As the unit of invalidation.** status: dead end for this goal. They
+  are a hand-placed partition, so a change repaints whatever its tile
+  holds.
+- **As a pixel cache for scrolling and expensive subtrees.** status:
+  uncertain, decided by X10.
+  - Scrolling must be served without the main thread.
+  - On tile-based mobile GPUs the hardware tile is a floor.
+  - The notes' alternative is caches promoted by measured cost with
+    hysteresis (`notes/raster.md` §5, `notes/architecture.md` §3.e4).
 
-7.4 **Partial presentation.** Status: established with limits.
+7.4 **Partial presentation.** status: established on some platforms.
 - **What exists.** Buffer age and partial update in EGL, Wayland damage,
-  DXGI dirty and scroll rectangles, and damage clips in KMS.
-- **The limits.** Vulkan has no buffer-age query. The Metal and
-  CoreAnimation behavior is unverified.
-- **What it saves.** Mostly power and memory traffic, not frame time.
+  DXGI dirty and scroll rectangles, and KMS damage clips, all recalled.
+- **The limits.** Vulkan has no buffer-age query (recalled), and the
+  Metal and CoreAnimation behavior is unverified.
+- **What it saves.** Mostly power and memory traffic.
 
-7.5 **Text.** Status: uncertain. On text-heavy pages glyph drawing is the
-dominant item. A glyph atlas, Slug-style curve rendering and Vello's
-compute rasterization each need hardware to compare (experiment X10).
+7.5 **Text.** status: uncertain. Glyph drawing is expected to dominate on
+text-heavy pages; that is derived from an assumed scene, not measured. A
+glyph atlas, Slug-style curve rendering and Vello's compute rasterization
+need hardware to compare (X10).
 
-7.6 **A software damage rasterizer in Whitefoot.** Status: proposal for
-the owner. Writes to disjoint rows are provable. It would serve as a
-pixel-exact test oracle, a headless target and a fallback, and it does not
-replace the shell's GPU path (`notes/raster.md` §7).
+7.6 **A software damage rasterizer in Whitefoot.** status: promising, as
+a proposal for the owner.
+- **What it provides.** Writes to disjoint rows are provable, and it would
+  serve as a pixel-exact test oracle, a headless target and a fallback.
+- **What it does not do.** It does not replace the shell's GPU path
+  (`notes/raster.md` §7).
 
 ### 8. The oracle for every incremental step
 
-Status: established here; extend it. Snowghost already requires the
-sequential and `--par` builds to give byte-identical dumps. An incremental
-run is held to the same rule: after a history of edits, its dumps must be
-byte-identical to a full run on the final document. This gives an exact
-oracle for every experiment below at no extra design cost
-(`notes/theory.md` §2.7).
+status: established here, extended.
+- **The rule.** Snowghost requires the sequential and `--par` builds to
+  give byte-identical dumps. An incremental run is held to the same rule:
+  after a history of edits, its dumps must be byte-identical to a full run
+  on the final document.
+- **What makes it cheap.** The existing dumps print values (computed
+  values, rectangles), not interned ids or slot indices, so it costs no
+  design. Any new dump must keep that property.
 
-### 9. What no engine solves
+### 9. What remains hard everywhere
 
 From `notes/engines.md` §7.3:
 
-- **Cycles in the dependency graph.** Container queries and `:has()` make
-  it cyclic, and CSS restricts them with containment.
-- **Inherent non-locality.** The non-local couplings of 1.4 to 1.6 stay
+- **Real coupling stays real.** The couplings of 1.4 to 1.6 stay
   non-local whatever the representation.
-- **The cost of finding what to recheck.** It grows with depth times the
-  width of a level unless sequences are kept as summary trees, which margin
-  collapsing and floats complicate.
-- **Key comparison costs.** Comparing a key can cost more than recomputing
-  a cheap node.
+- **Finding what to recheck.** Its cost grows with depth times level
+  width unless sequences become summary trees (3.8) or traversal avoids the
+  spine (5.4).
+- **Comparing a key.** It can cost more than recomputing a cheap node.
 
 ## Experiments
 
-The experiments below are merged from the five notes, in the order they
-build on each other. Each criterion is written before the experiment is
-run.
+Each criterion is written before the experiment runs, and each can fail.
 
 | Id | Question | Needs | Criterion |
 |---|---|---|---|
-| X1 | How local are real edits in Snowghost's own stages, and how many contexts and paragraphs do the pages have? | two full runs around a scripted edit, and a diff tool that compares group values, not interned ids, and aligns units by a stable marker | records the affected set per edit kind at each unit; decides whether context plus paragraph is the layout unit (`notes/architecture.md` E5, `notes/engines.md` E1) |
-| X2 | How is per-node style stored under stable identity: renumbering, a certified scatter, or `Segments`? | three small drivers at ecma262's element count | for one insertion at the top, the faster under 1 ms wins; a certificate proof over 2 s per loop is reported to Whitefoot |
-| X3 | Which offset structure: context-relative, sibling-anchored, or offset tree / prefix sums? | the census's edit script run on Snowghost's layout output | prefix sums or a tree if the context-relative scheme rewrites more than 10^4 coordinates where they rewrite fewer than 10^3 (`notes/raster.md` X9) |
-| X4 | Do width-keyed paragraph results hit, given that a paragraph's breaks hold over a range of widths? | paragraph output as a function of inline size, swept | decides whether container-width edits get memoization or only parallelism (`notes/fanout.md` §4, `notes/engines.md` E3) |
-| X5 | Incremental layout on the owned context tree (4.1), with cutoffs on `Space` and paragraph keys | X1, X2; the current stage | a one-paragraph edit under 1 ms at four workers and under 1/100 of the full stage; an `html` font-size change no worse than 1.2 times a full run; byte-identical to a full run (8) |
-| X6 | Does concurrency across stages (4.1) beat staged passes (4.3)? | X5 and a staged driver; a scattered 100-cell edit | 4.1 more than 20 percent faster, else 4.3 first |
-| X7 | A CPU damage-redraw oracle | a software rasterizer of chunks | damage-scissored and age-tracked redraws byte-identical to a full redraw; each deliberate breakage (missing spread, omitted overlap, wrong buffer age) fails it once (`notes/raster.md` X1) |
-| X8 | Damage redraw against full redraw and pixel caches on a real GPU | a GPU host and the paint stage | damage-limited rendering is justified if full redraw exceeds 25 percent of the frame budget or damage saves more than 20 percent of power; otherwise subtree caches promoted by cost, never tiles (`notes/raster.md` X3–X4) |
-| X9 | Whole-page paint with culling in the shell, or viewport-dependent paint | paint, shell | first-frame and scroll latency, and the size of the full list |
-| X10 | Text rendering: glyph atlas, Slug, or Vello | a GPU host | frame cost of a text-heavy page per approach (`notes/raster.md` X5) |
+| X1 | How local are real edits in Snowghost's own stages, at each unit of 2.1? | two full runs around a scripted edit, and a diff tool that compares group values, not ids, and aligns units by a stable marker | context plus paragraph is the layout unit if fewer than 1 percent of paragraphs change lines for word edits; otherwise a finer unit is needed. Per key design, the recomputed set over the minimal set must stay under 3 (`notes/architecture.md` §1.1, `notes/engines.md` E1) |
+| X2 | How is per-node style stored under stable identity: renumbering, a certified scatter, `Segments`, or order labels? | small drivers at ecma262's element count | for one insertion at the top, the fastest under 1 ms wins; a certificate proof over 2 s per loop is reported to Whitefoot |
+| X3 | Which offset structure: context-relative, sibling-anchored, summary tree, or prefix sums? | the census's edit script on Snowghost's layout output | over the census's distribution of translation roots, adopt the tree or prefix sums where the context-relative scheme's p90 rewrite count exceeds theirs by more than the per-write cost ratio. It can pass on ecma262 and fail on html5 |
+| X4 | Do a paragraph's line breaks hold over a range of widths? | paragraph output swept over inline size | width-keyed memoization pays if more than half of the paragraphs keep their breaks across a 10 px resize; otherwise container-width edits get parallelism only |
+| X5 | Incremental layout on the owned context tree (4.1), with cutoffs on `Space` and paragraph keys | X1, X2; the current stage | a one-paragraph edit under 1 ms at four workers and under 1/100 of the full stage; an `html` font-size change no worse than 1.2 times a full run; a full build with bookkeeping within 5 percent of today's; byte-identical to a full run (8) |
+| X6 | 4.1 against staged passes (4.3) | X5 and a staged driver | measured twice, on one local edit (latency to the first chunk) and on 100 scattered edits. 4.1 is the model if it wins the scattered case by more than 20 percent without losing the local one |
+| X7 | A pipeline of spawned stages (4.5) against the sequential chain | X5 and edit lists | the pipeline is worth it if, for a stream of edits, latency per edit is at most 1/1.3 of the chain's (`notes/theory.md` E5) |
+| X8 | Edits the census missed: parser appends and font arrival | the existing drivers | an append re-lays out only what follows, within 2 times the appended content's own cost; a font arrival costs no more than the text preparation of the paragraphs using it |
+| X9 | Whole-page paint with culling in the shell, or viewport-dependent paint | paint, shell | viewport-dependent paint is adopted only if the whole-page list exceeds the shared-memory budget or delays the first frame by more than one frame on ecma262 |
+| X10 | Pixels: full redraw, damage-scissored redraw, pixel caches, scroll by redraw or copy, and text rendering approaches | a GPU host and paint | damage-limited rendering is justified if full redraw exceeds 25 percent of the frame budget or damage saves more than 20 percent of power; a glyph atlas stays the default if it beats the others by more than 20 percent (`notes/raster.md` X3–X5) |
+| X11 | Does the oracle catch a forgotten version bump? | ticks as library code, X5 | delete one bump deliberately and run the edit script. If the oracle misses it, 5.3's language mechanism has its first ground |
+| X12 | The cost of recording reads and validating versions | X5 with recording | a no-change frame under 0.5 ms; recorded reads at context grain within 5 percent of the full build, or 3.3 is out |
+| X13 | An editing session | X5 | 100 to 1,000 edits typed at one point and scattered, the oracle checked after every prefix; no growth of interning tables or arenas beyond the content added |
+| X14 | A CPU damage-redraw oracle | a software rasterizer of chunks (7.6) | damage-scissored and age-tracked redraws byte-identical to a full redraw; each deliberate breakage (missing spread, omitted overlap, wrong buffer age) fails once (`notes/raster.md` X1) |
 
-X1 to X4 and X7 run in this container with the existing stages. X5 and X6
-need an incremental layout prototype. X8 to X10 need a paint stage and real
-hardware.
+**Where each can run.**
+- In this container with the existing stages: X1 to X4, X8 and X14.
+- Needing an incremental layout prototype: X5 to X7 and X11 to X13.
+- Needing paint and real hardware: X9 and X10.
 
-## Where the branches agree
+## Leads, and what each would foreclose
 
-These are leads to discuss, not decisions:
+These are leads for discussion, not decisions. Each says what choosing it
+early would close off.
 
-- **Measure before building.** X1, X3 and X4 decide the unit, the offset
-  structure and how far memoization reaches, at the cost of drivers and
-  diffs rather than an architecture.
-- **The candidate execution model is 4.1, with 4.3 as its control.**
-  Whitefoot proves 4.1's independence without new facts, its cutoffs use
-  data already stored, and its concurrency across stages falls out of the
-  proofs instead of being scheduled.
-- **Fix the paint boundary (6) before writing paint.** That boundary is
-  chunks per context in local coordinates, with stable identities, a
-  property tree and order lists. It is the hardest interface to change
-  later. Tiles and layers then stay out of the design, and the shell decides
-  damage by chunk bounds.
-- **Ask Whitefoot for nothing yet beyond what is recorded.** Versions as
-  data and passing inputs rather than the world come first. A compiler
-  mechanism for versions (5.3) needs X2's measurements and a decision card.
+- **Measure first: X1, X3, X4, X8, X12.** All five notes agree on this.
+  It closes nothing.
+- **4.1 as the execution model, with recorded reads (3.3) for the long
+  edges.** This is `notes/architecture.md`'s landing. `notes/theory.md`
+  proposes the spawned pipeline (4.5) instead, and the others are silent.
+  Choosing it before X6 and X7 would foreclose 4.5, spineless traversal
+  (5.4) and edit lists (3.9) as the main interface.
+- **Fix the paint boundary's properties (6.1) before writing paint.**
+  These hold under whole-page and viewport-dependent paint alike. Choosing
+  how damage is computed, or that tiles stay out entirely, would foreclose
+  X9 and X10.
+- **Correct the record in `design/pipeline.md`** about what the compiler
+  proves (5.1). This is a design-tree change for the owner.
 
 ## Open questions
 
-- **Counters and quotes.** How are they kept incremental once the box tree
-  builder resolves them in one walk? Checkpoints at context boundaries are
-  speculation.
+- **The memoization decision.** Should `design/pipeline.md`'s decision say
+  that the compiler proves a key complete in places, not in versions, and
+  not across the DOM arena (5.1)?
+- **Counters and quotes.** How do they stay incremental once one walk
+  resolves them (Q63)? By checkpoints, or by summary trees (3.8)?
 - **Snapshots.** What does a document snapshot look like once script
-  exists? Frame pipelining needs one.
+  exists? Are versioned slots (3.11) enough?
 - **Stable identities over time.** How do the interning tables and the text
   arena reclaim space under stable identities over many frames?
 - **`Segments`.** Can it carry a distinctness fact per segment?
-- **Viewport-dependent paint.** Is it worth a channel from the shell back
-  to the renderer?
+- **The shell channel.** Is viewport-dependent paint worth a channel from
+  the shell back to the renderer (4.4, X9)?
+- **Reflecting rows.** Can an effect row, or a finer read set, be reflected
+  into data to derive invalidation tables (1.1)?
