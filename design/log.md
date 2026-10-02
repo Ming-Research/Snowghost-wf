@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-02 Cascade the style stage's inherited values level by level
+
+Nodes: pipeline/style
+
+Owner-approved: 2026-10-02, after the handoff of mbbill/Snowghost#28's card Q64, the owner wrote in Chinese to rule Q64 as recommended: the inherited values are computed level by level.
+
+Summary: The style stage's second part, which computes what the parent decides (font size, custom properties and inherited values), becomes a cascade level by level instead of one pass in document order: one counted loop per level of the element tree over the nodes that write nothing the levels share, proved parallel by Whitefoot's range facts and `apart` certificate, then the level's other nodes in document order, and the pseudo-elements after the last level, so the chain is the tree's depth. The pass in document order and a level loop with the shared stores behind a lock or a per-level merge are refused. The grounds, the byte-identical dumps and the measured times are in research/investigations/style/DESIGN.md, The level cascade.
+
 ## 2026-10-02 Record the layout stage's shape and follow Chromium where a specification differs
 
 Nodes: pipeline, pipeline/layout, pipeline/style, vocabulary

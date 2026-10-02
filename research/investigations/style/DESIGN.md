@@ -894,6 +894,9 @@ file; repeating them needs the same edits.
 
 ## Owner rulings
 
+- **2026-10-02, Q64, the level cascade,** written in Chinese after the
+  handoff of mbbill/Snowghost#28: approved as recommended; the stage's
+  second part computes the inherited values level by level.
 - **2026-10-02, Q61.** Where the HTML Standard and Chromium differ, Snowghost
   follows Chromium: the user-agent sheet gives Chromium's computed values.
   This supersedes the 2026-10-01 choice to keep the Standard's sheet for
