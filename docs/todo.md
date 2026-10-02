@@ -233,12 +233,12 @@ example apart from the renderer code that exposed it
   the document's base URL (`url("http://snowghost.test/page/x.png")`); the
   stage keeps the specified URL, since it resolves no URL and loads no
   image. Change: resolve it with `pkg::url` when images are loaded.
-- **The `lh` unit and CSS `round()` are not parsed.** ecma262's
-  `.corner-cell { height: 2lh }` (9 `th`) and apollo11's
-  `@supports (width: round(1.5px, 1px))` image widths (2 `img`, 325px where
-  the reference rounds to 330px) differ. Change: `lh` and `rlh` as lengths of
-  the element's and the root's computed line-height, and the stepped-value
-  functions in `calc()`. Reopen when layout needs either.
+- **`rlh` and most stepped-value functions are not parsed.** The `lh` unit
+  (ecma262's `.corner-cell { height: 2lh }`) and `round()` of two px
+  lengths (apollo11's image widths) are; `rlh`, `round()` with another
+  strategy or other units, `mod()` and `rem()` are not. Change: `rlh` as a
+  length of the root's computed line-height and the remaining stepped-value
+  functions in `calc()`. Reopen when a page uses one.
 - **Some presentational hints are not implemented.** The `li` `value` and
   `ol` `start` and `reversed` hints for `counter-set` and `counter-reset`
   (Chromium exposes neither in computed values), the dimension attributes of
@@ -527,3 +527,37 @@ example apart from the renderer code that exposed it
   `pkg::layout::text` splits runs at on the page, and probe whether
   Chromium splits there. Reopen before apollo11's inline measure needs
   these boxes.
+- **About 70 of ecma262's block boxes follow line wraps that differ by
+  less than 0.2 px.** A line that fits here by about 0.01 px does not fit
+  in Chromium (`emu-rhs` 83416); varying `text-indent` puts Chromium's
+  threshold between -25 and -25.2 px and the stage's between -24.5 and
+  -25 px, and an inline box's width here is 1/64 px less than Chromium's
+  for the same run (138.0 against 137.984). Each such wrap moves the boxes
+  after it by up to 3.5 px. Cause not yet isolated: Chromium appears to
+  test the fit against an unrounded sum of item widths. Change: probe the
+  fit test with runs whose widths sum to just under and over the available
+  width, and compare with `break_lines`. Reopen when ecma262's block
+  measure needs these boxes or a page shows the same wrap differences.
+- **`lh` for `line-height: normal` is 1.15 times the font size.** The style
+  stage resolves the `lh` unit against the element's computed line height,
+  and for `normal` it takes 1.15 times the font size, since it holds no
+  font ascent, descent or line gap; layout computes `normal` from the
+  face's metrics. Impact: none measured; ecma262 uses `lh` only with a
+  numeric line-height. Change: give the style stage the first available
+  face's metrics, as it already has its x-height and zero advance. Reopen
+  when a page uses `lh` under `line-height: normal`.
+- **The initial line height 18.4 px is written in five places.**
+  `renderer/style/inherited.wf`, `reset.wf` (twice), `lists.wf` and
+  `media.wf` each spell 16 px times 1.15. Change: one named constant in
+  `pkg::css::values`. Reopen with the next change to any of them.
+- **A table cell's absolute children are positioned twice.** The cell's
+  flow positions them, then `lay_out_table` positions them again with
+  `position_out_with` once the rows have their heights; the first result
+  is discarded. Change: skip the first pass for a context laid out as a
+  cell. Reopen when profiling shows it, or with the next change to table
+  cell layout.
+- **A float before a block inside an inline box sits 10 px too high.** In
+  `tests/layout/flow-cases.html`'s probe e1 the float is at y 427 where
+  Chromium puts it at 437. Change: probe how the block's collapsed margin
+  moves the float's position and apply it. Reopen when a page floats a box
+  there.
