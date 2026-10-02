@@ -22,7 +22,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
-	oracle-style-dump oracle-style
+	oracle-style-dump oracle-style oracle-layout-dump oracle-layout oracle-fonts oracle-text
 
 check: compiler renderer dom-selftest design-lint
 
@@ -163,6 +163,124 @@ oracle-style-dump:
 # `check` for the same reasons.
 oracle-style: compiler
 	@sh $(ROOT)/research/investigations/style/run.sh check
+
+# Dumps Chromium's boxes and text fragments for the three real pages of the
+# concurrency investigation and the focused case pages tests/layout/*-cases.html,
+# the oracle of the layout stage (research/investigations/layout), with
+# tests/layout/layout_oracle.mjs. It
+# needs what oracle-style-dump needs and stays out of `check`.
+LAYOUT_ORACLE := $(ORACLE)/layout
+
+# Builds the layout_oracle driver sequentially and with --par, dumps the real
+# pages and the case pages with both, requires the two dumps to be identical
+# and compares them with Chromium's from oracle-layout-dump
+# (research/investigations/layout); it fails while a real page misses the 99
+# percent criterion, a case page's structure differs or a case page matches
+# fewer boxes or text nodes than its floor in run.sh. It stays out of `check`
+# for the same reasons.
+oracle-layout: compiler oracle-fonts
+	@sh $(ROOT)/research/investigations/layout/run.sh check
+
+oracle-layout-dump:
+	@mkdir -p $(LAYOUT_ORACLE)
+	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/ecma262.html \
+		assets/css/ecmarkup.css=$(STYLE_PAGES)/ecma262-ecmarkup.css \
+		assets/css/print.css=$(STYLE_PAGES)/ecma262-print.css \
+		> $(LAYOUT_ORACLE)/ecma262.chromium.tsv.part
+	@mv $(LAYOUT_ORACLE)/ecma262.chromium.tsv.part $(LAYOUT_ORACLE)/ecma262.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/html5.html \
+		> $(LAYOUT_ORACLE)/html5.chromium.tsv.part
+	@mv $(LAYOUT_ORACLE)/html5.chromium.tsv.part $(LAYOUT_ORACLE)/html5.chromium.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/apollo11.html \
+		'wikibase.client.init&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-modules.css' \
+		'modules=site.styles&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-site.css' \
+		> $(LAYOUT_ORACLE)/apollo11.chromium.tsv.part
+	@mv $(LAYOUT_ORACLE)/apollo11.chromium.tsv.part $(LAYOUT_ORACLE)/apollo11.chromium.tsv
+	@cd $(ROOT) && for page in tests/layout/*-cases.html; do \
+		name=$$(basename $$page .html); \
+		$(NODE) tests/layout/layout_oracle.mjs dump $$page > $(LAYOUT_ORACLE)/$$name.chromium.tsv.part && \
+		mv $(LAYOUT_ORACLE)/$$name.chromium.tsv.part $(LAYOUT_ORACLE)/$$name.chromium.tsv || exit 1; \
+	done
+
+# Copies the installed faces the reference draws with on the oracle's host
+# into build/fonts, where pkg::oracle::fonts::load_fonts reads them in the
+# fallback order its interface documents; they are copied, not linked,
+# because std::fs opens no symbolic link.
+FONT_DIR := $(BUILD)/fonts
+SYSTEM_FONTS := /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf \
+	/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc \
+	/usr/share/fonts/opentype/tlwg/Loma.otf \
+	/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSans.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSerif.ttf \
+	/usr/share/fonts/truetype/freefont/FreeMono.ttf \
+	/usr/share/fonts/truetype/libreoffice/opens___.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf \
+	/usr/share/fonts/opentype/unifont/unifont.otf \
+	/usr/share/fonts/opentype/unifont/unifont_jp.otf \
+	/usr/share/fonts/opentype/unifont/unifont_sample.otf \
+	/usr/share/fonts/opentype/unifont/unifont_csur.otf \
+	/usr/share/fonts/opentype/unifont/unifont_upper.otf \
+	/usr/share/fonts/opentype/unifont/unifont_upper_sample.otf \
+	/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSerif-BoldItalic.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationMono-Italic.ttf \
+	/usr/share/fonts/truetype/liberation/LiberationMono-BoldItalic.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf \
+	/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSansBold.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSansOblique.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSansBoldOblique.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf \
+	/usr/share/fonts/truetype/freefont/FreeSerifBoldItalic.ttf \
+	/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf \
+	/usr/share/fonts/truetype/freefont/FreeMonoOblique.ttf \
+	/usr/share/fonts/truetype/freefont/FreeMonoBoldOblique.ttf \
+	/usr/share/fonts/opentype/tlwg/Loma-Bold.otf \
+	/usr/share/fonts/opentype/tlwg/Loma-Oblique.otf \
+	/usr/share/fonts/opentype/tlwg/Loma-BoldOblique.otf \
+	/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf
+oracle-fonts:
+	@mkdir -p $(FONT_DIR)
+	@cp $(SYSTEM_FONTS) $(FONT_DIR)/
+
+# The oracle of the layout stage's text preparation
+# (research/investigations/layout, "Text preparation results"): draws 1,000
+# text cases from each of the three real pages, adds the extents and
+# synthetic cases, measures them all in Chromium with tests/layout/text_oracle.mjs,
+# runs the text_oracle driver on the same cases and compares the two. It
+# needs what oracle-style-dump needs and the installed fonts, and stays out
+# of `check`; it fails while fewer than 99 percent of the widths match.
+TEXT_ORACLE := $(ORACLE)/text
+oracle-text: oracle-fonts $(BUILD)/text_oracle
+	@mkdir -p $(TEXT_ORACLE)
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs cases e 1000 $(STYLE_PAGES)/ecma262.html \
+		assets/css/ecmarkup.css=$(STYLE_PAGES)/ecma262-ecmarkup.css \
+		assets/css/print.css=$(STYLE_PAGES)/ecma262-print.css > $(TEXT_ORACLE)/ecma262.cases
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs cases h 1000 $(STYLE_PAGES)/html5.html > $(TEXT_ORACLE)/html5.cases
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs cases a 1000 $(STYLE_PAGES)/apollo11.html \
+		'wikibase.client.init&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-modules.css' \
+		'modules=site.styles&only=styles&skin=vector-2022=$(STYLE_PAGES)/apollo11-site.css' > $(TEXT_ORACLE)/apollo11.cases
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs extents > $(TEXT_ORACLE)/extents.cases
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs synthetic > $(TEXT_ORACLE)/synthetic.cases
+	@cd $(TEXT_ORACLE) && cat ecma262.cases html5.cases apollo11.cases extents.cases synthetic.cases > cases.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs measure $(TEXT_ORACLE)/cases.tsv > $(TEXT_ORACLE)/chromium.tsv
+	@cd $(ROOT) && $(BUILD)/text_oracle build/fonts build/oracle/text/cases.tsv > $(TEXT_ORACLE)/snowghost.tsv
+	@cd $(ROOT) && $(NODE) tests/layout/text_oracle.mjs compare $(TEXT_ORACLE)/cases.tsv $(TEXT_ORACLE)/chromium.tsv $(TEXT_ORACLE)/snowghost.tsv
 
 .PHONY: FORCE
 FORCE:

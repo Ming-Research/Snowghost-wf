@@ -4,6 +4,8 @@ Decision: Every renderer stage keeps only the data dependencies of its algorithm
 
 Decision: Each stage in the renderer, from the document to display lists and layer trees, is a pure Whitefoot function of explicit inputs whose result is memoized by those inputs, because the compiler then proves the memoization key complete and a result that read anything outside its key does not compile, instead of hand-maintained invalidation rules and caches, where a missed dependency renders stale output.
 
+Decision: Where a specification and the reference browser, Chromium, differ in what a page computes or how it is laid out, the renderer follows Chromium, recording the difference in the stage's research record, because Chromium is the engine readers compare a renderer with, so a page that differs from it reads as a defect whatever the specification says ([Q60 and Q61](../research/investigations/layout/DESIGN.md#owner-rulings)), instead of following the specification and recording where Chromium differs.
+
 Rejected:
 - The independent formatting context as the unit of parallel work: rejected because on each of the three measured real pages one block formatting context holds 85 to 95 percent of the text, so layout split only between contexts ran at 0.84 to 0.96 times the sequential build at four workers ([layout measurement](../research/investigations/concurrency/DESIGN.md#layout-measurement)).
 - Breaking a context's paragraphs in parallel only when no float is among its boxes: rejected because the dominant context holds a float on two of the three pages, where the rule gained nothing, while breaking lines needs no float placement until the lines beside a float.

@@ -1,0 +1,788 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+
+const align_prefix_words: Array<u8, 22> = "first last safe unsafe";
+
+const none_flex_word: Array<u8, 4> = "none";
+
+fn align_allowed(longhand: u8, code: u8) -> allowed: Bool pure {
+  doc "True when the alignment keyword numbered code, an align_ constant, is a value of longhand: normal for all six and the two self longhands; the content distributions only for justify-content and align-content; left and right only for the justify longhands; the baselines for all but justify-content; self-start and self-end only for the items and self longhands; auto only for align-self and justify-self; legacy only for justify-items.";
+  let is_justify_content = longhand == lh_justify_content;
+  let is_align_content = longhand == lh_align_content;
+  let is_justify_items = longhand == lh_justify_items;
+  let is_justify_self = longhand == lh_justify_self;
+  let is_align_self = longhand == lh_align_self;
+  let content = bor(is_justify_content, is_align_content);
+  let justify_axis = bor(is_justify_content, is_justify_items);
+  let justify = bor(justify_axis, is_justify_self);
+  let selves = bor(is_align_self, is_justify_self);
+  if code == align_normal {
+    return True();
+  }
+  if code == align_stretch {
+    return True();
+  }
+  let common_from = code >= align_start;
+  let common_to = code <= align_flex_end;
+  let common = band(common_from, common_to);
+  if common {
+    return True();
+  }
+  let self_from = code >= align_self_start;
+  let self_to = code <= align_self_end;
+  let self_position = band(self_from, self_to);
+  if self_position {
+    let plain = bnot(content);
+    return plain;
+  }
+  let side_from = code >= align_left;
+  let side_to = code <= align_right;
+  let side = band(side_from, side_to);
+  if side {
+    return justify;
+  }
+  let base_from = code >= align_baseline;
+  let base_to = code <= align_last_baseline;
+  let base = band(base_from, base_to);
+  if base {
+    let excluded = longhand == lh_justify_content;
+    let allowed = bnot(excluded);
+    return allowed;
+  }
+  let spread_from = code >= align_space_between;
+  let spread_to = code <= align_space_evenly;
+  let spread = band(spread_from, spread_to);
+  if spread {
+    return content;
+  }
+  if code == align_auto {
+    return selves;
+  }
+  if code == align_legacy {
+    let items = longhand == lh_justify_items;
+    return items;
+  }
+  return False();
+}
+
+fn positional(code: u8) -> position: Bool pure {
+  doc "True for the positions safe and unsafe may precede: start, end, center, flex-start, flex-end, self-start, self-end, left and right.";
+  let from = code >= align_start;
+  let to = code <= align_right;
+  let both = band(from, to);
+  return both;
+}
+
+fn align_word_at(values: &ComponentList, at: u64) -> code: Option<u8> reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "The align_ number of the identifier at at among the alignment keywords, or None.";
+  let shape = shape_of(values: values, at: at);
+  if shape.kind != s_ident {
+    return None<u8>();
+  }
+  let n = align_words.len;
+  let found = span_word(values: values, span: shape.name, list: &align_words[0_u64..n]);
+  match found {
+    Some(value: i) => {
+      let last_word = i == 12_u64;
+      if last_word {
+        return None<u8>();
+      }
+      let small = i < 256_u64;
+      if small {
+        let code = cvt::<u64, u8>(i);
+        return Some<u8>(value: code);
+      }
+      return None<u8>();
+    }
+    None() => {
+      return None<u8>();
+    }
+  }
+}
+
+fn align_value(values: &ComponentList, start: u64, end: u64, longhand: u8) -> code: Option<u8> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses an alignment longhand from start to end into one align_ number: one keyword; first baseline as baseline and last baseline as last-baseline; safe or unsafe before a position, accepted and dropped; legacy with left, right or center, in either order, as legacy.";
+  let first_at = skip_space(values: values, at: start, limit: end);
+  if first_at >= end {
+    return None<u8>();
+  }
+  let first_next = sibling_after(values: values, at: first_at, limit: end);
+  let second_at = skip_space(values: values, at: first_next, limit: end);
+  let n = align_prefix_words.len;
+  let first_shape = shape_of(values: values, at: first_at);
+  if first_shape.kind != s_ident {
+    return None<u8>();
+  }
+  let prefix = span_word(values: values, span: first_shape.name, list: &align_prefix_words[0_u64..n]);
+  if second_at >= end {
+    match prefix {
+      Some(..) => {
+        return None<u8>();
+      }
+      None() => {
+      }
+    }
+    match align_word_at(values: values, at: first_at) {
+      Some(value: code) => {
+        let allowed = align_allowed(longhand: longhand, code: code);
+        if allowed {
+          return Some<u8>(value: code);
+        }
+        return None<u8>();
+      }
+      None() => {
+        return None<u8>();
+      }
+    }
+  }
+  let second_next = sibling_after(values: values, at: second_at, limit: end);
+  let rest = skip_space(values: values, at: second_next, limit: end);
+  if rest < end {
+    return None<u8>();
+  }
+  let second = match align_word_at(values: values, at: second_at) {
+    Some(value: code) => {
+      give code;
+    }
+    None() => {
+      return None<u8>();
+    }
+  }
+  match prefix {
+    Some(value: p) => {
+      if p <= 1_u64 {
+        if second != align_baseline {
+          return None<u8>();
+        }
+        let code = if p == 0_u64 {
+          give align_baseline;
+        } else {
+          give align_last_baseline;
+        }
+        let allowed = align_allowed(longhand: longhand, code: code);
+        if allowed {
+          return Some<u8>(value: code);
+        }
+        return None<u8>();
+      }
+      let placed = positional(code: second);
+      let allowed = align_allowed(longhand: longhand, code: second);
+      let both = band(placed, allowed);
+      if both {
+        return Some<u8>(value: second);
+      }
+      return None<u8>();
+    }
+    None() => {
+    }
+  }
+  let first = match align_word_at(values: values, at: first_at) {
+    Some(value: code) => {
+      give code;
+    }
+    None() => {
+      return None<u8>();
+    }
+  }
+  let items = longhand == lh_justify_items;
+  if items {
+  } else {
+    return None<u8>();
+  }
+  let first_legacy = first == align_legacy;
+  let second_legacy = second == align_legacy;
+  let other = if first_legacy {
+    give second;
+  } else {
+    give first;
+  }
+  let one_legacy = bxor(first_legacy, second_legacy);
+  let left = other == align_left;
+  let right = other == align_right;
+  let center = other == align_center;
+  let sides = bor(left, right);
+  let direction = bor(sides, center);
+  let both = band(one_legacy, direction);
+  if both {
+    return Some<u8>(value: align_legacy);
+  }
+  return None<u8>();
+}
+
+fn align_declared(values: &ComponentList, start: u64, end: u64, longhand: u8) -> declared: Option<Declared> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "An alignment longhand's value as a Keyword holding its align_ number.";
+  match align_value(values: values, start: start, end: end, longhand: longhand) {
+    Some(value: code) => {
+      let made = Declared::Keyword(keyword: code);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn gap_value(values: &ComponentList, at: u64, limit: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "A gap from one component: normal, or a non-negative length-percentage.";
+  let n = weight_words.len;
+  let found = word_at(values: values, at: at, list: &weight_words[0_u64..n]);
+  match found {
+    Some(value: i) => {
+      if i == 0_u64 {
+        let made = Declared::Keyword(keyword: keyword_normal);
+        return Some<Declared>(value: made);
+      }
+      return None<Declared>();
+    }
+    None() => {
+    }
+  }
+  let yes = True();
+  let no = False();
+  let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+  return made;
+}
+
+fn order_value(values: &ComponentList, at: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "An integer for order, clamped to the range of i32.";
+  let shape = shape_of(values: values, at: at);
+  if shape.kind != s_number {
+    return None<Declared>();
+  }
+  if shape.integer {
+  } else {
+    return None<Declared>();
+  }
+  let high = fmin(shape.value, 2147483647.0_f64);
+  let clamped = fmax(high, -2147483648.0_f64);
+  let fits = cvt.defined::<f64, i32>(clamped);
+  if fits {
+    let whole = cvt::<f64, i32>(clamped);
+    let made = Declared::Integer(value: whole);
+    return Some<Declared>(value: made);
+  }
+  return None<Declared>();
+}
+
+fn factor_value(values: &ComponentList, at: u64, limit: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "A non-negative number for flex-grow and flex-shrink.";
+  match number_at(values: values, at: at, limit: limit) {
+    Some(value: parsed) => {
+      if parsed.next != limit {
+        return None<Declared>();
+      }
+      let negative = flt(parsed.value.number, 0.0_f64);
+      if negative {
+        return None<Declared>();
+      }
+      let amount = narrow(value: parsed.value.number);
+      let made = Declared::Number(value: amount);
+      return Some<Declared>(value: made);
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+}
+
+fn basis_value(values: &ComponentList, at: u64, limit: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "flex-basis from one component: auto, content and the size keywords as keywords, or a non-negative length-percentage.";
+  let auto_n = size_auto_word.len;
+  let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+  if auto_word {
+    let made = Declared::Keyword(keyword: keyword_auto);
+    return Some<Declared>(value: made);
+  }
+  let keyword = keyword_value(longhand: lh_flex_basis, values: values, at: at);
+  match keyword {
+    Some(value: k) => {
+      return Some<Declared>(value: k);
+    }
+    None() => {
+    }
+  }
+  let yes = True();
+  let no = False();
+  let made = length_value(values: values, at: at, limit: limit, allow_percent: yes, allow_negative: no);
+  return made;
+}
+
+fn zero_percent() -> made: Declared pure {
+  doc "The declared length 0%, its percentage kept as negative zero so that compute_length reports it as a percentage.";
+  let zero = lengths_zero();
+  let percent = fneg(0.0_f32);
+  let lengths = Lengths(px: zero.px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, lh: zero.lh, percent: percent);
+  let made = Declared::Length(value: lengths);
+  return made;
+}
+
+fn unitless_zero(values: &ComponentList, at: u64) -> zero: Bool reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "True for the number 0 written without a unit.";
+  let shape = shape_of(values: values, at: at);
+  if shape.kind != s_number {
+    return False();
+  }
+  let made = feq(shape.value, 0.0_f64);
+  return made;
+}
+
+fn expand_flex(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands flex: none as 0 0 auto; otherwise a grow_factor factor with an optional shrink_factor factor right after it and a basis before or after them, in any order, the omitted grow_factor taking 1, shrink_factor 1 and basis 0%; a unitless zero is a factor unless both factors are already given.";
+  let none_n = none_flex_word.len;
+  let grow_factor = Declared::Number(value: 1.0_f32);
+  let shrink_factor = Declared::Number(value: 1.0_f32);
+  let basis = zero_percent();
+  let have_grow = False();
+  let have_shrink = False();
+  let have_basis = False();
+  let last_was_grow = False();
+  let words = 0_u64;
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    set words = words +sat 1_u64;
+    let is_none = ident_is(values: values, at: at, word: &none_flex_word[0_u64..none_n]);
+    if is_none {
+      let alone = next >= end;
+      let first = words == 1_u64;
+      let only = band(alone, first);
+      if only {
+        let zero = Declared::Number(value: 0.0_f32);
+        let auto_value = Declared::Keyword(keyword: keyword_auto);
+        put_value(exp: exp, longhand: lh_flex_grow, value: zero);
+        put_value(exp: exp, longhand: lh_flex_shrink, value: zero);
+        put_value(exp: exp, longhand: lh_flex_basis, value: auto_value);
+        return True();
+      }
+      return False();
+    }
+    let factors_done = band(have_grow, have_shrink);
+    let zero = unitless_zero(values: values, at: at);
+    let as_basis_zero = band(zero, factors_done);
+    let number = if as_basis_zero {
+      give None<Declared>();
+    } else {
+      give factor_value(values: values, at: at, limit: next);
+    }
+    match number {
+      Some(value: v) => {
+        if have_grow {
+          let no_shrink = bnot(have_shrink);
+          let follows = band(last_was_grow, no_shrink);
+          if follows {
+            set shrink_factor = v;
+            set have_shrink = True();
+            set last_was_grow = False();
+          } else {
+            return False();
+          }
+        } else {
+          set grow_factor = v;
+          set have_grow = True();
+          set last_was_grow = True();
+        }
+      }
+      None() => {
+        if have_basis {
+          return False();
+        }
+        match basis_value(values: values, at: at, limit: next) {
+          Some(value: v) => {
+            set basis = v;
+            set have_basis = True();
+            set last_was_grow = False();
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+    }
+    set position = next;
+  }
+  if words == 0_u64 {
+    return False();
+  }
+  let some = bor(have_grow, have_basis);
+  if some {
+  } else {
+    return False();
+  }
+  put_value(exp: exp, longhand: lh_flex_grow, value: grow_factor);
+  put_value(exp: exp, longhand: lh_flex_shrink, value: shrink_factor);
+  put_value(exp: exp, longhand: lh_flex_basis, value: basis);
+  return True();
+}
+
+fn expand_flex_flow(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands flex-flow: a direction, a wrap or both in either order, each defaulting to its initial value.";
+  let direction = Declared::Keyword(keyword: 0_u8);
+  let wrapping = Declared::Keyword(keyword: 0_u8);
+  let have_direction = False();
+  let have_wrap = False();
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let as_direction = keyword_value(longhand: lh_flex_direction, values: values, at: at);
+    match as_direction {
+      Some(value: v) => {
+        if have_direction {
+          return False();
+        }
+        set direction = v;
+        set have_direction = True();
+      }
+      None() => {
+        match keyword_value(longhand: lh_flex_wrap, values: values, at: at) {
+          Some(value: v) => {
+            if have_wrap {
+              return False();
+            }
+            set wrapping = v;
+            set have_wrap = True();
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+    }
+    set position = next;
+  }
+  let any = bor(have_direction, have_wrap);
+  if any {
+  } else {
+    return False();
+  }
+  put_value(exp: exp, longhand: lh_flex_direction, value: direction);
+  put_value(exp: exp, longhand: lh_flex_wrap, value: wrapping);
+  return True();
+}
+
+fn expand_gap(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands gap and grid-gap: a row gap and an optional column gap, which defaults to the row gap.";
+  let first_at = skip_space(values: values, at: start, limit: end);
+  if first_at >= end {
+    return False();
+  }
+  let first_next = sibling_after(values: values, at: first_at, limit: end);
+  let row = match gap_value(values: values, at: first_at, limit: first_next) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return False();
+    }
+  }
+  let second_at = skip_space(values: values, at: first_next, limit: end);
+  if second_at >= end {
+    put_value(exp: exp, longhand: lh_row_gap, value: row);
+    put_value(exp: exp, longhand: lh_column_gap, value: row);
+    return True();
+  }
+  let second_next = sibling_after(values: values, at: second_at, limit: end);
+  let rest = skip_space(values: values, at: second_next, limit: end);
+  if rest < end {
+    return False();
+  }
+  match gap_value(values: values, at: second_at, limit: second_next) {
+    Some(value: column) => {
+      put_value(exp: exp, longhand: lh_row_gap, value: row);
+      put_value(exp: exp, longhand: lh_column_gap, value: column);
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn expand_place(values: &ComponentList, start: u64, end: u64, shorthand: u8, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands place-items, place-content and place-self: the align longhand's value, then optionally the justify longhand's, which otherwise repeats the first when the justify longhand accepts it; place-content's single baseline value gives justify-content start, as the shorthand's definition says.";
+  let align_long = if shorthand == sh_place_items {
+    give lh_align_items;
+  } else if shorthand == sh_place_content {
+    give lh_align_content;
+  } else {
+    give lh_align_self;
+  }
+  let justify_long = if shorthand == sh_place_items {
+    give lh_justify_items;
+  } else if shorthand == sh_place_content {
+    give lh_justify_content;
+  } else {
+    give lh_justify_self;
+  }
+  let pieces = box_slots_new::<u64>(capacity: 0_u64);
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    put::<u64>(cell: &pieces, value: at);
+    set position = next;
+  }
+  let count = pieces.inner.len;
+  let none = count == 0_u64;
+  let many = count > 4_u64;
+  let unusable = bor(none, many);
+  if unusable {
+    return False();
+  }
+  for (split in 1_u64..count) {
+    let middle = pieces.inner[split];
+    let inside = middle <= end;
+    if inside {
+    } else {
+      return False();
+    }
+    let left = align_value(values: values, start: start, end: middle, longhand: align_long);
+    let right = align_value(values: values, start: middle, end: end, longhand: justify_long);
+    match left {
+      Some(value: a) => {
+        match right {
+          Some(value: j) => {
+            let first = Declared::Keyword(keyword: a);
+            let second = Declared::Keyword(keyword: j);
+            put_value(exp: exp, longhand: align_long, value: first);
+            put_value(exp: exp, longhand: justify_long, value: second);
+            return True();
+          }
+          None() => {
+          }
+        }
+      }
+      None() => {
+      }
+    }
+  }
+  match align_value(values: values, start: start, end: end, longhand: align_long) {
+    Some(value: a) => {
+      let content = shorthand == sh_place_content;
+      let base_from = a >= align_baseline;
+      let base_to = a <= align_last_baseline;
+      let base = band(base_from, base_to);
+      let content_base = band(content, base);
+      let copied = if content_base {
+        give align_start;
+      } else {
+        give a;
+      }
+      let allowed = align_allowed(longhand: justify_long, code: copied);
+      if allowed {
+      } else {
+        return False();
+      }
+      let first = Declared::Keyword(keyword: a);
+      let second = Declared::Keyword(keyword: copied);
+      put_value(exp: exp, longhand: align_long, value: first);
+      put_value(exp: exp, longhand: justify_long, value: second);
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn ratio_number(values: &ComponentList, at: u64, limit: u64) -> number: Option<f32> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "A non-negative number of a ratio.";
+  match number_at(values: values, at: at, limit: limit) {
+    Some(value: parsed) => {
+      if parsed.next != limit {
+        return None<f32>();
+      }
+      let negative = flt(parsed.value.number, 0.0_f64);
+      if negative {
+        return None<f32>();
+      }
+      let amount = narrow(value: parsed.value.number);
+      return Some<f32>(value: amount);
+    }
+    None() => {
+      return None<f32>();
+    }
+  }
+}
+
+fn ratio_value(values: &ComponentList, start: u64, end: u64) -> declared: Option<Declared> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses aspect-ratio: auto alone as the keyword auto, or auto and a ratio in either order, or a ratio, a number with an optional / and second number that defaults to 1.";
+  let auto_n = size_auto_word.len;
+  let has_auto = False();
+  let has_width = False();
+  let has_height = False();
+  let slash = False();
+  let width = 0.0_f32;
+  let height = 1.0_f32;
+  let ratio_done = False();
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let is_auto = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+    let shape = shape_of(values: values, at: at);
+    let is_slash_delim = shape.kind == s_delim;
+    let is_slash_code = shape.code == 47_u32;
+    let is_slash = band(is_slash_delim, is_slash_code);
+    if is_auto {
+      if has_auto {
+        return None<Declared>();
+      }
+      let unfinished = bnot(ratio_done);
+      let open_ratio = band(slash, unfinished);
+      if open_ratio {
+        return None<Declared>();
+      }
+      set has_auto = True();
+      if has_width {
+        set ratio_done = True();
+      }
+    } else if is_slash {
+      let no_slash = bnot(slash);
+      let not_done = bnot(ratio_done);
+      let ready = band(has_width, no_slash);
+      let open = band(ready, not_done);
+      if open {
+        set slash = True();
+      } else {
+        return None<Declared>();
+      }
+    } else {
+      match ratio_number(values: values, at: at, limit: next) {
+        Some(value: amount) => {
+          if ratio_done {
+            return None<Declared>();
+          }
+          if slash {
+            if has_height {
+              return None<Declared>();
+            }
+            set height = amount;
+            set has_height = True();
+            set ratio_done = True();
+          } else if has_width {
+            return None<Declared>();
+          } else {
+            set width = amount;
+            set has_width = True();
+          }
+        }
+        None() => {
+          return None<Declared>();
+        }
+      }
+    }
+    set position = next;
+  }
+  let no_height = bnot(has_height);
+  let dangling = band(slash, no_height);
+  if dangling {
+    return None<Declared>();
+  }
+  if has_width {
+    let made = Declared::Ratio(auto: has_auto, width: width, height: height);
+    return Some<Declared>(value: made);
+  }
+  if has_auto {
+    let made = Declared::Keyword(keyword: keyword_auto);
+    return Some<Declared>(value: made);
+  }
+  return None<Declared>();
+}
+
+fn spacing_pair_value(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses border-spacing: one or two non-negative lengths, horizontal then vertical, the vertical defaulting to the horizontal, kept as two consecutive entries of the expansion's spacings.";
+  let first_at = skip_space(values: values, at: start, limit: end);
+  if first_at >= end {
+    return None<Declared>();
+  }
+  let no = False();
+  let first_next = sibling_after(values: values, at: first_at, limit: end);
+  let horizontal = match length_at(values: values, at: first_at, limit: first_next, allow_percent: no, allow_negative: no) {
+    Some(value: parsed) => {
+      if parsed.next != first_next {
+        return None<Declared>();
+      }
+      give parsed.value.lengths;
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+  let vertical = horizontal;
+  let second_at = skip_space(values: values, at: first_next, limit: end);
+  if second_at < end {
+    let second_next = sibling_after(values: values, at: second_at, limit: end);
+    let rest = skip_space(values: values, at: second_next, limit: end);
+    if rest < end {
+      return None<Declared>();
+    }
+    match length_at(values: values, at: second_at, limit: second_next, allow_percent: no, allow_negative: no) {
+      Some(value: parsed) => {
+        if parsed.next != second_next {
+          return None<Declared>();
+        }
+        set vertical = parsed.value.lengths;
+      }
+      None() => {
+        return None<Declared>();
+      }
+    }
+  }
+  let index = exp^.side.spacings.inner.len;
+  put::<Lengths>(cell: &exp^.side.spacings, value: horizontal);
+  put::<Lengths>(cell: &exp^.side.spacings, value: vertical);
+  let narrowed = to_u32(value: index);
+  let made = Declared::Stored(kind: stored_spacing, index: narrowed);
+  return Some<Declared>(value: made);
+}

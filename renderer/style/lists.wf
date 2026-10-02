@@ -1,0 +1,944 @@
+alias Atom = pkg::base::atom::Atom;
+alias AreaMap = pkg::css::values::AreaMap;
+alias ContainerGroup = pkg::css::values::ContainerGroup;
+alias ContentGroup = pkg::css::values::ContentGroup;
+alias ContentItem = pkg::css::values::ContentItem;
+alias ContentList = pkg::css::values::ContentList;
+alias CounterChange = pkg::css::values::CounterChange;
+alias CounterList = pkg::css::values::CounterList;
+alias DeclaredBreadth = pkg::css::values::DeclaredBreadth;
+alias Environment = pkg::css::values::Environment;
+alias GridLine = pkg::css::values::GridLine;
+alias ItemGroup = pkg::css::values::ItemGroup;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias LineNames = pkg::css::values::LineNames;
+alias NamedArea = pkg::css::values::NamedArea;
+alias QuoteList = pkg::css::values::QuoteList;
+alias QuotePair = pkg::css::values::QuotePair;
+alias Sizing = pkg::css::values::Sizing;
+alias TableGroup = pkg::css::values::TableGroup;
+alias Track = pkg::css::values::Track;
+alias TrackBreadth = pkg::css::values::TrackBreadth;
+alias TrackList = pkg::css::values::TrackList;
+alias compute_length = pkg::css::values::compute_length;
+alias repeat_none = pkg::css::values::repeat_none;
+alias track_auto = pkg::css::values::track_auto;
+
+const word_ceiling: u64 = 1073741824_u64;
+
+const predefined_tag: u64 = 1099511627776_u64;
+
+struct WordTable {
+  words: Box<Slots<u64>>;
+  starts: Box<Slots<u64>>;
+  slots: Box<Array<u32>>;
+  mask: u64;
+}
+
+struct Interned {
+  id: u32;
+  fresh: Bool;
+}
+
+fn word_table_new(expected: u64) -> made: WordTable pure {
+  doc "A table of word sequences with open addressing over a power-of-two number of slots at least twice expected, which bounds the number of distinct sequences it takes.";
+  let capacity = 16_u64;
+  for (step in 0_u64..40_u64) {
+    let half = capacity / 2_u64;
+    if half >= expected {
+      break;
+    }
+    set capacity = capacity *sat 2_u64;
+  }
+  let bounded = if capacity <= word_ceiling {
+    give capacity;
+  } else {
+    give word_ceiling;
+  }
+  let words = box_slots_new::<u64>(capacity: 0_u64);
+  let starts = box_slots_new::<u64>(capacity: 0_u64);
+  let slots = box_array_filled::<u32>(count: bounded, value: 0_u32);
+  let mask = bounded -sat 1_u64;
+  return WordTable(words: move words, starts: move starts, slots: move slots, mask: mask);
+}
+
+fn entry_bounds(table: &WordTable, slot_entry: u64) -> (start: u64, end: u64) reads(table) contract {
+  ensures start <= end;
+  ensures end <= table^.words.inner.len;
+} {
+  doc "The word range of slot_entry, empty for an unknown slot_entry.";
+  let count = table^.starts.inner.len;
+  let known = slot_entry < count;
+  if known {
+  } else {
+    return 0_u64, 0_u64;
+  }
+  let start = table^.starts.inner[slot_entry];
+  let next = slot_entry +sat 1_u64;
+  let end = if next < count {
+    give table^.starts.inner[next];
+  } else {
+    give table^.words.inner.len;
+  }
+  let ordered = start <= end;
+  let inside = end <= table^.words.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    return start, end;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn same_words(table: &WordTable, slot_entry: u64, key: &[u64]) -> same: Bool reads(table), reads(key) {
+  doc "True when slot_entry holds exactly the words of key.";
+  let (start, end) = entry_bounds(table: table, slot_entry: slot_entry);
+  let width = end - start;
+  if width != key^.len {
+    return False();
+  }
+  for (k in 0_u64..width) {
+    let at = start + k;
+    if table^.words.inner[at] != key^[k] {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn word_intern(table: &WordTable, key: &[u64]) -> found: Interned reads(key), writes(table) {
+  doc "The identifier of key among the table's sequences, the order in which equal sequences were first given, and whether key is new; a full table gives every new key the identifier 0.";
+  let hash = 14695981039346656037_u64;
+  let length = key^.len;
+  for (k in 0_u64..length) {
+    set hash = mix(hash: hash, value: key^[k]);
+  }
+  let capacity = table^.slots.inner.len;
+  let probe = iand(hash, table^.mask);
+  let no = False();
+  let yes = True();
+  for (step in 0_u64..capacity) {
+    let at = iand(probe, table^.mask);
+    let inside = at < table^.slots.inner.len;
+    if inside {
+    } else {
+      break;
+    }
+    let held = table^.slots.inner[at];
+    if held == 0_u32 {
+      let entry_count = table^.starts.inner.len;
+      let half = capacity / 2_u64;
+      let room = entry_count < half;
+      if room {
+      } else {
+        return Interned(id: 0_u32, fresh: no);
+      }
+      let start = table^.words.inner.len;
+      append_group::<u64>(cell: &table^.starts, value: start);
+      for (k in 0_u64..length) {
+        let word = key^[k];
+        append_group::<u64>(cell: &table^.words, value: word);
+      }
+      let one_based = entry_count +sat 1_u64;
+      set table^.slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+      let id = cvt.wrap::<u64, u32>(entry_count);
+      return Interned(id: id, fresh: yes);
+    }
+    let slot_entry_raw = cvt::<u32, u64>(held);
+    let slot_entry = slot_entry_raw -sat 1_u64;
+    let same = same_words(table: table, slot_entry: slot_entry, key: key);
+    if same {
+      let id = cvt.wrap::<u64, u32>(slot_entry);
+      return Interned(id: id, fresh: no);
+    }
+    set probe = at +wrap 1_u64;
+  }
+  return Interned(id: 0_u32, fresh: no);
+}
+
+fn put_word(key: &Box<Slots<u64>>, value: u64) -> result: unit writes(key) {
+  doc "Appends one word to a key.";
+  append_group::<u64>(cell: key, value: value);
+  return unit;
+}
+
+fn exact_word(value: f32) -> word: u64 pure {
+  doc "The bits of a float as a word, with negative zero taken as zero, so equal values give equal words.";
+  let zero = feq(value, 0.0_f32);
+  if zero {
+    return 0_u64;
+  }
+  let bits = reinterpret::<f32, u32>(value);
+  let word = cvt::<u32, u64>(bits);
+  return word;
+}
+
+fn put_lp(key: &Box<Slots<u64>>, value: LengthPercentage) -> result: unit writes(key) {
+  doc "Appends the words of a length-percentage.";
+  let px = exact_word(value: value.px);
+  let percent = exact_word(value: value.percent);
+  let has = bool_word(value: value.has_percent);
+  put_word(key: key, value: px);
+  put_word(key: key, value: percent);
+  put_word(key: key, value: has);
+  return unit;
+}
+
+fn put_sizing(key: &Box<Slots<u64>>, value: Sizing) -> result: unit writes(key) {
+  doc "Appends the words of a sizing value.";
+  let kind = cvt::<u8, u64>(value.kind);
+  let keyword = cvt::<u8, u64>(value.keyword);
+  put_word(key: key, value: kind);
+  put_word(key: key, value: keyword);
+  put_lp(key: key, value: value.value);
+  return unit;
+}
+
+fn put_line(key: &Box<Slots<u64>>, value: GridLine) -> result: unit writes(key) {
+  doc "Appends the words of a grid line.";
+  let kind = cvt::<u8, u64>(value.kind);
+  let number = cvt.wrap::<i32, u64>(value.number);
+  let name = cvt::<u32, u64>(value.name.index);
+  let named = bool_word(value: value.named);
+  put_word(key: key, value: kind);
+  put_word(key: key, value: number);
+  put_word(key: key, value: name);
+  put_word(key: key, value: named);
+  return unit;
+}
+
+fn clear_key(key: &Box<Slots<u64>>) -> result: unit writes(key) {
+  doc "Empties a key, keeping its storage.";
+  let count = key^.inner.len;
+  for (k in 0_u64..count) {
+    let filled = key^.inner.len > 0_u64;
+    if filled {
+      let removed = take_back(window: &key^.inner);
+    }
+  }
+  return unit;
+}
+
+fn node_environment(inherited: &Inherited) -> environment: Environment reads(inherited) {
+  doc "The environment the second part computed with, with its root font size.";
+  let base = inherited^.environment;
+  return Environment(width: base.width, height: base.height, root_font_size: inherited^.root_font_size, serif: base.serif, sans: base.sans, mono: base.mono);
+}
+
+fn computed_breadth(breadth: DeclaredBreadth, inherited: &Inherited, node: u64) -> computed: TrackBreadth reads(inherited) {
+  doc "A track breadth with its length computed against the font of node.";
+  let size = if node < inherited^.fonts.inner.len {
+    give inherited^.fonts.inner[node].size;
+  } else {
+    give 16.0_f32;
+  }
+  let ex = if node < inherited^.ex.inner.len {
+    give inherited^.ex.inner[node];
+  } else {
+    give 8.0_f32;
+  }
+  let ch = if node < inherited^.ch.inner.len {
+    give inherited^.ch.inner[node];
+  } else {
+    give 8.0_f32;
+  }
+  let lh = if node < inherited^.lh.inner.len {
+    give inherited^.lh.inner[node];
+  } else {
+    give 18.4_f32;
+  }
+  let environment = node_environment(inherited: inherited);
+  let value = compute_length(lengths: breadth.value, font_size: size, ex: ex, ch: ch, lh: lh, environment: environment);
+  return TrackBreadth(kind: breadth.kind, value: value, flex: breadth.flex);
+}
+
+struct TrackOut {
+  tracks: Box<Slots<Track>>;
+  track_lists: Box<Slots<TrackList>>;
+  line_names: Box<Slots<Atom>>;
+  area_maps: Box<Slots<AreaMap>>;
+  named_areas: Box<Slots<NamedArea>>;
+}
+
+struct ContainerTables {
+  groups: Box<Slots<ContainerGroup>>;
+  lists: TrackOut;
+}
+
+fn put_names(key: &Box<Slots<u64>>, inherited: &Inherited, names: LineNames) -> result: unit reads(inherited), writes(key) {
+  doc "Appends the count and atoms of a range of the named store's line names.";
+  let first = cvt::<u32, u64>(names.first);
+  let end = cvt::<u32, u64>(names.end);
+  let count = end -sat first;
+  put_word(key: key, value: count);
+  for (k in first..end) {
+    let inside = k < inherited^.named.line_names.inner.len;
+    if inside {
+      let atom = cvt::<u32, u64>(inherited^.named.line_names.inner[k].index);
+      put_word(key: key, value: atom);
+    }
+  }
+  return unit;
+}
+
+fn copy_names(out: &TrackOut, inherited: &Inherited, names: LineNames) -> copied: LineNames reads(inherited), writes(out) {
+  doc "Appends a range of the named store's line names to the output's and returns its range there.";
+  let first = cvt::<u32, u64>(names.first);
+  let end = cvt::<u32, u64>(names.end);
+  let start = out^.line_names.inner.len;
+  for (k in first..end) {
+    let inside = k < inherited^.named.line_names.inner.len;
+    if inside {
+      let atom = inherited^.named.line_names.inner[k];
+      append_group::<Atom>(cell: &out^.line_names, value: atom);
+    }
+  }
+  let stop = out^.line_names.inner.len;
+  let a = cvt.wrap::<u64, u32>(start);
+  let b = cvt.wrap::<u64, u32>(stop);
+  return LineNames(first: a, end: b);
+}
+
+fn track_key(key: &Box<Slots<u64>>, inherited: &Inherited, list: TrackList, node: u64) -> result: unit reads(inherited), writes(key) {
+  doc "Writes the words of a declared track list computed against the font of node: its repeat, each track's computed breadths, fit-content flag and names, and the names around the repeat and after the last track.";
+  clear_key(key: key);
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  let kind = cvt::<u8, u64>(list.repeat_kind);
+  let repeat_first_raw = cvt::<u32, u64>(list.repeat_first);
+  let repeat_first = repeat_first_raw -sat first;
+  let repeat_end_raw = cvt::<u32, u64>(list.repeat_end);
+  let repeat_end = repeat_end_raw -sat first;
+  put_word(key: key, value: kind);
+  put_word(key: key, value: repeat_first);
+  put_word(key: key, value: repeat_end);
+  let count = end -sat first;
+  put_word(key: key, value: count);
+  for (k in first..end) {
+    let inside = k < inherited^.named.tracks.inner.len;
+    if inside {
+      let track = inherited^.named.tracks.inner[k];
+      let min = computed_breadth(breadth: track.min, inherited: inherited, node: node);
+      let max = computed_breadth(breadth: track.max, inherited: inherited, node: node);
+      let min_kind = cvt::<u8, u64>(min.kind);
+      let max_kind = cvt::<u8, u64>(max.kind);
+      let min_flex = exact_word(value: min.flex);
+      let max_flex = exact_word(value: max.flex);
+      let fit = bool_word(value: track.fit_content);
+      put_word(key: key, value: min_kind);
+      put_lp(key: key, value: min.value);
+      put_word(key: key, value: min_flex);
+      put_word(key: key, value: max_kind);
+      put_lp(key: key, value: max.value);
+      put_word(key: key, value: max_flex);
+      put_word(key: key, value: fit);
+      put_names(key: key, inherited: inherited, names: track.names_before);
+    }
+  }
+  put_names(key: key, inherited: inherited, names: list.repeat_names_before);
+  put_names(key: key, inherited: inherited, names: list.repeat_names_after);
+  put_names(key: key, inherited: inherited, names: list.names_after);
+  return unit;
+}
+
+fn track_append(out: &TrackOut, inherited: &Inherited, list: TrackList, node: u64) -> result: unit reads(inherited), writes(out) {
+  doc "Appends a declared track list computed against the font of node to the output's tracks, names and lists.";
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  let base = out^.tracks.inner.len;
+  for (k in first..end) {
+    let inside = k < inherited^.named.tracks.inner.len;
+    if inside {
+      let track = inherited^.named.tracks.inner[k];
+      let min = computed_breadth(breadth: track.min, inherited: inherited, node: node);
+      let max = computed_breadth(breadth: track.max, inherited: inherited, node: node);
+      let names = copy_names(out: out, inherited: inherited, names: track.names_before);
+      let made = Track(min: min, max: max, fit_content: track.fit_content, names_before: names);
+      append_group::<Track>(cell: &out^.tracks, value: made);
+    }
+  }
+  let stop = out^.tracks.inner.len;
+  let repeat_first_raw = cvt::<u32, u64>(list.repeat_first);
+  let repeat_first = repeat_first_raw -sat first;
+  let repeat_end_raw = cvt::<u32, u64>(list.repeat_end);
+  let repeat_end = repeat_end_raw -sat first;
+  let before = copy_names(out: out, inherited: inherited, names: list.repeat_names_before);
+  let inside_names = copy_names(out: out, inherited: inherited, names: list.repeat_names_after);
+  let after = copy_names(out: out, inherited: inherited, names: list.names_after);
+  let a = cvt.wrap::<u64, u32>(base);
+  let b = cvt.wrap::<u64, u32>(stop);
+  let repeat_start_at = base +sat repeat_first;
+  let repeat_stop_at = base +sat repeat_end;
+  let c = cvt.wrap::<u64, u32>(repeat_start_at);
+  let d = cvt.wrap::<u64, u32>(repeat_stop_at);
+  let made = TrackList(first: a, end: b, repeat_kind: list.repeat_kind, repeat_names_before: before, repeat_first: c, repeat_end: d, repeat_names_after: inside_names, names_after: after);
+  append_group::<TrackList>(cell: &out^.track_lists, value: made);
+  return unit;
+}
+
+fn track_id(table: &WordTable, key: &Box<Slots<u64>>, out: &TrackOut, inherited: &Inherited, reference: u32, node: u32, none_id: u32) -> id: u32 reads(inherited), writes(table), writes(key), writes(out) {
+  doc "The identifier of the computed track list a reference names, interning it when new; none_id for the reference sentinel.";
+  if reference == list_none_ref {
+    return none_id;
+  }
+  let at = cvt::<u32, u64>(reference);
+  let inside = at < inherited^.named.track_lists.inner.len;
+  if inside {
+  } else {
+    return none_id;
+  }
+  let list = inherited^.named.track_lists.inner[at];
+  let wide_node = cvt::<u32, u64>(node);
+  track_key(key: key, inherited: inherited, list: list, node: wide_node);
+  let length = key^.inner.len;
+  let found = word_intern(table: table, key: &key^.inner[0_u64..length]);
+  if found.fresh {
+    track_append(out: out, inherited: inherited, list: list, node: wide_node);
+  }
+  return found.id;
+}
+
+fn area_id(table: &WordTable, key: &Box<Slots<u64>>, out: &TrackOut, inherited: &Inherited, reference: u32) -> id: u32 reads(inherited), writes(table), writes(key), writes(out) {
+  doc "The identifier of the area map a reference names, interning it when new; 0, none, for the reference sentinel.";
+  if reference == list_none_ref {
+    return 0_u32;
+  }
+  let at = cvt::<u32, u64>(reference);
+  let inside = at < inherited^.named.area_maps.inner.len;
+  if inside {
+  } else {
+    return 0_u32;
+  }
+  let map = inherited^.named.area_maps.inner[at];
+  clear_key(key: key);
+  let rows = cvt::<u32, u64>(map.rows);
+  let columns = cvt::<u32, u64>(map.columns);
+  put_word(key: key, value: rows);
+  put_word(key: key, value: columns);
+  let first = cvt::<u32, u64>(map.first);
+  let end = cvt::<u32, u64>(map.end);
+  for (k in first..end) {
+    let listed = k < inherited^.named.named_areas.inner.len;
+    if listed {
+      let area = inherited^.named.named_areas.inner[k];
+      let name = cvt::<u32, u64>(area.name.index);
+      let a = cvt::<u32, u64>(area.row_start);
+      let b = cvt::<u32, u64>(area.row_end);
+      let c = cvt::<u32, u64>(area.column_start);
+      let d = cvt::<u32, u64>(area.column_end);
+      put_word(key: key, value: name);
+      put_word(key: key, value: a);
+      put_word(key: key, value: b);
+      put_word(key: key, value: c);
+      put_word(key: key, value: d);
+    }
+  }
+  let length = key^.inner.len;
+  let found = word_intern(table: table, key: &key^.inner[0_u64..length]);
+  if found.fresh {
+    let start = out^.named_areas.inner.len;
+    for (k in first..end) {
+      let listed = k < inherited^.named.named_areas.inner.len;
+      if listed {
+        let area = inherited^.named.named_areas.inner[k];
+        append_group::<NamedArea>(cell: &out^.named_areas, value: area);
+      }
+    }
+    let stop = out^.named_areas.inner.len;
+    let a = cvt.wrap::<u64, u32>(start);
+    let b = cvt.wrap::<u64, u32>(stop);
+    let made = AreaMap(rows: map.rows, columns: map.columns, first: a, end: b);
+    append_group::<AreaMap>(cell: &out^.area_maps, value: made);
+  }
+  return found.id;
+}
+
+fn predefine(table: &WordTable, key: &Box<Slots<u64>>, tag: u64) -> result: unit writes(table), writes(key) {
+  doc "Interns a one-word sequence no list can give, so a predefined slot_entry takes the next identifier.";
+  clear_key(key: key);
+  let word = predefined_tag +sat tag;
+  put_word(key: key, value: word);
+  let length = key^.inner.len;
+  let found = word_intern(table: table, key: &key^.inner[0_u64..length]);
+  return unit;
+}
+
+fn intern_container_group(values: &[ContainerGroup], nodes: &[TrackNodes], inherited: &Inherited, ids: &[u32]) -> tables: ContainerTables reads(values), reads(nodes), reads(inherited), writes(ids) {
+  doc "Interns each node's flex and grid container values: its track-list and area-map references become identifiers of computed lists, track_lists[0] being none and [1] one auto track, area_maps[0] none, equal lists sharing one, and the groups are then interned by their values.";
+  let count = values^.len;
+  let groups = box_slots_new::<ContainerGroup>(capacity: 0_u64);
+  let tracks = box_slots_new::<Track>(capacity: 0_u64);
+  let track_lists = box_slots_new::<TrackList>(capacity: 0_u64);
+  let line_names = box_slots_new::<Atom>(capacity: 0_u64);
+  let area_maps = box_slots_new::<AreaMap>(capacity: 0_u64);
+  let named_areas = box_slots_new::<NamedArea>(capacity: 0_u64);
+  let out = TrackOut(tracks: move tracks, track_lists: move track_lists, line_names: move line_names, area_maps: move area_maps, named_areas: move named_areas);
+  let none_names = LineNames(first: 0_u32, end: 0_u32);
+  let none_list = TrackList(first: 0_u32, end: 0_u32, repeat_kind: repeat_none, repeat_names_before: none_names, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: none_names, names_after: none_names);
+  append_group::<TrackList>(cell: &out.track_lists, value: none_list);
+  let no = False();
+  let zero = LengthPercentage(px: 0.0_f32, percent: 0.0_f32, has_percent: no);
+  let auto_breadth = TrackBreadth(kind: track_auto, value: zero, flex: 0.0_f32);
+  let auto_track = Track(min: auto_breadth, max: auto_breadth, fit_content: no, names_before: none_names);
+  append_group::<Track>(cell: &out.tracks, value: auto_track);
+  let auto_list = TrackList(first: 0_u32, end: 1_u32, repeat_kind: repeat_none, repeat_names_before: none_names, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: none_names, names_after: none_names);
+  append_group::<TrackList>(cell: &out.track_lists, value: auto_list);
+  let none_map = AreaMap(rows: 0_u32, columns: 0_u32, first: 0_u32, end: 0_u32);
+  append_group::<AreaMap>(cell: &out.area_maps, value: none_map);
+  let same_nodes = nodes^.len == count;
+  let same_ids = ids^.len == count;
+  let usable = band(same_nodes, same_ids);
+  if usable {
+  } else {
+    return ContainerTables(groups: move groups, lists: move out);
+  }
+  let listed = 0_u64;
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let a = value.template_columns != list_none_ref;
+    let b = value.template_rows != list_none_ref;
+    let c = value.auto_columns != list_none_ref;
+    let d = value.auto_rows != list_none_ref;
+    let e = value.template_areas != list_none_ref;
+    let any_track = bor(a, b);
+    let any_auto = bor(c, d);
+    let some = bor(any_track, any_auto);
+    let any = bor(some, e);
+    if any {
+      set listed = listed +sat 5_u64;
+    }
+  }
+  let track_table = word_table_new(expected: listed);
+  let area_table = word_table_new(expected: listed);
+  let group_table = word_table_new(expected: count);
+  let key = box_slots_new::<u64>(capacity: 0_u64);
+  predefine(table: &track_table, key: &key, tag: 0_u64);
+  predefine(table: &track_table, key: &key, tag: 1_u64);
+  predefine(table: &area_table, key: &key, tag: 0_u64);
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let node = nodes^[i];
+    let columns = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.template_columns, node: node.columns, none_id: 0_u32);
+    let rows = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.template_rows, node: node.rows, none_id: 0_u32);
+    let auto_columns = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.auto_columns, node: node.auto_columns, none_id: 1_u32);
+    let auto_rows = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.auto_rows, node: node.auto_rows, none_id: 1_u32);
+    let areas = area_id(table: &area_table, key: &key, out: &out, inherited: inherited, reference: value.template_areas);
+    let made = ContainerGroup(flex_direction: value.flex_direction, flex_wrap: value.flex_wrap, justify_content: value.justify_content, align_items: value.align_items, align_content: value.align_content, justify_items: value.justify_items, row_gap: value.row_gap, column_gap: value.column_gap, template_columns: columns, template_rows: rows, template_areas: areas, auto_flow: value.auto_flow, auto_columns: auto_columns, auto_rows: auto_rows, column_count: value.column_count, column_width: value.column_width, column_fill: value.column_fill);
+    clear_key(key: &key);
+    let w_direction = cvt::<u8, u64>(made.flex_direction);
+    let w_wrap = cvt::<u8, u64>(made.flex_wrap);
+    let w_justify = cvt::<u8, u64>(made.justify_content);
+    let w_items = cvt::<u8, u64>(made.align_items);
+    let w_content = cvt::<u8, u64>(made.align_content);
+    let w_justify_items = cvt::<u8, u64>(made.justify_items);
+    let w_columns = cvt::<u32, u64>(columns);
+    let w_rows = cvt::<u32, u64>(rows);
+    let w_areas = cvt::<u32, u64>(areas);
+    let w_flow = cvt::<u8, u64>(made.auto_flow);
+    let w_auto_columns = cvt::<u32, u64>(auto_columns);
+    let w_auto_rows = cvt::<u32, u64>(auto_rows);
+    put_word(key: &key, value: w_direction);
+    put_word(key: &key, value: w_wrap);
+    put_word(key: &key, value: w_justify);
+    put_word(key: &key, value: w_items);
+    put_word(key: &key, value: w_content);
+    put_word(key: &key, value: w_justify_items);
+    put_sizing(key: &key, value: made.row_gap);
+    put_sizing(key: &key, value: made.column_gap);
+    put_word(key: &key, value: w_columns);
+    put_word(key: &key, value: w_rows);
+    put_word(key: &key, value: w_areas);
+    put_word(key: &key, value: w_flow);
+    put_word(key: &key, value: w_auto_columns);
+    put_word(key: &key, value: w_auto_rows);
+    let w_column_count = cvt::<u32, u64>(made.column_count);
+    let w_column_fill = cvt::<u8, u64>(made.column_fill);
+    put_word(key: &key, value: w_column_count);
+    put_sizing(key: &key, value: made.column_width);
+    put_word(key: &key, value: w_column_fill);
+    let length = key.inner.len;
+    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    if found.fresh {
+      append_group::<ContainerGroup>(cell: &groups, value: made);
+    }
+    set ids^[i] = found.id;
+  }
+  return ContainerTables(groups: move groups, lists: move out);
+}
+
+fn intern_item_group(values: &[ItemGroup], ids: &[u32]) -> table: Box<Slots<ItemGroup>> reads(values), writes(ids) {
+  doc "Interns each node's flex and grid item values by their values.";
+  let count = values^.len;
+  let groups = box_slots_new::<ItemGroup>(capacity: 0_u64);
+  let usable = ids^.len == count;
+  if usable {
+  } else {
+    return move groups;
+  }
+  let group_table = word_table_new(expected: count);
+  let key = box_slots_new::<u64>(capacity: 0_u64);
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    clear_key(key: &key);
+    let w_order = cvt.wrap::<i32, u64>(value.order);
+    let w_grow = exact_word(value: value.grow);
+    let w_shrink = exact_word(value: value.shrink);
+    let w_align = cvt::<u8, u64>(value.align_self);
+    let w_justify = cvt::<u8, u64>(value.justify_self);
+    put_word(key: &key, value: w_order);
+    put_word(key: &key, value: w_grow);
+    put_word(key: &key, value: w_shrink);
+    put_sizing(key: &key, value: value.basis);
+    put_word(key: &key, value: w_align);
+    put_word(key: &key, value: w_justify);
+    put_line(key: &key, value: value.row_start);
+    put_line(key: &key, value: value.row_end);
+    put_line(key: &key, value: value.column_start);
+    put_line(key: &key, value: value.column_end);
+    let w_break = cvt::<u8, u64>(value.break_inside);
+    put_word(key: &key, value: w_break);
+    let length = key.inner.len;
+    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    if found.fresh {
+      append_group::<ItemGroup>(cell: &groups, value: value);
+    }
+    set ids^[i] = found.id;
+  }
+  return move groups;
+}
+
+fn intern_table_group(values: &[TableGroup], ids: &[u32]) -> table: Box<Slots<TableGroup>> reads(values), writes(ids) {
+  doc "Interns each node's table values by their values.";
+  let count = values^.len;
+  let groups = box_slots_new::<TableGroup>(capacity: 0_u64);
+  let usable = ids^.len == count;
+  if usable {
+  } else {
+    return move groups;
+  }
+  let group_table = word_table_new(expected: count);
+  let key = box_slots_new::<u64>(capacity: 0_u64);
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    clear_key(key: &key);
+    let w_collapse = cvt::<u8, u64>(value.border_collapse);
+    let w_horizontal = exact_word(value: value.spacing_horizontal);
+    let w_vertical = exact_word(value: value.spacing_vertical);
+    let w_layout = cvt::<u8, u64>(value.table_layout);
+    let w_caption = cvt::<u8, u64>(value.caption_side);
+    put_word(key: &key, value: w_collapse);
+    put_word(key: &key, value: w_horizontal);
+    put_word(key: &key, value: w_vertical);
+    put_word(key: &key, value: w_layout);
+    put_word(key: &key, value: w_caption);
+    let length = key.inner.len;
+    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    if found.fresh {
+      append_group::<TableGroup>(cell: &groups, value: value);
+    }
+    set ids^[i] = found.id;
+  }
+  return move groups;
+}
+
+struct ContentOut {
+  content_lists: Box<Slots<ContentList>>;
+  content_items: Box<Slots<ContentItem>>;
+  counter_lists: Box<Slots<CounterList>>;
+  counter_changes: Box<Slots<CounterChange>>;
+  quote_lists: Box<Slots<QuoteList>>;
+  quote_pairs: Box<Slots<QuotePair>>;
+  text: Box<Slots<u8>>;
+}
+
+struct ContentTables {
+  groups: Box<Slots<ContentGroup>>;
+  lists: ContentOut;
+}
+
+fn put_text_words(key: &Box<Slots<u64>>, inherited: &Inherited, start: u32, end: u32) -> result: unit reads(inherited), writes(key) {
+  doc "Appends the length and bytes of a range of the named store's text.";
+  let a = cvt::<u32, u64>(start);
+  let b = cvt::<u32, u64>(end);
+  let width = b -sat a;
+  put_word(key: key, value: width);
+  for (k in a..b) {
+    let inside = k < inherited^.named.text.inner.len;
+    if inside {
+      let byte = cvt::<u8, u64>(inherited^.named.text.inner[k]);
+      put_word(key: key, value: byte);
+    }
+  }
+  return unit;
+}
+
+fn copy_text(out: &ContentOut, inherited: &Inherited, start: u32, end: u32) -> (first: u32, stop: u32) reads(inherited), writes(out) {
+  doc "Appends a range of the named store's text to the output's generated text and returns its range there.";
+  let a = cvt::<u32, u64>(start);
+  let b = cvt::<u32, u64>(end);
+  let from = out^.text.inner.len;
+  for (k in a..b) {
+    let inside = k < inherited^.named.text.inner.len;
+    if inside {
+      let byte = inherited^.named.text.inner[k];
+      append_group::<u8>(cell: &out^.text, value: byte);
+    }
+  }
+  let to = out^.text.inner.len;
+  let first = cvt.wrap::<u64, u32>(from);
+  let stop = cvt.wrap::<u64, u32>(to);
+  return first, stop;
+}
+
+fn content_id(table: &WordTable, memo: &Box<Array<u32>>, key: &Box<Slots<u64>>, out: &ContentOut, inherited: &Inherited, reference: u32) -> id: u32 reads(inherited), writes(table), writes(memo), writes(key), writes(out) {
+  doc "The identifier of the content list a reference names, 0 for normal and 1 for none, interning it when new; memo keeps each declared list's identifier.";
+  if reference == content_normal_ref {
+    return 0_u32;
+  }
+  if reference == content_none_ref {
+    return 1_u32;
+  }
+  let at = cvt::<u32, u64>(reference);
+  let known = at < inherited^.named.content_lists.inner.len;
+  let memoized = at < memo^.inner.len;
+  let usable = band(known, memoized);
+  if usable {
+  } else {
+    return 0_u32;
+  }
+  let remembered = memo^.inner[at];
+  if remembered != list_none_ref {
+    return remembered;
+  }
+  let list = inherited^.named.content_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  clear_key(key: key);
+  for (k in first..end) {
+    let inside = k < inherited^.named.content_items.inner.len;
+    if inside {
+      let item = inherited^.named.content_items.inner[k];
+      let kind = cvt::<u8, u64>(item.kind);
+      let name = cvt::<u32, u64>(item.name.index);
+      let style = cvt::<u32, u64>(item.list_style.index);
+      put_word(key: key, value: kind);
+      put_word(key: key, value: name);
+      put_word(key: key, value: style);
+      put_text_words(key: key, inherited: inherited, start: item.text_start, end: item.text_end);
+    }
+  }
+  let length = key^.inner.len;
+  let found = word_intern(table: table, key: &key^.inner[0_u64..length]);
+  if found.fresh {
+    let start = out^.content_items.inner.len;
+    for (k in first..end) {
+      let inside = k < inherited^.named.content_items.inner.len;
+      if inside {
+        let item = inherited^.named.content_items.inner[k];
+        let (text_start, text_end) = copy_text(out: out, inherited: inherited, start: item.text_start, end: item.text_end);
+        let made = ContentItem(kind: item.kind, text_start: text_start, text_end: text_end, name: item.name, list_style: item.list_style);
+        append_group::<ContentItem>(cell: &out^.content_items, value: made);
+      }
+    }
+    let stop = out^.content_items.inner.len;
+    let a = cvt.wrap::<u64, u32>(start);
+    let b = cvt.wrap::<u64, u32>(stop);
+    let made = ContentList(first: a, end: b);
+    append_group::<ContentList>(cell: &out^.content_lists, value: made);
+  }
+  set memo^.inner[at] = found.id;
+  return found.id;
+}
+
+fn counter_id(table: &WordTable, memo: &Box<Array<u32>>, key: &Box<Slots<u64>>, out: &ContentOut, inherited: &Inherited, reference: u32) -> id: u32 reads(inherited), writes(table), writes(memo), writes(key), writes(out) {
+  doc "The identifier of the counter list a reference names, 0 for none, interning it when new; memo keeps each declared list's identifier.";
+  if reference == list_none_ref {
+    return 0_u32;
+  }
+  let at = cvt::<u32, u64>(reference);
+  let known = at < inherited^.named.counter_lists.inner.len;
+  let memoized = at < memo^.inner.len;
+  let usable = band(known, memoized);
+  if usable {
+  } else {
+    return 0_u32;
+  }
+  let remembered = memo^.inner[at];
+  if remembered != list_none_ref {
+    return remembered;
+  }
+  let list = inherited^.named.counter_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  clear_key(key: key);
+  for (k in first..end) {
+    let inside = k < inherited^.named.counter_changes.inner.len;
+    if inside {
+      let change = inherited^.named.counter_changes.inner[k];
+      let name = cvt::<u32, u64>(change.name.index);
+      let value = cvt.wrap::<i32, u64>(change.value);
+      put_word(key: key, value: name);
+      put_word(key: key, value: value);
+    }
+  }
+  let length = key^.inner.len;
+  let found = word_intern(table: table, key: &key^.inner[0_u64..length]);
+  if found.fresh {
+    let start = out^.counter_changes.inner.len;
+    for (k in first..end) {
+      let inside = k < inherited^.named.counter_changes.inner.len;
+      if inside {
+        let change = inherited^.named.counter_changes.inner[k];
+        append_group::<CounterChange>(cell: &out^.counter_changes, value: change);
+      }
+    }
+    let stop = out^.counter_changes.inner.len;
+    let a = cvt.wrap::<u64, u32>(start);
+    let b = cvt.wrap::<u64, u32>(stop);
+    let made = CounterList(first: a, end: b);
+    append_group::<CounterList>(cell: &out^.counter_lists, value: made);
+  }
+  set memo^.inner[at] = found.id;
+  return found.id;
+}
+
+fn quote_id(table: &WordTable, memo: &Box<Array<u32>>, key: &Box<Slots<u64>>, out: &ContentOut, inherited: &Inherited, reference: u32) -> id: u32 reads(inherited), writes(table), writes(memo), writes(key), writes(out) {
+  doc "The identifier of the quote list a reference names, 0 for auto and 1 for none, interning it when new; memo keeps each declared list's identifier.";
+  if reference == quotes_auto_ref {
+    return 0_u32;
+  }
+  if reference == quotes_none_ref {
+    return 1_u32;
+  }
+  let at = cvt::<u32, u64>(reference);
+  let known = at < inherited^.named.quote_lists.inner.len;
+  let memoized = at < memo^.inner.len;
+  let usable = band(known, memoized);
+  if usable {
+  } else {
+    return 0_u32;
+  }
+  let remembered = memo^.inner[at];
+  if remembered != list_none_ref {
+    return remembered;
+  }
+  let list = inherited^.named.quote_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  clear_key(key: key);
+  for (k in first..end) {
+    let inside = k < inherited^.named.quote_pairs.inner.len;
+    if inside {
+      let pair = inherited^.named.quote_pairs.inner[k];
+      put_text_words(key: key, inherited: inherited, start: pair.open_start, end: pair.open_end);
+      put_text_words(key: key, inherited: inherited, start: pair.close_start, end: pair.close_end);
+    }
+  }
+  let length = key^.inner.len;
+  let found = word_intern(table: table, key: &key^.inner[0_u64..length]);
+  if found.fresh {
+    let start = out^.quote_pairs.inner.len;
+    for (k in first..end) {
+      let inside = k < inherited^.named.quote_pairs.inner.len;
+      if inside {
+        let pair = inherited^.named.quote_pairs.inner[k];
+        let (open_start, open_end) = copy_text(out: out, inherited: inherited, start: pair.open_start, end: pair.open_end);
+        let (close_start, close_end) = copy_text(out: out, inherited: inherited, start: pair.close_start, end: pair.close_end);
+        let made = QuotePair(open_start: open_start, open_end: open_end, close_start: close_start, close_end: close_end);
+        append_group::<QuotePair>(cell: &out^.quote_pairs, value: made);
+      }
+    }
+    let stop = out^.quote_pairs.inner.len;
+    let a = cvt.wrap::<u64, u32>(start);
+    let b = cvt.wrap::<u64, u32>(stop);
+    let made = QuoteList(first: a, end: b);
+    append_group::<QuoteList>(cell: &out^.quote_lists, value: made);
+  }
+  set memo^.inner[at] = found.id;
+  return found.id;
+}
+
+fn memo_for(count: u64) -> memo: Box<Array<u32>> pure {
+  doc "An array of count unknown identifiers, empty for a count past 2^30.";
+  let small = count <= word_ceiling;
+  if small {
+    let made = box_array_filled::<u32>(count: count, value: list_none_ref);
+    return move made;
+  }
+  let empty = box_array_filled::<u32>(count: 0_u64, value: list_none_ref);
+  return move empty;
+}
+
+fn intern_content_group(values: &[ContentGroup], inherited: &Inherited, ids: &[u32]) -> tables: ContentTables reads(values), reads(inherited), writes(ids) {
+  doc "Interns each node's generated-content values: its content, counter and quote references become identifiers of lists, content_lists[0] being normal and [1] none, counter_lists[0] none, quote_lists[0] auto and [1] none, equal lists sharing one, and the groups are then interned by their values. A value's quotes field holds the second part's quote reference.";
+  let count = values^.len;
+  let groups = box_slots_new::<ContentGroup>(capacity: 0_u64);
+  let content_lists = box_slots_new::<ContentList>(capacity: 0_u64);
+  let content_items = box_slots_new::<ContentItem>(capacity: 0_u64);
+  let counter_lists = box_slots_new::<CounterList>(capacity: 0_u64);
+  let counter_changes = box_slots_new::<CounterChange>(capacity: 0_u64);
+  let quote_lists = box_slots_new::<QuoteList>(capacity: 0_u64);
+  let quote_pairs = box_slots_new::<QuotePair>(capacity: 0_u64);
+  let text = box_slots_new::<u8>(capacity: 0_u64);
+  let out = ContentOut(content_lists: move content_lists, content_items: move content_items, counter_lists: move counter_lists, counter_changes: move counter_changes, quote_lists: move quote_lists, quote_pairs: move quote_pairs, text: move text);
+  let empty_content = ContentList(first: 0_u32, end: 0_u32);
+  append_group::<ContentList>(cell: &out.content_lists, value: empty_content);
+  append_group::<ContentList>(cell: &out.content_lists, value: empty_content);
+  let empty_counters = CounterList(first: 0_u32, end: 0_u32);
+  append_group::<CounterList>(cell: &out.counter_lists, value: empty_counters);
+  let empty_quotes = QuoteList(first: 0_u32, end: 0_u32);
+  append_group::<QuoteList>(cell: &out.quote_lists, value: empty_quotes);
+  append_group::<QuoteList>(cell: &out.quote_lists, value: empty_quotes);
+  let usable = ids^.len == count;
+  if usable {
+  } else {
+    return ContentTables(groups: move groups, lists: move out);
+  }
+  let content_count = inherited^.named.content_lists.inner.len;
+  let counter_count = inherited^.named.counter_lists.inner.len;
+  let quote_count = inherited^.named.quote_lists.inner.len;
+  let content_memo = memo_for(count: content_count);
+  let counter_memo = memo_for(count: counter_count);
+  let quote_memo = memo_for(count: quote_count);
+  let content_expected = content_count +sat 2_u64;
+  let counter_expected = counter_count +sat 1_u64;
+  let quote_expected = quote_count +sat 2_u64;
+  let content_table = word_table_new(expected: content_expected);
+  let counter_table = word_table_new(expected: counter_expected);
+  let quote_table = word_table_new(expected: quote_expected);
+  let group_table = word_table_new(expected: count);
+  let key = box_slots_new::<u64>(capacity: 0_u64);
+  predefine(table: &content_table, key: &key, tag: 0_u64);
+  predefine(table: &content_table, key: &key, tag: 1_u64);
+  predefine(table: &counter_table, key: &key, tag: 0_u64);
+  predefine(table: &quote_table, key: &key, tag: 0_u64);
+  predefine(table: &quote_table, key: &key, tag: 1_u64);
+  for (i in 0_u64..count) {
+    let value = values^[i];
+    let content = content_id(table: &content_table, memo: &content_memo, key: &key, out: &out, inherited: inherited, reference: value.content);
+    let reset = counter_id(table: &counter_table, memo: &counter_memo, key: &key, out: &out, inherited: inherited, reference: value.counter_reset);
+    let increment = counter_id(table: &counter_table, memo: &counter_memo, key: &key, out: &out, inherited: inherited, reference: value.counter_increment);
+    let assignment = counter_id(table: &counter_table, memo: &counter_memo, key: &key, out: &out, inherited: inherited, reference: value.counter_set);
+    let quotes = quote_id(table: &quote_table, memo: &quote_memo, key: &key, out: &out, inherited: inherited, reference: value.quotes);
+    let made = ContentGroup(content: content, counter_reset: reset, counter_increment: increment, counter_set: assignment, quotes: quotes, list_style_position: value.list_style_position);
+    clear_key(key: &key);
+    let w_content = cvt::<u32, u64>(content);
+    let w_reset = cvt::<u32, u64>(reset);
+    let w_increment = cvt::<u32, u64>(increment);
+    let w_set = cvt::<u32, u64>(assignment);
+    let w_quotes = cvt::<u32, u64>(quotes);
+    let w_position = cvt::<u8, u64>(made.list_style_position);
+    put_word(key: &key, value: w_content);
+    put_word(key: &key, value: w_reset);
+    put_word(key: &key, value: w_increment);
+    put_word(key: &key, value: w_set);
+    put_word(key: &key, value: w_quotes);
+    put_word(key: &key, value: w_position);
+    let length = key.inner.len;
+    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    if found.fresh {
+      append_group::<ContentGroup>(cell: &groups, value: made);
+    }
+    set ids^[i] = found.id;
+  }
+  return ContentTables(groups: move groups, lists: move out);
+}

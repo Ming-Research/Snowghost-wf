@@ -1,0 +1,1042 @@
+alias Args = std::text::Args;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias Family = pkg::css::values::Family;
+alias FontGroup = pkg::css::values::FontGroup;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias OutputStream = std::io::OutputStream;
+alias ShapedText = pkg::layout::text::ShapedText;
+alias Sizing = pkg::css::values::Sizing;
+alias TextRun = pkg::layout::text::TextRun;
+alias args_count = std::text::args_count;
+alias argument_bytes = pkg::oracle::support::argument_bytes;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias atom_table_new = pkg::base::atom::atom_table_new;
+alias break_allowed = pkg::layout::text::break_allowed;
+alias break_emergency = pkg::layout::text::break_emergency;
+alias break_mandatory = pkg::layout::text::break_mandatory;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias face_count = pkg::layout::text::face_count;
+alias face_extents = pkg::layout::text::face_extents;
+alias flush = pkg::oracle::support::flush;
+alias line_end = pkg::oracle::support::line_end;
+alias load_fonts = pkg::oracle::fonts::load_fonts;
+alias pick_fonts = pkg::layout::text::pick_fonts;
+alias primary_face = pkg::layout::text::primary_face;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_face_name = pkg::oracle::fonts::put_face_name;
+alias put_text = pkg::oracle::support::put_text;
+alias read_argument_file = pkg::oracle::support::read_argument_file;
+alias shape_paragraph = pkg::layout::text::shape_paragraph;
+alias sizing_normal = pkg::css::values::sizing_normal;
+
+const usage_text: Array<u8, 30> = "usage: text_oracle FONTS CASES";
+
+const program_prefix: Array<u8, 13> = "text_oracle: ";
+
+const fonts_text: Array<u8, 30> = "cannot load the faces of FONTS";
+
+const cases_text: Array<u8, 25> = "cannot read the case file";
+
+const malformed_text: Array<u8, 23> = "malformed case at line ";
+
+const picks_text: Array<u8, 18> = "pick_fonts refused";
+
+const shape_text: Array<u8, 33> = "shape_paragraph refused the case ";
+
+const unwritable_text: Array<u8, 31> = "standard output refused a write";
+
+const generic_words: Array<u8, 119> = "serif sans-serif monospace cursive fantasy system-ui ui-serif ui-sans-serif ui-monospace ui-rounded math emoji fangsong";
+
+const loaded_prefix: Array<u8, 2> = "F\t";
+
+const text_kind: u8 = 84_u8;
+
+const extents_kind: u8 = 88_u8;
+
+const tab: u8 = 9_u8;
+
+const line_feed: u8 = 10_u8;
+
+const space: u8 = 32_u8;
+
+const quote: u8 = 34_u8;
+
+const backslash: u8 = 92_u8;
+
+const comma: u8 = 44_u8;
+
+const minus: u8 = 45_u8;
+
+const dot: u8 = 46_u8;
+
+const letter_b: u8 = 98_u8;
+
+const colon: u8 = 58_u8;
+
+const flush_threshold: u64 = 65536_u64;
+
+const output_capacity: u64 = 131072_u64;
+
+const report_capacity: u64 = 4096_u64;
+
+const name_limit: u64 = 65536_u64;
+
+const text_limit: u64 = 1048576_u64;
+
+struct Spot {
+  doc "A half-open byte range of the case file.";
+  start: u64;
+  end: u64;
+}
+
+struct Case {
+  doc "One parsed case: its kind (text_kind or extents_kind), its ID and hexadecimal text as ranges of the case file, and the spacing and wrapping of a text case.";
+  kind: u8;
+  id: Spot;
+  text: Spot;
+  letter: f32;
+  word: f32;
+  wraps: Bool;
+  word_break: u8;
+  overflow_wrap: u8;
+}
+
+struct FaceTally {
+  doc "How many scalars a face draws in one case, and whether it draws them with synthetic bold.";
+  face: u32;
+  bold: Bool;
+  count: u64;
+}
+
+fn run(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Destructures the inputs, runs the oracle and closes the working directory.";
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, ..) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
+  let code = judge(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  let closed = close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn fail(err: &OutputStream, files: &HandleFactory, message: &[u8]) -> code: u8 reads(message), writes(err), writes(files) waits {
+  doc "Prints `text_oracle: MESSAGE` on standard error and returns 2.";
+  let report = box_slots_new::<u8>(capacity: report_capacity);
+  put_text(buffer: &report, text: &program_prefix[0_u64..program_prefix.len]);
+  put_text(buffer: &report, text: message);
+  put_byte(buffer: &report, value: line_feed);
+  let noted = flush(factory: files, output: err, buffer: &report);
+  return 2_u8;
+}
+
+fn judge(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+  doc "Loads the faces, reads and parses the case file, picks the fonts of every case and prints the results.";
+  let count = args_count(args: args);
+  let two = count == 3_u64;
+  if two {
+  } else {
+    let code = fail(err: err, files: files, message: &usage_text[0_u64..usage_text.len]);
+    return code;
+  }
+  match argument_bytes(args: args, position: 1_u64) {
+    Some(value: directory) => {
+      let length = directory.inner.len;
+      match load_fonts(factory: files, cwd: cwd, directory: &directory.inner[0_u64..length]) {
+        Ok(value: fonts) => {
+          match read_argument_file(factory: files, cwd: cwd, args: args, position: 2_u64) {
+            Ok(value: content) => {
+              let size = content.inner.len;
+              let code = print_all(fonts: &fonts, text: &content.inner[0_u64..size], out: out, err: err, files: files);
+              return code;
+            }
+            Err(error: problem) => {
+              let code = fail(err: err, files: files, message: &cases_text[0_u64..cases_text.len]);
+              return code;
+            }
+          }
+        }
+        Err(error: problem) => {
+          let code = fail(err: err, files: files, message: &fonts_text[0_u64..fonts_text.len]);
+          return code;
+        }
+      }
+    }
+    None() => {
+      let code = fail(err: err, files: files, message: &usage_text[0_u64..usage_text.len]);
+      return code;
+    }
+  }
+}
+
+fn tab_or_end(text: &[u8], from: u64, end: u64) -> result: u64 reads(text) {
+  doc "Returns the index of the first tab from from to end, or end, which it also returns when from is past end or end is past the text.";
+  let within = end <= text^.len;
+  let ordered = from <= end;
+  let located = band(within, ordered);
+  if located {
+  } else {
+    return end;
+  }
+  for (at in from..end) {
+    let byte = text^[at];
+    let found = byte == tab;
+    if found {
+      return at;
+    }
+  }
+  return end;
+}
+
+fn digit_value(byte: u8) -> result: u8 pure {
+  doc "Returns the value of an ASCII decimal digit, or 10 for any other byte.";
+  let low = byte >= 48_u8;
+  let high = byte <= 57_u8;
+  let digit = band(low, high);
+  if digit {
+    let value = byte - 48_u8;
+    return value;
+  }
+  return 10_u8;
+}
+
+fn parse_number(text: &[u8], spot: Spot) -> result: Option<f32> reads(text) {
+  doc "Parses a decimal number, an optional minus, 1 to 18 digits with at most one point among them, as JavaScript writes a CSS value, into f64 by dividing the digits as an integer by the power of ten of its fraction digits, and then into f32, both rounded to nearest, as a CSS parser reads the value as a double and stores a float. None for any other bytes.";
+  let length = text^.len;
+  let ordered = spot.start <= spot.end;
+  let inside = spot.end <= length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    return None<f32>();
+  }
+  let at = spot.start;
+  let negative = False();
+  if at < spot.end {
+    let first = text^[at];
+    let signed = first == minus;
+    if signed {
+      set negative = True();
+      set at = at + 1_u64;
+    }
+  }
+  let digits = 0_u64;
+  let fraction = 0_u64;
+  let pointed = False();
+  let mantissa = 0_u64;
+  for (index in at..spot.end) {
+    let byte = text^[index];
+    let point = byte == dot;
+    if point {
+      if pointed {
+        return None<f32>();
+      }
+      set pointed = True();
+    } else {
+      let value = digit_value(byte: byte);
+      let digit = value < 10_u8;
+      if digit {
+      } else {
+        return None<f32>();
+      }
+      set digits = digits +sat 1_u64;
+      let long = digits > 18_u64;
+      if long {
+        return None<f32>();
+      }
+      let wide = cvt::<u8, u64>(value);
+      let scaled = mantissa *wrap 10_u64;
+      set mantissa = scaled +wrap wide;
+      if pointed {
+        set fraction = fraction +sat 1_u64;
+      }
+    }
+  }
+  let none = digits == 0_u64;
+  if none {
+    return None<f32>();
+  }
+  let power = 1.0_f64;
+  for (step in 0_u64..fraction) {
+    set power = fmul.strict(power, 10.0_f64);
+  }
+  let whole = cvt.nearest::<u64, f64>(mantissa);
+  let quotient = fdiv.strict(whole, power);
+  let single = cvt.nearest::<f64, f32>(quotient);
+  if negative {
+    let flipped = fneg(single);
+    return Some<f32>(value: flipped);
+  }
+  return Some<f32>(value: single);
+}
+
+fn parse_small(text: &[u8], spot: Spot, limit: u8) -> result: Option<u8> reads(text) {
+  doc "Parses one decimal digit no greater than limit.";
+  let length = text^.len;
+  let next = spot.start +sat 1_u64;
+  let single = next == spot.end;
+  let inside = spot.start < length;
+  let usable = band(single, inside);
+  if usable {
+    let byte = text^[spot.start];
+    let value = digit_value(byte: byte);
+    let fits = value <= limit;
+    if fits {
+      return Some<u8>(value: value);
+    }
+  }
+  return None<u8>();
+}
+
+fn is_generic(name: &Box<Slots<u8>>) -> result: Bool reads(name) {
+  doc "Tells whether name, already lowered, is one of CSS's generic family keywords.";
+  let words = &generic_words[0_u64..generic_words.len];
+  let total = words^.len;
+  let length = name^.inner.len;
+  let start = 0_u64;
+  for (at in 0_u64..total) {
+    let byte = words^[at];
+    let boundary = byte == space;
+    let after = at + 1_u64;
+    let last = after == total;
+    if boundary {
+      let word_length = at -sat start;
+      let same = equal_word(name: name, words: words, start: start, length: word_length);
+      if same {
+        return True();
+      }
+      set start = at + 1_u64;
+    } else if last {
+      let word_end = at + 1_u64;
+      let word_length = word_end -sat start;
+      let same = equal_word(name: name, words: words, start: start, length: word_length);
+      if same {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn equal_word(name: &Box<Slots<u8>>, words: &[u8], start: u64, length: u64) -> result: Bool reads(name), reads(words) {
+  doc "Tells whether name equals the word of words from start of length.";
+  let name_length = name^.inner.len;
+  if name_length != length {
+    return False();
+  }
+  let total = words^.len;
+  for (offset in 0_u64..length) {
+    let at = start +sat offset;
+    if at >= total {
+      return False();
+    }
+    let left = name^.inner[offset];
+    let right = words^[at];
+    if left != right {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn add_family(name: &Box<Slots<u8>>, quoted: Bool, atoms: &AtomTable, families: &Box<Slots<Family>>) -> result: Bool reads(name), writes(atoms), writes(families) {
+  doc "Interns one family name and appends it to families, generic when it is unquoted and a generic keyword, lowered then. Returns False when the name cannot be interned or families is full.";
+  let length = name^.inner.len;
+  if length > name_limit {
+    return False();
+  }
+  let lowered = box_slots_new::<u8>(capacity: length);
+  for (
+    index in 0_u64..length,
+    invariant copied: lowered.inner.len == index
+  ) {
+    let byte = name^.inner[index];
+    let upper_low = byte >= 65_u8;
+    let upper_high = byte <= 90_u8;
+    let upper = band(upper_low, upper_high);
+    let folded = byte;
+    if upper {
+      set folded = byte + 32_u8;
+    }
+    place_back(window: &lowered.inner, value: folded);
+  }
+  let keyword = is_generic(name: &lowered);
+  let unquoted = bnot(quoted);
+  let generic = band(unquoted, keyword);
+  let interned = atom_intern(table: atoms, name: &name^.inner[0_u64..length]);
+  if generic {
+    set interned = atom_intern(table: atoms, name: &lowered.inner[0_u64..length]);
+  }
+  match interned {
+    Ok(value: atom) => {
+      let room = families^.inner.len < families^.inner.cap;
+      if room {
+        let family = Family(name: atom, generic: generic);
+        place_back(window: &families^.inner, value: family);
+        return True();
+      }
+      return False();
+    }
+    Err(error: problem) => {
+      return False();
+    }
+  }
+}
+
+fn parse_families(text: &[u8], spot: Spot, atoms: &AtomTable, families: &Box<Slots<Family>>) -> result: Bool reads(text), writes(atoms), writes(families) {
+  doc "Parses a computed font-family list as Chromium serializes it, names separated by a comma and spaces, each quoted with double quotes (backslash escaping the next byte) or a bare run of identifiers, and appends each to families. Returns False for an unterminated quote or a name that cannot be added.";
+  let length = text^.len;
+  let ordered = spot.start <= spot.end;
+  let inside = spot.end <= length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    return False();
+  }
+  let at = spot.start;
+  loop @names {
+    loop @blanks {
+      if at >= spot.end {
+        break @blanks;
+      }
+      let byte = text^[at];
+      let blank = byte == space;
+      if blank {
+        set at = at + 1_u64;
+      } else {
+        break @blanks;
+      }
+    }
+    if at >= spot.end {
+      break @names;
+    }
+    let name = box_slots_new::<u8>(capacity: name_limit);
+    let first = text^[at];
+    let quoted = first == quote;
+    if quoted {
+      set at = at + 1_u64;
+      let closed = False();
+      loop @letters {
+        if at >= spot.end {
+          break @letters;
+        }
+        let byte = text^[at];
+        let ends = byte == quote;
+        if ends {
+          set closed = True();
+          set at = at + 1_u64;
+          break @letters;
+        }
+        let escapes = byte == backslash;
+        if escapes {
+          set at = at + 1_u64;
+          if at >= spot.end {
+            break @letters;
+          }
+        }
+        let kept = text^[at];
+        let room = name.inner.len < name.inner.cap;
+        if room {
+          place_back(window: &name.inner, value: kept);
+        }
+        set at = at + 1_u64;
+      }
+      if closed {
+      } else {
+        return False();
+      }
+    } else {
+      loop @letters {
+        if at >= spot.end {
+          break @letters;
+        }
+        let byte = text^[at];
+        let ends = byte == comma;
+        if ends {
+          break @letters;
+        }
+        let room = name.inner.len < name.inner.cap;
+        if room {
+          place_back(window: &name.inner, value: byte);
+        }
+        set at = at + 1_u64;
+      }
+      loop @trailing {
+        let filled = name.inner.len;
+        let some = filled > 0_u64;
+        if some {
+        } else {
+          break @trailing;
+        }
+        let last = filled - 1_u64;
+        let byte = name.inner[last];
+        let blank = byte == space;
+        if blank {
+          let dropped = take_back(window: &name.inner);
+        } else {
+          break @trailing;
+        }
+      }
+    }
+    let added = add_family(name: &name, quoted: quoted, atoms: atoms, families: families);
+    if added {
+    } else {
+      return False();
+    }
+    loop @separator {
+      if at >= spot.end {
+        break @separator;
+      }
+      let byte = text^[at];
+      set at = at + 1_u64;
+      let ends = byte == comma;
+      if ends {
+        break @separator;
+      }
+    }
+  }
+  return True();
+}
+
+fn parse_case(text: &[u8], start: u64, end: u64, atoms: &AtomTable, families: &Box<Slots<Family>>, groups: &Box<Slots<FontGroup>>) -> result: Option<Case> reads(text), writes(atoms), writes(families), writes(groups) {
+  doc "Parses one case line from start to end, appending its font group and its family list. None for a line of any other shape.";
+  let length = text^.len;
+  let ordered = start <= end;
+  let inside = end <= length;
+  let located = band(ordered, inside);
+  let some = start < end;
+  let usable = band(located, some);
+  if usable {
+  } else {
+    return None<Case>();
+  }
+  let kind = text^[start];
+  let fields = box_slots_new::<Spot>(capacity: 12_u64);
+  let at = start;
+  loop @fields {
+    let stop = tab_or_end(text: text, from: at, end: end);
+    let room = fields.inner.len < fields.inner.cap;
+    if room {
+      let spot = Spot(start: at, end: stop);
+      place_back(window: &fields.inner, value: spot);
+    } else {
+      return None<Case>();
+    }
+    if stop >= end {
+      break @fields;
+    }
+    set at = stop + 1_u64;
+  }
+  let count = fields.inner.len;
+  let text_case = kind == text_kind;
+  let extents_case = kind == extents_kind;
+  let text_shape = count == 12_u64;
+  let extents_shape = count == 6_u64;
+  let text_line = band(text_case, text_shape);
+  let extents_line = band(extents_case, extents_shape);
+  let known = bor(text_line, extents_line);
+  if known {
+  } else {
+    return None<Case>();
+  }
+  if fields.inner.len < 6_u64 {
+    return None<Case>();
+  }
+  let id = fields.inner[1_u64];
+  let family_spot = fields.inner[2_u64];
+  let size_spot = fields.inner[3_u64];
+  let weight_spot = fields.inner[4_u64];
+  let style_spot = fields.inner[5_u64];
+  let families_start = families^.inner.len;
+  let parsed = parse_families(text: text, spot: family_spot, atoms: atoms, families: families);
+  if parsed {
+  } else {
+    return None<Case>();
+  }
+  let families_end = families^.inner.len;
+  let size = parse_number(text: text, spot: size_spot);
+  let weight = parse_number(text: text, spot: weight_spot);
+  let style = parse_small(text: text, spot: style_spot, limit: 2_u8);
+  let no_percent = False();
+  let zero = LengthPercentage(px: 0.0_f32, percent: 0.0_f32, has_percent: no_percent);
+  let normal = Sizing(kind: sizing_normal, keyword: 0_u8, value: zero);
+  let first = cvt.wrap::<u64, u32>(families_start);
+  let last = cvt.wrap::<u64, u32>(families_end);
+  let group_room = groups^.inner.len < groups^.inner.cap;
+  match size {
+    Some(value: px) => {
+      match weight {
+        Some(value: heaviness) => {
+          match style {
+            Some(value: slope) => {
+              if group_room {
+                let group = FontGroup(families_start: first, families_end: last, size: px, weight: heaviness, style: slope, line_height: normal);
+                place_back(window: &groups^.inner, value: group);
+              } else {
+                return None<Case>();
+              }
+            }
+            None() => {
+              return None<Case>();
+            }
+          }
+        }
+        None() => {
+          return None<Case>();
+        }
+      }
+    }
+    None() => {
+      return None<Case>();
+    }
+  }
+  let nothing = Spot(start: end, end: end);
+  if extents_line {
+    let wrapping = True();
+    let made = Case(kind: kind, id: id, text: nothing, letter: 0.0_f32, word: 0.0_f32, wraps: wrapping, word_break: 0_u8, overflow_wrap: 0_u8);
+    return Some<Case>(value: made);
+  }
+  if fields.inner.len < 12_u64 {
+    return None<Case>();
+  }
+  let letter_spot = fields.inner[6_u64];
+  let word_spot = fields.inner[7_u64];
+  let wrap_spot = fields.inner[8_u64];
+  let break_spot = fields.inner[9_u64];
+  let overflow_spot = fields.inner[10_u64];
+  let letter = parse_number(text: text, spot: letter_spot);
+  let word = parse_number(text: text, spot: word_spot);
+  let wrap_flag = parse_small(text: text, spot: wrap_spot, limit: 1_u8);
+  let word_break = parse_small(text: text, spot: break_spot, limit: 3_u8);
+  let overflow_wrap = parse_small(text: text, spot: overflow_spot, limit: 2_u8);
+  let scalars = fields.inner[11_u64];
+  match letter {
+    Some(value: letter_px) => {
+      match word {
+        Some(value: word_px) => {
+          match wrap_flag {
+            Some(value: wraps) => {
+              match word_break {
+                Some(value: breaking) => {
+                  match overflow_wrap {
+                    Some(value: overflowing) => {
+                      let wrapping = wraps != 0_u8;
+                      let made = Case(kind: kind, id: id, text: scalars, letter: letter_px, word: word_px, wraps: wrapping, word_break: breaking, overflow_wrap: overflowing);
+                      return Some<Case>(value: made);
+                    }
+                    None() => {
+                      return None<Case>();
+                    }
+                  }
+                }
+                None() => {
+                  return None<Case>();
+                }
+              }
+            }
+            None() => {
+              return None<Case>();
+            }
+          }
+        }
+        None() => {
+          return None<Case>();
+        }
+      }
+    }
+    None() => {
+      return None<Case>();
+    }
+  }
+}
+
+fn hex_value(byte: u8) -> result: u8 pure {
+  doc "Returns the value of a lowercase hexadecimal digit, or 16 for any other byte.";
+  let decimal = digit_value(byte: byte);
+  let is_decimal = decimal < 10_u8;
+  if is_decimal {
+    return decimal;
+  }
+  let low = byte >= 97_u8;
+  let high = byte <= 102_u8;
+  let letter = band(low, high);
+  if letter {
+    let offset = byte - 97_u8;
+    let value = offset + 10_u8;
+    return value;
+  }
+  return 16_u8;
+}
+
+fn decode_scalars(text: &[u8], spot: Spot) -> result: Option<Box<Slots<u32>>> reads(text) {
+  doc "Decodes the space-separated lowercase hexadecimal values of 1 to 6 digits in spot into scalar values; None for any other shape or more than text_limit values.";
+  let length = text^.len;
+  let ordered = spot.start <= spot.end;
+  let inside = spot.end <= length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    return None<Box<Slots<u32>>>();
+  }
+  let values = box_slots_new::<u32>(capacity: 0_u64);
+  let empty = spot.start == spot.end;
+  if empty {
+    return Some<Box<Slots<u32>>>(value: move values);
+  }
+  let span = spot.end -sat spot.start;
+  let capacity = imin(span, text_limit);
+  set values = box_slots_new::<u32>(capacity: capacity);
+  let value = 0_u32;
+  let digits = 0_u64;
+  for (at in spot.start..spot.end) {
+    let byte = text^[at];
+    let blank = byte == space;
+    if blank {
+      let none = digits == 0_u64;
+      if none {
+        return None<Box<Slots<u32>>>();
+      }
+      let room = values.inner.len < values.inner.cap;
+      if room {
+        place_back(window: &values.inner, value: value);
+      } else {
+        return None<Box<Slots<u32>>>();
+      }
+      set value = 0_u32;
+      set digits = 0_u64;
+    } else {
+      let digit = hex_value(byte: byte);
+      let valid = digit < 16_u8;
+      if valid {
+      } else {
+        return None<Box<Slots<u32>>>();
+      }
+      set digits = digits +sat 1_u64;
+      let long = digits > 6_u64;
+      if long {
+        return None<Box<Slots<u32>>>();
+      }
+      let wide = cvt::<u8, u32>(digit);
+      let shifted = ishl.wrap(value, 4_u32);
+      set value = ior(shifted, wide);
+    }
+  }
+  let none = digits == 0_u64;
+  if none {
+    return None<Box<Slots<u32>>>();
+  }
+  let room = values.inner.len < values.inner.cap;
+  if room {
+    place_back(window: &values.inner, value: value);
+  } else {
+    return None<Box<Slots<u32>>>();
+  }
+  return Some<Box<Slots<u32>>>(value: move values);
+}
+
+fn print_all(fonts: &FontSet, text: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(text), writes(out), writes(err), writes(files) waits {
+  doc "Prints the face lines, parses every case, picks the fonts of every case's group at once, and prints each case's result line.";
+  let output = box_slots_new::<u8>(capacity: output_capacity);
+  let faces = face_count(fonts: fonts);
+  for (face in 0_u64..faces) {
+    put_text(buffer: &output, text: &loaded_prefix[0_u64..loaded_prefix.len]);
+    put_decimal(buffer: &output, value: face);
+    put_byte(buffer: &output, value: tab);
+    put_face_name(buffer: &output, face: face);
+    put_byte(buffer: &output, value: line_feed);
+  }
+  let length = text^.len;
+  let lines = 0_u64;
+  for (at in 0_u64..length) {
+    let byte = text^[at];
+    let ends = byte == line_feed;
+    if ends {
+      set lines = lines +sat 1_u64;
+    }
+  }
+  let capacity = imin(lines, text_limit);
+  let atoms = atom_table_new();
+  let families = box_slots_new::<Family>(capacity: 0_u64);
+  set families = box_slots_new::<Family>(capacity: text_limit);
+  let groups = box_slots_new::<FontGroup>(capacity: capacity);
+  let cases = box_slots_new::<Case>(capacity: capacity);
+  let position = 0_u64;
+  let line_number = 1_u64;
+  loop @lines {
+    if position >= length {
+      break @lines;
+    }
+    let stop = line_end(text: text, start: position);
+    match parse_case(text: text, start: position, end: stop, atoms: &atoms, families: &families, groups: &groups) {
+      Some(value: parsed) => {
+        let room = cases.inner.len < cases.inner.cap;
+        if room {
+          place_back(window: &cases.inner, value: parsed);
+        }
+      }
+      None() => {
+        let sent = flush(factory: files, output: out, buffer: &output);
+        let report = box_slots_new::<u8>(capacity: report_capacity);
+        put_text(buffer: &report, text: &malformed_text[0_u64..malformed_text.len]);
+        put_decimal(buffer: &report, value: line_number);
+        let code = fail(err: err, files: files, message: &report.inner[0_u64..report.inner.len]);
+        return code;
+      }
+    }
+    set position = stop +sat 1_u64;
+    set line_number = line_number +sat 1_u64;
+  }
+  let group_count = groups.inner.len;
+  let family_count = families.inner.len;
+  match pick_fonts(fonts: fonts, groups: &groups.inner[0_u64..group_count], families: &families.inner[0_u64..family_count], atoms: &atoms) {
+    Ok(value: picks) => {
+      let case_count = cases.inner.len;
+      let sent_all = True();
+      for (index in 0_u64..case_count) {
+        let item = cases.inner[index];
+        let font = cvt.wrap::<u64, u32>(index);
+        if item.kind == extents_kind {
+          put_extents(fonts: fonts, picks: &picks, font: font, item: item, text: text, output: &output);
+        } else {
+          let shaped = put_shaped(fonts: fonts, picks: &picks, font: font, item: item, text: text, output: &output);
+          if shaped {
+          } else {
+            let sent = flush(factory: files, output: out, buffer: &output);
+            let report = box_slots_new::<u8>(capacity: report_capacity);
+            put_text(buffer: &report, text: &shape_text[0_u64..shape_text.len]);
+            let shown = item.id;
+            put_spot(output: &report, text: text, spot: shown);
+            let code = fail(err: err, files: files, message: &report.inner[0_u64..report.inner.len]);
+            return code;
+          }
+        }
+        let full = output.inner.len >= flush_threshold;
+        if full {
+          let sent = flush(factory: files, output: out, buffer: &output);
+          set sent_all = band(sent_all, sent);
+        }
+      }
+      let last = flush(factory: files, output: out, buffer: &output);
+      let delivered = band(sent_all, last);
+      if delivered {
+        return 0_u8;
+      }
+      let code = fail(err: err, files: files, message: &unwritable_text[0_u64..unwritable_text.len]);
+      return code;
+    }
+    Err(error: problem) => {
+      let code = fail(err: err, files: files, message: &picks_text[0_u64..picks_text.len]);
+      return code;
+    }
+  }
+}
+
+fn put_spot(output: &Box<Slots<u8>>, text: &[u8], spot: Spot) -> result: unit reads(text), writes(output) {
+  doc "Appends the bytes of text in spot to output.";
+  let length = text^.len;
+  let ordered = spot.start <= spot.end;
+  let inside = spot.end <= length;
+  let located = band(ordered, inside);
+  if located {
+    put_text(buffer: output, text: &text^[spot.start..spot.end]);
+  }
+  return unit;
+}
+
+fn put_whole(output: &Box<Slots<u8>>, value: f32) -> result: unit writes(output) {
+  doc "Appends value, a whole number, in decimal, with a minus sign when it is negative; 0 for a value that is not whole.";
+  match cvt.checked::<f32, i64>(value) {
+    Ok(value: whole) => {
+      let negative = whole < 0_i64;
+      let bits = cvt.wrap::<i64, u64>(whole);
+      if negative {
+        put_byte(buffer: output, value: minus);
+        let magnitude = 0_u64 -wrap bits;
+        put_decimal(buffer: output, value: magnitude);
+      } else {
+        put_decimal(buffer: output, value: bits);
+      }
+    }
+    Err(error: problem) => {
+      put_decimal(buffer: output, value: 0_u64);
+    }
+  }
+  return unit;
+}
+
+fn put_extents(fonts: &FontSet, picks: &FontPicks, font: u32, item: Case, text: &[u8], output: &Box<Slots<u8>>) -> result: unit reads(fonts), reads(picks), reads(text), writes(output) {
+  doc "Appends an extents result line for the primary face of font at its group's size.";
+  let face = primary_face(fonts: fonts, picks: picks, font: font);
+  let index = cvt::<u32, u64>(font);
+  let size = 0.0_f32;
+  if index < picks^.choices.inner.len {
+    set size = picks^.choices.inner[index].size;
+  }
+  let plain = False();
+  let extents = face_extents(fonts: fonts, face: face, size: size, synthetic_bold: plain);
+  let content = fadd.strict(extents.ascent, extents.descent);
+  let line = fadd.strict(content, extents.line_gap);
+  let half_gap = fmul.strict(extents.line_gap, 0.5_f32);
+  let above = ffloor(half_gap);
+  let baseline = fadd.strict(extents.ascent, above);
+  put_byte(buffer: output, value: extents_kind);
+  put_byte(buffer: output, value: tab);
+  let shown = item.id;
+  put_spot(output: output, text: text, spot: shown);
+  put_byte(buffer: output, value: tab);
+  put_whole(output: output, value: content);
+  put_byte(buffer: output, value: tab);
+  put_whole(output: output, value: line);
+  put_byte(buffer: output, value: tab);
+  put_whole(output: output, value: baseline);
+  put_byte(buffer: output, value: tab);
+  let ten = fmul.strict(extents.x_height, 10.0_f32);
+  let ten_scaled = fmul.strict(ten, 64.0_f32);
+  let x_units = ftrunc(ten_scaled);
+  put_whole(output: output, value: x_units);
+  put_byte(buffer: output, value: line_feed);
+  return unit;
+}
+
+fn put_shaped(fonts: &FontSet, picks: &FontPicks, font: u32, item: Case, text: &[u8], output: &Box<Slots<u8>>) -> result: Bool reads(fonts), reads(picks), reads(text), writes(output) {
+  doc "Shapes the case's text as one paragraph of one run and appends its result line. Returns False when the text cannot be decoded or shape_paragraph refuses it.";
+  let encoded = item.text;
+  match decode_scalars(text: text, spot: encoded) {
+    Some(value: scalars) => {
+      let count = scalars.inner.len;
+      let end = cvt.wrap::<u64, u32>(count);
+      let letter = item.letter;
+      let word = item.word;
+      let wraps = item.wraps;
+      let word_break = item.word_break;
+      let overflow_wrap = item.overflow_wrap;
+      let only = TextRun(start: 0_u32, end: end, font: font, letter_spacing: letter, word_spacing: word, wraps: wraps, word_break: word_break, overflow_wrap: overflow_wrap);
+      let runs = box_slots_new::<TextRun>(capacity: 1_u64);
+      place_back(window: &runs.inner, value: only);
+      let fits = count <= text_limit;
+      if fits {
+      } else {
+        return False();
+      }
+      match shape_paragraph(fonts: fonts, picks: picks, text: &scalars.inner[0_u64..count], runs: &runs.inner[0_u64..1_u64]) {
+        Ok(value: shaped) => {
+          put_result(shaped: &shaped, item: item, text: text, output: output);
+          return True();
+        }
+        Err(error: problem) => {
+          return False();
+        }
+      }
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn put_result(shaped: &ShapedText, item: Case, text: &[u8], output: &Box<Slots<u8>>) -> result: unit reads(shaped), reads(text), writes(output) {
+  doc "Appends a text result line: the width summed segment by segment and rounded up to 1/64 px, the faces with their scalar counts, and the break and emergency break indices.";
+  let total = 0.0_f32;
+  let tallies = box_slots_new::<FaceTally>(capacity: 64_u64);
+  let segment_count = shaped^.segments.inner.len;
+  let advance_count = shaped^.advances.inner.len;
+  for (index in 0_u64..segment_count) {
+    let segment = shaped^.segments.inner[index];
+    let start = cvt::<u32, u64>(segment.start);
+    let listed_end = cvt::<u32, u64>(segment.end);
+    let end = imin(listed_end, advance_count);
+    let sum = 0.0_f32;
+    for (at in start..end) {
+      set sum = fadd.strict(sum, shaped^.advances.inner[at]);
+    }
+    set total = fadd.strict(total, sum);
+    let span = listed_end -sat start;
+    let segment_face = segment.face;
+    let segment_bold = segment.synthetic_bold;
+    tally(tallies: &tallies, face: segment_face, bold: segment_bold, count: span);
+  }
+  let scaled = fmul.strict(total, 64.0_f32);
+  let width = fceil(scaled);
+  put_byte(buffer: output, value: text_kind);
+  put_byte(buffer: output, value: tab);
+  let shown = item.id;
+  put_spot(output: output, text: text, spot: shown);
+  put_byte(buffer: output, value: tab);
+  put_whole(output: output, value: width);
+  put_byte(buffer: output, value: tab);
+  let tally_count = tallies.inner.len;
+  for (index in 0_u64..tally_count) {
+    if index > 0_u64 {
+      put_byte(buffer: output, value: comma);
+    }
+    let counted = tallies.inner[index];
+    let face = cvt::<u32, u64>(counted.face);
+    put_decimal(buffer: output, value: face);
+    if counted.bold {
+      put_byte(buffer: output, value: letter_b);
+    }
+    put_byte(buffer: output, value: colon);
+    put_decimal(buffer: output, value: counted.count);
+  }
+  put_byte(buffer: output, value: tab);
+  let ordinary = False();
+  let urgent = True();
+  put_breaks(shaped: shaped, output: output, emergency: ordinary);
+  put_byte(buffer: output, value: tab);
+  put_breaks(shaped: shaped, output: output, emergency: urgent);
+  put_byte(buffer: output, value: line_feed);
+  return unit;
+}
+
+fn tally(tallies: &Box<Slots<FaceTally>>, face: u32, bold: Bool, count: u64) -> result: unit writes(tallies) {
+  doc "Adds count scalars to face's tally, appending a new tally when face has none and there is room.";
+  let length = tallies^.inner.len;
+  for (index in 0_u64..length) {
+    let counted = tallies^.inner[index];
+    let same = counted.face == face;
+    if same {
+      let sum = counted.count +sat count;
+      let bolded = counted.bold;
+      let updated = FaceTally(face: face, bold: bolded, count: sum);
+      set tallies^.inner[index] = updated;
+      return unit;
+    }
+  }
+  let room = tallies^.inner.len < tallies^.inner.cap;
+  if room {
+    let fresh = FaceTally(face: face, bold: bold, count: count);
+    place_back(window: &tallies^.inner, value: fresh);
+  }
+  return unit;
+}
+
+fn put_breaks(shaped: &ShapedText, output: &Box<Slots<u8>>, emergency: Bool) -> result: unit reads(shaped), writes(output) {
+  doc "Appends, comma-separated, the indices whose break is allowed or mandatory, or with emergency the indices whose break is an emergency break.";
+  let count = shaped^.breaks.inner.len;
+  let written = 0_u64;
+  for (index in 0_u64..count) {
+    let value = shaped^.breaks.inner[index];
+    let allowed = value == break_allowed;
+    let mandatory = value == break_mandatory;
+    let ordinary = bor(allowed, mandatory);
+    let urgent = value == break_emergency;
+    let wanted = ordinary;
+    if emergency {
+      set wanted = urgent;
+    }
+    if wanted {
+      if written > 0_u64 {
+        put_byte(buffer: output, value: comma);
+      }
+      put_decimal(buffer: output, value: index);
+      set written = written +sat 1_u64;
+    }
+  }
+  return unit;
+}

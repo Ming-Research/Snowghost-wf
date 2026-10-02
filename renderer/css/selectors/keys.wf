@@ -40,33 +40,82 @@ fn atom_hash(atoms: &AtomTable, atom: Atom) -> hash: u64 reads(atoms) {
   return hash;
 }
 
-fn subject_key(list: &SelectorList, atoms: &AtomTable, alternative: u64) -> key: SubjectKey reads(list), reads(atoms) {
-  doc "Reads the rightmost compound of the alternative, as match_complex starts from it, and keys it by its first id, else its first class, else its type selector.";
-  let anything = SubjectKey::Anything();
-  let nothing = SubjectKey::Nothing();
+fn alternative_entry(list: &SelectorList, alternative: u64) -> found: Option<AltEntry> reads(list) {
+  doc "The entry of the top-level alternative at index alternative, or None for a malformed list.";
   let start = cvt::<u32, u64>(list^.top_start);
   let count = alternative_count(list: list);
   let inside = alternative < count;
   if inside {
   } else {
-    return anything;
+    return None<AltEntry>();
   }
   let position = start +wrap alternative;
   let order_ok = position < list^.alt_order.inner.len;
   if order_ok {
   } else {
-    return anything;
+    return None<AltEntry>();
   }
   let actual = cvt::<u32, u64>(list^.alt_order.inner[position]);
   let alt_ok = actual < list^.alts.inner.len;
   if alt_ok {
   } else {
-    return anything;
+    return None<AltEntry>();
   }
   let alt = list^.alts.inner[actual];
-  if alt.never_matches {
-    return nothing;
+  return Some<AltEntry>(value: alt);
+}
+
+fn subject_key(list: &SelectorList, atoms: &AtomTable, alternative: u64) -> key: SubjectKey reads(list), reads(atoms) {
+  doc "Reads the rightmost compound of the alternative, as match_complex starts from it, and keys it by its first id, else its first class, else its type selector.";
+  match alternative_entry(list: list, alternative: alternative) {
+    Some(value: alt) => {
+      if alt.never_matches {
+        return SubjectKey::Nothing();
+      }
+      let key = compound_key(list: list, atoms: atoms, alt: alt);
+      return key;
+    }
+    None() => {
+      return SubjectKey::Anything();
+    }
   }
+}
+
+fn pseudo_subject_key(list: &SelectorList, atoms: &AtomTable, alternative: u64) -> key: SubjectKey reads(list), reads(atoms) {
+  doc "For an alternative ending in ::before or ::after, keys the compound the pseudo-element follows as subject_key keys a rightmost compound; Nothing for any other alternative.";
+  match alternative_entry(list: list, alternative: alternative) {
+    Some(value: alt) => {
+      let before = alt.pseudo == pseudo_element_before;
+      let after = alt.pseudo == pseudo_element_after;
+      let generated = bor(before, after);
+      if generated {
+        let key = compound_key(list: list, atoms: atoms, alt: alt);
+        return key;
+      }
+      return SubjectKey::Nothing();
+    }
+    None() => {
+      return SubjectKey::Anything();
+    }
+  }
+}
+
+fn alternative_pseudo_element(list: &SelectorList, alternative: u64) -> kind: u8 reads(list) {
+  doc "The pseudo-element the top-level alternative ends in.";
+  match alternative_entry(list: list, alternative: alternative) {
+    Some(value: alt) => {
+      return alt.pseudo;
+    }
+    None() => {
+      return pseudo_element_none;
+    }
+  }
+}
+
+fn compound_key(list: &SelectorList, atoms: &AtomTable, alt: AltEntry) -> key: SubjectKey reads(list), reads(atoms) {
+  doc "Keys the rightmost compound of alt by its first id, else its first class, else its type selector; Nothing when alt has no compound and Anything when the compound has none of them.";
+  let anything = SubjectKey::Anything();
+  let nothing = SubjectKey::Nothing();
   let has_compound = alt.compound_start < alt.compound_end;
   if has_compound {
   } else {

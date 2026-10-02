@@ -1,0 +1,1714 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+alias Sizing = pkg::css::values::Sizing;
+alias face_extents = pkg::layout::text::face_extents;
+alias primary_face = pkg::layout::text::primary_face;
+alias break_allowed = pkg::layout::text::break_allowed;
+alias break_mandatory = pkg::layout::text::break_mandatory;
+alias break_emergency = pkg::layout::text::break_emergency;
+alias sizing_value = pkg::css::values::sizing_value;
+alias sizing_number = pkg::css::values::sizing_number;
+alias sizing_keyword = pkg::css::values::sizing_keyword;
+
+const valign_baseline: u8 = 0_u8;
+
+const valign_sub: u8 = 1_u8;
+
+const valign_super: u8 = 2_u8;
+
+const valign_text_top: u8 = 3_u8;
+
+const valign_text_bottom: u8 = 4_u8;
+
+const valign_middle: u8 = 5_u8;
+
+const valign_top: u8 = 6_u8;
+
+const valign_bottom: u8 = 7_u8;
+
+const no_group: u32 = 4294967295_u32;
+
+struct Measure {
+  doc "A paragraph's horizontal measures in px for line breaking: each index's advance (an atomic inline's margin box), the decorations (margin, border and padding) of the inline boxes that open and that close at each position, whether each index holds a collapsible space, which hangs at a line's end and is dropped at a line's start, and whether an inline box with a bidi control (unicode-bidi other than normal) opens before each index that follows no space, where the reference allows no soft wrap opportunity.";
+  advances: Box<Array<f32>>;
+  opens: Box<Array<f32>>;
+  closes: Box<Array<f32>>;
+  collapsible: Box<Array<u8>>;
+  glued: Box<Array<u8>>;
+}
+
+struct Metrics {
+  doc "The vertical metrics of one box on a line, in layout units: the ascent and descent of its font's content area, and the ascent and descent of its line-height box, its half-leading included.";
+  content_ascent: i32;
+  content_descent: i32;
+  ascent: i32;
+  descent: i32;
+  x_height: i32;
+  font_size: i32;
+}
+
+struct OpenBox {
+  doc "An inline box open on a line: its style, its baseline's offset below the line's baseline, its metrics, where it started on this line (in px from the line's start, or a negative value when it continues from an earlier line), whether it opened on this line, the relative offset it and its ancestors give its contents, whether vertical-align top (1) or bottom (2) aligns it with the line box, the index of the line's aligned group it belongs to (no_group when none), whether it is culled (culled_box), where its current run of its own content on this line starts and whether that run holds any, and whether it reported a rectangle on this line.";
+  style: StyleRef;
+  shift: i32;
+  metrics: Metrics;
+  start: f32;
+  began: Bool;
+  dx: i32;
+  dy: i32;
+  edge: u8;
+  group: u32;
+  culled: Bool;
+  seg_start: f32;
+  seg_items: Bool;
+  emitted: Bool;
+}
+
+struct Aligned {
+  doc "A subtree a line aligns with its top (edge 1) or bottom (edge 2) once the line's other boxes set its height (CSS 2.2 10.8): its extent above and below the line's baseline while its root sits on its parent's baseline.";
+  edge: u8;
+  low: i32;
+  high: i32;
+  filled: Bool;
+}
+
+fn px_of(raw: i32) -> px: f32 pure {
+  doc "Layout units as px.";
+  let made = pixels(raw: raw);
+  return made;
+}
+
+fn floor_to_px(units_value: i32) -> whole: i32 pure {
+  doc "units_value, a length in layout units, rounded down to a whole number of px as the reference rounds the half-leading above a line's text (a negative value rounds toward minus infinity).";
+  if units_value >= 0_i32 {
+    let count = units_value / 64_i32;
+    let made = count *sat 64_i32;
+    return made;
+  }
+  let magnitude = 0_i32 -sat units_value;
+  let rounded = magnitude +sat 63_i32;
+  let count = rounded / 64_i32;
+  let made = count *sat 64_i32;
+  let negative = 0_i32 -sat made;
+  return negative;
+}
+
+fn box_metrics(styles: &Styles, fonts: &FontSet, picks: &FontPicks, style: StyleRef) -> metrics: Metrics reads(styles), reads(fonts), reads(picks) {
+  doc "The metrics of style's box: its primary font's ascent and descent at its size, as the reference rounds them, and its line-height box: normal gives the font's ascent, descent and line gap; a number times the font size (rounded to a unit first), or a length, gives the line height, around the content area with the half-leading split as the reference splits it, the top half rounded down to a whole pixel.";
+  let group = font_of(styles: styles, style: style);
+  let font = font_index(styles: styles, style: style);
+  let face = primary_face(fonts: fonts, picks: picks, font: font);
+  let bold = False();
+  let extents = face_extents(fonts: fonts, face: face, size: group.size, synthetic_bold: bold);
+  let ascent = units(px: extents.ascent);
+  let descent = units(px: extents.descent);
+  let gap = units(px: extents.line_gap);
+  let content = ascent +sat descent;
+  let line_height = if group.line_height.kind == sizing_value {
+    give units_nearest(px: group.line_height.value.px);
+  } else if group.line_height.kind == sizing_number {
+    give units_times(size: group.size, number: group.line_height.value.px);
+  } else {
+    give content +sat gap;
+  }
+  let leading = line_height -sat content;
+  let half = leading / 2_i32;
+  let whole = half / 64_i32;
+  let back = whole * 64_i32;
+  let lowered = back -sat 64_i32;
+  let below = back > half;
+  let top_half = if below {
+    give lowered;
+  } else {
+    give back;
+  }
+  let bottom_half = leading -sat top_half;
+  let x_height = units(px: extents.x_height);
+  let size = units(px: group.size);
+  let top = ascent +sat top_half;
+  let bottom = descent +sat bottom_half;
+  return Metrics(content_ascent: ascent, content_descent: descent, ascent: top, descent: bottom, x_height: x_height, font_size: size);
+}
+
+fn inline_frame(styles: &Styles, style: StyleRef, basis: i32) -> (start: f32, end: f32) reads(styles) {
+  doc "The px an inline box adds at its start and at its end: its left margin, border and padding, and its right ones.";
+  let margins = margin_edges(styles: styles, style: style, basis: basis);
+  let borders = border_edges(styles: styles, style: style);
+  let paddings = padding_edges(styles: styles, style: style, basis: basis);
+  let start_margin_border = margins.left +sat borders.left;
+  let start_raw = start_margin_border +sat paddings.left;
+  let end_margin_border = margins.right +sat borders.right;
+  let end_raw = end_margin_border +sat paddings.right;
+  let start = px_of(raw: start_raw);
+  let end = px_of(raw: end_raw);
+  return start, end;
+}
+
+fn atomic_width(children: &[Context], child: u32) -> px: f32 reads(children) {
+  doc "The px width of an atomic inline's margin box.";
+  let at = cvt::<u32, u64>(child);
+  if at < children^.len {
+    let inner = children^[at].width +sat children^[at].margin_left;
+    let outer = inner +sat children^[at].margin_right;
+    let made = px_of(raw: outer);
+    return made;
+  }
+  return 0.0_f32;
+}
+
+fn collapses(styles: &Styles, style: StyleRef) -> collapsing: Bool reads(styles) {
+  doc "Tells whether style's white-space collapses spaces: normal, nowrap and pre-line.";
+  let text = text_of(styles: styles, style: style);
+  let normal = text.white_space == white_normal;
+  let nowrap = text.white_space == white_nowrap;
+  let pre_line = text.white_space == white_pre_line;
+  let flat = bor(normal, nowrap);
+  let found = bor(flat, pre_line);
+  return found;
+}
+
+fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, basis: i32) -> made: Measure reads(paragraph), reads(children), reads(styles) {
+  doc "Computes a paragraph's Measure.";
+  let full = paragraph^.text.inner.len;
+  let count = imin(full, scalar_ceiling);
+  let positions = count + 1_u64;
+  let advances = box_array_filled::<f32>(count: count, value: 0.0_f32);
+  let opens = box_array_filled::<f32>(count: positions, value: 0.0_f32);
+  let closes = box_array_filled::<f32>(count: positions, value: 0.0_f32);
+  let collapsible = box_array_filled::<u8>(count: count, value: 0_u8);
+  let glued = box_array_filled::<u8>(count: positions, value: 0_u8);
+  let shaped_count = paragraph^.shaped.advances.inner.len;
+  for (i in 0_u64..count) {
+    if i < shaped_count {
+      set advances.inner[i] = paragraph^.shaped.advances.inner[i];
+    }
+  }
+  let runs = paragraph^.runs.inner.len;
+  for (r in 0_u64..runs) {
+    let run = paragraph^.runs.inner[r];
+    if r < paragraph^.run_styles.inner.len {
+      let style = paragraph^.run_styles.inner[r];
+      let collapsing = collapses(styles: styles, style: style);
+      if collapsing {
+        let low = cvt::<u32, u64>(run.start);
+        let high = cvt::<u32, u64>(run.end);
+        for (i in low..high) {
+          if i < count {
+            if paragraph^.text.inner[i] == 32_u32 {
+              set collapsible.inner[i] = 1_u8;
+            }
+          }
+        }
+      }
+    }
+  }
+  let marks = paragraph^.marks.inner.len;
+  for (m in 0_u64..marks) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Open(at: here, style: owner) => {
+        let (start, end) = inline_frame(styles: styles, style: owner, basis: basis);
+        let at = cvt::<u32, u64>(here);
+        if at < positions {
+          let old = opens.inner[at];
+          set opens.inner[at] = fadd.strict(old, start);
+          let group = box_of(styles: styles, style: owner);
+          let previous = if at > 0_u64 {
+            give at - 1_u64;
+          } else {
+            give 0_u64;
+          }
+          let has_before = at > 0_u64;
+          let in_text = previous < full;
+          let readable = band(has_before, in_text);
+          let last_scalar = if readable {
+            give paragraph^.text.inner[previous];
+          } else {
+            give 0_u32;
+          }
+          let follows_space = last_scalar == 32_u32;
+          let controlled = group.unicode_bidi != 0_u8;
+          let not_after_space = bnot(follows_space);
+          let glues = band(controlled, not_after_space);
+          if glues {
+            set glued.inner[at] = 1_u8;
+          }
+        }
+      }
+      Close(at: here, style: owner) => {
+        let (start, end) = inline_frame(styles: styles, style: owner, basis: basis);
+        let at = cvt::<u32, u64>(here);
+        if at < positions {
+          let old = closes.inner[at];
+          set closes.inner[at] = fadd.strict(old, end);
+        }
+      }
+      Atomic(at: here, context: child) => {
+        let at = cvt::<u32, u64>(here);
+        if at < count {
+          let width = atomic_width(children: children, child: child);
+          set advances.inner[at] = width;
+        }
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return Measure(advances: move advances, opens: move opens, closes: move closes, collapsible: move collapsible, glued: move glued);
+}
+
+fn advance_at(sizes: &Measure, at: u64) -> px: f32 reads(sizes) {
+  doc "The advance at index at, 0 past the end.";
+  if at < sizes^.advances.inner.len {
+    let found = sizes^.advances.inner[at];
+    return found;
+  }
+  return 0.0_f32;
+}
+
+fn open_at(sizes: &Measure, at: u64) -> px: f32 reads(sizes) {
+  doc "The decorations opening at position at, 0 past the end.";
+  if at < sizes^.opens.inner.len {
+    let found = sizes^.opens.inner[at];
+    return found;
+  }
+  return 0.0_f32;
+}
+
+fn close_at(sizes: &Measure, at: u64) -> px: f32 reads(sizes) {
+  doc "The decorations closing at position at, 0 past the end.";
+  if at < sizes^.closes.inner.len {
+    let found = sizes^.closes.inner[at];
+    return found;
+  }
+  return 0.0_f32;
+}
+
+fn collapsible_at(sizes: &Measure, at: u64) -> collapsible: Bool reads(sizes) {
+  doc "Whether index at holds a collapsible space; False past the end.";
+  if at < sizes^.collapsible.inner.len {
+    let found = sizes^.collapsible.inner[at] == 1_u8;
+    return found;
+  }
+  return False();
+}
+
+fn break_at(paragraph: &Paragraph, sizes: &Measure, at: u64) -> kind: u8 reads(paragraph), reads(sizes) {
+  doc "The break opportunity before index at: the shaped text's, except that a soft wrap opportunity is none where an inline box with a bidi control opens after anything but a space (research/investigations/layout/runs/bidi-isolate-breaks.txt).";
+  if at < paragraph^.shaped.breaks.inner.len {
+    let found = paragraph^.shaped.breaks.inner[at];
+    if found == break_allowed {
+      if at < sizes^.glued.inner.len {
+        if sizes^.glued.inner[at] == 1_u8 {
+          return 0_u8;
+        }
+      }
+    }
+    return found;
+  }
+  return 0_u8;
+}
+
+fn next_line(paragraph: &Paragraph, sizes: &Measure, start: u64, available: i32) -> (begin: u64, end: u64, width: f32) reads(paragraph), reads(sizes) {
+  doc "Finds the line that starts at start in available layout units: it drops collapsible spaces at its start, then fills greedily to the last allowed break opportunity before its content, trailing collapsible spaces excluded, overflows available; a mandatory break ends it; with no allowed opportunity before the overflow, an emergency one (overflow-wrap) is taken, and failing that the line runs to the next allowed opportunity. Returns its content start, its end and its content width in px.";
+  let count = paragraph^.text.inner.len;
+  let begin = start;
+  for (step in start..count) {
+    if begin < count {
+      let skip_space = collapsible_at(sizes: sizes, at: begin);
+      if skip_space {
+        set begin = begin +sat 1_u64;
+      } else {
+        break;
+      }
+    }
+  }
+  let width = 0.0_f32;
+  let trailing = 0.0_f32;
+  let candidate = begin;
+  let candidate_width = 0.0_f32;
+  let have_candidate = False();
+  let emergency = begin;
+  let emergency_width = 0.0_f32;
+  let have_emergency = False();
+  let overflowed = False();
+  for (j in begin..count) {
+    if j > begin {
+      let kind = break_at(paragraph: paragraph, sizes: sizes, at: j);
+      if kind == break_mandatory {
+        let content = fsub.strict(width, trailing);
+        return begin, j, content;
+      }
+      let content = fsub.strict(width, trailing);
+      if kind == break_allowed {
+        if overflowed {
+          return begin, j, content;
+        }
+        set candidate = j;
+        set candidate_width = content;
+        set have_candidate = True();
+      } else if kind == break_emergency {
+        if overflowed {
+        } else {
+          set emergency = j;
+          set emergency_width = content;
+          set have_emergency = True();
+        }
+      }
+    }
+    let opening = open_at(sizes: sizes, at: j);
+    let advance = advance_at(sizes: sizes, at: j);
+    let next = j +sat 1_u64;
+    let closing = close_at(sizes: sizes, at: next);
+    let with_open = fadd.strict(width, opening);
+    let with_advance = fadd.strict(with_open, advance);
+    set width = fadd.strict(with_advance, closing);
+    let hangs = collapsible_at(sizes: sizes, at: j);
+    if hangs {
+      let grown = fadd.strict(trailing, advance);
+      set trailing = fadd.strict(grown, closing);
+    } else {
+      set trailing = 0.0_f32;
+    }
+    let visible = fsub.strict(width, trailing);
+    let needed = units_up(px: visible);
+    let over = needed > available;
+    if over {
+      if have_candidate {
+        return begin, candidate, candidate_width;
+      }
+      if have_emergency {
+        return begin, emergency, emergency_width;
+      }
+      set overflowed = True();
+    }
+  }
+  let content = fsub.strict(width, trailing);
+  return begin, count, content;
+}
+
+fn exclusion_room(exclusions: &[Exclusion], top: i32, bottom: i32, width: i32) -> (left: i32, right: i32) reads(exclusions) {
+  doc "The left and right edges, in the context's content box, of the space beside the floats whose extent meets top to bottom, within width.";
+  let left = 0_i32;
+  let right = width;
+  let count = exclusions^.len;
+  for (k in 0_u64..count) {
+    let excluded = exclusions^[k];
+    let below = excluded.bottom <= top;
+    let above = excluded.top >= bottom;
+    let disjoint_span = bor(below, above);
+    if disjoint_span {
+    } else if excluded.left {
+      set left = imax(left, excluded.edge);
+    } else {
+      set right = imin(right, excluded.edge);
+    }
+  }
+  return left, right;
+}
+
+fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion], origin_x: i32, origin_y: i32, width: i32) -> result: unit reads(sizes), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(paragraph) {
+  doc "Breaks the paragraph into lines in a box width wide whose origin lies at origin_x, origin_y in the context's content box, each line as wide as the floats in exclusions leave beside the line's top and a strut's height below it (all the width when exclusions is empty), the first line indented by text-indent; a line whose first unbreakable run does not fit in the room beside floats moves down to the next float's bottom (CSS 2.2 9.5), and a paragraph with no text still has one line when an inline box in it has a nonzero margin, border or padding on its sides (research/investigations/layout/runs/empty-framed-line.txt); records each line's start, end, offset and content width, with tops left for the line metrics.";
+  let cleared = paragraph^.lines.inner.len;
+  for (step in 0_u64..cleared) {
+    let length = paragraph^.lines.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &paragraph^.lines.inner);
+  }
+  let count = paragraph^.text.inner.len;
+  let style = paragraph^.style;
+  let text = text_of(styles: styles, style: style);
+  let indent = resolve_lp(value: text.text_indent, basis: width);
+  let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: style);
+  let strut_height = strut.ascent +sat strut.descent;
+  if count == 0_u64 {
+    let opening = open_at(sizes: sizes, at: 0_u64);
+    let closing = close_at(sizes: sizes, at: 0_u64);
+    let edges = fadd.strict(opening, closing);
+    let flat = feq(edges, 0.0_f32);
+    let framed = bnot(flat);
+    if framed {
+      let edge_width = units_up(px: edges);
+      let only = Line(start: 0_u32, end: 0_u32, x: indent, width: edge_width, room: width, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: 0_i32);
+      let pushed = push_item::<Line>(cell: &paragraph^.lines, value: only, ceiling: item_ceiling);
+    }
+  }
+  let start = 0_u64;
+  let top = origin_y;
+  let first = True();
+  for (step in 0_u64..count) {
+    if start >= count {
+      break;
+    }
+    let indent_here = if first {
+      give indent;
+    } else {
+      give 0_i32;
+    }
+    let begin = start;
+    let end = start;
+    let content = 0.0_f32;
+    let left = 0_i32;
+    let available = 0_i32;
+    let shifting = True();
+    let retries = exclusions^.len +sat 1_u64;
+    for (retry in 0_u64..retries) {
+      if shifting {
+        let bottom = top +sat strut_height;
+        let box_right = origin_x +sat width;
+        let (left_edge, right_edge) = exclusion_room(exclusions: exclusions, top: top, bottom: bottom, width: box_right);
+        let shifted_left = left_edge -sat origin_x;
+        let line_left = imax(shifted_left, 0_i32);
+        let available_right = right_edge -sat origin_x;
+        let right = imin(available_right, width);
+        let room = right -sat line_left;
+        let line_available = room -sat indent_here;
+        let (line_begin, line_end, line_content) = next_line(paragraph: paragraph, sizes: sizes, start: start, available: line_available);
+        set begin = line_begin;
+        set end = line_end;
+        set content = line_content;
+        set left = line_left;
+        set available = line_available;
+        let room_px = px_of(raw: line_available);
+        let wide = fgt(line_content, room_px);
+        let narrowed = room < width;
+        let cramped = band(wide, narrowed);
+        let lower = lowest_bottom_above(exclusions: exclusions, top: top);
+        let below = lower > top;
+        let moves = band(cramped, below);
+        if moves {
+          set top = lower;
+        } else {
+          set shifting = False();
+        }
+      }
+    }
+    let small_begin = begin < 4294967295_u64;
+    let small_end = end < 4294967295_u64;
+    let small = band(small_begin, small_end);
+    if small {
+    } else {
+      break;
+    }
+    let line_width = units_up(px: content);
+    let offset = left +sat indent_here;
+    let begin_index = cvt::<u64, u32>(begin);
+    let end_index = cvt::<u64, u32>(end);
+    let least_top = top -sat origin_y;
+    let line = Line(start: begin_index, end: end_index, x: offset, width: line_width, room: available, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: least_top);
+    let pushed = push_item::<Line>(cell: &paragraph^.lines, value: line, ceiling: item_ceiling);
+    set top = top +sat strut_height;
+    set first = False();
+    if end <= start {
+      set start = start +sat 1_u64;
+    } else {
+      set start = end;
+    }
+  }
+  return unit;
+}
+
+struct Pending {
+  doc "A fragment a line produced before its baseline is known: its owner, its horizontal extent in px from the line's start, its top and height in layout units relative to the line's baseline, the relative offset that moves it, and its aligned group.";
+  kind: u8;
+  owner: u32;
+  from: f32;
+  to: f32;
+  top: i32;
+  height: i32;
+  dx: i32;
+  dy: i32;
+  group: u32;
+}
+
+fn valign_shift(styles: &Styles, style: StyleRef, own: Metrics, parent: Metrics, parent_shift: i32) -> shift: i32 reads(styles) {
+  doc "The offset below the line's baseline of the baseline of a box styled style, whose parent box's baseline lies parent_shift below it: baseline keeps the parent's; sub lowers it by a fifth of the parent's font size plus 1px and super raises it by a third plus 1px; text-top and text-bottom align the box's line-height box with the parent's content area; middle centres the box on the parent's baseline raised by half its x-height; a length or percentage of the box's line height raises it. top and bottom keep the parent's baseline until the line aligns their group with its top or bottom.";
+  let text = text_of(styles: styles, style: style);
+  let valign = text.vertical_align;
+  if valign.kind == sizing_value {
+    let line_height = own.ascent +sat own.descent;
+    let raise = resolve_lp(value: valign.value, basis: line_height);
+    let made = parent_shift -sat raise;
+    return made;
+  }
+  let keyword = valign.keyword;
+  if keyword == valign_sub {
+    let fifth = parent.font_size / 5_i32;
+    let lowered = fifth +sat 64_i32;
+    let made = parent_shift +sat lowered;
+    return made;
+  }
+  if keyword == valign_super {
+    let third = parent.font_size / 3_i32;
+    let lift = third +sat 64_i32;
+    let made = parent_shift -sat lift;
+    return made;
+  }
+  if keyword == valign_text_top {
+    let top = parent_shift -sat parent.content_ascent;
+    let made = top +sat own.ascent;
+    return made;
+  }
+  if keyword == valign_text_bottom {
+    let bottom = parent_shift +sat parent.content_descent;
+    let made = bottom -sat own.descent;
+    return made;
+  }
+  if keyword == valign_middle {
+    let half_x = parent.x_height / 2_i32;
+    let centre = parent_shift -sat half_x;
+    let span = own.descent -sat own.ascent;
+    let half_span = span / 2_i32;
+    let made = centre -sat half_span;
+    return made;
+  }
+  return parent_shift;
+}
+
+fn shown_owner(style: StyleRef) -> shown: Bool pure {
+  doc "Tells whether a box of style reports fragments: an element's own box, not an anonymous or generated one.";
+  let named = bnot(style.anonymous);
+  let own = style.pseudo == no_pseudo;
+  let both = band(named, own);
+  return both;
+}
+
+fn box_rect(styles: &Styles, held: OpenBox, end: f32, closes: Bool, basis: i32) -> rect: Pending reads(styles) {
+  doc "The rectangle of an inline box on one line: from its start (after its left margin when it began on this line) to end (before its right margin when it closes on this line), its content area plus vertical paddings and borders around its baseline.";
+  let style = held.style;
+  let margins = margin_edges(styles: styles, style: style, basis: basis);
+  let borders = border_edges(styles: styles, style: style);
+  let paddings = padding_edges(styles: styles, style: style, basis: basis);
+  let left_margin = px_of(raw: margins.left);
+  let right_margin = px_of(raw: margins.right);
+  let from = if held.began {
+    give fadd.strict(held.start, left_margin);
+  } else {
+    give held.start;
+  }
+  let to = if closes {
+    give fsub.strict(end, right_margin);
+  } else {
+    give end;
+  }
+  let above = held.metrics.content_ascent +sat paddings.top;
+  let above_border = above +sat borders.top;
+  let below = held.metrics.content_descent +sat paddings.bottom;
+  let below_border = below +sat borders.bottom;
+  let top = held.shift -sat above_border;
+  let height = above_border +sat below_border;
+  return Pending(kind: placed_element, owner: style.element, from: from, to: to, top: top, height: height, dx: held.dx, dy: held.dy, group: held.group);
+}
+
+fn segment_rect(held: OpenBox, to: f32) -> rect: Pending pure {
+  doc "The rectangle of a culled inline box's current run of its own content on one line, from the run's start to to: its content area around its baseline.";
+  let top = held.shift -sat held.metrics.content_ascent;
+  let height = held.metrics.content_ascent +sat held.metrics.content_descent;
+  return Pending(kind: placed_element, owner: held.style.element, from: held.seg_start, to: to, top: top, height: height, dx: held.dx, dy: held.dy, group: held.group);
+}
+
+fn add_box_rects(stack: &Box<Slots<OpenBox>>, at: u64, rect: Pending, list: &Box<Slots<Pending>>) -> result: unit writes(stack), writes(list) {
+  doc "Records rect for the open inline box at index at when it reports rectangles (an element's own box), and for each culled box enclosing it up to the first that is not culled, since the reference lists a culled box's rectangles as the runs of its own content and its children's rectangles; each is marked as having reported on this line.";
+  if at < stack^.inner.len {
+  } else {
+    return unit;
+  }
+  let style = stack^.inner[at].style;
+  let shown = shown_owner(style: style);
+  if shown {
+    let own = Pending(kind: rect.kind, owner: style.element, from: rect.from, to: rect.to, top: rect.top, height: rect.height, dx: rect.dx, dy: rect.dy, group: rect.group);
+    let pushed = push_item::<Pending>(cell: list, value: own, ceiling: item_ceiling);
+  }
+  if at < stack^.inner.len {
+    set stack^.inner[at].emitted = True();
+  }
+  let child = at;
+  for (step in 0_u64..at) {
+    if child == 0_u64 {
+      break;
+    }
+    let parent = child - 1_u64;
+    if parent < stack^.inner.len {
+      if stack^.inner[parent].culled {
+        let parent_style = stack^.inner[parent].style;
+        let parent_shown = shown_owner(style: parent_style);
+        if parent_shown {
+          let duplicate = Pending(kind: rect.kind, owner: parent_style.element, from: rect.from, to: rect.to, top: rect.top, height: rect.height, dx: rect.dx, dy: rect.dy, group: rect.group);
+          let copied = push_item::<Pending>(cell: list, value: duplicate, ceiling: item_ceiling);
+        }
+        if parent < stack^.inner.len {
+          set stack^.inner[parent].emitted = True();
+        }
+        set child = parent;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  return unit;
+}
+
+fn margined_box(styles: &Styles, style: StyleRef) -> margined: Bool reads(styles) {
+  doc "Tells whether an inline box styled style has a margin.";
+  let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+  let left_margin = margins.left != 0_i32;
+  let right_margin = margins.right != 0_i32;
+  let top_margin = margins.top != 0_i32;
+  let bottom_margin = margins.bottom != 0_i32;
+  let side_margins = bor(left_margin, right_margin);
+  let end_margins = bor(top_margin, bottom_margin);
+  let made = bor(side_margins, end_margins);
+  return made;
+}
+
+fn shifted_box(styles: &Styles, style: StyleRef) -> shifted: Bool reads(styles) {
+  doc "Tells whether style's vertical-align is anything but baseline, a length included.";
+  let text = text_of(styles: styles, style: style);
+  let valign = text.vertical_align;
+  if valign.kind == sizing_value {
+    return True();
+  }
+  let moved = valign.keyword != valign_baseline;
+  return moved;
+}
+
+fn framed_inside(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> inside: Box<Array<u8>> reads(paragraph), reads(styles), reads(fonts), reads(picks) {
+  doc "For each of the paragraph's marks, 1 when it opens an inline box that the reference keeps whole rather than culled because of a box or atomic inline directly inside it: a child with a margin, a vertical-align other than baseline or content-area metrics unlike its own, or an atomic inline.";
+  let marks = paragraph^.marks.inner.len;
+  let count = imin(marks, item_ceiling);
+  let inside = box_array_filled::<u8>(count: count, value: 0_u8);
+  let open_marks = box_slots_new::<u64>(capacity: 8_u64);
+  let open_metrics = box_slots_new::<Metrics>(capacity: 8_u64);
+  for (m in 0_u64..count) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Open(style: owner, ..) => {
+        let own = box_metrics(styles: styles, fonts: fonts, picks: picks, style: owner);
+        let margined = margined_box(styles: styles, style: owner);
+        let shifted = shifted_box(styles: styles, style: owner);
+        let depth = open_marks.inner.len;
+        let depth_metrics = open_metrics.inner.len;
+        let has_mark = depth > 0_u64;
+        let has_metrics = depth_metrics > 0_u64;
+        let both = band(has_mark, has_metrics);
+        if both {
+          let last_metrics = depth_metrics - 1_u64;
+          let last_mark = depth - 1_u64;
+          let parent_metrics = open_metrics.inner[last_metrics];
+          let parent_mark = open_marks.inner[last_mark];
+          let ascent_differs = parent_metrics.content_ascent != own.content_ascent;
+          let descent_differs = parent_metrics.content_descent != own.content_descent;
+          let metrics_differ = bor(ascent_differs, descent_differs);
+          let own_differs = bor(margined, shifted);
+          let raised = bor(own_differs, metrics_differ);
+          if raised {
+            if parent_mark < inside.inner.len {
+              set inside.inner[parent_mark] = 1_u8;
+            }
+          }
+        }
+        let pushed = push_item::<u64>(cell: &open_marks, value: m, ceiling: 4096_u64);
+        let pushed_metrics = push_item::<Metrics>(cell: &open_metrics, value: own, ceiling: 4096_u64);
+      }
+      Close(..) => {
+        let depth = open_marks.inner.len;
+        if depth > 0_u64 {
+          let removed = take_back(window: &open_marks.inner);
+        }
+        let depth_metrics = open_metrics.inner.len;
+        if depth_metrics > 0_u64 {
+          let removed_metrics = take_back(window: &open_metrics.inner);
+        }
+      }
+      Atomic(..) => {
+        let depth = open_marks.inner.len;
+        if depth > 0_u64 {
+          let last_mark = depth - 1_u64;
+          let parent_mark = open_marks.inner[last_mark];
+          if parent_mark < inside.inner.len {
+            set inside.inner[parent_mark] = 1_u8;
+          }
+        }
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return move inside;
+}
+
+fn culled_box(styles: &Styles, style: StyleRef) -> culled: Bool reads(styles) {
+  doc "Tells whether an inline box styled style is culled, as the reference culls one that paints and offsets nothing of its own: static position, no border, padding or margin and a transparent background; the reference then reports the runs of its own content and its children's rectangles rather than one rectangle per line. Opacity, outlines and shadows, which also keep a box, are outside the style stage's scope.";
+  let group = box_of(styles: styles, style: style);
+  if group.position != position_static {
+    return False();
+  }
+  let borders = border_edges(styles: styles, style: style);
+  let paddings = padding_edges(styles: styles, style: style, basis: 0_i32);
+  let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+  let across_border = horizontal(edges: borders);
+  let down_border = vertical(edges: borders);
+  let across_padding = horizontal(edges: paddings);
+  let down_padding = vertical(edges: paddings);
+  let bordered_x = across_border != 0_i32;
+  let bordered_y = down_border != 0_i32;
+  let padded_x = across_padding != 0_i32;
+  let padded_y = down_padding != 0_i32;
+  let left_margin = margins.left != 0_i32;
+  let right_margin = margins.right != 0_i32;
+  let top_margin = margins.top != 0_i32;
+  let bottom_margin = margins.bottom != 0_i32;
+  let bordered = bor(bordered_x, bordered_y);
+  let padded = bor(padded_x, padded_y);
+  let side_margins = bor(left_margin, right_margin);
+  let end_margins = bor(top_margin, bottom_margin);
+  let margined = bor(side_margins, end_margins);
+  let framed = bor(bordered, padded);
+  let kept = bor(framed, margined);
+  if kept {
+    return False();
+  }
+  let computed = computed_of(styles: styles, style: style);
+  let at = cvt::<u32, u64>(computed.background);
+  if at < styles^.backgrounds.inner.len {
+    let color = styles^.backgrounds.inner[at].color;
+    if color.current {
+      return False();
+    }
+    let painted = fgt(color.color.alpha, 0.0_f32);
+    if painted {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn valign_edge(styles: &Styles, style: StyleRef) -> edge: u8 reads(styles) {
+  doc "1 when style's vertical-align is top, 2 when bottom, otherwise 0.";
+  let text = text_of(styles: styles, style: style);
+  let valign = text.vertical_align;
+  if valign.kind == sizing_value {
+    return 0_u8;
+  }
+  if valign.keyword == valign_top {
+    return 1_u8;
+  }
+  if valign.keyword == valign_bottom {
+    return 2_u8;
+  }
+  return 0_u8;
+}
+
+fn join_group(aligned: &Box<Slots<Aligned>>, edge: u8, parent: u32) -> group: u32 writes(aligned) {
+  doc "The aligned group of a box whose parent is in group parent: the parent's, or a new group when the box itself is aligned by edge and its parent in none.";
+  if parent != no_group {
+    return parent;
+  }
+  if edge == 0_u8 {
+    return no_group;
+  }
+  let index = aligned^.inner.len;
+  if index < 4294967295_u64 {
+  } else {
+    return no_group;
+  }
+  let no = False();
+  let made = Aligned(edge: edge, low: 0_i32, high: 0_i32, filled: no);
+  let pushed = push_item::<Aligned>(cell: aligned, value: made, ceiling: item_ceiling);
+  if pushed {
+    let at = cvt::<u64, u32>(index);
+    return at;
+  }
+  return no_group;
+}
+
+fn extend_line(aligned: &Box<Slots<Aligned>>, group: u32, top: i32, bottom: i32, low: i32, high: i32) -> (low_out: i32, high_out: i32) writes(aligned) {
+  doc "Adds a box from top to bottom (below the line's baseline) to its aligned group's extent, or to the line's extent low to high when it is in none, and returns the line's extent.";
+  if group == no_group {
+    let lowest = imin(low, top);
+    let highest = imax(high, bottom);
+    return lowest, highest;
+  }
+  let at = cvt::<u32, u64>(group);
+  if at < aligned^.inner.len {
+    let first = aligned^.inner[at].low;
+    let last = aligned^.inner[at].high;
+    let started_low = imin(first, top);
+    let started_high = imax(last, bottom);
+    if aligned^.inner[at].filled {
+      set aligned^.inner[at].low = started_low;
+      set aligned^.inner[at].high = started_high;
+    } else {
+      set aligned^.inner[at].low = top;
+      set aligned^.inner[at].high = bottom;
+      set aligned^.inner[at].filled = True();
+    }
+  }
+  return low, high;
+}
+
+fn group_delta(aligned: &[Aligned], group: u32, low: i32, high: i32) -> delta: i32 reads(aligned) {
+  doc "How far a box of group moves down once the line spans low to high around its baseline: a top-aligned group's top meets the line's top, a bottom-aligned group's bottom the line's bottom.";
+  let at = cvt::<u32, u64>(group);
+  if at < aligned^.len {
+    let item = aligned^[at];
+    if item.edge == 1_u8 {
+      let made = low -sat item.low;
+      return made;
+    }
+    let made = high -sat item.high;
+    return made;
+  }
+  return 0_i32;
+}
+
+fn keeps_any(sizes: &Measure, from: u64, to: u64) -> kept: Bool reads(sizes) {
+  doc "Tells whether any position from from to to holds a scalar white-space keeps.";
+  for (at in from..to) {
+    let collapsible = collapsible_at(sizes: sizes, at: at);
+    if bnot(collapsible) {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn preserved_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 reads(paragraph) {
+  doc "Where the trailing preserved white space of the line from start to end begins (spaces and tabs), for a line a soft wrap ends: the reference leaves collapsible spaces there out of the text's fragment and reports the ones white-space keeps as a fragment of their own.";
+  let tail = end;
+  let count = paragraph^.text.inner.len;
+  for (step in start..end) {
+    if tail > start {
+      let at = tail - 1_u64;
+      if at < count {
+        let value = paragraph^.text.inner[at];
+        let space = value == 32_u32;
+        let tab = value == 9_u32;
+        let blank = bor(space, tab);
+        if blank {
+          set tail = at;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+  }
+  return tail;
+}
+
+fn forced_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 reads(paragraph) {
+  doc "Where the fragment of the forced break that ends the line from start to end begins, or end when a soft wrap or the paragraph's end ends it: the reference reports the break as a fragment of its own and keeps the preserved spaces before it in the text's fragment.";
+  let count = paragraph^.text.inner.len;
+  if end > start {
+    let last = end - 1_u64;
+    if last < count {
+      let value = paragraph^.text.inner[last];
+      if value == line_separator {
+        return last;
+      }
+    }
+  }
+  return end;
+}
+
+fn leading_cut(paragraph: &Paragraph, styles: &Styles, start: u64) -> cut: u64 reads(paragraph), reads(styles) {
+  doc "Where the preserved spaces that start the line at start end when white-space is pre-wrap or break-spaces and the line follows the paragraph's start or a forced break (the reference gives them a fragment of their own), otherwise start.";
+  let count = paragraph^.text.inner.len;
+  if start < count {
+  } else {
+    return start;
+  }
+  let first_space = paragraph^.text.inner[start] == 32_u32;
+  let blank = bnot(first_space);
+  if blank {
+    return start;
+  }
+  if start > 0_u64 {
+    let before = start - 1_u64;
+    let previous = paragraph^.text.inner[before];
+    if previous != line_separator {
+      return start;
+    }
+  }
+  let preserved = False();
+  let runs = paragraph^.runs.inner.len;
+  for (r in 0_u64..runs) {
+    let run = paragraph^.runs.inner[r];
+    let from = cvt::<u32, u64>(run.start);
+    let to = cvt::<u32, u64>(run.end);
+    let after = start >= from;
+    let inside = start < to;
+    let here = band(after, inside);
+    if here {
+      if r < paragraph^.run_styles.inner.len {
+        let style = paragraph^.run_styles.inner[r];
+        let text = text_of(styles: styles, style: style);
+        let pre_wrapped = text.white_space == white_pre_wrap;
+        let spaces = text.white_space == white_break_spaces;
+        set preserved = bor(pre_wrapped, spaces);
+      }
+      break;
+    }
+  }
+  let plain = bnot(preserved);
+  if plain {
+    return start;
+  }
+  let cut = start;
+  for (step in start..count) {
+    if cut < count {
+      let value = paragraph^.text.inner[cut];
+      if value == 32_u32 {
+        set cut = cut +sat 1_u64;
+      } else {
+        break;
+      }
+    }
+  }
+  return cut;
+}
+
+fn stack_offset(stack: &[OpenBox]) -> (dx: i32, dy: i32, group: u32) reads(stack) {
+  doc "The relative offset and aligned group of the innermost open inline box, or none.";
+  let depth = stack^.len;
+  if depth > 0_u64 {
+    let last = depth - 1_u64;
+    let held = stack^[last];
+    return held.dx, held.dy, held.group;
+  }
+  return 0_i32, 0_i32, no_group;
+}
+
+fn atomic_style(children: &[Context], child: u32) -> style: StyleRef reads(children) {
+  doc "The style of an atomic inline, or an anonymous one when child is out of range.";
+  let at = cvt::<u32, u64>(child);
+  if at < children^.len {
+    return children^[at].style;
+  }
+  let yes = True();
+  return StyleRef(element: no_index, pseudo: no_pseudo, anonymous: yes);
+}
+
+fn atomic_metrics(children: &[Context], child: u32) -> (ascent: i32, descent: i32) reads(children) {
+  doc "An atomic inline's extent above and below its baseline, margins included: its last line's baseline when it has one, otherwise its margin box's bottom.";
+  let at = cvt::<u32, u64>(child);
+  if at < children^.len {
+    let inner = children^[at].height +sat children^[at].margin_top;
+    let box_height = inner +sat children^[at].margin_bottom;
+    if children^[at].has_baseline {
+      let ascent = children^[at].margin_top +sat children^[at].baseline;
+      let descent = box_height -sat ascent;
+      return ascent, descent;
+    }
+    return box_height, 0_i32;
+  }
+  return 0_i32, 0_i32;
+}
+
+fn fallback_extents(paragraph: &Paragraph, segment_at: &Box<Array<u32>>, at: u64, styles: &Styles, fonts: &FontSet, picks: &FontPicks, style: StyleRef) -> (ascent: i32, descent: i32) reads(paragraph), reads(segment_at), reads(styles), reads(fonts), reads(picks) {
+  doc "The ascent and descent of the line-height box of the fallback face that draws the scalar at at when style's line-height is normal, or zero: the reference lets every face other than the primary one that draws text of an inline box widen the box's line-height box to the face's own, its ascent and descent with its line gap split around them as box_metrics splits a normal line height (research/investigations/layout/runs/fallback-line-height.txt).";
+  if at >= segment_at^.inner.len {
+    return 0_i32, 0_i32;
+  }
+  let found = segment_at^.inner[at];
+  if found == no_group {
+    return 0_i32, 0_i32;
+  }
+  let index = cvt::<u32, u64>(found);
+  if index >= paragraph^.shaped.segments.inner.len {
+    return 0_i32, 0_i32;
+  }
+  let segment = paragraph^.shaped.segments.inner[index];
+  let group = font_of(styles: styles, style: style);
+  let fixed = group.line_height.kind == sizing_value;
+  let scaled = group.line_height.kind == sizing_number;
+  let given = bor(fixed, scaled);
+  if given {
+    return 0_i32, 0_i32;
+  }
+  let font = font_index(styles: styles, style: style);
+  let primary = primary_face(fonts: fonts, picks: picks, font: font);
+  if segment.face == primary {
+    return 0_i32, 0_i32;
+  }
+  let bold = False();
+  let extents = face_extents(fonts: fonts, face: segment.face, size: segment.size, synthetic_bold: bold);
+  let ascent = units(px: extents.ascent);
+  let descent = units(px: extents.descent);
+  let gap = units(px: extents.line_gap);
+  let half_gap = gap / 2_i32;
+  let top_half = floor_to_px(units_value: half_gap);
+  let bottom_half = gap -sat top_half;
+  let above = ascent +sat top_half;
+  let below = descent +sat bottom_half;
+  return above, below;
+}
+
+fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, basis: i32) -> result: unit reads(sizes), reads(children), reads(styles), reads(fonts), reads(picks), writes(paragraph) {
+  doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes) and its atomic inlines' positions, relative to the paragraph's origin, and its height.";
+  let lines = paragraph^.lines.inner.len;
+  let full = paragraph^.text.inner.len;
+  let count = imin(full, scalar_ceiling);
+  let positions = count + 1_u64;
+  let xs = box_array_filled::<f32>(count: positions, value: 0.0_f32);
+  let shifts = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let text_tops = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let text_heights = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let moves_x = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let moves_y = box_array_filled::<i32>(count: positions, value: 0_i32);
+  let groups = box_array_filled::<u32>(count: positions, value: no_group);
+  let segment_at = box_array_filled::<u32>(count: positions, value: no_group);
+  let segment_count = paragraph^.shaped.segments.inner.len;
+  for (s in 0_u64..segment_count) {
+    if s < paragraph^.shaped.segments.inner.len {
+      let segment = paragraph^.shaped.segments.inner[s];
+      let first = cvt::<u32, u64>(segment.start);
+      let last_raw = cvt::<u32, u64>(segment.end);
+      let last = imin(last_raw, count);
+      let small = s < 4294967295_u64;
+      if small {
+        let named = cvt::<u64, u32>(s);
+        for (k in first..last) {
+          set segment_at.inner[k] = named;
+        }
+      }
+    }
+  }
+  let edges = box_array_filled::<u8>(count: positions, value: 0_u8);
+  let edge_marks = paragraph^.marks.inner.len;
+  for (m in 0_u64..edge_marks) {
+    let candidate = paragraph^.marks.inner[m];
+    match candidate {
+      Node(at: a, end: b, ..) => {
+        let first = cvt::<u32, u64>(a);
+        let last = cvt::<u32, u64>(b);
+        if first < edges.inner.len {
+          set edges.inner[first] = 1_u8;
+        }
+        if last < edges.inner.len {
+          set edges.inner[last] = 1_u8;
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Atomic(..) => {
+      }
+    }
+  }
+  let stack = box_slots_new::<OpenBox>(capacity: 8_u64);
+  let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: paragraph^.style);
+  let text = text_of(styles: styles, style: paragraph^.style);
+  let align = text.text_align;
+  let framed_marks = framed_inside(paragraph: paragraph, styles: styles, fonts: fonts, picks: picks);
+  let marks = paragraph^.marks.inner.len;
+  let mark = 0_u64;
+  let top = 0_i32;
+  let cleared = paragraph^.fragments.inner.len;
+  for (step in 0_u64..cleared) {
+    let length = paragraph^.fragments.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &paragraph^.fragments.inner);
+  }
+  let cleared_atomics = paragraph^.atomics.inner.len;
+  for (step in 0_u64..cleared_atomics) {
+    let length = paragraph^.atomics.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &paragraph^.atomics.inner);
+  }
+  for (l in 0_u64..lines) {
+    let line = paragraph^.lines.inner[l];
+    set top = imax(top, line.least_top);
+    let start = cvt::<u32, u64>(line.start);
+    let end = cvt::<u32, u64>(line.end);
+    let pending = box_slots_new::<Pending>(capacity: 8_u64);
+    let atomics = box_slots_new::<Atomic>(capacity: 0_u64);
+    let atomic_groups = box_slots_new::<u32>(capacity: 0_u64);
+    let aligned = box_slots_new::<Aligned>(capacity: 0_u64);
+    let low = 0_i32 -sat strut.ascent;
+    let high = strut.descent;
+    let open_count = stack.inner.len;
+    let parent_group = no_group;
+    for (k in 0_u64..open_count) {
+      let held = stack.inner[k];
+      let group = join_group(aligned: &aligned, edge: held.edge, parent: parent_group);
+      if k < stack.inner.len {
+        set stack.inner[k].start = 0.0_f32;
+        set stack.inner[k].began = False();
+        set stack.inner[k].seg_start = 0.0_f32;
+        set stack.inner[k].seg_items = False();
+        set stack.inner[k].emitted = False();
+        set stack.inner[k].group = group;
+      }
+      set parent_group = group;
+      let box_top = held.shift -sat held.metrics.ascent;
+      let box_bottom = held.shift +sat held.metrics.descent;
+      let (low_next, high_next) = extend_line(aligned: &aligned, group: group, top: box_top, bottom: box_bottom, low: low, high: high);
+      set low = low_next;
+      set high = high_next;
+    }
+    let x = 0.0_f32;
+    let forced_start = forced_tail(paragraph: paragraph, start: start, end: end);
+    let forced = forced_start < end;
+    let visible_end = forced_start;
+    for (step in start..end) {
+      if visible_end > start {
+        let last = visible_end - 1_u64;
+        let hanging = collapsible_at(sizes: sizes, at: last);
+        if hanging {
+          set visible_end = last;
+        } else {
+          break;
+        }
+      }
+    }
+    let wrapped = end < count;
+    let soft_start = if wrapped {
+      give preserved_tail(paragraph: paragraph, start: start, end: visible_end);
+    } else {
+      give visible_end;
+    }
+    let main_end = if forced {
+      give visible_end;
+    } else {
+      give soft_start;
+    }
+    let tail_lo = if forced {
+      give forced_start;
+    } else {
+      give soft_start;
+    }
+    let tail_hi = if forced {
+      give end;
+    } else {
+      give visible_end;
+    }
+    let lead_end = leading_cut(paragraph: paragraph, styles: styles, start: start);
+    let p = start;
+    for (step in 0_u64..positions) {
+      if p > end {
+        break;
+      }
+      for (scan in mark..marks) {
+        if mark >= marks {
+          break;
+        }
+        let current = paragraph^.marks.inner[mark];
+        let here = match current {
+          Open(at: a, ..) => {
+            give cvt::<u32, u64>(a);
+          }
+          Close(at: a, ..) => {
+            give cvt::<u32, u64>(a);
+          }
+          Atomic(at: a, ..) => {
+            give cvt::<u32, u64>(a);
+          }
+          Node(at: a, ..) => {
+            give cvt::<u32, u64>(a);
+          }
+        }
+        if here != p {
+          break;
+        }
+        let at_end = p == end;
+        let more = end < count;
+        let defer = band(at_end, more);
+        let mut_skip = match current {
+          Open(..) => {
+            give defer;
+          }
+          Close(..) => {
+            give False();
+          }
+          Atomic(..) => {
+            give defer;
+          }
+          Node(..) => {
+            give False();
+          }
+        }
+        if mut_skip {
+          break;
+        }
+        set mark = mark +sat 1_u64;
+        match current {
+          Open(at: a, style: owner) => {
+            let depth = stack.inner.len;
+            let parent_metrics = if depth > 0_u64 {
+              let last = depth - 1_u64;
+              give stack.inner[last].metrics;
+            } else {
+              give strut;
+            }
+            let parent_shift = if depth > 0_u64 {
+              let last = depth - 1_u64;
+              give stack.inner[last].shift;
+            } else {
+              give 0_i32;
+            }
+            let stack_depth = stack.inner.len;
+            let (outer_dx, outer_dy, outer_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
+            let own = box_metrics(styles: styles, fonts: fonts, picks: picks, style: owner);
+            let shift = valign_shift(styles: styles, style: owner, own: own, parent: parent_metrics, parent_shift: parent_shift);
+            let (own_dx, own_dy) = relative_offset(styles: styles, style: owner, basis_width: basis, basis_height: unknown);
+            let edge = valign_edge(styles: styles, style: owner);
+            let group = join_group(aligned: &aligned, edge: edge, parent: outer_group);
+            let began = True();
+            let moved_x = outer_dx +sat own_dx;
+            let moved_y = outer_dy +sat own_dy;
+            let depth_before = stack.inner.len;
+            if depth_before > 0_u64 {
+              let parent_at = depth_before - 1_u64;
+              let parent = stack.inner[parent_at];
+              if parent.culled {
+                if parent.seg_items {
+                  let run = segment_rect(held: parent, to: x);
+                  add_box_rects(stack: &stack, at: parent_at, rect: run, list: &pending);
+                }
+                if parent_at < stack.inner.len {
+                  set stack.inner[parent_at].seg_items = False();
+                }
+              }
+            }
+            let own_culled = culled_box(styles: styles, style: owner);
+            let this_mark = mark -sat 1_u64;
+            let framed_below = if this_mark < framed_marks.inner.len {
+              give framed_marks.inner[this_mark] != 0_u8;
+            } else {
+              give False();
+            }
+            let open_inside = bnot(framed_below);
+            let culled = band(own_culled, open_inside);
+            let no_run = False();
+            let past_visible_open = p > visible_end;
+            let known_open = visible_end < xs.inner.len;
+            let hanging_open = band(past_visible_open, known_open);
+            let open_x = if hanging_open {
+              give xs.inner[visible_end];
+            } else {
+              give x;
+            }
+            let opened = OpenBox(style: owner, shift: shift, metrics: own, start: open_x, began: began, dx: moved_x, dy: moved_y, edge: edge, group: group, culled: culled, seg_start: open_x, seg_items: no_run, emitted: no_run);
+            let pushed = push_item::<OpenBox>(cell: &stack, value: opened, ceiling: 4096_u64);
+            let box_top = shift -sat own.ascent;
+            let box_bottom = shift +sat own.descent;
+            let (low_next, high_next) = extend_line(aligned: &aligned, group: group, top: box_top, bottom: box_bottom, low: low, high: high);
+            set low = low_next;
+            set high = high_next;
+            let (opening, own_end) = inline_frame(styles: styles, style: owner, basis: basis);
+            set x = fadd.strict(x, opening);
+          }
+          Close(at: a, style: owner) => {
+            let (own_start, closing) = inline_frame(styles: styles, style: owner, basis: basis);
+            set x = fadd.strict(x, closing);
+            let depth = stack.inner.len;
+            if depth > 0_u64 {
+              let last = depth - 1_u64;
+              let held = stack.inner[last];
+              let on_line = p > start;
+              let started_here = held.began;
+              let shows = bor(on_line, started_here);
+              if shows {
+                let yes = True();
+                let past_visible = p > visible_end;
+                let known = visible_end < xs.inner.len;
+                let hanging = band(past_visible, known);
+                let end_x = if hanging {
+                  let before_spaces = xs.inner[visible_end];
+                  give fadd.strict(before_spaces, closing);
+                } else {
+                  give x;
+                }
+                if held.culled {
+                  let silent = bnot(held.emitted);
+                  let reports = bor(held.seg_items, silent);
+                  if reports {
+                    let run = segment_rect(held: held, to: end_x);
+                    add_box_rects(stack: &stack, at: last, rect: run, list: &pending);
+                  }
+                } else {
+                  let whole = box_rect(styles: styles, held: held, end: end_x, closes: yes, basis: basis);
+                  add_box_rects(stack: &stack, at: last, rect: whole, list: &pending);
+                }
+              }
+              let present = stack.inner.len;
+              if present > 0_u64 {
+                let removed = take_back(window: &stack.inner);
+              }
+              let remaining = stack.inner.len;
+              if remaining > 0_u64 {
+                let outer = remaining - 1_u64;
+                set stack.inner[outer].seg_start = x;
+              }
+            }
+          }
+          Atomic(at: a, context: child) => {
+            let depth = stack.inner.len;
+            let parent_shift = if depth > 0_u64 {
+              let last = depth - 1_u64;
+              give stack.inner[last].shift;
+            } else {
+              give 0_i32;
+            }
+            let parent_metrics = if depth > 0_u64 {
+              let last = depth - 1_u64;
+              give stack.inner[last].metrics;
+            } else {
+              give strut;
+            }
+            let stack_depth = stack.inner.len;
+            let (outer_dx, outer_dy, outer_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
+            let (ascent, descent) = atomic_metrics(children: children, child: child);
+            let child_style = atomic_style(children: children, child: child);
+            let own = Metrics(content_ascent: ascent, content_descent: descent, ascent: ascent, descent: descent, x_height: 0_i32, font_size: 0_i32);
+            let shift = valign_shift(styles: styles, style: child_style, own: own, parent: parent_metrics, parent_shift: parent_shift);
+            let edge = valign_edge(styles: styles, style: child_style);
+            let group = join_group(aligned: &aligned, edge: edge, parent: outer_group);
+            let box_top = shift -sat ascent;
+            let box_bottom = shift +sat descent;
+            let (low_next, high_next) = extend_line(aligned: &aligned, group: group, top: box_top, bottom: box_bottom, low: low, high: high);
+            set low = low_next;
+            set high = high_next;
+            let (own_dx, own_dy) = relative_offset(styles: styles, style: child_style, basis_width: basis, basis_height: unknown);
+            let origin = units(px: x);
+            let total_dx = outer_dx +sat own_dx;
+            let total_dy = outer_dy +sat own_dy;
+            let moved_x = origin +sat total_dx;
+            let moved_y = box_top +sat total_dy;
+            let placed = Atomic(context: child, x: moved_x, y: moved_y);
+            let pushed = push_item::<Atomic>(cell: &atomics, value: placed, ceiling: item_ceiling);
+            let pushed_group = push_item::<u32>(cell: &atomic_groups, value: group, ceiling: item_ceiling);
+            let holders = stack.inner.len;
+            if holders > 0_u64 {
+              let holder = holders - 1_u64;
+              set stack.inner[holder].seg_items = True();
+            }
+          }
+          Node(..) => {
+          }
+        }
+      }
+      if p < end {
+        if p < xs.inner.len {
+          set xs.inner[p] = x;
+        }
+        let edge_here = if p < edges.inner.len {
+          give edges.inner[p] != 0_u8;
+        } else {
+          give False();
+        }
+        let cut_lead = p == lead_end;
+        let at_tail = p == tail_lo;
+        let has_tail = tail_lo < tail_hi;
+        let cut_tail = band(at_tail, has_tail);
+        let cut_ends = bor(cut_lead, cut_tail);
+        let cut_here = bor(edge_here, cut_ends);
+        let after_start = p > start;
+        let splits = band(cut_here, after_start);
+        let open_depth = stack.inner.len;
+        if splits {
+          if open_depth > 0_u64 {
+            let innermost_box = open_depth - 1_u64;
+            let held = stack.inner[innermost_box];
+            let flushes = band(held.culled, held.seg_items);
+            if flushes {
+              let run = segment_rect(held: held, to: x);
+              add_box_rects(stack: &stack, at: innermost_box, rect: run, list: &pending);
+              if innermost_box < stack.inner.len {
+                set stack.inner[innermost_box].seg_items = False();
+                set stack.inner[innermost_box].seg_start = x;
+              }
+            }
+          }
+        }
+        let depth = stack.inner.len;
+        let shift_here = if depth > 0_u64 {
+          let last = depth - 1_u64;
+          give stack.inner[last].shift;
+        } else {
+          give 0_i32;
+        }
+        let metrics_here = if depth > 0_u64 {
+          let last = depth - 1_u64;
+          give stack.inner[last].metrics;
+        } else {
+          give strut;
+        }
+        let inside_tables = p < shifts.inner.len;
+        let inside_tops = p < text_tops.inner.len;
+        let inside_heights = p < text_heights.inner.len;
+        let inside_pair = band(inside_tables, inside_tops);
+        let inside = band(inside_pair, inside_heights);
+        if inside {
+          set shifts.inner[p] = shift_here;
+          set text_tops.inner[p] = shift_here -sat metrics_here.content_ascent;
+          set text_heights.inner[p] = metrics_here.content_ascent +sat metrics_here.content_descent;
+        }
+        let stack_depth = stack.inner.len;
+        let (here_dx, here_dy, here_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
+        let here_style = if depth > 0_u64 {
+          let last = depth - 1_u64;
+          give stack.inner[last].style;
+        } else {
+          give paragraph^.style;
+        }
+        let (extra_ascent, extra_descent) = fallback_extents(paragraph: paragraph, segment_at: &segment_at, at: p, styles: styles, fonts: fonts, picks: picks, style: here_style);
+        if extra_ascent > 0_i32 {
+          let extra_top = shift_here -sat extra_ascent;
+          let extra_bottom = shift_here +sat extra_descent;
+          let (low_here, high_here) = extend_line(aligned: &aligned, group: here_group, top: extra_top, bottom: extra_bottom, low: low, high: high);
+          set low = low_here;
+          set high = high_here;
+        }
+        if stack_depth > 0_u64 {
+          let innermost = stack_depth - 1_u64;
+          if innermost < stack.inner.len {
+            set stack.inner[innermost].seg_items = True();
+          }
+        }
+        let inside_x = p < moves_x.inner.len;
+        let inside_y = p < moves_y.inner.len;
+        let inside_group = p < groups.inner.len;
+        let inside_moves = band(inside_x, inside_y);
+        let inside_all = band(inside_moves, inside_group);
+        if inside_all {
+          set moves_x.inner[p] = here_dx;
+          set moves_y.inner[p] = here_dy;
+          set groups.inner[p] = here_group;
+        }
+        let advance = advance_at(sizes: sizes, at: p);
+        set x = fadd.strict(x, advance);
+      } else if p < positions {
+        set xs.inner[p] = x;
+      }
+      set p = p +sat 1_u64;
+    }
+    let visible_x = if visible_end < positions {
+      give xs.inner[visible_end];
+    } else {
+      give x;
+    }
+    let still_open = stack.inner.len;
+    for (step in 0_u64..still_open) {
+      let k_top = still_open - 1_u64;
+      let k = k_top - step;
+      if k < stack.inner.len {
+        let held = stack.inner[k];
+        let on_line = end > start;
+        let shows_now = bor(on_line, held.began);
+        let cut_short = visible_end < end;
+        let spaces_hang = collapsible_at(sizes: sizes, at: visible_end);
+        let trimmed = band(cut_short, spaces_hang);
+        let before_visible = flt(held.start, visible_x);
+        let opened_late = bnot(before_visible);
+        let late = band(trimmed, opened_late);
+        let only_trailing = band(held.began, late);
+        let not_trailing = bnot(only_trailing);
+        let shows = band(shows_now, not_trailing);
+        if shows {
+          if held.culled {
+            let silent = bnot(held.emitted);
+            let wanted = bor(held.seg_items, silent);
+            let run_before = flt(held.seg_start, visible_x);
+            let run_late = bnot(run_before);
+            let run_trailing = band(trimmed, run_late);
+            let holds_run = bnot(run_trailing);
+            let reports = band(wanted, holds_run);
+            if reports {
+              let run = segment_rect(held: held, to: visible_x);
+              add_box_rects(stack: &stack, at: k, rect: run, list: &pending);
+            }
+          } else {
+            let no = False();
+            let whole = box_rect(styles: styles, held: held, end: visible_x, closes: no, basis: basis);
+            add_box_rects(stack: &stack, at: k, rect: whole, list: &pending);
+          }
+        }
+      }
+    }
+    let group_count = aligned.inner.len;
+    for (g in 0_u64..group_count) {
+      let item = aligned.inner[g];
+      let size = item.high -sat item.low;
+      if item.edge == 1_u8 {
+        let reach = low +sat size;
+        set high = imax(high, reach);
+      } else {
+        let reach = high -sat size;
+        set low = imin(low, reach);
+      }
+    }
+    let baseline = 0_i32 -sat low;
+    let height = high -sat low;
+    let free = line.room -sat line.width;
+    let offset_align = if align == align_right_text {
+      give free;
+    } else if align == align_end_text {
+      give free;
+    } else if align == align_webkit_right {
+      give free;
+    } else if align == align_center_text {
+      give free / 2_i32;
+    } else if align == align_webkit_center {
+      give free / 2_i32;
+    } else {
+      give 0_i32;
+    }
+    let shift_x = imax(offset_align, 0_i32);
+    let line_x = line.x +sat shift_x;
+    set paragraph^.lines.inner[l].top = top;
+    set paragraph^.lines.inner[l].height = height;
+    set paragraph^.lines.inner[l].baseline = baseline;
+    let line_top_baseline = top +sat baseline;
+    let pending_count = pending.inner.len;
+    for (k in 0_u64..pending_count) {
+      let item = pending.inner[k];
+      let from = units(px: item.from);
+      let to = units(px: item.to);
+      let x_line = line_x +sat from;
+      let x_from = x_line +sat item.dx;
+      let width = to -sat from;
+      let group_total = aligned.inner.len;
+      let delta = group_delta(aligned: &aligned.inner[0_u64..group_total], group: item.group, low: low, high: high);
+      let y_line = line_top_baseline +sat item.top;
+      let y_moved = y_line +sat item.dy;
+      let y = y_moved +sat delta;
+      let made = Fragment(kind: item.kind, owner: item.owner, x: x_from, y: y, width: width, height: item.height);
+      let pushed = push_item::<Fragment>(cell: &paragraph^.fragments, value: made, ceiling: item_ceiling);
+    }
+    let atomic_count = atomics.inner.len;
+    for (k in 0_u64..atomic_count) {
+      let placed = atomics.inner[k];
+      let child_at = cvt::<u32, u64>(placed.context);
+      let margin_left = if child_at < children^.len {
+        give children^[child_at].margin_left;
+      } else {
+        give 0_i32;
+      }
+      let margin_top = if child_at < children^.len {
+        give children^[child_at].margin_top;
+      } else {
+        give 0_i32;
+      }
+      let atomic_group = if k < atomic_groups.inner.len {
+        give atomic_groups.inner[k];
+      } else {
+        give no_group;
+      }
+      let group_total = aligned.inner.len;
+      let delta = group_delta(aligned: &aligned.inner[0_u64..group_total], group: atomic_group, low: low, high: high);
+      let left = line_x +sat placed.x;
+      let ax = left +sat margin_left;
+      let above = line_top_baseline +sat placed.y;
+      let raised = above +sat margin_top;
+      let ay = raised +sat delta;
+      let moved = Atomic(context: placed.context, x: ax, y: ay);
+      let pushed = push_item::<Atomic>(cell: &paragraph^.atomics, value: moved, ceiling: item_ceiling);
+    }
+    let node_marks = paragraph^.marks.inner.len;
+    for (k in 0_u64..node_marks) {
+      let candidate = paragraph^.marks.inner[k];
+      match candidate {
+        Node(at: a, end: b, node: source) => {
+          let first = cvt::<u32, u64>(a);
+          let last = cvt::<u32, u64>(b);
+          let from_index = imax(first, start);
+          let main_hi = imin(last, main_end);
+          let leading = if from_index == start {
+            give lead_end;
+          } else {
+            give from_index;
+          }
+          let lead_floor = imax(leading, from_index);
+          let cut_lead = imin(lead_floor, main_hi);
+          let tail_from = imax(tail_lo, from_index);
+          let tail_to = imin(tail_hi, last);
+          for (part in 0_u64..3_u64) {
+            let lo = if part == 0_u64 {
+              give from_index;
+            } else if part == 1_u64 {
+              give cut_lead;
+            } else {
+              give tail_from;
+            }
+            let hi = if part == 0_u64 {
+              give cut_lead;
+            } else if part == 1_u64 {
+              give main_hi;
+            } else {
+              give tail_to;
+            }
+            let nonempty = lo < hi;
+            let inside = hi < positions;
+            let present = band(nonempty, inside);
+            let kept = if part == 2_u64 {
+              give keeps_any(sizes: sizes, from: lo, to: hi);
+            } else {
+              give True();
+            }
+            let shown = band(present, kept);
+            if shown {
+              let x0 = xs.inner[lo];
+              let width_px = 0.0_f32;
+              for (i in lo..hi) {
+                let advance = advance_at(sizes: sizes, at: i);
+                set width_px = fadd.strict(width_px, advance);
+              }
+              let width = units_up(px: width_px);
+              let above = text_tops.inner[lo];
+              let move_x = if lo < moves_x.inner.len {
+                give moves_x.inner[lo];
+              } else {
+                give 0_i32;
+              }
+              let move_y = if lo < moves_y.inner.len {
+                give moves_y.inner[lo];
+              } else {
+                give 0_i32;
+              }
+              let text_group = if lo < groups.inner.len {
+                give groups.inner[lo];
+              } else {
+                give no_group;
+              }
+              let group_total = aligned.inner.len;
+              let delta = group_delta(aligned: &aligned.inner[0_u64..group_total], group: text_group, low: low, high: high);
+              let y_line = line_top_baseline +sat above;
+              let y_moved = y_line +sat move_y;
+              let y = y_moved +sat delta;
+              let x_from = units(px: x0);
+              let x_start = line_x +sat x_from;
+              let x_line = x_start +sat move_x;
+              let content = text_heights.inner[lo];
+              let made = Fragment(kind: placed_text, owner: source, x: x_line, y: y, width: width, height: content);
+              let pushed = push_item::<Fragment>(cell: &paragraph^.fragments, value: made, ceiling: item_ceiling);
+            }
+          }
+        }
+        Open(..) => {
+        }
+        Close(..) => {
+        }
+        Atomic(..) => {
+        }
+      }
+    }
+    set top = top +sat height;
+  }
+  set paragraph^.height = top;
+  return unit;
+}

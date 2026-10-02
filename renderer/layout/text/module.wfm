@@ -1,0 +1,101 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Face = pkg::font::Face;
+alias Family = pkg::css::values::Family;
+alias FontGroup = pkg::css::values::FontGroup;
+
+public const break_none: u8 = 0_u8;
+
+public const break_allowed: u8 = 1_u8;
+
+public const break_mandatory: u8 = 2_u8;
+
+public const break_emergency: u8 = 3_u8;
+
+public const cluster_start: u8 = 1_u8;
+
+public const cluster_space: u8 = 2_u8;
+
+public enum TextError {
+  TooLarge();
+  Invalid();
+}
+
+struct FontFace {
+  face: Face;
+  family: Box<Slots<u8>>;
+  weight: u16;
+  italic: Bool;
+  x_height: i16;
+}
+
+public struct FontSet {
+  faces: Box<Slots<FontFace>>;
+}
+
+public struct FontChoice {
+  public first: u32;
+  public end: u32;
+  public size: f32;
+  public weight: f32;
+  public italic: Bool;
+}
+
+public struct FontPicks {
+  public readonly choices: Box<Slots<FontChoice>>;
+  public readonly chain: Box<Slots<u32>>;
+}
+
+public struct FontExtents {
+  public ascent: f32;
+  public descent: f32;
+  public line_gap: f32;
+  public x_height: f32;
+  public zero_advance: f32;
+  public space_advance: f32;
+}
+
+public struct TextRun {
+  public start: u32;
+  public end: u32;
+  public font: u32;
+  public letter_spacing: f32;
+  public word_spacing: f32;
+  public wraps: Bool;
+  public word_break: u8;
+  public overflow_wrap: u8;
+}
+
+public struct FaceSegment {
+  public start: u32;
+  public end: u32;
+  public face: u32;
+  public size: f32;
+  public synthetic_bold: Bool;
+}
+
+public struct ShapedText {
+  public readonly advances: Box<Array<f32>>;
+  public readonly breaks: Box<Array<u8>>;
+  public readonly clusters: Box<Array<u8>>;
+  public readonly segments: Box<Slots<FaceSegment>>;
+}
+
+public fn font_set_new() -> made: FontSet pure doc "Returns a set that holds no face.";
+
+public fn font_set_add(fonts: &FontSet, family: &[u8], weight: u16, italic: Bool, data: &[u8]) -> result: Result<unit, TextError> reads(family), reads(data), writes(fonts) contract {
+  requires data^.len <= 268435456_u64;
+} doc "Loads data with pkg::font::load_face and adds it to fonts as a face of the family named family (the family name the platform reports, such as Liberation Serif), of the given weight (100 to 900) and italic or oblique when italic holds. The order of addition is the fallback order: a character that no face of an element's font-family list maps is drawn with the first face added, in this order, that maps it. Invalid when load_face refuses data; TooLarge past 2^31 faces.";
+
+public fn shaped_empty() -> made: ShapedText pure doc "Returns a shaped paragraph that holds no text: every array empty and no segment.";
+
+public fn face_count(fonts: &FontSet) -> count: u64 reads(fonts) doc "Returns the number of faces in fonts.";
+
+public fn pick_fonts(fonts: &FontSet, groups: &[FontGroup], families: &[Family], atoms: &AtomTable) -> result: Result<FontPicks, TextError> reads(fonts), reads(groups), reads(families), reads(atoms) doc "Returns, at each index of groups (the style stage's interned font groups, whose family lists are spans of families), the faces that draw text of that group, in priority order, as a span of chain, with the group's size, weight and style. A family name is resolved as the reference browser resolves it on its host (research/investigations/layout/DESIGN.md, Family names): serif, sans-serif, monospace and system-ui to Liberation Serif, Liberation Sans, DejaVu Sans Mono and DejaVu Sans; cursive and fantasy to Liberation Serif; Arial and Helvetica to Liberation Sans, Times New Roman and Times to Liberation Serif, Courier New and Courier to Liberation Mono; any other name to the installed family of that name, ASCII case-insensitively, or to nothing. Within a family, the face is chosen by CSS Fonts 4's font matching for the group's weight and style. The faces of the list come first, in list order and without repeats, then Liberation Serif when the list resolved to none, then the remaining faces of fonts in fallback order. Each matched face draws the group with synthetic bold when the group's weight is 600 or more and the face's is below 600, as the reference does. TooLarge past 2^31 entries.";
+
+public fn shape_paragraph(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[TextRun]) -> result: Result<ShapedText, TextError> reads(fonts), reads(picks), reads(text), reads(runs) contract {
+  requires text^.len <= 1073741824_u64;
+} doc "Shapes one paragraph: text is its scalar values after white-space processing and text-transform, with U+FFFC standing for each atomic inline and U+2028 for each forced line break, and runs cover text in order without gaps, each with the font group (an index of picks) and the spacing and wrapping of its style. Each run is itemized into maximal segments drawn by one face in one script, the face the first of its chain that maps the scalar (a cluster's marks follow its base, and a default ignorable the scalar before it) and the script that of the run's letters as the reference's itemizer resolves it (Common and inherited scalars take the script around them, and a run without letters is Latin, the script of the reference's en-US content language), and each segment is shaped once with pkg::font::shape_run in its script; a control (General_Category Cc, U+2028, U+2029, U+FFFC) is a segment and a cluster of its own, not shaped, of advance 0. advances holds, at the index of the first scalar of each cluster, the cluster's advance in px at the run's size, unrounded, plus letter-spacing after every cluster and word-spacing after every space (U+0020 and U+00A0), and 0 at every other index; clusters marks each cluster's first index with cluster_start and each index holding a space with cluster_space; segments lists the face segments in order. breaks holds, at each index i, whether a line may break before text[i]: break_mandatory after a U+2028 or a U+000A, break_allowed where pkg::text::line_break::find_line_breaks finds an opportunity, tailored as the reference's line breaker tailors it (always after a space or a tab before any other scalar, and between two scalars that are ASCII or U+00A0 only where its table of ASCII pairs allows one), adjusted by the run holding text[i - 1] as CSS Text 3 does for word-break (break-all allows a break between any two letters or numbers, keep-all forbids one between two letters, ideographs among them) and for white-space (a run that does not wrap keeps only mandatory breaks), break_emergency at the other cluster boundaries not before a space of a run whose overflow-wrap is break-word or anywhere or whose word-break is break-word, and break_none elsewhere and at index 0. A run's word_break is 0 for normal, 1 break-all, 2 keep-all and 3 break-word, and its overflow_wrap 0 for normal, 1 break-word and 2 anywhere. TooLarge when a segment passes pkg::font's limits.";
+
+public fn face_extents(fonts: &FontSet, face: u32, size: f32, synthetic_bold: Bool) -> extents: FontExtents reads(fonts) doc "Returns the vertical metrics of face drawn at size px as the reference uses them: ascent, descent and line gap from the face's hhea table, or from its OS/2 typographic metrics when USE_TYPO_METRICS is set, scaled and each rounded to whole pixels as the reference rounds them; the x-height and the advance of the digit zero and of the space, unrounded. A face outside fonts gives zeros.";
+
+public fn primary_face(fonts: &FontSet, picks: &FontPicks, font: u32) -> face: u32 reads(fonts), reads(picks) doc "Returns the first face of font's chain that maps U+0020, the face whose metrics give the group's line height and baseline, or the first face of the chain when none does.";

@@ -1,0 +1,877 @@
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_text = pkg::oracle::support::put_text;
+alias put_keyword = pkg::css::values::put_keyword;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias ComputedStyle = pkg::style::ComputedStyle;
+alias Document = pkg::dom::Document;
+alias GridLine = pkg::css::values::GridLine;
+alias LineNames = pkg::css::values::LineNames;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias TextSpan = pkg::dom::TextSpan;
+alias Track = pkg::css::values::Track;
+alias TrackBreadth = pkg::css::values::TrackBreadth;
+alias TrackList = pkg::css::values::TrackList;
+alias item_alt = pkg::css::values::item_alt;
+alias item_attr = pkg::css::values::item_attr;
+alias item_counter = pkg::css::values::item_counter;
+alias item_counters = pkg::css::values::item_counters;
+alias item_string = pkg::css::values::item_string;
+alias item_url = pkg::css::values::item_url;
+alias item_open_quote = pkg::css::values::item_open_quote;
+alias line_auto = pkg::css::values::line_auto;
+alias line_span = pkg::css::values::line_span;
+alias repeat_none = pkg::css::values::repeat_none;
+alias repeat_auto_fill = pkg::css::values::repeat_auto_fill;
+alias track_length = pkg::css::values::track_length;
+alias track_flex = pkg::css::values::track_flex;
+alias track_auto = pkg::css::values::track_auto;
+alias track_min_content = pkg::css::values::track_min_content;
+alias lh_flex_direction = pkg::css::values::lh_flex_direction;
+
+const breadth_words: Array<u8, 28> = "auto min-content max-content";
+
+const quote_item_words: Array<u8, 51> = "open-quote close-quote no-open-quote no-close-quote";
+
+const repeat_open_words: Array<u8, 34> = "repeat(auto-fill, repeat(auto-fit,";
+
+const minmax_open: Array<u8, 7> = "minmax(";
+
+const fit_content_open: Array<u8, 12> = "fit-content(";
+
+const counter_open: Array<u8, 8> = "counter(";
+
+const counters_open: Array<u8, 9> = "counters(";
+
+const url_open: Array<u8, 4> = "url(";
+
+const decimal_name: Array<u8, 7> = "decimal";
+
+const span_word: Array<u8, 4> = "span";
+
+const fr_unit: Array<u8, 2> = "fr";
+
+const slash_text: Array<u8, 3> = " / ";
+
+fn put_space(buffer: &Box<Slots<u8>>) -> result: unit writes(buffer) {
+  doc "Appends a space.";
+  put_byte(buffer: buffer, value: 32_u8);
+  return unit;
+}
+
+fn put_integer(buffer: &Box<Slots<u8>>, value: i32) -> result: unit writes(buffer) {
+  doc "Appends an integer in decimal with its sign.";
+  let negative = value < 0_i32;
+  if negative {
+    put_byte(buffer: buffer, value: 45_u8);
+    let wide = cvt::<i32, i64>(value);
+    let magnitude = 0_i64 -sat wide;
+    let unsigned = cvt.wrap::<i64, u64>(magnitude);
+    put_decimal(buffer: buffer, value: unsigned);
+    return unit;
+  }
+  let unsigned = cvt.wrap::<i32, u64>(value);
+  put_decimal(buffer: buffer, value: unsigned);
+  return unit;
+}
+
+fn put_float(buffer: &Box<Slots<u8>>, value: f32) -> result: unit writes(buffer) {
+  doc "Appends a number as Chromium serializes it.";
+  let wide = cvt::<f32, f64>(value);
+  put_number(buffer: buffer, value: wide);
+  return unit;
+}
+
+fn put_css_string(buffer: &Box<Slots<u8>>, text: &[u8]) -> result: unit reads(text), writes(buffer) {
+  doc "Appends text's characters as the body of a CSS string, serialized as CSSOM serializes a string: a quotation mark or reverse solidus escaped by a reverse solidus, a control character as a reverse solidus, its lower-case hexadecimal code and a space; every reverse solidus is then written twice, as the oracle's file format escapes it.";
+  let length = text^.len;
+  for (k in 0_u64..length) {
+    let byte = text^[k];
+    let low = byte < 32_u8;
+    let delete = byte == 127_u8;
+    let control = bor(low, delete);
+    let quote = byte == 34_u8;
+    let backslash = byte == 92_u8;
+    let escaped = bor(quote, backslash);
+    if control {
+      put_byte(buffer: buffer, value: 92_u8);
+      put_byte(buffer: buffer, value: 92_u8);
+      let high_nibble = byte / 16_u8;
+      let low_nibble = byte % 16_u8;
+      if high_nibble != 0_u8 {
+        let digit = hex_digit(value: high_nibble);
+        put_byte(buffer: buffer, value: digit);
+      }
+      let digit = hex_digit(value: low_nibble);
+      put_byte(buffer: buffer, value: digit);
+      put_byte(buffer: buffer, value: 32_u8);
+    } else if escaped {
+      put_byte(buffer: buffer, value: 92_u8);
+      put_byte(buffer: buffer, value: 92_u8);
+      if backslash {
+        put_byte(buffer: buffer, value: 92_u8);
+        put_byte(buffer: buffer, value: 92_u8);
+      } else {
+        put_byte(buffer: buffer, value: byte);
+      }
+    } else {
+      put_byte(buffer: buffer, value: byte);
+    }
+  }
+  return unit;
+}
+
+fn hex_digit(value: u8) -> digit: u8 pure {
+  doc "The lower-case hexadecimal digit of a value below 16.";
+  let small = value < 10_u8;
+  if small {
+    let made = 48_u8 +sat value;
+    return made;
+  }
+  let letter = value -sat 10_u8;
+  let made = 97_u8 +sat letter;
+  return made;
+}
+
+fn generated_slice(styles: &Styles, start: u32, end: u32) -> (first: u64, stop: u64) reads(styles) contract {
+  ensures first <= stop;
+  ensures stop <= styles^.generated_text.inner.len;
+} {
+  doc "The bounds of a range of the generated text, empty when it lies outside.";
+  let a = cvt::<u32, u64>(start);
+  let b = cvt::<u32, u64>(end);
+  let ordered = a <= b;
+  let inside = b <= styles^.generated_text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    return a, b;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn put_names(buffer: &Box<Slots<u8>>, styles: &Styles, atoms: &AtomTable, names: LineNames, leading: Bool) -> wrote: Bool reads(styles), reads(atoms), writes(buffer) {
+  doc "Appends a list of line names in square brackets, after a space when leading holds; nothing for an empty list. Returns whether it wrote.";
+  let first = cvt::<u32, u64>(names.first);
+  let end = cvt::<u32, u64>(names.end);
+  if first >= end {
+    return False();
+  }
+  if leading {
+    put_space(buffer: buffer);
+  }
+  put_byte(buffer: buffer, value: 91_u8);
+  for (k in first..end) {
+    let inside = k < styles^.line_names.inner.len;
+    if inside {
+      if k > first {
+        put_space(buffer: buffer);
+      }
+      put_atom(buffer: buffer, atoms: atoms, index: styles^.line_names.inner[k].index);
+    }
+  }
+  put_byte(buffer: buffer, value: 93_u8);
+  return True();
+}
+
+fn put_breadth(buffer: &Box<Slots<u8>>, breadth: TrackBreadth) -> result: unit writes(buffer) {
+  doc "Appends a track breadth: a length-percentage, a flex value in fr, or its keyword.";
+  if breadth.kind == track_length {
+    put_length_percentage(buffer: buffer, value: breadth.value);
+    return unit;
+  }
+  if breadth.kind == track_flex {
+    put_float(buffer: buffer, value: breadth.flex);
+    put_text(buffer: buffer, text: &fr_unit[0_u64..fr_unit.len]);
+    return unit;
+  }
+  let n = breadth_words.len;
+  let index = if breadth.kind == track_auto {
+    give 0_u64;
+  } else if breadth.kind == track_min_content {
+    give 1_u64;
+  } else {
+    give 2_u64;
+  }
+  put_nth_word(buffer: buffer, list: &breadth_words[0_u64..n], index: index);
+  return unit;
+}
+
+fn same_breadth(first: TrackBreadth, second: TrackBreadth) -> same: Bool pure {
+  doc "True when two breadths are equal.";
+  if first.kind != second.kind {
+    return False();
+  }
+  let px = feq(first.value.px, second.value.px);
+  let percent = feq(first.value.percent, second.value.percent);
+  let has = eeq(first.value.has_percent, second.value.has_percent);
+  let flex = feq(first.flex, second.flex);
+  let a = band(px, percent);
+  let b = band(has, flex);
+  let both = band(a, b);
+  return both;
+}
+
+fn put_track(buffer: &Box<Slots<u8>>, track: Track) -> result: unit writes(buffer) {
+  doc "Appends a track size: fit-content() of its maximum, its breadth when the minimum and maximum are equal, or minmax().";
+  if track.fit_content {
+    put_text(buffer: buffer, text: &fit_content_open[0_u64..fit_content_open.len]);
+    put_length_percentage(buffer: buffer, value: track.max.value);
+    put_byte(buffer: buffer, value: 41_u8);
+    return unit;
+  }
+  let same = same_breadth(first: track.min, second: track.max);
+  if same {
+    put_breadth(buffer: buffer, breadth: track.min);
+    return unit;
+  }
+  put_text(buffer: buffer, text: &minmax_open[0_u64..minmax_open.len]);
+  put_breadth(buffer: buffer, breadth: track.min);
+  put_byte(buffer: buffer, value: 44_u8);
+  put_space(buffer: buffer);
+  put_breadth(buffer: buffer, breadth: track.max);
+  put_byte(buffer: buffer, value: 41_u8);
+  return unit;
+}
+
+fn put_track_list(buffer: &Box<Slots<u8>>, styles: &Styles, atoms: &AtomTable, id: u32, first_only: Bool) -> result: unit reads(styles), reads(atoms), writes(buffer) {
+  doc "Appends a track list as Chromium's computedStyleMap serializes it: none for the empty list, otherwise its tracks with their line names in brackets and the automatic repeat as repeat(); with first_only, only the first track, as get() reads a list-valued property.";
+  let at = cvt::<u32, u64>(id);
+  let known = at < styles^.track_lists.inner.len;
+  if known {
+  } else {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let list = styles^.track_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  if first >= end {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let repeat_first = cvt::<u32, u64>(list.repeat_first);
+  let repeat_end = cvt::<u32, u64>(list.repeat_end);
+  let repeating = list.repeat_kind != repeat_none;
+  let wrote = False();
+  for (k in first..end) {
+    let inside = k < styles^.tracks.inner.len;
+    if inside {
+    } else {
+      return unit;
+    }
+    let track = styles^.tracks.inner[k];
+    let at_repeat = k == repeat_first;
+    let opens = band(repeating, at_repeat);
+    if opens {
+      let before = put_names(buffer: buffer, styles: styles, atoms: atoms, names: list.repeat_names_before, leading: wrote);
+      if before {
+        set wrote = True();
+      }
+      if wrote {
+        put_space(buffer: buffer);
+      }
+      let n = repeat_open_words.len;
+      let index = if list.repeat_kind == repeat_auto_fill {
+        give 0_u64;
+      } else {
+        give 1_u64;
+      }
+      put_nth_word(buffer: buffer, list: &repeat_open_words[0_u64..n], index: index);
+      put_space(buffer: buffer);
+      set wrote = False();
+    }
+    let named = put_names(buffer: buffer, styles: styles, atoms: atoms, names: track.names_before, leading: wrote);
+    if named {
+      set wrote = True();
+    }
+    if wrote {
+      put_space(buffer: buffer);
+    }
+    put_track(buffer: buffer, track: track);
+    set wrote = True();
+    if first_only {
+      return unit;
+    }
+    let last_repeated = k +sat 1_u64;
+    let at_end = last_repeated == repeat_end;
+    let closes = band(repeating, at_end);
+    if closes {
+      let after = put_names(buffer: buffer, styles: styles, atoms: atoms, names: list.repeat_names_after, leading: wrote);
+      put_byte(buffer: buffer, value: 41_u8);
+    }
+  }
+  let trailing = put_names(buffer: buffer, styles: styles, atoms: atoms, names: list.names_after, leading: wrote);
+  return unit;
+}
+
+fn put_areas(buffer: &Box<Slots<u8>>, styles: &Styles, atoms: &AtomTable, id: u32) -> result: unit reads(styles), reads(atoms), writes(buffer) {
+  doc "Appends grid-template-areas: none, or one quoted string per row naming each cell's area, a full stop for a cell in none.";
+  let at = cvt::<u32, u64>(id);
+  let known = at < styles^.area_maps.inner.len;
+  if known {
+  } else {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let map = styles^.area_maps.inner[at];
+  let rows = cvt::<u32, u64>(map.rows);
+  let columns = cvt::<u32, u64>(map.columns);
+  let no_rows = rows == 0_u64;
+  let no_columns = columns == 0_u64;
+  let none_map = bor(no_rows, no_columns);
+  if none_map {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let first = cvt::<u32, u64>(map.first);
+  let end = cvt::<u32, u64>(map.end);
+  for (r in 0_u64..rows) {
+    if r > 0_u64 {
+      put_space(buffer: buffer);
+    }
+    put_byte(buffer: buffer, value: 34_u8);
+    for (c in 0_u64..columns) {
+      if c > 0_u64 {
+        put_space(buffer: buffer);
+      }
+      let found = False();
+      for (k in first..end) {
+        let inside = k < styles^.named_areas.inner.len;
+        let open = bnot(found);
+        let look = band(inside, open);
+        if look {
+          let area = styles^.named_areas.inner[k];
+          let row_start = cvt::<u32, u64>(area.row_start);
+          let row_end = cvt::<u32, u64>(area.row_end);
+          let column_start = cvt::<u32, u64>(area.column_start);
+          let column_end = cvt::<u32, u64>(area.column_end);
+          let after_top = r >= row_start;
+          let before_bottom = r < row_end;
+          let after_left = c >= column_start;
+          let before_right = c < column_end;
+          let in_rows = band(after_top, before_bottom);
+          let in_columns = band(after_left, before_right);
+          let covers = band(in_rows, in_columns);
+          if covers {
+            put_atom(buffer: buffer, atoms: atoms, index: area.name.index);
+            set found = True();
+          }
+        }
+      }
+      if found {
+      } else {
+        put_byte(buffer: buffer, value: 46_u8);
+      }
+    }
+    put_byte(buffer: buffer, value: 34_u8);
+  }
+  return unit;
+}
+
+fn put_line(buffer: &Box<Slots<u8>>, atoms: &AtomTable, line: GridLine) -> result: unit reads(atoms), writes(buffer) {
+  doc "Appends a grid line: auto, or span, its number when not zero and its name, separated by spaces.";
+  if line.kind == line_auto {
+    put_text(buffer: buffer, text: &auto_word[0_u64..auto_word.len]);
+    return unit;
+  }
+  let wrote = False();
+  if line.kind == line_span {
+    put_text(buffer: buffer, text: &span_word[0_u64..span_word.len]);
+    set wrote = True();
+  }
+  if line.number != 0_i32 {
+    if wrote {
+      put_space(buffer: buffer);
+    }
+    put_integer(buffer: buffer, value: line.number);
+    set wrote = True();
+  }
+  if line.named {
+    if wrote {
+      put_space(buffer: buffer);
+    }
+    put_atom(buffer: buffer, atoms: atoms, index: line.name.index);
+  }
+  return unit;
+}
+
+fn atom_is(atoms: &AtomTable, index: u32, word: &[u8]) -> same: Bool reads(atoms), reads(word) {
+  doc "True when the atom's text is word.";
+  let at = cvt::<u32, u64>(index);
+  let known = at < atoms^.spans.inner.len;
+  if known {
+  } else {
+    return False();
+  }
+  let span = atoms^.spans.inner[at];
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  let inside = end <= atoms^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return False();
+  }
+  let width = end - start;
+  if width != word^.len {
+    return False();
+  }
+  for (k in 0_u64..width) {
+    let at_byte = start + k;
+    if atoms^.text.inner[at_byte] != word^[k] {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn lower_ascii(byte: u8) -> lower: u8 pure {
+  doc "Lowers an ASCII upper-case letter.";
+  let from = byte >= 65_u8;
+  let to = byte <= 90_u8;
+  let upper = band(from, to);
+  if upper {
+    let made = byte + 32_u8;
+    return made;
+  }
+  return byte;
+}
+
+fn attribute_value(document: &Document, atoms: &AtomTable, element: NodeId, name: u32) -> value: Option<TextSpan> reads(document), reads(atoms) {
+  doc "The value of element's first attribute in no namespace whose name equals the atom's text ASCII case-insensitively, or None.";
+  let index = cvt::<u32, u64>(element.index);
+  let known = index < document^.nodes.inner.len;
+  if known {
+  } else {
+    return None<TextSpan>();
+  }
+  let name_at = cvt::<u32, u64>(name);
+  let named = name_at < atoms^.spans.inner.len;
+  if named {
+  } else {
+    return None<TextSpan>();
+  }
+  let wanted = atoms^.spans.inner[name_at];
+  let w_start = cvt::<u32, u64>(wanted.start);
+  let w_end = cvt::<u32, u64>(wanted.end);
+  let data = &document^.nodes.inner[index].data;
+  match data^ {
+    Element(namespace: space, local_name: local, attributes: attrs, template_contents: held) => {
+      let total = attrs^.inner.len;
+      for (k in 0_u64..total) {
+        let attribute = attrs^.inner[k];
+        let plain = match attribute.namespace {
+          NoNamespace() => {
+            give True();
+          }
+          XLink() => {
+            give False();
+          }
+          Xml() => {
+            give False();
+          }
+          XmlNs() => {
+            give False();
+          }
+        }
+        if plain {
+          let attribute_at = cvt::<u32, u64>(attribute.name.index);
+          let listed = attribute_at < atoms^.spans.inner.len;
+          if listed {
+            let span = atoms^.spans.inner[attribute_at];
+            let a_start = cvt::<u32, u64>(span.start);
+            let a_end = cvt::<u32, u64>(span.end);
+            let a_width = a_end -sat a_start;
+            let w_width = w_end -sat w_start;
+            let same = a_width == w_width;
+            if same {
+              let equal = True();
+              for (b in 0_u64..a_width) {
+                let x = a_start +sat b;
+                let y = w_start +sat b;
+                let inside_x = x < atoms^.text.inner.len;
+                let inside_y = y < atoms^.text.inner.len;
+                let inside = band(inside_x, inside_y);
+                if inside {
+                  let left = lower_ascii(byte: atoms^.text.inner[x]);
+                  let right = lower_ascii(byte: atoms^.text.inner[y]);
+                  if left != right {
+                    set equal = False();
+                  }
+                } else {
+                  set equal = False();
+                }
+              }
+              if equal {
+                return Some<TextSpan>(value: attribute.value);
+              }
+            }
+          }
+        }
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return None<TextSpan>();
+}
+
+fn put_document_text(buffer: &Box<Slots<u8>>, document: &Document, span: TextSpan) -> result: unit reads(document), writes(buffer) {
+  doc "Appends a span of the document's text as the body of a CSS string.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  let inside = end <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    put_css_string(buffer: buffer, text: &document^.text.inner[start..end]);
+  }
+  return unit;
+}
+
+fn put_content(buffer: &Box<Slots<u8>>, styles: &Styles, atoms: &AtomTable, document: &Document, element: NodeId, id: u32) -> result: unit reads(styles), reads(atoms), reads(document), writes(buffer) {
+  doc "Appends content: normal, none, or its items separated by spaces, adjacent strings and attr() values, which read the element's attribute, joined in one string as Chromium serializes them, and the alternative text after a solidus.";
+  if id == 0_u32 {
+    put_text(buffer: buffer, text: &normal_word[0_u64..normal_word.len]);
+    return unit;
+  }
+  if id == 1_u32 {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let at = cvt::<u32, u64>(id);
+  let known = at < styles^.content_lists.inner.len;
+  if known {
+  } else {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let list = styles^.content_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  let in_string = False();
+  let wrote = False();
+  let decimal_n = decimal_name.len;
+  for (k in first..end) {
+    let inside = k < styles^.content_items.inner.len;
+    if inside {
+    } else {
+      return unit;
+    }
+    let item = styles^.content_items.inner[k];
+    let is_string = item.kind == item_string;
+    let is_attr = item.kind == item_attr;
+    let textual = bor(is_string, is_attr);
+    if textual {
+      if in_string {
+      } else {
+        if wrote {
+          put_space(buffer: buffer);
+        }
+        put_byte(buffer: buffer, value: 34_u8);
+        set in_string = True();
+      }
+      if item.kind == item_string {
+        let (a, b) = generated_slice(styles: styles, start: item.text_start, end: item.text_end);
+        put_css_string(buffer: buffer, text: &styles^.generated_text.inner[a..b]);
+      } else {
+        match attribute_value(document: document, atoms: atoms, element: element, name: item.name.index) {
+          Some(value: span) => {
+            put_document_text(buffer: buffer, document: document, span: span);
+          }
+          None() => {
+          }
+        }
+      }
+      set wrote = True();
+    } else {
+      if in_string {
+        put_byte(buffer: buffer, value: 34_u8);
+        set in_string = False();
+      }
+      if item.kind == item_alt {
+        put_text(buffer: buffer, text: &slash_text[0_u64..slash_text.len]);
+        set wrote = False();
+      } else {
+        if wrote {
+          put_space(buffer: buffer);
+        }
+        if item.kind == item_url {
+          put_text(buffer: buffer, text: &url_open[0_u64..url_open.len]);
+          put_byte(buffer: buffer, value: 34_u8);
+          let (a, b) = generated_slice(styles: styles, start: item.text_start, end: item.text_end);
+          put_css_string(buffer: buffer, text: &styles^.generated_text.inner[a..b]);
+          put_byte(buffer: buffer, value: 34_u8);
+          put_byte(buffer: buffer, value: 41_u8);
+        } else if item.kind == item_counter {
+          put_text(buffer: buffer, text: &counter_open[0_u64..counter_open.len]);
+          put_atom(buffer: buffer, atoms: atoms, index: item.name.index);
+          let decimal = atom_is(atoms: atoms, index: item.list_style.index, word: &decimal_name[0_u64..decimal_n]);
+          if decimal {
+          } else {
+            put_byte(buffer: buffer, value: 44_u8);
+            put_space(buffer: buffer);
+            put_atom(buffer: buffer, atoms: atoms, index: item.list_style.index);
+          }
+          put_byte(buffer: buffer, value: 41_u8);
+        } else if item.kind == item_counters {
+          put_text(buffer: buffer, text: &counters_open[0_u64..counters_open.len]);
+          put_atom(buffer: buffer, atoms: atoms, index: item.name.index);
+          put_byte(buffer: buffer, value: 44_u8);
+          put_space(buffer: buffer);
+          put_byte(buffer: buffer, value: 34_u8);
+          let (a, b) = generated_slice(styles: styles, start: item.text_start, end: item.text_end);
+          put_css_string(buffer: buffer, text: &styles^.generated_text.inner[a..b]);
+          put_byte(buffer: buffer, value: 34_u8);
+          let decimal = atom_is(atoms: atoms, index: item.list_style.index, word: &decimal_name[0_u64..decimal_n]);
+          if decimal {
+          } else {
+            put_byte(buffer: buffer, value: 44_u8);
+            put_space(buffer: buffer);
+            put_atom(buffer: buffer, atoms: atoms, index: item.list_style.index);
+          }
+          put_byte(buffer: buffer, value: 41_u8);
+        } else {
+          let n = quote_item_words.len;
+          let offset = item.kind -sat item_open_quote;
+          let index = cvt::<u8, u64>(offset);
+          put_nth_word(buffer: buffer, list: &quote_item_words[0_u64..n], index: index);
+        }
+        set wrote = True();
+      }
+    }
+  }
+  if in_string {
+    put_byte(buffer: buffer, value: 34_u8);
+  }
+  return unit;
+}
+
+fn put_counters(buffer: &Box<Slots<u8>>, styles: &Styles, atoms: &AtomTable, id: u32) -> result: unit reads(styles), reads(atoms), writes(buffer) {
+  doc "Appends a counter list: none, or each name and value separated by spaces.";
+  let at = cvt::<u32, u64>(id);
+  let known = at < styles^.counter_lists.inner.len;
+  let some = id != 0_u32;
+  let usable = band(known, some);
+  if usable {
+  } else {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let list = styles^.counter_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  for (k in first..end) {
+    let inside = k < styles^.counter_changes.inner.len;
+    if inside {
+      if k > first {
+        put_space(buffer: buffer);
+      }
+      let change = styles^.counter_changes.inner[k];
+      put_atom(buffer: buffer, atoms: atoms, index: change.name.index);
+      put_space(buffer: buffer);
+      put_integer(buffer: buffer, value: change.value);
+    }
+  }
+  return unit;
+}
+
+fn put_quotes(buffer: &Box<Slots<u8>>, styles: &Styles, id: u32) -> result: unit reads(styles), writes(buffer) {
+  doc "Appends quotes: auto, none, or its strings separated by spaces.";
+  if id == 0_u32 {
+    put_text(buffer: buffer, text: &auto_word[0_u64..auto_word.len]);
+    return unit;
+  }
+  let at = cvt::<u32, u64>(id);
+  let known = at < styles^.quote_lists.inner.len;
+  let some = id != 1_u32;
+  let usable = band(known, some);
+  if usable {
+  } else {
+    put_text(buffer: buffer, text: &none_word[0_u64..none_word.len]);
+    return unit;
+  }
+  let list = styles^.quote_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  for (k in first..end) {
+    let inside = k < styles^.quote_pairs.inner.len;
+    if inside {
+      if k > first {
+        put_space(buffer: buffer);
+      }
+      let pair = styles^.quote_pairs.inner[k];
+      let (a, b) = generated_slice(styles: styles, start: pair.open_start, end: pair.open_end);
+      put_byte(buffer: buffer, value: 34_u8);
+      put_css_string(buffer: buffer, text: &styles^.generated_text.inner[a..b]);
+      put_byte(buffer: buffer, value: 34_u8);
+      put_space(buffer: buffer);
+      let (c, d) = generated_slice(styles: styles, start: pair.close_start, end: pair.close_end);
+      put_byte(buffer: buffer, value: 34_u8);
+      put_css_string(buffer: buffer, text: &styles^.generated_text.inner[c..d]);
+      put_byte(buffer: buffer, value: 34_u8);
+    }
+  }
+  return unit;
+}
+
+fn put_second(buffer: &Box<Slots<u8>>, styles: &Styles, atoms: &AtomTable, document: &Document, element: NodeId, style: ComputedStyle) -> result: unit reads(styles), reads(atoms), reads(document), writes(buffer) {
+  doc "Appends a styled node's 42 values of the second batch, each after a tab, in the oracle's column order; element is the node or the pseudo-element's originating element, whose attributes attr() reads.";
+  let container_at = cvt::<u32, u64>(style.container);
+  let item_at = cvt::<u32, u64>(style.item);
+  let table_at = cvt::<u32, u64>(style.table);
+  let content_at = cvt::<u32, u64>(style.content);
+  let size_at = cvt::<u32, u64>(style.size);
+  let text_at = cvt::<u32, u64>(style.text);
+  let b1 = container_at < styles^.containers.inner.len;
+  let b2 = item_at < styles^.items.inner.len;
+  let b3 = table_at < styles^.tables.inner.len;
+  let b4 = content_at < styles^.contents.inner.len;
+  let b5 = size_at < styles^.sizes.inner.len;
+  let b6 = text_at < styles^.texts.inner.len;
+  let c1 = band(b1, b2);
+  let c2 = band(b3, b4);
+  let c3 = band(b5, b6);
+  let c4 = band(c1, c2);
+  let all = band(c4, c3);
+  if all {
+  } else {
+    return unit;
+  }
+  let container = styles^.containers.inner[container_at];
+  let item = styles^.items.inner[item_at];
+  let table = styles^.tables.inner[table_at];
+  let content = styles^.contents.inner[content_at];
+  let size = styles^.sizes.inner[size_at];
+  let text = styles^.texts.inner[text_at];
+  let no = False();
+  let yes = True();
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 55_u8, keyword: container.flex_direction);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 56_u8, keyword: container.flex_wrap);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 57_u8, keyword: container.justify_content);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 58_u8, keyword: container.align_items);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 59_u8, keyword: container.align_content);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 60_u8, keyword: container.justify_items);
+  put_tab(buffer: buffer);
+  put_sizing(buffer: buffer, longhand: 61_u8, value: container.row_gap);
+  put_tab(buffer: buffer);
+  put_sizing(buffer: buffer, longhand: 62_u8, value: container.column_gap);
+  put_tab(buffer: buffer);
+  put_track_list(buffer: buffer, styles: styles, atoms: atoms, id: container.template_columns, first_only: no);
+  put_tab(buffer: buffer);
+  put_track_list(buffer: buffer, styles: styles, atoms: atoms, id: container.template_rows, first_only: no);
+  put_tab(buffer: buffer);
+  put_areas(buffer: buffer, styles: styles, atoms: atoms, id: container.template_areas);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 66_u8, keyword: container.auto_flow);
+  put_tab(buffer: buffer);
+  put_track_list(buffer: buffer, styles: styles, atoms: atoms, id: container.auto_columns, first_only: yes);
+  put_tab(buffer: buffer);
+  put_track_list(buffer: buffer, styles: styles, atoms: atoms, id: container.auto_rows, first_only: yes);
+  put_tab(buffer: buffer);
+  put_integer(buffer: buffer, value: item.order);
+  put_tab(buffer: buffer);
+  put_float(buffer: buffer, value: item.grow);
+  put_tab(buffer: buffer);
+  put_float(buffer: buffer, value: item.shrink);
+  put_tab(buffer: buffer);
+  put_sizing(buffer: buffer, longhand: 72_u8, value: item.basis);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 73_u8, keyword: item.align_self);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 74_u8, keyword: item.justify_self);
+  put_tab(buffer: buffer);
+  put_line(buffer: buffer, atoms: atoms, line: item.row_start);
+  put_tab(buffer: buffer);
+  put_line(buffer: buffer, atoms: atoms, line: item.row_end);
+  put_tab(buffer: buffer);
+  put_line(buffer: buffer, atoms: atoms, line: item.column_start);
+  put_tab(buffer: buffer);
+  put_line(buffer: buffer, atoms: atoms, line: item.column_end);
+  put_tab(buffer: buffer);
+  let degenerate_width = feq(size.aspect_width, 0.0_f32);
+  let degenerate_height = feq(size.aspect_height, 0.0_f32);
+  let no_ratio = band(degenerate_width, degenerate_height);
+  let auto_only = band(size.aspect_auto, no_ratio);
+  if auto_only {
+    put_text(buffer: buffer, text: &auto_word[0_u64..auto_word.len]);
+  } else {
+    if size.aspect_auto {
+      put_text(buffer: buffer, text: &auto_word[0_u64..auto_word.len]);
+      put_space(buffer: buffer);
+    }
+    put_float(buffer: buffer, value: size.aspect_width);
+    put_text(buffer: buffer, text: &slash_text[0_u64..slash_text.len]);
+    put_float(buffer: buffer, value: size.aspect_height);
+  }
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 80_u8, keyword: table.border_collapse);
+  put_tab(buffer: buffer);
+  put_px(buffer: buffer, value: table.spacing_horizontal);
+  let equal_spacing = feq(table.spacing_horizontal, table.spacing_vertical);
+  if equal_spacing {
+  } else {
+    put_space(buffer: buffer);
+    put_px(buffer: buffer, value: table.spacing_vertical);
+  }
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 82_u8, keyword: table.table_layout);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 83_u8, keyword: table.caption_side);
+  put_tab(buffer: buffer);
+  put_content(buffer: buffer, styles: styles, atoms: atoms, document: document, element: element, id: content.content);
+  put_tab(buffer: buffer);
+  put_counters(buffer: buffer, styles: styles, atoms: atoms, id: content.counter_reset);
+  put_tab(buffer: buffer);
+  put_counters(buffer: buffer, styles: styles, atoms: atoms, id: content.counter_increment);
+  put_tab(buffer: buffer);
+  put_counters(buffer: buffer, styles: styles, atoms: atoms, id: content.counter_set);
+  put_tab(buffer: buffer);
+  put_quotes(buffer: buffer, styles: styles, id: content.quotes);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 89_u8, keyword: content.list_style_position);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 90_u8, keyword: text.overflow_wrap);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 91_u8, keyword: text.word_break);
+  put_tab(buffer: buffer);
+  let automatic_count = container.column_count == 0_u32;
+  if automatic_count {
+    put_text(buffer: buffer, text: &auto_word[0_u64..auto_word.len]);
+  } else {
+    let count_wide = cvt::<u32, u64>(container.column_count);
+    put_decimal(buffer: buffer, value: count_wide);
+  }
+  put_tab(buffer: buffer);
+  put_sizing(buffer: buffer, longhand: 93_u8, value: container.column_width);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 94_u8, keyword: container.column_fill);
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 95_u8, keyword: item.break_inside);
+  let box_at = cvt::<u32, u64>(style.box);
+  let box_fits = box_at < styles^.boxes.inner.len;
+  let bidi = if box_fits {
+    give styles^.boxes.inner[box_at].unicode_bidi;
+  } else {
+    give 0_u8;
+  }
+  put_tab(buffer: buffer);
+  put_keyword(out: buffer, longhand: 96_u8, keyword: bidi);
+  return unit;
+}

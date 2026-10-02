@@ -1,10 +1,25 @@
 alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias BackgroundGroup = pkg::css::values::BackgroundGroup;
+alias TrackList = pkg::css::values::TrackList;
+alias Track = pkg::css::values::Track;
+alias TableGroup = pkg::css::values::TableGroup;
+alias QuotePair = pkg::css::values::QuotePair;
+alias QuoteList = pkg::css::values::QuoteList;
+alias NamedArea = pkg::css::values::NamedArea;
+alias ItemGroup = pkg::css::values::ItemGroup;
+alias CounterList = pkg::css::values::CounterList;
+alias CounterChange = pkg::css::values::CounterChange;
+alias ContentList = pkg::css::values::ContentList;
+alias ContentItem = pkg::css::values::ContentItem;
+alias ContentGroup = pkg::css::values::ContentGroup;
+alias ContainerGroup = pkg::css::values::ContainerGroup;
+alias AreaMap = pkg::css::values::AreaMap;
 alias BorderGroup = pkg::css::values::BorderGroup;
 alias BoxGroup = pkg::css::values::BoxGroup;
 alias ComponentList = pkg::css::syntax::ComponentList;
 alias DeclarationStore = pkg::css::values::DeclarationStore;
+alias Declared = pkg::css::values::Declared;
 alias Document = pkg::dom::Document;
 alias Environment = pkg::css::values::Environment;
 alias Family = pkg::css::values::Family;
@@ -21,6 +36,10 @@ alias TextSpan = pkg::dom::TextSpan;
 public const origin_user_agent: u8 = 0_u8;
 
 public const origin_author: u8 = 1_u8;
+
+public const pseudo_before: u8 = 0_u8;
+
+public const pseudo_after: u8 = 1_u8;
 
 public enum StyleError {
   TooLarge();
@@ -67,6 +86,7 @@ public struct RuleStore {
   customs: Box<Slots<CustomDeclaration>>;
   custom_rules: Box<Slots<u32>>;
   attributes: Box<Slots<AttributeStyle>>;
+  hints: Box<Slots<AttributeStyle>>;
 }
 
 public enum SheetSource {
@@ -84,6 +104,24 @@ public struct Cascade {
   winners: Box<Array<u32>>;
   custom_keys: Box<Array<u64>>;
   custom_count: u64;
+  element_count: u64;
+  nodes: Box<Array<NodeId>>;
+  parents: Box<Array<u32>>;
+  kinds: Box<Array<u8>>;
+}
+
+struct Resolved {
+  node: u32;
+  longhand: u8;
+  valid: Bool;
+  value: Declared;
+}
+
+struct TrackNodes {
+  columns: u32;
+  rows: u32;
+  auto_columns: u32;
+  auto_rows: u32;
 }
 
 struct CustomEntry {
@@ -105,6 +143,7 @@ public struct Inherited {
   font_scales: Box<Array<f32>>;
   ex: Box<Array<f32>>;
   ch: Box<Array<f32>>;
+  lh: Box<Array<f32>>;
   sets: Box<Array<u32>>;
   custom_sets: Box<Slots<CustomSet>>;
   custom_entries: Box<Slots<CustomEntry>>;
@@ -114,6 +153,14 @@ public struct Inherited {
   disc: Atom;
   monospace: Atom;
   root_font_size: f32;
+  tables: Box<Array<TableGroup>>;
+  quotes: Box<Array<u32>>;
+  list_positions: Box<Array<u8>>;
+  resolved: Box<Slots<Resolved>>;
+  resolves: Bool;
+  environment: Environment;
+  pseudo_parents: Box<Slots<u32>>;
+  pseudo_kinds: Box<Slots<u8>>;
 }
 
 public struct Resets {
@@ -124,6 +171,11 @@ public struct Resets {
   backgrounds: Box<Array<BackgroundGroup>>;
   vertical_aligns: Box<Array<Sizing>>;
   decorations: Box<Array<u8>>;
+  containers: Box<Array<ContainerGroup>>;
+  track_nodes: Box<Array<TrackNodes>>;
+  items: Box<Array<ItemGroup>>;
+  table_layouts: Box<Array<u8>>;
+  contents: Box<Array<ContentGroup>>;
 }
 
 public struct ComputedStyle {
@@ -135,6 +187,16 @@ public struct ComputedStyle {
   public text: u32;
   public background: u32;
   public custom: u32;
+  public container: u32;
+  public item: u32;
+  public table: u32;
+  public content: u32;
+}
+
+public struct PseudoStyle {
+  public element: u32;
+  public kind: u8;
+  public style: ComputedStyle;
 }
 
 public struct Styles {
@@ -148,6 +210,23 @@ public struct Styles {
   public readonly backgrounds: Box<Slots<BackgroundGroup>>;
   public readonly families: Box<Slots<Family>>;
   public readonly custom_sets: u64;
+  public readonly containers: Box<Slots<ContainerGroup>>;
+  public readonly items: Box<Slots<ItemGroup>>;
+  public readonly tables: Box<Slots<TableGroup>>;
+  public readonly contents: Box<Slots<ContentGroup>>;
+  public readonly tracks: Box<Slots<Track>>;
+  public readonly track_lists: Box<Slots<TrackList>>;
+  public readonly line_names: Box<Slots<Atom>>;
+  public readonly area_maps: Box<Slots<AreaMap>>;
+  public readonly named_areas: Box<Slots<NamedArea>>;
+  public readonly content_lists: Box<Slots<ContentList>>;
+  public readonly content_items: Box<Slots<ContentItem>>;
+  public readonly counter_lists: Box<Slots<CounterList>>;
+  public readonly counter_changes: Box<Slots<CounterChange>>;
+  public readonly quote_lists: Box<Slots<QuoteList>>;
+  public readonly quote_pairs: Box<Slots<QuotePair>>;
+  public readonly generated_text: Box<Slots<u8>>;
+  public readonly pseudos: Box<Slots<PseudoStyle>>;
 }
 
 public fn rule_store_new() -> made: RuleStore pure doc "Returns a store that holds no sheet, rule or declaration.";
@@ -164,16 +243,18 @@ public fn media_holds(document: &Document, span: TextSpan, environment: Environm
 
 public fn add_style_attributes(store: &RuleStore, document: &Document, traversal: &Traversal, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(store), writes(atoms) doc "Parses the style attribute of each element of traversal in the HTML, SVG or MathML namespace, in preorder, as a declaration list of the author origin that applies to that element alone, after every rule and with a specificity above any selector's. It is called after every sheet has been added.";
 
+public fn add_presentational_hints(store: &RuleStore, document: &Document, traversal: &Traversal, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(store), writes(atoms) doc "Records, for each element of traversal in the HTML namespace, in preorder, the presentational hints of the HTML Standard's rendering section that depend on attribute values, as a declaration list match_elements offers in the user-agent layer with a specificity above every selector's, so an author declaration always wins over a hint and a hint over every normal user-agent rule: the width and height attributes of img, video, embed, iframe, object and an image input as dimensions, and of img, video and an image input as aspect-ratio auto w / h when neither is a percentage; canvas's as aspect-ratio when both are non-negative integers; a table's width (ignoring zero) and height, cellspacing as border-spacing and border as its border widths, 1px when the value does not parse; the width of col and hr; the height of tr, thead, tbody and tfoot; a td's or th's width and height (ignoring zero), its table's cellpadding as its padding; and, for a table whose border attribute is not equivalent to zero, the rules the standard gives table[border] and its cells under that condition, border-style outset on the table and a 1px inset border on each cell of table > tr or table > thead, tbody or tfoot > tr. It is called after add_style_attributes; static hints, whose selectors express them, are in the user-agent sheet.";
+
 public fn rule_count(store: &RuleStore) -> count: u64 reads(store) doc "Returns the number of style rules store holds.";
 
 public fn build_traversal(document: &Document) -> result: Result<Traversal, StyleError> reads(document) doc "Returns document's Element nodes in tree order (preorder), which a walk from the document root through first children and next siblings visits; template contents are not in the tree. parents holds, at each element's preorder index, its parent element's preorder index, or the number of elements for an element whose parent is no element.";
 
-public fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Cascade, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) doc "The first part of the stage, one counted loop over the elements in preorder whose iteration writes only its element's slots: it tests the rules a rule index offers for the element with pkg::css::selectors::matching_specificity and keeps, for each longhand, the declaration of the largest cascade key among the matching rules and the element's style attribute: origin and importance (user agent normal, author normal, author important, user agent important), then specificity, then order of appearance. It also records, for each rule that sets custom properties, the specificity with which it matched, so the pass in document order chooses custom properties without matching again.";
+public fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Cascade, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) doc "The first part of the stage. A counted loop over the elements finds which ::before and ::after some rule with a longhand declaration matches, through a second rule index keyed by the compound before the pseudo-element; those pseudo-elements are numbered after the elements, in document order of their elements, ::before before ::after, and the styled nodes are the elements in preorder followed by them, each pseudo-element's parent being its element. Then one counted loop over the styled nodes, whose iteration writes only its node's slots, tests the rules a rule index offers with pkg::css::selectors::matching_specificity, or pseudo_matching_specificity for a pseudo-element, and keeps, for each longhand, the declaration of the largest cascade key among the matching rules, an element's presentational hints and its style attribute: origin and importance (user agent normal, author normal, author important, user agent important), then specificity, then order of appearance. It also records, for each rule that sets custom properties, the specificity with which it matched, so the pass in document order chooses custom properties without matching again.";
 
-public fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Inherited, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(atoms) doc "The second part, one pass over the elements in preorder, so a parent is computed before its children: it computes each element's custom properties, substituting var() in their values against its parent's and its own, and the inherited longhands, the font longhands with font-size first and the text longhands, from each element's winning declarations and its parent's computed values, substituting var() where a winning declaration holds one. An element that declares no custom property shares its parent's set.";
+public fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Inherited, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(atoms) doc "The second part, one pass over the styled nodes in order, so a parent is computed before its children: it computes each node's custom properties, substituting var() in their values against its parent's and its own, and the inherited longhands, the font longhands with font-size first, the text longhands and the inherited table and generated-content longhands, from each node's winning declarations and its parent's computed values, substituting var() where a winning declaration holds one. A node that declares no custom property shares its parent's set. It also substitutes and parses each pending winning value of a longhand that is not inherited but whose value names atoms or fills the store's side tables (the grid templates, implicit tracks and lines, content and the counters), since that writes shared tables; the third part reads the result.";
 
-public fn reset_pass(store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Resets, StyleError> reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal) doc "The third part, one counted loop over the elements whose iteration writes only its element's slots: it computes the longhands that are not inherited from the element's winning declarations, its own font size and custom properties from the second part, substituting var() in a buffer of its own; an explicit inherit, and the blockification of a flex or grid container's children, read the parent's declarations again by walking up the ancestors, so no element waits for another.";
+public fn reset_pass(store: &RuleStore, cascade: &Cascade, inherited: &Inherited, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Resets, StyleError> reads(store), reads(cascade), reads(inherited), reads(atoms), reads(traversal) doc "The third part, one counted loop over the styled nodes whose iteration writes only its node's slots: it computes the longhands that are not inherited from the node's winning declarations, its own font size and custom properties from the second part, substituting var() in a buffer of its own; an explicit inherit, and the blockification of a flex or grid container's children, read the parent's declarations again by walking up the ancestors, so no node waits for another. List values (track lists, area maps, content and counter lists) are kept as references to the second part's store with the node whose font their lengths use; content normal of a pseudo-element computes to none.";
 
-public fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal) doc "Interns each of the seven value groups in its own table and the custom-property sets by their entries, as eight independent tasks, and returns every element's identifiers in preorder; the custom identifier is the first set with the element's entries, and custom_sets the number of distinct sets. Equal groups and equal sets get equal identifiers.";
+public fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal) doc "Interns each of the eleven value groups in its own table and the custom-property sets by their entries, as twelve independent tasks, and returns every element's identifiers in preorder and every pseudo-element's in pseudos, in the order of the styled nodes; the custom identifier is the first set with the element's entries, and custom_sets the number of distinct sets. The container and content tasks also intern the lists their groups name, computing track lengths against the font of the node they come from: track_lists[0] is none and [1] one auto track, area_maps[0] none, content_lists[0] normal and [1] none, counter_lists[0] none, quote_lists[0] auto and [1] none. Equal groups, equal lists and equal sets get equal identifiers.";
 
 public fn compute_styles(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Styles, StyleError> reads(store), reads(document), reads(traversal), writes(atoms) doc "Runs match_elements, inherited_pass, reset_pass and intern_styles in turn.";

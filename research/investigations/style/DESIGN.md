@@ -8,9 +8,22 @@ below; criterion 1 holds on ecma262 and fails on html5 and apollo11 on the
 border colors alone, which trace to one rule of Chromium's user-agent sheet
 that the HTML Standard does not have. The owner ruled the three choices the
 results raised on 2026-10-01 ("Choices after the results" below): the stage
-keeps the Standard's sheet, so that failure stays recorded; `ex` and `ch`
+keeps the Standard's sheet, so that failure stays recorded (superseded on
+2026-10-02 by the ruling Q61, which follows Chromium: "Owner rulings"); `ex` and `ch`
 come from the default fonts' metrics; and lengths become `LayoutUnit` when
 layout reads them.
+
+The second batch of the layout stage's scope
+(`research/investigations/layout/DESIGN.md`, "The style stage's second
+batch") is written and measured in "The second batch" below: the 37
+longhands of flex, grid, tables and generated content, `::before` and
+`::after` (Q51), the four groups of Q58 and the presentational hints of
+`width`, `height` and the table attributes. The owner then ruled (Q61,
+2026-10-02) that where the HTML Standard and Chromium differ the stage follows
+Chromium, so the user-agent sheet gives Chromium's computed values and
+criterion 1 holds on every page for every property, border colors and
+`counter-reset` included ("The multi-column properties and Chromium's sheet"
+below).
 
 ## Question
 
@@ -154,6 +167,13 @@ The modules' interfaces are their `module.wfm` files; in short:
   sheets as the browser would and writes the oracle's TSV, or times the
   steps (`run.sh` in this directory).
 
+The second batch extends these interfaces ("The second batch" below): the
+37 longhands, `Stored` and `Ratio` values with the store's side tables and
+`declaration_store_side_copy`; `alternative_pseudo_element`,
+`pseudo_subject_key` and `pseudo_matching_specificity`; `Styles`' four new
+groups, their lists and `pseudos`; and `add_presentational_hints`, which the
+driver calls after `add_style_attributes`.
+
 ## How the three parts keep only true dependencies
 
 Each follows from Q47 and Q50 and
@@ -239,7 +259,10 @@ accounts for the failures.
 
 The classes of mismatch, with their causes:
 
-- **Chromium's user-agent sheet where the HTML Standard has no rule:**
+- **Chromium's user-agent sheet where the HTML Standard has no rule**
+  (the sheet follows Chromium since the owner's ruling Q61 of 2026-10-02, so
+  these classes are gone; "The multi-column properties and Chromium's
+  sheet"):
   `table { border-color: gray }` (1,123, 3,849 and 135 elements on
   ecma262, html5 and apollo11, tables and the cells that inherit it);
   `overflow: clip` on `img`, `video` and `canvas` (7, 30 and 65);
@@ -247,9 +270,9 @@ The classes of mismatch, with their causes:
   colors, borders and padding, which the Standard leaves to prose (5 buttons
   and a fieldset on ecma262, 81 inputs on apollo11); `svg:not(:root) { overflow: hidden }` from its SVG
   sheet (1).
-- **The HTML Standard's sheet where Chromium has no rule:**
-  `sub, sup { line-height: normal }` (990 and 214 elements on ecma262 and
-  html5).
+- **The HTML Standard's sheet where Chromium has no rule** (also
+  followed to Chromium's since Q61): `sub, sup { line-height: normal }` (990
+  and 214 elements on ecma262 and html5).
 - **Chromium's own behaviour:** the `source` and `track` children of a
   `video` take initial values instead of inherited ones (71 on apollo11);
   two `td` elements of html5 whose font size computes to 4.8px read 6px,
@@ -343,7 +366,8 @@ known.
   and with this one rule added both pass (criterion 1 above). Keeping the
   Standard's sheet records the difference, as the scope says; adding the
   rule makes the stage match the reference on every page.
-  The owner ruled for the Standard's sheet. The rendering section of the
+  The owner ruled for the Standard's sheet (superseded on 2026-10-02 by Q61,
+  which follows Chromium). The rendering section of the
   HTML Standard (checked again on 2026-10-01 at
   https://html.spec.whatwg.org/multipage/rendering.html) sets table border
   colors only as `inherit` on row groups and rows, `black` on the cells of a
@@ -375,7 +399,280 @@ known.
   rounding the decision asks for, moved to layout's input; the owner agreed,
   and `design/vocabulary.md` records it.
 
+## The second batch
+
+The longhands, pseudo-elements and hints the layout stage's scope adds
+(`research/investigations/layout/DESIGN.md`, "The style stage's second
+batch"), on the interfaces of Q51 and Q58.
+
+### What it adds
+
+- **`pkg::css::values`** parses the 37 longhands `flex-direction` to
+  `word-break` and the shorthands `flex`, `flex-flow`, `gap` (and the aliases
+  `grid-gap`, `grid-row-gap`, `grid-column-gap`, `word-wrap`),
+  `place-items`, `place-content`, `place-self`, `grid-template`, `grid`,
+  `grid-area`, `grid-row` and `grid-column`; `list-style` now sets
+  `list-style-position`. A value of variable length is a `Stored` value
+  naming an entry of the `DeclarationStore`'s side stores (track lists with
+  their declared tracks and line names, area maps, grid lines, content,
+  counter and quote lists, and the two `border-spacing` lengths); an integer
+  `repeat()` is expanded at parse time and one `auto-fill` or `auto-fit`
+  repeat is kept as the list's repeated range; `aspect-ratio` is a `Ratio`.
+  An explicit `0%` keeps its percentage as negative zero, so a computed
+  `flex-basis: 0%` (and `width: 0%`) reads as a percentage.
+- **`pkg::css::selectors`** keeps which pseudo-element each alternative ends
+  in and adds `pseudo_subject_key` and `pseudo_matching_specificity`, which
+  match an alternative ending in `::before` or `::after` (or `:before`,
+  `:after`) against its originating element with the pseudo-element counted
+  as one type selector.
+- **`pkg::style`** cascades, inherits and computes the new longhands in the
+  three parts, computes a style for each `::before` and `::after` some rule
+  with a longhand declaration matches into `Styles.pseudos`, interns the
+  four groups of Q58 as four more tasks beside the eight, and offers the
+  presentational hints of `add_presentational_hints`. The user-agent sheet
+  gains the Standard's rules for the new longhands.
+
+### How the second batch keeps only true dependencies
+
+- **Pseudo-elements are styled nodes after the elements.** A counted loop
+  over the elements finds, per element, whether a rule of a second rule
+  index, keyed by the compound before the pseudo-element, matches its
+  `::before` and its `::after`; a sequential count numbers them after the
+  elements, in document order of their elements, since each one's number
+  depends on how many come before it; then the first part's loop runs over
+  elements and pseudo-elements alike, and the second part's pass reaches a
+  pseudo-element after its element, its parent. The winners arrays hold one
+  run per styled node, so no element carries pseudo-element slots, and the
+  element index space, which the oracle and every consumer read, is
+  unchanged. Matching the pseudo-element rules twice, once to find which
+  pseudo-elements exist and once to cascade them, is extra work that adds no
+  order.
+- **Pending values that fill shared tables are parsed in the pass in
+  document order.** A `var()` in a track list, an area map, a grid line,
+  `content` or a counter list must intern names and append side entries
+  after substitution, which writes the shared atom table and store, so the
+  pass resolves such values of every node, though the longhands are not
+  inherited, and the third part reads the result; the pass does this only
+  when the sheets hold such a value, and it is the shared tables that order
+  it, not the values' parents.
+- **The third part is two counted loops.** The new values not inherited are
+  computed in a loop of their own beside the first batch's, because one
+  loop writing all twelve outputs captured 520 bytes, more than the
+  runtime's 256-byte lane frame, and the compiler declined to run it in
+  parallel (the ledger of the first run); the two loops read the same inputs
+  and neither waits for the other.
+- **Lists are computed where they are interned.** A track list's lengths
+  depend on the font of the node whose value applies, and a list cannot be
+  written to a shared table from a parallel loop, so the third part keeps a
+  reference to the declared list and that node, and the container task
+  computes and interns the list beside its group, the one task that writes
+  its tables; equal lists share an identifier, and the content task does
+  the same for content, counter and quote lists, remembering each declared
+  list's identifier.
+- **Presentational hints are added in one walk, as style attributes are.**
+  Each element's hints are written as a declaration list and parsed into the
+  shared store in preorder, before matching; a cell reads its table's
+  `cellpadding` and `border` by walking two or three parents up.
+
+### Oracle additions
+
+`tests/css/style_oracle.mjs` dumps the 37 new longhands from
+`computedStyleMap()`, whose `get()` gives a list-valued property's first
+item, so `grid-auto-columns` and `grid-auto-rows` hold their first track,
+and one row per `::before` and `::after` whose content is not `none`, from
+`getComputedStyle(element, pseudo)`. For those rows the properties whose
+resolved value is not the computed value are dumped empty and not compared:
+the sizes, offsets, margins and paddings, `line-height` (a number reads as
+px: `line-height: 1.5` on a 16px `::before` reads `24px`), `min-width` and
+`min-height` (`auto` reads `0px` on a box that is no flex or grid item), and
+the grid templates of a grid container, each checked with a one-element page
+in Chromium 141. Chromium keeps a computed counter list in a hash map, so it
+serializes `counter-reset: mw-ref-details-parent mw-references list-item`
+as `mw-references 0 list-item 0 mw-ref-details-parent 0`; compare sorts the
+name and value pairs of the three counter longhands on both sides. A
+mismatch in a compared pseudo-element cell is reported, an empty Chromium
+cell is skipped, and a row whose index or name differs stops the
+comparison, each checked by editing a copy of the cases page's dump.
+
+### The multi-column properties and Chromium's sheet
+
+The layout stage's multi-column layout reads four more longhands, none of them
+inherited, which the style stage now parses, cascades and interns, and the
+owner's ruling Q61 of 2026-10-02 moved the user-agent sheet to Chromium's
+computed values.
+
+- **Longhands 92 to 95.** `column-count` (`auto` or a positive integer,
+  `ContainerGroup.column_count`, 0 for `auto`, clamped to 65535 as Chromium
+  computes it), `column-width` (`auto` or a non-negative length with no
+  percentage, a `Sizing`; `0` is a width, not `auto`), `column-fill`
+  (`balance`, `auto`, `balance-all`) and `break-inside` (`auto`, `avoid`,
+  `avoid-page`, `avoid-column`, `ItemGroup.break_inside`). They are grammars of
+  the second batch's tables (`pkg::css::values`, `columns.wf`), cascaded in
+  `reset_second` beside the flex and grid values, and `longhand_count`,
+  the cascade's winner tables and the oracle's columns grew from 92 to 96.
+  The layout stage then added `unicode-bidi` (`lh_unicode_bidi`, 97
+  longhands), which the oracle dumps as a column, and the `lh` unit in
+  lengths (`Lengths.lh`), resolved against the element's computed line
+  height; with `line-height: normal` the stage takes 1.15 times the font
+  size, since it holds no font metrics beyond the x-height and the zero's
+  advance (`docs/todo.md`).
+- **Shorthands and aliases, as probed in Chromium 141.** `columns` takes a
+  width, a count or both in either order, `auto` standing for either and each
+  omitted one `auto`; two counts, two widths and three values are invalid and
+  `columns: 0 3` reads 0 as the width. `page-break-inside` and
+  `-webkit-column-break-inside` accept only `auto` and `avoid`
+  (`avoid-page`, `avoid-column` and `always` are invalid there), so they are
+  one-longhand shorthands, not aliases; `-webkit-column-count`,
+  `-webkit-column-width` and `-webkit-column-gap` are aliases and
+  `-webkit-columns` a shorthand alias. `-moz-column-width` and the other
+  `-moz-` spellings stay unknown names, as in Chromium (apollo11 and html5
+  write them beside the standard ones). Chromium 141 rejects
+  `column-fill: balance-all`; the stage parses it as CSS Multicol Level 2
+  defines it, since the interface declares it, and the cases page leaves it
+  out so that one difference does not enter the criterion.
+- **Interning.** The container and item groups are interned by a key of their
+  fields, which the new fields had to join: before they did, the cases page
+  showed `column-count` 95.81%, `column-width` 95.81%, `column-fill` 98.74%
+  and `break-inside` 96.23%, every element taking the first group with the
+  same other values.
+- **Parallelism.** The four values are read by the loops that already read
+  the flex and grid values, so no loop is added and none gains an order; the
+  ledger still splits `pseudo_flags`, `match_all`, `reset_all` and
+  `reset_second_all` (10 captured bindings, as before) and admits the eleven
+  adjacent interning pairs, and every page's sequential and `--par` dumps are
+  byte-identical.
+- **The user-agent sheet follows Chromium.** `ua.css` adds
+  `table { border-color: gray }`, drops `line-height: normal` from `sub` and
+  `sup`, sets `overflow: clip` on `img`, `video`, `canvas`, `iframe`, `embed`
+  and `object` (not on `input[type=image]`), `-webkit-center` for `caption` and
+  `center`, the SVG sheet's `overflow: hidden`, and the fonts, colors, borders,
+  padding and disabled colors of `input`, `button`, `select`, `textarea` and
+  `fieldset`; it leaves out `ol, ul, menu { counter-reset: list-item }` and the
+  `align-content` rules of inputs, buttons and selects. Every rule from
+  Chromium's sheet is marked in the file. The control rules were written
+  against Chromium's computed values for each input type, `button`, `select`
+  (drop-down and list box), `textarea`, `fieldset` and the disabled variants,
+  on probe pages dumped by `style_oracle.mjs` and diffed cell by cell with the
+  driver; the cases page keeps one of each input type, the disabled variants,
+  `button`, drop-down and list-box `select`, `textarea` and `fieldset`, and
+  the controls still differing (`option`, `meter`, `progress`, `audio`,
+  `marquee`, `rt`, the controls of a disabled `fieldset`: `docs/todo.md`) are
+  left off it.
+  The stage has no system colors, so `Canvas`, `CanvasText` and `ThreeDFace`
+  (whose declarations the sheet dropped as invalid, leaving the dialog's
+  background and the fieldset's border unset) are written as the rgb values
+  Chromium resolves them to, and the hint that gives the cells of a bordered
+  table their width and `inset` style now gives `border-color: inherit` too,
+  as Chromium does, so the cell shows the table's gray.
+
+Results of `run.sh check`, against Chromium dumps made by the same tree's
+`make oracle-style-dump`, before the sheet's change (commit 356d6ee, with
+`UA` set to the previous `ua.css`) and after it (commit 59a946b; the cases page at commit 4df6612, which adds the controls), per page: the
+properties below 99 percent and the lowest property, whose causes are the
+classes above.
+
+| Page | Elements | Before: below 99% | After: below 99% | After: lowest property |
+|---|---:|---|---|---|
+| ecma262 | 179,471 | counter-reset 97.29% | none | display, width, height 99.99% |
+| html5 | 117,179 | border-top, -right, -bottom, -left-color 96.78% | none | width, height, aspect-ratio 99.98% |
+| apollo11 | 11,845 | border colors 98.36% | none | line-height 99.40% |
+| cases | 179, then 230 | border colors 85.77% | none | align-content, grid-template-rows, content 99.65% |
+
+The four new columns match on every element and pseudo-element of every page
+(100.00%; the cases page has 291 compared cells each, including a `::before`
+with its own `column-count`, `column-width` and `break-inside`). The remaining
+lowest values are the classes recorded above that Q61 does not touch: images
+the oracle refuses, `source` and `track` under `video`, `lh` and `round()`,
+the repeat, `safe` and `url()` forms on the cases page.
+
+### Results
+
+`run.sh check` with `PAGES` set to a copy of the pages outside the
+worktree's link, at commit 4d4fe0f, against the Chromium dumps of the same commit's
+`make oracle-style-dump`:
+
+| Page | Elements | Pseudo-elements | Properties below 99% | Lowest new longhand |
+|---|---:|---:|---|---|
+| ecma262 | 179,471 | 13,368 | counter-reset 97.29% | align-content 99.99% |
+| html5 | 117,179 | 2,512 | border-top, -right and -left-color 96.78% | counter-reset 99.16% |
+| apollo11 | 11,845 | 1,416 | border colors 98.36%, counter-reset 98.40% | border-collapse 99.73% |
+| cases | 161 | 44 | border colors 83.41%, counter-reset 98.53% | align-content 99.02% |
+
+Every page's sequential and `--par` dumps are byte-identical (criterion 3).
+The ledger splits `pseudo_flags`, `match_all`, `reset_all` and
+`reset_second_all` and admits the twelve interning calls as eleven adjacent
+pairs. The border colors were then the owner-ruled difference (Chromium's
+`table { border-color: gray }`, a ruling Q61 later superseded, below). With
+the user-agent sheet's
+`ol, ul, menu { counter-reset: list-item }` left out and nothing else
+changed (`runs/ua-no-list-reset.txt`), counter-reset matches on
+every element of every page, and every other property is unchanged, so that one rule accounts for its failures.
+
+The classes of mismatch the second batch adds, with their causes:
+
+- **The Standard's user-agent rules where Chromium's computed values
+  differ** (left out since Q61; the layout stage is to reset `list-item` for these
+  lists implicitly, as Chromium does):
+  `ol, ul, menu { counter-reset: list-item }` (5,223, 995 and 211
+  lists on ecma262, html5 and apollo11; Chromium resets the `list-item`
+  counter without showing it in the computed value); `align-content: unsafe
+  center` on inputs and `center` on buttons and selects (5 on ecma262, 23 on
+  apollo11), which Chromium leaves `normal`.
+- **Chromium's behaviour with images the oracle refuses:** an `img` with
+  alt text whose load failed loses its `width` and `height` presentational
+  hints and their `aspect-ratio` in Chromium (1 on ecma262, 5 on html5, 9 on
+  apollo11): the DevTools protocol shows the hints among the element's
+  attribute styles while its computed values are `auto`.
+- **Chromium's own behaviour:** as in the first batch, the `source` and
+  `track` children of a `video` take initial values, here
+  `border-collapse: separate` under a collapsing table (35 on apollo11).
+- **Not implemented:** the `lh` unit (`height: 2lh`, 9 `th` on ecma262) and
+  CSS `round()`, whose `@supports` block apollo11 uses for image widths (2
+  `img`, 325px against 330px; the first batch's unexplained image widths);
+  a `url()` in `content` is kept as written where Chromium resolves it
+  against the base URL (1 on the cases page).
+- **Parsed as the interface declares, differently from Chromium:** an
+  integer `repeat()` is expanded (`16px [m] 16px [m]` against
+  `repeat(2, 16px [m])`), `safe` and `unsafe` are dropped (`end` against
+  `safe end`), and `legacy` with a direction computes to `normal`; each is
+  on the cases page only (`docs/todo.md`).
+
+### Choices the second batch raises
+
+- **`ol, ul, menu { counter-reset: list-item }`.** Settled by the owner's
+  ruling Q61 (2026-10-02), which follows Chromium and leaves the rule out;
+  the question as it stood: the HTML Standard's
+  rendering section has the rule, and the tree's decision keeps the
+  Standard's sheet and records where the reference differs; with it,
+  `counter-reset` misses criterion 1 on ecma262 and apollo11, and without it
+  every page passes. Layout needs the `list-item` reset either way, to
+  number list markers; it can come from this rule or be implied for lists as
+  Chromium does.
+- **Interface changes beyond the declared ones,** each needed to reproduce a
+  value: `SizeGroup` keeps `aspect_width` and `aspect_height` instead of one
+  ratio, since the computed value is the pair (`auto 100 / 50`);
+  `TrackList.repeat_names_before` holds the names between the track before an
+  automatic repeat and the repeat; `item_url` and `item_alt` keep `url()`
+  images and the alternative text after `/` (apollo11's `']' / ''`), without
+  which those `::after` rows would lose their content; `track_lists[1]` is
+  one `auto` track, the implicit tracks' initial value.
+- **Shapes the decisions do not settle,** each taken as the one with the
+  fewest true dependencies and described in "How the second batch keeps
+  only true dependencies": pending values of stored longhands resolved in
+  the pass in document order, ordered by the shared atom table and store; the
+  third part as two loops, for the runtime's lane frame; hints written in one
+  walk before matching, as style attributes are; lists computed where they
+  are interned; and a pseudo-element whose matched rules set only custom
+  properties getting no style, since its content is `none` and it generates
+  no box.
+
 ## Owner rulings
+
+- **2026-10-02, Q61.** Where the HTML Standard and Chromium differ, Snowghost
+  follows Chromium: the user-agent sheet gives Chromium's computed values.
+  This supersedes the 2026-10-01 choice to keep the Standard's sheet for
+  `table { border-color: gray }` and the second batch's choice for
+  `ol, ul, menu { counter-reset: list-item }`.
 
 - **2026-10-01, scope.** The scope, oracle and criteria above, with flex,
   grid and generated content in the second batch.

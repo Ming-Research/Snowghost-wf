@@ -8,7 +8,7 @@ alias ComponentList = pkg::css::syntax::ComponentList;
 alias Span = pkg::css::syntax::Span;
 alias ComponentRange = pkg::css::rules::ComponentRange;
 
-const shorthand_names: Array<u8, 168> = "margin padding border border-top border-right border-bottom border-left border-width border-style border-color font background overflow list-style text-decoration inset";
+const shorthand_names: Array<u8, 353> = "margin padding border border-top border-right border-bottom border-left border-width border-style border-color font background overflow list-style text-decoration inset flex flex-flow gap place-items place-content place-self grid-template grid grid-area grid-row grid-column grid-gap columns page-break-inside -webkit-columns -webkit-column-break-inside";
 
 const wide_words: Array<u8, 41> = "initial inherit unset revert revert-layer";
 
@@ -64,6 +64,32 @@ const sh_text_decoration: u8 = 14_u8;
 
 const sh_inset: u8 = 15_u8;
 
+const sh_flex: u8 = 16_u8;
+
+const sh_flex_flow: u8 = 17_u8;
+
+const sh_gap: u8 = 18_u8;
+
+const sh_place_items: u8 = 19_u8;
+
+const sh_place_content: u8 = 20_u8;
+
+const sh_place_self: u8 = 21_u8;
+
+const sh_grid_template: u8 = 22_u8;
+
+const sh_grid: u8 = 23_u8;
+
+const sh_grid_area: u8 = 24_u8;
+
+const sh_grid_row: u8 = 25_u8;
+
+const sh_grid_column: u8 = 26_u8;
+
+const sh_columns: u8 = 27_u8;
+
+const sh_break_inside: u8 = 28_u8;
+
 enum ItemValue {
   Value(value: Declared);
   FamilyNames(start: u32, end: u32);
@@ -85,6 +111,7 @@ struct Expansion {
   items: Box<Slots<Item>>;
   names: Box<Slots<NameRef>>;
   text: Box<Slots<u8>>;
+  side: DeclarationStore;
 }
 
 fn put<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: unit writes(cell) {
@@ -131,7 +158,8 @@ fn expansion_new() -> made: Expansion pure {
   let items = box_slots_new::<Item>(capacity: 0_u64);
   let names = box_slots_new::<NameRef>(capacity: 0_u64);
   let text = box_slots_new::<u8>(capacity: 0_u64);
-  return Expansion(items: move items, names: move names, text: move text);
+  let side = declaration_store_new();
+  return Expansion(items: move items, names: move names, text: move text, side: move side);
 }
 
 fn put_value(exp: &Expansion, longhand: u8, value: Declared) -> result: unit writes(exp) {
@@ -153,12 +181,27 @@ fn to_u32(value: u64) -> narrowed: u32 pure {
 }
 
 fn shorthand_code(name: &[u8]) -> found: Option<u8> reads(name) {
-  doc "The number of the shorthand named name, ASCII case-insensitively, or None.";
+  doc "The number of the shorthand named name, ASCII case-insensitively, or None; grid-gap is gap, -webkit-columns is columns, and page-break-inside and -webkit-column-break-inside are the one-longhand shorthand that sets break-inside from auto or avoid.";
   let n = shorthand_names.len;
   let index = find_word(list: &shorthand_names[0_u64..n], text: name);
   match index {
     Some(value: i) => {
-      let small = i < 16_u64;
+      if i == 27_u64 {
+        return Some<u8>(value: sh_gap);
+      }
+      if i == 28_u64 {
+        return Some<u8>(value: sh_columns);
+      }
+      if i == 29_u64 {
+        return Some<u8>(value: sh_break_inside);
+      }
+      if i == 30_u64 {
+        return Some<u8>(value: sh_columns);
+      }
+      if i == 31_u64 {
+        return Some<u8>(value: sh_break_inside);
+      }
+      let small = i < 27_u64;
       if small {
         let code = cvt::<u64, u8>(i);
         return Some<u8>(value: code);
@@ -192,13 +235,37 @@ fn member_count(shorthand: u8) -> count: u64 pure {
     return 2_u64;
   }
   if shorthand == sh_list_style {
-    return 1_u64;
+    return 2_u64;
   }
   if shorthand == sh_text_decoration {
     return 1_u64;
   }
   if shorthand == sh_inset {
     return 4_u64;
+  }
+  if shorthand == sh_flex {
+    return 3_u64;
+  }
+  if shorthand == sh_grid_template {
+    return 3_u64;
+  }
+  if shorthand == sh_grid {
+    return 6_u64;
+  }
+  if shorthand == sh_grid_area {
+    return 4_u64;
+  }
+  if shorthand == sh_columns {
+    return 2_u64;
+  }
+  if shorthand == sh_break_inside {
+    return 1_u64;
+  }
+  let pair_from = shorthand >= sh_flex_flow;
+  let pair_to = shorthand <= sh_grid_column;
+  let pair = band(pair_from, pair_to);
+  if pair {
+    return 2_u64;
   }
   let boxes = shorthand <= sh_border_color;
   if boxes {
@@ -300,10 +367,113 @@ fn member(shorthand: u8, longhand: u8, k: u64) -> member: u8 pure {
     return lh_overflow_y;
   }
   if shorthand == sh_list_style {
-    return lh_list_style_type;
+    if k == 0_u64 {
+      return lh_list_style_type;
+    }
+    return lh_list_style_position;
   }
   if shorthand == sh_text_decoration {
     return lh_text_decoration_line;
+  }
+  let second = member_second(shorthand: shorthand, longhand: longhand, k: k);
+  return second;
+}
+
+fn member_second(shorthand: u8, longhand: u8, k: u64) -> member: u8 pure {
+  doc "The longhand number k of a shorthand of the second batch; longhand itself for any other.";
+  let first = k == 0_u64;
+  if shorthand == sh_columns {
+    if first {
+      return lh_column_width;
+    }
+    return lh_column_count;
+  }
+  if shorthand == sh_break_inside {
+    return lh_break_inside;
+  }
+  if shorthand == sh_flex {
+    if first {
+      return lh_flex_grow;
+    }
+    if k == 1_u64 {
+      return lh_flex_shrink;
+    }
+    return lh_flex_basis;
+  }
+  if shorthand == sh_flex_flow {
+    if first {
+      return lh_flex_direction;
+    }
+    return lh_flex_wrap;
+  }
+  if shorthand == sh_gap {
+    if first {
+      return lh_row_gap;
+    }
+    return lh_column_gap;
+  }
+  if shorthand == sh_place_items {
+    if first {
+      return lh_align_items;
+    }
+    return lh_justify_items;
+  }
+  if shorthand == sh_place_content {
+    if first {
+      return lh_align_content;
+    }
+    return lh_justify_content;
+  }
+  if shorthand == sh_place_self {
+    if first {
+      return lh_align_self;
+    }
+    return lh_justify_self;
+  }
+  let is_template = shorthand == sh_grid_template;
+  let is_grid = shorthand == sh_grid;
+  let template = bor(is_template, is_grid);
+  if template {
+    if first {
+      return lh_grid_template_rows;
+    }
+    if k == 1_u64 {
+      return lh_grid_template_columns;
+    }
+    if k == 2_u64 {
+      return lh_grid_template_areas;
+    }
+    if k == 3_u64 {
+      return lh_grid_auto_flow;
+    }
+    if k == 4_u64 {
+      return lh_grid_auto_columns;
+    }
+    return lh_grid_auto_rows;
+  }
+  if shorthand == sh_grid_area {
+    if first {
+      return lh_grid_row_start;
+    }
+    if k == 1_u64 {
+      return lh_grid_column_start;
+    }
+    if k == 2_u64 {
+      return lh_grid_row_end;
+    }
+    return lh_grid_column_end;
+  }
+  if shorthand == sh_grid_row {
+    if first {
+      return lh_grid_row_start;
+    }
+    return lh_grid_row_end;
+  }
+  if shorthand == sh_grid_column {
+    if first {
+      return lh_grid_column_start;
+    }
+    return lh_grid_column_end;
   }
   return longhand;
 }
@@ -461,7 +631,7 @@ fn color_value(values: &ComponentList, at: u64, limit: u64) -> declared: Option<
 fn px_value(px: f32) -> declared: Declared pure {
   doc "A declared length of px pixels.";
   let zero = lengths_zero();
-  let lengths = Lengths(px: px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, percent: zero.percent);
+  let lengths = Lengths(px: px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, lh: zero.lh, percent: zero.percent);
   let made = Declared::Length(value: lengths);
   return made;
 }
@@ -987,9 +1157,11 @@ fn put_word_text(exp: &Expansion, list: &[u8]) -> result: unit reads(list), writ
 fn expand_list_style(values: &ComponentList, start: u64, end: u64, shorthand: Bool, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
   requires end <= values^.components.inner.len;
 } {
-  doc "Takes the list-style-type of a list-style shorthand, or of the longhand when shorthand is false: an identifier, lowered, or a string, quoted; none when only none is given, and disc when the shorthand names no type.";
+  doc "Takes the list-style-type and list-style-position of a list-style shorthand, or the type of the longhand when shorthand is false: the type an identifier, lowered, or a string, quoted; none when only none is given, and disc when the shorthand names no type; the position inside or outside, outside when none is given.";
   let from = exp^.text.inner.len;
   let have_type = False();
+  let have_position = False();
+  let position_code = 0_u8;
   let nones = 0_u64;
   let cursor = start;
   let span = end -sat start;
@@ -1030,6 +1202,19 @@ fn expand_list_style(values: &ComponentList, start: u64, end: u64, shorthand: Bo
             if none_value {
               set nones = nones +sat 1_u64;
             } else if position_here {
+              if have_position {
+                return False();
+              }
+              set have_position = True();
+              match position {
+                Some(value: p) => {
+                  if p == 0_u64 {
+                    set position_code = 1_u8;
+                  }
+                }
+                None() => {
+                }
+              }
             } else {
               if have_type {
                 return False();
@@ -1049,6 +1234,10 @@ fn expand_list_style(values: &ComponentList, start: u64, end: u64, shorthand: Bo
       }
     }
     set cursor = next;
+  }
+  if shorthand {
+    let placed_value = Declared::Keyword(keyword: position_code);
+    put_value(exp: exp, longhand: lh_list_style_position, value: placed_value);
   }
   if have_type {
     put_name(exp: exp, longhand: lh_list_style_type, from: from);
@@ -1402,6 +1591,18 @@ fn expand(values: &ComponentList, start: u64, end: u64, shorthand: u8, longhand:
       let made = expand_decoration(values: values, start: s, end: e, shorthand: no, exp: exp);
       return made;
     }
+    let second = grammar >= g_align;
+    if second {
+      match second_value(values: values, start: s, end: e, longhand: longhand, grammar: grammar, exp: exp) {
+        Some(value: v) => {
+          put_value(exp: exp, longhand: longhand, value: v);
+          return True();
+        }
+        None() => {
+          return False();
+        }
+      }
+    }
     match single_value(values: values, at: s, limit: e, longhand: longhand) {
       Some(value: v) => {
         put_value(exp: exp, longhand: longhand, value: v);
@@ -1443,6 +1644,11 @@ fn expand(values: &ComponentList, start: u64, end: u64, shorthand: u8, longhand:
   }
   if shorthand == sh_text_decoration {
     let made = expand_decoration(values: values, start: s, end: e, shorthand: yes, exp: exp);
+    return made;
+  }
+  let second = shorthand >= sh_flex;
+  if second {
+    let made = expand_second(values: values, start: s, end: e, shorthand: shorthand, exp: exp);
     return made;
   }
   let made = expand_box(values: values, start: s, end: e, shorthand: shorthand, exp: exp);
@@ -1604,11 +1810,20 @@ fn parse_declaration(values: &ComponentList, name: Span, range: ComponentRange, 
   } else {
     return Ok<u64, ValuesError>(value: 0_u64);
   }
+  let offsets = match merge_side(exp: &exp, atoms: atoms, store: store) {
+    Ok(value: o) => {
+      give o;
+    }
+    Err(error: e) => {
+      return Err<u64, ValuesError>(error: e);
+    }
+  }
   let n = exp.items.inner.len;
   for (k in 0_u64..n) {
     let item = exp.items.inner[k];
     match resolve(value: item.value, exp: &exp, atoms: atoms, store: store) {
-      Ok(value: v) => {
+      Ok(value: resolved) => {
+        let v = shift_stored(value: resolved, offsets: offsets);
         let declaration = Declaration(longhand: item.longhand, important: important, value: v);
         match store_put::<Declaration>(cell: &store^.declarations, value: declaration) {
           Ok(..) => {
@@ -1641,6 +1856,10 @@ fn parse_pending(values: &ComponentList, range: ComponentRange, shorthand: u8, l
     if item.longhand == longhand {
       match item.value {
         Value(value: v) => {
+          let stored = is_stored(value: v);
+          if stored {
+            return None<Declared>();
+          }
           return Some<Declared>(value: v);
         }
         Name(..) => {
@@ -1665,12 +1884,21 @@ fn parse_pending_named(values: &ComponentList, range: ComponentRange, shorthand:
     let invalid = None<Declared>();
     return Ok<Option<Declared>, ValuesError>(value: invalid);
   }
+  let offsets = match merge_side(exp: &exp, atoms: atoms, store: store) {
+    Ok(value: o) => {
+      give o;
+    }
+    Err(error: e) => {
+      return Err<Option<Declared>, ValuesError>(error: e);
+    }
+  }
   let n = exp.items.inner.len;
   for (k in 0_u64..n) {
     let item = exp.items.inner[k];
     if item.longhand == longhand {
       match resolve(value: item.value, exp: &exp, atoms: atoms, store: store) {
-        Ok(value: v) => {
+        Ok(value: resolved) => {
+          let v = shift_stored(value: resolved, offsets: offsets);
           let found = Some<Declared>(value: v);
           return Ok<Option<Declared>, ValuesError>(value: found);
         }
@@ -1728,6 +1956,12 @@ fn parse_length(values: &ComponentList, range: ComponentRange, allow_percent: Bo
         Pending(..) => {
           return None<Lengths>();
         }
+        Ratio(..) => {
+          return None<Lengths>();
+        }
+        Stored(..) => {
+          return None<Lengths>();
+        }
       }
     }
     None() => {
@@ -1740,4 +1974,487 @@ fn append_family(store: &DeclarationStore, family: Family) -> result: Result<uni
   doc "Appends one family name.";
   let made = store_put::<Family>(cell: &store^.families, value: family);
   return made;
+}
+
+fn second_value(values: &ComponentList, start: u64, end: u64, longhand: u8, grammar: u8, exp: &Expansion) -> declared: Option<Declared> reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Parses the value from start to end, trimmed, for a longhand of the second batch under its grammar.";
+  if grammar == g_align {
+    let made = align_declared(values: values, start: start, end: end, longhand: longhand);
+    return made;
+  }
+  if grammar == g_tracks {
+    let made = template_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if grammar == g_areas {
+    let made = areas_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if grammar == g_flow {
+    let made = flow_value(values: values, start: start, end: end);
+    return made;
+  }
+  if grammar == g_auto_tracks {
+    let made = auto_tracks_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if grammar == g_line {
+    let made = line_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if grammar == g_ratio {
+    let made = ratio_value(values: values, start: start, end: end);
+    return made;
+  }
+  if grammar == g_spacing_pair {
+    let made = spacing_pair_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if grammar == g_content {
+    let made = content_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if grammar == g_counters {
+    let made = counters_value(values: values, start: start, end: end, longhand: longhand, exp: exp);
+    return made;
+  }
+  if grammar == g_quotes {
+    let made = quotes_value(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  let at = match single_at(values: values, start: start, end: end) {
+    Some(value: k) => {
+      give k;
+    }
+    None() => {
+      return None<Declared>();
+    }
+  }
+  let inside = at < end;
+  if inside {
+  } else {
+    return None<Declared>();
+  }
+  let next = sibling_after(values: values, at: at, limit: end);
+  if grammar == g_gap {
+    let made = gap_value(values: values, at: at, limit: next);
+    return made;
+  }
+  if grammar == g_order {
+    let made = order_value(values: values, at: at);
+    return made;
+  }
+  if grammar == g_column_count {
+    let made = count_value(values: values, at: at);
+    return made;
+  }
+  if grammar == g_column_width {
+    let made = width_value(values: values, at: at, limit: next);
+    return made;
+  }
+  if grammar == g_factor {
+    let made = factor_value(values: values, at: at, limit: next);
+    return made;
+  }
+  if grammar == g_basis {
+    let made = basis_value(values: values, at: at, limit: next);
+    return made;
+  }
+  return None<Declared>();
+}
+
+fn expand_second(values: &ComponentList, start: u64, end: u64, shorthand: u8, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands a shorthand of the second batch.";
+  if shorthand == sh_flex {
+    let made = expand_flex(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if shorthand == sh_flex_flow {
+    let made = expand_flex_flow(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if shorthand == sh_gap {
+    let made = expand_gap(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  let place_from = shorthand >= sh_place_items;
+  let place_to = shorthand <= sh_place_self;
+  let place = band(place_from, place_to);
+  if place {
+    let made = expand_place(values: values, start: start, end: end, shorthand: shorthand, exp: exp);
+    return made;
+  }
+  if shorthand == sh_grid_template {
+    let made = expand_template(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if shorthand == sh_grid {
+    let made = expand_grid(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if shorthand == sh_columns {
+    let made = expand_columns(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  if shorthand == sh_break_inside {
+    let made = expand_break_inside(values: values, start: start, end: end, exp: exp);
+    return made;
+  }
+  let made = expand_lines(values: values, start: start, end: end, shorthand: shorthand, exp: exp);
+  return made;
+}
+
+struct Offsets {
+  track_lists: u32;
+  area_maps: u32;
+  grid_lines: u32;
+  content_lists: u32;
+  counter_lists: u32;
+  quote_lists: u32;
+  spacings: u32;
+}
+
+fn mapped_atom(map: &Box<Array<u32>>, atom: Atom) -> mapped: Atom reads(map) {
+  doc "The interned atom of a placeholder atom, whose index is a position among the expansion's names; the placeholder itself for an index past them.";
+  let at = cvt::<u32, u64>(atom.index);
+  let inside = at < map^.inner.len;
+  if inside {
+    let index = map^.inner[at];
+    return Atom(index: index);
+  }
+  return atom;
+}
+
+fn shift(value: u32, base: u64) -> shifted: u32 pure {
+  doc "value plus base, narrowed.";
+  let wide = cvt::<u32, u64>(value);
+  let sum = wide +sat base;
+  let made = to_u32(value: sum);
+  return made;
+}
+
+fn shift_names(names: LineNames, base: u64) -> shifted: LineNames pure {
+  doc "A line-name range moved by base.";
+  let first = shift(value: names.first, base: base);
+  let end = shift(value: names.end, base: base);
+  return LineNames(first: first, end: end);
+}
+
+fn side_empty(side: &DeclarationStore) -> empty: Bool reads(side) {
+  doc "True when a store's side stores hold nothing.";
+  let a = side^.tracks.inner.len == 0_u64;
+  let b = side^.track_lists.inner.len == 0_u64;
+  let c = side^.area_maps.inner.len == 0_u64;
+  let d = side^.grid_lines.inner.len == 0_u64;
+  let e = side^.content_lists.inner.len == 0_u64;
+  let f = side^.counter_lists.inner.len == 0_u64;
+  let g = side^.quote_lists.inner.len == 0_u64;
+  let h = side^.spacings.inner.len == 0_u64;
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let gh = band(g, h);
+  let abcd = band(ab, cd);
+  let efgh = band(ef, gh);
+  let all = band(abcd, efgh);
+  return all;
+}
+
+fn copy_side(from: &DeclarationStore, map: &Box<Array<u32>>, store: &DeclarationStore) -> result: Result<Offsets, ValuesError> reads(from), reads(map), writes(store) {
+  doc "Appends every side store of from to store's, moving each index by the length store's target held before, and replacing each atom through map when map is not empty; returns where from's lists start in store.";
+  let tracks_base = store^.tracks.inner.len;
+  let lists_base = store^.track_lists.inner.len;
+  let names_base = store^.line_names.inner.len;
+  let maps_base = store^.area_maps.inner.len;
+  let areas_base = store^.named_areas.inner.len;
+  let lines_base = store^.grid_lines.inner.len;
+  let contents_base = store^.content_lists.inner.len;
+  let items_base = store^.content_items.inner.len;
+  let counters_base = store^.counter_lists.inner.len;
+  let changes_base = store^.counter_changes.inner.len;
+  let quotes_base = store^.quote_lists.inner.len;
+  let pairs_base = store^.quote_pairs.inner.len;
+  let text_base = store^.text.inner.len;
+  let spacings_base = store^.spacings.inner.len;
+  let names_count = from^.line_names.inner.len;
+  for (k in 0_u64..names_count) {
+    let name = mapped_atom(map: map, atom: from^.line_names.inner[k]);
+    let placed = propagate store_put::<Atom>(cell: &store^.line_names, value: name);
+  }
+  let tracks_count = from^.tracks.inner.len;
+  for (k in 0_u64..tracks_count) {
+    let track = from^.tracks.inner[k];
+    let names = shift_names(names: track.names_before, base: names_base);
+    let made = DeclaredTrack(min: track.min, max: track.max, fit_content: track.fit_content, names_before: names);
+    let placed = propagate store_put::<DeclaredTrack>(cell: &store^.tracks, value: made);
+  }
+  let lists_count = from^.track_lists.inner.len;
+  for (k in 0_u64..lists_count) {
+    let list = from^.track_lists.inner[k];
+    let first = shift(value: list.first, base: tracks_base);
+    let end = shift(value: list.end, base: tracks_base);
+    let repeat_first = shift(value: list.repeat_first, base: tracks_base);
+    let repeat_end = shift(value: list.repeat_end, base: tracks_base);
+    let before = shift_names(names: list.repeat_names_before, base: names_base);
+    let inside = shift_names(names: list.repeat_names_after, base: names_base);
+    let after = shift_names(names: list.names_after, base: names_base);
+    let made = TrackList(first: first, end: end, repeat_kind: list.repeat_kind, repeat_names_before: before, repeat_first: repeat_first, repeat_end: repeat_end, repeat_names_after: inside, names_after: after);
+    let placed = propagate store_put::<TrackList>(cell: &store^.track_lists, value: made);
+  }
+  let areas_count = from^.named_areas.inner.len;
+  for (k in 0_u64..areas_count) {
+    let area = from^.named_areas.inner[k];
+    let name = mapped_atom(map: map, atom: area.name);
+    let made = NamedArea(name: name, row_start: area.row_start, row_end: area.row_end, column_start: area.column_start, column_end: area.column_end);
+    let placed = propagate store_put::<NamedArea>(cell: &store^.named_areas, value: made);
+  }
+  let maps_count = from^.area_maps.inner.len;
+  for (k in 0_u64..maps_count) {
+    let map_entry = from^.area_maps.inner[k];
+    let first = shift(value: map_entry.first, base: areas_base);
+    let end = shift(value: map_entry.end, base: areas_base);
+    let made = AreaMap(rows: map_entry.rows, columns: map_entry.columns, first: first, end: end);
+    let placed = propagate store_put::<AreaMap>(cell: &store^.area_maps, value: made);
+  }
+  let lines_count = from^.grid_lines.inner.len;
+  for (k in 0_u64..lines_count) {
+    let line = from^.grid_lines.inner[k];
+    let name = if line.named {
+      give mapped_atom(map: map, atom: line.name);
+    } else {
+      give line.name;
+    }
+    let made = GridLine(kind: line.kind, number: line.number, name: name, named: line.named);
+    let placed = propagate store_put::<GridLine>(cell: &store^.grid_lines, value: made);
+  }
+  let items_count = from^.content_items.inner.len;
+  for (k in 0_u64..items_count) {
+    let item = from^.content_items.inner[k];
+    let one_counter = item.kind == item_counter;
+    let many_counters = item.kind == item_counters;
+    let attribute = item.kind == item_attr;
+    let counter = bor(one_counter, many_counters);
+    let named = bor(counter, attribute);
+    let name = if named {
+      give mapped_atom(map: map, atom: item.name);
+    } else {
+      give item.name;
+    }
+    let style = if counter {
+      give mapped_atom(map: map, atom: item.list_style);
+    } else {
+      give item.list_style;
+    }
+    let text_start = shift(value: item.text_start, base: text_base);
+    let text_end = shift(value: item.text_end, base: text_base);
+    let made = ContentItem(kind: item.kind, text_start: text_start, text_end: text_end, name: name, list_style: style);
+    let placed = propagate store_put::<ContentItem>(cell: &store^.content_items, value: made);
+  }
+  let contents_count = from^.content_lists.inner.len;
+  for (k in 0_u64..contents_count) {
+    let list = from^.content_lists.inner[k];
+    let first = shift(value: list.first, base: items_base);
+    let end = shift(value: list.end, base: items_base);
+    let made = ContentList(first: first, end: end);
+    let placed = propagate store_put::<ContentList>(cell: &store^.content_lists, value: made);
+  }
+  let changes_count = from^.counter_changes.inner.len;
+  for (k in 0_u64..changes_count) {
+    let change = from^.counter_changes.inner[k];
+    let name = mapped_atom(map: map, atom: change.name);
+    let made = CounterChange(name: name, value: change.value);
+    let placed = propagate store_put::<CounterChange>(cell: &store^.counter_changes, value: made);
+  }
+  let counters_count = from^.counter_lists.inner.len;
+  for (k in 0_u64..counters_count) {
+    let list = from^.counter_lists.inner[k];
+    let first = shift(value: list.first, base: changes_base);
+    let end = shift(value: list.end, base: changes_base);
+    let made = CounterList(first: first, end: end);
+    let placed = propagate store_put::<CounterList>(cell: &store^.counter_lists, value: made);
+  }
+  let pairs_count = from^.quote_pairs.inner.len;
+  for (k in 0_u64..pairs_count) {
+    let pair = from^.quote_pairs.inner[k];
+    let a = shift(value: pair.open_start, base: text_base);
+    let b = shift(value: pair.open_end, base: text_base);
+    let c = shift(value: pair.close_start, base: text_base);
+    let d = shift(value: pair.close_end, base: text_base);
+    let made = QuotePair(open_start: a, open_end: b, close_start: c, close_end: d);
+    let placed = propagate store_put::<QuotePair>(cell: &store^.quote_pairs, value: made);
+  }
+  let quotes_count = from^.quote_lists.inner.len;
+  for (k in 0_u64..quotes_count) {
+    let list = from^.quote_lists.inner[k];
+    let first = shift(value: list.first, base: pairs_base);
+    let end = shift(value: list.end, base: pairs_base);
+    let made = QuoteList(first: first, end: end);
+    let placed = propagate store_put::<QuoteList>(cell: &store^.quote_lists, value: made);
+  }
+  let text_count = from^.text.inner.len;
+  for (k in 0_u64..text_count) {
+    let byte = from^.text.inner[k];
+    let placed = propagate store_put::<u8>(cell: &store^.text, value: byte);
+  }
+  let spacings_count = from^.spacings.inner.len;
+  for (k in 0_u64..spacings_count) {
+    let spacing = from^.spacings.inner[k];
+    let placed = propagate store_put::<Lengths>(cell: &store^.spacings, value: spacing);
+  }
+  let lists_base_narrow = to_u32(value: lists_base);
+  let maps_base_narrow = to_u32(value: maps_base);
+  let lines_base_narrow = to_u32(value: lines_base);
+  let contents_base_narrow = to_u32(value: contents_base);
+  let counters_base_narrow = to_u32(value: counters_base);
+  let quotes_base_narrow = to_u32(value: quotes_base);
+  let spacings_base_narrow = to_u32(value: spacings_base);
+  let made = Offsets(track_lists: lists_base_narrow, area_maps: maps_base_narrow, grid_lines: lines_base_narrow, content_lists: contents_base_narrow, counter_lists: counters_base_narrow, quote_lists: quotes_base_narrow, spacings: spacings_base_narrow);
+  return Ok<Offsets, ValuesError>(value: made);
+}
+
+fn zero_offsets() -> made: Offsets pure {
+  doc "Offsets that move nothing.";
+  return Offsets(track_lists: 0_u32, area_maps: 0_u32, grid_lines: 0_u32, content_lists: 0_u32, counter_lists: 0_u32, quote_lists: 0_u32, spacings: 0_u32);
+}
+
+fn merge_side(exp: &Expansion, atoms: &AtomTable, store: &DeclarationStore) -> result: Result<Offsets, ValuesError> reads(exp), writes(atoms), writes(store) {
+  doc "Interns the expansion's names and appends its side stores to store with copy_side, so its Stored values can be moved to store's indices by shift_stored.";
+  let empty = side_empty(side: &exp^.side);
+  if empty {
+    let made = zero_offsets();
+    return Ok<Offsets, ValuesError>(value: made);
+  }
+  let count = exp^.names.inner.len;
+  let small = count <= 2147483648_u64;
+  if small {
+  } else {
+    let refusal = ValuesError::TooLarge();
+    return Err<Offsets, ValuesError>(error: refusal);
+  }
+  let map = box_array_filled::<u32>(count: count, value: 0_u32);
+  for (k in 0_u64..count) {
+    let name = exp^.names.inner[k];
+    let atom = propagate intern_text(exp: exp, start: name.start, end: name.end, atoms: atoms);
+    set map.inner[k] = atom.index;
+  }
+  let made = propagate copy_side(from: &exp^.side, map: &map, store: store);
+  return Ok<Offsets, ValuesError>(value: made);
+}
+
+fn shift_stored(value: Declared, offsets: Offsets) -> shifted: Declared pure {
+  doc "A Stored value moved by the offset of its kind; any other value unchanged.";
+  match value {
+    Stored(kind: k, index: i) => {
+      let base = if k == stored_tracks {
+        give offsets.track_lists;
+      } else if k == stored_areas {
+        give offsets.area_maps;
+      } else if k == stored_line {
+        give offsets.grid_lines;
+      } else if k == stored_content {
+        give offsets.content_lists;
+      } else if k == stored_counters {
+        give offsets.counter_lists;
+      } else if k == stored_quotes {
+        give offsets.quote_lists;
+      } else {
+        give offsets.spacings;
+      }
+      let wide = cvt::<u32, u64>(base);
+      let moved = shift(value: i, base: wide);
+      return Declared::Stored(kind: k, index: moved);
+    }
+    Keyword(..) => {
+      return value;
+    }
+    Length(..) => {
+      return value;
+    }
+    Number(..) => {
+      return value;
+    }
+    Integer(..) => {
+      return value;
+    }
+    ColorValue(..) => {
+      return value;
+    }
+    CurrentColor() => {
+      return value;
+    }
+    Families(..) => {
+      return value;
+    }
+    ListStyle(..) => {
+      return value;
+    }
+    Wide(..) => {
+      return value;
+    }
+    Pending(..) => {
+      return value;
+    }
+    Ratio(..) => {
+      return value;
+    }
+  }
+}
+
+fn is_stored(value: Declared) -> stored: Bool pure {
+  doc "True for a Stored value.";
+  match value {
+    Stored(..) => {
+      return True();
+    }
+    Keyword(..) => {
+      return False();
+    }
+    Length(..) => {
+      return False();
+    }
+    Number(..) => {
+      return False();
+    }
+    Integer(..) => {
+      return False();
+    }
+    ColorValue(..) => {
+      return False();
+    }
+    CurrentColor() => {
+      return False();
+    }
+    Families(..) => {
+      return False();
+    }
+    ListStyle(..) => {
+      return False();
+    }
+    Wide(..) => {
+      return False();
+    }
+    Pending(..) => {
+      return False();
+    }
+    Ratio(..) => {
+      return False();
+    }
+  }
+}
+
+fn declaration_store_side_copy(from: &DeclarationStore) -> result: Result<DeclarationStore, ValuesError> reads(from) {
+  doc "A store with no declaration that holds from's family names and side stores at the same indices.";
+  let made = declaration_store_new();
+  let family_count = from^.families.inner.len;
+  for (k in 0_u64..family_count) {
+    let family = from^.families.inner[k];
+    let placed = propagate store_put::<Family>(cell: &made.families, value: family);
+  }
+  let map = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  let offsets = propagate copy_side(from: from, map: &map, store: &made);
+  return Ok<DeclarationStore, ValuesError>(value: move made);
 }

@@ -75,10 +75,13 @@ example apart from the renderer code that exposed it
   (`ENOTDIR`) and no std call reaches the file. Impact: `png_oracle check`
   refuses its `DIR` in a worktree whose `build` is a link to another
   checkout's build directory, so `make oracle-png` fails there; a `DIR`
-  spelling that reaches the same directory without a link works. Change: a
-  std function that forms a `RelativePath` from a byte range, or a component
-  open that follows links. Reopen when oracle runs from such worktrees are
-  needed.
+  spelling that reaches the same directory without a link works. The
+  `style_oracle` driver fails the same way on the real pages in such a
+  worktree (`build/research/concurrency` is a link), so
+  `research/investigations/style/run.sh` takes `PAGES`, a copy of the pages
+  outside the link. Change: a std function that forms a `RelativePath` from
+  a byte range, or a component open that follows links. Reopen when oracle
+  runs from such worktrees are needed.
 
 - **A local `slots_new::<T, N>()` clears all N slots when created.** The
   code compiled at the pin clears the whole window before any value is
@@ -190,8 +193,65 @@ example apart from the renderer code that exposed it
   and read SVG style elements. Reopen when an SVG-heavy page joins the
   corpus.
 
+- **Second-batch values the style stage parses differently from the
+  reference.** Each is a recorded class of the style investigation's second
+  batch (`research/investigations/style/DESIGN.md`): an integer `repeat()` in
+  a track list is expanded at parse time, as the interface declares, where
+  Chromium keeps `repeat(2, ...)`; `safe` and `unsafe` are dropped from
+  alignment values, which Chromium keeps; `justify-items: legacy` with a
+  direction is kept as `legacy`, which computes to `normal`, where Chromium
+  keeps `legacy center`. No real page uses any of them. Change: give
+  `TrackList` a list of repeated ranges with counts and the alignment values
+  an overflow-position bit and a legacy bit, if layout needs them; reopen
+  when a page uses one.
+- **Multi-column values the style stage does not give.** `column-span`,
+  `column-rule-width`, `column-rule-style` and `column-rule-color` (the rule's
+  width takes part in the column box's width), `break-before`, `break-after`,
+  `orphans` and `widows` are not parsed; `column-count: calc(...)` is not
+  parsed as an integer (Chromium accepts `calc(1 + 2)`), and a `calc()` that
+  is no length is not a `column-width` either; `column-fill: balance-all` is
+  parsed as CSS Multicol Level 2 defines it, where Chromium 141 rejects it,
+  and `-webkit-column-fill` is not an alias, as in Chromium. Change: add the
+  longhands to `pkg::css::values` as the second batch did for flex and grid,
+  and an integer `calc()` grammar. Reopen when the layout stage's multi-column
+  layout or a page needs one.
+- **The user-agent sheet's Chromium rules cover what the pages and a probe of
+  every control showed.** Chromium's computed values still differ for
+  `option` and `optgroup` (`min-height`, padding, `align-items`, gaps), the
+  `meter` and `progress` boxes, `audio`'s `display: none` without controls
+  and its size, `marquee`, `rt`'s font size, and the `width` and `height`
+  attributes of `svg`; `:disabled` does not match the controls of a disabled
+  `fieldset`, which the selector matcher does not implement; a `select`
+  shown as a list box is recognised by the `multiple` and `size` attributes
+  read as text, so `size="02"` is not; and a table's `frame` and `rules`
+  attributes give `outset` and `inset` where Chromium gives `solid` (the hints'
+  place in the cascade, below). The form-control font is the probed Linux
+  host's. Change: probe and add each with the same method as the form
+  controls (`tests/css/style_oracle.mjs` on a page of the elements against the
+  `style_oracle` driver). Reopen when layout draws one of them.
+- **`url()` in `content` is kept as written.** Chromium resolves it against
+  the document's base URL (`url("http://snowghost.test/page/x.png")`); the
+  stage keeps the specified URL, since it resolves no URL and loads no
+  image. Change: resolve it with `pkg::url` when images are loaded.
+- **`rlh` and most stepped-value functions are not parsed.** The `lh` unit
+  (ecma262's `.corner-cell { height: 2lh }`) and `round()` of two px
+  lengths (apollo11's image widths) are; `rlh`, `round()` with another
+  strategy or other units, `mod()` and `rem()` are not. Change: `rlh` as a
+  length of the root's computed line-height and the remaining stepped-value
+  functions in `calc()`. Reopen when a page uses one.
+- **Some presentational hints are not implemented.** The `li` `value` and
+  `ol` `start` and `reversed` hints for `counter-set` and `counter-reset`
+  (Chromium exposes neither in computed values), the dimension attributes of
+  a `source` in a `picture` that an `img` takes from it, `body`'s margin
+  attributes, `bgcolor`, `bordercolor`, `background`, and the `table[border]`
+  rules' place in the user-agent cascade: they are offered with the hints,
+  above every user-agent selector, so on a table with both `border` and
+  `frame` or `rules` they win where the Standard's later rules would.
+  Change: per-record specificity and order for the hint records. Reopen when
+  a page uses one.
 - **Component walking helpers are written twice.** `pkg::css::values`
-  (`tokens.wf`, `components.wf`) and `pkg::style` (`components.wf`) each
+  (`tokens.wf`, `components.wf`, and `shapes.wf`, whose `shape_of` the second
+  batch's grammars use) and `pkg::style` (`components.wf`) each
   classify components, skip whitespace, find a sibling and compare an
   identifier with a word list, because neither module can reach the
   other's private functions. Change: make one set public in
@@ -320,3 +380,215 @@ example apart from the renderer code that exposed it
   its other lookups here. Change: validate per lookup and ignore only the
   failing lookup, matching HarfBuzz's neutering. Reopen when a real web
   font with a partly broken layout table renders differently from Chrome.
+
+- **Emoji presentation is not given to a color emoji face.** Chromium draws
+  a character whose Emoji_Presentation is Yes (U+231B, U+1F600) with Noto
+  Color Emoji ahead of the font-family list; `pkg::layout::text` draws it
+  with the first face of the chain that maps it (DejaVu Sans for U+1F600,
+  FreeSerif for U+231B), so the advance differs. Impact: 1 of the 3,000
+  text cases drawn from the three pages (html5's U+231B) and the synthetic
+  emoji cases (research/investigations/layout/DESIGN.md, "Text preparation
+  results"). Change: Emoji_Presentation in `pkg::text::properties` from
+  emoji-data.txt, a mark on color faces (CBDT, sbix or COLR) in `FontSet`,
+  and itemizing emoji-presentation sequences, and characters followed by
+  U+FE0F, to the first color face. Reopen when a page that renders emoji
+  joins the corpus.
+- **Indic and other complex scripts are shaped as Common.** `pkg::font`
+  shapes Latin, Greek, Cyrillic and Common only, so Devanagari's reordering
+  and conjuncts and Tamil's are missing: two of apollo11's language links
+  (हिन्दी and தமிழ், in FreeSans) are 0.33 and 0.08 px wider than in
+  Chromium. Change: HarfBuzz's Indic shaper in `pkg::font` and the script
+  in `pkg::layout::text`'s itemizer. Reopen when such text is in scope.
+- **Fallback for bold or italic text skips the generic's own family.** For
+  a bold or italic group whose first family is `serif` (or `monospace`),
+  Chromium tries fontconfig's face for that generic name at normal style
+  (DejaVu Serif, DejaVu Sans Mono) before its global fallback order
+  (`research/investigations/layout/runs/text-fallback.txt`: bold `serif`
+  draws U+2200 with DejaVu Serif, regular `serif` with DejaVu Sans);
+  `pick_fonts` follows the fixed order of the set, as its interface says.
+  Chromium also picks a run's fallback face by the run's first unmapped
+  character and keeps it for later characters it maps, where
+  `pkg::layout::text` decides per character. Impact: none of the sampled
+  page text (its first families are IBM Plex Serif and sans-serif). Change:
+  a per-group fallback prefix in `pick_fonts`, with the interface's doc.
+  Reopen when bold or italic serif text with symbols outside Liberation is
+  measured.
+- **`word-break: break-all` is not Chromium's.** Blink also breaks before
+  and after dash punctuation in break-all and does not break after a
+  hyphen-minus before a non-ASCII letter; `pkg::layout::text` allows a break
+  between two letters or numbers only. Impact: 21 of the synthetic break
+  cases; no sampled page text uses break-all or keep-all. Change: measure
+  Blink's break-all classes as the normal ASCII table was measured and
+  encode them. Reopen when a page uses break-all.
+- **The x-height of a face without OS/2 sxHeight is approximated.** Skia
+  measures the hinted x glyph for DejaVu and WenQuanYi (OS/2 version 1),
+  giving whole pixels; `face_extents` returns 0.56 times the rounded
+  ascent, Blink's own fallback, so `ex` lengths and `vertical-align:
+  middle` on DejaVu text differ by up to about 1 px. Change: the x glyph's
+  bounding box from glyf with the autohinter's rounding, or a measured
+  table. Reopen when ex units on DejaVu text move a measured box.
+- **Letter-spacing does not turn ligatures off.** Chromium disables
+  liga, clig, dlig, hlig and calt when letter-spacing is not 0;
+  `pkg::font::shape_run` takes no feature settings. The installed Liberation
+  faces have no such ligatures, so no measured case differs. Change: a
+  feature parameter in `shape_run`. Reopen when a face with ligatures is
+  drawn with letter-spacing.
+- **A tab gets no advance from text preparation.** `shape_paragraph` treats
+  U+0009 as a control of advance 0; its width depends on its position and
+  `tab-size`, which only line layout knows. The layout stage must give each
+  preserved tab its tab stop. Reopen with `white-space: pre` text that holds
+  tabs.
+- **`text-align: justify` aligns as start.** `finish_lines` offsets a line
+  for right, end, center and their -webkit- forms and leaves every other
+  value at the start, so justified lines keep their natural spacing.
+  Impact: no element of the three pages computes `justify` (the style
+  oracle's text-align column). Change: distribute a line's free space over
+  its justification opportunities, except on the last line and lines a
+  forced break ends, as CSS Text 3, 7.3 describes. Reopen when a page
+  justifies text.
+- **`text-overflow: ellipsis` draws no ellipsis.** Chromium reports an
+  extra fragment for the ellipsis of an overflowing line in a box with
+  `overflow` other than visible; the stage leaves the line whole. Change:
+  truncate the line's runs at the content edge less the ellipsis's advance
+  and add the ellipsis fragment. Reopen when a measured page sets it on
+  overflowing text.
+- **A text input's baseline is 3 px above Chromium's.** The stage puts the
+  baseline of a single-line text input at its border, padding, centred
+  line and the font's ascent (`lay_out_replaced`); in `tests/layout/flow-cases.html`
+  Chromium's baseline lies 13 px below the input's top where the stage's
+  lies 10 px below, which moves the line and the boxes after it. Change:
+  probe the inner editor's position with borders, padding and heights
+  varied, and take its baseline. Reopen when a page puts a text input on a
+  line with text.
+- **Most form controls do not have the reference's size.** Only
+  single-line text inputs, checkboxes and radio buttons get Chromium's
+  natural sizes (`natural_text_input`, `natural_toggle`); the other
+  `input` types, `select` and `textarea` are replaced boxes of the default
+  300 by 150 px (`is_replaced`, `natural_object`), and `button` is laid out
+  as an ordinary inline-block. Change: their natural sizes and baselines
+  from probes of Chromium. Reopen when a page lays one out.
+- **Multi-column layout is limited to Q59's form.** `column-span`,
+  orphans and widows, `column-fill: balance-all` and a break inside a box
+  that is neither a paragraph, a table nor a `break-inside: avoid` box
+  (a fixed-height block is kept whole) are not implemented
+  (`renderer/layout/columns.wf`). Impact: none on the three pages, whose
+  multi-column containers hold tables, lists and paragraphs. Change: the
+  fragmentation units and the spanner's own pass. Reopen when a page uses
+  one.
+- **Right-to-left text is shaped and ordered as left-to-right.** Eleven of
+  apollo11's language names in Arabic script (span 506 is 60.66 px wide
+  here, 38.27 in Chromium) and about a dozen of its text nodes differ:
+  `pkg::font` applies no Arabic joining forms and the stage does no
+  bidirectional reordering, both out of scope. Change: Arabic shaping in
+  `pkg::font` and UAX #9 reordering of a line's runs. Reopen when
+  right-to-left text is in scope.
+- **`font-variant: small-caps` is not applied.** The style stage does not
+  compute it and text preparation draws lowercase letters at full size:
+  apollo11's twelve `abbr` navigation links (t, e, v) and their `li` are
+  1 to 2 px off. Change: the longhand in `pkg::css::values` and synthetic
+  small capitals in `pkg::layout::text`, as Chromium scales lowercase
+  letters to 70 percent. Reopen with any further page that sets it.
+- **`transform` does not move boxes.** `getClientRects` reports transformed
+  boxes; apollo11's search icon (`span` 110, `translateY(-50%)`) is 9 px
+  lower here. Transforms are out of scope. Change: apply translations to
+  the dumped rectangles of a box and its descendants after layout. Reopen
+  when transforms are in scope.
+- **An absolute box's static position inside an inline formatting context
+  is the block's start.** apollo11's `span` 3660 (`.sr-only` inside a line)
+  starts at x 263 here and at the inline position 395.5 in Chromium.
+  Change: record the inline position the box would have had on its line
+  as its static position. Reopen when such a box is visible on a page.
+- **A float's max-content contribution is added to the widest line.** The
+  stage adds a float's width to the widest line of the text beside it;
+  Chromium adds it to the lines it sits beside only
+  (`research/investigations/layout/runs/float-intrinsic.txt`: float, aaa,
+  br, bbb gives 54 px here, 51.3125 in Chromium). Change: track the lines a
+  float shortens during the max-content pass. Reopen when a page's
+  shrink-to-fit box holds a float beside lines of different widths.
+- **A block-level box in normal flow ignores `width: min-content`,
+  `max-content` and `fit-content`.** The keywords size shrink-to-fit
+  boxes, tables and absolute boxes only. Change: resolve them in the
+  block's used width from its intrinsic sizes. Reopen when a page sets one
+  on a block in flow.
+- **Preserved spaces that hang at a `pre-wrap` line's end are not in the
+  text's width.** `tests/layout/flow-cases.html`'s pre-wrap text reports a
+  first line 200 px wide in Chromium and 157.75 here. Change: include the
+  hanging spaces up to the line's end in the fragment, as Chromium's
+  `getClientRects` does. Reopen when a page wraps pre-wrap text with
+  runs of spaces.
+- **Some apollo11 links lose the kerning across their end.** About 21 of
+  apollo11's links are 1.0 to 1.2 px wider than in Chromium: the text
+  "Kennedy" in `a` 1223 is 55.58 px wide here and 54.55 in Chromium, which
+  shapes it together with the comma after the link, so the y-comma kerning
+  pair applies. The stage gives the same 54.55 on a probe with the same
+  markup inside the page's own head and stylesheets, so something else on
+  the full page splits the shaping run there;
+  the cause is not yet found. Change: find which property or boundary
+  `pkg::layout::text` splits runs at on the page, and probe whether
+  Chromium splits there. Reopen before apollo11's inline measure needs
+  these boxes.
+- **About 70 of ecma262's block boxes follow line wraps that differ by
+  less than 0.2 px.** A line that fits here by about 0.01 px does not fit
+  in Chromium (`emu-rhs` 83416); varying `text-indent` puts Chromium's
+  threshold between -25 and -25.2 px and the stage's between -24.5 and
+  -25 px, and an inline box's width here is 1/64 px less than Chromium's
+  for the same run (138.0 against 137.984). Each such wrap moves the boxes
+  after it by up to 3.5 px. Cause not yet isolated: Chromium appears to
+  test the fit against an unrounded sum of item widths. Change: probe the
+  fit test with runs whose widths sum to just under and over the available
+  width, and compare with `break_lines`. Reopen when ecma262's block
+  measure needs these boxes or a page shows the same wrap differences.
+- **`lh` for `line-height: normal` is 1.15 times the font size.** The style
+  stage resolves the `lh` unit against the element's computed line height,
+  and for `normal` it takes 1.15 times the font size, since it holds no
+  font ascent, descent or line gap; layout computes `normal` from the
+  face's metrics. Impact: none measured; ecma262 uses `lh` only with a
+  numeric line-height. Change: give the style stage the first available
+  face's metrics, as it already has its x-height and zero advance. Reopen
+  when a page uses `lh` under `line-height: normal`.
+- **The initial line height 18.4 px is written in five places.**
+  `renderer/style/inherited.wf`, `reset.wf` (twice), `lists.wf` and
+  `media.wf` each spell 16 px times 1.15. Change: one named constant in
+  `pkg::css::values`. Reopen with the next change to any of them.
+- **A table cell's absolute children are positioned twice.** The cell's
+  flow positions them, then `lay_out_table` positions them again with
+  `position_out_with` once the rows have their heights; the first result
+  is discarded. Change: skip the first pass for a context laid out as a
+  cell. Reopen when profiling shows it, or with the next change to table
+  cell layout.
+- **A float before a block inside an inline box sits 10 px too high.** In
+  `tests/layout/flow-cases.html`'s probe e1 the float is at y 427 where
+  Chromium puts it at 437. Change: probe how the block's collapsed margin
+  moves the float's position and apply it. Reopen when a page floats a box
+  there.
+- **`ex` and `ch` still come from the generic families' faces.** The layout
+  scope was to revise the style stage's provisional rule
+  (`design/pipeline/style.md`) to the metrics of the installed face each
+  element's `font-family` matches, now that `pkg::layout::text` matches
+  families; the style stage still takes the x-height and zero advance of
+  the serif, sans-serif and monospace defaults. Impact: not measured
+  separately; criterion 1 holds on the three pages with it. Change: run family matching before the
+  style stage's compute part and pass each font group's first face metrics.
+  Reopen when a page sizes boxes in `ex` or `ch` under a named family.
+- **Multi-column layout ignores `column-fill: auto` and the container's
+  height.** `fragment_columns` always balances and never reads
+  `column_fill` or a definite container height, where Chromium fills
+  columns in turn up to that height and balances only up to it. Impact:
+  none on the three pages, whose multi-column containers have auto heights
+  and balance. Change: take the definite height as the column height for
+  `auto`, and as the bound of the balanced height, with overflow columns.
+  Reopen when a page sets either.
+- **Most of the layout passes' loops run sequentially.** Of the 340 loops in
+  `renderer/layout/` the `--par` ledger lists, it permits 49; it refuses
+  127 that write storage neither the iteration introduces nor an
+  accumulator holds, 119 that write storage outliving the iteration
+  without an exactly associative reduction, 39 that leave early and 6
+  that carry several accumulators. The layout passes reach 2.30 and 2.47
+  times their sequential speed at four workers on ecma262 and html5, and
+  1.53 on apollo11 (research/investigations/layout/DESIGN.md, Layout
+  results). Which refused loops hold the passes' time is not measured.
+  Change: profile the passes' sequential time by function, then rewrite the
+  costly loops so each iteration writes only its own element, or state the
+  minimal semantic gap for Whitefoot under Whitefoot requirements when a
+  loop cannot be so written. Reopen before the next performance target for
+  layout, or when the passes exceed half the stage's time at four workers.

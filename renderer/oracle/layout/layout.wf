@@ -1,0 +1,818 @@
+alias Args = std::text::Args;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias HandleFactory = std::io::HandleFactory;
+alias NodeId = pkg::dom::NodeId;
+alias OutputStream = std::io::OutputStream;
+alias PlacedRect = pkg::layout::PlacedRect;
+alias Styles = pkg::style::Styles;
+alias Traversal = pkg::style::Traversal;
+alias Viewport = pkg::layout::Viewport;
+alias argument_bytes = pkg::oracle::support::argument_bytes;
+alias args_count = std::text::args_count;
+alias build_boxes = pkg::layout::build_boxes;
+alias build_layout = pkg::layout::build_layout;
+alias close_directory = std::fs::close_directory;
+alias compute_styles = pkg::style::compute_styles;
+alias default_environment = pkg::oracle::page::default_environment;
+alias exit_status = std::process::exit_status;
+alias flush = pkg::oracle::support::flush;
+alias lay_out = pkg::layout::lay_out;
+alias layout_counts = pkg::layout::layout_counts;
+alias load_fonts = pkg::oracle::fonts::load_fonts;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias load_page = pkg::oracle::page::load_page;
+alias parse_decimal = pkg::oracle::support::parse_decimal;
+alias pick_fonts = pkg::layout::text::pick_fonts;
+alias place_boxes = pkg::layout::place_boxes;
+alias placed_element = pkg::layout::placed_element;
+alias placed_text = pkg::layout::placed_text;
+alias prepare_text = pkg::layout::prepare_text;
+alias put_argument = pkg::oracle::support::put_argument;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_text = pkg::oracle::support::put_text;
+
+const usage_text: Array<u8, 76> = "usage: layout_oracle dump|boxes|text|layout REPS PAGE UA [SUFFIX=SHEET ...]\n";
+
+const mode_words: Array<u8, 22> = "dump boxes text layout";
+
+const failed_text: Array<u8, 23> = "layout_oracle: failed: ";
+
+const fonts_directory: Array<u8, 11> = "build/fonts";
+
+const label_elements: Array<u8, 10> = " elements ";
+
+const label_contexts: Array<u8, 10> = " contexts ";
+
+const label_paragraphs: Array<u8, 12> = " paragraphs ";
+
+const label_reps: Array<u8, 6> = " reps ";
+
+fn run(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Destructures the inputs, drives one invocation and closes the working directory.";
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, ..) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
+  let code = drive(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn fail(err: &OutputStream, files: &HandleFactory, what: &[u8]) -> code: u8 reads(what), writes(err), writes(files) waits {
+  doc "Reports a failure and returns the exit code 2.";
+  let buffer = box_slots_new::<u8>(capacity: 128_u64);
+  put_text(buffer: &buffer, text: &failed_text[0_u64..failed_text.len]);
+  put_text(buffer: &buffer, text: what);
+  put_byte(buffer: &buffer, value: 10_u8);
+  let written = flush(factory: files, output: err, buffer: &buffer);
+  return 2_u8;
+}
+
+fn word_bounds(list: &[u8], index: u64) -> (start: u64, end: u64) reads(list) {
+  doc "The bounds of word number index of the space-separated list, or an empty range.";
+  let length = list^.len;
+  let word = 0_u64;
+  let start = 0_u64;
+  for (at in 0_u64..length) {
+    if list^[at] == 32_u8 {
+      if word == index {
+        return start, at;
+      }
+      set word = word +sat 1_u64;
+      set start = at +sat 1_u64;
+    }
+  }
+  if word == index {
+    return start, length;
+  }
+  return 0_u64, 0_u64;
+}
+
+fn put_units(buffer: &Box<Slots<u8>>, px: f32) -> result: unit writes(buffer) {
+  doc "Appends px, a multiple of 1/64, as its exact shortest decimal.";
+  let scaled = fmul.strict(px, 64.0_f32);
+  let rounded = froundeven(scaled);
+  let fits = cvt.defined::<f32, i64>(rounded);
+  let raw = if fits {
+    give cvt::<f32, i64>(rounded);
+  } else {
+    give 0_i64;
+  }
+  let negative = raw < 0_i64;
+  let magnitude_signed = if negative {
+    give 0_i64 -sat raw;
+  } else {
+    give raw;
+  }
+  let magnitude = if magnitude_signed >= 0_i64 {
+    give cvt::<i64, u64>(magnitude_signed);
+  } else {
+    give 0_u64;
+  }
+  if negative {
+    put_byte(buffer: buffer, value: 45_u8);
+  }
+  let whole = magnitude / 64_u64;
+  let part = magnitude % 64_u64;
+  put_decimal(buffer: buffer, value: whole);
+  if part == 0_u64 {
+    return unit;
+  }
+  put_byte(buffer: buffer, value: 46_u8);
+  let digits = part *sat 15625_u64;
+  let divisor = 100000_u64;
+  let remaining = digits;
+  for (k in 0_u64..6_u64) {
+    if remaining == 0_u64 {
+      break;
+    }
+    let digit = remaining / divisor;
+    let capped = imin(digit, 9_u64);
+    let small = cvt::<u64, u8>(capped);
+    let character = 48_u8 +sat small;
+    put_byte(buffer: buffer, value: character);
+    set remaining = remaining % divisor;
+    set remaining = remaining *sat 10_u64;
+  }
+  return unit;
+}
+
+fn put_rect(buffer: &Box<Slots<u8>>, rect: PlacedRect) -> result: unit writes(buffer) {
+  doc "Appends X,Y,WIDTH,HEIGHT.";
+  put_units(buffer: buffer, px: rect.x);
+  put_byte(buffer: buffer, value: 44_u8);
+  put_units(buffer: buffer, px: rect.y);
+  put_byte(buffer: buffer, value: 44_u8);
+  put_units(buffer: buffer, px: rect.width);
+  put_byte(buffer: buffer, value: 44_u8);
+  put_units(buffer: buffer, px: rect.height);
+  return unit;
+}
+
+fn mode_of(args: &Args) -> mode: Option<u64> reads(args) {
+  doc "The number of the MODE argument among mode_words.";
+  match argument_bytes(args: args, position: 1_u64) {
+    Some(value: bytes) => {
+      let size = bytes.inner.len;
+      for (k in 0_u64..4_u64) {
+        let (start, end) = word_bounds(list: &mode_words[0_u64..mode_words.len], index: k);
+        let ordered = start <= end;
+        let inside = end <= mode_words.len;
+        let usable = band(ordered, inside);
+        if usable {
+          let length = end - start;
+          if length == size {
+            let same = True();
+            for (c in 0_u64..length) {
+              let at = start + c;
+              if at < mode_words.len {
+                if c < bytes.inner.len {
+                  if mode_words[at] != bytes.inner[c] {
+                    set same = False();
+                  }
+                }
+              }
+            }
+            if same {
+              return Some<u64>(value: k);
+            }
+          }
+        }
+      }
+      return None<u64>();
+    }
+    None() => {
+      return None<u64>();
+    }
+  }
+}
+
+fn display_inline_level(styles: &Styles, element: u64) -> inline: Bool reads(styles) {
+  doc "Whether the element's computed display is inline-level as the oracle classes it: inline, inline-block, inline-flex, inline-grid, inline-table, ruby or ruby-text.";
+  if element < styles^.elements.inner.len {
+    let box_id = cvt::<u32, u64>(styles^.elements.inner[element].box);
+    if box_id < styles^.boxes.inner.len {
+      let display = styles^.boxes.inner[box_id].display;
+      let plain = display == 0_u8;
+      let block = display == 5_u8;
+      let table = display == 8_u8;
+      let flex = display == 18_u8;
+      let grid = display == 20_u8;
+      let ruby = display == 21_u8;
+      let ruby_text = display == 22_u8;
+      let first = bor(plain, block);
+      let second = bor(table, flex);
+      let third = bor(grid, ruby);
+      let early = bor(first, second);
+      let late = bor(third, ruby_text);
+      let found = bor(early, late);
+      return found;
+    }
+  }
+  return False();
+}
+
+fn put_name(buffer: &Box<Slots<u8>>, atoms: &AtomTable, document: &Document, node: NodeId) -> result: unit reads(atoms), reads(document), writes(buffer) {
+  doc "Appends the element's local name.";
+  let at = cvt::<u32, u64>(node.index);
+  if at < document^.nodes.inner.len {
+    let data = &document^.nodes.inner[at].data;
+    match data^ {
+      Element(local_name: local, ..) => {
+        let index = cvt::<u32, u64>(local^.index);
+        if index < atoms^.spans.inner.len {
+          let span = atoms^.spans.inner[index];
+          let start = cvt::<u32, u64>(span.start);
+          let end = cvt::<u32, u64>(span.end);
+          let ordered = start <= end;
+          let inside = end <= atoms^.text.inner.len;
+          let usable = band(ordered, inside);
+          if usable {
+            put_text(buffer: buffer, text: &atoms^.text.inner[start..end]);
+          }
+        }
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Text(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn put_signed(buffer: &Box<Slots<u8>>, value: i64) -> result: unit writes(buffer) {
+  doc "Appends a signed decimal.";
+  if value < 0_i64 {
+    put_byte(buffer: buffer, value: 45_u8);
+    let magnitude = 0_i64 -sat value;
+    let wide = if magnitude >= 0_i64 {
+      give cvt::<i64, u64>(magnitude);
+    } else {
+      give 0_u64;
+    }
+    put_decimal(buffer: buffer, value: wide);
+    return unit;
+  }
+  let wide = cvt::<i64, u64>(value);
+  put_decimal(buffer: buffer, value: wide);
+  return unit;
+}
+
+fn bucket(placed: &[PlacedRect], kind: u8, keys: &[u32], count: u64) -> (starts: Box<Array<u64>>, order: Box<Array<u64>>) reads(placed), reads(keys) {
+  doc "Groups the rectangles of kind by their owner's key (keys maps an owner to a bucket below count, or count for none), each bucket's rectangles line by line: starts has count + 1 entries and order lists rectangle indices bucket by bucket.";
+  let all = placed^.len;
+  let total = imin(all, 1073741824_u64);
+  let size = count +sat 1_u64;
+  let bounded = imin(size, 1073741824_u64);
+  let starts = box_array_filled::<u64>(count: bounded, value: 0_u64);
+  let order = box_array_filled::<u64>(count: total, value: 0_u64);
+  for (k in 0_u64..total) {
+    let rect = placed^[k];
+    if rect.kind == kind {
+      let owner = cvt::<u32, u64>(rect.owner);
+      if owner < keys^.len {
+        let key = cvt::<u32, u64>(keys^[owner]);
+        let next = key +sat 1_u64;
+        if next < starts.inner.len {
+          set starts.inner[next] = starts.inner[next] +sat 1_u64;
+        }
+      }
+    }
+  }
+  let buckets = starts.inner.len;
+  for (b in 1_u64..buckets) {
+    let before = b - 1_u64;
+    set starts.inner[b] = starts.inner[b] +sat starts.inner[before];
+  }
+  let fill = box_array_filled::<u64>(count: bounded, value: 0_u64);
+  for (b in 0_u64..buckets) {
+    if b < fill.inner.len {
+      set fill.inner[b] = starts.inner[b];
+    }
+  }
+  for (k in 0_u64..total) {
+    let rect = placed^[k];
+    if rect.kind == kind {
+      let owner = cvt::<u32, u64>(rect.owner);
+      if owner < keys^.len {
+        let key = cvt::<u32, u64>(keys^[owner]);
+        if key < fill.inner.len {
+          let at = fill.inner[key];
+          if at < order.inner.len {
+            set order.inner[at] = k;
+          }
+          set fill.inner[key] = at +sat 1_u64;
+        }
+      }
+    }
+  }
+  let bucket_count = starts.inner.len;
+  for (b in 1_u64..bucket_count) {
+    let before = b - 1_u64;
+    let low = starts.inner[before];
+    let high = starts.inner[b];
+    sort_bucket(placed: placed, order: &order, low: low, high: high);
+  }
+  return move starts, move order;
+}
+
+fn sort_bucket(placed: &[PlacedRect], order: &Box<Array<u64>>, low: u64, high: u64) -> result: unit reads(placed), writes(order) {
+  doc "Moves each of one bucket's rectangles after those that lie wholly above it, keeping the order of rectangles on the same line, as the reference lists a box's rectangles line by line and each line's from start to end.";
+  for (i in low..high) {
+    let j = i;
+    for (step in low..i) {
+      if j > low {
+        let before = j - 1_u64;
+        let inside = j < order^.inner.len;
+        if inside {
+          let upper = order^.inner[before];
+          let lower = order^.inner[j];
+          let in_upper = upper < placed^.len;
+          let in_lower = lower < placed^.len;
+          let both = band(in_upper, in_lower);
+          if both {
+            let upper_y = placed^[upper].y;
+            let lower_bottom = fadd.strict(placed^[lower].y, placed^[lower].height);
+            let upper_height = placed^[upper].height;
+            let upper_boxed = fgt(upper_height, 0.0_f32);
+            let beneath = fge(upper_y, lower_bottom);
+            let lower_y = placed^[lower].y;
+            let strictly = fgt(upper_y, lower_y);
+            let below = band(beneath, strictly);
+            let later = band(below, upper_boxed);
+            if later {
+              set order^.inner[before] = lower;
+              set order^.inner[j] = upper;
+              set j = before;
+            } else {
+              break;
+            }
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn put_rects(buffer: &Box<Slots<u8>>, placed: &[PlacedRect], starts: &[u64], order: &[u64], key: u64) -> count: u64 reads(placed), reads(starts), reads(order), writes(buffer) {
+  doc "Appends the rectangles of bucket key separated by spaces and returns how many.";
+  let next = key +sat 1_u64;
+  let inside = next < starts^.len;
+  if inside {
+  } else {
+    return 0_u64;
+  }
+  let first = starts^[key];
+  let end = starts^[next];
+  let written = 0_u64;
+  for (k in first..end) {
+    if k < order^.len {
+      let index = order^[k];
+      if index < placed^.len {
+        if written > 0_u64 {
+          put_byte(buffer: buffer, value: 32_u8);
+        }
+        put_rect(buffer: buffer, rect: placed^[index]);
+        set written = written +sat 1_u64;
+      }
+    }
+  }
+  return written;
+}
+
+fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &Styles, placed: &[PlacedRect], out: &OutputStream, files: &HandleFactory) -> written: Bool reads(document), reads(atoms), reads(traversal), reads(styles), reads(placed), writes(out), writes(files) waits {
+  doc "Writes every element's E line, every rendered text node's T line and the H line.";
+  let nodes = document^.nodes.inner.len;
+  let count = traversal^.elements.inner.len;
+  let small = count < 4294967295_u64;
+  let few_nodes = nodes < 1073741824_u64;
+  let usable = band(small, few_nodes);
+  if usable {
+  } else {
+    return False();
+  }
+  let identity = box_array_filled::<u32>(count: count, value: 0_u32);
+  let element_of = box_array_filled::<u32>(count: nodes, value: 4294967295_u32);
+  for (i in 0_u64..count) {
+    set identity.inner[i] = cvt::<u64, u32>(i);
+    let node = traversal^.elements.inner[i];
+    let at = cvt::<u32, u64>(node.index);
+    if at < element_of.inner.len {
+      set element_of.inner[at] = cvt::<u64, u32>(i);
+    }
+  }
+  let (element_starts, element_order) = bucket(placed: placed, kind: placed_element, keys: &identity.inner[0_u64..count], count: count);
+  let ordinal_of = box_array_filled::<u32>(count: nodes, value: 4294967295_u32);
+  let text_nodes = box_slots_new::<u32>(capacity: 1024_u64);
+  let stack = box_slots_new::<NodeId>(capacity: 64_u64);
+  if 0_u64 < nodes {
+    let root_child = document^.nodes.inner[0_u64].links.first_child;
+    match root_child {
+      Some(value: first) => {
+        let pushed = push_node(stack: &stack, node: first);
+      }
+      None() => {
+      }
+    }
+  }
+  for (step in 0_u64..nodes) {
+    let depth = stack.inner.len;
+    if depth == 0_u64 {
+      break;
+    }
+    let node = take_back(window: &stack.inner);
+    let at = cvt::<u32, u64>(node.index);
+    if at < nodes {
+      let sibling_link = document^.nodes.inner[at].links.next_sibling;
+      match sibling_link {
+        Some(value: sibling) => {
+          let pushed = push_node(stack: &stack, node: sibling);
+        }
+        None() => {
+        }
+      }
+      let data = &document^.nodes.inner[at].data;
+      let is_text = match data^ {
+        Text(..) => {
+          give True();
+        }
+        DocumentRoot(..) => {
+          give False();
+        }
+        DocumentType(..) => {
+          give False();
+        }
+        Element(..) => {
+          give False();
+        }
+        Comment(..) => {
+          give False();
+        }
+        Fragment() => {
+          give False();
+        }
+      }
+      if is_text {
+        let ordinal = text_nodes.inner.len;
+        if ordinal < 4294967295_u64 {
+          set ordinal_of.inner[at] = cvt::<u64, u32>(ordinal);
+          put_byte_u32(cell: &text_nodes, value: node.index);
+        }
+      }
+      let child_link = document^.nodes.inner[at].links.first_child;
+      match child_link {
+        Some(value: child) => {
+          let pushed = push_node(stack: &stack, node: child);
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  let texts = text_nodes.inner.len;
+  let (text_starts, text_order) = bucket(placed: placed, kind: placed_text, keys: &ordinal_of.inner[0_u64..nodes], count: texts);
+  let buffer = box_slots_new::<u8>(capacity: 65536_u64);
+  let starts_count = element_starts.inner.len;
+  let order_count = element_order.inner.len;
+  let total = placed^.len;
+  let bottom = 0.0_f32;
+  for (k in 0_u64..total) {
+    let rect = placed^[k];
+    let rect_bottom = fadd.strict(rect.y, rect.height);
+    set bottom = fmax(bottom, rect_bottom);
+  }
+  for (i in 0_u64..count) {
+    put_text(buffer: &buffer, text: &element_line[0_u64..2_u64]);
+    put_decimal(buffer: &buffer, value: i);
+    put_byte(buffer: &buffer, value: 9_u8);
+    let node = traversal^.elements.inner[i];
+    put_name(buffer: &buffer, atoms: atoms, document: document, node: node);
+    put_byte(buffer: &buffer, value: 9_u8);
+    let parent = if i < traversal^.parents.inner.len {
+      give cvt::<u32, u64>(traversal^.parents.inner[i]);
+    } else {
+      give count;
+    }
+    if parent < count {
+      put_decimal(buffer: &buffer, value: parent);
+    } else {
+      put_text(buffer: &buffer, text: &minus_one[0_u64..2_u64]);
+    }
+    put_byte(buffer: &buffer, value: 9_u8);
+    let mark = buffer.inner.len;
+    put_byte(buffer: &buffer, value: 110_u8);
+    put_byte(buffer: &buffer, value: 9_u8);
+    let shown = put_rects(buffer: &buffer, placed: placed, starts: &element_starts.inner[0_u64..starts_count], order: &element_order.inner[0_u64..order_count], key: i);
+    if shown > 0_u64 {
+      let inline = display_inline_level(styles: styles, element: i);
+      if mark < buffer.inner.len {
+        if inline {
+          set buffer.inner[mark] = 105_u8;
+        } else {
+          set buffer.inner[mark] = 98_u8;
+        }
+      }
+    }
+    put_byte(buffer: &buffer, value: 10_u8);
+    if buffer.inner.len > 60000_u64 {
+      let flushed = flush(factory: files, output: out, buffer: &buffer);
+      if flushed {
+      } else {
+        return False();
+      }
+    }
+  }
+  let text_starts_count = text_starts.inner.len;
+  let text_order_count = text_order.inner.len;
+  for (t in 0_u64..texts) {
+    let next = t +sat 1_u64;
+    let has = if next < text_starts.inner.len {
+      give text_starts.inner[next] > text_starts.inner[t];
+    } else {
+      give False();
+    }
+    if has {
+      put_text(buffer: &buffer, text: &text_line[0_u64..2_u64]);
+      put_decimal(buffer: &buffer, value: t);
+      put_byte(buffer: &buffer, value: 9_u8);
+      let node_index = cvt::<u32, u64>(text_nodes.inner[t]);
+      let parent_element = if node_index < nodes {
+        let parent_link = document^.nodes.inner[node_index].links.parent;
+        match parent_link {
+          Some(value: parent) => {
+            let parent_at = cvt::<u32, u64>(parent.index);
+            if parent_at < element_of.inner.len {
+              give element_of.inner[parent_at];
+            } else {
+              give 4294967295_u32;
+            }
+          }
+          None() => {
+            give 4294967295_u32;
+          }
+        }
+      } else {
+        give 4294967295_u32;
+      }
+      if parent_element == 4294967295_u32 {
+        put_text(buffer: &buffer, text: &minus_one[0_u64..2_u64]);
+      } else {
+        let wide = cvt::<u32, u64>(parent_element);
+        put_decimal(buffer: &buffer, value: wide);
+      }
+      put_byte(buffer: &buffer, value: 9_u8);
+      let shown = put_rects(buffer: &buffer, placed: placed, starts: &text_starts.inner[0_u64..text_starts_count], order: &text_order.inner[0_u64..text_order_count], key: t);
+      put_byte(buffer: &buffer, value: 10_u8);
+      if buffer.inner.len > 60000_u64 {
+        let flushed = flush(factory: files, output: out, buffer: &buffer);
+        if flushed {
+        } else {
+          return False();
+        }
+      }
+    }
+  }
+  put_text(buffer: &buffer, text: &height_line[0_u64..2_u64]);
+  let floor = ftrunc(bottom);
+  let viewport_floor = fmax(floor, 7.2e2_f32);
+  let fits = cvt.defined::<f32, u64>(viewport_floor);
+  let height = if fits {
+    give cvt::<f32, u64>(viewport_floor);
+  } else {
+    give 0_u64;
+  }
+  put_decimal(buffer: &buffer, value: height);
+  put_byte(buffer: &buffer, value: 10_u8);
+  let flushed = flush(factory: files, output: out, buffer: &buffer);
+  return flushed;
+}
+
+fn push_node(stack: &Box<Slots<NodeId>>, node: NodeId) -> pushed: Bool writes(stack) {
+  doc "Pushes node, doubling the stack when full.";
+  let length = stack^.inner.len;
+  let capacity = stack^.inner.cap;
+  if length >= capacity {
+    let doubled = capacity *sat 2_u64;
+    let wanted = imax(doubled, 16_u64);
+    let bounded = imin(wanted, 1073741824_u64);
+    if bounded <= length {
+      return False();
+    }
+    grow(cell: stack, capacity: bounded);
+  }
+  if stack^.inner.len < stack^.inner.cap {
+    place_back(window: &stack^.inner, value: node);
+    return True();
+  }
+  return False();
+}
+
+fn put_byte_u32(cell: &Box<Slots<u32>>, value: u32) -> result: unit writes(cell) {
+  doc "Appends value, doubling the window when full.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let doubled = capacity *sat 2_u64;
+    let wanted = imax(doubled, 16_u64);
+    let bounded = imin(wanted, 1073741824_u64);
+    if bounded <= length {
+      return unit;
+    }
+    grow(cell: cell, capacity: bounded);
+  }
+  if cell^.inner.len < cell^.inner.cap {
+    place_back(window: &cell^.inner, value: value);
+  }
+  return unit;
+}
+
+const element_line: Array<u8, 2> = "E\t";
+
+const text_line: Array<u8, 2> = "T\t";
+
+const height_line: Array<u8, 2> = "H\t";
+
+const minus_one: Array<u8, 2> = "-1";
+
+fn pick_all(fonts: &FontSet, styles: &Styles, atoms: &AtomTable) -> picks: Option<FontPicks> reads(fonts), reads(styles), reads(atoms) {
+  doc "Matches every font group of styles against the fonts: the font matching of the stage, which the timed modes repeat with each repetition.";
+  let groups = styles^.fonts.inner.len;
+  let families = styles^.families.inner.len;
+  match pick_fonts(fonts: fonts, groups: &styles^.fonts.inner[0_u64..groups], families: &styles^.families.inner[0_u64..families], atoms: atoms) {
+    Ok(value: found) => {
+      return Some<FontPicks>(value: move found);
+    }
+    Err(..) => {
+      return None<FontPicks>();
+    }
+  }
+}
+
+fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+  doc "Reads the invocation, loads and styles the page, loads the fonts, and runs the mode.";
+  let count = args_count(args: args);
+  let mode = match mode_of(args: args) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
+      return code;
+    }
+  }
+  if count < 5_u64 {
+    let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
+    return code;
+  }
+  let reps = match argument_bytes(args: args, position: 2_u64) {
+    Some(value: bytes) => {
+      let size = bytes.inner.len;
+      match parse_decimal(text: &bytes.inner[0_u64..size], start: 0_u64, end: size) {
+        Some(value: n) => {
+          give n;
+        }
+        None() => {
+          let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
+          return code;
+        }
+      }
+    }
+    None() => {
+      let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
+      return code;
+    }
+  }
+  let environment = default_environment();
+  let page = match load_page(factory: files, cwd: cwd, args: args, page: 3_u64, sheet: 4_u64, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      let code = fail(err: err, files: files, what: &page_word[0_u64..page_word.len]);
+      return code;
+    }
+  }
+  let styles = match compute_styles(store: &page.store, document: &page.document, atoms: &page.atoms, traversal: &page.traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      let code = fail(err: err, files: files, what: &style_word[0_u64..style_word.len]);
+      return code;
+    }
+  }
+  let fonts = match load_fonts(factory: files, cwd: cwd, directory: &fonts_directory[0_u64..fonts_directory.len]) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
+      return code;
+    }
+  }
+  let viewport = Viewport(width: 1.28e3_f32, height: 7.2e2_f32);
+  if mode == 0_u64 {
+    let picks = match pick_all(fonts: &fonts, styles: &styles, atoms: &page.atoms) {
+      Some(value: found) => {
+        give move found;
+      }
+      None() => {
+        let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
+        return code;
+      }
+    }
+    let layout = match build_layout(document: &page.document, traversal: &page.traversal, styles: &styles, atoms: &page.atoms, fonts: &fonts, picks: &picks, viewport: viewport) {
+      Ok(value: found) => {
+        give move found;
+      }
+      Err(..) => {
+        let code = fail(err: err, files: files, what: &layout_word[0_u64..layout_word.len]);
+        return code;
+      }
+    }
+    lay_out(layout: &layout, document: &page.document, styles: &styles, fonts: &fonts, picks: &picks);
+    let placed = place_boxes(layout: &layout);
+    let placed_count = placed.inner.len;
+    let written = dump(document: &page.document, atoms: &page.atoms, traversal: &page.traversal, styles: &styles, placed: &placed.inner[0_u64..placed_count], out: out, files: files);
+    if written {
+      return 0_u8;
+    }
+    return 2_u8;
+  }
+  let contexts = 0_u64;
+  let paragraphs = 0_u64;
+  for (rep in 0_u64..reps) {
+    let layout = match build_boxes(document: &page.document, traversal: &page.traversal, styles: &styles, atoms: &page.atoms, viewport: viewport) {
+      Ok(value: found) => {
+        give move found;
+      }
+      Err(..) => {
+        let code = fail(err: err, files: files, what: &layout_word[0_u64..layout_word.len]);
+        return code;
+      }
+    }
+    if mode >= 2_u64 {
+      let picks = match pick_all(fonts: &fonts, styles: &styles, atoms: &page.atoms) {
+        Some(value: found) => {
+          give move found;
+        }
+        None() => {
+          let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
+          return code;
+        }
+      }
+      match prepare_text(layout: &layout, document: &page.document, styles: &styles, fonts: &fonts, picks: &picks) {
+        Ok(..) => {
+        }
+        Err(..) => {
+          let code = fail(err: err, files: files, what: &layout_word[0_u64..layout_word.len]);
+          return code;
+        }
+      }
+      if mode == 3_u64 {
+        lay_out(layout: &layout, document: &page.document, styles: &styles, fonts: &fonts, picks: &picks);
+      }
+    }
+    let (counted_contexts, counted_paragraphs) = layout_counts(layout: &layout);
+    set contexts = counted_contexts;
+    set paragraphs = counted_paragraphs;
+  }
+  let buffer = box_slots_new::<u8>(capacity: 256_u64);
+  put_argument(buffer: &buffer, args: args, position: 1_u64);
+  put_text(buffer: &buffer, text: &label_elements[0_u64..label_elements.len]);
+  put_decimal(buffer: &buffer, value: page.traversal.elements.inner.len);
+  put_text(buffer: &buffer, text: &label_contexts[0_u64..label_contexts.len]);
+  put_decimal(buffer: &buffer, value: contexts);
+  put_text(buffer: &buffer, text: &label_paragraphs[0_u64..label_paragraphs.len]);
+  put_decimal(buffer: &buffer, value: paragraphs);
+  put_text(buffer: &buffer, text: &label_reps[0_u64..label_reps.len]);
+  put_decimal(buffer: &buffer, value: reps);
+  put_byte(buffer: &buffer, value: 10_u8);
+  let written = flush(factory: files, output: out, buffer: &buffer);
+  return 0_u8;
+}
+
+const page_word: Array<u8, 4> = "page";
+
+const style_word: Array<u8, 11> = "style stage";
+
+const fonts_word: Array<u8, 5> = "fonts";
+
+const layout_word: Array<u8, 12> = "layout stage";
