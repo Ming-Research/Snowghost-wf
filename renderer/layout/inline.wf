@@ -79,8 +79,23 @@ fn px_of(raw: i32) -> px: f32 pure {
   return made;
 }
 
+fn floor_to_px(units_value: i32) -> whole: i32 pure {
+  doc "units_value, a length in layout units, rounded down to a whole number of px as the reference rounds the half-leading above a line's text (a negative value rounds toward minus infinity).";
+  if units_value >= 0_i32 {
+    let count = units_value / 64_i32;
+    let made = count *sat 64_i32;
+    return made;
+  }
+  let magnitude = 0_i32 -sat units_value;
+  let rounded = magnitude +sat 63_i32;
+  let count = rounded / 64_i32;
+  let made = count *sat 64_i32;
+  let negative = 0_i32 -sat made;
+  return negative;
+}
+
 fn box_metrics(styles: &Styles, fonts: &FontSet, picks: &FontPicks, style: StyleRef) -> metrics: Metrics reads(styles), reads(fonts), reads(picks) {
-  doc "The metrics of style's box: its primary font's ascent and descent at its size, as the reference rounds them, and its line-height box: normal gives the font's ascent, descent and line gap; a number times the font size, or a length, gives the line height, around the content area with the half-leading split as the reference splits it, the top half rounded down.";
+  doc "The metrics of style's box: its primary font's ascent and descent at its size, as the reference rounds them, and its line-height box: normal gives the font's ascent, descent and line gap; a number times the font size, or a length, gives the line height, around the content area with the half-leading split as the reference splits it, the top half rounded down to a whole px.";
   let group = font_of(styles: styles, style: style);
   let font = font_index(styles: styles, style: style);
   let face = primary_face(fonts: fonts, picks: picks, font: font);
@@ -99,7 +114,8 @@ fn box_metrics(styles: &Styles, fonts: &FontSet, picks: &FontPicks, style: Style
     give content +sat gap;
   }
   let leading = line_height -sat content;
-  let top_half = leading / 2_i32;
+  let half_units = leading / 2_i32;
+  let top_half = floor_to_px(units_value: half_units);
   let bottom_half = leading -sat top_half;
   let x_height = units(px: extents.x_height);
   let size = units(px: group.size);
@@ -859,6 +875,45 @@ fn atomic_metrics(children: &[Context], child: u32) -> (ascent: i32, descent: i3
   return 0_i32, 0_i32;
 }
 
+fn fallback_extents(paragraph: &Paragraph, segment_at: &Box<Array<u32>>, at: u64, styles: &Styles, fonts: &FontSet, picks: &FontPicks, style: StyleRef) -> (ascent: i32, descent: i32) reads(paragraph), reads(segment_at), reads(styles), reads(fonts), reads(picks) {
+  doc "The ascent and descent of the line-height box of the fallback face that draws the scalar at at when style's line-height is normal, or zero: the reference lets every face other than the primary one that draws text of an inline box widen the box's line-height box to the face's own, its ascent and descent with its line gap split around them as box_metrics splits a normal line height (research/investigations/layout/runs/fallback-line-height.txt).";
+  if at >= segment_at^.inner.len {
+    return 0_i32, 0_i32;
+  }
+  let found = segment_at^.inner[at];
+  if found == no_group {
+    return 0_i32, 0_i32;
+  }
+  let index = cvt::<u32, u64>(found);
+  if index >= paragraph^.shaped.segments.inner.len {
+    return 0_i32, 0_i32;
+  }
+  let segment = paragraph^.shaped.segments.inner[index];
+  let group = font_of(styles: styles, style: style);
+  let fixed = group.line_height.kind == sizing_value;
+  let scaled = group.line_height.kind == sizing_number;
+  let given = bor(fixed, scaled);
+  if given {
+    return 0_i32, 0_i32;
+  }
+  let font = font_index(styles: styles, style: style);
+  let primary = primary_face(fonts: fonts, picks: picks, font: font);
+  if segment.face == primary {
+    return 0_i32, 0_i32;
+  }
+  let bold = False();
+  let extents = face_extents(fonts: fonts, face: segment.face, size: segment.size, synthetic_bold: bold);
+  let ascent = units(px: extents.ascent);
+  let descent = units(px: extents.descent);
+  let gap = units(px: extents.line_gap);
+  let half_gap = gap / 2_i32;
+  let top_half = floor_to_px(units_value: half_gap);
+  let bottom_half = gap -sat top_half;
+  let above = ascent +sat top_half;
+  let below = descent +sat bottom_half;
+  return above, below;
+}
+
 fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, basis: i32) -> result: unit reads(sizes), reads(children), reads(styles), reads(fonts), reads(picks), writes(paragraph) {
   doc "Computes each line's height and baseline (CSS 2.2 10.8) from the strut, the inline boxes on it and its atomic inlines (each vertically aligned), then aligns the subtrees whose vertical-align is top or bottom with the line box, growing it to hold them, moves each box, text and atomic inline by the relative offsets of its inline ancestors and its own, aligns it by text-align, and records the paragraph's fragments (its inline boxes and text nodes) and its atomic inlines' positions, relative to the paragraph's origin, and its height.";
   let lines = paragraph^.lines.inner.len;
@@ -872,6 +927,23 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
   let moves_x = box_array_filled::<i32>(count: positions, value: 0_i32);
   let moves_y = box_array_filled::<i32>(count: positions, value: 0_i32);
   let groups = box_array_filled::<u32>(count: positions, value: no_group);
+  let segment_at = box_array_filled::<u32>(count: positions, value: no_group);
+  let segment_count = paragraph^.shaped.segments.inner.len;
+  for (s in 0_u64..segment_count) {
+    if s < paragraph^.shaped.segments.inner.len {
+      let segment = paragraph^.shaped.segments.inner[s];
+      let first = cvt::<u32, u64>(segment.start);
+      let last_raw = cvt::<u32, u64>(segment.end);
+      let last = imin(last_raw, count);
+      let small = s < 4294967295_u64;
+      if small {
+        let named = cvt::<u64, u32>(s);
+        for (k in first..last) {
+          set segment_at.inner[k] = named;
+        }
+      }
+    }
+  }
   let stack = box_slots_new::<OpenBox>(capacity: 8_u64);
   let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: paragraph^.style);
   let text = text_of(styles: styles, style: paragraph^.style);
@@ -1165,6 +1237,20 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
         }
         let stack_depth = stack.inner.len;
         let (here_dx, here_dy, here_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
+        let here_style = if depth > 0_u64 {
+          let last = depth - 1_u64;
+          give stack.inner[last].style;
+        } else {
+          give paragraph^.style;
+        }
+        let (extra_ascent, extra_descent) = fallback_extents(paragraph: paragraph, segment_at: &segment_at, at: p, styles: styles, fonts: fonts, picks: picks, style: here_style);
+        if extra_ascent > 0_i32 {
+          let extra_top = shift_here -sat extra_ascent;
+          let extra_bottom = shift_here +sat extra_descent;
+          let (low_here, high_here) = extend_line(aligned: &aligned, group: here_group, top: extra_top, bottom: extra_bottom, low: low, high: high);
+          set low = low_here;
+          set high = high_here;
+        }
         if stack_depth > 0_u64 {
           let innermost = stack_depth - 1_u64;
           if innermost < stack.inner.len {
