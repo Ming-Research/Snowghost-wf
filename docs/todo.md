@@ -18,18 +18,52 @@ example apart from the renderer code that exposed it
   one level's nodes writes `results[child]` for each of their children.
   The writes never collide, but Whitefoot sees integers read from storage
   and cannot prove them distinct, so the loop cannot run in parallel. It
-  keeps the style stage's cascade a sequential pass in document order
-  (`design/pipeline/style.md`), and the layout builder's map from node to
-  style index is the same scatter. The owner prefers a mechanism that
-  works for any container (array, hash map, arena), needs no restricted
-  container operations and costs nothing at run time; the candidate is an
-  affine key that only its container mints, so that two places hold two
-  different keys, studied in Whitefoot as its own investigation against
-  monotone containers and a built-in partition. The real style stage's
-  pass in document order takes 0.164 s, 26 percent of the four-worker stage,
-  on ecma262 and 8 and 3 percent on html5 and apollo11
-  (`research/investigations/style/DESIGN.md`, criterion 2). Reopen the
-  cascade when Whitefoot settles it.
+  keeps the style stage's pass in document order, which computes what the
+  parent decides, sequential (`design/pipeline/style.md`), and the layout
+  builder's map from node to style index is the same scatter. Whitefoot's
+  owner selected range facts (candidate N of its unique-keys investigation)
+  over an affine key that only its container mints, and
+  mbbill/Whitefoot#203 adds them, in Whitefoot's main at the pin: each pass
+  derives its index arrays from the tree with loops whose invariants state
+  that a level lists distinct elements and that a parent lies one level
+  above its element, and a counted loop's `apart` certificate proves two
+  iterations disjoint from them. Style shape D in the concurrency
+  prototype is the cascade written that way
+  (`research/investigations/concurrency/DESIGN.md`, "Shape D: a proved level
+  cascade"). The real style stage's pass in document order is what a
+  rewrite compares against: it takes 0.164 s, 26 percent of the four-worker
+  stage, on ecma262 and 8 and 3 percent on html5 and apollo11
+  (`research/investigations/style/DESIGN.md`, criterion 2). As a level
+  loop each element reads the custom-property set of its parent's owner
+  while the level writes the sets of the elements that declare their own,
+  separated by a fact that an owner lies at or above its element; since
+  mbbill/Whitefoot#204 Whitefoot proves it in about 1 s
+  (`research/investigations/unique-keys/owner_loop.wf`). Reopen that pass,
+  and the layout builder's map, now that the pin is at Whitefoot's main;
+  `design/pipeline/style.md`'s first decision reopens with it.
+
+- **A parallel loop's body cannot bind an ordered result list.** Minimal
+  example: a counted loop whose body is `let (value, known) = f(k);` followed
+  by `set out[k] = value;` is denied parallelism as an unsupported body form
+  whatever `f` writes, while the same loop over a one-result `f` is
+  permitted. Style shape D's level loop therefore calls `cascade_into`, which
+  writes `cascade_element`'s values through an element reference and returns
+  its flag alone. Whitefoot records it in its `docs/todo.md`, "A counted
+  loop that binds an ordered result list is denied parallelism"
+  (mbbill/Whitefoot#203). Change: the permission survey gives each binder
+  its own place. Reopen when that lands; then call `cascade_element`
+  directly.
+
+- **A function receives every value its requirements name.** Minimal
+  example: a function whose requirement states `positions[slots[k]] == k`
+  for every `k` must take `positions` as a parameter though its body never
+  reads it, and every call passes it. `cascade_level` in
+  `renderer/proto/style/shapes.wf` takes `positions`, `depths` and `level`
+  only so its requirements can name them. Whitefoot records it in its
+  `docs/todo.md`, "Parameters a contract names but the body does not use
+  are passed at run time" (mbbill/Whitefoot#203). Change: a parameter that
+  only contracts read, erased by lowering. Reopen when that lands or the
+  calls' cost shows in a profile.
 
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
@@ -61,6 +95,28 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Shape D derives the levels the traversal already holds.**
+  `level_index` in `renderer/proto/style/shapes.wf` repeats the depth walk
+  and a grouping by depth that `Walk` and `Levels` in
+  `renderer/proto/style/traversal.wf` already compute for shape A, and
+  shape D's cascade timing includes both. Impact: shape D pays for the walk
+  twice per stage, and the two derivations can drift apart. Change: state
+  `level_index`'s postconditions where the traversal builds its levels, so
+  the pipeline derives them once. Reopen when shape D replaces C in the
+  pipeline or the real stage's pass in document order becomes a level
+  loop.
+
+- **Shapes C and D and the cascade timing repeat one match.**
+  `style_shape_c`, `style_shape_d` and `match_all` in
+  `renderer/proto/style/shapes.wf` each check the element and rule counts,
+  build the rule index and the sibling positions and run the flat match;
+  C and D then differ only in their cascade, which `cascade_only` already
+  chooses between. Impact: a change to the match has to be made three
+  times, and `check` compares C's and D's results but not `match_all`'s, so
+  a drift there would show only in the cascade timings. Change: C and D
+  call `match_all` and `cascade_only`. Reopen with the next change to the
+  match or when shape D replaces C in the pipeline, and time C again then,
+  since its code changes.
 - **The selector oracle does not exercise the rule index, sibling
   positions or specificity.** `tests/css/selectors_oracle.py` drives
   `selector_matches`, which scans; `subject_key`, `name_hash`,
