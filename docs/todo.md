@@ -578,14 +578,14 @@ example apart from the renderer code that exposed it
   and balance. Change: take the definite height as the column height for
   `auto`, and as the bound of the balanced height, with overflow columns.
   Reopen when a page sets either.
-- **Most of the layout passes' loops run sequentially.** Of the 343 loops in
-  `renderer/layout/` the `--par` ledger lists, it permits 50; it refuses
+- **Most of the layout passes' loops run sequentially.** Of the 340 loops in
+  `renderer/layout/` the `--par` ledger lists, it permits 49; it refuses
   127 that write storage neither the iteration introduces nor an
-  accumulator holds, 120 that write storage outliving the iteration
-  without an exactly associative reduction, 39 that leave early and 7
-  that carry several accumulators. The layout passes reach 1.91 and 2.02
+  accumulator holds, 119 that write storage outliving the iteration
+  without an exactly associative reduction, 39 that leave early and 6
+  that carry several accumulators. The layout passes reach 2.30 and 2.47
   times their sequential speed at four workers on ecma262 and html5, and
-  1.31 on apollo11 (research/investigations/layout/DESIGN.md, Layout
+  1.53 on apollo11 (research/investigations/layout/DESIGN.md, Layout
   results). Which refused loops hold the passes' time is not measured.
   Change: profile the passes' sequential time by function, then rewrite the
   costly loops so each iteration writes only its own element, or state the

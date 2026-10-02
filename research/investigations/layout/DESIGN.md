@@ -386,6 +386,10 @@ recommended; each starts from the dependencies of its candidates.
   readers compare with, so where the Standard and Chromium differ the
   stage follows Chromium, which also reverses the style stage's ruling on
   `table { border-color: gray }`.
+- **2026-10-02, Q62 and Q63** (Choices after the results), written in
+  Chinese: both approved as recommended: line heights take the reference's
+  conversion to layout units, and the box tree builder's walk resolves
+  counters and quotes.
 
 ## Text preparation results
 
@@ -473,7 +477,7 @@ Each mismatch class, with its cause (`docs/todo.md` holds the changes):
   FreeSerif and FreeSans cases differ by 1/64 px in ten x-heights.
 ## Layout results
 
-At Snowghost commit 273fbb4 with Whitefoot `3629be15`, against Chromium 141
+At Snowghost commit a5fc2de with Whitefoot `3629be15`, against Chromium 141
 on this host (`run.sh check`, `runs/check.txt`; Chromium's dumps from
 `make oracle-layout-dump`):
 
@@ -527,38 +531,45 @@ sequential and `--par` builds, the latter at four workers, give
 byte-identical dumps of the three pages and the five case pages
 (`runs/check.txt`).
 
-**Speed (criterion 2).** `run.sh time` at the same commit, on this host's
+**Speed (criterion 2).** `run.sh time` at commit a5fc2de, on this host's
 four processors with no other job running, the best of five runs, per run
-of the stage from computed styles to the dumped boxes (`runs/time-parts.txt`;
-"box tree and text" is the build mode, which builds the box tree and
-prepares its text, and "layout passes" is the layout mode less it):
+(`runs/time-parts.txt`). Each run times the stage from computed styles to
+laid-out boxes: the box tree (the driver's boxes mode), the text
+preparation with font matching, shaping and break opportunities (text mode
+less boxes), and the layout passes (layout mode less text); placing the
+boxes for the dump and writing it are not timed.
 
 | Page | Part | Sequential | `--par`, 1 worker | 2 workers | 4 workers | Speed-up at 4 |
 |---|---|---:|---:|---:|---:|---:|
-| ecma262 | whole stage | 1.273 s | 1.293 s | 0.870 s | 0.580 s | 2.20 |
-| ecma262 | box tree and text | 0.910 s | 0.890 s | 0.610 s | 0.390 s | 2.33 |
-| ecma262 | layout passes | 0.363 s | 0.403 s | 0.260 s | 0.190 s | 1.91 |
-| html5 | whole stage | 1.360 s | 1.353 s | 0.860 s | 0.597 s | 2.28 |
-| html5 | box tree and text | 1.017 s | 1.050 s | 0.640 s | 0.427 s | 2.38 |
-| html5 | layout passes | 0.343 s | 0.303 s | 0.220 s | 0.170 s | 2.02 |
-| apollo11 | whole stage | 0.083 s | 0.088 s | 0.064 s | 0.044 s | 1.89 |
-| apollo11 | box tree and text | 0.062 s | 0.057 s | 0.044 s | 0.028 s | 2.21 |
-| apollo11 | layout passes | 0.021 s | 0.031 s | 0.020 s | 0.016 s | 1.31 |
+| ecma262 | whole stage | 1.290 s | 1.357 s | 0.860 s | 0.587 s | 2.20 |
+| ecma262 | box tree | 0.103 s | 0.113 s | 0.093 s | 0.100 s | 1.03 |
+| ecma262 | text preparation | 0.780 s | 0.833 s | 0.480 s | 0.310 s | 2.52 |
+| ecma262 | layout passes | 0.407 s | 0.410 s | 0.287 s | 0.177 s | 2.30 |
+| html5 | whole stage | 1.390 s | 1.393 s | 0.880 s | 0.590 s | 2.36 |
+| html5 | box tree | 0.100 s | 0.083 s | 0.090 s | 0.090 s | 1.11 |
+| html5 | text preparation | 0.937 s | 0.990 s | 0.583 s | 0.357 s | 2.62 |
+| html5 | layout passes | 0.353 s | 0.320 s | 0.207 s | 0.143 s | 2.47 |
+| apollo11 | whole stage | 0.086 s | 0.086 s | 0.065 s | 0.044 s | 1.95 |
+| apollo11 | box tree | 0.005 s | 0.006 s | 0.005 s | 0.005 s | 1.00 |
+| apollo11 | text preparation | 0.052 s | 0.055 s | 0.041 s | 0.020 s | 2.60 |
+| apollo11 | layout passes | 0.029 s | 0.025 s | 0.019 s | 0.019 s | 1.53 |
 
 Criterion 2 holds on ecma262 and html5. Intrinsic sizes are computed on
 demand inside the layout passes (Q56), so they are not a part of their own.
-The box tree and its text preparation (font matching, shaping, break
-opportunities) take about three quarters of the stage on the two large
-pages. The layout passes on html5 take 0.343 s sequentially against the
-prototype's 0.029 s, which used a fixed advance per character, no
-`clear`, floats that do not push each other, and fixed fractions of the
-enclosing width for floats, table cells, flex and grid items and
-inline-blocks. Of the 343 loops in `renderer/layout/` the `--par`
-ledger lists, it permits 50; of the 293 it refuses, 127 write storage
-neither the iteration introduces nor an accumulator holds, 120 write
-storage that outlives the iteration without an exactly associative
-reduction, 39 leave early and 7 carry several accumulators. Which of them
-hold the passes' sequential time is not measured.
+Text preparation is about 60 percent of the sequential stage on ecma262
+and 67 percent on html5. The box tree's walk is the one chain in document
+order the tree decides, so it does not speed up; at four workers it is 17
+and 15 percent of the stage on ecma262 and html5. The layout passes on
+html5 take 0.353 s sequentially against the prototype's 0.029 s, which used
+a fixed advance per character, no `clear`, floats that do not push each
+other, and fixed fractions of the enclosing width for floats, table
+cells, flex and grid items and inline-blocks. Of the 340 loops in
+`renderer/layout/` the `--par` ledger lists, it permits 49; of the 291 it
+refuses, 127 write storage neither the iteration introduces nor an
+accumulator holds, 119 write storage that outlives the iteration without
+an exactly associative reduction, 39 leave early and 6 carry several
+accumulators (`runs/ledger-loops.txt`). Which of them hold the passes'
+sequential time is not measured.
 
 **Table steps the draft leaves undefined (Q57).** Where CSS Tables 3's
 editor's draft leaves a step to the implementation, the stage takes the
@@ -581,7 +592,8 @@ that implements it:
 
 ## Choices after the results
 
-Two decisions the results changed, for the owner's ruling:
+Two decisions the results changed, which the owner approved (Owner
+rulings):
 
 - **Q62, line heights in layout units.** Q54 had every computed length
   truncated toward zero when layout reads it. The reference rounds a

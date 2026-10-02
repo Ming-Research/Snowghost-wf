@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-02 Record the layout stage's shape and follow Chromium where a specification differs
+
+Nodes: pipeline, pipeline/layout, pipeline/style, vocabulary
+
+Owner-approved: 2026-10-01, the owner approved the layout scope, oracle and criteria, including font matching through Snowghost's own table and scrollbars that take no space, and then wrote in Chinese that Q51 to Q58 were all approved as recommended and to start the implementation; 2026-10-02, the owner agreed in Chinese to Q59's recommended option A, first ruled Q60 to follow the Standard and then reversed it to follow Chromium for every difference (Q60 and Q61), and, shown the cards Q62 and Q63 with the tree edit that lifts the Q61 ruling to the pipeline, wrote in Chinese that they agreed to both.
+
+Summary: The layout tree records font matching through Snowghost's own table of the reference's resolution on its host, scrollbars that take no space, text prepared per paragraph in one counted loop without a shared shaping cache, fragments written relative to their formatting context, intrinsic sizes computed on demand, tables per CSS Tables 3's draft with the reference's behavior for undefined steps, a limited multi-column layout laid out as one column and split by a column map, and counters and quotes resolved in the box tree builder's walk rather than a separate pass in the style stage. The style tree records generated boxes' styles in a sparse list beside the elements' and moves the user-agent sheet to the reference's computed values. The pipeline records the owner's rule that the renderer follows Chromium where a specification differs. The vocabulary tree adds the layout-only value groups and states each computed length's conversion to `LayoutUnit` as the reference's for its use, line heights included. The grounds and measurements are in research/investigations/layout/DESIGN.md.
+
 ## 2026-10-01 Record the real style stage's shape, value groups and units
 
 Nodes: pipeline/style, vocabulary
