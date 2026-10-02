@@ -27,6 +27,21 @@ example apart from the renderer code that exposed it
   invariant states its entries distinct, usable by every loop over it.
   Reopen when Whitefoot offers one, or when the builder's map is rewritten.
 
+- **Reading an unwritten scalar field denies a certified loop.** Minimal
+  example: `state: &State` with fields `one: Box<Array<u64>>` and
+  `shared: Common`, where `Common` holds `scale: f32`; a counted loop with
+  `apart(i, j) { }` writes `state^.one.inner[at]` for distinct `at`.
+  Adding `let s = state^.shared.scale;` to its body, even unused, makes the
+  ledger deny the loop at the write ("the body writes storage that is
+  neither introduced by the iteration nor the accumulator"), while reading
+  `state^.shared.table.inner.len` keeps it permitted; no iteration writes
+  `state^.shared`. The style stage's level loops
+  (`renderer/style/levels.wf`) therefore read the environment and the
+  state's scalars once before each loop. Change: the permission survey
+  separates a read of a field no iteration writes from the certified
+  writes. Reopen when Whitefoot changes the survey, or when a loop needs a
+  scalar that changes per level.
+
 - **A function receives every value its requirements name.** Minimal
   example: a function whose requirement states `positions[slots[k]] == k`
   for every `k` must take `positions` as a parameter though its body never

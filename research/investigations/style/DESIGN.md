@@ -830,8 +830,45 @@ description in the renderer:
   The pseudo-elements counted are the styled ones the first part numbers,
   more than the dump lists. The rest are the root and, on apollo11 and the
   cases page, nodes that declare custom properties or have a pending value
-  of a stored longhand. The times of criterion
-  2 are to be measured on a host with no other job.
+  of a stored longhand.
+- **The fallback path.** None of the three pages sends a node of the level
+  loop to the sequential path for a pending value only
+  `parse_pending_named` parses. `tests/css/style-cases.html` now does: a
+  `font-family`, `list-style-type`, `quotes` and `border-spacing` taken
+  from `var()`, with and without a custom property in scope. Its dumps at
+  7e54cc1 with the case added, sequential and `--par` (b25828cfabd613e5),
+  equal the dump the stage before the port gives of the same page, and a
+  level loop that leaves such a node unflagged, so that neither path
+  computes it, changes the dump from the first added element on.
+- **Criterion 2.** `run.sh time` before the port (f4028dc) and after it
+  (7e54cc1), one after the other on the same host's four processors with
+  no other job (`runs/level-cascade-time-before.txt`,
+  `runs/level-cascade-time-after.txt`), the best of five runs, per run of
+  the stage. The pass is the inherited mode less the match mode, a
+  difference of two timed modes, so its smaller values carry the noise of
+  both:
+
+| Page | Build | Pass before | Pass after | Ratio | Stage before | Stage after |
+|---|---|---:|---:|---:|---:|---:|
+| ecma262 | sequential | 0.262 s | 0.346 s | 0.76 | 2.410 s | 2.436 s |
+| ecma262 | 2 workers | 0.288 s | 0.184 s | 1.57 | 1.530 s | 1.434 s |
+| ecma262 | 4 workers | 0.284 s | 0.114 s | 2.49 | 1.094 s | 0.926 s |
+| html5 | sequential | 0.058 s | 0.132 s | 0.44 | 1.850 s | 2.024 s |
+| html5 | 2 workers | 0.078 s | 0.048 s | 1.63 | 1.100 s | 1.112 s |
+| html5 | 4 workers | 0.074 s | 0.036 s | 2.06 | 0.722 s | 0.718 s |
+| apollo11 | sequential | 0.0205 s | 0.0265 s | 0.77 | 1.009 s | 1.014 s |
+| apollo11 | 4 workers | 0.0170 s | 0.0040 s | 4.25 | 0.2945 s | 0.2815 s |
+
+  Criterion 2 holds: at four workers the pass is 2.49 and 2.06 times
+  faster on ecma262 and html5, and the whole stage is 15 percent faster on
+  ecma262, 4 percent on apollo11 and level on html5 (0.718 against 0.722
+  s). The sequential build pays for the port: the pass runs `node_plain`'s
+  loop, `level_index`'s check and grouping, and a loop per level, so it is
+  32 percent slower on ecma262 and about twice as slow on html5, whose
+  stage is 9 percent slower sequentially, more than the pass's 0.07 s
+  explains, so part of it is the run's noise. The criterion judges four
+  workers, the build the renderer runs; the sequential cost is the price
+  of the levels and is recorded, not hidden.
 
 ## Owner rulings
 
