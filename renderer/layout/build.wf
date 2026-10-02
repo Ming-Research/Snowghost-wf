@@ -190,9 +190,10 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let cells = box_slots_new::<TableCell>(capacity: 0_u64);
   let captions = box_slots_new::<u32>(capacity: 0_u64);
   let fragments = box_slots_new::<Fragment>(capacity: 0_u64);
+  let splits = box_slots_new::<Split>(capacity: 0_u64);
   let no = False();
   let space = Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
-  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no);
+  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no);
 }
 
 fn new_open(style: StyleRef, first: u64) -> made: Open pure {
@@ -349,6 +350,77 @@ fn add_object(context: &Context, open: &Open, child: Context) -> result: Result<
   let piece = Piece::Object(context: at, style: style);
   let added = propagate add_piece(context: context, open: open, piece: piece, size: 1_u64);
   return Ok<unit, LayoutError>(value: unit);
+}
+
+fn stash_inlines(open: &Open) -> saved: Box<Slots<StyleRef>> writes(open) {
+  doc "Takes the inline boxes open around a block-level box that interrupts them, so the block's own paragraphs do not begin them; restore_inlines gives them back after it.";
+  let count = open^.inlines.inner.len;
+  let reserve = imin(count, 4096_u64);
+  let saved = box_slots_new::<StyleRef>(capacity: reserve);
+  for (k in 0_u64..count) {
+    let style = open^.inlines.inner[k];
+    let pushed = push_item::<StyleRef>(cell: &saved, value: style, ceiling: 4096_u64);
+  }
+  for (step in 0_u64..count) {
+    let length = open^.inlines.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let removed = take_back(window: &open^.inlines.inner);
+  }
+  set open^.emitted = 0_u64;
+  return move saved;
+}
+
+fn restore_inlines(open: &Open, saved: &Box<Slots<StyleRef>>) -> result: unit reads(saved), writes(open) {
+  doc "Reopens the inline boxes stash_inlines took, to be begun again when content arrives.";
+  let count = saved^.inner.len;
+  for (k in 0_u64..count) {
+    let style = saved^.inner[k];
+    let pushed = push_item::<StyleRef>(cell: &open^.inlines, value: style, ceiling: 4096_u64);
+  }
+  set open^.emitted = 0_u64;
+  return unit;
+}
+
+fn open_splits(context: &Context, saved: &Box<Slots<StyleRef>>, flow_open: u64) -> first: u64 reads(saved), writes(context) {
+  doc "Records a block-in-inline for each element's inline box in saved around the block whose flow entry opens at flow_open, and returns the index of the first record, for close_splits.";
+  let first = context^.splits.inner.len;
+  let small = flow_open < 4294967295_u64;
+  if small {
+  } else {
+    return first;
+  }
+  let at = cvt::<u64, u32>(flow_open);
+  let count = saved^.inner.len;
+  for (k in 0_u64..count) {
+    let style = saved^.inner[k];
+    let named = bnot(style.anonymous);
+    let own = style.pseudo == no_pseudo;
+    let shown = band(named, own);
+    if shown {
+      let made = Split(owner: style.element, open: at, close: at, left: 0_i32, width: 0_i32);
+      let pushed = push_item::<Split>(cell: &context^.splits, value: made, ceiling: item_ceiling);
+    }
+  }
+  return first;
+}
+
+fn close_splits(context: &Context, first: u64, flow_close: u64) -> result: unit writes(context) {
+  doc "Gives the block-in-inline records from first on the flow entry flow_close that closes their block.";
+  let small = flow_close < 4294967295_u64;
+  if small {
+  } else {
+    return unit;
+  }
+  let at = cvt::<u64, u32>(flow_close);
+  let count = context^.splits.inner.len;
+  for (k in first..count) {
+    if k < context^.splits.inner.len {
+      set context^.splits.inner[k].close = at;
+    }
+  }
+  return unit;
 }
 
 fn add_child_flow(context: &Context, child: Context, kind: u8) -> result: Result<unit, LayoutError> writes(context) {
@@ -1474,11 +1546,19 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let independent = bor(own, separate);
   if independent {
     let closed = propagate end_paragraph(context: context, open: open);
+    let flow_at = context^.flow.inner.len;
     let child = propagate build_box(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
     let placed = propagate add_child_flow(context: context, child: move child, kind: 0_u8);
+    let around = open^.inlines.inner.len;
+    if around > 0_u64 {
+      let saved = stash_inlines(open: open);
+      let first = open_splits(context: context, saved: &saved, flow_open: flow_at);
+      restore_inlines(open: open, saved: &saved);
+    }
     return Ok<unit, LayoutError>(value: unit);
   }
   let closed = propagate end_paragraph(context: context, open: open);
+  let saved = stash_inlines(open: open);
   let index = context^.blocks.inner.len;
   if index < 4294967295_u64 {
   } else {
@@ -1488,8 +1568,10 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let block = Block(style: style, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, marker: marker);
   let kept = propagate push_or_fail::<Block>(cell: &context^.blocks, value: block);
   let at = cvt::<u64, u32>(index);
+  let flow_open = context^.flow.inner.len;
   let opening = Flow::Open(block: at);
   let opened = propagate push_or_fail::<Flow>(cell: &context^.flow, value: opening);
+  let first_split = open_splits(context: context, saved: &saved, flow_open: flow_open);
   let outer = open^.style;
   set open^.style = style;
   let marked = propagate add_inside_marker(styles: styles, atoms: atoms, walk: walk, style: style, context: context, open: open);
@@ -1498,8 +1580,11 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let after = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, context: context, open: open);
   let ended = propagate end_paragraph(context: context, open: open);
   set open^.style = outer;
+  let flow_close = context^.flow.inner.len;
   let closing = Flow::Close(block: at);
   let closed_block = propagate push_or_fail::<Flow>(cell: &context^.flow, value: closing);
+  close_splits(context: context, first: first_split, flow_close: flow_close);
+  restore_inlines(open: open, saved: &saved);
   return Ok<unit, LayoutError>(value: unit);
 }
 

@@ -156,11 +156,13 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
   let flow_count = context^.flow.inner.len;
   let left = 0_i32;
   let width = content_width;
+  let next_split = 0_u64;
   for (k in 0_u64..flow_count) {
     if k >= context^.flow.inner.len {
       break;
     }
     let item = context^.flow.inner[k];
+    set next_split = place_splits(context: context, from: next_split, flow: k, left: left, width: width);
     match item {
       Open(block: b) => {
         let at = cvt::<u32, u64>(b);
@@ -442,6 +444,332 @@ fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts:
     lay_out_child(child: &context^.children.inner[child], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   }
   return True();
+}
+
+fn place_splits(context: &Context, from: u64, flow: u64, left: i32, width: i32) -> next: u64 writes(context) {
+  doc "Gives the block-in-inline records from from on whose block opens at flow entry flow the content box left and width it sits in, and returns the first record past them.";
+  let at = from;
+  let count = context^.splits.inner.len;
+  for (step in from..count) {
+    if at < context^.splits.inner.len {
+      let opens = cvt::<u32, u64>(context^.splits.inner[at].open);
+      if opens == flow {
+        set context^.splits.inner[at].left = left;
+        set context^.splits.inner[at].width = width;
+        set at = at +sat 1_u64;
+      } else {
+        break;
+      }
+    }
+  }
+  return at;
+}
+
+fn entry_extent(context: &Context, flow: u32) -> (top: i32, bottom: i32) reads(context) {
+  doc "The top and bottom, in the context's border box, of the block or child context whose flow entry is flow: a block's at its Open or Close entry, a child context's at its Child entry.";
+  let at = cvt::<u32, u64>(flow);
+  if at < context^.flow.inner.len {
+  } else {
+    return 0_i32, 0_i32;
+  }
+  let item = context^.flow.inner[at];
+  match item {
+    Open(block: b) => {
+      let index = cvt::<u32, u64>(b);
+      if index < context^.blocks.inner.len {
+        let top = context^.blocks.inner[index].y;
+        let bottom = top +sat context^.blocks.inner[index].height;
+        return top, bottom;
+      }
+    }
+    Close(block: b) => {
+      let index = cvt::<u32, u64>(b);
+      if index < context^.blocks.inner.len {
+        let top = context^.blocks.inner[index].y;
+        let bottom = top +sat context^.blocks.inner[index].height;
+        return top, bottom;
+      }
+    }
+    Child(context: c) => {
+      let index = cvt::<u32, u64>(c);
+      if index < context^.children.inner.len {
+        let top = context^.children.inner[index].y;
+        let bottom = top +sat context^.children.inner[index].height;
+        return top, bottom;
+      }
+    }
+    Text(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return 0_i32, 0_i32;
+}
+
+fn lineless(context: &Context, flow: u64) -> empty: Bool reads(context) {
+  doc "Tells whether flow entry flow is a paragraph without lines.";
+  if flow < context^.flow.inner.len {
+  } else {
+    return False();
+  }
+  let item = context^.flow.inner[flow];
+  match item {
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        let lines = context^.paragraphs.inner[at].lines.inner.len;
+        let none = lines == 0_u64;
+        return none;
+      }
+    }
+    Open(..) => {
+    }
+    Close(..) => {
+    }
+    Child(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return False();
+}
+
+fn gap_lineless(context: &Context, after: u32, before: u32) -> empty: Bool reads(context) {
+  doc "Tells whether every flow entry strictly between after and before is a paragraph without lines.";
+  let low = cvt::<u32, u64>(after);
+  let high = cvt::<u32, u64>(before);
+  let from = low +sat 1_u64;
+  if from > high {
+    return False();
+  }
+  for (k in from..high) {
+    let empty = lineless(context: context, flow: k);
+    if empty {
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn shows_owner(context: &Context, flow: u64, owner: u32, opening: Bool) -> shown: Bool reads(context) {
+  doc "Tells whether flow entry flow is a paragraph with lines in which owner's inline box opens (opening) or closes, so that it reports owner's rectangle there itself.";
+  if flow < context^.flow.inner.len {
+  } else {
+    return False();
+  }
+  let item = context^.flow.inner[flow];
+  let paragraph = match item {
+    Text(paragraph: p) => {
+      give cvt::<u32, u64>(p);
+    }
+    Open(..) => {
+      give 18446744073709551615_u64;
+    }
+    Close(..) => {
+      give 18446744073709551615_u64;
+    }
+    Child(..) => {
+      give 18446744073709551615_u64;
+    }
+    Float(..) => {
+      give 18446744073709551615_u64;
+    }
+    Out(..) => {
+      give 18446744073709551615_u64;
+    }
+  }
+  if paragraph < context^.paragraphs.inner.len {
+  } else {
+    return False();
+  }
+  let lines = context^.paragraphs.inner[paragraph].lines.inner.len;
+  if lines == 0_u64 {
+    return False();
+  }
+  let marks = context^.paragraphs.inner[paragraph].marks.inner.len;
+  for (m in 0_u64..marks) {
+    if paragraph < context^.paragraphs.inner.len {
+      if m < context^.paragraphs.inner[paragraph].marks.inner.len {
+        let mark = context^.paragraphs.inner[paragraph].marks.inner[m];
+        let found = match mark {
+          Open(style: s, ..) => {
+            let same = s.element == owner;
+            let plain = bnot(s.anonymous);
+            let own = s.pseudo == no_pseudo;
+            let shown_style = band(plain, own);
+            let named = band(same, shown_style);
+            give band(named, opening);
+          }
+          Close(style: s, ..) => {
+            let same = s.element == owner;
+            let plain = bnot(s.anonymous);
+            let own = s.pseudo == no_pseudo;
+            let shown_style = band(plain, own);
+            let named = band(same, shown_style);
+            let closing = bnot(opening);
+            give band(named, closing);
+          }
+          Atomic(..) => {
+            give False();
+          }
+          Node(..) => {
+            give False();
+          }
+        }
+        if found {
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn split_fragments(context: &Context, content_left: i32) -> result: unit writes(context) {
+  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one at the run's top or bottom where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
+  let count = context^.splits.inner.len;
+  let bounded = imin(count, item_ceiling);
+  let used = box_array_filled::<u8>(count: bounded, value: 0_u8);
+  for (k in 0_u64..bounded) {
+    if k < used.inner.len {
+      if used.inner[k] == 0_u8 {
+        if k < context^.splits.inner.len {
+          let first = context^.splits.inner[k];
+          let last_close = first.close;
+          let run_end = k;
+          for (j in k..bounded) {
+            if j > k {
+              if j < context^.splits.inner.len {
+                let next = context^.splits.inner[j];
+                if next.owner == first.owner {
+                  let joined = gap_lineless(context: context, after: last_close, before: next.open);
+                  if joined {
+                    set last_close = next.close;
+                    set run_end = j;
+                    if j < used.inner.len {
+                      set used.inner[j] = 1_u8;
+                    }
+                  } else {
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          let (top, first_bottom) = entry_extent(context: context, flow: first.open);
+          let (last_top, bottom) = entry_extent(context: context, flow: last_close);
+          let x = content_left +sat first.left;
+          let height = bottom -sat top;
+          let run_open = cvt::<u32, u64>(first.open);
+          let run_close = cvt::<u32, u64>(last_close);
+          let yes = True();
+          let no = False();
+          let has_before = if run_open > 0_u64 {
+            let before = run_open - 1_u64;
+            give shows_owner(context: context, flow: before, owner: first.owner, opening: no);
+          } else {
+            give False();
+          }
+          if bnot(has_before) {
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: 0_i32, height: 0_i32);
+          }
+          add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
+          let after = run_close +sat 1_u64;
+          let has_after = shows_owner(context: context, flow: after, owner: first.owner, opening: yes);
+          if bnot(has_after) {
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: bottom, width: 0_i32, height: 0_i32);
+          }
+        }
+      }
+    }
+  }
+  let entries = context^.flow.inner.len;
+  for (k in 0_u64..entries) {
+    let empty = lineless(context: context, flow: k);
+    if empty {
+      empty_inline_fragments(context: context, flow: k);
+    }
+  }
+  return unit;
+}
+
+fn split_owner(context: &Context, owner: u32) -> found: Bool reads(context) {
+  doc "Tells whether a block interrupts owner's inline box in this context.";
+  let count = context^.splits.inner.len;
+  for (k in 0_u64..count) {
+    if context^.splits.inner[k].owner == owner {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn empty_inline_fragments(context: &Context, flow: u64) -> result: unit writes(context) {
+  doc "Adds an empty rectangle, at the paragraph's origin, for each inline box that opens in the paragraph at flow entry flow, which has no lines, when no block interrupts its element here.";
+  if flow < context^.flow.inner.len {
+  } else {
+    return unit;
+  }
+  let item = context^.flow.inner[flow];
+  let paragraph = match item {
+    Text(paragraph: p) => {
+      give cvt::<u32, u64>(p);
+    }
+    Open(..) => {
+      give 18446744073709551615_u64;
+    }
+    Close(..) => {
+      give 18446744073709551615_u64;
+    }
+    Child(..) => {
+      give 18446744073709551615_u64;
+    }
+    Float(..) => {
+      give 18446744073709551615_u64;
+    }
+    Out(..) => {
+      give 18446744073709551615_u64;
+    }
+  }
+  if paragraph < context^.paragraphs.inner.len {
+  } else {
+    return unit;
+  }
+  let left = context^.paragraphs.inner[paragraph].left;
+  let top = context^.paragraphs.inner[paragraph].top;
+  let marks = context^.paragraphs.inner[paragraph].marks.inner.len;
+  for (m in 0_u64..marks) {
+    if paragraph < context^.paragraphs.inner.len {
+      if m < context^.paragraphs.inner[paragraph].marks.inner.len {
+        let mark = context^.paragraphs.inner[paragraph].marks.inner[m];
+        match mark {
+          Open(style: s, ..) => {
+            let plain = bnot(s.anonymous);
+            let own = s.pseudo == no_pseudo;
+            let shown = band(plain, own);
+            if shown {
+              let interrupted = split_owner(context: context, owner: s.element);
+              if bnot(interrupted) {
+                add_fragment(context: context, kind: placed_element, owner: s.element, x: left, y: top, width: 0_i32, height: 0_i32);
+              }
+            }
+          }
+          Close(..) => {
+          }
+          Atomic(..) => {
+          }
+          Node(..) => {
+          }
+        }
+      }
+    }
+  }
+  return unit;
 }
 
 fn mark_lines(frames: &Box<Slots<Frame>>) -> result: unit writes(frames) {
@@ -1092,6 +1420,7 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
   copy_fragments(context: context);
+  split_fragments(context: context, content_left: content_left);
   return unit;
 }
 
