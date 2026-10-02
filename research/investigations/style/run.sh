@@ -28,6 +28,12 @@
 # the Whitefoot check lock, taken with RUN_CHECK (by default the pinned
 # checkout's .github/run-check.pl), so no other heavy job shares the machine.
 #
+# PAGES replaces the directory of the real pages and their sheets,
+# build/research/concurrency by default; a worktree whose build directory
+# links to another checkout's needs a copy outside the link, since the driver
+# opens no path through a symbolic link (docs/todo.md, Whitefoot
+# requirements).
+#
 # UA replaces the user-agent sheet, a path relative to the repository, for a
 # diagnostic run such as the one in runs/ua-table-gray.txt, whose sheet is
 # renderer/style/ua.css followed by the line `table { border-color: gray; }`.
@@ -41,7 +47,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 cd "$root"
 
-data=build/research/concurrency
+data=${PAGES:-build/research/concurrency}
 oracle=build/oracle/style
 out=build/research/style
 ua=${UA:-renderer/style/ua.css}

@@ -12,6 +12,17 @@ keeps the Standard's sheet, so that failure stays recorded; `ex` and `ch`
 come from the default fonts' metrics; and lengths become `LayoutUnit` when
 layout reads them.
 
+The second batch of the layout stage's scope
+(`research/investigations/layout/DESIGN.md`, "The style stage's second
+batch") is written and measured in "The second batch" below: the 37
+longhands of flex, grid, tables and generated content, `::before` and
+`::after` (Q51), the four groups of Q58 and the presentational hints of
+`width`, `height` and the table attributes. Criterion 1 holds on every page
+for every new longhand but `counter-reset` on ecma262 and apollo11, which the
+Standard's `ol, ul, menu { counter-reset: list-item }` puts below 99 percent
+against Chromium's computed `none`; that choice is the owner's
+("Choices the second batch raises").
+
 ## Question
 
 What does the style stage of the first milestone, headless static rendering,
@@ -153,6 +164,13 @@ The modules' interfaces are their `module.wfm` files; in short:
 - **`pkg::oracle::style`**, the `style_oracle` entry, loads a page and its
   sheets as the browser would and writes the oracle's TSV, or times the
   steps (`run.sh` in this directory).
+
+The second batch extends these interfaces ("The second batch" below): the
+37 longhands, `Stored` and `Ratio` values with the store's side tables and
+`declaration_store_side_copy`; `alternative_pseudo_element`,
+`pseudo_subject_key` and `pseudo_matching_specificity`; `Styles`' four new
+groups, their lists and `pseudos`; and `add_presentational_hints`, which the
+driver calls after `add_style_attributes`.
 
 ## How the three parts keep only true dependencies
 
@@ -374,6 +392,177 @@ known.
   The proposal was to round when layout reads a computed length, the one
   rounding the decision asks for, moved to layout's input; the owner agreed,
   and `design/vocabulary.md` records it.
+
+## The second batch
+
+The longhands, pseudo-elements and hints the layout stage's scope adds
+(`research/investigations/layout/DESIGN.md`, "The style stage's second
+batch"), on the interfaces of Q51 and Q58.
+
+### What it adds
+
+- **`pkg::css::values`** parses the 37 longhands `flex-direction` to
+  `word-break` and the shorthands `flex`, `flex-flow`, `gap` (and the aliases
+  `grid-gap`, `grid-row-gap`, `grid-column-gap`, `word-wrap`),
+  `place-items`, `place-content`, `place-self`, `grid-template`, `grid`,
+  `grid-area`, `grid-row` and `grid-column`; `list-style` now sets
+  `list-style-position`. A value of variable length is a `Stored` value
+  naming an entry of the `DeclarationStore`'s side stores (track lists with
+  their declared tracks and line names, area maps, grid lines, content,
+  counter and quote lists, and the two `border-spacing` lengths); an integer
+  `repeat()` is expanded at parse time and one `auto-fill` or `auto-fit`
+  repeat is kept as the list's repeated range; `aspect-ratio` is a `Ratio`.
+  An explicit `0%` keeps its percentage as negative zero, so a computed
+  `flex-basis: 0%` (and `width: 0%`) reads as a percentage.
+- **`pkg::css::selectors`** keeps which pseudo-element each alternative ends
+  in and adds `pseudo_subject_key` and `pseudo_matching_specificity`, which
+  match an alternative ending in `::before` or `::after` (or `:before`,
+  `:after`) against its originating element with the pseudo-element counted
+  as one type selector.
+- **`pkg::style`** cascades, inherits and computes the new longhands in the
+  three parts, computes a style for each `::before` and `::after` some rule
+  with a longhand declaration matches into `Styles.pseudos`, interns the
+  four groups of Q58 as four more tasks beside the eight, and offers the
+  presentational hints of `add_presentational_hints`. The user-agent sheet
+  gains the Standard's rules for the new longhands.
+
+### How the second batch keeps only true dependencies
+
+- **Pseudo-elements are styled nodes after the elements.** A counted loop
+  over the elements finds, per element, whether a rule of a second rule
+  index, keyed by the compound before the pseudo-element, matches its
+  `::before` and its `::after`; a sequential count numbers them after the
+  elements, in document order of their elements, since each one's number
+  depends on how many come before it; then the first part's loop runs over
+  elements and pseudo-elements alike, and the second part's pass reaches a
+  pseudo-element after its element, its parent. The winners arrays hold one
+  run per styled node, so no element carries pseudo-element slots, and the
+  element index space, which the oracle and every consumer read, is
+  unchanged. Matching the pseudo-element rules twice, once to find which
+  pseudo-elements exist and once to cascade them, is extra work that adds no
+  order.
+- **Pending values that fill shared tables are parsed in the pass in
+  document order.** A `var()` in a track list, an area map, a grid line,
+  `content` or a counter list must intern names and append side entries
+  after substitution, which writes the shared atom table and store, so the
+  pass resolves such values of every node, though the longhands are not
+  inherited, and the third part reads the result; the pass does this only
+  when the sheets hold such a value, and it is the shared tables that order
+  it, not the values' parents.
+- **The third part is two counted loops.** The new values not inherited are
+  computed in a loop of their own beside the first batch's, because one
+  loop writing all twelve outputs captured 520 bytes, more than the
+  runtime's 256-byte lane frame, and the compiler declined to run it in
+  parallel (the ledger of the first run); the two loops read the same inputs
+  and neither waits for the other.
+- **Lists are computed where they are interned.** A track list's lengths
+  depend on the font of the node whose value applies, and a list cannot be
+  written to a shared table from a parallel loop, so the third part keeps a
+  reference to the declared list and that node, and the container task
+  computes and interns the list beside its group, the one task that writes
+  its tables; equal lists share an identifier, and the content task does
+  the same for content, counter and quote lists, remembering each declared
+  list's identifier.
+- **Presentational hints are added in one walk, as style attributes are.**
+  Each element's hints are written as a declaration list and parsed into the
+  shared store in preorder, before matching; a cell reads its table's
+  `cellpadding` and `border` by walking two or three parents up.
+
+### Oracle additions
+
+`tests/css/style_oracle.mjs` dumps the 37 new longhands from
+`computedStyleMap()`, whose `get()` gives a list-valued property's first
+item, so `grid-auto-columns` and `grid-auto-rows` hold their first track,
+and one row per `::before` and `::after` whose content is not `none`, from
+`getComputedStyle(element, pseudo)`. For those rows the properties whose
+resolved value is not the computed value are dumped empty and not compared:
+the sizes, offsets, margins and paddings, `line-height` (a number reads as
+px: `line-height: 1.5` on a 16px `::before` reads `24px`), `min-width` and
+`min-height` (`auto` reads `0px` on a box that is no flex or grid item), and
+the grid templates of a grid container, each checked with a one-element page
+in Chromium 141. Chromium keeps a computed counter list in a hash map, so it
+serializes `counter-reset: mw-ref-details-parent mw-references list-item`
+as `mw-references 0 list-item 0 mw-ref-details-parent 0`; compare sorts the
+name and value pairs of the three counter longhands on both sides. A
+mismatch in a compared pseudo-element cell is reported, an empty Chromium
+cell is skipped, and a row whose index or name differs stops the
+comparison, each checked by editing a copy of the cases page's dump.
+
+### Results
+
+`run.sh check` with `PAGES` set to a copy of the pages outside the
+worktree's link, at commit 4d4fe0f, against the Chromium dumps of the same commit's
+`make oracle-style-dump`:
+
+| Page | Elements | Pseudo-elements | Properties below 99% | Lowest new longhand |
+|---|---:|---:|---|---|
+| ecma262 | 179,471 | 13,368 | counter-reset 97.29% | align-content 99.99% |
+| html5 | 117,179 | 2,512 | border-top, -right and -left-color 96.78% | counter-reset 99.16% |
+| apollo11 | 11,845 | 1,416 | border colors 98.36%, counter-reset 98.40% | border-collapse 99.73% |
+| cases | 161 | 44 | border colors 83.41%, counter-reset 98.53% | align-content 99.02% |
+
+Every page's sequential and `--par` dumps are byte-identical (criterion 3).
+The ledger splits `pseudo_flags`, `match_all`, `reset_all` and
+`reset_second_all` and admits the twelve interning calls as eleven adjacent
+pairs. The border colors are the owner-ruled difference (Chromium's
+`table { border-color: gray }`). With the user-agent sheet's
+`ol, ul, menu { counter-reset: list-item }` left out and nothing else
+changed (`runs/ua-no-list-reset.txt`), counter-reset matches on
+every element of every page, and every other property is unchanged, so that one rule accounts for its failures.
+
+The classes of mismatch the second batch adds, with their causes:
+
+- **The Standard's user-agent rules where Chromium's computed values
+  differ:** `ol, ul, menu { counter-reset: list-item }` (5,223, 995 and 211
+  lists on ecma262, html5 and apollo11; Chromium resets the `list-item`
+  counter without showing it in the computed value); `align-content: unsafe
+  center` on inputs and `center` on buttons and selects (5 on ecma262, 23 on
+  apollo11), which Chromium leaves `normal`.
+- **Chromium's behaviour with images the oracle refuses:** an `img` with
+  alt text whose load failed loses its `width` and `height` presentational
+  hints and their `aspect-ratio` in Chromium (1 on ecma262, 5 on html5, 9 on
+  apollo11): the DevTools protocol shows the hints among the element's
+  attribute styles while its computed values are `auto`.
+- **Chromium's own behaviour:** as in the first batch, the `source` and
+  `track` children of a `video` take initial values, here
+  `border-collapse: separate` under a collapsing table (35 on apollo11).
+- **Not implemented:** the `lh` unit (`height: 2lh`, 9 `th` on ecma262) and
+  CSS `round()`, whose `@supports` block apollo11 uses for image widths (2
+  `img`, 325px against 330px; the first batch's unexplained image widths);
+  a `url()` in `content` is kept as written where Chromium resolves it
+  against the base URL (1 on the cases page).
+- **Parsed as the interface declares, differently from Chromium:** an
+  integer `repeat()` is expanded (`16px [m] 16px [m]` against
+  `repeat(2, 16px [m])`), `safe` and `unsafe` are dropped (`end` against
+  `safe end`), and `legacy` with a direction computes to `normal`; each is
+  on the cases page only (`docs/todo.md`).
+
+### Choices the second batch raises
+
+- **`ol, ul, menu { counter-reset: list-item }`.** The HTML Standard's
+  rendering section has the rule, and the tree's decision keeps the
+  Standard's sheet and records where the reference differs; with it,
+  `counter-reset` misses criterion 1 on ecma262 and apollo11, and without it
+  every page passes. Layout needs the `list-item` reset either way, to
+  number list markers; it can come from this rule or be implied for lists as
+  Chromium does.
+- **Interface changes beyond the declared ones,** each needed to reproduce a
+  value: `SizeGroup` keeps `aspect_width` and `aspect_height` instead of one
+  ratio, since the computed value is the pair (`auto 100 / 50`);
+  `TrackList.repeat_names_before` holds the names between the track before an
+  automatic repeat and the repeat; `item_url` and `item_alt` keep `url()`
+  images and the alternative text after `/` (apollo11's `']' / ''`), without
+  which those `::after` rows would lose their content; `track_lists[1]` is
+  one `auto` track, the implicit tracks' initial value.
+- **Shapes the decisions do not settle,** each taken as the one with the
+  fewest true dependencies and described in "How the second batch keeps
+  only true dependencies": pending values of stored longhands resolved in
+  the pass in document order, ordered by the shared atom table and store; the
+  third part as two loops, for the runtime's lane frame; hints written in one
+  walk before matching, as style attributes are; lists computed where they
+  are interned; and a pseudo-element whose matched rules set only custom
+  properties getting no style, since its content is `none` and it generates
+  no box.
 
 ## Owner rulings
 

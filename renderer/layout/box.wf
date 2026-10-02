@@ -201,6 +201,64 @@ fn specified_height(styles: &Styles, style: StyleRef, basis: i32, frame: i32) ->
   return unknown;
 }
 
+fn applied_width(styles: &Styles, style: StyleRef, basis: i32, frame: i32, ignored: Bool) -> raw: i32 reads(styles) {
+  doc "specified_width, or unknown when ignored.";
+  if ignored {
+    return unknown;
+  }
+  let made = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  return made;
+}
+
+fn applied_height(styles: &Styles, style: StyleRef, basis: i32, frame: i32, ignored: Bool) -> raw: i32 reads(styles) {
+  doc "specified_height, or unknown when ignored.";
+  if ignored {
+    return unknown;
+  }
+  let made = specified_height(styles: styles, style: style, basis: basis, frame: frame);
+  return made;
+}
+
+fn applied_width_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i32, ignored: Bool) -> (minimum: i32, maximum: i32) reads(styles) {
+  doc "width_limits, or none when ignored.";
+  if ignored {
+    return unknown, unknown;
+  }
+  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: basis, frame: frame);
+  return minimum, maximum;
+}
+
+fn applied_height_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i32, ignored: Bool) -> (minimum: i32, maximum: i32) reads(styles) {
+  doc "height_limits, or none when ignored.";
+  if ignored {
+    return unknown, unknown;
+  }
+  let (minimum, maximum) = height_limits(styles: styles, style: style, basis: basis, frame: frame);
+  return minimum, maximum;
+}
+
+fn sizes_ignored(context: &Context, styles: &Styles) -> ignored: Bool reads(styles), reads(context) {
+  doc "Tells whether context's width, height and their limits do not apply, as the reference draws an image it could not fetch: an inline img showing its alt text, and an img showing the broken-image icon or nothing that does not give both a width and a height.";
+  let natural = context^.natural;
+  if natural == natural_alt_box {
+    return True();
+  }
+  let icon = natural == natural_icon;
+  let empty = natural == natural_empty;
+  let image = bor(icon, empty);
+  if image {
+    let sizes = size_of(styles: styles, style: context^.style);
+    let wide = size_value(value: sizes.width, basis: context^.space.basis_width);
+    let tall = size_value(value: sizes.height, basis: context^.space.basis_height);
+    let has_wide = wide >= 0_i32;
+    let has_tall = tall >= 0_i32;
+    let both = band(has_wide, has_tall);
+    let made = bnot(both);
+    return made;
+  }
+  return False();
+}
+
 fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> width: i32 reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The border-box width of context in its space (CSS 2.2 10.3): the width its parent imposes; else its width property; else, for a shrink-to-fit box, its intrinsic sizes clamped to the available space, min(max(min-content, available), max-content); else the available space less its margins; then clamped by min-width and max-width.";
   let space = context^.space;
@@ -211,11 +269,12 @@ fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let frame_border = horizontal(edges: border);
   let frame_padding = horizontal(edges: padding);
   let frame = frame_border +sat frame_padding;
-  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: basis, frame: frame);
+  let ignored = sizes_ignored(context: context, styles: styles);
+  let (minimum, maximum) = applied_width_limits(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
   if space.forced_width >= 0_i32 {
     return space.forced_width;
   }
-  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  let specified = applied_width(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
   if specified >= 0_i32 {
     let clamped = clamp_size(size: specified, minimum: minimum, maximum: maximum);
     let made = imax(clamped, frame);
@@ -245,11 +304,12 @@ fn used_height(context: &Context, styles: &Styles, content: i32) -> height: i32 
   let frame_border = vertical(edges: border);
   let frame_padding = vertical(edges: padding);
   let frame = frame_border +sat frame_padding;
-  let (minimum, maximum) = height_limits(styles: styles, style: style, basis: space.basis_height, frame: frame);
+  let ignored = sizes_ignored(context: context, styles: styles);
+  let (minimum, maximum) = applied_height_limits(styles: styles, style: style, basis: space.basis_height, frame: frame, ignored: ignored);
   if space.forced_height >= 0_i32 {
     return space.forced_height;
   }
-  let specified = specified_height(styles: styles, style: style, basis: space.basis_height, frame: frame);
+  let specified = applied_height(styles: styles, style: style, basis: space.basis_height, frame: frame, ignored: ignored);
   let base = if specified >= 0_i32 {
     give specified;
   } else {
@@ -294,8 +354,9 @@ fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, font
   let frame_border = horizontal(edges: border);
   let frame_padding = horizontal(edges: padding);
   let frame = frame_border +sat frame_padding;
-  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: basis, frame: frame);
-  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  let ignored = sizes_ignored(context: context, styles: styles);
+  let (minimum, maximum) = applied_width_limits(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
+  let specified = applied_width(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
   let skipped = specified >= 0_i32;
   let (least_content, most_content) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
   let content_high = imax(most_content, least_content);
@@ -338,7 +399,7 @@ fn intrinsic_content(context: &Context, styles: &Styles, document: &Document, fo
     return least, most;
   }
   if context^.kind == ctx_replaced {
-    let (least, most) = intrinsic_replaced();
+    let (least, most) = intrinsic_replaced(context: context, styles: styles, fonts: fonts, picks: picks);
     return least, most;
   }
   let (least, most) = intrinsic_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
@@ -362,7 +423,7 @@ fn lay_out_context(context: &Context, styles: &Styles, document: &Document, font
   } else if context^.kind == ctx_table {
     lay_out_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   } else if context^.kind == ctx_replaced {
-    lay_out_replaced(context: context, styles: styles);
+    lay_out_replaced(context: context, styles: styles, fonts: fonts, picks: picks);
   } else {
     lay_out_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   }

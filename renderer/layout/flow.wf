@@ -9,7 +9,7 @@ alias break_mandatory = pkg::layout::text::break_mandatory;
 alias break_allowed = pkg::layout::text::break_allowed;
 
 struct Frame {
-  doc "A block box open during a flow pass: its index, the left offset and width of its content box in the context's content box, its top border and padding, and, in the stacking pass, whether its border-box top is known yet and its relative offset.";
+  doc "A block box open during a flow pass: its index, the left offset and width of its content box in the context's content box, its top border and padding, and, in the stacking pass, whether its border-box top is known yet, its relative offset and whether a line box lies inside it.";
   block: u32;
   left: i32;
   width: i32;
@@ -17,6 +17,7 @@ struct Frame {
   known: Bool;
   dx: i32;
   dy: i32;
+  lines: Bool;
 }
 
 struct Stack {
@@ -172,7 +173,7 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
           let border = border_edges(styles: styles, style: style);
           let padding = padding_edges(styles: styles, style: style, basis: width);
           let unknown_top = False();
-          let saved = Frame(block: b, left: left, width: width, top_frame: 0_i32, known: unknown_top, dx: 0_i32, dy: 0_i32);
+          let saved = Frame(block: b, left: left, width: width, top_frame: 0_i32, known: unknown_top, dx: 0_i32, dy: 0_i32, lines: unknown_top);
           let pushed = push_item::<Frame>(cell: &frames, value: saved, ceiling: item_ceiling);
           let inner_left = x +sat border.left;
           set left = inner_left +sat padding.left;
@@ -412,6 +413,34 @@ fn resolve_open(context: &Context, frames: &Box<Slots<Frame>>, y: i32) -> result
   return unit;
 }
 
+fn mark_lines(frames: &Box<Slots<Frame>>) -> result: unit writes(frames) {
+  doc "Records that a line box lies inside every open block.";
+  let count = frames^.inner.len;
+  for (k in 0_u64..count) {
+    set frames^.inner[k].lines = True();
+  }
+  return unit;
+}
+
+fn marker_line(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks, at: u64, lines: Bool) -> height: i32 reads(context), reads(styles), reads(fonts), reads(picks) {
+  doc "The height of the line an outside marker makes in the block at, a list item no line box lies inside of (its line-height box), or 0 when it makes none.";
+  if lines {
+    return 0_i32;
+  }
+  if at < context^.blocks.inner.len {
+  } else {
+    return 0_i32;
+  }
+  if context^.blocks.inner[at].marker {
+  } else {
+    return 0_i32;
+  }
+  let style = context^.blocks.inner[at].style;
+  let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: style);
+  let made = metrics.ascent +sat metrics.descent;
+  return made;
+}
+
 fn offset_of(frames: &Box<Slots<Frame>>) -> (dx: i32, dy: i32) reads(frames) {
   doc "The relative offset the open blocks add to what they contain.";
   let count = frames^.inner.len;
@@ -513,7 +542,7 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
           let natural = stack.cursor +sat natural_term;
           let cleared = clear_floor > natural;
           let unknown_top = False();
-          let saved = Frame(block: b, left: left, width: width, top_frame: top_frame, known: unknown_top, dx: total_dx, dy: total_dy);
+          let saved = Frame(block: b, left: left, width: width, top_frame: top_frame, known: unknown_top, dx: total_dx, dy: total_dy, lines: unknown_top);
           let pushed = push_item::<Frame>(cell: &frames, value: saved, ceiling: item_ceiling);
           let framed = top_frame > 0_i32;
           let resolve = bor(framed, cleared);
@@ -550,17 +579,22 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
           let vertical_frame = frame.top_frame +sat bottom_frame;
           let specified = specified_height(styles: styles, style: style, basis: basis_height, frame: vertical_frame);
           let (minimum, maximum) = height_limits(styles: styles, style: style, basis: basis_height, frame: vertical_frame);
+          let marker = marker_line(context: context, styles: styles, fonts: fonts, picks: picks, at: at, lines: frame.lines);
+          let has_marker = marker > 0_i32;
           if frame.known {
             let top = context^.blocks.inner[at].y;
             let closes_inside = bottom_frame > 0_i32;
             let fixed = specified >= 0_i32;
             let contained = bor(closes_inside, fixed);
             let collapsed_end = pending_margin(stack: &stack);
-            let content_end = if contained {
+            let flow_end = if contained {
               give stack.cursor +sat collapsed_end;
             } else {
               give stack.cursor;
             }
+            let marker_top = top +sat frame.top_frame;
+            let marker_end = marker_top +sat marker;
+            let content_end = imax(flow_end, marker_end);
             let natural = content_end -sat top;
             let automatic = natural +sat bottom_frame;
             let chosen = if fixed {
@@ -572,7 +606,8 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
             let height = imax(clamped, vertical_frame);
             set context^.blocks.inner[at].height = height;
             let grew = height != automatic;
-            let separate = bor(contained, grew);
+            let held_apart = bor(contained, grew);
+            let separate = bor(held_apart, has_marker);
             if separate {
               set stack.cursor = top +sat height;
               clear_margins(stack: &stack);
@@ -586,7 +621,7 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
             let chosen = if specified >= 0_i32 {
               give specified;
             } else {
-              give 0_i32;
+              give marker +sat vertical_frame;
             }
             let clamped = clamp_size(size: chosen, minimum: minimum, maximum: maximum);
             let height = imax(clamped, vertical_frame);
@@ -598,6 +633,10 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
             add_margin(stack: &stack, margin: margins.bottom);
           }
           let removed = take_back(window: &frames.inner);
+          let lines_inside = bor(frame.lines, has_marker);
+          if lines_inside {
+            mark_lines(frames: &frames);
+          }
           set left = frame.left;
           set width = frame.width;
           let dx = frame.dx;
@@ -619,6 +658,7 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
           let waiting = pending_margin(stack: &stack);
           let y = stack.cursor +sat waiting;
           resolve_open(context: context, frames: &frames, y: y);
+          mark_lines(frames: &frames);
           clear_margins(stack: &stack);
           let height = paragraph_height(context: context, at: at);
           let bottom = y +sat height;
@@ -701,6 +741,7 @@ fn stack_flow(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontP
               let child_base = y +sat context^.children.inner[at].baseline;
               set baseline = content_top +sat child_base;
               set has_baseline = True();
+              mark_lines(frames: &frames);
             }
             let margin_bottom = context^.children.inner[at].margin_bottom;
             add_margin(stack: &stack, margin: margin_bottom);
@@ -1158,20 +1199,72 @@ fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts
   return least, most;
 }
 
-fn natural_size() -> (width: i32, height: i32) pure {
-  doc "The natural size of a replaced box the stage does not load: 300 by 150 px, as CSS 2.2 10.3.2 falls back to.";
+fn natural_size(natural: u8) -> (width: i32, height: i32) pure {
+  doc "The natural size of a replaced box the stage does not load: 16 by 16 px for the broken-image icon, nothing for an empty img, and otherwise 300 by 150 px, as CSS 2.2 10.3.2 falls back to.";
+  let icon = natural == natural_icon;
+  let alt_icon = natural == natural_alt_icon;
+  let either = bor(icon, alt_icon);
+  if either {
+    return 1024_i32, 1024_i32;
+  }
+  if natural == natural_empty {
+    return 0_i32, 0_i32;
+  }
   return 19200_i32, 9600_i32;
 }
 
-fn intrinsic_replaced() -> (minimum: i32, maximum: i32) pure {
-  doc "A replaced box's content width is its natural width.";
-  let (width, height) = natural_size();
+fn marker_width(metrics: Metrics) -> width: i32 pure {
+  doc "The advance of an inside bullet marker of a font with metrics, as the reference sizes it: a symbol (a third of the rounded ascent, plus one, halved, plus 2 px), a -1 px start margin and an end margin of the font size.";
+  let ascent_px = metrics.content_ascent / 64_i32;
+  let doubled = ascent_px *sat 2_i32;
+  let two_thirds = doubled / 3_i32;
+  let raised = two_thirds +sat 1_i32;
+  let half = raised / 2_i32;
+  let bullet_px = half +sat 2_i32;
+  let bullet = bullet_px *sat 64_i32;
+  let outer = bullet +sat metrics.font_size;
+  let made = outer -sat 64_i32;
+  return made;
+}
+
+fn intrinsic_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> (minimum: i32, maximum: i32) reads(context), reads(styles), reads(fonts), reads(picks) {
+  doc "A replaced box's content width is its natural width; an inside bullet marker's is its advance.";
+  if context^.natural == natural_marker {
+    let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: context^.style);
+    let wide = marker_width(metrics: metrics);
+    return wide, wide;
+  }
+  let (width, height) = natural_size(natural: context^.natural);
   return width, width;
 }
 
-fn lay_out_replaced(context: &Context, styles: &Styles) -> result: unit reads(styles), writes(context) {
-  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given.";
-  let (natural_width, natural_height) = natural_size();
+fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given. The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it.";
+  let (natural_width, natural_height) = natural_size(natural: context^.natural);
+  if context^.natural == natural_marker {
+    let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: context^.style);
+    let wide = marker_width(metrics: metrics);
+    let tall = metrics.content_ascent +sat metrics.content_descent;
+    set context^.width = wide;
+    set context^.height = tall;
+    set context^.baseline = metrics.content_ascent;
+    set context^.has_baseline = True();
+    return unit;
+  }
+  if context^.natural == natural_alt_icon {
+    let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: context^.style);
+    set context^.width = natural_width;
+    set context^.height = natural_height;
+    set context^.baseline = natural_height -sat metrics.content_descent;
+    set context^.has_baseline = True();
+    return unit;
+  }
+  let ignored = sizes_ignored(context: context, styles: styles);
+  let icon = context^.natural == natural_icon;
+  let empty = context^.natural == natural_empty;
+  let unloaded = bor(icon, empty);
+  let block_level = bnot(context^.space.shrink);
+  let fills = band(unloaded, block_level);
   let style = context^.style;
   let basis = context^.space.basis_width;
   let border = border_edges(styles: styles, style: style);
@@ -1182,8 +1275,8 @@ fn lay_out_replaced(context: &Context, styles: &Styles) -> result: unit reads(st
   let frame_vertical_border = vertical(edges: border);
   let frame_vertical_padding = vertical(edges: padding);
   let frame_vertical = frame_vertical_border +sat frame_vertical_padding;
-  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
-  let specified_tall = specified_height(styles: styles, style: style, basis: context^.space.basis_height, frame: frame_vertical);
+  let specified = applied_width(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
+  let specified_tall = applied_height(styles: styles, style: style, basis: context^.space.basis_height, frame: frame_vertical, ignored: ignored);
   let width = if context^.space.forced_width >= 0_i32 {
     give context^.space.forced_width;
   } else if specified >= 0_i32 {
@@ -1203,6 +1296,11 @@ fn lay_out_replaced(context: &Context, styles: &Styles) -> result: unit reads(st
       give 0_i32;
     }
     give scaled +sat frame;
+  } else if fills {
+    let margins = margin_edges(styles: styles, style: style, basis: basis);
+    let around = horizontal(edges: margins);
+    let room = context^.space.available -sat around;
+    give imax(room, frame);
   } else {
     give natural_width +sat frame;
   }
