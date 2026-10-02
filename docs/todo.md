@@ -11,48 +11,21 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
 
-- **A write through indices the program knows are distinct cannot be
-  proved disjoint.** Minimal example: a tree in an arena, each node's
-  children's indices kept in its own list, built in one pass in index
-  order, so every index appears in exactly one list; a counted loop over
-  one level's nodes writes `results[child]` for each of their children.
-  The writes never collide, but Whitefoot sees integers read from storage
-  and cannot prove them distinct, so the loop cannot run in parallel. It
-  keeps the style stage's pass in document order, which computes what the
-  parent decides, sequential (`design/pipeline/style.md`), and the layout
-  builder's map from node to style index is the same scatter. Whitefoot's
-  owner selected range facts (candidate N of its unique-keys investigation)
-  over an affine key that only its container mints, and
-  mbbill/Whitefoot#203 adds them, in Whitefoot's main at the pin: each pass
-  derives its index arrays from the tree with loops whose invariants state
-  that a level lists distinct elements and that a parent lies one level
-  above its element, and a counted loop's `apart` certificate proves two
-  iterations disjoint from them. Style shape D in the concurrency
-  prototype is the cascade written that way
-  (`research/investigations/concurrency/DESIGN.md`, "Shape D: a proved level
-  cascade"). The real style stage's pass in document order is what a
-  rewrite compares against: it takes 0.164 s, 26 percent of the four-worker
-  stage, on ecma262 and 8 and 3 percent on html5 and apollo11
-  (`research/investigations/style/DESIGN.md`, criterion 2). As a level
-  loop each element reads the custom-property set of its parent's owner
-  while the level writes the sets of the elements that declare their own,
-  separated by a fact that an owner lies at or above its element; since
-  mbbill/Whitefoot#204 Whitefoot proves it in about 1 s
-  (`research/investigations/unique-keys/owner_loop.wf`). Reopen that pass,
-  and the layout builder's map, now that the pin is at Whitefoot's main;
-  `design/pipeline/style.md`'s first decision reopens with it.
-
-- **A parallel loop's body cannot bind an ordered result list.** Minimal
-  example: a counted loop whose body is `let (value, known) = f(k);` followed
-  by `set out[k] = value;` is denied parallelism as an unsupported body form
-  whatever `f` writes, while the same loop over a one-result `f` is
-  permitted. Style shape D's level loop therefore calls `cascade_into`, which
-  writes `cascade_element`'s values through an element reference and returns
-  its flag alone. Whitefoot records it in its `docs/todo.md`, "A counted
-  loop that binds an ordered result list is denied parallelism"
-  (mbbill/Whitefoot#203). Change: the permission survey gives each binder
-  its own place. Reopen when that lands; then call `cascade_element`
-  directly.
+- **A write through indices the program knows are distinct needs its
+  facts derived again in each pass.** Minimal example: a tree in an arena,
+  each node's children's indices kept in its own list; a counted loop over
+  one level's nodes writes `results[child]` for each child. Range facts and
+  `apart` (mbbill/Whitefoot#203, #204) now prove such a loop parallel, and
+  the style stage's inherited pass is written that way
+  (`research/investigations/style/DESIGN.md`, "The level cascade"), but the
+  facts are loop invariants of the pass that derives them, not properties
+  of the arrays: a public function's contract may name only public fields
+  (MOD-6), so the traversal cannot hand its levels to the pass with the
+  facts attached, and the pass checks the walk's depths again in a counted
+  loop of its own. The layout builder's map from node to style index is
+  the remaining scatter written sequentially. Change: a container whose
+  invariant states its entries distinct, usable by every loop over it.
+  Reopen when Whitefoot offers one, or when the builder's map is rewritten.
 
 - **A function receives every value its requirements name.** Minimal
   example: a function whose requirement states `positions[slots[k]] == k`
@@ -95,16 +68,15 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
-- **Shape D derives the levels the traversal already holds.**
-  `level_index` in `renderer/proto/style/shapes.wf` repeats the depth walk
-  and a grouping by depth that `Walk` and `Levels` in
-  `renderer/proto/style/traversal.wf` already compute for shape A, and
-  shape D's cascade timing includes both. Impact: shape D pays for the walk
-  twice per stage, and the two derivations can drift apart. Change: state
-  `level_index`'s postconditions where the traversal builds its levels, so
-  the pipeline derives them once. Reopen when shape D replaces C in the
-  pipeline or the real stage's pass in document order becomes a level
-  loop.
+- **The style stage checks the walk's depths again to group levels.**
+  `level_index` in `renderer/style/levels.wf` runs a counted pass over the
+  depths `walk_elements` records, to state the facts the level loops need,
+  then groups the elements by depth; the prototype's shape D
+  (`renderer/proto/style/shapes.wf`) walks the tree again for the same
+  purpose. Impact: one sequential counted pass and one grouping per stage,
+  inside the measured inherited pass. Change: produce the facts where the
+  walk records the depths, once a public interface may carry them (see
+  Whitefoot requirements, distinct indices). Reopen with that requirement.
 
 - **Shapes C and D and the cascade timing repeat one match.**
   `style_shape_c`, `style_shape_d` and `match_all` in
