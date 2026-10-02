@@ -465,6 +465,20 @@ fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts:
   return True();
 }
 
+const no_line: i32 = -2147483647_i32;
+
+fn open_unresolved(frames: &Box<Slots<Frame>>) -> unresolved: Bool reads(frames) {
+  doc "Tells whether an open block's top still waits on the margins that follow, so a block starting now has its top margin collapse through that block's.";
+  let count = frames^.inner.len;
+  for (k in 0_u64..count) {
+    if frames^.inner[k].known {
+    } else {
+      return True();
+    }
+  }
+  return False();
+}
+
 fn line_splits(context: &Context, from: u64, flow: u64, line: i32) -> next: u64 writes(context) {
   doc "Gives the block-in-inline records from from on whose block opens at flow entry flow the top line of the line before it, and returns the first record past them.";
   let at = from;
@@ -765,7 +779,12 @@ fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> res
             give False();
           }
           if bnot(has_before) {
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: first.line, width: 0_i32, height: 0_i32);
+            let line_y = if first.line == no_line {
+              give top;
+            } else {
+              give first.line;
+            }
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_y, width: 0_i32, height: 0_i32);
           }
           add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
           let after = run_close +sat 1_u64;
@@ -968,7 +987,13 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
     let item = context^.flow.inner[k];
     let waiting_line = pending_margin(stack: &stack);
     let line_offset = stack.cursor +sat waiting_line;
-    let line_top = content_top +sat line_offset;
+    let line_at = content_top +sat line_offset;
+    let through = open_unresolved(frames: &frames);
+    let line_top = if through {
+      give no_line;
+    } else {
+      give line_at;
+    }
     set next_split = line_splits(context: context, from: next_split, flow: k, line: line_top);
     match item {
       Open(block: b) => {
@@ -1811,7 +1836,7 @@ fn intrinsic_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks
 }
 
 fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(styles), reads(fonts), reads(picks), writes(context) {
-  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given. The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it.";
+  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given. The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it. A text input's baseline is its line's, centred in its content box.";
   let (natural_width, natural_height) = replaced_size(context: context, styles: styles, fonts: fonts, picks: picks);
   let field = context^.natural == natural_text_input;
   if context^.natural == natural_marker {
@@ -1901,6 +1926,16 @@ fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: 
   let height = used_height(context: context, styles: styles, content: natural_tall);
   set context^.height = height;
   set context^.has_baseline = False();
+  if field {
+    let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: style);
+    let above_content = border.top +sat padding.top;
+    let content_box = height -sat frame_vertical;
+    let spare = content_box -sat natural_height;
+    let centred = spare / 2_i32;
+    let line_top = above_content +sat centred;
+    set context^.baseline = line_top +sat metrics.ascent;
+    set context^.has_baseline = True();
+  }
   add_own_fragment(context: context);
   return unit;
 }
