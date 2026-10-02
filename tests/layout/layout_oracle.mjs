@@ -62,8 +62,8 @@
 // position within 1 px, and the scroll heights); and for each judged
 // measure below 100% its eight most frequent mismatch classes with their
 // counts and one example. Exit status: 0 when the three judged measures
-// each match at least 99.0%; 1 when one does not, or the files' structure
-// differs; 2 on a usage or input error.
+// each match at least 99.0%; 1 when one does not; 2 on a usage or input
+// error; 3 when the files' structure differs.
 //
 // CHROMIUM and PLAYWRIGHT override the browser binary and the playwright
 // module's path.
@@ -291,14 +291,14 @@ function compare(chromiumPath, snowghostPath) {
   const snowghost = read(snowghostPath);
   if (chromium.elements.length !== snowghost.elements.length) {
     process.stdout.write(`element count differs: chromium ${chromium.elements.length}, snowghost ${snowghost.elements.length}\n`);
-    process.exit(1);
+    process.exit(3);
   }
   for (let i = 0; i < chromium.elements.length; i++) {
     const c = chromium.elements[i];
     const s = snowghost.elements[i];
     if (c.name !== s.name || c.parent !== s.parent) {
       process.stdout.write(`element ${i}: chromium ${c.name} in ${c.parent}, snowghost ${s.name} in ${s.parent}\n`);
-      process.exit(1);
+      process.exit(3);
     }
   }
 

@@ -174,7 +174,7 @@ LAYOUT_ORACLE := $(ORACLE)/layout
 # Builds the layout_oracle driver sequentially and with --par, dumps the real
 # pages and the case pages with both, requires the two dumps to be identical
 # and compares them with Chromium's from oracle-layout-dump
-# (research/investigations/layout); it fails while a page misses the 99
+# (research/investigations/layout); it fails while a real page misses the 99
 # percent criterion. It stays out of `check` for the same reasons.
 oracle-layout: compiler
 	@sh $(ROOT)/research/investigations/layout/run.sh check

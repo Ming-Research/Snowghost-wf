@@ -465,3 +465,91 @@ Each mismatch class, with its cause (`docs/todo.md` holds the changes):
   glyph (whole pixels, the unhinted 4.375 px at 8 px under synthetic
   oblique), where `face_extents` returns 0.56 times the ascent; five
   FreeSerif and FreeSans cases differ by 1/64 px in ten x-heights.
+## Layout results
+
+At Snowghost commit 273fbb4 with Whitefoot `3629be15`, against Chromium 141
+on this host (`run.sh check`, `runs/check.txt`; Chromium's dumps from
+`make oracle-layout-dump`):
+
+| Page | Block-level boxes | Inline-level boxes | Text nodes |
+|---|---:|---:|---:|
+| ecma262 | 40,112 / 40,182 (99.82%) | 127,523 / 127,533 (99.99%) | 189,739 / 189,761 (99.98%) |
+| html5 | 44,111 / 44,111 (100.00%) | 73,008 / 73,054 (99.93%) | 119,707 / 119,763 (99.95%) |
+| apollo11 | 2,351 / 2,365 (99.40%) | 8,190 / 8,235 (99.45%) | 8,032 / 8,069 (99.54%) |
+
+Criterion 1 holds on all three pages. The case pages, which hold probes of
+the rules below and of known gaps, give flex 259/259, grid 286/286, table
+694/718, flow 219/234 and columns 93/99 block-level boxes. What remains,
+by class and cause (each deferred in `docs/todo.md`):
+
+- **ecma262, 70 block-level boxes, 10 inline boxes and 22 text
+  nodes:** line wraps that differ by less than 0.2 px of available width,
+  each moving the boxes after it by up to 3.5 px; 37 `emu-clause`, 9
+  `emu-annex` and the other `y` classes follow them. One `path` inside an
+  `svg` has no box here, since the stage does not lay out an SVG's inside.
+- **html5, 46 inline boxes and 56 text nodes:** right-to-left text, out of
+  scope: Arabic in `span`, `kbd`, `samp`, `bdo` and the `pre` of the
+  bidirectional examples, which the stage shapes without joining forms and
+  does not reorder; and glyph sequences HarfBuzz composes differently (the
+  named character references U+226F and U+2282 with U+20D2).
+- **apollo11, 14 block-level boxes:** 11 language names in Arabic script
+  (right-to-left text, as above); the search icon, which `transform`
+  moves (out of scope); and two absolutely positioned boxes whose static
+  position lies inside a line, which the stage puts at the block's start.
+- **apollo11, 45 inline boxes and 37 text nodes:** the right-to-left
+  language names; twelve `abbr` links in `font-variant: small-caps`,
+  which the style stage does not compute; and about twenty links whose
+  text Chromium kerns with the punctuation after them, which the stage
+  does on a probe of the same markup but not on the page, cause not yet
+  found.
+
+The rules that brought the pages there, each from a probe of Chromium,
+are in `runs/` with their cases in `tests/layout/*-cases.html`: the
+culling of inline boxes and the rectangles of a block inside an inline box
+(`ecma262-block-in-inline-lh-cell.txt`), line heights rounded to layout
+units (`line-height-rounding.txt`), the faces a line's height takes from
+fallback (`fallback-line-height.txt`), the `lh` unit, intrinsic width
+keywords and floats in intrinsic widths (`float-intrinsic.txt`), the
+column widths of spanning cells (`colspan-min-content.txt`), images'
+ratios and broken-image fallbacks (`replaced-ratio.txt`,
+`alt-icon-min-content.txt`), and balanced columns, whose height Chromium
+starts at the one-column content height over the column count and grows
+by the least overflow.
+
+**Equality across builds (criterion 3).** At the same commit the
+sequential and `--par` builds, the latter at four workers, give
+byte-identical dumps of the three pages and the five case pages
+(`runs/check.txt`).
+
+**Speed (criterion 2).** `run.sh time` at the same commit, on this host's
+four processors with no other job running, the best of five runs, per run
+of the stage from computed styles to the dumped boxes (`runs/time-parts.txt`;
+"box tree and text" is the build mode, which builds the box tree and
+prepares its text, and "layout passes" is the layout mode less it):
+
+| Page | Part | Sequential | `--par`, 1 worker | 2 workers | 4 workers | Speed-up at 4 |
+|---|---|---:|---:|---:|---:|---:|
+| ecma262 | whole stage | 1.273 s | 1.293 s | 0.870 s | 0.580 s | 2.20 |
+| ecma262 | box tree and text | 0.910 s | 0.890 s | 0.610 s | 0.390 s | 2.33 |
+| ecma262 | layout passes | 0.363 s | 0.403 s | 0.260 s | 0.190 s | 1.91 |
+| html5 | whole stage | 1.360 s | 1.353 s | 0.860 s | 0.597 s | 2.28 |
+| html5 | box tree and text | 1.017 s | 1.050 s | 0.640 s | 0.427 s | 2.38 |
+| html5 | layout passes | 0.343 s | 0.303 s | 0.220 s | 0.170 s | 2.02 |
+| apollo11 | whole stage | 0.083 s | 0.088 s | 0.064 s | 0.044 s | 1.89 |
+| apollo11 | box tree and text | 0.062 s | 0.057 s | 0.044 s | 0.028 s | 2.21 |
+| apollo11 | layout passes | 0.021 s | 0.031 s | 0.020 s | 0.016 s | 1.31 |
+
+Criterion 2 holds on ecma262 and html5. Intrinsic sizes are computed on
+demand inside the layout passes (Q56), so they are not a part of their own.
+The box tree and its text preparation (font matching, shaping, break
+opportunities) take about three quarters of the stage on the two large
+pages. The layout passes on html5 take 0.343 s sequentially against the
+prototype's 0.029 s, which used a fixed advance per character, no
+`clear`, floats that do not push each other, and fixed fractions of the
+enclosing width for floats, table cells, flex and grid items and
+inline-blocks. Of the 343 loops in `renderer/layout/` the `--par`
+ledger lists, it permits 50; of the 293 it refuses, 127 write storage
+neither the iteration introduces nor an accumulator holds, 120 write
+storage that outlives the iteration without an exactly associative
+reduction, 39 leave early and 7 carry several accumulators. Which of them
+hold the passes' sequential time is not measured.
