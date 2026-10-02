@@ -221,6 +221,35 @@ fn applied_width(styles: &Styles, style: StyleRef, basis: i32, frame: i32, ignor
   return made;
 }
 
+fn width_keyword(styles: &Styles, style: StyleRef, ignored: Bool) -> keyword: i32 reads(styles) {
+  doc "The content keyword of style's width property (0 min-content, 1 max-content, 2 fit-content, 3 -webkit-fill-available), or unknown when it has none or is ignored.";
+  if ignored {
+    return unknown;
+  }
+  let sizes = size_of(styles: styles, style: style);
+  if sizes.width.kind == sizing_keyword {
+    let word = cvt::<u8, i32>(sizes.width.keyword);
+    return word;
+  }
+  return unknown;
+}
+
+fn keyword_size(keyword: i32, least: i32, most: i32, room: i32) -> size: i32 pure {
+  doc "The border-box width a content keyword gives a box with min-content width least, max-content width most and room to fill: min-content, max-content, fit-content (the room within least and most) or -webkit-fill-available (the room).";
+  let floor = imax(least, room);
+  let fitted = imin(floor, most);
+  if keyword == 0_i32 {
+    return least;
+  }
+  if keyword == 1_i32 {
+    return most;
+  }
+  if keyword == 2_i32 {
+    return fitted;
+  }
+  return room;
+}
+
 fn applied_height(styles: &Styles, style: StyleRef, basis: i32, frame: i32, ignored: Bool) -> raw: i32 reads(styles) {
   doc "specified_height, or unknown when ignored.";
   if ignored {
@@ -249,7 +278,7 @@ fn applied_height_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i3
 }
 
 fn sizes_ignored(context: &Context, styles: &Styles) -> ignored: Bool reads(styles), reads(context) {
-  doc "Tells whether context's width, height and their limits do not apply: a table cell's, which its table applies as its columns' widths and its rows' least heights, and those of an image the reference could not fetch, which it draws as an inline img showing its alt text, or as an img showing the broken-image icon or nothing that does not give both a width and a height.";
+  doc "Tells whether context's width, height and their limits do not apply: a table cell's, which its table applies as its columns' widths and its rows' least heights, and those of an image the reference could not fetch, which it draws as an inline img showing its alt text, or as an img showing the broken-image icon or nothing that gives neither both a width and a height nor one of them with the aspect ratio of its width and height attributes.";
   let group = box_of(styles: styles, style: context^.style);
   if group.display == display_cell {
     return True();
@@ -268,7 +297,11 @@ fn sizes_ignored(context: &Context, styles: &Styles) -> ignored: Bool reads(styl
     let has_wide = wide >= 0_i32;
     let has_tall = tall >= 0_i32;
     let both = band(has_wide, has_tall);
-    let made = bnot(both);
+    let one = bor(has_wide, has_tall);
+    let ratio = context^.ratio_width > 0_i32;
+    let derived = band(ratio, one);
+    let usable = bor(both, derived);
+    let made = bnot(usable);
     return made;
   }
   return False();
@@ -298,7 +331,16 @@ fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let margins = margin_edges(styles: styles, style: style, basis: basis);
   let around = horizontal(edges: margins);
   let room = space.available -sat around;
-  let base = if space.shrink {
+  let keyword = width_keyword(styles: styles, style: style, ignored: ignored);
+  let content_sized = keyword >= 0_i32;
+  let base = if content_sized {
+    let no = False();
+    let (low, high) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: no);
+    let high_content = imax(high, low);
+    let least = low +sat frame;
+    let most = high_content +sat frame;
+    give keyword_size(keyword: keyword, least: least, most: most, room: room);
+  } else if space.shrink {
     let (least, most) = intrinsic_sizes(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     let floor = imax(least, room);
     give imin(floor, most);
@@ -373,19 +415,26 @@ fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, font
   let percent_basis = unknown;
   let (minimum, maximum) = applied_width_limits(styles: styles, style: style, basis: percent_basis, frame: frame, ignored: ignored);
   let specified = applied_width(styles: styles, style: style, basis: percent_basis, frame: frame, ignored: ignored);
+  let keyword = width_keyword(styles: styles, style: style, ignored: ignored);
   let skipped = specified >= 0_i32;
   let (least_content, most_content) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
   let content_high = imax(most_content, least_content);
   let low_frame = least_content +sat frame;
   let high_frame = content_high +sat frame;
   let fixed = specified >= 0_i32;
+  let widest = keyword == 1_i32;
   let least = if fixed {
     give specified;
+  } else if widest {
+    give high_frame;
   } else {
     give low_frame;
   }
+  let narrowest = keyword == 0_i32;
   let most = if fixed {
     give specified;
+  } else if narrowest {
+    give low_frame;
   } else {
     give high_frame;
   }

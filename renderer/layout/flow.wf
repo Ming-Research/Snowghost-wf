@@ -74,7 +74,7 @@ fn float_bottom(stack: &Stack, side: u8) -> bottom: i32 reads(stack) {
 }
 
 fn block_width(styles: &Styles, style: StyleRef, available: i32) -> (width: i32, left: i32, margin_left: i32, margin_right: i32) reads(styles) {
-  doc "The border-box width and the left offset of an in-flow block-level box in a containing block available wide (CSS 2.2 10.3.3): an auto width fills the space its margins leave; a given width keeps it, with auto margins sharing the rest equally, one auto margin taking it all, and with none auto the right margin taking the rest.";
+  doc "The border-box width and the left offset of an in-flow block-level box in a containing block available wide (CSS 2.2 10.3.3): an auto width fills the space its margins leave; a given width keeps it, with auto margins sharing the rest equally, one auto margin taking it all (a box that leaves no rest takes its auto margins as zero), and with none auto the right margin taking the rest.";
   let border = border_edges(styles: styles, style: style);
   let padding = padding_edges(styles: styles, style: style, basis: available);
   let frame_border = horizontal(edges: border);
@@ -98,7 +98,10 @@ fn block_width(styles: &Styles, style: StyleRef, available: i32) -> (width: i32,
   let fixed = band(fixed_test, either);
   let limited = clamped != natural;
   let centring_pair = band(limited, either);
-  let centring = bor(fixed, centring_pair);
+  let wanted = bor(fixed, centring_pair);
+  let spare = free -sat around;
+  let fits = spare >= 0_i32;
+  let centring = band(wanted, fits);
   if centring {
     let room = free -sat around;
     if auto_left {
@@ -1157,12 +1160,16 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
             let height = imax(clamped, vertical_frame);
             set context^.blocks.inner[at].height = height;
             if height > 0_i32 {
+              resolve_open(context: context, frames: &frames, y: y);
               set stack.cursor = y +sat height;
               clear_margins(stack: &stack);
             }
             add_margin(stack: &stack, margin: margins.bottom);
           }
-          let removed = take_back(window: &frames.inner);
+          let still_open = frames.inner.len;
+          if still_open > 0_u64 {
+            let removed = take_back(window: &frames.inner);
+          }
           let lines_inside = bor(frame.lines, has_marker);
           if lines_inside {
             mark_lines(frames: &frames);
@@ -1171,10 +1178,12 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
           set width = frame.width;
           let dx = frame.dx;
           let dy = frame.dy;
-          let x_shifted = context^.blocks.inner[at].x +sat dx;
-          let y_shifted = context^.blocks.inner[at].y +sat dy;
-          set context^.blocks.inner[at].x = content_left +sat x_shifted;
-          set context^.blocks.inner[at].y = content_top +sat y_shifted;
+          if at < context^.blocks.inner.len {
+            let x_shifted = context^.blocks.inner[at].x +sat dx;
+            let y_shifted = context^.blocks.inner[at].y +sat dy;
+            set context^.blocks.inner[at].x = content_left +sat x_shifted;
+            set context^.blocks.inner[at].y = content_top +sat y_shifted;
+          }
         }
       }
       Text(paragraph: p) => {
@@ -1487,13 +1496,13 @@ fn position_out_with(context: &Context, styles: &Styles, document: &Document, fo
           let stretch_width = band(stretch_width_pair, width_auto);
           let stretch_height_pair = band(top_set, bottom_set);
           let stretch_height = band(stretch_height_pair, height_auto);
-          let stretching = bor(stretch_width, stretch_height);
-          let width_given = bnot(width_auto);
-          let height_given = bnot(height_auto);
-          let width_percent = band(width_given, sizes.width.value.has_percent);
-          let height_percent = band(height_given, sizes.height.value.has_percent);
-          let percent_size = bor(width_percent, height_percent);
-          let again = bor(stretching, percent_size);
+          let width_is_value = sizes.width.kind == sizing_value;
+          let height_is_value = sizes.height.kind == sizing_value;
+          let width_percent = band(width_is_value, sizes.width.value.has_percent);
+          let height_percent = band(height_is_value, sizes.height.value.has_percent);
+          let percent_axis = bor(width_percent, height_percent);
+          let stretch_axis = bor(stretch_width, stretch_height);
+          let again = bor(stretch_axis, percent_axis);
           if again {
             let margin_lr = context^.children.inner[at].margin_left +sat context^.children.inner[at].margin_right;
             let margin_tb = context^.children.inner[at].margin_top +sat context^.children.inner[at].margin_bottom;
@@ -1513,8 +1522,8 @@ fn position_out_with(context: &Context, styles: &Styles, document: &Document, fo
             } else {
               give unknown;
             }
-            let fits_content = bnot(stretching);
-            set context^.children.inner[at].space = Space(available: cb_width, basis_width: cb_width, basis_height: cb_height, forced_width: forced_width, forced_height: forced_height, shrink: fits_content);
+            let no = False();
+            set context^.children.inner[at].space = Space(available: cb_width, basis_width: cb_width, basis_height: cb_height, forced_width: forced_width, forced_height: forced_height, shrink: no);
             set context^.children.inner[at].intrinsic_known = False();
             lay_out_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
           }
@@ -1639,10 +1648,11 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
 }
 
 fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, minimum: Bool) -> width: i32 reads(paragraph), reads(children), reads(styles) {
-  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give.";
+  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt).";
   let count = paragraph^.text.inner.len;
   let sizes = measure(paragraph: paragraph, children: children, styles: styles, basis: 0_i32);
   let marks = paragraph^.marks.inner.len;
+  let icon_floor = 0_i32;
   for (m in 0_u64..marks) {
     let mark = paragraph^.marks.inner[m];
     match mark {
@@ -1660,8 +1670,17 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
           }
           let with_left = base +sat children^[child_at].margin_left;
           let outer = with_left +sat children^[child_at].margin_right;
+          let icon = children^[child_at].natural == natural_alt_icon;
+          let floated_icon = band(minimum, icon);
+          if floated_icon {
+            set icon_floor = imax(icon_floor, outer);
+          }
           if at < sizes.advances.inner.len {
-            set sizes.advances.inner[at] = pixels(raw: outer);
+            if floated_icon {
+              set sizes.advances.inner[at] = 0.0_f32;
+            } else {
+              set sizes.advances.inner[at] = pixels(raw: outer);
+            }
           }
         }
       }
@@ -1679,7 +1698,7 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
   let current = pixels(raw: indent);
   let trailing = 0.0_f32;
   for (j in 0_u64..count) {
-    let kind = break_at(paragraph: paragraph, at: j);
+    let kind = break_at(paragraph: paragraph, sizes: &sizes, at: j);
     let mandatory = kind == break_mandatory;
     let allowed = kind == break_allowed;
     let ends = if minimum {
@@ -1712,7 +1731,17 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
   }
   let visible = fsub.strict(current, trailing);
   set best = fmax(best, visible);
+  let icon_px = pixels(raw: icon_floor);
+  set best = fmax(best, icon_px);
   let made = units_up(px: best);
+  return made;
+}
+
+fn chunk_most(most: i32, text: i32, floats: i32, around: i32) -> made: i32 pure {
+  doc "most raised by the max-content width of a run of floats and lines between two block boundaries: the reference adds the widths of the floats to the widest line they sit beside (research/investigations/layout/runs/float-intrinsic.txt).";
+  let together = text +sat floats;
+  let total = together +sat around;
+  let made = imax(most, total);
   return made;
 }
 
@@ -1732,6 +1761,8 @@ fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts
   let fixed = box_slots_new::<i32>(capacity: 8_u64);
   let around = 0_i32;
   let fixed_depth = 0_u64;
+  let chunk_text = 0_i32;
+  let chunk_floats = 0_i32;
   let flow_count = context^.flow.inner.len;
   for (k in 0_u64..flow_count) {
     if k >= context^.flow.inner.len {
@@ -1740,6 +1771,9 @@ fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts
     let item = context^.flow.inner[k];
     match item {
       Open(block: b) => {
+        set most = chunk_most(most: most, text: chunk_text, floats: chunk_floats, around: around);
+        set chunk_text = 0_i32;
+        set chunk_floats = 0_i32;
         let at = cvt::<u32, u64>(b);
         if at < context^.blocks.inner.len {
           let style = context^.blocks.inner[at].style;
@@ -1765,6 +1799,9 @@ fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts
         }
       }
       Close(..) => {
+        set most = chunk_most(most: most, text: chunk_text, floats: chunk_floats, around: around);
+        set chunk_text = 0_i32;
+        set chunk_floats = 0_i32;
         let depth = frames.inner.len;
         if depth > 0_u64 {
           let last = depth - 1_u64;
@@ -1796,10 +1833,13 @@ fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts
           let low_total = low +sat around;
           let high_total = high +sat around;
           set least = imax(least, low_total);
-          set most = imax(most, high_total);
+          set chunk_text = imax(chunk_text, high);
         }
       }
       Child(context: c) => {
+        set most = chunk_most(most: most, text: chunk_text, floats: chunk_floats, around: around);
+        set chunk_text = 0_i32;
+        set chunk_floats = 0_i32;
         let at = cvt::<u32, u64>(c);
         let open = fixed_depth == 0_u64;
         let present = at < children;
@@ -1826,15 +1866,15 @@ fn intrinsic_flow(context: &Context, styles: &Styles, document: &Document, fonts
           let low = child^.min_content +sat margins;
           let high = child^.max_content +sat margins;
           let low_total = low +sat around;
-          let high_total = high +sat around;
           set least = imax(least, low_total);
-          set most = imax(most, high_total);
+          set chunk_floats = chunk_floats +sat high;
         }
       }
       Out(..) => {
       }
     }
   }
+  set most = chunk_most(most: most, text: chunk_text, floats: chunk_floats, around: around);
   return least, most;
 }
 
@@ -1898,9 +1938,20 @@ fn intrinsic_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks
 }
 
 fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(styles), reads(fonts), reads(picks), writes(context) {
-  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given. The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it. A text input's baseline is its line's, centred in its content box.";
-  let (natural_width, natural_height) = replaced_size(context: context, styles: styles, fonts: fonts, picks: picks);
+  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given; the ratio of an img, video or svg element is that of its width and height attributes when it has both, and a replaced box without one takes the natural size on an axis that is auto (research/investigations/layout/runs/replaced-ratio.txt). The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it. A text input's baseline is its line's, centred in its content box.";
+  let (natural_width_base, natural_height_base) = replaced_size(context: context, styles: styles, fonts: fonts, picks: picks);
   let field = context^.natural == natural_text_input;
+  let has_ratio = context^.ratio_width > 0_i32;
+  let natural_width = if has_ratio {
+    give context^.ratio_width;
+  } else {
+    give natural_width_base;
+  }
+  let natural_height = if has_ratio {
+    give context^.ratio_height;
+  } else {
+    give natural_height_base;
+  }
   if context^.natural == natural_marker {
     let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: context^.style);
     let wide = marker_width(metrics: metrics);
@@ -1955,7 +2006,12 @@ fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: 
     } else {
       give 0_i32;
     }
-    give scaled +sat frame;
+    let content_wide = if has_ratio {
+      give scaled;
+    } else {
+      give natural_width;
+    }
+    give content_wide +sat frame;
   } else if fills {
     let margins = margin_edges(styles: styles, style: style, basis: basis);
     let around = horizontal(edges: margins);
@@ -1966,10 +2022,9 @@ fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: 
   }
   set context^.width = width;
   let content_width = width -sat frame;
-  let keeps_ratio = bnot(field);
-  let width_given = specified >= 0_i32;
-  let scaled_by_width = band(width_given, keeps_ratio);
-  let natural_tall = if scaled_by_width {
+  let has_width = specified >= 0_i32;
+  let sized_by_ratio = band(has_ratio, has_width);
+  let natural_tall = if sized_by_ratio {
     if natural_width > 0_i32 {
       let wide = cvt::<i32, i64>(content_width);
       let ratio_top = cvt::<i32, i64>(natural_height);
@@ -2056,12 +2111,12 @@ fn intrinsic_stacked(context: &Context, styles: &Styles, document: &Document, fo
 }
 
 fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) {
-  doc "Lays out the initial containing block at the viewport's width, its origin at the viewport's.";
+  doc "Lays out the initial containing block at the viewport's size, its origin at the viewport's, so that a percentage height of the root element resolves against the viewport's height (research/investigations/layout/runs/root-percent-height.txt).";
   let viewport = layout^.viewport;
   let width = units(px: viewport.width);
   let height = units(px: viewport.height);
   let no = False();
-  set layout^.root.space = Space(available: width, basis_width: width, basis_height: height, forced_width: width, forced_height: unknown, shrink: no);
+  set layout^.root.space = Space(available: width, basis_width: width, basis_height: height, forced_width: width, forced_height: height, shrink: no);
   lay_out_context(context: &layout^.root, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   set layout^.root.x = 0_i32;
   set layout^.root.y = 0_i32;

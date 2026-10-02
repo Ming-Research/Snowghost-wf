@@ -169,8 +169,10 @@ and `colspan`, `border-collapse` (both values), `border-spacing`,
 columns: the flex and grid properties above, `border-collapse`,
 `border-spacing`, `table-layout`, `caption-side`, `content`,
 `counter-reset`, `counter-increment`, `counter-set`, `quotes`,
-`list-style-position`, `overflow-wrap`, `word-break`, `aspect-ratio`, and
-the presentational hints of `width`, `height` and the table attributes.
+`list-style-position`, `overflow-wrap`, `word-break`, `unicode-bidi` (whose
+only effect here is that no soft wrap opportunity precedes an inline box with
+a bidi control, `runs/bidi-isolate-breaks.txt`), `aspect-ratio`, and the
+presentational hints of `width`, `height` and the table attributes.
 
 **Out of scope,** each counted where the pages use it: writing modes,
 `direction: rtl` and bidirectional reordering; multi-column layout;
