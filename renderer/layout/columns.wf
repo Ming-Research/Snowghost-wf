@@ -174,14 +174,15 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
   return unit;
 }
 
-fn columns_needed(pieces_list: &[Unit], height: i32, first: i32) -> count: i32 reads(pieces_list) {
-  doc "The number of columns height tall that the pieces_list fill when each column takes the pieces_list in order while they fit, the first column starting at first, the content box's top, and each later one at the top of its first unit, where the margins before it are truncated.";
+fn column_shortage(pieces_list: &[Unit], height: i32, first: i32) -> (count: i32, shortage: i32) reads(pieces_list) {
+  doc "The number of columns height tall that the pieces_list fill when each column takes the pieces_list in order while they fit, the first column starting at first, the content box's top, and each later one at the top of its first unit, where the margins before it are truncated; and the least amount by which a unit that moved to a later column overflowed its column, or 2147483647 when none moved.";
   let total = pieces_list^.len;
   if total == 0_u64 {
-    return 0_i32;
+    return 0_i32, 2147483647_i32;
   }
   let count = 1_i32;
   let start = first;
+  let shortage = 2147483647_i32;
   for (k in 0_u64..total) {
     let piece = pieces_list^[k];
     let reach = piece.bottom -sat start;
@@ -189,55 +190,47 @@ fn columns_needed(pieces_list: &[Unit], height: i32, first: i32) -> count: i32 r
     let later = piece.top > start;
     let breaks = band(over, later);
     if breaks {
+      let missing = reach -sat height;
+      set shortage = imin(shortage, missing);
       set count = count +sat 1_i32;
       set start = piece.top;
     }
   }
-  return count;
+  return count, shortage;
 }
 
-fn balanced_height(pieces_list: &[Unit], count: i32, first: i32) -> height: i32 reads(pieces_list) {
-  doc "The least column height at which the pieces_list fill at most count columns (CSS Multi-column 1, 7.1: column-fill balance), found by bisection between the tallest unit and the pieces_list' whole extent.";
+fn balanced_height(pieces_list: &[Unit], count: i32, first: i32, laid_height: i32) -> height: i32 reads(pieces_list) {
+  doc "The column height of balanced columns (CSS Multi-column 1, 7.1: column-fill balance) as the reference finds it: first the content's height laid out in one column, its trailing margins included, divided by count and rounded up to a layout unit; then, while the pieces_list need more than count columns at that height, the height grows by the least amount by which a unit overflowed its column. A unit that overflows only by the trailing margins after it fits, since margins at a column's end are truncated.";
   let total = pieces_list^.len;
   if total == 0_u64 {
     return 0_i32;
   }
-  let tallest = 0_i32;
-  for (k in 0_u64..total) {
-    let piece = pieces_list^[k];
-    let size = piece.bottom -sat piece.top;
-    set tallest = imax(tallest, size);
-  }
-  let last = total - 1_u64;
-  let whole = pieces_list^[last].bottom -sat first;
-  let low = tallest;
-  let high = imax(whole, tallest);
-  for (step in 0_u64..40_u64) {
-    if low >= high {
+  let columns = imax(count, 1_i32);
+  let spare = columns -sat 1_i32;
+  let rounded = laid_height +sat spare;
+  let share = rounded / columns;
+  let height = imax(share, 0_i32);
+  let attempts = total +sat 1_u64;
+  for (step in 0_u64..attempts) {
+    let (needed, shortage) = column_shortage(pieces_list: pieces_list, height: height, first: first);
+    if needed <= columns {
       break;
     }
-    let span = high -sat low;
-    let half = span / 2_i32;
-    let middle = low +sat half;
-    let needed = columns_needed(pieces_list: pieces_list, height: middle, first: first);
-    if needed <= count {
-      set high = middle;
-    } else {
-      set low = middle +sat 1_i32;
-    }
+    let stretch = imax(shortage, 1_i32);
+    set height = height +sat stretch;
   }
-  return high;
+  return height;
 }
 
 fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, gap: i32, content_top: i32, laid_height: i32) -> height: i32 reads(styles), writes(context) {
-  doc "Splits a multi-column context's content, laid out in one column width wide, into at most count balanced columns: records the column map that moves each column's pieces_list beside the first, and returns the content height, the tallest column's.";
+  doc "Splits a multi-column context's content, laid out in one column width wide and laid_height tall, into at most count balanced columns: records the column map that moves each column's pieces_list beside the first, and returns the content height, the columns' height.";
   let pieces_list = box_slots_new::<Unit>(capacity: 64_u64);
   collect_units(context: context, styles: styles, pieces_list: &pieces_list);
   let total = pieces_list.inner.len;
   if total == 0_u64 {
     return laid_height;
   }
-  let height = balanced_height(pieces_list: &pieces_list.inner[0_u64..total], count: count, first: content_top);
+  let height = balanced_height(pieces_list: &pieces_list.inner[0_u64..total], count: count, first: content_top, laid_height: laid_height);
   let step = width +sat gap;
   let column_bottom = content_top +sat height;
   let column = 0_i32;
@@ -245,8 +238,6 @@ fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, 
   let from = -2147483647_i32;
   let shift_x = 0_i32;
   let shift_y = 0_i32;
-  let bottom_seen = content_top;
-  let tallest = 0_i32;
   for (k in 0_u64..total) {
     let piece = pieces_list.inner[k];
     let reach = piece.bottom -sat start;
@@ -254,8 +245,6 @@ fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, 
     let later = piece.top > start;
     let breaks = band(over, later);
     if breaks {
-      let used = bottom_seen -sat content_top;
-      set tallest = imax(tallest, used);
       let ended = ColumnPiece(from: from, to: piece.top, dx: shift_x, dy: shift_y, bottom: column_bottom);
       let pushed = push_item::<ColumnPiece>(cell: &context^.column_map, value: ended, ceiling: item_ceiling);
       set column = column +sat 1_i32;
@@ -264,15 +253,8 @@ fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, 
       set shift_x = column *sat step;
       set shift_y = content_top -sat piece.top;
     }
-    let moved_bottom = piece.bottom +sat shift_y;
-    set bottom_seen = imax(bottom_seen, moved_bottom);
-    if breaks {
-      set bottom_seen = moved_bottom;
-    }
   }
-  let last_used = bottom_seen -sat content_top;
-  set tallest = imax(tallest, last_used);
   let final_piece = ColumnPiece(from: from, to: 2147483647_i32, dx: shift_x, dy: shift_y, bottom: column_bottom);
   let pushed_last = push_item::<ColumnPiece>(cell: &context^.column_map, value: final_piece, ceiling: item_ceiling);
-  return tallest;
+  return height;
 }
