@@ -22,7 +22,7 @@ DESIGN_REVIEW_BASE ?= origin/main
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
-	oracle-style-dump oracle-style oracle-layout-dump oracle-fonts oracle-text
+	oracle-style-dump oracle-style oracle-layout-dump oracle-layout oracle-fonts oracle-text
 
 check: compiler renderer dom-selftest design-lint
 
@@ -170,6 +170,15 @@ oracle-style: compiler
 # tests/layout/layout_oracle.mjs. It
 # needs what oracle-style-dump needs and stays out of `check`.
 LAYOUT_ORACLE := $(ORACLE)/layout
+
+# Builds the layout_oracle driver sequentially and with --par, dumps the real
+# pages and the case pages with both, requires the two dumps to be identical
+# and compares them with Chromium's from oracle-layout-dump
+# (research/investigations/layout); it fails while a page misses the 99
+# percent criterion. It stays out of `check` for the same reasons.
+oracle-layout: compiler
+	@sh $(ROOT)/research/investigations/layout/run.sh check
+
 oracle-layout-dump:
 	@mkdir -p $(LAYOUT_ORACLE)
 	@cd $(ROOT) && $(NODE) tests/layout/layout_oracle.mjs dump $(STYLE_PAGES)/ecma262.html \

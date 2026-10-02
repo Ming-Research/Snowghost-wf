@@ -1,0 +1,193 @@
+#!/bin/sh
+# The harness of the layout investigation (DESIGN.md in this directory).
+#
+#   run.sh check [PAGE...]      builds the layout_oracle driver sequentially
+#                               and with --par, dumps every page with both,
+#                               requires the two dumps to be byte-identical
+#                               (criterion 3), compares the dump with
+#                               Chromium's (criterion 1) and prints the
+#                               parallelism ledger's lines for the stage's
+#                               loops; it exits with 1 when the dumps differ
+#                               or the comparison fails
+#   run.sh time [PAGE [REPS]]   builds both drivers and times the stage's
+#                               parts on every page, or on PAGE (criterion 2)
+#
+# PAGE is one of ecma262, html5 and apollo11, the real pages of the
+# concurrency investigation, or the name of a case page
+# tests/layout/NAME.html, such as flow-cases (checked, not timed);
+# `research/investigations/concurrency/run.sh fetch` downloads the pages and
+# their sheets to build/research/concurrency/, `make oracle-fonts` copies the
+# fonts the driver loads to build/fonts, and `make oracle-layout-dump` writes
+# Chromium's dumps to build/oracle/layout/.
+#
+# time prints, per page, the mode (build, the box tree with its text
+# preparation, and layout, which also lays the tree out; MODES overrides the
+# list), the build, REPS, T(0)
+# and T(REPS) as the best of RUNS runs (five by default) and the per-run time
+# (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and
+# 4 (WORKERS overrides the list) and the sequential build. A part's time is
+# the difference between its mode and the one before it. The timed runs hold
+# the Whitefoot check lock, taken with RUN_CHECK (by default the pinned
+# checkout's .github/run-check.pl), so no other heavy job shares the machine.
+#
+# PAGES replaces the directory of the real pages and their sheets,
+# build/research/concurrency by default; a worktree whose build directory
+# links to another checkout's needs a copy outside the link, since the driver
+# opens no path through a symbolic link (docs/todo.md, Whitefoot
+# requirements).
+#
+# UA replaces the user-agent sheet, a path relative to the repository, for a
+# diagnostic run.
+#
+# The drivers are built with WHITEFOOTC (by default the pinned compiler's
+# gate build, as the Makefile builds it). POSIX sh plus node and sha256sum.
+
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../../.." && pwd)
+cd "$root"
+
+data=${PAGES:-build/research/concurrency}
+oracle=build/oracle/layout
+out=build/research/layout
+ua=${UA:-renderer/style/ua.css}
+compiler=${WHITEFOOTC:-$root/whitefoot/compiler/target/gate/whitefootc}
+lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
+runs=${RUNS:-5}
+workers=${WORKERS:-1 2 4}
+pages="ecma262 html5 apollo11 $(cd tests/layout && ls *-cases.html | sed 's/\.html$//' | tr '\n' ' ')"
+modes=${MODES:-build layout}
+
+# The sheet mappings of each page's stylesheet links, SUFFIX=SHEET as the
+# driver and tests/layout/layout_oracle.mjs take them.
+sheets_of() {
+	case $1 in
+	ecma262) echo "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css assets/css/print.css=$data/ecma262-print.css" ;;
+	html5 | *-cases) echo "" ;;
+	apollo11) echo "wikibase.client.init&only=styles&skin=vector-2022=$data/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$data/apollo11-site.css" ;;
+	*)
+		echo "run.sh: unknown page $1" >&2
+		exit 2
+		;;
+	esac
+}
+
+# Repetitions per page, chosen so the stage dominates T(REPS) at four
+# workers.
+page_file() {
+	case $1 in
+	*-cases) echo "tests/layout/$1.html" ;;
+	*) echo "$data/$1.html" ;;
+	esac
+}
+
+reps_of() {
+	case $1 in
+	ecma262) echo 3 ;;
+	html5) echo 3 ;;
+	apollo11) echo 10 ;;
+	esac
+}
+
+build() {
+	mkdir -p "$out"
+	(cd renderer && "$compiler" --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par) >"$out/ledger.txt"
+	(cd renderer && "$compiler" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle)
+}
+
+check() {
+	build
+	status=0
+	for page in ${*:-$pages}; do
+		sheets=$(sheets_of "$page")
+		build/layout_oracle dump 1 "$(page_file "$page")" "$ua" $sheets >"$out/$page.seq.tsv"
+		WF_WORKERS=4 build/layout_oracle_par dump 1 "$(page_file "$page")" "$ua" $sheets >"$out/$page.par.tsv"
+		if cmp -s "$out/$page.seq.tsv" "$out/$page.par.tsv"; then
+			echo "$page: sequential and --par dumps identical, $(sha256sum <"$out/$page.seq.tsv" | cut -c1-16)"
+		else
+			echo "$page: sequential and --par dumps differ" >&2
+			status=1
+		fi
+		echo "$page: against Chromium"
+		node tests/layout/layout_oracle.mjs compare "$oracle/$page.chromium.tsv" "$out/$page.seq.tsv" || status=1
+	done
+	echo "parallelism ledger ($out/ledger.txt):"
+	grep -E 'PAR [a-z]+ +layout\.' "$out/ledger.txt" || true
+	return $status
+}
+
+# Prints the elapsed seconds of one run: the sequential build for "seq",
+# otherwise the --par build with WF_WORKERS set to the first argument.
+elapsed() {
+	lanes=$1
+	shift
+	if [ "$lanes" = seq ]; then
+		binary=build/layout_oracle
+		lanes=1
+	else
+		binary=build/layout_oracle_par
+	fi
+	if ! WF_WORKERS=$lanes command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>"$out/time.txt"; then
+		echo "run.sh: $binary $* failed" >&2
+		exit 1
+	fi
+	awk '$1 == "real" { print $2 }' "$out/time.txt"
+}
+
+# Prints the least of RUNS elapsed times.
+best() {
+	times=
+	i=0
+	while [ "$i" -lt "$runs" ]; do
+		seconds=$(elapsed "$@")
+		times="$times $seconds"
+		i=$((i + 1))
+	done
+	echo "$times" | awk '{ least = $1; for (i = 2; i <= NF; i++) if ($i < least) least = $i; print least }'
+}
+
+time_parts() {
+	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" layout-time sh "$here/run.sh" time "$@"
+	fi
+	build
+	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
+	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "drivers: $(sha256sum <build/layout_oracle_par | cut -c1-16) $(sha256sum <build/layout_oracle | cut -c1-16)"
+	echo "runs: $runs, commit: $(git rev-parse --short HEAD)"
+	echo "page mode build reps T(0) T(REPS) per-run"
+	for page in ${1:-ecma262 html5 apollo11}; do
+		sheets=$(sheets_of "$page")
+		file=$(page_file "$page")
+		counts=$(build/layout_oracle layout 1 "$file" "$ua" $sheets)
+		echo "# $page: $counts"
+		reps=${2:-$(reps_of "$page")}
+		for mode in $modes; do
+			for lanes in $workers seq; do
+				zero=$(best "$lanes" "$mode" 0 "$file" "$ua" $sheets)
+				full=$(best "$lanes" "$mode" "$reps" "$file" "$ua" $sheets)
+				case $lanes in
+				seq) label=seq ;;
+				*) label=par-$lanes ;;
+				esac
+				echo "$page $mode $label $reps $zero $full" | awk '{ printf "%s %s %s %s %s %s %.4f\n", $1, $2, $3, $4, $5, $6, ($6 - $5) / $4 }'
+			done
+		done
+	done
+}
+
+case ${1:-} in
+check)
+	shift
+	check "$@"
+	;;
+time)
+	shift
+	time_parts "$@"
+	;;
+*)
+	echo "usage: run.sh check [PAGE...] | time [PAGE [REPS]]" >&2
+	exit 2
+	;;
+esac
