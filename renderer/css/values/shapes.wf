@@ -1,0 +1,283 @@
+alias Atom = pkg::base::atom::Atom;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Span = pkg::css::syntax::Span;
+
+const s_ident: u8 = 0_u8;
+
+const s_function: u8 = 1_u8;
+
+const s_string: u8 = 2_u8;
+
+const s_url: u8 = 3_u8;
+
+const s_number: u8 = 4_u8;
+
+const s_dimension: u8 = 5_u8;
+
+const s_bracket: u8 = 6_u8;
+
+const s_delim: u8 = 7_u8;
+
+const s_percentage: u8 = 8_u8;
+
+const s_space: u8 = 9_u8;
+
+const s_comma: u8 = 10_u8;
+
+const s_other: u8 = 11_u8;
+
+struct Shape {
+  kind: u8;
+  value: f64;
+  integer: Bool;
+  name: Span;
+  end: u32;
+  code: u32;
+}
+
+struct Pieces {
+  count: u64;
+  first_start: u64;
+  first_end: u64;
+  second_start: u64;
+  second_end: u64;
+  third_start: u64;
+  third_end: u64;
+}
+
+fn shape_of(values: &ComponentList, at: u64) -> shape: Shape reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "Classifies the component at at for the second batch's grammars: an identifier, function or string with its name or value span, a URL, a number with whether it is an integer, a dimension with its unit, a square-bracket block with its end, a delimiter with its code point, a percentage, whitespace, a comma, or anything else.";
+  let empty = Span(start: 0_u32, end: 0_u32);
+  let no = False();
+  let other = Shape(kind: s_other, value: 0.0_f64, integer: no, name: empty, end: 0_u32, code: 0_u32);
+  match values^.components.inner[at] {
+    Ident(name: n) => {
+      return Shape(kind: s_ident, value: 0.0_f64, integer: no, name: n^, end: 0_u32, code: 0_u32);
+    }
+    Function(name: n, end: e) => {
+      return Shape(kind: s_function, value: 0.0_f64, integer: no, name: n^, end: e^, code: 0_u32);
+    }
+    AtKeyword(..) => {
+      return other;
+    }
+    Hash(..) => {
+      return other;
+    }
+    QuotedString(value: v) => {
+      return Shape(kind: s_string, value: 0.0_f64, integer: no, name: v^, end: 0_u32, code: 0_u32);
+    }
+    Url(value: v) => {
+      return Shape(kind: s_url, value: 0.0_f64, integer: no, name: v^, end: 0_u32, code: 0_u32);
+    }
+    Delim(code_point: c) => {
+      return Shape(kind: s_delim, value: 0.0_f64, integer: no, name: empty, end: 0_u32, code: c^);
+    }
+    Number(number: n) => {
+      let whole = match n^.kind {
+        Integer() => {
+          give True();
+        }
+        Number() => {
+          give False();
+        }
+      }
+      return Shape(kind: s_number, value: n^.value, integer: whole, name: empty, end: 0_u32, code: 0_u32);
+    }
+    Percentage(number: n) => {
+      return Shape(kind: s_percentage, value: n^.value, integer: no, name: empty, end: 0_u32, code: 0_u32);
+    }
+    Dimension(number: n, unit_name: u) => {
+      return Shape(kind: s_dimension, value: n^.value, integer: no, name: u^, end: 0_u32, code: 0_u32);
+    }
+    UnicodeRange(..) => {
+      return other;
+    }
+    IncludeMatch() => {
+      return other;
+    }
+    DashMatch() => {
+      return other;
+    }
+    PrefixMatch() => {
+      return other;
+    }
+    SuffixMatch() => {
+      return other;
+    }
+    SubstringMatch() => {
+      return other;
+    }
+    Column() => {
+      return other;
+    }
+    Whitespace() => {
+      return Shape(kind: s_space, value: 0.0_f64, integer: no, name: empty, end: 0_u32, code: 0_u32);
+    }
+    Cdo() => {
+      return other;
+    }
+    Cdc() => {
+      return other;
+    }
+    Colon() => {
+      return other;
+    }
+    Semicolon() => {
+      return other;
+    }
+    Comma() => {
+      return Shape(kind: s_comma, value: 0.0_f64, integer: no, name: empty, end: 0_u32, code: 0_u32);
+    }
+    ParenthesisBlock(..) => {
+      return other;
+    }
+    BracketBlock(end: e) => {
+      return Shape(kind: s_bracket, value: 0.0_f64, integer: no, name: empty, end: e^, code: 0_u32);
+    }
+    BraceBlock(..) => {
+      return other;
+    }
+    Error(..) => {
+      return other;
+    }
+  }
+}
+
+fn span_is(values: &ComponentList, span: Span, word: &[u8]) -> same: Bool reads(values), reads(word) {
+  doc "True when the text of span equals word, a lower-case word, ASCII case-insensitively.";
+  let (a, b) = text_of(values: values, span: span);
+  let same = same_lower(text: &values^.text.inner[a..b], word: word);
+  return same;
+}
+
+fn span_word(values: &ComponentList, span: Span, list: &[u8]) -> found: Option<u64> reads(values), reads(list) {
+  doc "The number of the word of list that the text of span is, ASCII case-insensitively, or None.";
+  let (a, b) = text_of(values: values, span: span);
+  let found = find_word(list: list, text: &values^.text.inner[a..b]);
+  return found;
+}
+
+fn split_pieces(values: &ComponentList, start: u64, end: u64) -> pieces: Pieces reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Splits the components from start to end at top-level commas into at most three pieces, each from its first component to the comma or end; count is the number of pieces, 4 for more than three.";
+  let count = 1_u64;
+  let a0 = start;
+  let a1 = end;
+  let b0 = end;
+  let b1 = end;
+  let c0 = end;
+  let c1 = end;
+  let cursor = start;
+  let span = end -sat start;
+  for (step in 0_u64..span) {
+    if cursor >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: cursor, limit: end);
+    let shape = shape_of(values: values, at: cursor);
+    if shape.kind == s_comma {
+      if count == 1_u64 {
+        set a1 = cursor;
+        set b0 = next;
+      } else if count == 2_u64 {
+        set b1 = cursor;
+        set c0 = next;
+      } else if count == 3_u64 {
+        set c1 = cursor;
+      }
+      set count = count +sat 1_u64;
+    }
+    set cursor = next;
+  }
+  return Pieces(count: count, first_start: a0, first_end: a1, second_start: b0, second_end: b1, third_start: c0, third_end: c1);
+}
+
+fn single_at(values: &ComponentList, start: u64, end: u64) -> found: Option<u64> reads(values) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "The index of the one component from start to end with whitespace around it trimmed, or None when there is none or more than one.";
+  let at = skip_space(values: values, at: start, limit: end);
+  if at >= end {
+    return None<u64>();
+  }
+  let next = sibling_after(values: values, at: at, limit: end);
+  let after = skip_space(values: values, at: next, limit: end);
+  if after != end {
+    return None<u64>();
+  }
+  return Some<u64>(value: at);
+}
+
+fn local_name(exp: &Expansion, values: &ComponentList, span: Span, lower: Bool) -> name: Atom reads(values), writes(exp) {
+  doc "Appends the text of span, lowered ASCII when lower holds, to the expansion's text as one more name and returns a placeholder atom whose index is that name's position among the expansion's names; merge_side replaces it with the interned atom.";
+  let from = exp^.text.inner.len;
+  put_text(exp: exp, values: values, span: span, lower: lower);
+  let to = exp^.text.inner.len;
+  let index = exp^.names.inner.len;
+  let a = to_u32(value: from);
+  let b = to_u32(value: to);
+  let no = False();
+  let made = NameRef(start: a, end: b, generic: no);
+  put::<NameRef>(cell: &exp^.names, value: made);
+  let narrowed = to_u32(value: index);
+  return Atom(index: narrowed);
+}
+
+fn local_word(exp: &Expansion, word: &[u8]) -> name: Atom reads(word), writes(exp) {
+  doc "Appends word as one more name of the expansion, as local_name does.";
+  let from = exp^.text.inner.len;
+  put_word_text(exp: exp, list: word);
+  let to = exp^.text.inner.len;
+  let index = exp^.names.inner.len;
+  let a = to_u32(value: from);
+  let b = to_u32(value: to);
+  let no = False();
+  let made = NameRef(start: a, end: b, generic: no);
+  put::<NameRef>(cell: &exp^.names, value: made);
+  let narrowed = to_u32(value: index);
+  return Atom(index: narrowed);
+}
+
+fn side_text(exp: &Expansion, values: &ComponentList, span: Span) -> (start: u32, end: u32) reads(values), writes(exp) {
+  doc "Appends the text of span to the expansion's side text, where strings live, and returns its bounds there.";
+  let from = exp^.side.text.inner.len;
+  let (a, b) = text_of(values: values, span: span);
+  for (k in a..b) {
+    let byte = values^.text.inner[k];
+    put::<u8>(cell: &exp^.side.text, value: byte);
+  }
+  let to = exp^.side.text.inner.len;
+  let low = to_u32(value: from);
+  let high = to_u32(value: to);
+  return low, high;
+}
+
+fn is_custom_ident(values: &ComponentList, span: Span) -> custom: Bool reads(values) {
+  doc "True when an identifier may be a custom-ident in the grid and counter grammars: not a CSS-wide keyword, default, auto or span.";
+  let n = reserved_idents.len;
+  let found = span_word(values: values, span: span, list: &reserved_idents[0_u64..n]);
+  match found {
+    Some(..) => {
+      return False();
+    }
+    None() => {
+      return True();
+    }
+  }
+}
+
+const reserved_idents: Array<u8, 54> = "initial inherit unset revert revert-layer default auto";
+
+fn bound(values: &ComponentList, at: u64) -> bounded: u64 reads(values) contract {
+  ensures bounded <= values^.components.inner.len;
+} {
+  doc "at, or the number of components when at is past them.";
+  let length = values^.components.inner.len;
+  if at <= length {
+    return at;
+  }
+  return length;
+}

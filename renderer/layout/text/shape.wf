@@ -1,0 +1,623 @@
+alias BreakOpportunity = pkg::text::line_break::BreakOpportunity;
+alias face_metrics = pkg::font::face_metrics;
+alias find_line_breaks = pkg::text::line_break::find_line_breaks;
+alias glyph_advance = pkg::font::glyph_advance;
+alias nominal_glyph = pkg::font::nominal_glyph;
+alias shape_run = pkg::font::shape_run;
+
+const word_break_all: u8 = 1_u8;
+
+const word_keep_all: u8 = 2_u8;
+
+const word_break_word: u8 = 3_u8;
+
+const overflow_normal: u8 = 0_u8;
+
+const shape_ceiling: u64 = 16777216_u64;
+
+const line_feed: u32 = 10_u32;
+
+const line_separator_scalar: u32 = 8232_u32;
+
+const no_break_space: u32 = 160_u32;
+
+const bold_threshold: f32 = 6.0e2_f32;
+
+const bold_face: u16 = 600_u16;
+
+const no_script: u8 = 255_u8;
+
+const tab_scalar: u32 = 9_u32;
+
+const hyphen_minus: u32 = 45_u32;
+
+const table_first: u32 = 33_u32;
+
+const table_last: u32 = 126_u32;
+
+const ascii_last: u32 = 127_u32;
+
+const ascii_breaks: Array<u64, 188> =[288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 0_u64, 0_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 0_u64, 0_u64, 0_u64, 0_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 17293822567928272630_u64, 805306367_u64, 288230376285929600_u64, 67108864_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 0_u64, 0_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 17293822567928272572_u64, 805306367_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 0_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64, 288230376285929600_u64, 67108864_u64];
+
+struct Span {
+  doc "A half-open range of indices.";
+  start: u64;
+  end: u64;
+}
+
+fn chain_span(picks: &FontPicks, choice: FontChoice) -> span: Span reads(picks) {
+  doc "Returns choice's span of the chain, clamped to the chain.";
+  let length = picks^.chain.inner.len;
+  let first = cvt::<u32, u64>(choice.first);
+  let listed_end = cvt::<u32, u64>(choice.end);
+  let end = imin(listed_end, length);
+  let start = imin(first, end);
+  let span = Span(start: start, end: end);
+  return span;
+}
+
+fn maps_all(fonts: &FontSet, face: u64, text: &[u32], start: u64, end: u64) -> result: Bool reads(fonts), reads(text) {
+  doc "Tells whether face maps every scalar of text from start to end.";
+  let count = fonts^.faces.inner.len;
+  let length = text^.len;
+  if face >= count {
+    return False();
+  }
+  let stop = imin(end, length);
+  for (index in start..stop) {
+    let scalar = text^[index];
+    let glyph = nominal_glyph(face: &fonts^.faces.inner[face].face, scalar: scalar);
+    let missing = glyph == 0_u16;
+    if missing {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn cluster_face(fonts: &FontSet, picks: &FontPicks, span: Span, text: &[u32], start: u64, end: u64, fallback: u32) -> face: u32 reads(fonts), reads(picks), reads(text) {
+  doc "Returns the face that draws the cluster from start to end, a base and its marks: the first face of the span that maps all of them, else the first that maps the base, else fallback, the chain's first face, which then draws .notdef as the reference's primary font does.";
+  let length = picks^.chain.inner.len;
+  let stop = imin(span.end, length);
+  let base_end = start +sat 1_u64;
+  for (position in span.start..stop) {
+    let face = picks^.chain.inner[position];
+    let index = cvt::<u32, u64>(face);
+    let mapped = maps_all(fonts: fonts, face: index, text: text, start: start, end: end);
+    if mapped {
+      return face;
+    }
+  }
+  for (position in span.start..stop) {
+    let face = picks^.chain.inner[position];
+    let index = cvt::<u32, u64>(face);
+    let mapped = maps_all(fonts: fonts, face: index, text: text, start: start, end: base_end);
+    if mapped {
+      return face;
+    }
+  }
+  return fallback;
+}
+
+fn itemize_faces(fonts: &FontSet, picks: &FontPicks, span: Span, text: &[u32], start: u64, end: u64, faces: &Box<Array<u32>>) -> result: unit reads(fonts), reads(picks), reads(text), writes(faces) {
+  doc "Writes the face of every scalar of the run from start to end: each base with the marks after it is a cluster drawn by cluster_face; a mark without a base, a default ignorable and a control take the face before them, or the chain's first face at the run's start.";
+  let text_length = text^.len;
+  let faces_length = faces^.inner.len;
+  let limit = imin(text_length, faces_length);
+  let stop = imin(end, limit);
+  let chain_length = picks^.chain.inner.len;
+  let fallback = 0_u32;
+  if span.start < chain_length {
+    set fallback = picks^.chain.inner[span.start];
+  }
+  let previous = fallback;
+  let at = start;
+  loop @scalars {
+    if at >= stop {
+      break @scalars;
+    }
+    let scalar = text^[at];
+    let kind = scalar_kind(scalar: scalar);
+    let is_base = kind == kind_base;
+    if is_base {
+      let after = at + 1_u64;
+      loop @marks {
+        if after >= stop {
+          break @marks;
+        }
+        let next = text^[after];
+        let next_kind = scalar_kind(scalar: next);
+        let is_mark = next_kind == kind_mark;
+        if is_mark {
+          set after = after + 1_u64;
+        } else {
+          break @marks;
+        }
+      }
+      let face = cluster_face(fonts: fonts, picks: picks, span: span, text: text, start: at, end: after, fallback: fallback);
+      for (index in at..after) {
+        if index < faces_length {
+          set faces^.inner[index] = face;
+        }
+      }
+      set previous = face;
+      set at = after;
+    } else {
+      set faces^.inner[at] = previous;
+      set at = at + 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn itemize_scripts(text: &[u32], start: u64, end: u64, scripts: &Box<Array<u8>>) -> result: unit reads(text), writes(scripts) {
+  doc "Writes the resolved script of every scalar of the run from start to end: a Latin, Greek, Cyrillic or other letter keeps its own, and a Common or inherited scalar takes the script before it, or, before the run's first letter, that letter's script, as the reference's script itemizer resolves them; a run without letters takes the script of the reference's content language, Latin for its en-US, which selects the latn lookups (kerning among them) that a face's default language system may lack.";
+  let text_length = text^.len;
+  let scripts_length = scripts^.inner.len;
+  let limit = imin(text_length, scripts_length);
+  let stop = imin(end, limit);
+  let current = script_latin;
+  for (index in start..stop) {
+    let scalar = text^[index];
+    let script = scalar_script(scalar: scalar);
+    let common = script == script_common;
+    let inherited = script == script_inherited;
+    let follows = bor(common, inherited);
+    if follows {
+    } else {
+      set current = script;
+      break;
+    }
+  }
+  for (index in start..stop) {
+    let scalar = text^[index];
+    let script = scalar_script(scalar: scalar);
+    let common = script == script_common;
+    let inherited = script == script_inherited;
+    let follows = bor(common, inherited);
+    if follows {
+    } else {
+      set current = script;
+    }
+    set scripts^.inner[index] = current;
+  }
+  return unit;
+}
+
+fn push_segment(cell: &Box<Slots<FaceSegment>>, value: FaceSegment) -> result: Result<unit, TextError> writes(cell) {
+  doc "Appends value to cell, growing a full cell to twice its capacity or to 8; TooLarge past entry_limit segments.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let doubled = capacity +sat capacity;
+    let wanted = imax(doubled, 8_u64);
+    let bounded = wanted <= entry_limit;
+    let larger = wanted > capacity;
+    let growable = band(bounded, larger);
+    if growable {
+      grow(cell: cell, capacity: wanted);
+    }
+  }
+  let room = cell^.inner.len < cell^.inner.cap;
+  if room {
+    place_back(window: &cell^.inner, value: value);
+    return Ok<unit, TextError>(value: unit);
+  }
+  let too_large = TextError::TooLarge();
+  return Err<unit, TextError>(error: too_large);
+}
+
+fn shape_segment(fonts: &FontSet, face: u32, script: u8, size: f32, text: &[u32], start: u64, end: u64, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>) -> result: Result<unit, TextError> reads(fonts), reads(text), writes(advances), writes(clusters) {
+  doc "Shapes text from start to end with face in script once, and adds each glyph's advance in px, in glyph order, to the index of its cluster's first scalar, which it marks with cluster_start. TooLarge past shape_run's limits.";
+  let text_length = text^.len;
+  let ordered = start <= end;
+  let inside = end <= text_length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    let invalid = TextError::Invalid();
+    return Err<unit, TextError>(error: invalid);
+  }
+  let span = end - start;
+  if span > shape_ceiling {
+    let too_large = TextError::TooLarge();
+    return Err<unit, TextError>(error: too_large);
+  }
+  let index = cvt::<u32, u64>(face);
+  let count = fonts^.faces.inner.len;
+  if index >= count {
+    let invalid = TextError::Invalid();
+    return Err<unit, TextError>(error: invalid);
+  }
+  let metrics = face_metrics(face: &fonts^.faces.inner[index].face);
+  let scale = advance_scale(size: size, units_per_em: metrics.units_per_em);
+  let shaping = shaping_script(script: script);
+  let advances_length = advances^.inner.len;
+  let clusters_length = clusters^.inner.len;
+  match shape_run(face: &fonts^.faces.inner[index].face, text: &text^[start..end], script: shaping) {
+    Ok(value: run) => {
+      let glyphs = run.glyphs.inner.len;
+      for (position in 0_u64..glyphs) {
+        let glyph = run.glyphs.inner[position];
+        let cluster = cvt::<u32, u64>(glyph.cluster);
+        let at = start +sat cluster;
+        let in_segment = at < end;
+        let in_advances = at < advances_length;
+        let in_clusters = at < clusters_length;
+        let stored = band(in_advances, in_clusters);
+        let usable = band(in_segment, stored);
+        if usable {
+          let nominal = glyph_advance(face: &fonts^.faces.inner[index].face, glyph: glyph.glyph);
+          let px = glyph_px(scale: scale, nominal: nominal, shaped: glyph.x_advance);
+          let sum = fadd.strict(advances^.inner[at], px);
+          set advances^.inner[at] = sum;
+          set clusters^.inner[at] = cluster_start;
+        }
+      }
+      return Ok<unit, TextError>(value: unit);
+    }
+    Err(error: problem) => {
+      let too_large = TextError::TooLarge();
+      return Err<unit, TextError>(error: too_large);
+    }
+  }
+}
+
+fn synthetic_bold_for(fonts: &FontSet, face: u32, weight: f32) -> result: Bool reads(fonts) {
+  doc "Tells whether face draws a group of weight with synthetic bold: the group asks for 600 or more and the face is lighter than 600.";
+  let heavy = fge(weight, bold_threshold);
+  let index = cvt::<u32, u64>(face);
+  let count = fonts^.faces.inner.len;
+  if index < count {
+    let face_weight = fonts^.faces.inner[index].weight;
+    let light = face_weight < bold_face;
+    let synthetic = band(heavy, light);
+    return synthetic;
+  }
+  return False();
+}
+
+fn shape_segments(fonts: &FontSet, choice: FontChoice, text: &[u32], start: u64, end: u64, faces: &Box<Array<u32>>, scripts: &Box<Array<u8>>, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>, segments: &Box<Slots<FaceSegment>>) -> result: Result<unit, TextError> reads(fonts), reads(text), reads(faces), reads(scripts), writes(advances), writes(clusters), writes(segments) {
+  doc "Splits the run from start to end into maximal segments of one face and one resolved script, each control a segment of its own, shapes each segment once, and appends the segments in order. A control is not shaped: it is one cluster of advance 0.";
+  let text_length = text^.len;
+  let faces_length = faces^.inner.len;
+  let scripts_length = scripts^.inner.len;
+  let clusters_length = clusters^.inner.len;
+  let first_limit = imin(text_length, faces_length);
+  let second_limit = imin(scripts_length, clusters_length);
+  let limit = imin(first_limit, second_limit);
+  let stop = imin(end, limit);
+  let at = start;
+  loop @segments {
+    if at >= stop {
+      break @segments;
+    }
+    let face = faces^.inner[at];
+    let script = scripts^.inner[at];
+    let scalar = text^[at];
+    let kind = scalar_kind(scalar: scalar);
+    let control = kind == kind_control;
+    let after = at + 1_u64;
+    if control {
+      if at < clusters^.inner.len {
+        set clusters^.inner[at] = cluster_start;
+      }
+    } else {
+      loop @extend {
+        if after >= stop {
+          break @extend;
+        }
+        let next_face = faces^.inner[after];
+        let next_script = scripts^.inner[after];
+        let next_scalar = text^[after];
+        let next_kind = scalar_kind(scalar: next_scalar);
+        let same_face = next_face == face;
+        let same_script = next_script == script;
+        let next_control = next_kind == kind_control;
+        let shaped_too = bnot(next_control);
+        let alike = band(same_face, same_script);
+        let joins = band(alike, shaped_too);
+        if joins {
+          set after = after + 1_u64;
+        } else {
+          break @extend;
+        }
+      }
+      let shaped = propagate shape_segment(fonts: fonts, face: face, script: script, size: choice.size, text: text, start: at, end: after, advances: advances, clusters: clusters);
+    }
+    let synthetic = synthetic_bold_for(fonts: fonts, face: face, weight: choice.weight);
+    let first = cvt.wrap::<u64, u32>(at);
+    let last = cvt.wrap::<u64, u32>(after);
+    let segment = FaceSegment(start: first, end: last, face: face, size: choice.size, synthetic_bold: synthetic);
+    let pushed = propagate push_segment(cell: segments, value: segment);
+    set at = after;
+  }
+  return Ok<unit, TextError>(value: unit);
+}
+
+fn apply_spacing(run: TextRun, text: &[u32], advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>) -> result: unit reads(text), writes(advances), writes(clusters) {
+  doc "Adds the run's letter-spacing after every cluster that is not a control and its word-spacing after every U+0020 and U+00A0, and marks every such space with cluster_space.";
+  let text_length = text^.len;
+  let advances_length = advances^.inner.len;
+  let clusters_length = clusters^.inner.len;
+  let first_limit = imin(text_length, advances_length);
+  let limit = imin(first_limit, clusters_length);
+  let start = cvt::<u32, u64>(run.start);
+  let listed_end = cvt::<u32, u64>(run.end);
+  let end = imin(listed_end, limit);
+  for (index in start..end) {
+    let scalar = text^[index];
+    let flags = clusters^.inner[index];
+    let kind = scalar_kind(scalar: scalar);
+    let control = kind == kind_control;
+    let starts = flags == cluster_start;
+    let shaped = bnot(control);
+    let spaced = band(starts, shaped);
+    let advance = advances^.inner[index];
+    if spaced {
+      set advance = fadd.strict(advance, run.letter_spacing);
+    }
+    let plain = scalar == 32_u32;
+    let fixed = scalar == no_break_space;
+    let space = bor(plain, fixed);
+    if space {
+      set advance = fadd.strict(advance, run.word_spacing);
+      set clusters^.inner[index] = ior(flags, cluster_space);
+    }
+    set advances^.inner[index] = advance;
+  }
+  return unit;
+}
+
+fn is_space(scalar: u32) -> result: Bool pure {
+  doc "Tells whether scalar is a space or a tab, after which the reference allows a line break before any other scalar.";
+  let space = scalar == 32_u32;
+  let tab = scalar == tab_scalar;
+  let either = bor(space, tab);
+  return either;
+}
+
+fn ascii_like(scalar: u32) -> result: Bool pure {
+  doc "Tells whether scalar is ASCII or U+00A0, the scalars between which the reference consults its ASCII table instead of UAX #14.";
+  let ascii = scalar <= ascii_last;
+  let fixed = scalar == no_break_space;
+  let either = bor(ascii, fixed);
+  return either;
+}
+
+fn is_alphanumeric(scalar: u32) -> result: Bool pure {
+  doc "Tells whether scalar is an ASCII letter or digit.";
+  let digit_low = scalar >= 48_u32;
+  let digit_high = scalar <= 57_u32;
+  let upper_low = scalar >= 65_u32;
+  let upper_high = scalar <= 90_u32;
+  let lower_low = scalar >= 97_u32;
+  let lower_high = scalar <= 122_u32;
+  let digit = band(digit_low, digit_high);
+  let upper = band(upper_low, upper_high);
+  let lower = band(lower_low, lower_high);
+  let letter = bor(upper, lower);
+  let either = bor(digit, letter);
+  return either;
+}
+
+fn table_break(before: u32, after: u32) -> result: Bool pure {
+  doc "Looks up the reference's soft wrap opportunity between two printable ASCII scalars in ascii_breaks, the reference's table (Blink's kAsciiLineBreakTable) as tests/layout/text_oracle.mjs ascii measures it in Chromium 141: row r holds the opportunities after the scalar 33 + r, its first word the bits of the scalars 33 to 96 after it and its second those of 97 to 126. No opportunity for scalars outside 33 to 126.";
+  let before_low = before >= table_first;
+  let before_high = before <= table_last;
+  let after_low = after >= table_first;
+  let after_high = after <= table_last;
+  let before_in = band(before_low, before_high);
+  let after_in = band(after_low, after_high);
+  let both = band(before_in, after_in);
+  if both {
+  } else {
+    return False();
+  }
+  let row = before - table_first;
+  let column = after - table_first;
+  let high = column >= 64_u32;
+  let word_offset = 0_u64;
+  let bit = column;
+  if high {
+    set word_offset = 1_u64;
+    set bit = column - 64_u32;
+  }
+  let row_wide = cvt::<u32, u64>(row);
+  let doubled = row_wide * 2_u64;
+  let at = doubled + word_offset;
+  if at >= ascii_breaks.len {
+    return False();
+  }
+  let word = ascii_breaks[at];
+  let shifted = ishr.wrap(word, bit);
+  let low_bit = iand(shifted, 1_u64);
+  let set_bit = low_bit != 0_u64;
+  return set_bit;
+}
+
+fn reference_break(text: &[u32], index: u64, found: u8) -> result: Bool reads(text) {
+  doc "Tells whether the reference allows a line break before text[index], from the UAX #14 opportunity found there, as Blink's line break iterator tailors it in normal word-break: always after a space or a tab before any scalar that is neither; between two scalars that are ASCII or U+00A0, only where its ASCII table allows one, except that a break between a hyphen-minus and a digit follows an ASCII letter or digit only; and UAX #14's opportunity elsewhere.";
+  let length = text^.len;
+  let ordered = index >= 1_u64;
+  let inside = index < length;
+  let located = band(ordered, inside);
+  if located {
+  } else {
+    return False();
+  }
+  let before = index - 1_u64;
+  let previous = text^[before];
+  let scalar = text^[index];
+  let after_space = is_space(scalar: previous);
+  if after_space {
+    let spaced = is_space(scalar: scalar);
+    let opens = bnot(spaced);
+    return opens;
+  }
+  let previous_ascii = ascii_like(scalar: previous);
+  let current_ascii = ascii_like(scalar: scalar);
+  let both = band(previous_ascii, current_ascii);
+  if both {
+    let hyphen = previous == hyphen_minus;
+    let digit_low = scalar >= 48_u32;
+    let digit_high = scalar <= 57_u32;
+    let digit = band(digit_low, digit_high);
+    let minus_sign = band(hyphen, digit);
+    if minus_sign {
+      if before >= 1_u64 {
+        let earlier = before - 1_u64;
+        let word = text^[earlier];
+        let joined = is_alphanumeric(scalar: word);
+        return joined;
+      }
+      return False();
+    }
+    let tabled = table_break(before: previous, after: scalar);
+    return tabled;
+  }
+  let allowed = found == break_allowed;
+  return allowed;
+}
+
+fn opportunity_allowed(opportunity: BreakOpportunity) -> result: u8 pure {
+  doc "Returns break_allowed, break_mandatory or break_none for a line break opportunity.";
+  match opportunity {
+    Prohibited() => {
+      return break_none;
+    }
+    Allowed() => {
+      return break_allowed;
+    }
+    Mandatory() => {
+      return break_mandatory;
+    }
+  }
+}
+
+fn find_breaks(text: &[u32], runs: &[TextRun], run_of: &Box<Array<u32>>, clusters: &Box<Array<u8>>, breaks: &Box<Array<u8>>) -> result: unit reads(text), reads(runs), reads(run_of), reads(clusters), writes(breaks) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Writes, at every index i past 0, whether a line may break before text[i]: mandatory after a U+2028 or a U+000A or where UAX #14 requires it, nothing else in a run that does not wrap, otherwise UAX #14's opportunity adjusted by the run holding text[i - 1] for word-break (break-all allows a break between two letters or numbers, keep-all forbids one between two letters), and an emergency break at the other cluster starts of a run whose overflow-wrap is not normal or whose word-break is break-word. Each index depends only on the opportunities and the scalars beside it.";
+  let length = text^.len;
+  let prohibited = BreakOpportunity::Prohibited();
+  let opportunities = box_array_filled::<BreakOpportunity>(count: length, value: prohibited);
+  find_line_breaks(text: text, opportunities: &opportunities.inner[0_u64..length]);
+  let run_count = runs^.len;
+  let first_limit = imin(length, run_of^.inner.len);
+  let second_limit = imin(clusters^.inner.len, breaks^.inner.len);
+  let limit = imin(first_limit, second_limit);
+  for (index in 1_u64..limit) {
+    let before = index - 1_u64;
+    let previous = text^[before];
+    let scalar = text^[index];
+    let run_index = cvt::<u32, u64>(run_of^.inner[before]);
+    let value = break_none;
+    if run_index < run_count {
+      let run = runs^[run_index];
+      let after_feed = previous == line_feed;
+      let after_separator = previous == line_separator_scalar;
+      let forced_scalar = bor(after_feed, after_separator);
+      let found = opportunity_allowed(opportunity: opportunities.inner[before]);
+      let forced_rule = found == break_mandatory;
+      let forced = bor(forced_scalar, forced_rule);
+      if forced {
+        set value = break_mandatory;
+      } else if run.wraps {
+        let allowed = reference_break(text: text, index: index, found: found);
+        let flags = clusters^.inner[index];
+        let starts = iand(flags, cluster_start);
+        let cluster_begins = starts != 0_u8;
+        let previous_class = letter_class(scalar: previous);
+        let current_class = letter_class(scalar: scalar);
+        let previous_word = previous_class != 0_u8;
+        let current_word = current_class != 0_u8;
+        let both_word = band(previous_word, current_word);
+        let previous_letter = previous_class == 2_u8;
+        let current_letter = current_class == 2_u8;
+        let both_letters = band(previous_letter, current_letter);
+        let break_all = run.word_break == word_break_all;
+        let keep_all = run.word_break == word_keep_all;
+        let opened = band(break_all, both_word);
+        let opened_here = band(opened, cluster_begins);
+        if opened_here {
+          set allowed = True();
+        }
+        let closed = band(keep_all, both_letters);
+        if closed {
+          set allowed = False();
+        }
+        let wrap_anywhere = run.overflow_wrap != overflow_normal;
+        let legacy = run.word_break == word_break_word;
+        let emergency = bor(wrap_anywhere, legacy);
+        let before_space = is_space(scalar: scalar);
+        let not_before_space = bnot(before_space);
+        let emergency_cluster = band(emergency, cluster_begins);
+        let emergency_here = band(emergency_cluster, not_before_space);
+        if allowed {
+          set value = break_allowed;
+        } else if emergency_here {
+          set value = break_emergency;
+        }
+      }
+    }
+    set breaks^.inner[index] = value;
+  }
+  return unit;
+}
+
+fn shape_paragraph(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[TextRun]) -> result: Result<ShapedText, TextError> reads(fonts), reads(picks), reads(text), reads(runs) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Itemizes, shapes and spaces each run in order, appending its segments, then finds the paragraph's break opportunities. It reads only its inputs, so paragraphs are prepared independently. Invalid when the runs do not cover text in order or name a font outside picks.";
+  let length = text^.len;
+  let advances = box_array_filled::<f32>(count: length, value: 0.0_f32);
+  let clusters = box_array_filled::<u8>(count: length, value: 0_u8);
+  let breaks = box_array_filled::<u8>(count: length, value: break_none);
+  let faces = box_array_filled::<u32>(count: length, value: 0_u32);
+  let scripts = box_array_filled::<u8>(count: length, value: script_common);
+  let run_of = box_array_filled::<u32>(count: length, value: 0_u32);
+  let segments = box_slots_new::<FaceSegment>(capacity: 0_u64);
+  let run_count = runs^.len;
+  let choice_count = picks^.choices.inner.len;
+  let expected = 0_u64;
+  for (index in 0_u64..run_count) {
+    let run = runs^[index];
+    let start = cvt::<u32, u64>(run.start);
+    let end = cvt::<u32, u64>(run.end);
+    let font = cvt::<u32, u64>(run.font);
+    let contiguous = start == expected;
+    let ordered = start <= end;
+    let inside = end <= length;
+    let known = font < choice_count;
+    let placed = band(contiguous, ordered);
+    let bounded = band(inside, known);
+    let valid = band(placed, bounded);
+    if valid {
+    } else {
+      let invalid = TextError::Invalid();
+      return Err<ShapedText, TextError>(error: invalid);
+    }
+    let choice = picks^.choices.inner[font];
+    let span = chain_span(picks: picks, choice: choice);
+    itemize_faces(fonts: fonts, picks: picks, span: span, text: text, start: start, end: end, faces: &faces);
+    itemize_scripts(text: text, start: start, end: end, scripts: &scripts);
+    let run_number = cvt.wrap::<u64, u32>(index);
+    let run_limit = imin(end, run_of.inner.len);
+    for (position in start..run_limit) {
+      set run_of.inner[position] = run_number;
+    }
+    let shaped = propagate shape_segments(fonts: fonts, choice: choice, text: text, start: start, end: end, faces: &faces, scripts: &scripts, advances: &advances, clusters: &clusters, segments: &segments);
+    apply_spacing(run: run, text: text, advances: &advances, clusters: &clusters);
+    set expected = end;
+  }
+  let covered = expected == length;
+  if covered {
+  } else {
+    let invalid = TextError::Invalid();
+    return Err<ShapedText, TextError>(error: invalid);
+  }
+  find_breaks(text: text, runs: runs, run_of: &run_of, clusters: &clusters, breaks: &breaks);
+  let made = ShapedText(advances: move advances, breaks: move breaks, clusters: move clusters, segments: move segments);
+  return Ok<ShapedText, TextError>(value: move made);
+}

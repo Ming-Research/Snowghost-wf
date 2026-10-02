@@ -41,10 +41,13 @@ example apart from the renderer code that exposed it
   (`ENOTDIR`) and no std call reaches the file. Impact: `png_oracle check`
   refuses its `DIR` in a worktree whose `build` is a link to another
   checkout's build directory, so `make oracle-png` fails there; a `DIR`
-  spelling that reaches the same directory without a link works. Change: a
-  std function that forms a `RelativePath` from a byte range, or a component
-  open that follows links. Reopen when oracle runs from such worktrees are
-  needed.
+  spelling that reaches the same directory without a link works. The
+  `style_oracle` driver fails the same way on the real pages in such a
+  worktree (`build/research/concurrency` is a link), so
+  `research/investigations/style/run.sh` takes `PAGES`, a copy of the pages
+  outside the link. Change: a std function that forms a `RelativePath` from
+  a byte range, or a component open that follows links. Reopen when oracle
+  runs from such worktrees are needed.
 
 - **A local `slots_new::<T, N>()` clears all N slots when created.** The
   code compiled at the pin clears the whole window before any value is
@@ -134,8 +137,40 @@ example apart from the renderer code that exposed it
   and read SVG style elements. Reopen when an SVG-heavy page joins the
   corpus.
 
+- **Second-batch values the style stage parses differently from the
+  reference.** Each is a recorded class of the style investigation's second
+  batch (`research/investigations/style/DESIGN.md`): an integer `repeat()` in
+  a track list is expanded at parse time, as the interface declares, where
+  Chromium keeps `repeat(2, ...)`; `safe` and `unsafe` are dropped from
+  alignment values, which Chromium keeps; `justify-items: legacy` with a
+  direction is kept as `legacy`, which computes to `normal`, where Chromium
+  keeps `legacy center`. No real page uses any of them. Change: give
+  `TrackList` a list of repeated ranges with counts and the alignment values
+  an overflow-position bit and a legacy bit, if layout needs them; reopen
+  when a page uses one.
+- **`url()` in `content` is kept as written.** Chromium resolves it against
+  the document's base URL (`url("http://snowghost.test/page/x.png")`); the
+  stage keeps the specified URL, since it resolves no URL and loads no
+  image. Change: resolve it with `pkg::url` when images are loaded.
+- **The `lh` unit and CSS `round()` are not parsed.** ecma262's
+  `.corner-cell { height: 2lh }` (9 `th`) and apollo11's
+  `@supports (width: round(1.5px, 1px))` image widths (2 `img`, 325px where
+  the reference rounds to 330px) differ. Change: `lh` and `rlh` as lengths of
+  the element's and the root's computed line-height, and the stepped-value
+  functions in `calc()`. Reopen when layout needs either.
+- **Some presentational hints are not implemented.** The `li` `value` and
+  `ol` `start` and `reversed` hints for `counter-set` and `counter-reset`
+  (Chromium exposes neither in computed values), the dimension attributes of
+  a `source` in a `picture` that an `img` takes from it, `body`'s margin
+  attributes, `bgcolor`, `bordercolor`, `background`, and the `table[border]`
+  rules' place in the user-agent cascade: they are offered with the hints,
+  above every user-agent selector, so on a table with both `border` and
+  `frame` or `rules` they win where the Standard's later rules would.
+  Change: per-record specificity and order for the hint records. Reopen when
+  a page uses one.
 - **Component walking helpers are written twice.** `pkg::css::values`
-  (`tokens.wf`, `components.wf`) and `pkg::style` (`components.wf`) each
+  (`tokens.wf`, `components.wf`, and `shapes.wf`, whose `shape_of` the second
+  batch's grammars use) and `pkg::style` (`components.wf`) each
   classify components, skip whitespace, find a sibling and compare an
   identifier with a word list, because neither module can reach the
   other's private functions. Change: make one set public in
@@ -264,3 +299,61 @@ example apart from the renderer code that exposed it
   its other lookups here. Change: validate per lookup and ignore only the
   failing lookup, matching HarfBuzz's neutering. Reopen when a real web
   font with a partly broken layout table renders differently from Chrome.
+
+- **Emoji presentation is not given to a color emoji face.** Chromium draws
+  a character whose Emoji_Presentation is Yes (U+231B, U+1F600) with Noto
+  Color Emoji ahead of the font-family list; `pkg::layout::text` draws it
+  with the first face of the chain that maps it (DejaVu Sans for U+1F600,
+  FreeSerif for U+231B), so the advance differs. Impact: 1 of the 3,000
+  text cases drawn from the three pages (html5's U+231B) and the synthetic
+  emoji cases (research/investigations/layout/DESIGN.md, "Text preparation
+  results"). Change: Emoji_Presentation in `pkg::text::properties` from
+  emoji-data.txt, a mark on color faces (CBDT, sbix or COLR) in `FontSet`,
+  and itemizing emoji-presentation sequences, and characters followed by
+  U+FE0F, to the first color face. Reopen when a page that renders emoji
+  joins the corpus.
+- **Indic and other complex scripts are shaped as Common.** `pkg::font`
+  shapes Latin, Greek, Cyrillic and Common only, so Devanagari's reordering
+  and conjuncts and Tamil's are missing: two of apollo11's language links
+  (हिन्दी and தமிழ், in FreeSans) are 0.33 and 0.08 px wider than in
+  Chromium. Change: HarfBuzz's Indic shaper in `pkg::font` and the script
+  in `pkg::layout::text`'s itemizer. Reopen when such text is in scope.
+- **Fallback for bold or italic text skips the generic's own family.** For
+  a bold or italic group whose first family is `serif` (or `monospace`),
+  Chromium tries fontconfig's face for that generic name at normal style
+  (DejaVu Serif, DejaVu Sans Mono) before its global fallback order
+  (`research/investigations/layout/runs/text-fallback.txt`: bold `serif`
+  draws U+2200 with DejaVu Serif, regular `serif` with DejaVu Sans);
+  `pick_fonts` follows the fixed order of the set, as its interface says.
+  Chromium also picks a run's fallback face by the run's first unmapped
+  character and keeps it for later characters it maps, where
+  `pkg::layout::text` decides per character. Impact: none of the sampled
+  page text (its first families are IBM Plex Serif and sans-serif). Change:
+  a per-group fallback prefix in `pick_fonts`, with the interface's doc.
+  Reopen when bold or italic serif text with symbols outside Liberation is
+  measured.
+- **`word-break: break-all` is not Chromium's.** Blink also breaks before
+  and after dash punctuation in break-all and does not break after a
+  hyphen-minus before a non-ASCII letter; `pkg::layout::text` allows a break
+  between two letters or numbers only. Impact: 21 of the synthetic break
+  cases; no sampled page text uses break-all or keep-all. Change: measure
+  Blink's break-all classes as the normal ASCII table was measured and
+  encode them. Reopen when a page uses break-all.
+- **The x-height of a face without OS/2 sxHeight is approximated.** Skia
+  measures the hinted x glyph for DejaVu and WenQuanYi (OS/2 version 1),
+  giving whole pixels; `face_extents` returns 0.56 times the rounded
+  ascent, Blink's own fallback, so `ex` lengths and `vertical-align:
+  middle` on DejaVu text differ by up to about 1 px. Change: the x glyph's
+  bounding box from glyf with the autohinter's rounding, or a measured
+  table. Reopen when ex units on DejaVu text move a measured box.
+- **Letter-spacing does not turn ligatures off.** Chromium disables
+  liga, clig, dlig, hlig and calt when letter-spacing is not 0;
+  `pkg::font::shape_run` takes no feature settings. The installed Liberation
+  faces have no such ligatures, so no measured case differs. Change: a
+  feature parameter in `shape_run`. Reopen when a face with ligatures is
+  drawn with letter-spacing.
+- **A tab gets no advance from text preparation.** `shape_paragraph` treats
+  U+0009 as a control of advance 0; its width depends on its position and
+  `tab-size`, which only line layout knows. The layout stage must give each
+  preserved tab its tab stop. Reopen with `white-space: pre` text that holds
+  tabs.
