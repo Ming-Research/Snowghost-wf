@@ -60,6 +60,7 @@ alias lh_visibility = pkg::css::values::lh_visibility;
 alias lh_white_space = pkg::css::values::lh_white_space;
 alias lh_word_spacing = pkg::css::values::lh_word_spacing;
 alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_pending = pkg::css::values::parse_pending;
 alias parse_pending_named = pkg::css::values::parse_pending_named;
 alias sizing_keyword = pkg::css::values::sizing_keyword;
 alias sizing_normal = pkg::css::values::sizing_normal;
@@ -948,26 +949,37 @@ fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &A
   return Ok<u32, StyleError>(value: id);
 }
 
-fn set_bounds(state: &Inherited, set_id: u32) -> (first: u64, end: u64) reads(state) contract {
+fn entry_range(sets: &[CustomSet], entries_length: u64, set_id: u32) -> (first: u64, end: u64) reads(sets) contract {
   ensures first <= end;
-  ensures end <= state^.custom_entries.inner.len;
+  ensures end <= entries_length;
 } {
-  doc "The entry range of a custom-property set, empty for an unknown set.";
+  doc "The entry range of a custom-property set among entries_length entries, empty for an unknown set or one that does not lie among them.";
   let index = cvt::<u32, u64>(set_id);
-  let known = index < state^.custom_sets.inner.len;
+  let known = index < sets^.len;
   if known {
   } else {
     return 0_u64, 0_u64;
   }
-  let first = cvt::<u32, u64>(state^.custom_sets.inner[index].first);
-  let end = cvt::<u32, u64>(state^.custom_sets.inner[index].end);
+  let first = cvt::<u32, u64>(sets^[index].first);
+  let end = cvt::<u32, u64>(sets^[index].end);
   let ordered = first <= end;
-  let inside = end <= state^.custom_entries.inner.len;
+  let inside = end <= entries_length;
   let usable = band(ordered, inside);
   if usable {
     return first, end;
   }
   return 0_u64, 0_u64;
+}
+
+fn set_bounds(state: &Inherited, set_id: u32) -> (first: u64, end: u64) reads(state) contract {
+  ensures first <= end;
+  ensures end <= state^.custom_entries.inner.len;
+} {
+  doc "The entry range of a custom-property set of the pass, empty for an unknown set.";
+  let sets = state^.custom_sets.inner.len;
+  let entries = state^.custom_entries.inner.len;
+  let (first, end) = entry_range(sets: &state^.custom_sets.inner[0_u64..sets], entries_length: entries, set_id: set_id);
+  return first, end;
 }
 
 fn declared_inherited(state: &Inherited, store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8, set_id: u32, atoms: &AtomTable) -> result: Result<Option<Declared>, StyleError> reads(store), reads(cascade), writes(state), writes(atoms) {
@@ -1005,18 +1017,72 @@ fn gather_declared(state: &Inherited, store: &RuleStore, cascade: &Cascade, posi
   return Ok<NodeDeclared, StyleError>(value: made);
 }
 
-fn plain_declared(store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8) -> (plain: Bool, declared: Option<Declared>) reads(store), reads(cascade) {
-  doc "inherited_declared for a winning value that holds no var(), reading nothing it would write: None when the longhand inherits, through no declaration, inherit or unset, and Wide(initial) for initial; plain is false, with None, when the winning value is pending, which only inherited_declared substitutes.";
+fn plain_resolved(store: &RuleStore, pending: PendingRef, longhand: u8, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable) -> (plain: Bool, declared: Option<Declared>) reads(store), reads(entries), reads(text), reads(atoms) {
+  doc "resolve_named for a pending value whose substituted value parse_pending parses, which interns no name and appends to no store: its value, or None when the value is invalid at computed-value time. plain is false, with None, when parse_pending gives nothing for a value that substitutes and tokenizes, which only parse_pending_named can parse: a name, a family list, a value of a side table, or an invalid one.";
   let none = None<Declared>();
+  let yes = True();
+  let scratch = box_slots_new::<u8>(capacity: 0_u64);
+  let substituted = substitute_pending(store: store, pending: pending, entries: entries, text: text, atoms: atoms, out: &scratch);
+  if substituted {
+  } else {
+    return yes, none;
+  }
+  let size = scratch.inner.len;
+  let small = size <= 16777216_u64;
+  if small {
+  } else {
+    return yes, none;
+  }
+  let parsed = parse_component_values(source: &scratch.inner[0_u64..size]);
+  match move parsed {
+    Ok(value: list) => {
+      let count = list.components.inner.len;
+      let last = cvt.wrap::<u64, u32>(count);
+      let whole = ComponentRange(start: 0_u32, end: last);
+      match parse_pending(values: &list, range: whole, shorthand: pending.shorthand, longhand: longhand) {
+        Some(value: found) => {
+          let value = Some<Declared>(value: found);
+          return yes, value;
+        }
+        None() => {
+          let named_only = False();
+          return named_only, none;
+        }
+      }
+    }
+    Err(..) => {
+      return yes, none;
+    }
+  }
+}
+
+fn plain_declared(store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable) -> (plain: Bool, declared: Option<Declared>) reads(store), reads(cascade), reads(entries), reads(text), reads(atoms) {
+  doc "inherited_declared without writing: a pending winning value is substituted against entries and text and parsed by plain_resolved. plain is false, with None, when plain_resolved's is, so only inherited_declared can parse the value.";
+  let none = None<Declared>();
+  let yes = True();
   match winner_value(store: store, cascade: cascade, element: element, longhand: longhand) {
     Some(value: declared) => {
       match declared_pending(declared: declared) {
-        Some(..) => {
-          let pending = False();
-          return pending, none;
+        Some(value: pending) => {
+          let (resolvable, resolved) = plain_resolved(store: store, pending: pending, longhand: longhand, entries: entries, text: text, atoms: atoms);
+          if resolvable {
+          } else {
+            return resolvable, none;
+          }
+          match resolved {
+            Some(value: inner) => {
+              let inherits = inherits_value(declared: inner);
+              if inherits {
+                return yes, none;
+              }
+              return yes, resolved;
+            }
+            None() => {
+              return yes, none;
+            }
+          }
         }
         None() => {
-          let yes = True();
           let inherits = inherits_value(declared: declared);
           if inherits {
             return yes, none;
@@ -1027,35 +1093,34 @@ fn plain_declared(store: &RuleStore, cascade: &Cascade, element: u64, longhand: 
       }
     }
     None() => {
-      let yes = True();
       return yes, none;
     }
   }
 }
 
-fn gather_plain(store: &RuleStore, cascade: &Cascade, position: u64) -> (plain: Bool, declared: NodeDeclared) reads(store), reads(cascade) {
-  doc "gather_declared for a node none of whose winning values of these longhands holds var(), by plain_declared, so it writes nothing; plain is false when one is pending, and the node is then computed by inherit_element.";
-  let (family_plain, family) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_family);
-  let (size_plain, size) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_size);
-  let (weight_plain, weight) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_weight);
-  let (style_plain, style) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_style);
-  let (line_plain, line) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_line_height);
-  let (color_plain, color) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_color);
-  let (align_plain, align) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_align);
-  let (indent_plain, indent) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_indent);
-  let (transform_plain, transform) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_transform);
-  let (white_plain, white) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_white_space);
-  let (letter_plain, letter) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_letter_spacing);
-  let (word_plain, word) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_word_spacing);
-  let (list_plain, list) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_list_style_type);
-  let (visibility_plain, visibility) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_visibility);
-  let (wrapping_plain, wrapping) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_overflow_wrap);
-  let (breaking_plain, breaking) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_word_break);
-  let (collapse_plain, collapse) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_border_collapse);
-  let (caption_plain, caption) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_caption_side);
-  let (spacing_plain, spacing) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_border_spacing);
-  let (quotes_plain, quotes) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_quotes);
-  let (marker_plain, marker) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_list_style_position);
+fn gather_plain(store: &RuleStore, cascade: &Cascade, position: u64, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable) -> (plain: Bool, declared: NodeDeclared) reads(store), reads(cascade), reads(entries), reads(text), reads(atoms) {
+  doc "gather_declared for a node that declares no custom property, against its parent's custom properties, entries and text, by plain_declared, so it writes nothing; plain is false when a pending value is one only parse_pending_named parses, and the node is then computed by inherit_element.";
+  let (family_plain, family) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_family, entries: entries, text: text, atoms: atoms);
+  let (size_plain, size) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_size, entries: entries, text: text, atoms: atoms);
+  let (weight_plain, weight) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_weight, entries: entries, text: text, atoms: atoms);
+  let (style_plain, style) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_style, entries: entries, text: text, atoms: atoms);
+  let (line_plain, line) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_line_height, entries: entries, text: text, atoms: atoms);
+  let (color_plain, color) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_color, entries: entries, text: text, atoms: atoms);
+  let (align_plain, align) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_align, entries: entries, text: text, atoms: atoms);
+  let (indent_plain, indent) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_indent, entries: entries, text: text, atoms: atoms);
+  let (transform_plain, transform) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_transform, entries: entries, text: text, atoms: atoms);
+  let (white_plain, white) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_white_space, entries: entries, text: text, atoms: atoms);
+  let (letter_plain, letter) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_letter_spacing, entries: entries, text: text, atoms: atoms);
+  let (word_plain, word) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_word_spacing, entries: entries, text: text, atoms: atoms);
+  let (list_plain, list) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_list_style_type, entries: entries, text: text, atoms: atoms);
+  let (visibility_plain, visibility) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_visibility, entries: entries, text: text, atoms: atoms);
+  let (wrapping_plain, wrapping) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_overflow_wrap, entries: entries, text: text, atoms: atoms);
+  let (breaking_plain, breaking) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_word_break, entries: entries, text: text, atoms: atoms);
+  let (collapse_plain, collapse) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_border_collapse, entries: entries, text: text, atoms: atoms);
+  let (caption_plain, caption) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_caption_side, entries: entries, text: text, atoms: atoms);
+  let (spacing_plain, spacing) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_border_spacing, entries: entries, text: text, atoms: atoms);
+  let (quotes_plain, quotes) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_quotes, entries: entries, text: text, atoms: atoms);
+  let (marker_plain, marker) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_list_style_position, entries: entries, text: text, atoms: atoms);
   let plain_1 = band(family_plain, size_plain);
   let plain_2 = band(plain_1, weight_plain);
   let plain_3 = band(plain_2, style_plain);
