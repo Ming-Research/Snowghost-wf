@@ -363,6 +363,50 @@ fn grow_columns(cols: &Box<Slots<Col>>, deltas: &Box<Slots<i32>>, weights: &Box<
   return unit;
 }
 
+fn grow_min_columns(cols: &Box<Slots<Col>>, deltas: &Box<Slots<i32>>, weights: &Box<Slots<i64>>, first: u64, end: u64, excess: i32) -> result: unit writes(cols), writes(deltas), writes(weights) {
+  doc "Adds excess to the min-content widths of the columns first to end that a spanning cell's min-content width needs, as the reference does (research/investigations/layout/runs/colspan-min-content.txt): in proportion to how far each column's max-content width exceeds its min-content width until every column is as wide as its max-content width, and the rest by the rules of excess_weights.";
+  if excess <= 0_i32 {
+    return unit;
+  }
+  let total = 0_i64;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let spare = col.max -sat col.min;
+    let range = imax(spare, 0_i32);
+    let wide = cvt::<i32, i64>(range);
+    put_i64(list: weights, at: k, value: wide);
+    set total = total +sat wide;
+  }
+  if total <= 0_i64 {
+    grow_columns(cols: cols, deltas: deltas, weights: weights, first: first, end: end, excess: excess, which: 0_u8);
+    return unit;
+  }
+  let wide_excess = cvt::<i32, i64>(excess);
+  if wide_excess <= total {
+    clear_range(list: deltas, first: first, end: end);
+    share_out(deltas: deltas, weights: weights, first: first, end: end, excess: excess);
+    for (k in first..end) {
+      let col = col_get(cols: cols, at: k);
+      let more = get_i32(list: deltas, at: k);
+      set col.min = col.min +sat more;
+      col_put(cols: cols, at: k, value: col);
+    }
+    return unit;
+  }
+  let given = 0_i32;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let spare = col.max -sat col.min;
+    let range = imax(spare, 0_i32);
+    set given = given +sat range;
+    set col.min = col.min +sat range;
+    col_put(cols: cols, at: k, value: col);
+  }
+  let rest = excess -sat given;
+  grow_columns(cols: cols, deltas: deltas, weights: weights, first: first, end: end, excess: rest, which: 0_u8);
+  return unit;
+}
+
 fn span_percent(cols: &Box<Slots<Col>>, item: Item) -> result: unit writes(cols) {
   doc "Takes a spanning cell's percentage width into the columns it spans that have none yet (CSS Tables 3, 3.8.3): the cell's percentage less the percentages the columns already have, shared in proportion to the columns' max-content widths, or equally when those are all zero.";
   let wanted = fgt(item.percent, 0.0_f32);
@@ -431,7 +475,7 @@ fn distribute_span(cols: &Box<Slots<Col>>, deltas: &Box<Slots<i32>>, weights: &B
   }
   let min_need = item.min -sat between;
   let min_excess = min_need -sat min_sum;
-  grow_columns(cols: cols, deltas: deltas, weights: weights, first: first, end: end, excess: min_excess, which: 0_u8);
+  grow_min_columns(cols: cols, deltas: deltas, weights: weights, first: first, end: end, excess: min_excess);
   for (k in first..end) {
     let col = col_get(cols: cols, at: k);
     set col.max = imax(col.max, col.min);
