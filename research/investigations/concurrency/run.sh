@@ -4,9 +4,12 @@
 #   run.sh fetch                 downloads the three real pages and the style
 #                                sheets they load, each checked against its
 #                                pinned SHA-256
-#   run.sh synth                 writes the four synthetic pages
-#   run.sh check [PAGE...]       builds the style driver and runs its check
-#                                (A, B and C agree, the intern pass is sound)
+#   run.sh synth                 writes the four synthetic pages and the
+#                                style check's ceiling page
+#   run.sh check [PAGE...]       builds the style and layout drivers and runs
+#                                their checks (A, B, C and D agree, the
+#                                intern pass is sound; L1, L2 and L3 agree),
+#                                and the style check on the ceiling page
 #   run.sh style [PAGE [REPS]]   builds the style driver and times the style
 #                                stage on every page, or on PAGE
 #   run.sh layout [PAGE [REPS]]  builds the layout driver and times the layout
@@ -21,7 +24,9 @@
 # Pages and sheets live in build/research/concurrency/. PAGE is one of
 # ecma262, html5, apollo11, flat, deep, unbalanced and paragraph.
 #
-# style prints, per page, shape (A, B, C and the intern pass) and build, T(0)
+# style prints, per page, shape (A, B, C, D and the intern pass, or the
+# shapes SHAPES lists, where cascade-c and cascade-d time C's and D's cascade
+# alone over one match) and build, T(0)
 # and T(REPS) as the best of RUNS runs (seven by default) and the stage time
 # (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and 4
 # (WORKERS overrides the list) and the sequential build. REPS is chosen per
@@ -115,8 +120,18 @@ reps_of() {
 	paragraph) shapes=20000 intern=100000 ;;
 	*) echo "run.sh: unknown page $1" >&2; exit 2 ;;
 	esac
+	case $1 in
+	ecma262) cascade=40 ;;
+	html5) cascade=60 ;;
+	apollo11) cascade=100 ;;
+	flat) cascade=1000 ;;
+	deep) cascade=5000 ;;
+	unbalanced) cascade=2000 ;;
+	paragraph) cascade=20000 ;;
+	esac
 	case $2 in
 	intern) echo "$intern" ;;
+	cascade-c | cascade-d) echo "$cascade" ;;
 	*) echo "$shapes" ;;
 	esac
 }
@@ -255,7 +270,19 @@ synth() {
 		printf '</p>\n'
 		page_end
 	} >"$data/paragraph.html"
-	for page in $synthetic_pages; do
+	# ceiling: the deepest tree the style traversal admits, its last element
+	# 4096 levels below html, for the style check alone.
+	{
+		page_start ceiling
+		i=0
+		while [ "$i" -lt 4095 ]; do
+			printf '<div>'
+			i=$((i + 1))
+		done
+		printf '%s\n' "$words"
+		page_end
+	} >"$data/ceiling.html"
+	for page in $synthetic_pages ceiling; do
 		echo "$page: $(wc -c <"$data/$page.html") bytes"
 	done
 }
@@ -280,6 +307,17 @@ build_layout() {
 	(cd renderer && "$compiler" --graph modules.wfg --entry proto_layout -o ../build/proto_layout_seq)
 }
 
+# Names the compiler by its path, relative to the checkout when it lies
+# inside it, and its SHA-256 prefix, and the pinned checkout's revision when
+# the compiler is the pin's own build.
+compiler_line() {
+	line="compiler: ${compiler#"$root"/} $(sha256sum <"$compiler" | cut -c1-16)"
+	if [ "$compiler" = "$root/whitefoot/compiler/target/gate/whitefootc" ]; then
+		line="$line, whitefoot $(git -C "$root/whitefoot" rev-parse --short=8 HEAD)"
+	fi
+	echo "$line"
+}
+
 page_file() {
 	file=$data/$1.html
 	if [ ! -f "$file" ]; then
@@ -299,6 +337,9 @@ check() {
 		printf '%s: ' "$page"
 		build/proto_layout check 1 "$file" "$ua" $(sheets_of "$page")
 	done
+	file=$(page_file ceiling)
+	printf 'ceiling: '
+	build/proto_style check 1 "$file" "$ua"
 }
 
 # Prints the elapsed seconds of one run of the driver: the sequential build
@@ -337,19 +378,20 @@ best() {
 style() {
 	driver=proto_style
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
-		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh "$here/run.sh" style "$@"
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh research/investigations/concurrency/run.sh style "$@"
 	fi
 	build
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
-	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	compiler_line
+	echo "runs: best of $runs"
 	echo "page shape build reps T(0) T(REPS) stage"
 	for page in $pages; do
 		file=$(page_file "$page")
 		sheets=$(sheets_of "$page")
 		counts=$(build/proto_style C 0 "$file" "$ua" $sheets | awk '{ print $2, $3, $4, $5 }')
 		echo "# $page: $counts"
-		for shape in A B C intern; do
+		for shape in ${SHAPES:-A B C D intern}; do
 			reps=${2:-$(reps_of "$page" "$shape")}
 			for mode in $workers seq; do
 				zero=$(best "$mode" "$shape" 0 "$file" "$ua" $sheets)
@@ -367,14 +409,15 @@ style() {
 layout() {
 	driver=proto_layout
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
-		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh "$here/run.sh" layout "$@"
+		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh research/investigations/concurrency/run.sh layout "$@"
 	fi
 	if [ -z "${KEEP_BUILD:-}" ] || [ ! -x build/proto_layout ] || [ ! -x build/proto_layout_seq ]; then
 		build_layout
 	fi
 	pages=${1:-$real_pages $synthetic_pages}
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
-	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	compiler_line
+	echo "runs: best of $runs"
 	echo "drivers: $(sha256sum <build/proto_layout | cut -c1-16) $(sha256sum <build/proto_layout_seq | cut -c1-16)"
 	echo "page mode build reps T(0) T(REPS) stage"
 	for page in $pages; do
