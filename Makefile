@@ -175,8 +175,10 @@ LAYOUT_ORACLE := $(ORACLE)/layout
 # pages and the case pages with both, requires the two dumps to be identical
 # and compares them with Chromium's from oracle-layout-dump
 # (research/investigations/layout); it fails while a real page misses the 99
-# percent criterion. It stays out of `check` for the same reasons.
-oracle-layout: compiler
+# percent criterion, a case page's structure differs or a case page matches
+# fewer boxes or text nodes than its floor in run.sh. It stays out of `check`
+# for the same reasons.
+oracle-layout: compiler oracle-fonts
 	@sh $(ROOT)/research/investigations/layout/run.sh check
 
 oracle-layout-dump:
