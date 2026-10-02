@@ -113,7 +113,7 @@ check() {
 		node tests/layout/layout_oracle.mjs compare "$oracle/$page.chromium.tsv" "$out/$page.seq.tsv" || status=1
 	done
 	echo "parallelism ledger ($out/ledger.txt):"
-	grep -E 'PAR [a-z]+ +layout\.' "$out/ledger.txt" || true
+	grep -E '^PAR split +layout\.' "$out/ledger.txt" || true
 	return $status
 }
 
