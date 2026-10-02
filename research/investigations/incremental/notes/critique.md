@@ -1,6 +1,6 @@
 # Critique of `research/investigations/incremental/DESIGN.md` and its five notes
 
-Repository `/home/user/snowghost`, branch `research/incremental`, head `3ed7078`.
+Repository Snowghost, branch `research/incremental`, head `3ed7078`.
 Read: `DESIGN.md`, `notes/{theory,architecture,engines,fanout,raster}.md`,
 `design/pipeline.md`, `design/pipeline/layout.md`, the census aggregates under
 `census/`, `research/investigations/concurrency/DESIGN.md` (open question,
