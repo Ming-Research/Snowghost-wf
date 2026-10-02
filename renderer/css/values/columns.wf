@@ -1,0 +1,184 @@
+alias ComponentList = pkg::css::syntax::ComponentList;
+
+const avoid_word: Array<u8, 5> = "avoid";
+
+const max_column_count: f64 = 65535.0_f64;
+
+struct ColumnToken {
+  kind: u8;
+  value: Declared;
+}
+
+const token_auto: u8 = 0_u8;
+
+const token_count: u8 = 1_u8;
+
+const token_width: u8 = 2_u8;
+
+const token_invalid: u8 = 3_u8;
+
+fn count_integer(values: &ComponentList, at: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "A positive integer for column-count, clamped to 65535 as Chromium computes it; None for a number that is no integer or below 1.";
+  let shape = shape_of(values: values, at: at);
+  if shape.kind != s_number {
+    return None<Declared>();
+  }
+  if shape.integer {
+  } else {
+    return None<Declared>();
+  }
+  let positive = fge(shape.value, 1.0_f64);
+  if positive {
+  } else {
+    return None<Declared>();
+  }
+  let clamped = fmin(shape.value, max_column_count);
+  let fits = cvt.defined::<f64, i32>(clamped);
+  if fits {
+    let whole = cvt::<f64, i32>(clamped);
+    let made = Declared::Integer(value: whole);
+    return Some<Declared>(value: made);
+  }
+  return None<Declared>();
+}
+
+fn count_value(values: &ComponentList, at: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "A column-count: auto or a positive integer.";
+  let auto_n = size_auto_word.len;
+  let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+  if auto_word {
+    let made = Declared::Keyword(keyword: keyword_auto);
+    return Some<Declared>(value: made);
+  }
+  let made = count_integer(values: values, at: at);
+  return made;
+}
+
+fn width_value(values: &ComponentList, at: u64, limit: u64) -> declared: Option<Declared> reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "A column-width: auto or a non-negative length, with no percentage.";
+  let auto_n = size_auto_word.len;
+  let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+  if auto_word {
+    let made = Declared::Keyword(keyword: keyword_auto);
+    return Some<Declared>(value: made);
+  }
+  let no = False();
+  let made = length_value(values: values, at: at, limit: limit, allow_percent: no, allow_negative: no);
+  return made;
+}
+
+fn column_token(values: &ComponentList, at: u64, limit: u64) -> token: ColumnToken reads(values) contract {
+  requires at < limit;
+  requires limit <= values^.components.inner.len;
+} {
+  doc "Classifies one component of columns: auto, a positive integer (a count), a non-negative length (a width, which includes the number 0), or neither.";
+  let auto_value = Declared::Keyword(keyword: keyword_auto);
+  let auto_n = size_auto_word.len;
+  let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+  if auto_word {
+    return ColumnToken(kind: token_auto, value: auto_value);
+  }
+  match count_integer(values: values, at: at) {
+    Some(value: v) => {
+      return ColumnToken(kind: token_count, value: v);
+    }
+    None() => {
+    }
+  }
+  match width_value(values: values, at: at, limit: limit) {
+    Some(value: v) => {
+      return ColumnToken(kind: token_width, value: v);
+    }
+    None() => {
+      return ColumnToken(kind: token_invalid, value: auto_value);
+    }
+  }
+}
+
+fn expand_columns(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands columns: a width, a count or both in either order, each auto when omitted, and auto standing for either; a third component, two widths or two counts are invalid.";
+  let width = Declared::Keyword(keyword: keyword_auto);
+  let count = Declared::Keyword(keyword: keyword_auto);
+  let have_width = False();
+  let have_count = False();
+  let tokens = 0_u64;
+  let span = end -sat start;
+  let position = start;
+  for (step in 0_u64..span) {
+    let at = skip_space(values: values, at: position, limit: end);
+    if at >= end {
+      break;
+    }
+    let next = sibling_after(values: values, at: at, limit: end);
+    let token = column_token(values: values, at: at, limit: next);
+    if token.kind == token_count {
+      if have_count {
+        return False();
+      }
+      set count = token.value;
+      set have_count = True();
+    } else if token.kind == token_width {
+      if have_width {
+        return False();
+      }
+      set width = token.value;
+      set have_width = True();
+    } else if token.kind == token_invalid {
+      return False();
+    }
+    set tokens = tokens +sat 1_u64;
+    set position = next;
+  }
+  let usable = tokens >= 1_u64;
+  let short = tokens <= 2_u64;
+  let fits = band(usable, short);
+  if fits {
+  } else {
+    return False();
+  }
+  put_value(exp: exp, longhand: lh_column_width, value: width);
+  put_value(exp: exp, longhand: lh_column_count, value: count);
+  return True();
+}
+
+fn expand_break_inside(values: &ComponentList, start: u64, end: u64, exp: &Expansion) -> valid: Bool reads(values), writes(exp) contract {
+  requires end <= values^.components.inner.len;
+} {
+  doc "Expands page-break-inside and -webkit-column-break-inside, the legacy spellings of break-inside, which accept only auto and avoid.";
+  match single_at(values: values, start: start, end: end) {
+    Some(value: at) => {
+      let inside = at < end;
+      if inside {
+      } else {
+        return False();
+      }
+      let auto_n = size_auto_word.len;
+      let auto_word = ident_is(values: values, at: at, word: &size_auto_word[0_u64..auto_n]);
+      if auto_word {
+        let made = Declared::Keyword(keyword: break_inside_auto);
+        put_value(exp: exp, longhand: lh_break_inside, value: made);
+        return True();
+      }
+      let avoid_n = avoid_word.len;
+      let avoid = ident_is(values: values, at: at, word: &avoid_word[0_u64..avoid_n]);
+      if avoid {
+        let made = Declared::Keyword(keyword: break_inside_avoid);
+        put_value(exp: exp, longhand: lh_break_inside, value: made);
+        return True();
+      }
+      return False();
+    }
+    None() => {
+      return False();
+    }
+  }
+}

@@ -148,6 +148,31 @@ example apart from the renderer code that exposed it
   `TrackList` a list of repeated ranges with counts and the alignment values
   an overflow-position bit and a legacy bit, if layout needs them; reopen
   when a page uses one.
+- **Multi-column values the style stage does not give.** `column-span`,
+  `column-rule-width`, `column-rule-style` and `column-rule-color` (the rule's
+  width takes part in the column box's width), `break-before`, `break-after`,
+  `orphans` and `widows` are not parsed; `column-count: calc(...)` is not
+  parsed as an integer (Chromium accepts `calc(1 + 2)`), and a `calc()` that
+  is no length is not a `column-width` either; `column-fill: balance-all` is
+  parsed as CSS Multicol Level 2 defines it, where Chromium 141 rejects it,
+  and `-webkit-column-fill` is not an alias, as in Chromium. Change: add the
+  longhands to `pkg::css::values` as the second batch did for flex and grid,
+  and an integer `calc()` grammar. Reopen when the layout stage's multi-column
+  layout or a page needs one.
+- **The user-agent sheet's Chromium rules cover what the pages and a probe of
+  every control showed.** Chromium's computed values still differ for
+  `option` and `optgroup` (`min-height`, padding, `align-items`, gaps), the
+  `meter` and `progress` boxes, `audio`'s `display: none` without controls
+  and its size, `marquee`, `rt`'s font size, and the `width` and `height`
+  attributes of `svg`; `:disabled` does not match the controls of a disabled
+  `fieldset`, which the selector matcher does not implement; a `select`
+  shown as a list box is recognised by the `multiple` and `size` attributes
+  read as text, so `size="02"` is not; and a table's `frame` and `rules`
+  attributes give `outset` and `inset` where Chromium gives `solid` (the hints'
+  place in the cascade, below). The form-control font is the probed Linux
+  host's. Change: probe and add each with the same method as the form
+  controls (`tests/css/style_oracle.mjs` on a page of the elements against the
+  `style_oracle` driver). Reopen when layout draws one of them.
 - **`url()` in `content` is kept as written.** Chromium resolves it against
   the document's base URL (`url("http://snowghost.test/page/x.png")`); the
   stage keeps the specified URL, since it resolves no URL and loads no
