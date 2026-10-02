@@ -107,7 +107,7 @@ fn box_metrics(styles: &Styles, fonts: &FontSet, picks: &FontPicks, style: Style
   let gap = units(px: extents.line_gap);
   let content = ascent +sat descent;
   let line_height = if group.line_height.kind == sizing_value {
-    give units(px: group.line_height.value.px);
+    give units_nearest(px: group.line_height.value.px);
   } else if group.line_height.kind == sizing_number {
     let product = fmul.strict(group.line_height.value.px, group.size);
     give units(px: product);
@@ -403,7 +403,7 @@ fn exclusion_room(exclusions: &[Exclusion], top: i32, bottom: i32, width: i32) -
 }
 
 fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion], origin_x: i32, origin_y: i32, width: i32) -> result: unit reads(sizes), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(paragraph) {
-  doc "Breaks the paragraph into lines in a box width wide whose origin lies at origin_x, origin_y in the context's content box, each line as wide as the floats in exclusions leave beside the line's top and a strut's height below it (all the width when exclusions is empty), the first line indented by text-indent; records each line's start, end, offset and content width, with tops left for the line metrics.";
+  doc "Breaks the paragraph into lines in a box width wide whose origin lies at origin_x, origin_y in the context's content box, each line as wide as the floats in exclusions leave beside the line's top and a strut's height below it (all the width when exclusions is empty), the first line indented by text-indent; a line whose first unbreakable run does not fit in the room beside floats moves down to the next float's bottom (CSS 2.2 9.5); records each line's start, end, offset and content width, with tops left for the line metrics.";
   let cleared = paragraph^.lines.inner.len;
   for (step in 0_u64..cleared) {
     let length = paragraph^.lines.inner.len;
@@ -425,21 +425,49 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
     if start >= count {
       break;
     }
-    let bottom = top +sat strut_height;
-    let box_right = origin_x +sat width;
-    let (left_edge, right_edge) = exclusion_room(exclusions: exclusions, top: top, bottom: bottom, width: box_right);
-    let shifted_left = left_edge -sat origin_x;
-    let left = imax(shifted_left, 0_i32);
-    let available_right = right_edge -sat origin_x;
-    let right = imin(available_right, width);
-    let room = right -sat left;
     let indent_here = if first {
       give indent;
     } else {
       give 0_i32;
     }
-    let available = room -sat indent_here;
-    let (begin, end, content) = next_line(paragraph: paragraph, sizes: sizes, start: start, available: available);
+    let begin = start;
+    let end = start;
+    let content = 0.0_f32;
+    let left = 0_i32;
+    let available = 0_i32;
+    let shifting = True();
+    let retries = exclusions^.len +sat 1_u64;
+    for (retry in 0_u64..retries) {
+      if shifting {
+        let bottom = top +sat strut_height;
+        let box_right = origin_x +sat width;
+        let (left_edge, right_edge) = exclusion_room(exclusions: exclusions, top: top, bottom: bottom, width: box_right);
+        let shifted_left = left_edge -sat origin_x;
+        let line_left = imax(shifted_left, 0_i32);
+        let available_right = right_edge -sat origin_x;
+        let right = imin(available_right, width);
+        let room = right -sat line_left;
+        let line_available = room -sat indent_here;
+        let (line_begin, line_end, line_content) = next_line(paragraph: paragraph, sizes: sizes, start: start, available: line_available);
+        set begin = line_begin;
+        set end = line_end;
+        set content = line_content;
+        set left = line_left;
+        set available = line_available;
+        let room_px = px_of(raw: line_available);
+        let wide = fgt(line_content, room_px);
+        let narrowed = room < width;
+        let cramped = band(wide, narrowed);
+        let lower = lowest_bottom_above(exclusions: exclusions, top: top);
+        let below = lower > top;
+        let moves = band(cramped, below);
+        if moves {
+          set top = lower;
+        } else {
+          set shifting = False();
+        }
+      }
+    }
     let small_begin = begin < 4294967295_u64;
     let small_end = end < 4294967295_u64;
     let small = band(small_begin, small_end);
@@ -451,7 +479,8 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
     let offset = left +sat indent_here;
     let begin_index = cvt::<u64, u32>(begin);
     let end_index = cvt::<u64, u32>(end);
-    let line = Line(start: begin_index, end: end_index, x: offset, width: line_width, room: available, top: 0_i32, height: strut_height, baseline: strut.ascent);
+    let least_top = top -sat origin_y;
+    let line = Line(start: begin_index, end: end_index, x: offset, width: line_width, room: available, top: 0_i32, height: strut_height, baseline: strut.ascent, least_top: least_top);
     let pushed = push_item::<Line>(cell: &paragraph^.lines, value: line, ceiling: item_ceiling);
     set top = top +sat strut_height;
     set first = False();
@@ -1000,6 +1029,7 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
   }
   for (l in 0_u64..lines) {
     let line = paragraph^.lines.inner[l];
+    set top = imax(top, line.least_top);
     let start = cvt::<u32, u64>(line.start);
     let end = cvt::<u32, u64>(line.end);
     let pending = box_slots_new::<Pending>(capacity: 8_u64);
