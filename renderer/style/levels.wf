@@ -1,0 +1,478 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias DeclarationStore = pkg::css::values::DeclarationStore;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+
+const unlisted: u64 = 18446744073709551615_u64;
+
+const node_fast: u8 = 0_u8;
+
+const node_slow: u8 = 1_u8;
+
+nocopy struct LevelIndex {
+  slots: Box<Segments<u64>>;
+  positions: Box<Array<u64>>;
+}
+
+fn level_index(parents: &[u32], depths: &[u32]) -> index: Option<LevelIndex> reads(parents), reads(depths) contract {
+  requires depths^.len == parents^.len;
+  requires parents^.len <= 4294967294_u64;
+  ensures when Some(value: levels): levels.positions.inner.len == parents^.len;
+  ensures when Some(value: levels): forall listed(d in 0_u64..levels.slots.inner.len, k in 0_u64..levels.slots.inner[d].len) when levels.slots.inner[d][k] != unlisted: levels.positions.inner[levels.slots.inner[d][k]] == k, depths^[levels.slots.inner[d][k]] == d;
+  ensures when Some(value: levels): forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
+} {
+  doc "The tree levels of the elements, from the depths the traversal's walk recorded: a counted pass checks that each element's parent precedes it, or is the document, and lies one level above it, and counts each depth; a second groups the elements by depth in preorder with each one's position in its level. The postconditions state what inherit_level requires: a level lists distinct elements, each at its own position, and a parent lies one level above its element. None when a parent neither precedes its element nor is the document, a depth disagrees with its parent's, or the tree is deeper than depth_ceiling.";
+  let n = parents^.len;
+  let ceiling_levels = depth_ceiling + 1_u64;
+  let sizes = box_array_filled::<u64>(count: ceiling_levels, value: 0_u64);
+  let deepest = 0_u64;
+  for (
+    at in 0_u64..n,
+    invariant forall above(e in 0_u64..at) when parents^[e] < n: parents^[e] < e, depths^[parents^[e]] + 1_u64 == depths^[e]
+  ) {
+    let raw = cvt::<u32, u64>(parents^[at]);
+    let depth = cvt::<u32, u64>(depths^[at]);
+    if raw == n {
+    } else if raw < at {
+      let upper = cvt::<u32, u64>(depths^[raw]);
+      let below = upper + 1_u64;
+      if below != depth {
+        return None<LevelIndex>();
+      }
+    } else {
+      return None<LevelIndex>();
+    }
+    set deepest = imax(deepest, depth);
+    if depth < ceiling_levels {
+      let seen = sizes.inner[depth];
+      if seen < n {
+        set sizes.inner[depth] = seen + 1_u64;
+      } else {
+        return None<LevelIndex>();
+      }
+    } else {
+      return None<LevelIndex>();
+    }
+  }
+  if deepest > depth_ceiling {
+    return None<LevelIndex>();
+  }
+  let rows_wanted = deepest + 1_u64;
+  let made = box_segments_filled::<u64>(lengths: &sizes.inner[0_u64..rows_wanted], value: unlisted);
+  match move made {
+    None() => {
+      return None<LevelIndex>();
+    }
+    Some(value: slots) => {
+      let fill = box_array_filled::<u64>(count: rows_wanted, value: 0_u64);
+      let positions = box_array_filled::<u64>(count: n, value: 0_u64);
+      let rows = slots.inner.len;
+      for (
+        at in 0_u64..n,
+        invariant forall fresh(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != unlisted: slots.inner[d][k] < at,
+        invariant forall grouped(d in 0_u64..rows, k in 0_u64..slots.inner[d].len) when slots.inner[d][k] != unlisted: positions.inner[slots.inner[d][k]] == k, depths^[slots.inner[d][k]] == d
+      ) {
+        let depth = cvt::<u32, u64>(depths^[at]);
+        let within_rows = depth < rows;
+        let within_levels = depth < rows_wanted;
+        let known = band(within_rows, within_levels);
+        if known {
+          let offset = fill.inner[depth];
+          let segment = &slots.inner[depth];
+          if offset < segment^.len {
+            set segment^[offset] = at;
+            set positions.inner[at] = offset;
+            set fill.inner[depth] = offset + 1_u64;
+          } else {
+            return None<LevelIndex>();
+          }
+        } else {
+          return None<LevelIndex>();
+        }
+      }
+      let levels = LevelIndex(slots: move slots, positions: move positions);
+      return Some<LevelIndex>(value: move levels);
+    }
+  }
+}
+
+fn fast_node(parent: NodeInherited, store: &RuleStore, cascade: &Cascade, document: &Document, named: &DeclarationStore, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable, environment: Environment, root_font_size: f32, initial_family: u32, disc: Atom, monospace: Atom, position: u64) -> (plain: Bool, values: NodeInherited) reads(store), reads(cascade), reads(document), reads(named), reads(entries), reads(text), reads(atoms) {
+  doc "Computes a node that has a parent and whose node_plain is true from its parent's values, as inherit_element would, writing nothing: its declared values by gather_plain and its values by compute_node. plain is false, with the parent's values, when a winning value of an inherited longhand is pending.";
+  let (plain, declared) = gather_plain(store: store, cascade: cascade, position: position, entries: entries, text: text, atoms: atoms);
+  if plain {
+  } else {
+    return plain, parent;
+  }
+  let yes = True();
+  let (values, root_size) = compute_node(declared: declared, parent: parent, has_parent: yes, root_font_size: root_font_size, named: named, atoms: atoms, document: document, store: store, cascade: cascade, position: position, environment: environment, initial_family: initial_family, disc: disc, monospace_name_atom: monospace);
+  return plain, values;
+}
+
+fn cascade_levels(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<unit, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(state), writes(atoms) {
+  doc "Computes every styled node of the pass in document order, its parent before it, level by level: node_plain flags, in one counted loop, the nodes that write a shared store; then, for each tree level from the root, inherit_level computes the level's other elements in one counted loop and inherit_element the flagged ones in preorder; then inherit_pseudos computes the pseudo-elements, whose parent is an element, and inherit_element the flagged ones in order. Inconsistent when the cascade does not list a parent and a kind for every styled node, or level_index refuses the traversal's depths.";
+  let count = cascade^.nodes.inner.len;
+  let n = traversal^.parents.inner.len;
+  let measured = traversal^.depths.inner.len == n;
+  let elements = n == cascade^.element_count;
+  let within = n <= count;
+  let small = n <= 4294967294_u64;
+  let few = count <= 4294967296_u64;
+  let parents_listed = count <= cascade^.parents.inner.len;
+  let kinds_listed = count <= cascade^.kinds.inner.len;
+  let aligned = band(measured, elements);
+  let bounded = band(within, small);
+  let sized = band(bounded, few);
+  let listed = band(parents_listed, kinds_listed);
+  let shaped = band(aligned, sized);
+  let usable = band(shaped, listed);
+  if usable {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  let flags = box_array_filled::<u8>(count: count, value: node_fast);
+  for (at in 0_u64..count) {
+    let plain = node_plain(store: store, cascade: cascade, position: at);
+    if plain {
+    } else {
+      set flags.inner[at] = node_slow;
+    }
+  }
+  let index = level_index(parents: &traversal^.parents.inner[0_u64..n], depths: &traversal^.depths.inner[0_u64..n]);
+  match move index {
+    None() => {
+      let failure = StyleError::Inconsistent();
+      return Err<unit, StyleError>(error: failure);
+    }
+    Some(value: levels) => {
+      let rows = levels.slots.inner.len;
+      for (level in 0_u64..rows) {
+        let positioned = n <= levels.positions.inner.len;
+        if positioned {
+        } else {
+          let failure = StyleError::Inconsistent();
+          return Err<unit, StyleError>(error: failure);
+        }
+        inherit_level(slots: &levels.slots.inner[level], positions: &levels.positions.inner[0_u64..n], depths: &traversal^.depths.inner[0_u64..n], parents: &traversal^.parents.inner[0_u64..n], flags: &flags.inner[0_u64..count], state: state, store: store, cascade: cascade, document: document, atoms: atoms, level: level);
+        let row = &levels.slots.inner[level];
+        let size = row^.len;
+        for (k in 0_u64..size) {
+          let at = row^[k];
+          let known = at < flags.inner.len;
+          if known {
+            if flags.inner[at] != node_fast {
+              let done = propagate inherit_element(state: state, store: store, cascade: cascade, document: document, atoms: atoms, environment: environment, position: at);
+            }
+          }
+        }
+      }
+    }
+  }
+  let parents_n = cascade^.parents.inner.len;
+  inherit_pseudos(first: n, parents: &cascade^.parents.inner[0_u64..parents_n], flags: &flags.inner[0_u64..count], state: state, store: store, cascade: cascade, document: document, atoms: atoms);
+  for (p in n..count) {
+    let known = p < flags.inner.len;
+    if known {
+      if flags.inner[p] != node_fast {
+        let done = propagate inherit_element(state: state, store: store, cascade: cascade, document: document, atoms: atoms, environment: environment, position: p);
+      }
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn inherit_level(slots: &[u64], positions: &[u64], depths: &[u32], parents: &[u32], flags: &[u8], state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, level: u64) -> result: unit reads(slots), reads(parents), reads(store), reads(cascade), reads(document), reads(atoms), writes(flags), writes(state) contract {
+  requires positions^.len == parents^.len;
+  requires depths^.len == parents^.len;
+  requires forall listed(k in 0_u64..slots^.len) when slots^[k] < parents^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
+  requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
+} {
+  doc "One tree level of the pass in document order: iteration k computes, by fast_node, the element at preorder index slots^[k] from its parent's values, which the levels before computed, and writes them at that index of each per-node array of state, its custom-property set being its parent's; it reads state's shared stores and the values the pass shares, read once before the loop, and writes none. An element flagged slow is left as it is, and one without a parent element or one fast_node finds pending is flagged slow, all left to inherit_element. The requirements state that the level lists distinct elements, positions^ naming each one's own iteration, and that a parent lies one level above its element, so the certificate separates the writes of two iterations and a write of one from the parent reads of another.";
+  let count = slots^.len;
+  let n = parents^.len;
+  let environment = state^.environment;
+  let root_font_size = state^.root_font_size;
+  let initial_family = state^.initial_family;
+  let disc = state^.disc;
+  let monospace = state^.monospace;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let at = slots^[k];
+    let element = at < n;
+    let flagged = at < flags^.len;
+    let present = band(element, flagged);
+    if present {
+      if flags^[at] == node_fast {
+        let raw = cvt::<u32, u64>(parents^[at]);
+        let has_parent = raw < n;
+        let parent_fonts = raw < state^.fonts.inner.len;
+        let parent_texts = raw < state^.texts.inner.len;
+        let parent_visibility = raw < state^.visibility.inner.len;
+        let parent_font_keywords = raw < state^.font_keywords.inner.len;
+        let parent_font_scales = raw < state^.font_scales.inner.len;
+        let parent_ex = raw < state^.ex.inner.len;
+        let parent_ch = raw < state^.ch.inner.len;
+        let parent_lh = raw < state^.lh.inner.len;
+        let parent_tables = raw < state^.tables.inner.len;
+        let parent_quotes = raw < state^.quotes.inner.len;
+        let parent_list_positions = raw < state^.list_positions.inner.len;
+        let parent_sets = raw < state^.sets.inner.len;
+        let readable_1 = band(parent_fonts, parent_texts);
+        let readable_2 = band(readable_1, parent_visibility);
+        let readable_3 = band(readable_2, parent_font_keywords);
+        let readable_4 = band(readable_3, parent_font_scales);
+        let readable_5 = band(readable_4, parent_ex);
+        let readable_6 = band(readable_5, parent_ch);
+        let readable_7 = band(readable_6, parent_lh);
+        let readable_8 = band(readable_7, parent_tables);
+        let readable_9 = band(readable_8, parent_quotes);
+        let readable_10 = band(readable_9, parent_list_positions);
+        let readable_11 = band(readable_10, parent_sets);
+        let usable = band(has_parent, readable_11);
+        if usable {
+          let parent = NodeInherited(font: state^.fonts.inner[raw], text: state^.texts.inner[raw], visibility: state^.visibility.inner[raw], keyword: state^.font_keywords.inner[raw], scale: state^.font_scales.inner[raw], ex: state^.ex.inner[raw], ch: state^.ch.inner[raw], lh: state^.lh.inner[raw], table: state^.tables.inner[raw], quotes: state^.quotes.inner[raw], marker: state^.list_positions.inner[raw]);
+          let parent_set = state^.sets.inner[raw];
+          let sets_n = state^.custom_sets.inner.len;
+          let entries_n = state^.custom_entries.inner.len;
+          let text_n = state^.custom_text.inner.len;
+          let (first_entry, end_entry) = entry_range(sets: &state^.custom_sets.inner[0_u64..sets_n], entries_length: entries_n, set_id: parent_set);
+          let (plain, values) = fast_node(parent: parent, store: store, cascade: cascade, document: document, named: &state^.named, entries: &state^.custom_entries.inner[first_entry..end_entry], text: &state^.custom_text.inner[0_u64..text_n], atoms: atoms, environment: environment, root_font_size: root_font_size, initial_family: initial_family, disc: disc, monospace: monospace, position: at);
+          if plain {
+            if at < state^.fonts.inner.len {
+              set state^.fonts.inner[at] = values.font;
+            }
+            if at < state^.texts.inner.len {
+              set state^.texts.inner[at] = values.text;
+            }
+            if at < state^.visibility.inner.len {
+              set state^.visibility.inner[at] = values.visibility;
+            }
+            if at < state^.font_keywords.inner.len {
+              set state^.font_keywords.inner[at] = values.keyword;
+            }
+            if at < state^.font_scales.inner.len {
+              set state^.font_scales.inner[at] = values.scale;
+            }
+            if at < state^.ex.inner.len {
+              set state^.ex.inner[at] = values.ex;
+            }
+            if at < state^.ch.inner.len {
+              set state^.ch.inner[at] = values.ch;
+            }
+            if at < state^.lh.inner.len {
+              set state^.lh.inner[at] = values.lh;
+            }
+            if at < state^.tables.inner.len {
+              set state^.tables.inner[at] = values.table;
+            }
+            if at < state^.quotes.inner.len {
+              set state^.quotes.inner[at] = values.quotes;
+            }
+            if at < state^.list_positions.inner.len {
+              set state^.list_positions.inner[at] = values.marker;
+            }
+            if at < state^.sets.inner.len {
+              set state^.sets.inner[at] = parent_set;
+            }
+          } else {
+            set flags^[at] = node_slow;
+          }
+        } else {
+          set flags^[at] = node_slow;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn inherit_pseudos(first: u64, parents: &[u32], flags: &[u8], state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable) -> result: unit reads(parents), reads(store), reads(cascade), reads(document), reads(atoms), writes(flags), writes(state) {
+  doc "The pseudo-elements of the pass in document order, numbered from first, after every element: iteration p computes the pseudo-element at p from its element's values, at an index below first, as inherit_level does an element; the certificate separates the writes of two iterations, each at its own index, from the reads of another's element, below every index the loop writes.";
+  let count = parents^.len;
+  let environment = state^.environment;
+  let root_font_size = state^.root_font_size;
+  let initial_family = state^.initial_family;
+  let disc = state^.disc;
+  let monospace = state^.monospace;
+  for (
+    p in first..count,
+    apart(i, j) {
+    }
+  ) {
+    let flagged = p < flags^.len;
+    if flagged {
+      if flags^[p] == node_fast {
+        let raw = cvt::<u32, u64>(parents^[p]);
+        let has_parent = raw < first;
+        let parent_fonts = raw < state^.fonts.inner.len;
+        let parent_texts = raw < state^.texts.inner.len;
+        let parent_visibility = raw < state^.visibility.inner.len;
+        let parent_font_keywords = raw < state^.font_keywords.inner.len;
+        let parent_font_scales = raw < state^.font_scales.inner.len;
+        let parent_ex = raw < state^.ex.inner.len;
+        let parent_ch = raw < state^.ch.inner.len;
+        let parent_lh = raw < state^.lh.inner.len;
+        let parent_tables = raw < state^.tables.inner.len;
+        let parent_quotes = raw < state^.quotes.inner.len;
+        let parent_list_positions = raw < state^.list_positions.inner.len;
+        let parent_sets = raw < state^.sets.inner.len;
+        let readable_1 = band(parent_fonts, parent_texts);
+        let readable_2 = band(readable_1, parent_visibility);
+        let readable_3 = band(readable_2, parent_font_keywords);
+        let readable_4 = band(readable_3, parent_font_scales);
+        let readable_5 = band(readable_4, parent_ex);
+        let readable_6 = band(readable_5, parent_ch);
+        let readable_7 = band(readable_6, parent_lh);
+        let readable_8 = band(readable_7, parent_tables);
+        let readable_9 = band(readable_8, parent_quotes);
+        let readable_10 = band(readable_9, parent_list_positions);
+        let readable_11 = band(readable_10, parent_sets);
+        let usable = band(has_parent, readable_11);
+        if usable {
+          let parent = NodeInherited(font: state^.fonts.inner[raw], text: state^.texts.inner[raw], visibility: state^.visibility.inner[raw], keyword: state^.font_keywords.inner[raw], scale: state^.font_scales.inner[raw], ex: state^.ex.inner[raw], ch: state^.ch.inner[raw], lh: state^.lh.inner[raw], table: state^.tables.inner[raw], quotes: state^.quotes.inner[raw], marker: state^.list_positions.inner[raw]);
+          let parent_set = state^.sets.inner[raw];
+          let sets_n = state^.custom_sets.inner.len;
+          let entries_n = state^.custom_entries.inner.len;
+          let text_n = state^.custom_text.inner.len;
+          let (first_entry, end_entry) = entry_range(sets: &state^.custom_sets.inner[0_u64..sets_n], entries_length: entries_n, set_id: parent_set);
+          let (plain, values) = fast_node(parent: parent, store: store, cascade: cascade, document: document, named: &state^.named, entries: &state^.custom_entries.inner[first_entry..end_entry], text: &state^.custom_text.inner[0_u64..text_n], atoms: atoms, environment: environment, root_font_size: root_font_size, initial_family: initial_family, disc: disc, monospace: monospace, position: p);
+          if plain {
+            if p < state^.fonts.inner.len {
+              set state^.fonts.inner[p] = values.font;
+            }
+            if p < state^.texts.inner.len {
+              set state^.texts.inner[p] = values.text;
+            }
+            if p < state^.visibility.inner.len {
+              set state^.visibility.inner[p] = values.visibility;
+            }
+            if p < state^.font_keywords.inner.len {
+              set state^.font_keywords.inner[p] = values.keyword;
+            }
+            if p < state^.font_scales.inner.len {
+              set state^.font_scales.inner[p] = values.scale;
+            }
+            if p < state^.ex.inner.len {
+              set state^.ex.inner[p] = values.ex;
+            }
+            if p < state^.ch.inner.len {
+              set state^.ch.inner[p] = values.ch;
+            }
+            if p < state^.lh.inner.len {
+              set state^.lh.inner[p] = values.lh;
+            }
+            if p < state^.tables.inner.len {
+              set state^.tables.inner[p] = values.table;
+            }
+            if p < state^.quotes.inner.len {
+              set state^.quotes.inner[p] = values.quotes;
+            }
+            if p < state^.list_positions.inner.len {
+              set state^.list_positions.inner[p] = values.marker;
+            }
+            if p < state^.sets.inner.len {
+              set state^.sets.inner[p] = parent_set;
+            }
+          } else {
+            set flags^[p] = node_slow;
+          }
+        } else {
+          set flags^[p] = node_slow;
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn offers_customs(store: &RuleStore, first: u32, end: u32) -> offers: Bool reads(store) {
+  doc "True when offer_customs would offer at least one custom declaration from first to end.";
+  let low = cvt::<u32, u64>(first);
+  let high = cvt::<u32, u64>(end);
+  let total = store^.customs.inner.len;
+  let some = low < high;
+  let inside = high <= total;
+  let offers = band(some, inside);
+  return offers;
+}
+
+fn declares_customs(store: &RuleStore, cascade: &Cascade, position: u64) -> declares: Bool reads(store), reads(cascade) {
+  doc "True when collect_customs would collect a custom declaration for the node, so that custom_set makes it a set of its own: a custom-property rule it matched, or its style attribute, offers one.";
+  let count = cascade^.custom_count;
+  let base = position *sat count;
+  let rules = store^.custom_rules.inner.len;
+  for (slot in 0_u64..count) {
+    let at = base +sat slot;
+    let inside = at < cascade^.custom_keys.inner.len;
+    let known = slot < rules;
+    let usable = band(inside, known);
+    if usable {
+      let key = cascade^.custom_keys.inner[at];
+      if key != 0_u64 {
+        let rule = cvt::<u32, u64>(store^.custom_rules.inner[slot]);
+        let listed_rule = rule < store^.rules.inner.len;
+        if listed_rule {
+          let first = store^.rules.inner[rule].custom_first;
+          let end = store^.rules.inner[rule].custom_end;
+          let offers = offers_customs(store: store, first: first, end: end);
+          if offers {
+            return True();
+          }
+        }
+      }
+    }
+  }
+  match attribute_style_of(store: store, element: position) {
+    Some(value: record) => {
+      let inside = record < store^.attributes.inner.len;
+      if inside {
+        let first = store^.attributes.inner[record].custom_first;
+        let end = store^.attributes.inner[record].custom_end;
+        let offers = offers_customs(store: store, first: first, end: end);
+        return offers;
+      }
+    }
+    None() => {
+    }
+  }
+  return False();
+}
+
+fn pending_stored_winner(store: &RuleStore, cascade: &Cascade, position: u64) -> pending: Bool reads(store), reads(cascade) {
+  doc "True when a winning value of a stored longhand of the node is pending, so that resolve_stored appends to the pass's resolved list for it.";
+  for (code in 55_u64..97_u64) {
+    let longhand = cvt::<u64, u8>(code);
+    let stored = stored_longhand(longhand: longhand);
+    if stored {
+      match winner_value(store: store, cascade: cascade, element: position, longhand: longhand) {
+        Some(value: declared) => {
+          match declared_pending(declared: declared) {
+            Some(..) => {
+              return True();
+            }
+            None() => {
+            }
+          }
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn node_plain(store: &RuleStore, cascade: &Cascade, position: u64) -> plain: Bool reads(store), reads(cascade) {
+  doc "True when the node declares no custom property and no winning value of a stored longhand is pending, so that computing it writes none of the pass's shared stores, unless a winning value of an inherited longhand is pending, which gather_plain finds.";
+  let customs = declares_customs(store: store, cascade: cascade, position: position);
+  if customs {
+    return False();
+  }
+  let pending = pending_stored_winner(store: store, cascade: cascade, position: position);
+  let plain = bnot(pending);
+  return plain;
+}
