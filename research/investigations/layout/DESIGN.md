@@ -547,7 +547,7 @@ boxes for the dump and writing it are not timed.
 | ecma262 | layout passes | 0.407 s | 0.410 s | 0.287 s | 0.177 s | 2.30 |
 | html5 | whole stage | 1.390 s | 1.393 s | 0.880 s | 0.590 s | 2.36 |
 | html5 | box tree | 0.100 s | 0.083 s | 0.090 s | 0.090 s | 1.11 |
-| html5 | text preparation | 0.937 s | 0.990 s | 0.583 s | 0.357 s | 2.62 |
+| html5 | text preparation | 0.937 s | 0.990 s | 0.583 s | 0.357 s | 2.63 |
 | html5 | layout passes | 0.353 s | 0.320 s | 0.207 s | 0.143 s | 2.47 |
 | apollo11 | whole stage | 0.086 s | 0.086 s | 0.065 s | 0.044 s | 1.95 |
 | apollo11 | box tree | 0.005 s | 0.006 s | 0.005 s | 0.005 s | 1.00 |
@@ -559,8 +559,10 @@ demand inside the layout passes (Q56), so they are not a part of their own.
 Text preparation is about 60 percent of the sequential stage on ecma262
 and 67 percent on html5. The box tree's walk is the one chain in document
 order the tree decides, so it does not speed up; at four workers it is 17
-and 15 percent of the stage on ecma262 and html5. The layout passes on
-html5 take 0.353 s sequentially against the prototype's 0.029 s, which used
+and 15 percent of the stage on ecma262 and html5. The layout passes take
+0.143 s on html5 and 0.019 s on apollo11 at four workers (0.353 and
+0.029 s sequentially), against the prototype's 0.029 and 0.0017 s (What
+exists), which used
 a fixed advance per character, no `clear`, floats that do not push each
 other, and fixed fractions of the enclosing width for floats, table
 cells, flex and grid items and inline-blocks. Of the 340 loops in
@@ -588,7 +590,17 @@ that implements it:
   they leave, are lower bounds (`tablegrid.wf`);
 - a row group's height is a least height for its rows, what it exceeds
   them by going to its rows (`renderer/layout/table.wf`); the draft ignores
-  heights on row groups.
+  heights on row groups;
+- a table's `width`, `min-width` and `max-width` always size its border
+  box (`table.wf`, the used width); the draft is silent;
+- a percentage column asks the table for the width in which it gets its
+  share of the other columns' max-content widths (`table.wf`, the content
+  widths), which the draft's sums do not say;
+- extra height goes to rows in proportion to their heights, and equally
+  only when all their heights are zero (`table.wf`), where the draft shares
+  it equally: a step the draft defines and the reference does otherwise,
+  so the stage follows the reference ([pipeline](../../../design/pipeline.md)'s
+  rule to follow Chromium).
 
 ## Choices after the results
 

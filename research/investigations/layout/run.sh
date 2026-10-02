@@ -236,7 +236,7 @@ time_parts() {
 	fi
 	build
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
-	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
+	echo "compiler: $(basename "$compiler") $(sha256sum <"$compiler" | cut -c1-16)"
 	echo "drivers: $(sha256sum <build/layout_oracle_par | cut -c1-16) $(sha256sum <build/layout_oracle | cut -c1-16)"
 	echo "runs: $runs, commit: $(git rev-parse --short HEAD)"
 	echo "page mode build reps T(0) T(REPS) per-run"
