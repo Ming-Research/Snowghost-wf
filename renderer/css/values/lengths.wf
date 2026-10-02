@@ -5,6 +5,8 @@ const unit_words: Array<u8, 48> = "px em rem ex ch vw vh vmin vmax cm mm q in pt
 
 const calc_names: Array<u8, 17> = "calc -webkit-calc";
 
+const round_name: Array<u8, 5> = "round";
+
 const max_calc_depth: u64 = 32_u64;
 
 struct Calc {
@@ -416,6 +418,203 @@ fn delim_at(values: &ComponentList, at: u64) -> code: u32 reads(values) contract
   }
 }
 
+fn comma_at(values: &ComponentList, at: u64) -> found: Bool reads(values) contract {
+  requires at < values^.components.inner.len;
+} {
+  doc "True when the component at at is a comma.";
+  match values^.components.inner[at] {
+    Delim(..) => {
+      return False();
+    }
+    Ident(..) => {
+      return False();
+    }
+    Function(..) => {
+      return False();
+    }
+    AtKeyword(..) => {
+      return False();
+    }
+    Hash(..) => {
+      return False();
+    }
+    QuotedString(..) => {
+      return False();
+    }
+    Url(..) => {
+      return False();
+    }
+    Number(..) => {
+      return False();
+    }
+    Percentage(..) => {
+      return False();
+    }
+    Dimension(..) => {
+      return False();
+    }
+    UnicodeRange(..) => {
+      return False();
+    }
+    IncludeMatch(..) => {
+      return False();
+    }
+    DashMatch(..) => {
+      return False();
+    }
+    PrefixMatch(..) => {
+      return False();
+    }
+    SuffixMatch(..) => {
+      return False();
+    }
+    SubstringMatch(..) => {
+      return False();
+    }
+    Column(..) => {
+      return False();
+    }
+    Whitespace(..) => {
+      return False();
+    }
+    Cdo(..) => {
+      return False();
+    }
+    Cdc(..) => {
+      return False();
+    }
+    Colon(..) => {
+      return False();
+    }
+    Semicolon(..) => {
+      return False();
+    }
+    Comma() => {
+      return True();
+    }
+    ParenthesisBlock(..) => {
+      return False();
+    }
+    BracketBlock(..) => {
+      return False();
+    }
+    BraceBlock(..) => {
+      return False();
+    }
+    Error(..) => {
+      return False();
+    }
+  }
+}
+
+fn is_round_name(values: &ComponentList, name: Span) -> round: Bool reads(values) {
+  doc "True for the function name round.";
+  let (start, end) = text_of(values: values, span: name);
+  let n = round_name.len;
+  let found = find_word(list: &round_name[0_u64..n], text: &values^.text.inner[start..end]);
+  match found {
+    Some(..) => {
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn pure_px(value: Lengths) -> alone: Bool pure {
+  doc "True when value is a length of pixels alone, with no em, rem, ex, ch, viewport or percentage part.";
+  let a = feq(value.em, 0.0_f32);
+  let b = feq(value.rem, 0.0_f32);
+  let c = feq(value.ex, 0.0_f32);
+  let d = feq(value.ch, 0.0_f32);
+  let e = feq(value.vw, 0.0_f32);
+  let f = feq(value.vh, 0.0_f32);
+  let g = feq(value.vmin, 0.0_f32);
+  let h = feq(value.vmax, 0.0_f32);
+  let i = feq(value.percent, 0.0_f32);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let gh = band(g, h);
+  let abcd = band(ab, cd);
+  let efgh = band(ef, gh);
+  let most = band(abcd, efgh);
+  let made = band(most, i);
+  return made;
+}
+
+fn round_in(values: &ComponentList, start: u64, end: u64, depth: u64) -> rounded: Option<Calc> reads(values) {
+  doc "Parses the components [start, end) of round(A, B) with A and B lengths of pixels alone, as the nearest multiple of B to A with a tie going up (CSS Values 4, 10.3); any other form is refused, since the sum of units a Lengths keeps cannot hold a rounding that depends on the units' values.";
+  let limit = values^.components.inner.len;
+  let bounded = end <= limit;
+  if bounded {
+  } else {
+    return None<Calc>();
+  }
+  let comma = end;
+  let cursor = start;
+  let span = if end > start {
+    give end - start;
+  } else {
+    give 0_u64;
+  }
+  for (step in 0_u64..span) {
+    if cursor >= end {
+      break;
+    }
+    let is_comma = comma_at(values: values, at: cursor);
+    if is_comma {
+      set comma = cursor;
+      break;
+    }
+    set cursor = sibling_after(values: values, at: cursor, limit: end);
+  }
+  if comma >= end {
+    return None<Calc>();
+  }
+  let after = comma + 1_u64;
+  match sum_in(values: values, start: start, end: comma, depth: depth) {
+    Some(value: first) => {
+      match sum_in(values: values, start: after, end: end, depth: depth) {
+        Some(value: second) => {
+          let numbers = bor(first.is_number, second.is_number);
+          if numbers {
+            return None<Calc>();
+          }
+          let first_pure = pure_px(value: first.lengths);
+          let second_pure = pure_px(value: second.lengths);
+          let both = band(first_pure, second_pure);
+          if both {
+          } else {
+            return None<Calc>();
+          }
+          let step_px = second.lengths.px;
+          let positive = fgt(step_px, 0.0_f32);
+          if positive {
+          } else {
+            return None<Calc>();
+          }
+          let ratio = fdiv.strict(first.lengths.px, step_px);
+          let half = fadd.strict(ratio, 0.5_f32);
+          let whole = ffloor(half);
+          let px = fmul.strict(whole, step_px);
+          let zero = lengths_zero();
+          let made = Lengths(px: px, em: zero.em, rem: zero.rem, ex: zero.ex, ch: zero.ch, vw: zero.vw, vh: zero.vh, vmin: zero.vmin, vmax: zero.vmax, percent: zero.percent);
+          let result = calc_lengths(value: made);
+          return Some<Calc>(value: result);
+        }
+        None() => {
+          return None<Calc>();
+        }
+      }
+    }
+    None() => {
+      return None<Calc>();
+    }
+  }
+}
+
 fn product_of(first: Calc, second: Calc, divide: Bool) -> product: Option<Calc> pure {
   doc "Multiplies or divides two calc() operands where at least one is a number and the divisor is a nonzero number, as calc() keeps lengths linear.";
   if divide {
@@ -647,12 +846,19 @@ fn length_at(values: &ComponentList, at: u64, limit: u64, allow_percent: Bool, a
     }
     Function(name: f, end: e) => {
       let calc = is_calc_name(values: values, name: f^);
-      if calc {
+      let rounding = is_round_name(values: values, name: f^);
+      let known = bor(calc, rounding);
+      if known {
       } else {
         return None<Parsed>();
       }
       let inner_start = at + 1_u64;
-      match sum_in(values: values, start: inner_start, end: next, depth: 0_u64) {
+      let sum = if rounding {
+        give round_in(values: values, start: inner_start, end: next, depth: 0_u64);
+      } else {
+        give sum_in(values: values, start: inner_start, end: next, depth: 0_u64);
+      }
+      match sum {
         Some(value: v) => {
           if v.is_number {
             let zero = feq(v.number, 0.0_f64);
