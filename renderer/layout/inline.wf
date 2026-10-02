@@ -31,11 +31,12 @@ const valign_bottom: u8 = 7_u8;
 const no_group: u32 = 4294967295_u32;
 
 struct Measure {
-  doc "A paragraph's horizontal measures in px for line breaking: each index's advance (an atomic inline's margin box), the decorations (margin, border and padding) of the inline boxes that open and that close at each position, and whether each index holds a collapsible space, which hangs at a line's end and is dropped at a line's start.";
+  doc "A paragraph's horizontal measures in px for line breaking: each index's advance (an atomic inline's margin box), the decorations (margin, border and padding) of the inline boxes that open and that close at each position, whether each index holds a collapsible space, which hangs at a line's end and is dropped at a line's start, and whether an inline box with a bidi control (unicode-bidi other than normal) opens before each index that follows no space, where the reference allows no soft wrap opportunity.";
   advances: Box<Array<f32>>;
   opens: Box<Array<f32>>;
   closes: Box<Array<f32>>;
   collapsible: Box<Array<u8>>;
+  glued: Box<Array<u8>>;
 }
 
 struct Metrics {
@@ -170,6 +171,7 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, basis: 
   let opens = box_array_filled::<f32>(count: positions, value: 0.0_f32);
   let closes = box_array_filled::<f32>(count: positions, value: 0.0_f32);
   let collapsible = box_array_filled::<u8>(count: count, value: 0_u8);
+  let glued = box_array_filled::<u8>(count: positions, value: 0_u8);
   let shaped_count = paragraph^.shaped.advances.inner.len;
   for (i in 0_u64..count) {
     if i < shaped_count {
@@ -205,6 +207,27 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, basis: 
         if at < positions {
           let old = opens.inner[at];
           set opens.inner[at] = fadd.strict(old, start);
+          let group = box_of(styles: styles, style: owner);
+          let previous = if at > 0_u64 {
+            give at - 1_u64;
+          } else {
+            give 0_u64;
+          }
+          let has_before = at > 0_u64;
+          let in_text = previous < full;
+          let readable = band(has_before, in_text);
+          let last_scalar = if readable {
+            give paragraph^.text.inner[previous];
+          } else {
+            give 0_u32;
+          }
+          let follows_space = last_scalar == 32_u32;
+          let controlled = group.unicode_bidi != 0_u8;
+          let not_after_space = bnot(follows_space);
+          let glues = band(controlled, not_after_space);
+          if glues {
+            set glued.inner[at] = 1_u8;
+          }
         }
       }
       Close(at: here, style: owner) => {
@@ -226,7 +249,7 @@ fn measure(paragraph: &Paragraph, children: &[Context], styles: &Styles, basis: 
       }
     }
   }
-  return Measure(advances: move advances, opens: move opens, closes: move closes, collapsible: move collapsible);
+  return Measure(advances: move advances, opens: move opens, closes: move closes, collapsible: move collapsible, glued: move glued);
 }
 
 fn advance_at(sizes: &Measure, at: u64) -> px: f32 reads(sizes) {
@@ -265,10 +288,17 @@ fn collapsible_at(sizes: &Measure, at: u64) -> collapsible: Bool reads(sizes) {
   return False();
 }
 
-fn break_at(paragraph: &Paragraph, at: u64) -> kind: u8 reads(paragraph) {
-  doc "The break opportunity before index at.";
+fn break_at(paragraph: &Paragraph, sizes: &Measure, at: u64) -> kind: u8 reads(paragraph), reads(sizes) {
+  doc "The break opportunity before index at: the shaped text's, except that a soft wrap opportunity is none where an inline box with a bidi control opens after anything but a space (research/investigations/layout/runs/bidi-isolate-breaks.txt).";
   if at < paragraph^.shaped.breaks.inner.len {
     let found = paragraph^.shaped.breaks.inner[at];
+    if found == break_allowed {
+      if at < sizes^.glued.inner.len {
+        if sizes^.glued.inner[at] == 1_u8 {
+          return 0_u8;
+        }
+      }
+    }
     return found;
   }
   return 0_u8;
@@ -299,7 +329,7 @@ fn next_line(paragraph: &Paragraph, sizes: &Measure, start: u64, available: i32)
   let overflowed = False();
   for (j in begin..count) {
     if j > begin {
-      let kind = break_at(paragraph: paragraph, at: j);
+      let kind = break_at(paragraph: paragraph, sizes: sizes, at: j);
       if kind == break_mandatory {
         let content = fsub.strict(width, trailing);
         return begin, j, content;
