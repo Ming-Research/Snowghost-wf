@@ -49,7 +49,7 @@ struct Metrics {
 }
 
 struct OpenBox {
-  doc "An inline box open on a line: its style, its baseline's offset below the line's baseline, its metrics, where it started on this line (in px from the line's start, or a negative value when it continues from an earlier line), whether it opened on this line, the relative offset it and its ancestors give its contents, whether vertical-align top (1) or bottom (2) aligns it with the line box, and the index of the line's aligned group it belongs to (no_group when none).";
+  doc "An inline box open on a line: its style, its baseline's offset below the line's baseline, its metrics, where it started on this line (in px from the line's start, or a negative value when it continues from an earlier line), whether it opened on this line, the relative offset it and its ancestors give its contents, whether vertical-align top (1) or bottom (2) aligns it with the line box, the index of the line's aligned group it belongs to (no_group when none), whether it is culled (culled_box), where its current run of its own content on this line starts and whether that run holds any, and whether it reported a rectangle on this line.";
   style: StyleRef;
   shift: i32;
   metrics: Metrics;
@@ -59,6 +59,10 @@ struct OpenBox {
   dy: i32;
   edge: u8;
   group: u32;
+  culled: Bool;
+  seg_start: f32;
+  seg_items: Bool;
+  emitted: Bool;
 }
 
 struct Aligned {
@@ -486,14 +490,9 @@ fn add_pending(list: &Box<Slots<Pending>>, kind: u8, owner: u32, from: f32, to: 
   return unit;
 }
 
-fn inline_box_fragment(styles: &Styles, held: OpenBox, end: f32, closes: Bool, basis: i32, list: &Box<Slots<Pending>>) -> result: unit reads(styles), writes(list) {
-  doc "Records the fragment of an inline box on one line: from its start (after its left margin when it began on this line) to end (before its right margin when it closes on this line), its content area plus vertical paddings and borders around its baseline.";
+fn box_rect(styles: &Styles, held: OpenBox, end: f32, closes: Bool, basis: i32) -> rect: Pending reads(styles) {
+  doc "The rectangle of an inline box on one line: from its start (after its left margin when it began on this line) to end (before its right margin when it closes on this line), its content area plus vertical paddings and borders around its baseline.";
   let style = held.style;
-  let shown = shown_owner(style: style);
-  if shown {
-  } else {
-    return unit;
-  }
   let margins = margin_edges(styles: styles, style: style, basis: basis);
   let borders = border_edges(styles: styles, style: style);
   let paddings = padding_edges(styles: styles, style: style, basis: basis);
@@ -515,8 +514,103 @@ fn inline_box_fragment(styles: &Styles, held: OpenBox, end: f32, closes: Bool, b
   let below_border = below +sat borders.bottom;
   let top = held.shift -sat above_border;
   let height = above_border +sat below_border;
-  add_pending(list: list, kind: placed_element, owner: style.element, from: from, to: to, top: top, height: height, held: held);
+  return Pending(kind: placed_element, owner: style.element, from: from, to: to, top: top, height: height, dx: held.dx, dy: held.dy, group: held.group);
+}
+
+fn segment_rect(held: OpenBox, to: f32) -> rect: Pending pure {
+  doc "The rectangle of a culled inline box's current run of its own content on one line, from the run's start to to: its content area around its baseline.";
+  let top = held.shift -sat held.metrics.content_ascent;
+  let height = held.metrics.content_ascent +sat held.metrics.content_descent;
+  return Pending(kind: placed_element, owner: held.style.element, from: held.seg_start, to: to, top: top, height: height, dx: held.dx, dy: held.dy, group: held.group);
+}
+
+fn add_box_rects(stack: &Box<Slots<OpenBox>>, at: u64, rect: Pending, list: &Box<Slots<Pending>>) -> result: unit writes(stack), writes(list) {
+  doc "Records rect for the open inline box at index at when it reports rectangles (an element's own box), and for each culled box enclosing it up to the first that is not culled, since the reference lists a culled box's rectangles as the runs of its own content and its children's rectangles; each is marked as having reported on this line.";
+  if at < stack^.inner.len {
+  } else {
+    return unit;
+  }
+  let style = stack^.inner[at].style;
+  let shown = shown_owner(style: style);
+  if shown {
+    let own = Pending(kind: rect.kind, owner: style.element, from: rect.from, to: rect.to, top: rect.top, height: rect.height, dx: rect.dx, dy: rect.dy, group: rect.group);
+    let pushed = push_item::<Pending>(cell: list, value: own, ceiling: item_ceiling);
+  }
+  if at < stack^.inner.len {
+    set stack^.inner[at].emitted = True();
+  }
+  let child = at;
+  for (step in 0_u64..at) {
+    if child == 0_u64 {
+      break;
+    }
+    let parent = child - 1_u64;
+    if parent < stack^.inner.len {
+      if stack^.inner[parent].culled {
+        let parent_style = stack^.inner[parent].style;
+        let parent_shown = shown_owner(style: parent_style);
+        if parent_shown {
+          let duplicate = Pending(kind: rect.kind, owner: parent_style.element, from: rect.from, to: rect.to, top: rect.top, height: rect.height, dx: rect.dx, dy: rect.dy, group: rect.group);
+          let copied = push_item::<Pending>(cell: list, value: duplicate, ceiling: item_ceiling);
+        }
+        if parent < stack^.inner.len {
+          set stack^.inner[parent].emitted = True();
+        }
+        set child = parent;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
   return unit;
+}
+
+fn culled_box(styles: &Styles, style: StyleRef) -> culled: Bool reads(styles) {
+  doc "Tells whether an inline box styled style is culled, as the reference culls one that paints and offsets nothing of its own: static position, no border, padding or margin and a transparent background; the reference then reports the runs of its own content and its children's rectangles rather than one rectangle per line. Opacity, outlines and shadows, which also keep a box, are outside the style stage's scope.";
+  let group = box_of(styles: styles, style: style);
+  if group.position != position_static {
+    return False();
+  }
+  let borders = border_edges(styles: styles, style: style);
+  let paddings = padding_edges(styles: styles, style: style, basis: 0_i32);
+  let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+  let across_border = horizontal(edges: borders);
+  let down_border = vertical(edges: borders);
+  let across_padding = horizontal(edges: paddings);
+  let down_padding = vertical(edges: paddings);
+  let bordered_x = across_border != 0_i32;
+  let bordered_y = down_border != 0_i32;
+  let padded_x = across_padding != 0_i32;
+  let padded_y = down_padding != 0_i32;
+  let left_margin = margins.left != 0_i32;
+  let right_margin = margins.right != 0_i32;
+  let top_margin = margins.top != 0_i32;
+  let bottom_margin = margins.bottom != 0_i32;
+  let bordered = bor(bordered_x, bordered_y);
+  let padded = bor(padded_x, padded_y);
+  let side_margins = bor(left_margin, right_margin);
+  let end_margins = bor(top_margin, bottom_margin);
+  let margined = bor(side_margins, end_margins);
+  let framed = bor(bordered, padded);
+  let kept = bor(framed, margined);
+  if kept {
+    return False();
+  }
+  let computed = computed_of(styles: styles, style: style);
+  let at = cvt::<u32, u64>(computed.background);
+  if at < styles^.backgrounds.inner.len {
+    let color = styles^.backgrounds.inner[at].color;
+    if color.current {
+      return False();
+    }
+    let painted = fgt(color.color.alpha, 0.0_f32);
+    if painted {
+      return False();
+    }
+  }
+  return True();
 }
 
 fn valign_edge(styles: &Styles, style: StyleRef) -> edge: u8 reads(styles) {
@@ -727,6 +821,9 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       if k < stack.inner.len {
         set stack.inner[k].start = 0.0_f32;
         set stack.inner[k].began = False();
+        set stack.inner[k].seg_start = 0.0_f32;
+        set stack.inner[k].seg_items = False();
+        set stack.inner[k].emitted = False();
         set stack.inner[k].group = group;
       }
       set parent_group = group;
@@ -822,7 +919,23 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
             let began = True();
             let moved_x = outer_dx +sat own_dx;
             let moved_y = outer_dy +sat own_dy;
-            let opened = OpenBox(style: owner, shift: shift, metrics: own, start: x, began: began, dx: moved_x, dy: moved_y, edge: edge, group: group);
+            let depth_before = stack.inner.len;
+            if depth_before > 0_u64 {
+              let parent_at = depth_before - 1_u64;
+              let parent = stack.inner[parent_at];
+              if parent.culled {
+                if parent.seg_items {
+                  let run = segment_rect(held: parent, to: x);
+                  add_box_rects(stack: &stack, at: parent_at, rect: run, list: &pending);
+                }
+                if parent_at < stack.inner.len {
+                  set stack.inner[parent_at].seg_items = False();
+                }
+              }
+            }
+            let culled = culled_box(styles: styles, style: owner);
+            let no_run = False();
+            let opened = OpenBox(style: owner, shift: shift, metrics: own, start: x, began: began, dx: moved_x, dy: moved_y, edge: edge, group: group, culled: culled, seg_start: x, seg_items: no_run, emitted: no_run);
             let pushed = push_item::<OpenBox>(cell: &stack, value: opened, ceiling: 4096_u64);
             let box_top = shift -sat own.ascent;
             let box_bottom = shift +sat own.descent;
@@ -853,9 +966,27 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
                 } else {
                   give x;
                 }
-                inline_box_fragment(styles: styles, held: held, end: end_x, closes: yes, basis: basis, list: &pending);
+                if held.culled {
+                  let silent = bnot(held.emitted);
+                  let reports = bor(held.seg_items, silent);
+                  if reports {
+                    let run = segment_rect(held: held, to: end_x);
+                    add_box_rects(stack: &stack, at: last, rect: run, list: &pending);
+                  }
+                } else {
+                  let whole = box_rect(styles: styles, held: held, end: end_x, closes: yes, basis: basis);
+                  add_box_rects(stack: &stack, at: last, rect: whole, list: &pending);
+                }
               }
-              let removed = take_back(window: &stack.inner);
+              let present = stack.inner.len;
+              if present > 0_u64 {
+                let removed = take_back(window: &stack.inner);
+              }
+              let remaining = stack.inner.len;
+              if remaining > 0_u64 {
+                let outer = remaining - 1_u64;
+                set stack.inner[outer].seg_start = x;
+              }
             }
           }
           Atomic(at: a, context: child) => {
@@ -894,6 +1025,11 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
             let placed = Atomic(context: child, x: moved_x, y: moved_y);
             let pushed = push_item::<Atomic>(cell: &atomics, value: placed, ceiling: item_ceiling);
             let pushed_group = push_item::<u32>(cell: &atomic_groups, value: group, ceiling: item_ceiling);
+            let holders = stack.inner.len;
+            if holders > 0_u64 {
+              let holder = holders - 1_u64;
+              set stack.inner[holder].seg_items = True();
+            }
           }
           Node(..) => {
           }
@@ -928,6 +1064,12 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
         }
         let stack_depth = stack.inner.len;
         let (here_dx, here_dy, here_group) = stack_offset(stack: &stack.inner[0_u64..stack_depth]);
+        if stack_depth > 0_u64 {
+          let innermost = stack_depth - 1_u64;
+          if innermost < stack.inner.len {
+            set stack.inner[innermost].seg_items = True();
+          }
+        }
         let inside_x = p < moves_x.inner.len;
         let inside_y = p < moves_y.inner.len;
         let inside_group = p < groups.inner.len;
@@ -951,13 +1093,27 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       give x;
     }
     let still_open = stack.inner.len;
-    for (k in 0_u64..still_open) {
-      let held = stack.inner[k];
-      let on_line = end > start;
-      let shows = bor(on_line, held.began);
-      if shows {
-        let no = False();
-        inline_box_fragment(styles: styles, held: held, end: visible_x, closes: no, basis: basis, list: &pending);
+    for (step in 0_u64..still_open) {
+      let k_top = still_open - 1_u64;
+      let k = k_top - step;
+      if k < stack.inner.len {
+        let held = stack.inner[k];
+        let on_line = end > start;
+        let shows = bor(on_line, held.began);
+        if shows {
+          if held.culled {
+            let silent = bnot(held.emitted);
+            let reports = bor(held.seg_items, silent);
+            if reports {
+              let run = segment_rect(held: held, to: visible_x);
+              add_box_rects(stack: &stack, at: k, rect: run, list: &pending);
+            }
+          } else {
+            let no = False();
+            let whole = box_rect(styles: styles, held: held, end: visible_x, closes: no, basis: basis);
+            add_box_rects(stack: &stack, at: k, rect: whole, list: &pending);
+          }
+        }
       }
     }
     let group_count = aligned.inner.len;
