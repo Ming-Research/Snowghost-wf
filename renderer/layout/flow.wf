@@ -465,6 +465,24 @@ fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts:
   return True();
 }
 
+fn line_splits(context: &Context, from: u64, flow: u64, line: i32) -> next: u64 writes(context) {
+  doc "Gives the block-in-inline records from from on whose block opens at flow entry flow the top line of the line before it, and returns the first record past them.";
+  let at = from;
+  let count = context^.splits.inner.len;
+  for (step in from..count) {
+    if at < context^.splits.inner.len {
+      let opens = cvt::<u32, u64>(context^.splits.inner[at].open);
+      if opens == flow {
+        set context^.splits.inner[at].line = line;
+        set at = at +sat 1_u64;
+      } else {
+        break;
+      }
+    }
+  }
+  return at;
+}
+
 fn place_splits(context: &Context, from: u64, flow: u64, left: i32, width: i32) -> next: u64 writes(context) {
   doc "Gives the block-in-inline records from from on whose block opens at flow entry flow the content box left and width it sits in, and returns the first record past them.";
   let at = from;
@@ -702,7 +720,7 @@ fn entry_margin(context: &Context, styles: &Styles, flow: u32, basis: i32, below
 }
 
 fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> result: unit reads(styles), writes(context) {
-  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one at the run's top margin edge or bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
+  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
   let count = context^.splits.inner.len;
   let bounded = imin(count, item_ceiling);
   let used = box_array_filled::<u8>(count: bounded, value: 0_u8);
@@ -747,9 +765,7 @@ fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> res
             give False();
           }
           if bnot(has_before) {
-            let above = entry_margin(context: context, styles: styles, flow: first.open, basis: first.width, below: no);
-            let line_top = top -sat above;
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_top, width: 0_i32, height: 0_i32);
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: first.line, width: 0_i32, height: 0_i32);
           }
           add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
           let after = run_close +sat 1_u64;
@@ -943,12 +959,17 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let width = content_width;
   let baseline = 0_i32;
   let has_baseline = False();
+  let next_split = 0_u64;
   let flow_count = context^.flow.inner.len;
   for (k in 0_u64..flow_count) {
     if k >= context^.flow.inner.len {
       break;
     }
     let item = context^.flow.inner[k];
+    let waiting_line = pending_margin(stack: &stack);
+    let line_offset = stack.cursor +sat waiting_line;
+    let line_top = content_top +sat line_offset;
+    set next_split = line_splits(context: context, from: next_split, flow: k, line: line_top);
     match item {
       Open(block: b) => {
         let at = cvt::<u32, u64>(b);
