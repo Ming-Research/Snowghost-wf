@@ -510,6 +510,12 @@ computed values.
   the second batch's tables (`pkg::css::values`, `columns.wf`), cascaded in
   `reset_second` beside the flex and grid values, and `longhand_count`,
   the cascade's winner tables and the oracle's columns grew from 92 to 96.
+  The layout stage then added `unicode-bidi` (`lh_unicode_bidi`, 97
+  longhands), which the oracle dumps as a column, and the `lh` unit in
+  lengths (`Lengths.lh`), resolved against the element's computed line
+  height; with `line-height: normal` the stage takes 1.15 times the font
+  size, since it holds no font metrics beyond the x-height and the zero's
+  advance (`docs/todo.md`).
 - **Shorthands and aliases, as probed in Chromium 141.** `columns` takes a
   width, a count or both in either order, `auto` standing for either and each
   omitted one `auto`; two counts, two widths and three values are invalid and
@@ -595,8 +601,9 @@ worktree's link, at commit 4d4fe0f, against the Chromium dumps of the same commi
 Every page's sequential and `--par` dumps are byte-identical (criterion 3).
 The ledger splits `pseudo_flags`, `match_all`, `reset_all` and
 `reset_second_all` and admits the twelve interning calls as eleven adjacent
-pairs. The border colors are the owner-ruled difference (Chromium's
-`table { border-color: gray }`). With the user-agent sheet's
+pairs. The border colors were then the owner-ruled difference (Chromium's
+`table { border-color: gray }`, a ruling Q61 later superseded, below). With
+the user-agent sheet's
 `ol, ul, menu { counter-reset: list-item }` left out and nothing else
 changed (`runs/ua-no-list-reset.txt`), counter-reset matches on
 every element of every page, and every other property is unchanged, so that one rule accounts for its failures.

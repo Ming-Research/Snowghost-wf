@@ -126,9 +126,11 @@ laid out in flow, where it stays at scroll position zero.
 **Inline layout.** CSS Text 3 white-space processing and `text-transform`;
 font matching and per-character fallback; shaping with `pkg::font`; line
 breaking with `pkg::text::line_break` under `word-break: normal` and
-`overflow-wrap`; `letter-spacing`, `word-spacing`, `text-indent` and
-`text-align` (start, end, left, right, center, and justify, which no page
-uses); line boxes from
+`overflow-wrap`, where Blink's ASCII break table overrides UAX #14 (Text
+preparation results, Break opportunities); `letter-spacing`,
+`word-spacing`, `text-indent` and `text-align` (start, end, left, right,
+center, and justify, which no page uses and the stage aligns as start,
+`docs/todo.md`); line boxes from
 `line-height` and `vertical-align` (CSS 2.2 10.8); inline boxes' horizontal
 margins, borders and padding; atomic inlines (`inline-block`, replaced
 elements, `inline-flex`, `inline-grid`, `inline-table`); `br`.
@@ -139,10 +141,11 @@ resolves on the oracle's host (What the measured pages use, Family names),
 an unmatched list ending at the default, Liberation Serif; weight and style
 are chosen by CSS Fonts 4's matching, synthesizing what no face provides;
 a character no face of the list maps falls back to the installed faces in a
-fixed order. This revises the style stage's provisional `ex` and `ch` rule
-(`design/pipeline/style.md`) to the metrics of the installed font each
-element uses; web fonts stay out of scope, so the rule stays provisional
-on them.
+fixed order. This was to revise the style stage's provisional `ex` and
+`ch` rule (`design/pipeline/style.md`) to the metrics of the installed font
+each element uses; the stage did not do it, and the style stage still takes
+them from the generic families' faces (`docs/todo.md`). Web fonts stay out
+of scope, so the rule stays provisional on them.
 
 **Replaced elements.** `img`, `video`, `svg` and `canvas` sized by CSS, by
 their `width` and `height` attributes as presentational hints, and by
@@ -186,7 +189,7 @@ container queries; `zoom`; quirks mode.
 
 ## The stage's shape, before the interface choices
 
-Following `docs/constitution.md`'s parallelism-first aim and the decided
+Following AGENTS.md's "Design for parallelism first" and the decided
 tree, the work keeps only these dependencies, which the interface choices,
 brought to the owner as decision cards after the scope is approved, refine:
 
@@ -298,6 +301,8 @@ recommended; each starts from the dependencies of its candidates.
   List items, which increment the implicit `list-item` counter, join the
   pass only when generated content reads that counter, since outside
   markers take no space; ecma262 has 15,782 of them.
+  Q63 (Choices after the results) records where the stage resolves them
+  instead: in the box tree builder's walk.
 - **Q53, text preparation.** One counted loop over paragraphs, each
   iteration itemizing its own text by font, script and style, shaping each
   item once with `pkg::font` and finding its break opportunities and its
@@ -315,8 +320,9 @@ recommended; each starts from the dependencies of its candidates.
   advances), instead of rounding each glyph's advance, which drifts by up
   to 1/128 px a glyph and moves line breaks, or rounding both to nearest,
   which misses the exact-match tier by 1/64 px wherever the reference
-  rounds otherwise; the fixed summation order keeps the result independent
-  of the worker count.
+  rounds otherwise (Q62, below, gives line heights the reference's own
+  conversion, `runs/line-height-rounding.txt`); the fixed summation order
+  keeps the result independent of the worker count.
 - **Q55, fragments relative to their context.** Each formatting context
   writes its boxes, line boxes and text fragments with offsets from its
   own border box, and its parent places it by one offset; absolute
@@ -553,3 +559,43 @@ neither the iteration introduces nor an accumulator holds, 120 write
 storage that outlives the iteration without an exactly associative
 reduction, 39 leave early and 7 carry several accumulators. Which of them
 hold the passes' sequential time is not measured.
+
+**Table steps the draft leaves undefined (Q57).** Where CSS Tables 3's
+editor's draft leaves a step to the implementation, the stage takes the
+reference's behavior, each probed in Chromium and stated in the function
+that implements it:
+
+- columns that no cell starts in and no `col` gives a box collapse, and no
+  spacing is counted beside them (`mark_collapsed`,
+  `renderer/layout/tablegrid.wf`); the draft's grid keeps them;
+- a spanning cell's min-content width grows the columns it spans in
+  proportion to how far each column's max-content width exceeds its
+  min-content width, then by the draft's excess rules
+  (`runs/colspan-min-content.txt`, `tablegrid.wf`);
+- the max-content sum leaves room for percentage columns: their
+  max-content widths and the others' sum, each over the share of the table
+  they leave, are lower bounds (`tablegrid.wf`);
+- a row group's height is a least height for its rows, what it exceeds
+  them by going to its rows (`renderer/layout/table.wf`); the draft ignores
+  heights on row groups.
+
+## Choices after the results
+
+Two decisions the results changed, for the owner's ruling:
+
+- **Q62, line heights in layout units.** Q54 had every computed length
+  truncated toward zero when layout reads it. The reference rounds a
+  line-height given as a length to the nearest layout unit, and makes a
+  number line-height of the font size rounded to the nearest unit times the
+  number, truncated (`runs/line-height-rounding.txt`: all 7 length cases
+  and all 9 number cases); truncating every length made apollo11's
+  infobox rows a unit short each, 1 px after 60 rows. The stage converts
+  line heights so (`units_nearest`, `units_times` in
+  `renderer/layout/styles.wf`), and `design/vocabulary.md` states it.
+- **Q63, where counters are resolved.** Q52 put counter and quote values
+  in one pass of the style stage over only the elements that change or
+  read a counter. The stage resolves them in the box tree builder's walk,
+  which already visits every element in document order, with every list
+  item incrementing `list-item`; a separate pass would be a second chain
+  in document order over the same elements. `design/pipeline/layout.md`
+  states it, and `design/pipeline/style.md` no longer holds Q52's node.

@@ -561,3 +561,34 @@ example apart from the renderer code that exposed it
   Chromium puts it at 437. Change: probe how the block's collapsed margin
   moves the float's position and apply it. Reopen when a page floats a box
   there.
+- **`ex` and `ch` still come from the generic families' faces.** The layout
+  scope was to revise the style stage's provisional rule
+  (`design/pipeline/style.md`) to the metrics of the installed face each
+  element's `font-family` matches, now that `pkg::layout::text` matches
+  families; the style stage still takes the x-height and zero advance of
+  the serif, sans-serif and monospace defaults. Impact: not measured
+  separately; criterion 1 holds on the three pages with it. Change: run family matching before the
+  style stage's compute part and pass each font group's first face metrics.
+  Reopen when a page sizes boxes in `ex` or `ch` under a named family.
+- **Multi-column layout ignores `column-fill: auto` and the container's
+  height.** `fragment_columns` always balances and never reads
+  `column_fill` or a definite container height, where Chromium fills
+  columns in turn up to that height and balances only up to it. Impact:
+  none on the three pages, whose multi-column containers have auto heights
+  and balance. Change: take the definite height as the column height for
+  `auto`, and as the bound of the balanced height, with overflow columns.
+  Reopen when a page sets either.
+- **Most of the layout passes' loops run sequentially.** Of the 343 loops in
+  `renderer/layout/` the `--par` ledger lists, it permits 50; it refuses
+  127 that write storage neither the iteration introduces nor an
+  accumulator holds, 120 that write storage outliving the iteration
+  without an exactly associative reduction, 39 that leave early and 7
+  that carry several accumulators. The layout passes reach 1.91 and 2.02
+  times their sequential speed at four workers on ecma262 and html5, and
+  1.31 on apollo11 (research/investigations/layout/DESIGN.md, Layout
+  results). Which refused loops hold the passes' time is not measured.
+  Change: profile the passes' sequential time by function, then rewrite the
+  costly loops so each iteration writes only its own element, or state the
+  minimal semantic gap for Whitefoot under Whitefoot requirements when a
+  loop cannot be so written. Reopen before the next performance target for
+  layout, or when the passes exceed half the stage's time at four workers.
