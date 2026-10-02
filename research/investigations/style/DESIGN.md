@@ -31,7 +31,8 @@ What does the style stage of the first milestone, headless static rendering,
 compute for every element, from which inputs, and how is it judged correct?
 The stage's shape is decided (`design/pipeline/style.md`: matching in one
 parallel loop in document order with a rule index and sibling positions,
-then a cascade pass in document order), and so are its value types
+then a cascade pass in document order, which "The level cascade" below
+later replaced), and so are its value types
 (`design/vocabulary.md`: `LayoutUnit` lengths rounded once at computed-value
 time, atoms for names, interned groups of computed values). What remains is
 which CSS the stage implements first and the oracle that judges it.
@@ -659,7 +660,8 @@ The classes of mismatch the second batch adds, with their causes:
 - **Shapes the decisions do not settle,** each taken as the one with the
   fewest true dependencies and described in "How the second batch keeps
   only true dependencies": pending values of stored longhands resolved in
-  the pass in document order, ordered by the shared atom table and store; the
+  the pass in document order (as it then was), ordered by the shared atom
+  table and store; the
   third part as two loops, for the runtime's lane frame; hints written in one
   walk before matching, as style attributes are; lists computed where they
   are interned; and a pseudo-element whose matched rules set only custom
@@ -683,7 +685,8 @@ parent's and the store's alone and write only their own slots. A node that
 declares custom properties, or whose winning value of an inherited or a
 stored longhand holds `var()`, appends to stores the pass shares (the
 custom-property sets, entries and text, and the list of resolved values,
-kept in node order for the third part) and may intern atoms. The port
+kept, before the port, in node order for the third part) and may intern
+atoms. The port
 keeps that work, and only that, out of the parallel loop.
 
 **Criteria**, recorded before the code:
@@ -721,8 +724,8 @@ The port, in `renderer/style/levels.wf` and `inherited.wf`:
 - `node_plain` flags, in one counted loop over the styled nodes, each node
   that declares a custom property (it gets a set of its own) or has a
   pending winning value of a stored longhand (it appends to the resolved
-  list); a node without a parent element, whose font size every `rem`
-  reads, is left to the sequential path too.
+  list). `inherit_level` then leaves to the sequential path a node without
+  a parent element, whose font size every `rem` reads.
 - `level_index` groups the elements by the depths the traversal's walk
   already records (`Traversal` keeps them), so the walk is not repeated:
   a counted pass checks that each element's parent precedes it, or is the
@@ -835,40 +838,58 @@ description in the renderer:
   loop to the sequential path for a pending value only
   `parse_pending_named` parses. `tests/css/style-cases.html` now does: a
   `font-family`, `list-style-type`, `quotes` and `border-spacing` taken
-  from `var()`, with and without a custom property in scope. Its dumps at
-  7e54cc1 with the case added, sequential and `--par` (b25828cfabd613e5),
+  from `var()`, with and without a custom property in scope. Its dumps
+  with the case added, sequential and `--par` (b25828cfabd613e5,
+  `runs/level-cascade-check-final.txt`),
   equal the dump the stage before the port gives of the same page, and a
   level loop that leaves such a node unflagged, so that neither path
   computes it, changes the dump from the first added element on.
 - **Criterion 2.** `run.sh time` before the port (f4028dc) and after it
-  (7e54cc1), one after the other on the same host's four processors with
-  no other job (`runs/level-cascade-time-before.txt`,
+  (5936e0f, whose renderer is 7e54cc1's), one after the other on the same
+  host's four processors with no other job
+  (`runs/level-cascade-time-before.txt`,
   `runs/level-cascade-time-after.txt`), the best of five runs, per run of
   the stage. The pass is the inherited mode less the match mode, a
   difference of two timed modes, so its smaller values carry the noise of
-  both:
+  both (apollo11's two-worker 0.0015 s is below the timer's resolution
+  over twenty repetitions):
 
 | Page | Build | Pass before | Pass after | Ratio | Stage before | Stage after |
 |---|---|---:|---:|---:|---:|---:|
 | ecma262 | sequential | 0.262 s | 0.346 s | 0.76 | 2.410 s | 2.436 s |
+| ecma262 | 1 worker | 0.274 s | 0.344 s | 0.80 | 2.394 s | 2.462 s |
 | ecma262 | 2 workers | 0.288 s | 0.184 s | 1.57 | 1.530 s | 1.434 s |
 | ecma262 | 4 workers | 0.284 s | 0.114 s | 2.49 | 1.094 s | 0.926 s |
 | html5 | sequential | 0.058 s | 0.132 s | 0.44 | 1.850 s | 2.024 s |
+| html5 | 1 worker | 0.024 s | 0.128 s | 0.19 | 1.842 s | 1.876 s |
 | html5 | 2 workers | 0.078 s | 0.048 s | 1.63 | 1.100 s | 1.112 s |
 | html5 | 4 workers | 0.074 s | 0.036 s | 2.06 | 0.722 s | 0.718 s |
 | apollo11 | sequential | 0.0205 s | 0.0265 s | 0.77 | 1.009 s | 1.014 s |
+| apollo11 | 1 worker | 0.0175 s | 0.0085 s | 2.06 | 0.997 s | 0.988 s |
+| apollo11 | 2 workers | 0.0160 s | 0.0015 s | 10.67 | 0.543 s | 0.524 s |
 | apollo11 | 4 workers | 0.0170 s | 0.0040 s | 4.25 | 0.2945 s | 0.2815 s |
 
   Criterion 2 holds: at four workers the pass is 2.49 and 2.06 times
   faster on ecma262 and html5, and the whole stage is 15 percent faster on
   ecma262, 4 percent on apollo11 and level on html5 (0.718 against 0.722
-  s). The sequential build pays for the port: the pass runs `node_plain`'s
-  loop, `level_index`'s check and grouping, and a loop per level, so it is
-  32 percent slower on ecma262 and about twice as slow on html5, whose
-  stage is 9 percent slower sequentially, more than the pass's 0.07 s
-  explains, so part of it is the run's noise. The criterion judges four
-  workers, the build the renderer runs; the sequential cost is the price
-  of the levels and is recorded, not hidden.
+  s). At one worker and in the sequential build the port costs: the pass
+  runs `node_plain`'s loop, `level_index`'s check and grouping, and a loop
+  per level, so on ecma262 it is 20 to 24 percent slower and on html5 two
+  to five times slower, its stage 9 percent slower sequentially, more
+  than the pass's 0.07 s explains, so part of it is the run's noise. The
+  criterion judges four workers, the build the renderer runs; the cost at
+  one worker is the price of the levels and is recorded, not hidden.
+
+**What these results rest on.** The equality, the hashes and the
+Chromium comparison at the final revision are in
+`runs/level-cascade-check-final.txt`, written by `run.sh check`. The
+shares of nodes the loops compute, the count of nodes the
+recommendation's rule would have sent to the sequential path (65,100 and
+8,500 on ecma262), the ledger's denials of `level_index`'s passes and of
+the loop without `apart`, the declined split at 26 captured bindings, and
+the controls of the facts were observed by the agent that implemented
+the port, with temporary counters and edited copies, and are not in a run
+file; repeating them needs the same edits.
 
 ## Owner rulings
 

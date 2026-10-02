@@ -10,8 +10,6 @@ const node_fast: u8 = 0_u8;
 
 const node_slow: u8 = 1_u8;
 
-const node_pending: u8 = 2_u8;
-
 nocopy struct LevelIndex {
   slots: Box<Segments<u64>>;
   positions: Box<Array<u64>>;
@@ -112,7 +110,7 @@ fn fast_node(parent: NodeInherited, store: &RuleStore, cascade: &Cascade, docume
 }
 
 fn cascade_levels(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<unit, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(state), writes(atoms) {
-  doc "Computes every styled node of the pass in document order, its parent before it, level by level: node_plain flags, in one counted loop, the nodes that write a shared store; then, for each tree level from the root, inherit_level computes the level's other elements in one counted loop and inherit_element the flagged ones in preorder; then inherit_pseudos computes the pseudo-elements, whose parent is an element, and inherit_element the flagged ones in order. Inconsistent when level_index refuses the traversal's depths.";
+  doc "Computes every styled node of the pass in document order, its parent before it, level by level: node_plain flags, in one counted loop, the nodes that write a shared store; then, for each tree level from the root, inherit_level computes the level's other elements in one counted loop and inherit_element the flagged ones in preorder; then inherit_pseudos computes the pseudo-elements, whose parent is an element, and inherit_element the flagged ones in order. Inconsistent when the cascade does not list a parent and a kind for every styled node, or level_index refuses the traversal's depths.";
   let count = cascade^.nodes.inner.len;
   let n = traversal^.parents.inner.len;
   let measured = traversal^.depths.inner.len == n;
@@ -120,10 +118,14 @@ fn cascade_levels(state: &Inherited, store: &RuleStore, cascade: &Cascade, docum
   let within = n <= count;
   let small = n <= 4294967294_u64;
   let few = count <= 4294967296_u64;
+  let parents_listed = count <= cascade^.parents.inner.len;
+  let kinds_listed = count <= cascade^.kinds.inner.len;
   let aligned = band(measured, elements);
   let bounded = band(within, small);
   let sized = band(bounded, few);
-  let usable = band(aligned, sized);
+  let listed = band(parents_listed, kinds_listed);
+  let shaped = band(aligned, sized);
+  let usable = band(shaped, listed);
   if usable {
   } else {
     let failure = StyleError::Inconsistent();
@@ -186,7 +188,7 @@ fn inherit_level(slots: &[u64], positions: &[u64], depths: &[u32], parents: &[u3
   requires forall listed(k in 0_u64..slots^.len) when slots^[k] < parents^.len: positions^[slots^[k]] == k, depths^[slots^[k]] == level;
   requires forall up(e in 0_u64..parents^.len) when parents^[e] < parents^.len: depths^[parents^[e]] + 1_u64 == depths^[e];
 } {
-  doc "One tree level of the pass in document order: iteration k computes, by fast_node, the element at preorder index slots^[k] from its parent's values, which the levels before computed, and writes them at that index of each per-node array of state, its custom-property set being its parent's; it reads state's shared stores and the values the pass shares, read once before the loop, and writes none. An element flagged slow, or one without a parent element, is flagged slow, and one fast_node finds pending is flagged pending, both left to inherit_element. The requirements state that the level lists distinct elements, positions^ naming each one's own iteration, and that a parent lies one level above its element, so the certificate separates the writes of two iterations and a write of one from the parent reads of another.";
+  doc "One tree level of the pass in document order: iteration k computes, by fast_node, the element at preorder index slots^[k] from its parent's values, which the levels before computed, and writes them at that index of each per-node array of state, its custom-property set being its parent's; it reads state's shared stores and the values the pass shares, read once before the loop, and writes none. An element flagged slow is left as it is, and one without a parent element or one fast_node finds pending is flagged slow, all left to inherit_element. The requirements state that the level lists distinct elements, positions^ naming each one's own iteration, and that a parent lies one level above its element, so the certificate separates the writes of two iterations and a write of one from the parent reads of another.";
   let count = slots^.len;
   let n = parents^.len;
   let environment = state^.environment;
@@ -277,7 +279,7 @@ fn inherit_level(slots: &[u64], positions: &[u64], depths: &[u32], parents: &[u3
               set state^.sets.inner[at] = parent_set;
             }
           } else {
-            set flags^[at] = node_pending;
+            set flags^[at] = node_slow;
           }
         } else {
           set flags^[at] = node_slow;
@@ -376,7 +378,7 @@ fn inherit_pseudos(first: u64, parents: &[u32], flags: &[u8], state: &Inherited,
               set state^.sets.inner[p] = parent_set;
             }
           } else {
-            set flags^[p] = node_pending;
+            set flags^[p] = node_slow;
           }
         } else {
           set flags^[p] = node_slow;

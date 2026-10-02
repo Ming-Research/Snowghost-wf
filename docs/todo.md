@@ -93,6 +93,29 @@ example apart from the renderer code that exposed it
   walk records the depths, once a public interface may carry them (see
   Whitefoot requirements, distinct indices). Reopen with that requirement.
 
+- **The level cascade's fast path repeats the sequential path's code.**
+  `inherit_level` and `inherit_pseudos` (`renderer/style/levels.wf`) each
+  write the twelve per-node arrays inline, as `store_node` does;
+  `gather_plain`, `plain_declared` and `plain_resolved` repeat
+  `gather_declared`, `inherited_declared` and `resolve_named` without the
+  writes to shared stores. They share `compute_node`, but only the style
+  oracle's dumps keep the gathering paths equal. The loops are inlined
+  because passing the arrays as parameters made 26 captured bindings,
+  more than the runtime's lane frame takes, and `store_node` takes the
+  whole state. Impact: a change to how a node is gathered or stored has to
+  be made twice. Change: one gathering function generic over whether it
+  may write shared stores, and a store of a node's values the loop may
+  call. Reopen with the next change to either path, or when the
+  permission survey admits a call that writes one element of each array.
+
+- **More than one parentless element takes the last one's root font
+  size.** The style stage's second and third parts set `root_font_size`
+  from each element without a parent element, so with several the last
+  wins; the pass before the level cascade gave its children the first.
+  The HTML tree builder makes exactly one, so no page shows it. Change:
+  take the document element's size, and refuse or ignore others. Reopen
+  when another document source (XML, script) can make several.
+
 - **Shapes C and D and the cascade timing repeat one match.**
   `style_shape_c`, `style_shape_d` and `match_all` in
   `renderer/proto/style/shapes.wf` each check the element and rule counts,
