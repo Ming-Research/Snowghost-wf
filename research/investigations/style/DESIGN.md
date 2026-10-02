@@ -762,7 +762,10 @@ a shorter chain:
   (`plain_resolved`, which the third part's `pending_value` now uses too).
   `parse_pending_named` gives the same value for every value
   `parse_pending` parses, since `merge_side` and `shift_stored` change only
-  names and side-table values. Without it, 65,100 of ecma262's 179,471
+  names and side-table values; only at a resource ceiling do they differ,
+  where `merge_side` cannot intern a name of the expansion or append its
+  side tables (the atom table or the store full) and stops the stage with
+  TooLarge, which the loop, appending nothing, does not. Without it, 65,100 of ecma262's 179,471
   elements and 8,500 of its 13,368 pseudo-elements, each with a pending
   winning value of an inherited longhand, took the sequential path.
 - **The facts stay inside the stage's second part.** `todo.md` asks for
@@ -785,22 +788,26 @@ permitted. The loops read the scalars they need once before the loop.
 
 ### Results
 
-At commit 881eede with Whitefoot 3629be15
-(`runs/level-cascade-check-881eede.txt`):
+With Whitefoot 3629be15, the style oracle's check at commit 881eede
+(`runs/level-cascade-check-881eede.txt`), the controls of the facts at the
+same commit and the rest at e6fad78, which changes only a function's
+description in the renderer:
 
 - **Criterion 1.** Every page's sequential and `--par` dumps are
   byte-identical to the stage's before the port (f4028dc): ecma262
   c2317cfc58d7dafd, html5 55b66818fc3b7e6d, apollo11 6b2c50185e8c4442,
-  cases 43af18e0ddfcb6b6. The layout oracle's html5 dump is byte-identical
-  to the one the layout driver built at f4028dc gives (58deb6d805fce800).
-  A fast path that writes the parent's font instead of the computed one
-  changes ecma262's dump and drops `font-size` to 93.85 percent against
-  Chromium, so the dumps see the loop's results.
+  cases 43af18e0ddfcb6b6. The layout oracle's html5 dumps, sequential and
+  `--par`, are byte-identical to the one the layout driver built at
+  f4028dc gives (58deb6d805fce800), and `run.sh check html5` of the layout
+  investigation passes. A level loop that writes the parent's font instead
+  of the computed one changes ecma262's dump and drops `font-size` to 4.41
+  percent against Chromium, so the dumps see the loop's results.
 - **Permission.** `--par-ledger` permits and splits `inherit_level`'s and
   `inherit_pseudos`' loops (14 and 13 captured bindings) and `node_plain`'s;
   `level_index`'s two passes, the loop over levels and the sequential loops
   stay denied, each depending on what earlier iterations wrote. Without
-  `apart`, the level loop is denied at its first write. Before the loops
+  `apart`, the level loop is denied at its first write (a `--function`
+  build's ledger). Before the loops
   wrote through the state, with each per-node array a parameter, they were
   permitted but declined to split: 26 captured bindings, 1,112 bytes, did
   not fit the runtime's 256-byte lane frame.
