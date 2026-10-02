@@ -176,7 +176,7 @@ LAYOUT_ORACLE := $(ORACLE)/layout
 # and compares them with Chromium's from oracle-layout-dump
 # (research/investigations/layout); it fails while a real page misses the 99
 # percent criterion. It stays out of `check` for the same reasons.
-oracle-layout: compiler
+oracle-layout: compiler oracle-fonts
 	@sh $(ROOT)/research/investigations/layout/run.sh check
 
 oracle-layout-dump:
