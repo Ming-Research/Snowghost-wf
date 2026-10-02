@@ -350,6 +350,30 @@ recommended; each starts from the dependencies of its candidates.
   criteria's bounds and measures as proposed.
 - **2026-10-01, Q51 to Q58,** written in Chinese: all as recommended, and
   start the implementation.
+- **2026-10-02, Q59, multi-column layout,** written in Chinese: agreed
+  with the recommendation, a limited multi-column layout. The scope had
+  left multi-column out while counting its boxes, without measuring how
+  many there are: 9,125 of html5's 44,111 block boxes (20.7 percent) and
+  332 of apollo11's 2,365 (14 percent) lie in multi-column containers
+  (html5's `#base64-table` and `#named-character-references-table`,
+  apollo11's two reference lists), so criterion 1 could not hold on those
+  pages without it. Chromium breaks those containers only between table
+  rows, between list items that `break-inside: avoid-column` keeps whole,
+  and between the lines of a paragraph, without applying orphans or widows,
+  splits a broken box into one rectangle per column that reaches the
+  column's bottom, and repeats no table header; the stage does the same:
+  `column-count`, `column-width`, `column-gap` and balanced columns, no
+  `column-span` and no break inside a line.
+- **2026-10-02, Q60 and Q61, Chromium over the HTML Standard,** written in
+  Chinese: the HTML Standard's `sub, sup { line-height: normal }`, which
+  Chromium does not apply, made every line with a `sup` or `sub` 2 to 5 px
+  shorter than the reference; with it removed from the user-agent sheet
+  ecma262's block boxes rose from 85.98 to 90.53 percent within 1 px and
+  html5's from 87.29 to 88.14. The owner first ruled to follow the
+  Standard, then reversed it for every difference: Chromium is the engine
+  readers compare with, so where the Standard and Chromium differ the
+  stage follows Chromium, which also reverses the style stage's ruling on
+  `table { border-color: gray }`.
 
 ## Text preparation results
 
