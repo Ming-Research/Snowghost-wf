@@ -1,0 +1,278 @@
+alias Styles = pkg::style::Styles;
+alias sizing_value = pkg::css::values::sizing_value;
+alias break_inside_avoid = pkg::css::values::break_inside_avoid;
+alias break_inside_avoid_column = pkg::css::values::break_inside_avoid_column;
+
+struct Unit {
+  doc "A part of a multi-column context's content that no column break may split, from top to bottom in the context's border box as laid out in one column.";
+  top: i32;
+  bottom: i32;
+}
+
+fn multicol(styles: &Styles, style: StyleRef) -> columned: Bool reads(styles) {
+  doc "Tells whether a box styled style is a multi-column container: its column-count or column-width is not auto (CSS Multi-column 1, 2).";
+  if style.anonymous {
+    return False();
+  }
+  let group = container_of(styles: styles, style: style);
+  let counted = group.column_count > 0_u32;
+  let sized = group.column_width.kind == sizing_value;
+  let made = bor(counted, sized);
+  return made;
+}
+
+fn column_gap_of(styles: &Styles, style: StyleRef, basis: i32) -> gap: i32 reads(styles) {
+  doc "The used column gap of a multi-column container: column-gap, or 1em for normal.";
+  let group = container_of(styles: styles, style: style);
+  if group.column_gap.kind == sizing_value {
+    let resolved = resolve_lp(value: group.column_gap.value, basis: basis);
+    let made = imax(resolved, 0_i32);
+    return made;
+  }
+  let font = font_of(styles: styles, style: style);
+  let made = units(px: font.size);
+  return made;
+}
+
+fn column_shape(styles: &Styles, style: StyleRef, available: i32) -> (count: i32, width: i32, gap: i32) reads(styles) {
+  doc "The used column count and column width of a multi-column container whose content box is available wide (CSS Multi-column 1, 3.4): with only column-count, that many columns share the width; with column-width, as many columns of at least that width as fit, at most column-count when it is set, and at least one; the columns then share the width less the gaps.";
+  let group = container_of(styles: styles, style: style);
+  let gap = column_gap_of(styles: styles, style: style, basis: available);
+  let counted = group.column_count > 0_u32;
+  let requested = if counted {
+    let bounded = imin(group.column_count, 1000_u32);
+    give cvt::<u32, i32>(bounded);
+  } else {
+    give 1000_i32;
+  }
+  let sized = group.column_width.kind == sizing_value;
+  let fitting = if sized {
+    let wanted = resolve_lp(value: group.column_width.value, basis: available);
+    let least = imax(wanted, 1_i32);
+    let summed = least +sat gap;
+    let with_gap = imax(summed, 1_i32);
+    let room = available +sat gap;
+    let fit = if with_gap > 0_i32 {
+      give room / with_gap;
+    } else {
+      give 1_i32;
+    }
+    give imax(fit, 1_i32);
+  } else {
+    give requested;
+  }
+  let count = imin(requested, fitting);
+  let positive = imax(count, 1_i32);
+  let gaps_count = positive -sat 1_i32;
+  let gaps = gaps_count *sat gap;
+  let shared = available -sat gaps;
+  let share = if positive > 0_i32 {
+    give shared / positive;
+  } else {
+    give shared;
+  }
+  let width = imax(share, 0_i32);
+  return positive, width, gap;
+}
+
+fn avoids_columns(styles: &Styles, style: StyleRef) -> avoided: Bool reads(styles) {
+  doc "Tells whether break-inside forbids a column break inside a box styled style: avoid or avoid-column.";
+  let group = item_of(styles: styles, style: style);
+  let avoid = group.break_inside == break_inside_avoid;
+  let avoid_column = group.break_inside == break_inside_avoid_column;
+  let made = bor(avoid, avoid_column);
+  return made;
+}
+
+fn push_unit(pieces_list: &Box<Slots<Unit>>, top: i32, bottom: i32) -> result: unit writes(pieces_list) {
+  doc "Appends a unit from top to bottom.";
+  let made = Unit(top: top, bottom: bottom);
+  let pushed = push_item::<Unit>(cell: pieces_list, value: made, ceiling: item_ceiling);
+  return unit;
+}
+
+fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Unit>>) -> result: unit reads(context), reads(styles), writes(pieces_list) {
+  doc "Collects the multi-column context's pieces_list in order: each paragraph, each block or child context whose break-inside avoids column breaks, each row of a table child, and each other child context; column breaks fall only between pieces_list, so a paragraph's lines stay in one column.";
+  let skip_depth = 0_u64;
+  let depth = 0_u64;
+  let flow_count = context^.flow.inner.len;
+  for (k in 0_u64..flow_count) {
+    let item = context^.flow.inner[k];
+    match item {
+      Open(block: b) => {
+        set depth = depth +sat 1_u64;
+        let at = cvt::<u32, u64>(b);
+        if skip_depth == 0_u64 {
+          if at < context^.blocks.inner.len {
+            let block = context^.blocks.inner[at];
+            let avoided = avoids_columns(styles: styles, style: block.style);
+            if avoided {
+              let bottom = block.y +sat block.height;
+              push_unit(pieces_list: pieces_list, top: block.y, bottom: bottom);
+              set skip_depth = depth;
+            }
+          }
+        }
+      }
+      Close(..) => {
+        if depth == skip_depth {
+          set skip_depth = 0_u64;
+        }
+        set depth = depth -sat 1_u64;
+      }
+      Text(paragraph: p) => {
+        if skip_depth == 0_u64 {
+          let at = cvt::<u32, u64>(p);
+          if at < context^.paragraphs.inner.len {
+            let lines = context^.paragraphs.inner[at].lines.inner.len;
+            let origin = context^.paragraphs.inner[at].top;
+            for (l in 0_u64..lines) {
+              if at < context^.paragraphs.inner.len {
+                if l < context^.paragraphs.inner[at].lines.inner.len {
+                  let line = context^.paragraphs.inner[at].lines.inner[l];
+                  let top = origin +sat line.top;
+                  let bottom = top +sat line.height;
+                  push_unit(pieces_list: pieces_list, top: top, bottom: bottom);
+                }
+              }
+            }
+          }
+        }
+      }
+      Child(context: c) => {
+        if skip_depth == 0_u64 {
+          let at = cvt::<u32, u64>(c);
+          if at < context^.children.inner.len {
+            let child = &context^.children.inner[at];
+            let avoided = avoids_columns(styles: styles, style: child^.style);
+            let table = child^.kind == ctx_table;
+            let rows = child^.rows.inner.len;
+            let has_rows = rows > 0_u64;
+            let open_table = band(table, has_rows);
+            let not_avoided = bnot(avoided);
+            let by_rows = band(open_table, not_avoided);
+            if by_rows {
+              for (r in 0_u64..rows) {
+                let row = child^.rows.inner[r];
+                let top = child^.y +sat row.y;
+                let bottom = top +sat row.height;
+                push_unit(pieces_list: pieces_list, top: top, bottom: bottom);
+              }
+            } else {
+              let bottom = child^.y +sat child^.height;
+              push_unit(pieces_list: pieces_list, top: child^.y, bottom: bottom);
+            }
+          }
+        }
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn columns_needed(pieces_list: &[Unit], height: i32) -> count: i32 reads(pieces_list) {
+  doc "The number of columns height tall that the pieces_list fill when each column takes the pieces_list in order while they fit, starting at the top of its first unit.";
+  let total = pieces_list^.len;
+  if total == 0_u64 {
+    return 0_i32;
+  }
+  let count = 1_i32;
+  let start = pieces_list^[0_u64].top;
+  for (k in 0_u64..total) {
+    let piece = pieces_list^[k];
+    let reach = piece.bottom -sat start;
+    let over = reach > height;
+    let later = piece.top > start;
+    let breaks = band(over, later);
+    if breaks {
+      set count = count +sat 1_i32;
+      set start = piece.top;
+    }
+  }
+  return count;
+}
+
+fn balanced_height(pieces_list: &[Unit], count: i32) -> height: i32 reads(pieces_list) {
+  doc "The least column height at which the pieces_list fill at most count columns (CSS Multi-column 1, 7.1: column-fill balance), found by bisection between the tallest unit and the pieces_list' whole extent.";
+  let total = pieces_list^.len;
+  if total == 0_u64 {
+    return 0_i32;
+  }
+  let tallest = 0_i32;
+  for (k in 0_u64..total) {
+    let piece = pieces_list^[k];
+    let size = piece.bottom -sat piece.top;
+    set tallest = imax(tallest, size);
+  }
+  let last = total - 1_u64;
+  let whole = pieces_list^[last].bottom -sat pieces_list^[0_u64].top;
+  let low = tallest;
+  let high = imax(whole, tallest);
+  for (step in 0_u64..40_u64) {
+    if low >= high {
+      break;
+    }
+    let span = high -sat low;
+    let half = span / 2_i32;
+    let middle = low +sat half;
+    let needed = columns_needed(pieces_list: pieces_list, height: middle);
+    if needed <= count {
+      set high = middle;
+    } else {
+      set low = middle +sat 1_i32;
+    }
+  }
+  return high;
+}
+
+fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, gap: i32, content_top: i32, laid_height: i32) -> height: i32 reads(styles), writes(context) {
+  doc "Splits a multi-column context's content, laid out in one column width wide, into at most count balanced columns: records the column map that moves each column's pieces_list beside the first, and returns the content height, the tallest column's.";
+  let pieces_list = box_slots_new::<Unit>(capacity: 64_u64);
+  collect_units(context: context, styles: styles, pieces_list: &pieces_list);
+  let total = pieces_list.inner.len;
+  if total == 0_u64 {
+    return laid_height;
+  }
+  let height = balanced_height(pieces_list: &pieces_list.inner[0_u64..total], count: count);
+  let step = width +sat gap;
+  let column_bottom = content_top +sat height;
+  let column = 0_i32;
+  let start = pieces_list.inner[0_u64].top;
+  let from = -2147483647_i32;
+  let shift_x = 0_i32;
+  let shift_y = 0_i32;
+  let bottom_seen = content_top;
+  let tallest = 0_i32;
+  for (k in 0_u64..total) {
+    let piece = pieces_list.inner[k];
+    let reach = piece.bottom -sat start;
+    let over = reach > height;
+    let later = piece.top > start;
+    let breaks = band(over, later);
+    if breaks {
+      let used = bottom_seen -sat content_top;
+      set tallest = imax(tallest, used);
+      let ended = ColumnPiece(from: from, to: piece.top, dx: shift_x, dy: shift_y, bottom: column_bottom);
+      let pushed = push_item::<ColumnPiece>(cell: &context^.column_map, value: ended, ceiling: item_ceiling);
+      set column = column +sat 1_i32;
+      set start = piece.top;
+      set from = piece.top;
+      set shift_x = column *sat step;
+      set shift_y = content_top -sat piece.top;
+    }
+    let moved_bottom = piece.bottom +sat shift_y;
+    set bottom_seen = imax(bottom_seen, moved_bottom);
+    if breaks {
+      set bottom_seen = moved_bottom;
+    }
+  }
+  let last_used = bottom_seen -sat content_top;
+  set tallest = imax(tallest, last_used);
+  let final_piece = ColumnPiece(from: from, to: 2147483647_i32, dx: shift_x, dy: shift_y, bottom: column_bottom);
+  let pushed_last = push_item::<ColumnPiece>(cell: &context^.column_map, value: final_piece, ceiling: item_ceiling);
+  return tallest;
+}
