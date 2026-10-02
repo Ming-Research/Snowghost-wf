@@ -74,7 +74,7 @@ fn float_bottom(stack: &Stack, side: u8) -> bottom: i32 reads(stack) {
 }
 
 fn block_width(styles: &Styles, style: StyleRef, available: i32) -> (width: i32, left: i32, margin_left: i32, margin_right: i32) reads(styles) {
-  doc "The border-box width and the left offset of an in-flow block-level box in a containing block available wide (CSS 2.2 10.3.3): an auto width fills the space its margins leave; a given width keeps it, with auto margins sharing the rest equally, one auto margin taking it all, and with none auto the right margin taking the rest.";
+  doc "The border-box width and the left offset of an in-flow block-level box in a containing block available wide (CSS 2.2 10.3.3): an auto width fills the space its margins leave; a given width keeps it, with auto margins sharing the rest equally, one auto margin taking it all (a box that leaves no rest takes its auto margins as zero), and with none auto the right margin taking the rest.";
   let border = border_edges(styles: styles, style: style);
   let padding = padding_edges(styles: styles, style: style, basis: available);
   let frame_border = horizontal(edges: border);
@@ -98,7 +98,10 @@ fn block_width(styles: &Styles, style: StyleRef, available: i32) -> (width: i32,
   let fixed = band(fixed_test, either);
   let limited = clamped != natural;
   let centring_pair = band(limited, either);
-  let centring = bor(fixed, centring_pair);
+  let wanted = bor(fixed, centring_pair);
+  let spare = free -sat around;
+  let fits = spare >= 0_i32;
+  let centring = band(wanted, fits);
   if centring {
     let room = free -sat around;
     if auto_left {
@@ -1061,12 +1064,16 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
             let height = imax(clamped, vertical_frame);
             set context^.blocks.inner[at].height = height;
             if height > 0_i32 {
+              resolve_open(context: context, frames: &frames, y: y);
               set stack.cursor = y +sat height;
               clear_margins(stack: &stack);
             }
             add_margin(stack: &stack, margin: margins.bottom);
           }
-          let removed = take_back(window: &frames.inner);
+          let still_open = frames.inner.len;
+          if still_open > 0_u64 {
+            let removed = take_back(window: &frames.inner);
+          }
           let lines_inside = bor(frame.lines, has_marker);
           if lines_inside {
             mark_lines(frames: &frames);
@@ -1075,10 +1082,12 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
           set width = frame.width;
           let dx = frame.dx;
           let dy = frame.dy;
-          let x_shifted = context^.blocks.inner[at].x +sat dx;
-          let y_shifted = context^.blocks.inner[at].y +sat dy;
-          set context^.blocks.inner[at].x = content_left +sat x_shifted;
-          set context^.blocks.inner[at].y = content_top +sat y_shifted;
+          if at < context^.blocks.inner.len {
+            let x_shifted = context^.blocks.inner[at].x +sat dx;
+            let y_shifted = context^.blocks.inner[at].y +sat dy;
+            set context^.blocks.inner[at].x = content_left +sat x_shifted;
+            set context^.blocks.inner[at].y = content_top +sat y_shifted;
+          }
         }
       }
       Text(paragraph: p) => {
@@ -1507,10 +1516,11 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
 }
 
 fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Styles, minimum: Bool) -> width: i32 reads(paragraph), reads(children), reads(styles) {
-  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give.";
+  doc "A paragraph's min-content width (its widest unbreakable run between allowed or mandatory break opportunities) or max-content width (its widest run between mandatory breaks), with the first line's indent, its inline boxes' margins, borders and paddings, and its atomic inlines at the margin-box widths their own intrinsic sizes give, except that the icon before an img's alt text floats in the reference, so it adds nothing to the min-content width of its line and only sets a least for it (research/investigations/layout/runs/alt-icon-min-content.txt).";
   let count = paragraph^.text.inner.len;
   let sizes = measure(paragraph: paragraph, children: children, styles: styles, basis: 0_i32);
   let marks = paragraph^.marks.inner.len;
+  let icon_floor = 0_i32;
   for (m in 0_u64..marks) {
     let mark = paragraph^.marks.inner[m];
     match mark {
@@ -1528,8 +1538,17 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
           }
           let with_left = base +sat children^[child_at].margin_left;
           let outer = with_left +sat children^[child_at].margin_right;
+          let icon = children^[child_at].natural == natural_alt_icon;
+          let floated_icon = band(minimum, icon);
+          if floated_icon {
+            set icon_floor = imax(icon_floor, outer);
+          }
           if at < sizes.advances.inner.len {
-            set sizes.advances.inner[at] = pixels(raw: outer);
+            if floated_icon {
+              set sizes.advances.inner[at] = 0.0_f32;
+            } else {
+              set sizes.advances.inner[at] = pixels(raw: outer);
+            }
           }
         }
       }
@@ -1580,6 +1599,8 @@ fn paragraph_intrinsic(paragraph: &Paragraph, children: &[Context], styles: &Sty
   }
   let visible = fsub.strict(current, trailing);
   set best = fmax(best, visible);
+  let icon_px = pixels(raw: icon_floor);
+  set best = fmax(best, icon_px);
   let made = units_up(px: best);
   return made;
 }
