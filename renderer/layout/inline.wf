@@ -376,7 +376,8 @@ fn break_lines(paragraph: &Paragraph, sizes: &Measure, styles: &Styles, fonts: &
       break;
     }
     let bottom = top +sat strut_height;
-    let (left_edge, right_edge) = exclusion_room(exclusions: exclusions, top: top, bottom: bottom, width: width);
+    let box_right = origin_x +sat width;
+    let (left_edge, right_edge) = exclusion_room(exclusions: exclusions, top: top, bottom: bottom, width: box_right);
     let shifted_left = left_edge -sat origin_x;
     let left = imax(shifted_left, 0_i32);
     let available_right = right_edge -sat origin_x;
@@ -595,6 +596,44 @@ fn group_delta(aligned: &[Aligned], group: u32, low: i32, high: i32) -> delta: i
     return made;
   }
   return 0_i32;
+}
+
+fn keeps_any(sizes: &Measure, from: u64, to: u64) -> kept: Bool reads(sizes) {
+  doc "Tells whether any position from from to to holds a scalar white-space keeps.";
+  for (at in from..to) {
+    let collapsible = collapsible_at(sizes: sizes, at: at);
+    if bnot(collapsible) {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn preserved_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 reads(paragraph) {
+  doc "Where the trailing white space of the line from start to end begins (spaces, tabs and forced breaks): the reference leaves collapsible spaces there out of the text's fragment and reports the ones white-space keeps as a fragment of their own.";
+  let tail = end;
+  let count = paragraph^.text.inner.len;
+  for (step in start..end) {
+    if tail > start {
+      let at = tail - 1_u64;
+      if at < count {
+        let value = paragraph^.text.inner[at];
+        let space = value == 32_u32;
+        let tab = value == 9_u32;
+        let separator = value == line_separator;
+        let blank = bor(space, tab);
+        let white = bor(blank, separator);
+        if white {
+          set tail = at;
+        } else {
+          break;
+        }
+      } else {
+        break;
+      }
+    }
+  }
+  return tail;
 }
 
 fn stack_offset(stack: &[OpenBox]) -> (dx: i32, dy: i32, group: u32) reads(stack) {
@@ -991,6 +1030,7 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       let moved = Atomic(context: placed.context, x: ax, y: ay);
       let pushed = push_item::<Atomic>(cell: &paragraph^.atomics, value: moved, ceiling: item_ceiling);
     }
+    let tail_start = preserved_tail(paragraph: paragraph, start: start, end: visible_end);
     let node_marks = paragraph^.marks.inner.len;
     for (k in 0_u64..node_marks) {
       let candidate = paragraph^.marks.inner[k];
@@ -1000,28 +1040,47 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
           let last = cvt::<u32, u64>(b);
           let from_index = imax(first, start);
           let to_index = imin(last, visible_end);
-          if from_index < to_index {
-            if to_index < positions {
-              let x0 = xs.inner[from_index];
+          for (part in 0_u64..2_u64) {
+            let lo = if part == 0_u64 {
+              give from_index;
+            } else {
+              give imax(from_index, tail_start);
+            }
+            let hi = if part == 0_u64 {
+              give imin(to_index, tail_start);
+            } else {
+              give to_index;
+            }
+            let nonempty = lo < hi;
+            let inside = hi < positions;
+            let present = band(nonempty, inside);
+            let kept = if part == 0_u64 {
+              give True();
+            } else {
+              give keeps_any(sizes: sizes, from: lo, to: hi);
+            }
+            let shown = band(present, kept);
+            if shown {
+              let x0 = xs.inner[lo];
               let width_px = 0.0_f32;
-              for (i in from_index..to_index) {
+              for (i in lo..hi) {
                 let advance = advance_at(sizes: sizes, at: i);
                 set width_px = fadd.strict(width_px, advance);
               }
               let width = units_up(px: width_px);
-              let above = text_tops.inner[from_index];
-              let move_x = if from_index < moves_x.inner.len {
-                give moves_x.inner[from_index];
+              let above = text_tops.inner[lo];
+              let move_x = if lo < moves_x.inner.len {
+                give moves_x.inner[lo];
               } else {
                 give 0_i32;
               }
-              let move_y = if from_index < moves_y.inner.len {
-                give moves_y.inner[from_index];
+              let move_y = if lo < moves_y.inner.len {
+                give moves_y.inner[lo];
               } else {
                 give 0_i32;
               }
-              let text_group = if from_index < groups.inner.len {
-                give groups.inner[from_index];
+              let text_group = if lo < groups.inner.len {
+                give groups.inner[lo];
               } else {
                 give no_group;
               }
@@ -1033,7 +1092,7 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
               let x_from = units(px: x0);
               let x_start = line_x +sat x_from;
               let x_line = x_start +sat move_x;
-              let content = text_heights.inner[from_index];
+              let content = text_heights.inner[lo];
               let made = Fragment(kind: placed_text, owner: source, x: x_line, y: y, width: width, height: content);
               let pushed = push_item::<Fragment>(cell: &paragraph^.fragments, value: made, ceiling: item_ceiling);
             }

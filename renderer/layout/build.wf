@@ -216,8 +216,8 @@ fn new_paragraph(style: StyleRef, first: u64, count: u64, reserve: u64) -> made:
   return Paragraph(style: style, first: first, count: count, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, width: 0_i32, left: 0_i32, top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32);
 }
 
-fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result: Result<unit, LayoutError> writes(context), writes(open) {
-  doc "Appends piece, standing for at most size scalar values, to the open paragraph, first emitting the Begin pieces of the inline boxes open around it that this paragraph has not begun; TooLarge past scalar_ceiling.";
+fn emit_begins(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+  doc "Emits the Begin pieces of the inline boxes open around the open paragraph's next piece that this paragraph has not begun.";
   let open_count = open^.inlines.inner.len;
   let begun = open^.emitted;
   if begun < open_count {
@@ -228,6 +228,12 @@ fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result:
     }
     set open^.emitted = open_count;
   }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn add_piece(context: &Context, open: &Open, piece: Piece, size: u64) -> result: Result<unit, LayoutError> writes(context), writes(open) {
+  doc "Appends piece, standing for at most size scalar values, to the open paragraph, first emitting the Begin pieces of the inline boxes open around it that this paragraph has not begun; TooLarge past scalar_ceiling.";
+  let begun = propagate emit_begins(context: context, open: open);
   let big = size > scalar_ceiling;
   if big {
     return too_large::<unit>();
@@ -289,8 +295,7 @@ fn end_paragraph(context: &Context, open: &Open) -> result: Result<unit, LayoutE
 fn begin_inline(context: &Context, open: &Open, style: StyleRef) -> result: Result<unit, LayoutError> writes(context), writes(open) {
   doc "Opens the inline box styled style: its Begin piece goes into the open paragraph at once, so an empty inline box still bounds a position.";
   let pushed = propagate push_or_fail::<StyleRef>(cell: &open^.inlines, value: style);
-  let begin = Piece::Begin(style: style);
-  let added = propagate add_piece(context: context, open: open, piece: begin, size: 0_u64);
+  let begun = propagate emit_begins(context: context, open: open);
   return Ok<unit, LayoutError>(value: unit);
 }
 
@@ -1406,7 +1411,9 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   let named_br = name == atom_br;
   let is_br = band(html, named_br);
   if is_br {
+    let begun = propagate begin_inline(context: context, open: open, style: style);
     let added = propagate add_scalar_piece(context: context, open: open, value: line_separator, style: owner_style);
+    let ended = propagate end_inline(context: context, open: open);
     return Ok<unit, LayoutError>(value: unit);
   }
   let named_wbr = name == atom_wbr;
@@ -1459,7 +1466,9 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
     let placed = propagate add_object(context: context, open: open, child: move child);
     return Ok<unit, LayoutError>(value: unit);
   }
-  let own = establishes(group: group);
+  let established = establishes(group: group);
+  let root = element == 0_u32;
+  let own = bor(established, root);
   let other_kind = kind != ctx_flow;
   let separate = bor(other_kind, fallback);
   let independent = bor(own, separate);
@@ -2105,7 +2114,7 @@ fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(conte
 }
 
 fn build_layout(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms), reads(fonts), reads(picks) {
-  doc "Maps each element's node to its preorder index, walks the document from its root into the initial containing block, a flow context whose root element is a block box of it, and prepares every paragraph.";
+  doc "Maps each element's node to its preorder index, walks the document from its root into the initial containing block, a flow context whose root element is a child context of it, since the root element's margins do not collapse with its children's (CSS 2.2 8.3.1), and prepares every paragraph.";
   let nodes = document^.nodes.inner.len;
   if nodes <= item_ceiling {
   } else {
