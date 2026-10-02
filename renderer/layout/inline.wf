@@ -793,7 +793,7 @@ fn keeps_any(sizes: &Measure, from: u64, to: u64) -> kept: Bool reads(sizes) {
 }
 
 fn preserved_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 reads(paragraph) {
-  doc "Where the trailing white space of the line from start to end begins (spaces, tabs and forced breaks): the reference leaves collapsible spaces there out of the text's fragment and reports the ones white-space keeps as a fragment of their own.";
+  doc "Where the trailing preserved white space of the line from start to end begins (spaces and tabs), for a line a soft wrap ends: the reference leaves collapsible spaces there out of the text's fragment and reports the ones white-space keeps as a fragment of their own.";
   let tail = end;
   let count = paragraph^.text.inner.len;
   for (step in start..end) {
@@ -803,10 +803,8 @@ fn preserved_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 read
         let value = paragraph^.text.inner[at];
         let space = value == 32_u32;
         let tab = value == 9_u32;
-        let separator = value == line_separator;
         let blank = bor(space, tab);
-        let white = bor(blank, separator);
-        if white {
+        if blank {
           set tail = at;
         } else {
           break;
@@ -817,6 +815,78 @@ fn preserved_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 read
     }
   }
   return tail;
+}
+
+fn forced_tail(paragraph: &Paragraph, start: u64, end: u64) -> tail: u64 reads(paragraph) {
+  doc "Where the fragment of the forced break that ends the line from start to end begins, or end when a soft wrap or the paragraph's end ends it: the reference reports the break as a fragment of its own and keeps the preserved spaces before it in the text's fragment.";
+  let count = paragraph^.text.inner.len;
+  if end > start {
+    let last = end - 1_u64;
+    if last < count {
+      let value = paragraph^.text.inner[last];
+      if value == line_separator {
+        return last;
+      }
+    }
+  }
+  return end;
+}
+
+fn leading_cut(paragraph: &Paragraph, styles: &Styles, start: u64) -> cut: u64 reads(paragraph), reads(styles) {
+  doc "Where the preserved spaces that start the line at start end when white-space is pre-wrap or break-spaces and the line follows the paragraph's start or a forced break (the reference gives them a fragment of their own), otherwise start.";
+  let count = paragraph^.text.inner.len;
+  if start < count {
+  } else {
+    return start;
+  }
+  let first_space = paragraph^.text.inner[start] == 32_u32;
+  let blank = bnot(first_space);
+  if blank {
+    return start;
+  }
+  if start > 0_u64 {
+    let before = start - 1_u64;
+    let previous = paragraph^.text.inner[before];
+    if previous != line_separator {
+      return start;
+    }
+  }
+  let preserved = False();
+  let runs = paragraph^.runs.inner.len;
+  for (r in 0_u64..runs) {
+    let run = paragraph^.runs.inner[r];
+    let from = cvt::<u32, u64>(run.start);
+    let to = cvt::<u32, u64>(run.end);
+    let after = start >= from;
+    let inside = start < to;
+    let here = band(after, inside);
+    if here {
+      if r < paragraph^.run_styles.inner.len {
+        let style = paragraph^.run_styles.inner[r];
+        let text = text_of(styles: styles, style: style);
+        let pre_wrapped = text.white_space == white_pre_wrap;
+        let spaces = text.white_space == white_break_spaces;
+        set preserved = bor(pre_wrapped, spaces);
+      }
+      break;
+    }
+  }
+  let plain = bnot(preserved);
+  if plain {
+    return start;
+  }
+  let cut = start;
+  for (step in start..count) {
+    if cut < count {
+      let value = paragraph^.text.inner[cut];
+      if value == 32_u32 {
+        set cut = cut +sat 1_u64;
+      } else {
+        break;
+      }
+    }
+  }
+  return cut;
 }
 
 fn stack_offset(stack: &[OpenBox]) -> (dx: i32, dy: i32, group: u32) reads(stack) {
@@ -924,7 +994,9 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       set high = high_next;
     }
     let x = 0.0_f32;
-    let visible_end = end;
+    let forced_start = forced_tail(paragraph: paragraph, start: start, end: end);
+    let forced = forced_start < end;
+    let visible_end = forced_start;
     for (step in start..end) {
       if visible_end > start {
         let last = visible_end - 1_u64;
@@ -1293,7 +1365,28 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
       let moved = Atomic(context: placed.context, x: ax, y: ay);
       let pushed = push_item::<Atomic>(cell: &paragraph^.atomics, value: moved, ceiling: item_ceiling);
     }
-    let tail_start = preserved_tail(paragraph: paragraph, start: start, end: visible_end);
+    let wrapped = end < count;
+    let soft_start = if wrapped {
+      give preserved_tail(paragraph: paragraph, start: start, end: visible_end);
+    } else {
+      give visible_end;
+    }
+    let main_end = if forced {
+      give visible_end;
+    } else {
+      give soft_start;
+    }
+    let tail_lo = if forced {
+      give forced_start;
+    } else {
+      give soft_start;
+    }
+    let tail_hi = if forced {
+      give end;
+    } else {
+      give visible_end;
+    }
+    let lead_end = leading_cut(paragraph: paragraph, styles: styles, start: start);
     let node_marks = paragraph^.marks.inner.len;
     for (k in 0_u64..node_marks) {
       let candidate = paragraph^.marks.inner[k];
@@ -1302,25 +1395,38 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
           let first = cvt::<u32, u64>(a);
           let last = cvt::<u32, u64>(b);
           let from_index = imax(first, start);
-          let to_index = imin(last, visible_end);
-          for (part in 0_u64..2_u64) {
+          let main_hi = imin(last, main_end);
+          let leading = if from_index == start {
+            give lead_end;
+          } else {
+            give from_index;
+          }
+          let lead_floor = imax(leading, from_index);
+          let cut_lead = imin(lead_floor, main_hi);
+          let tail_from = imax(tail_lo, from_index);
+          let tail_to = imin(tail_hi, last);
+          for (part in 0_u64..3_u64) {
             let lo = if part == 0_u64 {
               give from_index;
+            } else if part == 1_u64 {
+              give cut_lead;
             } else {
-              give imax(from_index, tail_start);
+              give tail_from;
             }
             let hi = if part == 0_u64 {
-              give imin(to_index, tail_start);
+              give cut_lead;
+            } else if part == 1_u64 {
+              give main_hi;
             } else {
-              give to_index;
+              give tail_to;
             }
             let nonempty = lo < hi;
             let inside = hi < positions;
             let present = band(nonempty, inside);
-            let kept = if part == 0_u64 {
-              give True();
-            } else {
+            let kept = if part == 2_u64 {
               give keeps_any(sizes: sizes, from: lo, to: hi);
+            } else {
+              give True();
             }
             let shown = band(present, kept);
             if shown {
