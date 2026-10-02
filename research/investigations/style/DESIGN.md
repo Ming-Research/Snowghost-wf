@@ -8,7 +8,8 @@ below; criterion 1 holds on ecma262 and fails on html5 and apollo11 on the
 border colors alone, which trace to one rule of Chromium's user-agent sheet
 that the HTML Standard does not have. The owner ruled the three choices the
 results raised on 2026-10-01 ("Choices after the results" below): the stage
-keeps the Standard's sheet, so that failure stays recorded; `ex` and `ch`
+keeps the Standard's sheet, so that failure stays recorded (superseded on
+2026-10-02 by the ruling Q61, which follows Chromium: "Owner rulings"); `ex` and `ch`
 come from the default fonts' metrics; and lengths become `LayoutUnit` when
 layout reads them.
 
@@ -17,11 +18,12 @@ The second batch of the layout stage's scope
 batch") is written and measured in "The second batch" below: the 37
 longhands of flex, grid, tables and generated content, `::before` and
 `::after` (Q51), the four groups of Q58 and the presentational hints of
-`width`, `height` and the table attributes. Criterion 1 holds on every page
-for every new longhand but `counter-reset` on ecma262 and apollo11, which the
-Standard's `ol, ul, menu { counter-reset: list-item }` puts below 99 percent
-against Chromium's computed `none`; that choice is the owner's
-("Choices the second batch raises").
+`width`, `height` and the table attributes. The owner then ruled (Q61,
+2026-10-02) that where the HTML Standard and Chromium differ the stage follows
+Chromium, so the user-agent sheet gives Chromium's computed values and
+criterion 1 holds on every page for every property, border colors and
+`counter-reset` included ("The multi-column properties and Chromium's sheet"
+below).
 
 ## Question
 
@@ -257,7 +259,10 @@ accounts for the failures.
 
 The classes of mismatch, with their causes:
 
-- **Chromium's user-agent sheet where the HTML Standard has no rule:**
+- **Chromium's user-agent sheet where the HTML Standard has no rule**
+  (the sheet follows Chromium since the owner's ruling Q61 of 2026-10-02, so
+  these classes are gone; "The multi-column properties and Chromium's
+  sheet"):
   `table { border-color: gray }` (1,123, 3,849 and 135 elements on
   ecma262, html5 and apollo11, tables and the cells that inherit it);
   `overflow: clip` on `img`, `video` and `canvas` (7, 30 and 65);
@@ -265,9 +270,9 @@ The classes of mismatch, with their causes:
   colors, borders and padding, which the Standard leaves to prose (5 buttons
   and a fieldset on ecma262, 81 inputs on apollo11); `svg:not(:root) { overflow: hidden }` from its SVG
   sheet (1).
-- **The HTML Standard's sheet where Chromium has no rule:**
-  `sub, sup { line-height: normal }` (990 and 214 elements on ecma262 and
-  html5).
+- **The HTML Standard's sheet where Chromium has no rule** (also
+  followed to Chromium's since Q61): `sub, sup { line-height: normal }` (990
+  and 214 elements on ecma262 and html5).
 - **Chromium's own behaviour:** the `source` and `track` children of a
   `video` take initial values instead of inherited ones (71 on apollo11);
   two `td` elements of html5 whose font size computes to 4.8px read 6px,
@@ -488,6 +493,88 @@ mismatch in a compared pseudo-element cell is reported, an empty Chromium
 cell is skipped, and a row whose index or name differs stops the
 comparison, each checked by editing a copy of the cases page's dump.
 
+### The multi-column properties and Chromium's sheet
+
+The layout stage's multi-column layout reads four more longhands, none of them
+inherited, which the style stage now parses, cascades and interns, and the
+owner's ruling Q61 of 2026-10-02 moved the user-agent sheet to Chromium's
+computed values.
+
+- **Longhands 92 to 95.** `column-count` (`auto` or a positive integer,
+  `ContainerGroup.column_count`, 0 for `auto`, clamped to 65535 as Chromium
+  computes it), `column-width` (`auto` or a non-negative length with no
+  percentage, a `Sizing`; `0` is a width, not `auto`), `column-fill`
+  (`balance`, `auto`, `balance-all`) and `break-inside` (`auto`, `avoid`,
+  `avoid-page`, `avoid-column`, `ItemGroup.break_inside`). They are grammars of
+  the second batch's tables (`pkg::css::values`, `columns.wf`), cascaded in
+  `reset_second` beside the flex and grid values, and `longhand_count`,
+  the cascade's winner tables and the oracle's columns grew from 92 to 96.
+- **Shorthands and aliases, as probed in Chromium 141.** `columns` takes a
+  width, a count or both in either order, `auto` standing for either and each
+  omitted one `auto`; two counts, two widths and three values are invalid and
+  `columns: 0 3` reads 0 as the width. `page-break-inside` and
+  `-webkit-column-break-inside` accept only `auto` and `avoid`
+  (`avoid-page`, `avoid-column` and `always` are invalid there), so they are
+  one-longhand shorthands, not aliases; `-webkit-column-count`,
+  `-webkit-column-width` and `-webkit-column-gap` are aliases and
+  `-webkit-columns` a shorthand alias. `-moz-column-width` and the other
+  `-moz-` spellings stay unknown names, as in Chromium (apollo11 and html5
+  write them beside the standard ones). Chromium 141 rejects
+  `column-fill: balance-all`; the stage parses it as CSS Multicol Level 2
+  defines it, since the interface declares it, and the cases page leaves it
+  out so that one difference does not enter the criterion.
+- **Interning.** The container and item groups are interned by a key of their
+  fields, which the new fields had to join: before they did, the cases page
+  showed `column-count` 95.81%, `column-width` 95.81%, `column-fill` 98.74%
+  and `break-inside` 96.23%, every element taking the first group with the
+  same other values.
+- **Parallelism.** The four values are read by the loops that already read
+  the flex and grid values, so no loop is added and none gains an order; the
+  ledger still splits `pseudo_flags`, `match_all`, `reset_all` and
+  `reset_second_all` (10 captured bindings, as before) and admits the eleven
+  adjacent interning pairs, and every page's sequential and `--par` dumps are
+  byte-identical.
+- **The user-agent sheet follows Chromium.** `ua.css` adds
+  `table { border-color: gray }`, drops `line-height: normal` from `sub` and
+  `sup`, sets `overflow: clip` on `img`, `video`, `canvas`, `iframe`, `embed`
+  and `object` (not on `input[type=image]`), `-webkit-center` for `caption` and
+  `center`, the SVG sheet's `overflow: hidden`, and the fonts, colors, borders,
+  padding and disabled colors of `input`, `button`, `select`, `textarea` and
+  `fieldset`; it leaves out `ol, ul, menu { counter-reset: list-item }` and the
+  `align-content` rules of inputs, buttons and selects. Every rule from
+  Chromium's sheet is marked in the file. The control rules were written
+  against Chromium's computed values for each input type, `button`, `select`
+  (drop-down and list box), `textarea`, `fieldset` and the disabled variants,
+  on two probe pages dumped by `style_oracle.mjs` and diffed cell by cell with
+  the driver until only the controls outside the recorded classes differed
+  (`option`, `meter`, `progress`, `audio`, `marquee`, `rt`: `docs/todo.md`).
+  The stage has no system colors, so `Canvas`, `CanvasText` and `ThreeDFace`
+  (whose declarations the sheet dropped as invalid, leaving the dialog's
+  background and the fieldset's border unset) are written as the rgb values
+  Chromium resolves them to, and the hint that gives the cells of a bordered
+  table their width and `inset` style now gives `border-color: inherit` too,
+  as Chromium does, so the cell shows the table's gray.
+
+Results of `run.sh check` at commit 59a946b, against Chromium
+dumps made by the same tree's `make oracle-style-dump`, with the sheet before
+the change (`UA` set to the previous `ua.css`) and after it, per page: the
+properties below 99 percent and the lowest property, whose causes are the
+classes above.
+
+| Page | Elements | Before: below 99% | After: below 99% | After: lowest property |
+|---|---:|---|---|---|
+| ecma262 | 179,471 | counter-reset 97.29% | none | display, width, height 99.99% |
+| html5 | 117,179 | border-top, -right, -bottom, -left-color 96.78% | none | width, height, aspect-ratio 99.98% |
+| apollo11 | 11,845 | border colors 98.36% | none | line-height 99.40% |
+| cases | 179 | border colors 85.77% | none | align-content, grid-template-rows, content 99.58% |
+
+The four new columns match on every element and pseudo-element of every page
+(100.00%; the cases page has 239 compared cells each, including a `::before`
+with its own `column-count`, `column-width` and `break-inside`). The remaining
+lowest values are the classes recorded above that Q61 does not touch: images
+the oracle refuses, `source` and `track` under `video`, `lh` and `round()`,
+the repeat, `safe` and `url()` forms on the cases page.
+
 ### Results
 
 `run.sh check` with `PAGES` set to a copy of the pages outside the
@@ -513,7 +600,9 @@ every element of every page, and every other property is unchanged, so that one 
 The classes of mismatch the second batch adds, with their causes:
 
 - **The Standard's user-agent rules where Chromium's computed values
-  differ:** `ol, ul, menu { counter-reset: list-item }` (5,223, 995 and 211
+  differ** (left out since Q61; the layout stage is to reset `list-item` for these
+  lists implicitly, as Chromium does):
+  `ol, ul, menu { counter-reset: list-item }` (5,223, 995 and 211
   lists on ecma262, html5 and apollo11; Chromium resets the `list-item`
   counter without showing it in the computed value); `align-content: unsafe
   center` on inputs and `center` on buttons and selects (5 on ecma262, 23 on
@@ -539,7 +628,9 @@ The classes of mismatch the second batch adds, with their causes:
 
 ### Choices the second batch raises
 
-- **`ol, ul, menu { counter-reset: list-item }`.** The HTML Standard's
+- **`ol, ul, menu { counter-reset: list-item }`.** Settled by the owner's
+  ruling Q61 (2026-10-02), which follows Chromium and leaves the rule out;
+  the question as it stood: the HTML Standard's
   rendering section has the rule, and the tree's decision keeps the
   Standard's sheet and records where the reference differs; with it,
   `counter-reset` misses criterion 1 on ecma262 and apollo11, and without it
@@ -565,6 +656,12 @@ The classes of mismatch the second batch adds, with their causes:
   no box.
 
 ## Owner rulings
+
+- **2026-10-02, Q61.** Where the HTML Standard and Chromium differ, Snowghost
+  follows Chromium: the user-agent sheet gives Chromium's computed values.
+  This supersedes the 2026-10-01 choice to keep the Standard's sheet for
+  `table { border-color: gray }` and the second batch's choice for
+  `ol, ul, menu { counter-reset: list-item }`.
 
 - **2026-10-01, scope.** The scope, oracle and criteria above, with flex,
   grid and generated content in the second batch.
