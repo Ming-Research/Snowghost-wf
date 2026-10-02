@@ -28,6 +28,7 @@ alias atom_rowspan = pkg::base::static_atoms::atom_rowspan;
 alias atom_select = pkg::base::static_atoms::atom_select;
 alias atom_src = pkg::base::static_atoms::atom_src;
 alias atom_span = pkg::base::static_atoms::atom_span;
+alias atom_type = pkg::base::static_atoms::atom_type;
 alias atom_svg = pkg::base::static_atoms::atom_svg;
 alias atom_textarea = pkg::base::static_atoms::atom_textarea;
 alias atom_video = pkg::base::static_atoms::atom_video;
@@ -70,6 +71,12 @@ const upper_latin_word: Array<u8, 11> = "upper-latin";
 const disc_word: Array<u8, 4> = "disc";
 
 const list_inside: u8 = 1_u8;
+
+const checkbox_word: Array<u8, 8> = "checkbox";
+
+const radio_word: Array<u8, 5> = "radio";
+
+const text_input_words: Array<u8, 42> = "text search email url tel password number ";
 
 const circle_word: Array<u8, 6> = "circle";
 
@@ -1134,8 +1141,99 @@ fn is_replaced(name: u32, html: Bool, svg: Bool) -> replaced: Bool pure {
   return found;
 }
 
+fn attribute_word(document: &Document, node: NodeId, name: u32, word: &[u8]) -> same: Bool reads(document), reads(word) {
+  doc "Tells whether node's attribute name equals word, ASCII case-insensitively.";
+  match attribute_of(document: document, node: node, name: name) {
+    Some(value: text) => {
+      let start = cvt::<u32, u64>(text.start);
+      let end = cvt::<u32, u64>(text.end);
+      let ordered = start <= end;
+      let inside = end <= document^.text.inner.len;
+      let usable = band(ordered, inside);
+      if usable {
+      } else {
+        return False();
+      }
+      let size = end - start;
+      if size != word^.len {
+        return False();
+      }
+      for (k in 0_u64..size) {
+        let at = start +sat k;
+        if at < document^.text.inner.len {
+          let byte = document^.text.inner[at];
+          let upper_low = byte >= 65_u8;
+          let upper_high = byte <= 90_u8;
+          let upper = band(upper_low, upper_high);
+          let lowered = if upper {
+            give byte +sat 32_u8;
+          } else {
+            give byte;
+          }
+          if lowered != word^[k] {
+            return False();
+          }
+        }
+      }
+      return True();
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn text_input_type(document: &Document, node: NodeId) -> text: Bool reads(document) {
+  doc "Tells whether an input element is a single-line text field: no type, or text, search, email, url, tel, password or number.";
+  match attribute_of(document: document, node: node, name: atom_type) {
+    Some(..) => {
+    }
+    None() => {
+      return True();
+    }
+  }
+  let total = text_input_words.len;
+  let start = 0_u64;
+  for (k in 0_u64..total) {
+    let byte = text_input_words[k];
+    if byte == 32_u8 {
+      if start < k {
+        let found = attribute_word(document: document, node: node, name: atom_type, word: &text_input_words[start..k]);
+        if found {
+          return True();
+        }
+      }
+      set start = k +sat 1_u64;
+    }
+  }
+  return False();
+}
+
+fn control_natural(document: &Document, node: NodeId) -> natural: u8 reads(document) {
+  doc "What an input element shows, as far as the stage sizes form controls: a text field, a checkbox or radio button, or a replaced box of the default size.";
+  let text = text_input_type(document: document, node: node);
+  if text {
+    return natural_text_input;
+  }
+  let checkbox_n = checkbox_word.len;
+  let radio_n = radio_word.len;
+  let checkbox = attribute_word(document: document, node: node, name: atom_type, word: &checkbox_word[0_u64..checkbox_n]);
+  let radio = attribute_word(document: document, node: node, name: atom_type, word: &radio_word[0_u64..radio_n]);
+  let toggle = bor(checkbox, radio);
+  if toggle {
+    return natural_toggle;
+  }
+  return natural_object;
+}
+
 fn image_natural(document: &Document, node: NodeId, name: u32, html: Bool) -> natural: u8 reads(document) {
-  doc "What an element shows in place of an image the stage does not load, as the reference shows an img whose fetch failed: an img with a nonempty alt shows its alt text, one with an empty alt or no src nothing, any other img the broken-image icon; any other element is natural_object.";
+  doc "What an element shows in place of an image the stage does not load, as the reference shows an img whose fetch failed: an img with a nonempty alt shows its alt text, one with an empty alt or no src nothing, any other img the broken-image icon; an input element its control_natural; any other element is natural_object.";
+  let input_named = name == atom_input;
+  let input = band(html, input_named);
+  if input {
+    let made = control_natural(document: document, node: node);
+    return made;
+  }
   let named = name == atom_img;
   let image = band(html, named);
   if image {
