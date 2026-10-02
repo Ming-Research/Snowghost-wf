@@ -34,15 +34,18 @@
 # fonts the driver loads to build/fonts, and `make oracle-layout-dump` writes
 # Chromium's dumps to build/oracle/layout/.
 #
-# time prints, per page, the mode (build, the box tree with its text
-# preparation, and layout, which also lays the tree out; MODES overrides the
-# list), the build, REPS, T(0)
-# and T(REPS) as the best of RUNS runs (five by default) and the per-run time
-# (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and
-# 4 (WORKERS overrides the list) and the sequential build. A part's time is
-# the difference between its mode and the one before it. The timed runs hold
-# the Whitefoot check lock, taken with RUN_CHECK (by default the pinned
-# checkout's .github/run-check.pl), so no other heavy job shares the machine.
+# time prints, per page, the mode (boxes, text and layout, in nested order:
+# boxes builds the box tree; text also matches the fonts and prepares every
+# paragraph's text, which is font matching, shaping and break opportunities;
+# layout also lays the tree out; MODES overrides the list), the build, REPS,
+# T(0) and T(REPS) as the best of RUNS runs (five by default) and the per-run
+# time (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2
+# and 4 (WORKERS overrides the list) and the sequential build. A part's time
+# is the difference between its mode and the one before it: the box tree is
+# boxes, the text preparation with the font matching is text minus boxes and
+# the layout passes are layout minus text. The timed runs hold the Whitefoot
+# check lock, taken with RUN_CHECK (by default the pinned checkout's
+# .github/run-check.pl), so no other heavy job shares the machine.
 #
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
@@ -71,7 +74,7 @@ lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
 runs=${RUNS:-5}
 workers=${WORKERS:-1 2 4}
 pages="ecma262 html5 apollo11 $(cd tests/layout && ls *-cases.html | sed 's/\.html$//' | tr '\n' ' ')"
-modes=${MODES:-build layout}
+modes=${MODES:-boxes text layout}
 
 # The sheet mappings of each page's stylesheet links, SUFFIX=SHEET as the
 # driver and tests/layout/layout_oracle.mjs take them.
