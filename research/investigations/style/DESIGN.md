@@ -366,7 +366,8 @@ known.
   and with this one rule added both pass (criterion 1 above). Keeping the
   Standard's sheet records the difference, as the scope says; adding the
   rule makes the stage match the reference on every page.
-  The owner ruled for the Standard's sheet. The rendering section of the
+  The owner ruled for the Standard's sheet (superseded on 2026-10-02 by Q61,
+  which follows Chromium). The rendering section of the
   HTML Standard (checked again on 2026-10-01 at
   https://html.spec.whatwg.org/multipage/rendering.html) sets table border
   colors only as `inherit` on row groups and rows, `black` on the cells of a
@@ -545,9 +546,12 @@ computed values.
   Chromium's sheet is marked in the file. The control rules were written
   against Chromium's computed values for each input type, `button`, `select`
   (drop-down and list box), `textarea`, `fieldset` and the disabled variants,
-  on two probe pages dumped by `style_oracle.mjs` and diffed cell by cell with
-  the driver until only the controls outside the recorded classes differed
-  (`option`, `meter`, `progress`, `audio`, `marquee`, `rt`: `docs/todo.md`).
+  on probe pages dumped by `style_oracle.mjs` and diffed cell by cell with the
+  driver; the cases page keeps one of each input type, the disabled variants,
+  `button`, drop-down and list-box `select`, `textarea` and `fieldset`, and
+  the controls still differing (`option`, `meter`, `progress`, `audio`,
+  `marquee`, `rt`, the controls of a disabled `fieldset`: `docs/todo.md`) are
+  left off it.
   The stage has no system colors, so `Canvas`, `CanvasText` and `ThreeDFace`
   (whose declarations the sheet dropped as invalid, leaving the dialog's
   background and the fieldset's border unset) are written as the rgb values
@@ -555,9 +559,9 @@ computed values.
   table their width and `inset` style now gives `border-color: inherit` too,
   as Chromium does, so the cell shows the table's gray.
 
-Results of `run.sh check` at commit 59a946b, against Chromium
-dumps made by the same tree's `make oracle-style-dump`, with the sheet before
-the change (`UA` set to the previous `ua.css`) and after it, per page: the
+Results of `run.sh check`, against Chromium dumps made by the same tree's
+`make oracle-style-dump`, before the sheet's change (commit 356d6ee, with
+`UA` set to the previous `ua.css`) and after it (commit 59a946b; the cases page at commit 4df6612, which adds the controls), per page: the
 properties below 99 percent and the lowest property, whose causes are the
 classes above.
 
@@ -566,10 +570,10 @@ classes above.
 | ecma262 | 179,471 | counter-reset 97.29% | none | display, width, height 99.99% |
 | html5 | 117,179 | border-top, -right, -bottom, -left-color 96.78% | none | width, height, aspect-ratio 99.98% |
 | apollo11 | 11,845 | border colors 98.36% | none | line-height 99.40% |
-| cases | 179 | border colors 85.77% | none | align-content, grid-template-rows, content 99.58% |
+| cases | 179, then 230 | border colors 85.77% | none | align-content, grid-template-rows, content 99.65% |
 
 The four new columns match on every element and pseudo-element of every page
-(100.00%; the cases page has 239 compared cells each, including a `::before`
+(100.00%; the cases page has 291 compared cells each, including a `::before`
 with its own `column-count`, `column-width` and `break-inside`). The remaining
 lowest values are the classes recorded above that Q61 does not touch: images
 the oracle refuses, `source` and `track` under `video`, `lh` and `round()`,
