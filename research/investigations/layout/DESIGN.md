@@ -175,9 +175,12 @@ a bidi control, `runs/bidi-isolate-breaks.txt`), `aspect-ratio`, and the
 presentational hints of `width`, `height` and the table attributes.
 
 **Out of scope,** each counted where the pages use it: writing modes,
-`direction: rtl` and bidirectional reordering; multi-column layout;
-`transform` (which moves `getBoundingClientRect`); form controls'
-intrinsic sizes and inner layout; SVG's inner layout (the `svg` element is a
+`direction: rtl` and bidirectional reordering; multi-column layout
+beyond the limited form Q59 brought in (no `column-span`, orphans, widows
+or `column-fill: balance-all`); `transform` (which moves
+`getBoundingClientRect`); form controls' inner layout, and the intrinsic
+sizes of controls other than single-line text inputs, checkboxes and radio
+buttons; SVG's inner layout (the `svg` element is a
 replaced box); iframes; ruby; hyphenation; fragmentation; `contain` and
 container queries; `zoom`; quirks mode.
 
@@ -228,7 +231,8 @@ most frequent mismatches with an example element.
 
 ## Criteria
 
-Proposed, to be recorded before any code:
+Recorded before any code; the owner ruled on them on 2026-10-01 (Owner
+rulings):
 
 1. **Correctness.** On each real page, at least 99 percent of the
    block-level boxes match Chromium within 1 px in width, height and

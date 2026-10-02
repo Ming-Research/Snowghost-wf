@@ -438,3 +438,92 @@ example apart from the renderer code that exposed it
   `tab-size`, which only line layout knows. The layout stage must give each
   preserved tab its tab stop. Reopen with `white-space: pre` text that holds
   tabs.
+- **`text-align: justify` aligns as start.** `finish_lines` offsets a line
+  for right, end, center and their -webkit- forms and leaves every other
+  value at the start, so justified lines keep their natural spacing.
+  Impact: no element of the three pages computes `justify` (the style
+  oracle's text-align column). Change: distribute a line's free space over
+  its justification opportunities, except on the last line and lines a
+  forced break ends, as CSS Text 3, 7.3 describes. Reopen when a page
+  justifies text.
+- **`text-overflow: ellipsis` draws no ellipsis.** Chromium reports an
+  extra fragment for the ellipsis of an overflowing line in a box with
+  `overflow` other than visible; the stage leaves the line whole. Change:
+  truncate the line's runs at the content edge less the ellipsis's advance
+  and add the ellipsis fragment. Reopen when a measured page sets it on
+  overflowing text.
+- **A text input's baseline is 3 px above Chromium's.** The stage puts the
+  baseline of a single-line text input at its border, padding, centred
+  line and the font's ascent (`lay_out_replaced`); in `tests/layout/flow-cases.html`
+  Chromium's baseline lies 13 px below the input's top where the stage's
+  lies 10 px below, which moves the line and the boxes after it. Change:
+  probe the inner editor's position with borders, padding and heights
+  varied, and take its baseline. Reopen when a page puts a text input on a
+  line with text.
+- **Most form controls do not have the reference's size.** Only
+  single-line text inputs, checkboxes and radio buttons get Chromium's
+  natural sizes (`natural_text_input`, `natural_toggle`); the other
+  `input` types, `select` and `textarea` are replaced boxes of the default
+  300 by 150 px (`is_replaced`, `natural_object`), and `button` is laid out
+  as an ordinary inline-block. Change: their natural sizes and baselines
+  from probes of Chromium. Reopen when a page lays one out.
+- **Multi-column layout is limited to Q59's form.** `column-span`,
+  orphans and widows, `column-fill: balance-all` and a break inside a box
+  that is neither a paragraph, a table nor a `break-inside: avoid` box
+  (a fixed-height block is kept whole) are not implemented
+  (`renderer/layout/columns.wf`). Impact: none on the three pages, whose
+  multi-column containers hold tables, lists and paragraphs. Change: the
+  fragmentation units and the spanner's own pass. Reopen when a page uses
+  one.
+- **Right-to-left text is shaped and ordered as left-to-right.** Eleven of
+  apollo11's language names in Arabic script (span 506 is 60.66 px wide
+  here, 38.27 in Chromium) and about a dozen of its text nodes differ:
+  `pkg::font` applies no Arabic joining forms and the stage does no
+  bidirectional reordering, both out of scope. Change: Arabic shaping in
+  `pkg::font` and UAX #9 reordering of a line's runs. Reopen when
+  right-to-left text is in scope.
+- **`font-variant: small-caps` is not applied.** The style stage does not
+  compute it and text preparation draws lowercase letters at full size:
+  apollo11's twelve `abbr` navigation links (t, e, v) and their `li` are
+  1 to 2 px off. Change: the longhand in `pkg::css::values` and synthetic
+  small capitals in `pkg::layout::text`, as Chromium scales lowercase
+  letters to 70 percent. Reopen with any further page that sets it.
+- **`transform` does not move boxes.** `getClientRects` reports transformed
+  boxes; apollo11's search icon (`span` 110, `translateY(-50%)`) is 9 px
+  lower here. Transforms are out of scope. Change: apply translations to
+  the dumped rectangles of a box and its descendants after layout. Reopen
+  when transforms are in scope.
+- **An absolute box's static position inside an inline formatting context
+  is the block's start.** apollo11's `span` 3660 (`.sr-only` inside a line)
+  starts at x 263 here and at the inline position 395.5 in Chromium.
+  Change: record the inline position the box would have had on its line
+  as its static position. Reopen when such a box is visible on a page.
+- **A float's max-content contribution is added to the widest line.** The
+  stage adds a float's width to the widest line of the text beside it;
+  Chromium adds it to the lines it sits beside only
+  (`research/investigations/layout/runs/float-intrinsic.txt`: float, aaa,
+  br, bbb gives 54 px here, 51.3125 in Chromium). Change: track the lines a
+  float shortens during the max-content pass. Reopen when a page's
+  shrink-to-fit box holds a float beside lines of different widths.
+- **A block-level box in normal flow ignores `width: min-content`,
+  `max-content` and `fit-content`.** The keywords size shrink-to-fit
+  boxes, tables and absolute boxes only. Change: resolve them in the
+  block's used width from its intrinsic sizes. Reopen when a page sets one
+  on a block in flow.
+- **Preserved spaces that hang at a `pre-wrap` line's end are not in the
+  text's width.** `tests/layout/flow-cases.html`'s pre-wrap text reports a
+  first line 200 px wide in Chromium and 157.75 here. Change: include the
+  hanging spaces up to the line's end in the fragment, as Chromium's
+  `getClientRects` does. Reopen when a page wraps pre-wrap text with
+  runs of spaces.
+- **Some apollo11 links lose the kerning across their end.** About 21 of
+  apollo11's links are 1.0 to 1.2 px wider than in Chromium: the text
+  "Kennedy" in `a` 1223 is 55.58 px wide here and 54.55 in Chromium, which
+  shapes it together with the comma after the link, so the y-comma kerning
+  pair applies. The stage gives the same 54.55 on a probe with the same
+  markup inside the page's own head and stylesheets, so something else on
+  the full page splits the shaping run there;
+  the cause is not yet found. Change: find which property or boundary
+  `pkg::layout::text` splits runs at on the page, and probe whether
+  Chromium splits there. Reopen before apollo11's inline measure needs
+  these boxes.
