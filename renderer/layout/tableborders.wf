@@ -1,0 +1,233 @@
+alias Styles = pkg::style::Styles;
+
+const border_hidden: u8 = 1_u8;
+
+fn side_value(width: f32, style: u8) -> value: i32 pure {
+  doc "A border side as a conflict value: -1 for the style hidden, which wins every conflict, else the width in layout units.";
+  if style == border_hidden {
+    return -1_i32;
+  }
+  let made = units(px: width);
+  return made;
+}
+
+fn merge_edge(list: &Box<Slots<i32>>, at: u64, value: i32) -> result: unit writes(list) {
+  doc "Takes a border side into the edge at at (CSS Tables 3, 3.7.1.3): hidden wins, else the wider.";
+  if at < list^.inner.len {
+    let current = list^.inner[at];
+    if current < 0_i32 {
+      return unit;
+    }
+    if value < 0_i32 {
+      set list^.inner[at] = -1_i32;
+      return unit;
+    }
+    let wider = imax(current, value);
+    set list^.inner[at] = wider;
+  }
+  return unit;
+}
+
+fn merge_vertical(vedge: &Box<Slots<i32>>, stride: u64, column: u64, first: u64, end: u64, value: i32) -> result: unit writes(vedge) {
+  doc "Takes a border side into the vertical edge at column boundary column in rows first to end.";
+  for (r in first..end) {
+    let base = r *sat stride;
+    let at = base +sat column;
+    merge_edge(list: vedge, at: at, value: value);
+  }
+  return unit;
+}
+
+fn merge_horizontal(hedge: &Box<Slots<i32>>, columns: u64, row: u64, first: u64, end: u64, value: i32) -> result: unit writes(hedge) {
+  doc "Takes a border side into the horizontal edge at row boundary row in columns first to end.";
+  let base = row *sat columns;
+  for (c in first..end) {
+    let at = base +sat c;
+    merge_edge(list: hedge, at: at, value: value);
+  }
+  return unit;
+}
+
+fn widest_vertical(vedge: &Box<Slots<i32>>, stride: u64, column: u64, first: u64, end: u64) -> width: i32 reads(vedge) {
+  doc "The widest of the vertical edge at column boundary column in rows first to end, a hidden edge being no width.";
+  let best = 0_i32;
+  for (r in first..end) {
+    let base = r *sat stride;
+    let at = base +sat column;
+    let value = get_i32(list: vedge, at: at);
+    set best = imax(best, value);
+  }
+  return best;
+}
+
+fn widest_horizontal(hedge: &Box<Slots<i32>>, columns: u64, row: u64, first: u64, end: u64) -> width: i32 reads(hedge) {
+  doc "The widest of the horizontal edge at row boundary row in columns first to end, a hidden edge being no width.";
+  let base = row *sat columns;
+  let best = 0_i32;
+  for (c in first..end) {
+    let at = base +sat c;
+    let value = get_i32(list: hedge, at: at);
+    set best = imax(best, value);
+  }
+  return best;
+}
+
+fn halves(top: i32, right: i32, bottom: i32, left: i32) -> edges: Edges pure {
+  doc "Half of each of four edge widths, exactly in layout units.";
+  let half_top = top / 2_i32;
+  let half_right = right / 2_i32;
+  let half_bottom = bottom / 2_i32;
+  let half_left = left / 2_i32;
+  return Edges(top: half_top, right: half_right, bottom: half_bottom, left: half_left);
+}
+
+fn side_edges(styles: &Styles, style: StyleRef) -> edges: Edges reads(styles) {
+  doc "style's four border sides as conflict values (side_value) in an Edges.";
+  let group = border_widths_of(styles: styles, style: style);
+  let top = side_value(width: group.top_width, style: group.top_style);
+  let right = side_value(width: group.right_width, style: group.right_style);
+  let bottom = side_value(width: group.bottom_width, style: group.bottom_style);
+  let left = side_value(width: group.left_width, style: group.left_style);
+  return Edges(top: top, right: right, bottom: bottom, left: left);
+}
+
+fn separate_borders(context: &Context, styles: &Styles, edges: &Box<Slots<Edges>>) -> table: Edges reads(context), reads(styles), writes(edges) {
+  doc "The borders of the separated-borders model: each cell's own computed borders in edges, and the table's.";
+  let cells = context^.cells.inner.len;
+  for (i in 0_u64..cells) {
+    if i < context^.cells.inner.len {
+      let child = cvt::<u32, u64>(context^.cells.inner[i].context);
+      if child < context^.children.inner.len {
+        let own = border_edges(styles: styles, style: context^.children.inner[child].style);
+        if i < edges^.inner.len {
+          set edges^.inner[i] = own;
+        }
+      }
+    }
+  }
+  let made = border_edges(styles: styles, style: context^.style);
+  return made;
+}
+
+fn collapse_borders(context: &Context, styles: &Styles, edges: &Box<Slots<Edges>>) -> table: Edges reads(context), reads(styles), writes(edges) {
+  doc "The borders of the collapsed-borders model (CSS Tables 3, 3.7): every edge between cells and at the table's sides takes the winning border of those that meet there, the table's, the columns', the row groups', the rows' and the cells' (hidden, else the widest; the borders' styles and colors do not change the layout), and each cell and the table take half of the edges at their sides. Returns the table's border widths, the halves of the widest edge at each side; edges gets each cell's.";
+  let rows = context^.rows.inner.len;
+  let columns = context^.columns.inner.len;
+  let stride = columns +sat 1_u64;
+  let vertical_count = rows *sat stride;
+  let rows_over = rows +sat 1_u64;
+  let horizontal_count = rows_over *sat columns;
+  let vedge = filled_i32(count: vertical_count, value: 0_i32);
+  let hedge = filled_i32(count: horizontal_count, value: 0_i32);
+  let own = side_edges(styles: styles, style: context^.style);
+  merge_vertical(vedge: &vedge, stride: stride, column: 0_u64, first: 0_u64, end: rows, value: own.left);
+  merge_vertical(vedge: &vedge, stride: stride, column: columns, first: 0_u64, end: rows, value: own.right);
+  merge_horizontal(hedge: &hedge, columns: columns, row: 0_u64, first: 0_u64, end: columns, value: own.top);
+  merge_horizontal(hedge: &hedge, columns: columns, row: rows, first: 0_u64, end: columns, value: own.bottom);
+  for (c in 0_u64..columns) {
+    if c < context^.columns.inner.len {
+      let column = context^.columns.inner[c];
+      let real = bnot(column.style.anonymous);
+      let shown = band(column.styled, real);
+      if shown {
+        let sides = side_edges(styles: styles, style: column.style);
+        let after = c +sat 1_u64;
+        let next = after;
+        merge_vertical(vedge: &vedge, stride: stride, column: c, first: 0_u64, end: rows, value: sides.left);
+        merge_vertical(vedge: &vedge, stride: stride, column: next, first: 0_u64, end: rows, value: sides.right);
+        merge_horizontal(hedge: &hedge, columns: columns, row: 0_u64, first: c, end: after, value: sides.top);
+        merge_horizontal(hedge: &hedge, columns: columns, row: rows, first: c, end: after, value: sides.bottom);
+      }
+    }
+  }
+  for (r in 0_u64..rows) {
+    if r < context^.rows.inner.len {
+      let row = context^.rows.inner[r];
+      let below = r +sat 1_u64;
+      let real_row = bnot(row.style.anonymous);
+      if real_row {
+        let sides = side_edges(styles: styles, style: row.style);
+        merge_vertical(vedge: &vedge, stride: stride, column: 0_u64, first: r, end: below, value: sides.left);
+        merge_vertical(vedge: &vedge, stride: stride, column: columns, first: r, end: below, value: sides.right);
+        merge_horizontal(hedge: &hedge, columns: columns, row: r, first: 0_u64, end: columns, value: sides.top);
+        merge_horizontal(hedge: &hedge, columns: columns, row: below, first: 0_u64, end: columns, value: sides.bottom);
+      }
+      let real_group = bnot(row.group.anonymous);
+      if real_group {
+        let sides = side_edges(styles: styles, style: row.group);
+        merge_vertical(vedge: &vedge, stride: stride, column: 0_u64, first: r, end: below, value: sides.left);
+        merge_vertical(vedge: &vedge, stride: stride, column: columns, first: r, end: below, value: sides.right);
+        let first_row = if r == 0_u64 {
+          give True();
+        } else {
+          let before = r - 1_u64;
+          let earlier = context^.rows.inner[before].group;
+          let other = earlier.element != row.group.element;
+          give bor(other, earlier.anonymous);
+        }
+        let last_row = if below >= context^.rows.inner.len {
+          give True();
+        } else {
+          let later = context^.rows.inner[below].group;
+          let other = later.element != row.group.element;
+          give bor(other, later.anonymous);
+        }
+        if first_row {
+          merge_horizontal(hedge: &hedge, columns: columns, row: r, first: 0_u64, end: columns, value: sides.top);
+        }
+        if last_row {
+          merge_horizontal(hedge: &hedge, columns: columns, row: below, first: 0_u64, end: columns, value: sides.bottom);
+        }
+      }
+    }
+  }
+  let cells = context^.cells.inner.len;
+  for (i in 0_u64..cells) {
+    if i < context^.cells.inner.len {
+      let cell = context^.cells.inner[i];
+      let child = cvt::<u32, u64>(cell.context);
+      if child < context^.children.inner.len {
+        let sides = side_edges(styles: styles, style: context^.children.inner[child].style);
+        let row_first = cvt::<u32, u64>(cell.row);
+        let row_span = cvt::<u32, u64>(cell.row_span);
+        let row_end_raw = row_first +sat row_span;
+        let row_end = imin(row_end_raw, rows);
+        let column_first = cvt::<u32, u64>(cell.column);
+        let column_span = cvt::<u32, u64>(cell.column_span);
+        let column_end_raw = column_first +sat column_span;
+        let column_end = imin(column_end_raw, columns);
+        merge_vertical(vedge: &vedge, stride: stride, column: column_first, first: row_first, end: row_end, value: sides.left);
+        merge_vertical(vedge: &vedge, stride: stride, column: column_end, first: row_first, end: row_end, value: sides.right);
+        merge_horizontal(hedge: &hedge, columns: columns, row: row_first, first: column_first, end: column_end, value: sides.top);
+        merge_horizontal(hedge: &hedge, columns: columns, row: row_end, first: column_first, end: column_end, value: sides.bottom);
+      }
+    }
+  }
+  for (i in 0_u64..cells) {
+    if i < context^.cells.inner.len {
+      let cell = context^.cells.inner[i];
+      let row_first = cvt::<u32, u64>(cell.row);
+      let row_span = cvt::<u32, u64>(cell.row_span);
+      let row_end_raw = row_first +sat row_span;
+      let row_end = imin(row_end_raw, rows);
+      let column_first = cvt::<u32, u64>(cell.column);
+      let column_span = cvt::<u32, u64>(cell.column_span);
+      let column_end_raw = column_first +sat column_span;
+      let column_end = imin(column_end_raw, columns);
+      let left = widest_vertical(vedge: &vedge, stride: stride, column: column_first, first: row_first, end: row_end);
+      let right = widest_vertical(vedge: &vedge, stride: stride, column: column_end, first: row_first, end: row_end);
+      let top = widest_horizontal(hedge: &hedge, columns: columns, row: row_first, first: column_first, end: column_end);
+      let bottom = widest_horizontal(hedge: &hedge, columns: columns, row: row_end, first: column_first, end: column_end);
+      let half = halves(top: top, right: right, bottom: bottom, left: left);
+      if i < edges^.inner.len {
+        set edges^.inner[i] = half;
+      }
+    }
+  }
+  let table_left = widest_vertical(vedge: &vedge, stride: stride, column: 0_u64, first: 0_u64, end: rows);
+  let table_right = widest_vertical(vedge: &vedge, stride: stride, column: columns, first: 0_u64, end: rows);
+  let table_top = widest_horizontal(hedge: &hedge, columns: columns, row: 0_u64, first: 0_u64, end: columns);
+  let table_bottom = widest_horizontal(hedge: &hedge, columns: columns, row: rows, first: 0_u64, end: columns);
+  let made = halves(top: table_top, right: table_right, bottom: table_bottom, left: table_left);
+  return made;
+}

@@ -2,6 +2,7 @@ alias Document = pkg::dom::Document;
 alias FontPicks = pkg::layout::text::FontPicks;
 alias FontSet = pkg::layout::text::FontSet;
 alias Styles = pkg::style::Styles;
+alias BoxGroup = pkg::css::values::BoxGroup;
 alias Sizing = pkg::css::values::Sizing;
 alias LengthPercentage = pkg::css::values::LengthPercentage;
 alias sizing_value = pkg::css::values::sizing_value;
@@ -135,11 +136,21 @@ fn clamp_size(size: i32, minimum: i32, maximum: i32) -> raw: i32 pure {
   return floored;
 }
 
+fn border_box_sized(group: BoxGroup) -> border_box: Bool pure {
+  doc "Whether the width and height of a box with group are its border box's: the box-sizing value border-box, and always a table's, whose width and height include its borders and paddings.";
+  let sized = group.box_sizing == box_sizing_border;
+  let table = group.display == display_table;
+  let inline_table = group.display == display_inline_table;
+  let any_table = bor(table, inline_table);
+  let made = bor(sized, any_table);
+  return made;
+}
+
 fn width_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> (minimum: i32, maximum: i32) reads(styles) {
   doc "The border-box min-width and max-width of style's box against basis (unknown when absent), with box-sizing applied.";
   let sizes = size_of(styles: styles, style: style);
   let group = box_of(styles: styles, style: style);
-  let border_box = group.box_sizing == box_sizing_border;
+  let border_box = border_box_sized(group: group);
   let min_raw = size_value(value: sizes.min_width, basis: basis);
   let max_raw = size_value(value: sizes.max_width, basis: basis);
   let minimum = if min_raw >= 0_i32 {
@@ -159,7 +170,7 @@ fn height_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> (m
   doc "The border-box min-height and max-height of style's box against basis (unknown when absent or indefinite), with box-sizing applied.";
   let sizes = size_of(styles: styles, style: style);
   let group = box_of(styles: styles, style: style);
-  let border_box = group.box_sizing == box_sizing_border;
+  let border_box = border_box_sized(group: group);
   let min_raw = size_value(value: sizes.min_height, basis: basis);
   let max_raw = size_value(value: sizes.max_height, basis: basis);
   let minimum = if min_raw >= 0_i32 {
@@ -179,7 +190,7 @@ fn specified_width(styles: &Styles, style: StyleRef, basis: i32, frame: i32) -> 
   doc "The border-box width style's width property gives against basis, with box-sizing applied, or unknown for auto and the content keywords.";
   let sizes = size_of(styles: styles, style: style);
   let group = box_of(styles: styles, style: style);
-  let border_box = group.box_sizing == box_sizing_border;
+  let border_box = border_box_sized(group: group);
   let content = size_value(value: sizes.width, basis: basis);
   if content >= 0_i32 {
     let made = border_box_from_content(content: content, border_box_sizing: border_box, frame: frame);
@@ -192,7 +203,7 @@ fn specified_height(styles: &Styles, style: StyleRef, basis: i32, frame: i32) ->
   doc "The border-box height style's height property gives against basis (unknown when indefinite), with box-sizing applied, or unknown for auto.";
   let sizes = size_of(styles: styles, style: style);
   let group = box_of(styles: styles, style: style);
-  let border_box = group.box_sizing == box_sizing_border;
+  let border_box = border_box_sized(group: group);
   let content = size_value(value: sizes.height, basis: basis);
   if content >= 0_i32 {
     let made = border_box_from_content(content: content, border_box_sizing: border_box, frame: frame);
@@ -238,7 +249,11 @@ fn applied_height_limits(styles: &Styles, style: StyleRef, basis: i32, frame: i3
 }
 
 fn sizes_ignored(context: &Context, styles: &Styles) -> ignored: Bool reads(styles), reads(context) {
-  doc "Tells whether context's width, height and their limits do not apply, as the reference draws an image it could not fetch: an inline img showing its alt text, and an img showing the broken-image icon or nothing that does not give both a width and a height.";
+  doc "Tells whether context's width, height and their limits do not apply: a table cell's, which its table applies as its columns' widths and its rows' least heights, and those of an image the reference could not fetch, which it draws as an inline img showing its alt text, or as an img showing the broken-image icon or nothing that does not give both a width and a height.";
+  let group = box_of(styles: styles, style: context^.style);
+  if group.display == display_cell {
+    return True();
+  }
   let natural = context^.natural;
   if natural == natural_alt_box {
     return True();
@@ -296,7 +311,7 @@ fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &F
 }
 
 fn used_height(context: &Context, styles: &Styles, content: i32) -> height: i32 reads(styles), reads(context) {
-  doc "The border-box height of context given the height of its laid-out content box: the height its parent imposes; else its height property when its percentage basis is known; else the content plus paddings and borders; then clamped by min-height and max-height.";
+  doc "The border-box height of context given the height of its laid-out content box: the height its parent imposes; else its height property when its percentage basis is known, which a table cell leaves to its table, a least height its content may exceed; else the content plus paddings and borders; then clamped by min-height and max-height.";
   let space = context^.space;
   let style = context^.style;
   let border = border_edges(styles: styles, style: style);
@@ -343,7 +358,7 @@ fn add_own_fragment(context: &Context) -> result: unit writes(context) {
 }
 
 fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The min-content and max-content border-box widths of context (Q56), computed on first request from its kind's content and kept: a specified width gives both, min-width and max-width clamp them, and paddings and borders are added to the content's.";
+  doc "The min-content and max-content border-box widths of context (Q56), computed on first request from its kind's content and kept: a specified width gives both, min-width and max-width clamp them, and paddings and borders are added to the content's; a width or limit that is a percentage counts as auto and none, since the containing block's width is not known until its content has been measured.";
   if context^.intrinsic_known {
     return context^.min_content, context^.max_content;
   }
@@ -355,8 +370,9 @@ fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, font
   let frame_padding = horizontal(edges: padding);
   let frame = frame_border +sat frame_padding;
   let ignored = sizes_ignored(context: context, styles: styles);
-  let (minimum, maximum) = applied_width_limits(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
-  let specified = applied_width(styles: styles, style: style, basis: basis, frame: frame, ignored: ignored);
+  let percent_basis = unknown;
+  let (minimum, maximum) = applied_width_limits(styles: styles, style: style, basis: percent_basis, frame: frame, ignored: ignored);
+  let specified = applied_width(styles: styles, style: style, basis: percent_basis, frame: frame, ignored: ignored);
   let skipped = specified >= 0_i32;
   let (least_content, most_content) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
   let content_high = imax(most_content, least_content);

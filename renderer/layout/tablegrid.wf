@@ -1,0 +1,869 @@
+alias Styles = pkg::style::Styles;
+alias LengthPercentage = pkg::css::values::LengthPercentage;
+alias Sizing = pkg::css::values::Sizing;
+alias sizing_value = pkg::css::values::sizing_value;
+
+struct Col {
+  doc "A column's working state while its width is resolved (CSS Tables 3, 3.8.3 and 3.9): its min-content and max-content widths, its intrinsic percentage width (0 when none), whether a specified length constrains it and that length (-1 when none), whether a cell starts in it, whether it is collapsed (no cell starts in it and no col element gives it a box: it has no width and no spacing beside it), the borders and paddings its percentage cell adds to the percentage in fixed layout, and its resolved width.";
+  min: i32;
+  max: i32;
+  percent: f32;
+  constrained: Bool;
+  fixed: i32;
+  originates: Bool;
+  collapsed: Bool;
+  extra: i32;
+  width: i32;
+}
+
+struct Item {
+  doc "A cell's measures for the table algorithms: its child context, its first row and column and its spans clamped to the grid, its outer min-content width, its outer max-content widths in a column a specified length does and does not constrain, its specified border-box width (-1 when none) and percentage width (0 when none), and its computed borders, its paddings and the borders the table uses for it (half the winning border in collapsed mode), and whether its sizes are its border box's.";
+  child: u64;
+  row: u64;
+  column: u64;
+  rows: u64;
+  columns: u64;
+  min: i32;
+  max_free: i32;
+  max_fixed: i32;
+  width: i32;
+  percent: f32;
+  border: Edges;
+  padding: Edges;
+  used: Edges;
+  border_box: Bool;
+}
+
+fn get_i32(list: &Box<Slots<i32>>, at: u64) -> value: i32 reads(list) {
+  doc "The slot of list at at, 0 outside it.";
+  if at < list^.inner.len {
+    let found = list^.inner[at];
+    return found;
+  }
+  return 0_i32;
+}
+
+fn put_i32(list: &Box<Slots<i32>>, at: u64, value: i32) -> result: unit writes(list) {
+  doc "Sets the slot of list at at, ignoring a position outside it.";
+  if at < list^.inner.len {
+    set list^.inner[at] = value;
+  }
+  return unit;
+}
+
+fn get_i64(list: &Box<Slots<i64>>, at: u64) -> value: i64 reads(list) {
+  doc "The slot of list at at, 0 outside it.";
+  if at < list^.inner.len {
+    let found = list^.inner[at];
+    return found;
+  }
+  return 0_i64;
+}
+
+fn put_i64(list: &Box<Slots<i64>>, at: u64, value: i64) -> result: unit writes(list) {
+  doc "Sets the slot of list at at, ignoring a position outside it.";
+  if at < list^.inner.len {
+    set list^.inner[at] = value;
+  }
+  return unit;
+}
+
+fn filled_i32(count: u64, value: i32) -> made: Box<Slots<i32>> pure {
+  doc "A list of count copies of value.";
+  let bounded = imin(count, item_ceiling);
+  let list = box_slots_new::<i32>(capacity: bounded);
+  for (k in 0_u64..bounded) {
+    let pushed = push_item::<i32>(cell: &list, value: value, ceiling: item_ceiling);
+  }
+  return move list;
+}
+
+fn zeros_i64(count: u64) -> made: Box<Slots<i64>> pure {
+  doc "A list of count zeros.";
+  let bounded = imin(count, item_ceiling);
+  let list = box_slots_new::<i64>(capacity: bounded);
+  for (k in 0_u64..bounded) {
+    let pushed = push_item::<i64>(cell: &list, value: 0_i64, ceiling: item_ceiling);
+  }
+  return move list;
+}
+
+fn zeros_edges(count: u64) -> made: Box<Slots<Edges>> pure {
+  doc "A list of count empty Edges.";
+  let bounded = imin(count, item_ceiling);
+  let list = box_slots_new::<Edges>(capacity: bounded);
+  let none = no_edges();
+  for (k in 0_u64..bounded) {
+    let pushed = push_item::<Edges>(cell: &list, value: none, ceiling: item_ceiling);
+  }
+  return move list;
+}
+
+fn edges_get(list: &Box<Slots<Edges>>, at: u64) -> found: Edges reads(list) {
+  doc "The slot of list at at, empty outside it.";
+  if at < list^.inner.len {
+    let made = list^.inner[at];
+    return made;
+  }
+  let none = no_edges();
+  return none;
+}
+
+fn fresh_col() -> made: Col pure {
+  doc "A column with no constraint.";
+  let no = False();
+  return Col(min: 0_i32, max: 0_i32, percent: 0.0_f32, constrained: no, fixed: -1_i32, originates: no, collapsed: no, extra: 0_i32, width: 0_i32);
+}
+
+fn zeros_cols(count: u64) -> made: Box<Slots<Col>> pure {
+  doc "A list of count unconstrained columns.";
+  let bounded = imin(count, item_ceiling);
+  let list = box_slots_new::<Col>(capacity: bounded);
+  let fresh = fresh_col();
+  for (k in 0_u64..bounded) {
+    let pushed = push_item::<Col>(cell: &list, value: fresh, ceiling: item_ceiling);
+  }
+  return move list;
+}
+
+fn col_get(cols: &Box<Slots<Col>>, at: u64) -> found: Col reads(cols) {
+  doc "The column at at, an unconstrained one outside the list.";
+  if at < cols^.inner.len {
+    let made = cols^.inner[at];
+    return made;
+  }
+  let fresh = fresh_col();
+  return fresh;
+}
+
+fn col_put(cols: &Box<Slots<Col>>, at: u64, value: Col) -> result: unit writes(cols) {
+  doc "Sets the column at at, ignoring a position outside the list.";
+  if at < cols^.inner.len {
+    set cols^.inner[at] = value;
+  }
+  return unit;
+}
+
+fn narrow(value: i64) -> made: i32 pure {
+  doc "value within the range of i32.";
+  let low = imax(value, -2147483647_i64);
+  let bounded = imin(low, 2147483647_i64);
+  let made = cvt::<i64, i32>(bounded);
+  return made;
+}
+
+fn visible_columns(cols: &Box<Slots<Col>>, first: u64, end: u64) -> count: u64 reads(cols) {
+  doc "How many of the columns first to end have a width and spacing beside them, the others being collapsed.";
+  let total = 0_u64;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let shown = bnot(col.collapsed);
+    if shown {
+      set total = total +sat 1_u64;
+    }
+  }
+  return total;
+}
+
+fn spacing_between(cols: &Box<Slots<Col>>, first: u64, end: u64, spacing: i32) -> total: i32 reads(cols) {
+  doc "The border spacing between the visible columns first to end: one fewer than they are.";
+  let shown = visible_columns(cols: cols, first: first, end: end);
+  if shown == 0_u64 {
+    return 0_i32;
+  }
+  let gaps = shown - 1_u64;
+  let made = multiple(amount: spacing, count: gaps);
+  return made;
+}
+
+fn mark_collapsed(context: &Context, cols: &Box<Slots<Col>>) -> result: unit reads(context), writes(cols) {
+  doc "Collapses the columns no cell starts in and no col element gives a box (the reference does; the draft's grid keeps them): a cell that spans them is as wide as the columns it does not span over, and no spacing is counted beside them.";
+  let columns = cols^.inner.len;
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let styled = if c < context^.columns.inner.len {
+      give context^.columns.inner[c].styled;
+    } else {
+      give False();
+    }
+    let kept = bor(col.originates, styled);
+    set col.collapsed = bnot(kept);
+    col_put(cols: cols, at: c, value: col);
+  }
+  return unit;
+}
+
+fn multiple(amount: i32, count: u64) -> total: i32 pure {
+  doc "amount counted count times, saturating.";
+  let capped = imin(count, 1048576_u64);
+  let wide = cvt::<u64, i32>(capped);
+  let made = amount *sat wide;
+  return made;
+}
+
+fn percent_of(percent: f32, basis: i32) -> width: i32 pure {
+  doc "percent percent of basis, as a computed percentage resolves.";
+  let yes = True();
+  let value = LengthPercentage(px: 0.0_f32, percent: percent, has_percent: yes);
+  let made = resolve_lp(value: value, basis: basis);
+  return made;
+}
+
+fn width_parts(value: Sizing) -> (length: i32, percent: f32) pure {
+  doc "A computed width as its length in layout units (-1 when it is not a length) and its percentage (0 when it is not one).";
+  if value.kind == sizing_value {
+    if value.value.has_percent {
+      return -1_i32, value.value.percent;
+    }
+    let made = units(px: value.value.px);
+    return made, 0.0_f32;
+  }
+  return -1_i32, 0.0_f32;
+}
+
+fn share_out(deltas: &Box<Slots<i32>>, weights: &Box<Slots<i64>>, first: u64, end: u64, excess: i32) -> result: unit reads(weights), writes(deltas) {
+  doc "Adds excess to deltas first to end in proportion to weights, each taking its share of what remains so the last positive weight takes the rest and the shares add to excess exactly; nothing when no weight is positive.";
+  let total = 0_i64;
+  for (k in first..end) {
+    let weight = get_i64(list: weights, at: k);
+    if weight > 0_i64 {
+      set total = total +sat weight;
+    }
+  }
+  let remaining = cvt::<i32, i64>(excess);
+  for (k in first..end) {
+    let weight = get_i64(list: weights, at: k);
+    if weight > 0_i64 {
+      if total > 0_i64 {
+        let product = remaining *sat weight;
+        let wide = product / total;
+        let part = narrow(value: wide);
+        let before = get_i32(list: deltas, at: k);
+        let after = before +sat part;
+        put_i32(list: deltas, at: k, value: after);
+        set remaining = remaining -sat wide;
+        set total = total -sat weight;
+      }
+    }
+  }
+  return unit;
+}
+
+fn clear_range(list: &Box<Slots<i32>>, first: u64, end: u64) -> result: unit writes(list) {
+  doc "Sets the entries of list first to end to zero.";
+  for (k in first..end) {
+    put_i32(list: list, at: k, value: 0_i32);
+  }
+  return unit;
+}
+
+fn excess_weights(cols: &Box<Slots<Col>>, first: u64, end: u64, weights: &Box<Slots<i64>>) -> result: unit reads(cols), writes(weights) {
+  doc "The weights by which the columns first to end take excess width (CSS Tables 3, 3.9.3.2): in proportion to max-content width over the unconstrained columns of no percentage that have originating cells and a max-content width; else equally over those; else in proportion to max-content width over the constrained columns of no percentage; else in proportion to the percentage widths; else equally over the columns with originating cells; else equally over all.";
+  let any_free_wide = False();
+  let any_free = False();
+  let any_fixed_wide = False();
+  let any_percent = False();
+  let any_origin = False();
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let no_percent = fgt(col.percent, 0.0_f32);
+    let zero_percent = bnot(no_percent);
+    let free = bnot(col.constrained);
+    let free_origin = band(free, col.originates);
+    let free_zero = band(free_origin, zero_percent);
+    let wide = col.max > 0_i32;
+    let free_wide = band(free_zero, wide);
+    let fixed_zero = band(col.constrained, zero_percent);
+    let fixed_wide = band(fixed_zero, wide);
+    if free_wide {
+      set any_free_wide = True();
+    }
+    if free_zero {
+      set any_free = True();
+    }
+    if fixed_wide {
+      set any_fixed_wide = True();
+    }
+    if no_percent {
+      set any_percent = True();
+    }
+    if col.originates {
+      set any_origin = True();
+    }
+  }
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let has_percent = fgt(col.percent, 0.0_f32);
+    let zero_percent = bnot(has_percent);
+    let free = bnot(col.constrained);
+    let free_origin = band(free, col.originates);
+    let free_zero = band(free_origin, zero_percent);
+    let wide = col.max > 0_i32;
+    let free_wide = band(free_zero, wide);
+    let fixed_zero = band(col.constrained, zero_percent);
+    let fixed_wide = band(fixed_zero, wide);
+    let wide_weight = cvt::<i32, i64>(col.max);
+    let percent_weight = units(px: col.percent);
+    let percent_wide = cvt::<i32, i64>(percent_weight);
+    let weight = if any_free_wide {
+      if free_wide {
+        give wide_weight;
+      }
+      give 0_i64;
+    } else if any_free {
+      if free_zero {
+        give 1_i64;
+      }
+      give 0_i64;
+    } else if any_fixed_wide {
+      if fixed_wide {
+        give wide_weight;
+      }
+      give 0_i64;
+    } else if any_percent {
+      if has_percent {
+        give percent_wide;
+      }
+      give 0_i64;
+    } else if any_origin {
+      if col.originates {
+        give 1_i64;
+      }
+      give 0_i64;
+    } else if col.collapsed {
+      give 0_i64;
+    } else {
+      give 1_i64;
+    }
+    put_i64(list: weights, at: k, value: weight);
+  }
+  return unit;
+}
+
+fn grow_columns(cols: &Box<Slots<Col>>, deltas: &Box<Slots<i32>>, weights: &Box<Slots<i64>>, first: u64, end: u64, excess: i32, which: u8) -> result: unit writes(cols), writes(deltas), writes(weights) {
+  doc "Adds excess to the min-content (which 0), max-content (which 1) or used (which 2) widths of the columns first to end by the rules of excess_weights.";
+  if excess <= 0_i32 {
+    return unit;
+  }
+  clear_range(list: deltas, first: first, end: end);
+  excess_weights(cols: cols, first: first, end: end, weights: weights);
+  share_out(deltas: deltas, weights: weights, first: first, end: end, excess: excess);
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let more = get_i32(list: deltas, at: k);
+    if which == 0_u8 {
+      set col.min = col.min +sat more;
+    } else if which == 1_u8 {
+      set col.max = col.max +sat more;
+    } else {
+      set col.width = col.width +sat more;
+    }
+    col_put(cols: cols, at: k, value: col);
+  }
+  return unit;
+}
+
+fn span_percent(cols: &Box<Slots<Col>>, item: Item) -> result: unit writes(cols) {
+  doc "Takes a spanning cell's percentage width into the columns it spans that have none yet (CSS Tables 3, 3.8.3): the cell's percentage less the percentages the columns already have, shared in proportion to the columns' max-content widths, or equally when those are all zero.";
+  let wanted = fgt(item.percent, 0.0_f32);
+  if wanted {
+  } else {
+    return unit;
+  }
+  let first = item.column;
+  let end = first +sat item.columns;
+  let known = 0.0_f32;
+  let weight_total = 0_i64;
+  let free_count = 0_u64;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    set known = fadd.strict(known, col.percent);
+    let has = fgt(col.percent, 0.0_f32);
+    if has {
+    } else {
+      let wide_max = cvt::<i32, i64>(col.max);
+      set weight_total = weight_total +sat wide_max;
+      set free_count = free_count +sat 1_u64;
+    }
+  }
+  let remaining = fsub.strict(item.percent, known);
+  let positive = fgt(remaining, 0.0_f32);
+  if positive {
+  } else {
+    return unit;
+  }
+  if free_count == 0_u64 {
+    return unit;
+  }
+  let free_capped = imin(free_count, 1048576_u64);
+  let count_wide = cvt::<u64, i32>(free_capped);
+  let count_float = cvt.nearest::<i32, f32>(count_wide);
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    let has = fgt(col.percent, 0.0_f32);
+    if has {
+    } else {
+      let share = if weight_total > 0_i64 {
+        let own = cvt::<i32, i64>(col.max);
+        let own_float = cvt.nearest::<i64, f32>(own);
+        let total_float = cvt.nearest::<i64, f32>(weight_total);
+        let ratio = fdiv.strict(own_float, total_float);
+        give fmul.strict(remaining, ratio);
+      } else {
+        give fdiv.strict(remaining, count_float);
+      }
+      set col.percent = share;
+      col_put(cols: cols, at: k, value: col);
+    }
+  }
+  return unit;
+}
+
+fn distribute_span(cols: &Box<Slots<Col>>, deltas: &Box<Slots<i32>>, weights: &Box<Slots<i64>>, item: Item, spacing: i32) -> result: unit writes(cols), writes(deltas), writes(weights) {
+  doc "Takes a cell spanning several columns into their min-content and max-content widths: what its outer widths exceed the columns' sums by, less the spacing between them, goes to the columns by the rules of excess_weights (CSS Tables 3, 3.9.3.2 for intrinsic widths).";
+  let first = item.column;
+  let end = first +sat item.columns;
+  let between = spacing_between(cols: cols, first: first, end: end, spacing: spacing);
+  let min_sum = 0_i32;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    set min_sum = min_sum +sat col.min;
+  }
+  let min_need = item.min -sat between;
+  let min_excess = min_need -sat min_sum;
+  grow_columns(cols: cols, deltas: deltas, weights: weights, first: first, end: end, excess: min_excess, which: 0_u8);
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    set col.max = imax(col.max, col.min);
+    col_put(cols: cols, at: k, value: col);
+  }
+  let max_sum = 0_i32;
+  for (k in first..end) {
+    let col = col_get(cols: cols, at: k);
+    set max_sum = max_sum +sat col.max;
+  }
+  let own = if item.width >= 0_i32 {
+    give item.max_fixed;
+  } else {
+    give item.max_free;
+  }
+  let max_need = own -sat between;
+  let max_excess = max_need -sat max_sum;
+  grow_columns(cols: cols, deltas: deltas, weights: weights, first: first, end: end, excess: max_excess, which: 1_u8);
+  span_percent(cols: cols, item: item);
+  return unit;
+}
+
+fn measure_columns(context: &Context, styles: &Styles, items: &Box<Slots<Item>>, cols: &Box<Slots<Col>>, spacing: i32) -> result: unit reads(context), reads(styles), reads(items), writes(cols) {
+  doc "The columns' min-content and max-content widths and intrinsic percentage widths in automatic layout (CSS Tables 3, 3.8.3): the col elements' widths and the cells that span one column first, then the cells that span two columns, three, and so on; a column a specified length constrains takes only the outer min-content widths of its other cells into its max-content width.";
+  let columns = cols^.inner.len;
+  let count = items^.inner.len;
+  let deltas = filled_i32(count: columns, value: 0_i32);
+  let weights = zeros_i64(count: columns);
+  for (c in 0_u64..columns) {
+    if c < context^.columns.inner.len {
+      let slot = context^.columns.inner[c];
+      if slot.styled {
+        let sizes = size_of(styles: styles, style: slot.style);
+        let (length, percent) = width_parts(value: sizes.width);
+        let col = col_get(cols: cols, at: c);
+        if length >= 0_i32 {
+          set col.constrained = True();
+          set col.fixed = length;
+          set col.min = imax(col.min, length);
+          set col.max = imax(col.max, length);
+        }
+        set col.percent = fmax(col.percent, percent);
+        col_put(cols: cols, at: c, value: col);
+      }
+    }
+  }
+  let longest = 1_u64;
+  for (i in 0_u64..count) {
+    if i < items^.inner.len {
+      let item = items^.inner[i];
+      set longest = imax(longest, item.columns);
+      let col = col_get(cols: cols, at: item.column);
+      set col.originates = True();
+      if item.columns == 1_u64 {
+        if item.width >= 0_i32 {
+          set col.constrained = True();
+          set col.fixed = imax(col.fixed, item.width);
+        }
+        set col.percent = fmax(col.percent, item.percent);
+      }
+      col_put(cols: cols, at: item.column, value: col);
+    }
+  }
+  mark_collapsed(context: context, cols: cols);
+  for (i in 0_u64..count) {
+    if i < items^.inner.len {
+      let item = items^.inner[i];
+      if item.columns == 1_u64 {
+        let col = col_get(cols: cols, at: item.column);
+        let outer = if col.constrained {
+          give item.max_fixed;
+        } else {
+          give item.max_free;
+        }
+        set col.min = imax(col.min, item.min);
+        set col.max = imax(col.max, outer);
+        col_put(cols: cols, at: item.column, value: col);
+      }
+    }
+  }
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    set col.max = imax(col.max, col.min);
+    col_put(cols: cols, at: c, value: col);
+  }
+  let first_span = 2_u64;
+  let last_span = longest +sat 1_u64;
+  for (span in first_span..last_span) {
+    for (i in 0_u64..count) {
+      if i < items^.inner.len {
+        let item = items^.inner[i];
+        if item.columns == span {
+          distribute_span(cols: cols, deltas: &deltas, weights: &weights, item: item, spacing: spacing);
+        }
+      }
+    }
+  }
+  clamp_percents(cols: cols);
+  return unit;
+}
+
+fn measure_fixed(context: &Context, styles: &Styles, items: &Box<Slots<Item>>, cols: &Box<Slots<Col>>, spacing: i32) -> result: unit reads(context), reads(styles), reads(items), writes(cols) {
+  doc "The columns' widths in fixed layout (CSS Tables 3, 3.5.1 and 3.8.3): only the widths of the col elements and of the cells of the first row count, a cell that spans several columns giving each of the columns that have no width an equal share of what its width leaves after the spacing; a column with no length has min-content and max-content widths of zero.";
+  let columns = cols^.inner.len;
+  let count = items^.inner.len;
+  for (c in 0_u64..columns) {
+    if c < context^.columns.inner.len {
+      let slot = context^.columns.inner[c];
+      if slot.styled {
+        let sizes = size_of(styles: styles, style: slot.style);
+        let (length, percent) = width_parts(value: sizes.width);
+        let col = col_get(cols: cols, at: c);
+        if length >= 0_i32 {
+          set col.constrained = True();
+          set col.fixed = length;
+        }
+        set col.percent = fmax(col.percent, percent);
+        col_put(cols: cols, at: c, value: col);
+      }
+    }
+  }
+  for (i in 0_u64..count) {
+    if i < items^.inner.len {
+      let item = items^.inner[i];
+      let col = col_get(cols: cols, at: item.column);
+      set col.originates = True();
+      col_put(cols: cols, at: item.column, value: col);
+    }
+  }
+  mark_collapsed(context: context, cols: cols);
+  for (i in 0_u64..count) {
+    if i < items^.inner.len {
+      let item = items^.inner[i];
+      let col = col_get(cols: cols, at: item.column);
+      if item.row == 0_u64 {
+        let first = item.column;
+        let end = first +sat item.columns;
+        if item.columns == 1_u64 {
+          if col.fixed < 0_i32 {
+            if item.width >= 0_i32 {
+              set col.constrained = True();
+              set col.fixed = item.width;
+            }
+          }
+          let item_percent = fgt(item.percent, 0.0_f32);
+          let col_percent = fgt(col.percent, 0.0_f32);
+          if item_percent {
+            if col_percent {
+            } else {
+              set col.percent = item.percent;
+              let sides_border = horizontal(edges: item.used);
+              let sides_padding = horizontal(edges: item.padding);
+              let sides = sides_border +sat sides_padding;
+              if item.border_box {
+                set col.extra = 0_i32;
+              } else {
+                set col.extra = sides;
+              }
+            }
+          }
+          col_put(cols: cols, at: item.column, value: col);
+        } else if item.width >= 0_i32 {
+          let between = spacing_between(cols: cols, first: first, end: end, spacing: spacing);
+          let room = item.width -sat between;
+          let shown = visible_columns(cols: cols, first: first, end: end);
+          let share = if room > 0_i32 {
+            let capped = imin(shown, 1048576_u64);
+            let wide = cvt::<u64, i32>(capped);
+            if wide > 0_i32 {
+              give room / wide;
+            }
+            give 0_i32;
+          } else {
+            give 0_i32;
+          }
+          for (k in first..end) {
+            let part = col_get(cols: cols, at: k);
+            let open = part.fixed < 0_i32;
+            let shown_part = bnot(part.collapsed);
+            let takes = band(open, shown_part);
+            if takes {
+              set part.constrained = True();
+              set part.fixed = share;
+              col_put(cols: cols, at: k, value: part);
+            }
+          }
+        }
+      }
+    }
+  }
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let length = imax(col.fixed, 0_i32);
+    set col.min = length;
+    set col.max = length;
+    col_put(cols: cols, at: c, value: col);
+  }
+  clamp_percents(cols: cols);
+  return unit;
+}
+
+fn clamp_percents(cols: &Box<Slots<Col>>) -> result: unit writes(cols) {
+  doc "Limits each column's intrinsic percentage width to what the columns before it leave of 100 percent (CSS Tables 3, 3.8.3).";
+  let columns = cols^.inner.len;
+  let used = 0.0_f32;
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let room = fsub.strict(1.0e2_f32, used);
+    let least = fmax(room, 0.0_f32);
+    let clamped = fmin(col.percent, least);
+    set col.percent = clamped;
+    set used = fadd.strict(used, clamped);
+    col_put(cols: cols, at: c, value: col);
+  }
+  return unit;
+}
+
+fn column_totals(cols: &Box<Slots<Col>>) -> (minimum: i32, maximum: i32) reads(cols) {
+  doc "The sums of the columns' min-content and max-content widths; the max-content sum leaves room for the percentage columns, as the reference does: the percentage columns' max-content widths and the others' sum, each over the share of the table they leave, are lower bounds.";
+  let columns = cols^.inner.len;
+  let least = 0_i32;
+  let most = 0_i32;
+  let others = 0_i32;
+  let share = 0.0_f32;
+  let needed = 0_i32;
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    set least = least +sat col.min;
+    set most = most +sat col.max;
+    let has = fgt(col.percent, 0.0_f32);
+    if has {
+      set share = fadd.strict(share, col.percent);
+      let one_hundred = 1.0e2_f32;
+      let wide = pixels(raw: col.max);
+      let scaled = fmul.strict(wide, one_hundred);
+      let each = fdiv.strict(scaled, col.percent);
+      let units_needed = units(px: each);
+      set needed = imax(needed, units_needed);
+    } else {
+      set others = others +sat col.max;
+    }
+  }
+  let below = flt(share, 1.0e2_f32);
+  let used = fgt(share, 0.0_f32);
+  let scaled_others = if band(below, used) {
+    let remaining = fsub.strict(1.0e2_f32, share);
+    let wide = pixels(raw: others);
+    let scaled = fmul.strict(wide, 1.0e2_f32);
+    let each = fdiv.strict(scaled, remaining);
+    give units(px: each);
+  } else {
+    give 0_i32;
+  }
+  let first = imax(most, needed);
+  let maximum = imax(first, scaled_others);
+  return least, maximum;
+}
+
+fn guess_width(col: Col, kind: u8, assignable: i32) -> width: i32 pure {
+  doc "A column's width in a sizing guess (CSS Tables 3, 3.9.3): kind 0 min-content; 1 min-content-percentage, where a percentage column takes the larger of its percentage of the assignable width and its min-content width; 2 min-content-specified, where a constrained column takes its max-content width; 3 max-content, where every other column takes its max-content width.";
+  let has = fgt(col.percent, 0.0_f32);
+  if has {
+    if kind == 0_u8 {
+      return col.min;
+    }
+    let target = percent_of(percent: col.percent, basis: assignable);
+    let made = imax(target, col.min);
+    return made;
+  }
+  if kind == 3_u8 {
+    return imax(col.max, col.min);
+  }
+  if kind == 2_u8 {
+    if col.constrained {
+      return imax(col.max, col.min);
+    }
+  }
+  return col.min;
+}
+
+fn guess_sum(cols: &Box<Slots<Col>>, kind: u8, assignable: i32) -> total: i32 reads(cols) {
+  doc "The sum of the columns' widths in sizing guess kind.";
+  let columns = cols^.inner.len;
+  let sum = 0_i32;
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let width = guess_width(col: col, kind: kind, assignable: assignable);
+    set sum = sum +sat width;
+  }
+  return sum;
+}
+
+fn distribute_auto(cols: &Box<Slots<Col>>, assignable: i32) -> result: unit writes(cols) {
+  doc "Gives the columns their used widths in assignable width, which adds up to it (CSS Tables 3, 3.9.3): at most the min-content guess, the min-content widths; between two consecutive sizing guesses, a combination of them in proportion to what each column grows between them; beyond the max-content guess, that guess plus the excess shared by the rules of excess_weights.";
+  let columns = cols^.inner.len;
+  let deltas = filled_i32(count: columns, value: 0_i32);
+  let weights = zeros_i64(count: columns);
+  let sum_zero = guess_sum(cols: cols, kind: 0_u8, assignable: assignable);
+  let sum_one = guess_sum(cols: cols, kind: 1_u8, assignable: assignable);
+  let sum_two = guess_sum(cols: cols, kind: 2_u8, assignable: assignable);
+  let sum_three = guess_sum(cols: cols, kind: 3_u8, assignable: assignable);
+  let low = if assignable <= sum_zero {
+    give 0_u8;
+  } else if assignable <= sum_one {
+    give 0_u8;
+  } else if assignable <= sum_two {
+    give 1_u8;
+  } else {
+    give 2_u8;
+  }
+  let sum_low = if low == 0_u8 {
+    give sum_zero;
+  } else if low == 1_u8 {
+    give sum_one;
+  } else {
+    give sum_two;
+  }
+  let high = low +sat 1_u8;
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let base = guess_width(col: col, kind: low, assignable: assignable);
+    let top = guess_width(col: col, kind: high, assignable: assignable);
+    let growth = top -sat base;
+    let growth_wide = cvt::<i32, i64>(growth);
+    put_i64(list: &weights, at: c, value: growth_wide);
+    set col.width = base;
+    col_put(cols: cols, at: c, value: col);
+  }
+  let beyond = assignable > sum_three;
+  if beyond {
+    for (c in 0_u64..columns) {
+      let col = col_get(cols: cols, at: c);
+      let top = guess_width(col: col, kind: 3_u8, assignable: assignable);
+      set col.width = top;
+      col_put(cols: cols, at: c, value: col);
+    }
+    let excess = assignable -sat sum_three;
+    grow_columns(cols: cols, deltas: &deltas, weights: &weights, first: 0_u64, end: columns, excess: excess, which: 2_u8);
+    return unit;
+  }
+  let room = assignable -sat sum_low;
+  if room > 0_i32 {
+    share_out(deltas: &deltas, weights: &weights, first: 0_u64, end: columns, excess: room);
+    for (c in 0_u64..columns) {
+      let col = col_get(cols: cols, at: c);
+      let more = get_i32(list: &deltas, at: c);
+      set col.width = col.width +sat more;
+      col_put(cols: cols, at: c, value: col);
+    }
+  }
+  return unit;
+}
+
+fn distribute_fixed(cols: &Box<Slots<Col>>, assignable: i32) -> result: unit writes(cols) {
+  doc "Gives the columns their used widths in fixed layout (CSS Tables 3, 3.9.3.1): a column with a length takes it, a percentage column its percentage of the assignable width, the rest zero; the excess goes equally to the columns with no width, else in proportion to the lengths, else in proportion to the percentages, else equally to all.";
+  let columns = cols^.inner.len;
+  let deltas = filled_i32(count: columns, value: 0_i32);
+  let weights = zeros_i64(count: columns);
+  let sum = 0_i32;
+  let any_empty = False();
+  let any_length = False();
+  let any_percent = False();
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let has = fgt(col.percent, 0.0_f32);
+    let sized = col.fixed >= 0_i32;
+    let width = if sized {
+      give col.fixed;
+    } else if has {
+      let share = percent_of(percent: col.percent, basis: assignable);
+      give share +sat col.extra;
+    } else {
+      give 0_i32;
+    }
+    set col.width = width;
+    set sum = sum +sat width;
+    let empty_pair = bnot(sized);
+    let no_percent = bnot(has);
+    let empty = band(empty_pair, no_percent);
+    if empty {
+      set any_empty = True();
+    }
+    let positive = width > 0_i32;
+    let length_wide = band(sized, positive);
+    if length_wide {
+      set any_length = True();
+    }
+    if has {
+      set any_percent = True();
+    }
+    col_put(cols: cols, at: c, value: col);
+  }
+  let excess = assignable -sat sum;
+  if excess <= 0_i32 {
+    return unit;
+  }
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let has = fgt(col.percent, 0.0_f32);
+    let sized = col.fixed >= 0_i32;
+    let empty_pair = bnot(sized);
+    let no_percent = bnot(has);
+    let empty = band(empty_pair, no_percent);
+    let wide = cvt::<i32, i64>(col.width);
+    let percent_weight = units(px: col.percent);
+    let percent_wide = cvt::<i32, i64>(percent_weight);
+    let weight = if any_empty {
+      if empty {
+        give 1_i64;
+      }
+      give 0_i64;
+    } else if any_length {
+      if sized {
+        give wide;
+      }
+      give 0_i64;
+    } else if any_percent {
+      if has {
+        give percent_wide;
+      }
+      give 0_i64;
+    } else {
+      give 1_i64;
+    }
+    put_i64(list: &weights, at: c, value: weight);
+  }
+  share_out(deltas: &deltas, weights: &weights, first: 0_u64, end: columns, excess: excess);
+  for (c in 0_u64..columns) {
+    let col = col_get(cols: cols, at: c);
+    let more = get_i32(list: &deltas, at: c);
+    set col.width = col.width +sat more;
+    col_put(cols: cols, at: c, value: col);
+  }
+  return unit;
+}

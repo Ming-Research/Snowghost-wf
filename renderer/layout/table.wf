@@ -2,15 +2,1149 @@ alias Document = pkg::dom::Document;
 alias FontPicks = pkg::layout::text::FontPicks;
 alias FontSet = pkg::layout::text::FontSet;
 alias Styles = pkg::style::Styles;
+alias sizing_keyword = pkg::css::values::sizing_keyword;
+alias sizing_value = pkg::css::values::sizing_value;
 
-fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Placeholder until the table algorithm lands: lays the children out stacked, as blocks.";
-  lay_out_stacked(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+struct Table {
+  doc "What the table algorithms share between the intrinsic and the used pass: each cell's used borders and measures, the columns' working state, which child contexts are cells (1) and which are captions (0), the model (collapsed borders, fixed layout), the spacing, the table's own borders and paddings (half the winning border and no padding when collapsed) and the basis percentages of paddings resolve against.";
+  borders: Box<Slots<Edges>>;
+  items: Box<Slots<Item>>;
+  cols: Box<Slots<Col>>;
+  kinds: Box<Slots<i32>>;
+  collapsed: Bool;
+  fixed: Bool;
+  spacing_h: i32;
+  spacing_v: i32;
+  border: Edges;
+  padding: Edges;
+  basis: i32;
+}
+
+struct Track {
+  doc "A row's working state while its height is resolved: its height from its cells and its specified heights, the largest distance from the top to the baseline of its baseline-aligned cells and the largest from there to their bottoms, its own specified height (-1 when none), whether a specified height constrains it, and its top.";
+  size: i32;
+  ascent: i32;
+  descent: i32;
+  fixed: i32;
+  constrained: Bool;
+  y: i32;
+}
+
+fn measure_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, cell: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Measures one child of a table: a cell's content min-content and max-content widths, which it keeps in its context's min_content and max_content with intrinsic_known set, or a caption's intrinsic sizes. A cell's are the widths of its content, without its paddings and borders (the table adds the ones it uses), unlike every other context's, which are border-box widths: nothing but the table asks a cell for intrinsic_sizes, and what did would get the content's.";
+  if cell {
+    if child^.intrinsic_known {
+      return unit;
+    }
+    let no = False();
+    let (least, most) = intrinsic_content(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: no);
+    let high = imax(most, least);
+    set child^.min_content = least;
+    set child^.max_content = high;
+    set child^.intrinsic_known = True();
+    return unit;
+  }
+  let (least, most) = intrinsic_sizes(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   return unit;
 }
 
+fn measure_cells(context: &Context, styles: &Styles, borders: &Box<Slots<Edges>>, items: &Box<Slots<Item>>, fixed_mode: Bool, basis: i32) -> result: unit reads(context), reads(styles), reads(borders), writes(items) {
+  doc "Each cell's measures (CSS Tables 3, 3.8.2): its outer min-content width, the larger of its min-width and its content's, and its outer max-content width, the largest of min-width, width, its content's min-content width and the smaller of max-width and its content's max-content width, in a column a specified length constrains without the last term's content; in fixed layout only the specified widths count.";
+  let cells = context^.cells.inner.len;
+  let rows = context^.rows.inner.len;
+  let columns = context^.columns.inner.len;
+  for (i in 0_u64..cells) {
+    if i < context^.cells.inner.len {
+      let cell = context^.cells.inner[i];
+      let child = cvt::<u32, u64>(cell.context);
+      if child < context^.children.inner.len {
+        let style = context^.children.inner[child].style;
+        let border = border_edges(styles: styles, style: style);
+        let padding = padding_edges(styles: styles, style: style, basis: basis);
+        let used = edges_get(list: borders, at: i);
+        let used_border = horizontal(edges: used);
+        let used_padding = horizontal(edges: padding);
+        let frame = used_border +sat used_padding;
+        let unknown_basis = -1_i32;
+        let (minimum, maximum) = width_limits(styles: styles, style: style, basis: unknown_basis, frame: frame);
+        let specified = specified_width(styles: styles, style: style, basis: unknown_basis, frame: frame);
+        let sizes = size_of(styles: styles, style: style);
+        let (ignored, percent) = width_parts(value: sizes.width);
+        let content_least = if fixed_mode {
+          give 0_i32;
+        } else {
+          give context^.children.inner[child].min_content;
+        }
+        let content_most = if fixed_mode {
+          give 0_i32;
+        } else {
+          give context^.children.inner[child].max_content;
+        }
+        let outer_content_least = content_least +sat frame;
+        let outer_content_most = content_most +sat frame;
+        let outer_least = imax(outer_content_least, minimum);
+        let stated = imax(specified, 0_i32);
+        let wanted = imax(outer_least, stated);
+        let capped = if maximum >= 0_i32 {
+          give imin(maximum, outer_content_most);
+        } else {
+          give outer_content_most;
+        }
+        let free = imax(wanted, capped);
+        let min_value = if fixed_mode {
+          give stated;
+        } else {
+          give outer_least;
+        }
+        let free_value = if fixed_mode {
+          give stated;
+        } else {
+          give free;
+        }
+        let fixed_value = if fixed_mode {
+          give stated;
+        } else {
+          give wanted;
+        }
+        let row_first = cvt::<u32, u64>(cell.row);
+        let row_span = cvt::<u32, u64>(cell.row_span);
+        let row_room = rows -sat row_first;
+        let row_count = imin(row_span, row_room);
+        let column_first = cvt::<u32, u64>(cell.column);
+        let column_span = cvt::<u32, u64>(cell.column_span);
+        let column_room = columns -sat column_first;
+        let column_count = imin(column_span, column_room);
+        let group = box_of(styles: styles, style: style);
+        let border_box = border_box_sized(group: group);
+        let made = Item(child: child, row: row_first, column: column_first, rows: row_count, columns: column_count, min: min_value, max_free: free_value, max_fixed: fixed_value, width: specified, percent: percent, border: border, padding: padding, used: used, border_box: border_box);
+        let pushed = push_item::<Item>(cell: items, value: made, ceiling: item_ceiling);
+      }
+    }
+  }
+  return unit;
+}
+
+fn prepare_table(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> prepared: Table reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Everything about a table's columns before a width is chosen: the borders of its cells and its own by the border model, the intrinsic sizes of its cells and captions in one counted loop over its child contexts, each iteration writing only its own child, and the columns' min-content and max-content widths and intrinsic percentage widths.";
+  let style = context^.style;
+  let group = table_of(styles: styles, style: style);
+  let collapsed = group.border_collapse == 1_u8;
+  let basis = imax(context^.space.basis_width, 0_i32);
+  let cells = context^.cells.inner.len;
+  let children = context^.children.inner.len;
+  let columns = context^.columns.inner.len;
+  let borders = zeros_edges(count: cells);
+  let kinds = filled_i32(count: children, value: 0_i32);
+  for (i in 0_u64..cells) {
+    if i < context^.cells.inner.len {
+      let child = cvt::<u32, u64>(context^.cells.inner[i].context);
+      put_i32(list: &kinds, at: child, value: 1_i32);
+    }
+  }
+  let own_border = if collapsed {
+    let made = collapse_borders(context: context, styles: styles, edges: &borders);
+    give made;
+  } else {
+    let made = separate_borders(context: context, styles: styles, edges: &borders);
+    give made;
+  }
+  let own_padding = if collapsed {
+    let none = no_edges();
+    give none;
+  } else {
+    let made = padding_edges(styles: styles, style: style, basis: basis);
+    give made;
+  }
+  let spacing_h = if collapsed {
+    give 0_i32;
+  } else {
+    let made = units(px: group.spacing_horizontal);
+    give made;
+  }
+  let spacing_v = if collapsed {
+    give 0_i32;
+  } else {
+    let made = units(px: group.spacing_vertical);
+    give made;
+  }
+  let sizes = size_of(styles: styles, style: style);
+  let width_given = sizes.width.kind == sizing_value;
+  let layout_fixed = group.table_layout == 1_u8;
+  let fixed_mode = band(layout_fixed, width_given);
+  for (k in 0_u64..children) {
+    let value = get_i32(list: &kinds, at: k);
+    let cell = value > 0_i32;
+    let skipped = band(cell, fixed_mode);
+    if skipped {
+    } else {
+      measure_child(child: &context^.children.inner[k], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, cell: cell);
+    }
+  }
+  let item_capacity = imin(cells, item_ceiling);
+  let items = box_slots_new::<Item>(capacity: item_capacity);
+  measure_cells(context: context, styles: styles, borders: &borders, items: &items, fixed_mode: fixed_mode, basis: basis);
+  let cols = zeros_cols(count: columns);
+  if fixed_mode {
+    measure_fixed(context: context, styles: styles, items: &items, cols: &cols, spacing: spacing_h);
+  } else {
+    measure_columns(context: context, styles: styles, items: &items, cols: &cols, spacing: spacing_h);
+  }
+  let shown = visible_columns(cols: &cols, first: 0_u64, end: columns);
+  let rows_spacing = if shown > 0_u64 {
+    give spacing_v;
+  } else {
+    give 0_i32;
+  }
+  return Table(borders: move borders, items: move items, cols: move cols, kinds: move kinds, collapsed: collapsed, fixed: fixed_mode, spacing_h: spacing_h, spacing_v: rows_spacing, border: own_border, padding: own_padding, basis: basis);
+}
+
+fn captions_minimum(context: &Context, styles: &Styles) -> least: i32 reads(context), reads(styles) {
+  doc "CAPMIN (CSS Tables 3, 3.9.1): the largest min-content contribution of the captions, their margins included; their intrinsic sizes are measured.";
+  let best = 0_i32;
+  let count = context^.captions.inner.len;
+  for (n in 0_u64..count) {
+    if n < context^.captions.inner.len {
+      let child = cvt::<u32, u64>(context^.captions.inner[n]);
+      if child < context^.children.inner.len {
+        let style = context^.children.inner[child].style;
+        let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+        let around = horizontal(edges: margins);
+        let own = context^.children.inner[child].min_content;
+        let outer = own +sat around;
+        set best = imax(best, outer);
+      }
+    }
+  }
+  return best;
+}
+
+fn grid_spacing(table: &Table) -> total: i32 reads(table) {
+  doc "The horizontal border spacing a table with at least one column holds: one more than its columns (CSS Tables 3, 3.8.2), the collapsed columns not counted.";
+  let columns = table^.cols.inner.len;
+  let shown = visible_columns(cols: &table^.cols, first: 0_u64, end: columns);
+  if shown == 0_u64 {
+    return 0_i32;
+  }
+  let count = shown +sat 1_u64;
+  let made = multiple(amount: table^.spacing_h, count: count);
+  return made;
+}
+
+fn computed_frame(context: &Context, styles: &Styles, basis: i32) -> frame: i32 reads(context), reads(styles) {
+  doc "The horizontal paddings and borders of the table's style as computed, which the generic intrinsic sizes add to a context's content.";
+  let style = context^.style;
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis);
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let made = frame_border +sat frame_padding;
+  return made;
+}
+
 fn intrinsic_table(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Placeholder until the table algorithm lands: the largest of the children's intrinsic sizes.";
-  let (least, most) = intrinsic_stacked(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  doc "The table's content widths (CSS Tables 3, 3.1): the columns' min-content or max-content widths and the border spacing, at least what makes the table as wide as its widest caption's min-content width, less the paddings and borders the generic sizes add again, which differ from the table's own in collapsed-borders mode. A percentage column asks the table for the width in which it gets its share of the max-content widths of the others (the reference does; the draft's sums do not say so).";
+  let table = prepare_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let (sum_least, sum_most) = column_totals(cols: &table.cols);
+  let spacing = grid_spacing(table: &table);
+  let border_frame = horizontal(edges: table.border);
+  let padding_frame = horizontal(edges: table.padding);
+  let frame = border_frame +sat padding_frame;
+  let caption = captions_minimum(context: context, styles: styles);
+  let grid_least = sum_least +sat spacing;
+  let grid_most = sum_most +sat spacing;
+  let outer_least_grid = grid_least +sat frame;
+  let outer_most_grid = grid_most +sat frame;
+  let outer_least = imax(outer_least_grid, caption);
+  let outer_most = imax(outer_most_grid, outer_least);
+  let known = computed_frame(context: context, styles: styles, basis: table.basis);
+  let least = outer_least -sat known;
+  let most = outer_most -sat known;
   return least, most;
+}
+
+fn table_width(context: &Context, styles: &Styles, table: &Table, grid_least: i32, grid_most: i32, caption: i32) -> width: i32 reads(context), reads(styles), reads(table) {
+  doc "The table's used border-box width (CSS Tables 3, 3.9.1): the width its parent imposes, else its width property, else the smaller of the grid's max-content width and the room its margins leave; clamped by max-width, and at least the greater of min-width, the widest caption's min-content width and the grid's min-content width. A table's width, min-width and max-width are always its border box's (the reference does; the draft is silent).";
+  let space = context^.space;
+  let style = context^.style;
+  let border_frame = horizontal(edges: table^.border);
+  let padding_frame = horizontal(edges: table^.padding);
+  let frame = border_frame +sat padding_frame;
+  let basis = space.basis_width;
+  let (minimum, maximum) = width_limits(styles: styles, style: style, basis: basis, frame: frame);
+  let specified = specified_width(styles: styles, style: style, basis: basis, frame: frame);
+  let margins = margin_edges(styles: styles, style: style, basis: basis);
+  let around = horizontal(edges: margins);
+  let room = space.available -sat around;
+  let base = if space.forced_width >= 0_i32 {
+    give space.forced_width;
+  } else if specified >= 0_i32 {
+    give specified;
+  } else {
+    give imin(grid_most, room);
+  }
+  let capped = if maximum >= 0_i32 {
+    give imin(base, maximum);
+  } else {
+    give base;
+  }
+  let floor_grid = imax(grid_least, caption);
+  let floor = imax(floor_grid, minimum);
+  let made = imax(capped, floor);
+  return made;
+}
+
+fn first_baseline(cell: &Context) -> (baseline: i32, found: Bool) reads(cell) {
+  doc "The baseline of a cell (CSS Tables 3, 3.10.2): the baseline of its first line box, or of its first in-flow child context that has one, from the cell's border box's top.";
+  let items = cell^.flow.inner.len;
+  for (k in 0_u64..items) {
+    if k < cell^.flow.inner.len {
+      let item = cell^.flow.inner[k];
+      match item {
+        Text(paragraph: p) => {
+          let at = cvt::<u32, u64>(p);
+          if at < cell^.paragraphs.inner.len {
+            if 0_u64 < cell^.paragraphs.inner[at].lines.inner.len {
+              let line = cell^.paragraphs.inner[at].lines.inner[0_u64];
+              let top = cell^.paragraphs.inner[at].top;
+              let inner = top +sat line.top;
+              let made = inner +sat line.baseline;
+              return made, True();
+            }
+          }
+        }
+        Child(context: c) => {
+          let at = cvt::<u32, u64>(c);
+          if at < cell^.children.inner.len {
+            if cell^.children.inner[at].has_baseline {
+              let top = cell^.children.inner[at].y;
+              let made = top +sat cell^.children.inner[at].baseline;
+              return made, True();
+            }
+          }
+        }
+        Open(..) => {
+        }
+        Close(..) => {
+        }
+        Float(..) => {
+        }
+        Out(..) => {
+        }
+      }
+    }
+  }
+  return 0_i32, False();
+}
+
+fn align_of(styles: &Styles, style: StyleRef) -> align: i32 reads(styles) {
+  doc "How a cell aligns vertically in its rows: 0 baseline (also for every value that does not apply to cells), 1 top, 2 middle, 3 bottom.";
+  let text = text_of(styles: styles, style: style);
+  let value = text.vertical_align;
+  if value.kind == sizing_keyword {
+    if value.keyword == 6_u8 {
+      return 1_i32;
+    }
+    if value.keyword == 5_u8 {
+      return 2_i32;
+    }
+    if value.keyword == 7_u8 {
+      return 3_i32;
+    }
+  }
+  return 0_i32;
+}
+
+fn owns_fragment(style: StyleRef) -> own: Bool pure {
+  doc "Tells whether a context of style reports its own box as the first of its fragments: an element's does, an anonymous box and a generated box do not.";
+  let named = bnot(style.anonymous);
+  let plain = style.pseudo == no_pseudo;
+  let made = band(named, plain);
+  return made;
+}
+
+fn shift_cell(cell: &Context, dx: i32, dy: i32) -> result: unit writes(cell) {
+  doc "Moves a laid-out cell's content by dx, dy: every fragment but the cell's own, which comes first when it has one, and every child context.";
+  let moved = dx != 0_i32;
+  let lowered = dy != 0_i32;
+  let any = bor(moved, lowered);
+  if any {
+  } else {
+    return unit;
+  }
+  let fragments = cell^.fragments.inner.len;
+  let own = owns_fragment(style: cell^.style);
+  let first = if own {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  }
+  for (f in first..fragments) {
+    if f < cell^.fragments.inner.len {
+      let x = cell^.fragments.inner[f].x +sat dx;
+      let y = cell^.fragments.inner[f].y +sat dy;
+      set cell^.fragments.inner[f].x = x;
+      set cell^.fragments.inner[f].y = y;
+    }
+  }
+  let children = cell^.children.inner.len;
+  for (c in 0_u64..children) {
+    if c < cell^.children.inner.len {
+      let x = cell^.children.inner[c].x +sat dx;
+      let y = cell^.children.inner[c].y +sat dy;
+      set cell^.children.inner[c].x = x;
+      set cell^.children.inner[c].y = y;
+    }
+  }
+  return unit;
+}
+
+fn lay_out_part(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, forced: i32, basis: i32, available: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Lays out one child of a table: a cell (forced is its border-box width) at that width with a natural height and no margins, a caption (forced is -1) as a block in the table's width with its margins.";
+  let no = False();
+  if forced >= 0_i32 {
+    set child^.space = Space(available: forced, basis_width: basis, basis_height: -1_i32, forced_width: forced, forced_height: -1_i32, shrink: no);
+    lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    return unit;
+  }
+  set child^.space = child_space(available: available, basis_width: available, basis_height: -1_i32, shrink: no);
+  lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  return unit;
+}
+
+fn finish_part(child: &Context, cell: Bool, width: i32, height: i32, dx: i32, dy: i32) -> result: unit writes(child) {
+  doc "Gives a laid-out cell its final border box, a width and a height of the rows and columns it spans, and its content its offset; a caption stays as laid out.";
+  if cell {
+    shift_cell(cell: child, dx: dx, dy: dy);
+    set child^.width = width;
+    set child^.height = height;
+    let own = owns_fragment(style: child^.style);
+    if own {
+      if 0_u64 < child^.fragments.inner.len {
+        set child^.fragments.inner[0_u64].width = width;
+        set child^.fragments.inner[0_u64].height = height;
+      }
+    }
+  }
+  return unit;
+}
+
+fn fresh_track() -> made: Track pure {
+  doc "A row with no content and no specified height.";
+  let no = False();
+  return Track(size: 0_i32, ascent: 0_i32, descent: 0_i32, fixed: -1_i32, constrained: no, y: 0_i32);
+}
+
+fn track_get(tracks: &Box<Slots<Track>>, at: u64) -> found: Track reads(tracks) {
+  doc "The row at at, an empty one outside the list.";
+  if at < tracks^.inner.len {
+    let made = tracks^.inner[at];
+    return made;
+  }
+  let fresh = fresh_track();
+  return fresh;
+}
+
+fn track_put(tracks: &Box<Slots<Track>>, at: u64, value: Track) -> result: unit writes(tracks) {
+  doc "Sets the row at at, ignoring a position outside the list.";
+  if at < tracks^.inner.len {
+    set tracks^.inner[at] = value;
+  }
+  return unit;
+}
+
+fn track_sum(tracks: &Box<Slots<Track>>, first: u64, end: u64) -> total: i32 reads(tracks) {
+  doc "The heights of the rows first to end.";
+  let sum = 0_i32;
+  for (r in first..end) {
+    let track = track_get(tracks: tracks, at: r);
+    set sum = sum +sat track.size;
+  }
+  return sum;
+}
+
+fn grow_tracks(tracks: &Box<Slots<Track>>, deltas: &Box<Slots<i32>>, weights: &Box<Slots<i64>>, first: u64, end: u64, excess: i32, only_free: Bool) -> result: unit writes(tracks), writes(deltas), writes(weights) {
+  doc "Adds excess to the heights of the rows first to end in proportion to their heights, only those no specified height constrains when only_free and any of them is free; equally when their heights are all zero (the reference's distribution; the draft shares equally).";
+  if excess <= 0_i32 {
+    return unit;
+  }
+  clear_range(list: deltas, first: first, end: end);
+  let eligible = 0_u64;
+  for (r in first..end) {
+    let track = track_get(tracks: tracks, at: r);
+    let free = bnot(track.constrained);
+    if free {
+      set eligible = eligible +sat 1_u64;
+    }
+  }
+  let some = eligible > 0_u64;
+  let restrict = band(only_free, some);
+  let total = 0_i64;
+  for (r in first..end) {
+    let track = track_get(tracks: tracks, at: r);
+    let free = bnot(track.constrained);
+    let counted = if restrict {
+      give free;
+    } else {
+      give True();
+    }
+    let wide = cvt::<i32, i64>(track.size);
+    let weight = if counted {
+      give wide;
+    } else {
+      give 0_i64;
+    }
+    put_i64(list: weights, at: r, value: weight);
+    set total = total +sat weight;
+  }
+  if total <= 0_i64 {
+    for (r in first..end) {
+      let track = track_get(tracks: tracks, at: r);
+      let free = bnot(track.constrained);
+      let counted = if restrict {
+        give free;
+      } else {
+        give True();
+      }
+      let weight = if counted {
+        give 1_i64;
+      } else {
+        give 0_i64;
+      }
+      put_i64(list: weights, at: r, value: weight);
+    }
+  }
+  share_out(deltas: deltas, weights: weights, first: first, end: end, excess: excess);
+  for (r in first..end) {
+    let track = track_get(tracks: tracks, at: r);
+    let more = get_i32(list: deltas, at: r);
+    set track.size = track.size +sat more;
+    track_put(tracks: tracks, at: r, value: track);
+  }
+  return unit;
+}
+
+fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<Slots<Track>>, natural: &Box<Slots<i32>>, minimums: &Box<Slots<i32>>, ascents: &Box<Slots<i32>>, aligns: &Box<Slots<i32>>) -> result: unit reads(context), reads(styles), reads(table), writes(tracks), writes(natural), writes(minimums), writes(ascents), writes(aligns) {
+  doc "The rows' heights from the laid-out cells (CSS Tables 3, 3.10.2): a row is as tall as its tallest cell that spans it alone and starts at the top, and as its baseline-aligned cells' tallest ascent and tallest descent together, and as its own specified height; cells spanning several rows then add what they lack, in proportion to the heights of the rows they span, in order of their spans. A cell's natural height is its laid-out height with the borders the table uses instead of its computed ones, which its specified height does not change: that is a least height of its own, which does not move its content, so a baseline-aligned cell with room to spare in it does not make its row taller.";
+  let rows = tracks^.inner.len;
+  let count = table^.items.inner.len;
+  for (r in 0_u64..rows) {
+    if r < context^.rows.inner.len {
+      let row_style = context^.rows.inner[r].style;
+      let track = track_get(tracks: tracks, at: r);
+      let real = bnot(row_style.anonymous);
+      if real {
+        let sizes = size_of(styles: styles, style: row_style);
+        let (length, percent) = width_parts(value: sizes.height);
+        set track.fixed = length;
+        let has_percent = fgt(percent, 0.0_f32);
+        let has_length = length >= 0_i32;
+        set track.constrained = bor(has_length, has_percent);
+        set track.size = imax(length, 0_i32);
+      }
+      track_put(tracks: tracks, at: r, value: track);
+    }
+  }
+  let longest = 1_u64;
+  for (i in 0_u64..count) {
+    if i < table^.items.inner.len {
+      let item = table^.items.inner[i];
+      set longest = imax(longest, item.rows);
+      let child = item.child;
+      if child < context^.children.inner.len {
+        let style = context^.children.inner[child].style;
+        let height = context^.children.inner[child].height;
+        let outer = height +sat item.used.top;
+        let above = outer +sat item.used.bottom;
+        let computed_top = item.border.top +sat item.border.bottom;
+        let natural_height = above -sat computed_top;
+        let (line, found) = first_baseline(cell: &context^.children.inner[child]);
+        let used_top = item.used.top -sat item.border.top;
+        let ascent = if found {
+          give line +sat used_top;
+        } else {
+          let bottom_edge = item.used.bottom +sat item.padding.bottom;
+          give natural_height -sat bottom_edge;
+        }
+        let align = align_of(styles: styles, style: style);
+        let frame_used = item.used.top +sat item.used.bottom;
+        let frame_padding = item.padding.top +sat item.padding.bottom;
+        let frame_vertical = frame_used +sat frame_padding;
+        let stated = specified_height(styles: styles, style: style, basis: -1_i32, frame: frame_vertical);
+        let minimum = imax(stated, 0_i32);
+        put_i32(list: natural, at: i, value: natural_height);
+        put_i32(list: minimums, at: i, value: minimum);
+        put_i32(list: ascents, at: i, value: ascent);
+        put_i32(list: aligns, at: i, value: align);
+        let track = track_get(tracks: tracks, at: item.row);
+        let on_baseline = align == 0_i32;
+        if on_baseline {
+          let low = natural_height -sat ascent;
+          set track.ascent = imax(track.ascent, ascent);
+          if item.rows == 1_u64 {
+            set track.descent = imax(track.descent, low);
+          }
+        } else if item.rows == 1_u64 {
+          set track.size = imax(track.size, natural_height);
+        }
+        if item.rows == 1_u64 {
+          set track.size = imax(track.size, minimum);
+        }
+        if item.rows == 1_u64 {
+          let sizes = size_of(styles: styles, style: style);
+          if sizes.height.kind == sizing_value {
+            set track.constrained = True();
+          }
+        }
+        track_put(tracks: tracks, at: item.row, value: track);
+      }
+    }
+  }
+  for (r in 0_u64..rows) {
+    let track = track_get(tracks: tracks, at: r);
+    let based = track.ascent +sat track.descent;
+    set track.size = imax(track.size, based);
+    track_put(tracks: tracks, at: r, value: track);
+  }
+  let deltas = filled_i32(count: rows, value: 0_i32);
+  let weights = zeros_i64(count: rows);
+  let first_span = 2_u64;
+  let last_span = longest +sat 1_u64;
+  for (span in first_span..last_span) {
+    for (i in 0_u64..count) {
+      if i < table^.items.inner.len {
+        let item = table^.items.inner[i];
+        if item.rows == span {
+          let first = item.row;
+          let end = first +sat item.rows;
+          let between_count = item.rows -sat 1_u64;
+          let between = multiple(amount: table^.spacing_v, count: between_count);
+          let have = track_sum(tracks: tracks, first: first, end: end);
+          let have_all = have +sat between;
+          let content_need = get_i32(list: natural, at: i);
+          let least_need = get_i32(list: minimums, at: i);
+          let need = imax(content_need, least_need);
+          let excess = need -sat have_all;
+          let no = False();
+          grow_tracks(tracks: tracks, deltas: &deltas, weights: &weights, first: first, end: end, excess: excess, only_free: no);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn apply_group_heights(context: &Context, styles: &Styles, tracks: &Box<Slots<Track>>, spacing: i32) -> result: unit reads(context), reads(styles), writes(tracks) {
+  doc "A row group's height is a least height for its rows (the reference does; the draft ignores heights on row groups): what it exceeds its rows' heights and the spacing between them by goes to the rows by grow_tracks.";
+  let rows = tracks^.inner.len;
+  let deltas = filled_i32(count: rows, value: 0_i32);
+  let weights = zeros_i64(count: rows);
+  for (r in 0_u64..rows) {
+    let group = group_at(context: context, at: r);
+    let real = bnot(group.anonymous);
+    let opens = if r == 0_u64 {
+      give True();
+    } else {
+      let before = r - 1_u64;
+      let earlier = group_at(context: context, at: before);
+      let other = earlier.element != group.element;
+      give bor(other, earlier.anonymous);
+    }
+    let starts = band(real, opens);
+    if starts {
+      let end = r +sat 1_u64;
+      let first_after = r +sat 1_u64;
+      for (k in first_after..rows) {
+        let later = group_at(context: context, at: k);
+        let same = later.element == group.element;
+        let named = bnot(later.anonymous);
+        let inside = band(same, named);
+        if inside {
+          set end = k +sat 1_u64;
+        } else {
+          break;
+        }
+      }
+      let sizes = size_of(styles: styles, style: group);
+      let (length, percent) = width_parts(value: sizes.height);
+      if length >= 0_i32 {
+        let count = end -sat r;
+        let between_count = count -sat 1_u64;
+        let between = multiple(amount: spacing, count: between_count);
+        let have = track_sum(tracks: tracks, first: r, end: end);
+        let have_all = have +sat between;
+        let excess = length -sat have_all;
+        let yes = True();
+        grow_tracks(tracks: tracks, deltas: &deltas, weights: &weights, first: r, end: end, excess: excess, only_free: yes);
+      }
+    }
+  }
+  return unit;
+}
+
+fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out a table (CSS Tables 3, 3.2): its columns' measures, its width, the columns' used widths, its cells and captions in one counted loop at those widths, then the rows' heights, the table's height, the cells' vertical alignment, and the boxes of the table, its rows, row groups and columns. The context's border box is the table wrapper, which holds the captions; the table's own border box inside it holds the grid.";
+  let style = context^.style;
+  let table = prepare_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let columns = table.cols.inner.len;
+  let rows = context^.rows.inner.len;
+  let children = context^.children.inner.len;
+  let border_frame = horizontal(edges: table.border);
+  let padding_frame = horizontal(edges: table.padding);
+  let frame = border_frame +sat padding_frame;
+  let spacing = grid_spacing(table: &table);
+  let (sum_least, sum_most) = column_totals(cols: &table.cols);
+  let caption = captions_minimum(context: context, styles: styles);
+  let grid_least_inner = sum_least +sat spacing;
+  let grid_most_inner = sum_most +sat spacing;
+  let grid_least = grid_least_inner +sat frame;
+  let grid_most = grid_most_inner +sat frame;
+  let width = table_width(context: context, styles: styles, table: &table, grid_least: grid_least, grid_most: grid_most, caption: caption);
+  let inner = width -sat frame;
+  let assignable_raw = inner -sat spacing;
+  let assignable = imax(assignable_raw, 0_i32);
+  if table.fixed {
+    distribute_fixed(cols: &table.cols, assignable: assignable);
+  } else {
+    distribute_auto(cols: &table.cols, assignable: assignable);
+  }
+  let origin_x = table.border.left +sat table.padding.left;
+  let first_edge = if spacing > 0_i32 {
+    give origin_x +sat table.spacing_h;
+  } else {
+    give origin_x;
+  }
+  let edge = first_edge;
+  let seen = False();
+  for (c in 0_u64..columns) {
+    if c < table.cols.inner.len {
+      if c < context^.columns.inner.len {
+        let col = table.cols.inner[c];
+        if col.collapsed {
+          set context^.columns.inner[c].x = edge;
+          set context^.columns.inner[c].width = 0_i32;
+        } else {
+          let start = if seen {
+            give edge +sat table.spacing_h;
+          } else {
+            give edge;
+          }
+          set context^.columns.inner[c].x = start;
+          set context^.columns.inner[c].width = col.width;
+          set edge = start +sat col.width;
+          set seen = True();
+        }
+      }
+    }
+  }
+  let forced = filled_i32(count: children, value: -1_i32);
+  let items = table.items.inner.len;
+  for (i in 0_u64..items) {
+    if i < table.items.inner.len {
+      let item = table.items.inner[i];
+      let first = item.column;
+      let last = first +sat item.columns;
+      let last_column = last -sat 1_u64;
+      if first < context^.columns.inner.len {
+        if last_column < context^.columns.inner.len {
+          let start = context^.columns.inner[first].x;
+          let finish_start = context^.columns.inner[last_column].x;
+          let finish = finish_start +sat context^.columns.inner[last_column].width;
+          let span_width = finish -sat start;
+          let computed_sides = horizontal(edges: item.border);
+          let used_sides = horizontal(edges: item.used);
+          let with_computed = span_width +sat computed_sides;
+          let wanted = with_computed -sat used_sides;
+          let box_width = imax(wanted, 0_i32);
+          put_i32(list: &forced, at: item.child, value: box_width);
+        }
+      }
+    }
+  }
+  for (k in 0_u64..children) {
+    let box_width = get_i32(list: &forced, at: k);
+    lay_out_part(child: &context^.children.inner[k], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, forced: box_width, basis: table.basis, available: width);
+  }
+  let track_capacity = imin(rows, item_ceiling);
+  let tracks = box_slots_new::<Track>(capacity: track_capacity);
+  let fresh = fresh_track();
+  for (r in 0_u64..rows) {
+    let pushed = push_item::<Track>(cell: &tracks, value: fresh, ceiling: item_ceiling);
+  }
+  let natural = filled_i32(count: items, value: 0_i32);
+  let minimums = filled_i32(count: items, value: 0_i32);
+  let ascents = filled_i32(count: items, value: 0_i32);
+  let aligns = filled_i32(count: items, value: 0_i32);
+  measure_rows(context: context, styles: styles, table: &table, tracks: &tracks, natural: &natural, minimums: &minimums, ascents: &ascents, aligns: &aligns);
+  apply_group_heights(context: context, styles: styles, tracks: &tracks, spacing: table.spacing_v);
+  let top_captions = 0_i32;
+  let bottom_captions = 0_i32;
+  let captions = context^.captions.inner.len;
+  for (n in 0_u64..captions) {
+    if n < context^.captions.inner.len {
+      let child = cvt::<u32, u64>(context^.captions.inner[n]);
+      if child < context^.children.inner.len {
+        let caption_style = context^.children.inner[child].style;
+        let side = table_of(styles: styles, style: caption_style);
+        let above = context^.children.inner[child].margin_top +sat context^.children.inner[child].height;
+        let outer = above +sat context^.children.inner[child].margin_bottom;
+        if side.caption_side == 1_u8 {
+          set bottom_captions = bottom_captions +sat outer;
+        } else {
+          set top_captions = top_captions +sat outer;
+        }
+      }
+    }
+  }
+  let content_height = track_sum(tracks: &tracks, first: 0_u64, end: rows);
+  let some_rows = rows > 0_u64;
+  let some_columns = columns > 0_u64;
+  let occupied = band(some_rows, some_columns);
+  let spacing_rows = if occupied {
+    let count = rows +sat 1_u64;
+    let made = multiple(amount: table.spacing_v, count: count);
+    give made;
+  } else {
+    give 0_i32;
+  }
+  let frame_border_v = vertical(edges: table.border);
+  let frame_padding_v = vertical(edges: table.padding);
+  let frame_v = frame_border_v +sat frame_padding_v;
+  let natural_inner = content_height +sat spacing_rows;
+  let natural_grid = natural_inner +sat frame_v;
+  let space = context^.space;
+  let (minimum_height, maximum_height) = height_limits(styles: styles, style: style, basis: space.basis_height, frame: frame_v);
+  let specified_grid = specified_height(styles: styles, style: style, basis: space.basis_height, frame: frame_v);
+  let imposed = if space.forced_height >= 0_i32 {
+    let captions_total = top_captions +sat bottom_captions;
+    let left = space.forced_height -sat captions_total;
+    give imax(left, 0_i32);
+  } else {
+    give specified_grid;
+  }
+  let capped_target = if maximum_height >= 0_i32 {
+    if imposed >= 0_i32 {
+      give imin(imposed, maximum_height);
+    }
+    give imposed;
+  } else {
+    give imposed;
+  }
+  let target = imax(capped_target, minimum_height);
+  let grid_height = imax(natural_grid, target);
+  let extra = grid_height -sat natural_grid;
+  if extra > 0_i32 {
+    let deltas = filled_i32(count: rows, value: 0_i32);
+    let weights = zeros_i64(count: rows);
+    let yes = True();
+    grow_tracks(tracks: &tracks, deltas: &deltas, weights: &weights, first: 0_u64, end: rows, excess: extra, only_free: yes);
+  }
+  let grid_top = top_captions;
+  let row_cursor_top = grid_top +sat table.border.top;
+  let row_cursor_pad = row_cursor_top +sat table.padding.top;
+  let y_cursor = row_cursor_pad +sat table.spacing_v;
+  for (r in 0_u64..rows) {
+    let track = track_get(tracks: &tracks, at: r);
+    set track.y = y_cursor;
+    track_put(tracks: &tracks, at: r, value: track);
+    if r < context^.rows.inner.len {
+      set context^.rows.inner[r].y = y_cursor;
+      set context^.rows.inner[r].height = track.size;
+    }
+    let after = y_cursor +sat track.size;
+    set y_cursor = after +sat table.spacing_v;
+  }
+  let finals_width = filled_i32(count: children, value: 0_i32);
+  let finals_height = filled_i32(count: children, value: 0_i32);
+  let finals_dx = filled_i32(count: children, value: 0_i32);
+  let finals_dy = filled_i32(count: children, value: 0_i32);
+  for (i in 0_u64..items) {
+    if i < table.items.inner.len {
+      let item = table.items.inner[i];
+      let first_row = item.row;
+      let last_row_end = first_row +sat item.rows;
+      let last_row = last_row_end -sat 1_u64;
+      let first_column = item.column;
+      let last_column_end = first_column +sat item.columns;
+      let last_column = last_column_end -sat 1_u64;
+      let top_track = track_get(tracks: &tracks, at: first_row);
+      let bottom_track = track_get(tracks: &tracks, at: last_row);
+      let bottom_edge = bottom_track.y +sat bottom_track.size;
+      let box_height = bottom_edge -sat top_track.y;
+      let left = if first_column < context^.columns.inner.len {
+        give context^.columns.inner[first_column].x;
+      } else {
+        give 0_i32;
+      }
+      let right = if last_column < context^.columns.inner.len {
+        let start = context^.columns.inner[last_column].x;
+        give start +sat context^.columns.inner[last_column].width;
+      } else {
+        give left;
+      }
+      let box_width = right -sat left;
+      let need = get_i32(list: &natural, at: i);
+      let ascent = get_i32(list: &ascents, at: i);
+      let align = get_i32(list: &aligns, at: i);
+      let room = box_height -sat need;
+      let align_offset = if align == 1_i32 {
+        give 0_i32;
+      } else if align == 3_i32 {
+        give room;
+      } else if align == 2_i32 {
+        give room / 2_i32;
+      } else {
+        give top_track.ascent -sat ascent;
+      }
+      let offset = imax(align_offset, 0_i32);
+      let used_top = item.used.top -sat item.border.top;
+      let used_left = item.used.left -sat item.border.left;
+      let total_dy = offset +sat used_top;
+      if item.child < context^.children.inner.len {
+        set context^.children.inner[item.child].x = left;
+        set context^.children.inner[item.child].y = top_track.y;
+      }
+      put_i32(list: &finals_width, at: item.child, value: box_width);
+      put_i32(list: &finals_height, at: item.child, value: box_height);
+      put_i32(list: &finals_dx, at: item.child, value: used_left);
+      put_i32(list: &finals_dy, at: item.child, value: total_dy);
+    }
+  }
+  for (k in 0_u64..children) {
+    let kind = get_i32(list: &table.kinds, at: k);
+    let cell = kind > 0_i32;
+    let box_width = get_i32(list: &finals_width, at: k);
+    let box_height = get_i32(list: &finals_height, at: k);
+    let dx = get_i32(list: &finals_dx, at: k);
+    let dy = get_i32(list: &finals_dy, at: k);
+    finish_part(child: &context^.children.inner[k], cell: cell, width: box_width, height: box_height, dx: dx, dy: dy);
+  }
+  let grid_bottom = grid_top +sat grid_height;
+  let top_cursor = 0_i32;
+  let bottom_cursor = grid_bottom;
+  for (n in 0_u64..captions) {
+    if n < context^.captions.inner.len {
+      let child = cvt::<u32, u64>(context^.captions.inner[n]);
+      if child < context^.children.inner.len {
+        let caption_style = context^.children.inner[child].style;
+        let side = table_of(styles: styles, style: caption_style);
+        let margin_left = context^.children.inner[child].margin_left;
+        let margin_right = context^.children.inner[child].margin_right;
+        let caption_width = context^.children.inner[child].width;
+        let used = margin_left +sat caption_width;
+        let all = used +sat margin_right;
+        let free = width -sat all;
+        let half = free / 2_i32;
+        let x = margin_left +sat half;
+        let margin_top = context^.children.inner[child].margin_top;
+        let caption_height = context^.children.inner[child].height;
+        if side.caption_side == 1_u8 {
+          let y = bottom_cursor +sat margin_top;
+          set context^.children.inner[child].x = x;
+          set context^.children.inner[child].y = y;
+          let after = y +sat caption_height;
+          set bottom_cursor = after +sat context^.children.inner[child].margin_bottom;
+        } else {
+          let y = top_cursor +sat margin_top;
+          set context^.children.inner[child].x = x;
+          set context^.children.inner[child].y = y;
+          let after = y +sat caption_height;
+          set top_cursor = after +sat context^.children.inner[child].margin_bottom;
+        }
+      }
+    }
+  }
+  let total_height = grid_bottom +sat bottom_captions;
+  set context^.width = width;
+  set context^.height = total_height;
+  let first_track = track_get(tracks: &tracks, at: 0_u64);
+  let first_baseline_row = if first_track.ascent > 0_i32 {
+    give first_track.ascent;
+  } else {
+    give first_track.size;
+  }
+  let baseline = first_track.y +sat first_baseline_row;
+  set context^.baseline = baseline;
+  set context^.has_baseline = rows > 0_u64;
+  add_own_fragment(context: context);
+  add_row_fragments(context: context, tracks: &tracks);
+  add_column_fragments(context: context, tracks: &tracks, grid_top: grid_top);
+  return unit;
+}
+
+fn group_at(context: &Context, at: u64) -> style: StyleRef reads(context) {
+  doc "The style of the row group of row at, an anonymous one outside the rows.";
+  if at < context^.rows.inner.len {
+    let made = context^.rows.inner[at].group;
+    return made;
+  }
+  let yes = True();
+  return StyleRef(element: 0_u32, pseudo: no_pseudo, anonymous: yes);
+}
+
+fn table_column(context: &Context, at: u64) -> found: TableColumn reads(context) {
+  doc "The column at at, an unstyled one outside the columns.";
+  if at < context^.columns.inner.len {
+    let made = context^.columns.inner[at];
+    return made;
+  }
+  let yes = True();
+  let no = False();
+  let anonymous = StyleRef(element: 0_u32, pseudo: no_pseudo, anonymous: yes);
+  return TableColumn(style: anonymous, styled: no, group: anonymous, x: 0_i32, width: 0_i32);
+}
+
+fn add_row_fragments(context: &Context, tracks: &Box<Slots<Track>>) -> result: unit reads(tracks), writes(context) {
+  doc "Reports the boxes of the rows and of the row groups: a row spans the columns' width and its own height, a row group its rows. Anonymous rows and groups have no box to report.";
+  let rows = tracks^.inner.len;
+  let columns = context^.columns.inner.len;
+  let left = if columns > 0_u64 {
+    give context^.columns.inner[0_u64].x;
+  } else {
+    give 0_i32;
+  }
+  let right = if columns > 0_u64 {
+    let last = columns - 1_u64;
+    let start = context^.columns.inner[last].x;
+    give start +sat context^.columns.inner[last].width;
+  } else {
+    give left;
+  }
+  let span = right -sat left;
+  for (r in 0_u64..rows) {
+    if r < context^.rows.inner.len {
+      let row = context^.rows.inner[r];
+      let track = track_get(tracks: tracks, at: r);
+      let real = bnot(row.style.anonymous);
+      if real {
+        add_fragment(context: context, kind: placed_element, owner: row.style.element, x: left, y: track.y, width: span, height: track.size);
+      }
+      let group = row.group;
+      let real_group = bnot(group.anonymous);
+      if real_group {
+        let opens = if r == 0_u64 {
+          give True();
+        } else {
+          let before = r - 1_u64;
+          let earlier = group_at(context: context, at: before);
+          let other = earlier.element != group.element;
+          give bor(other, earlier.anonymous);
+        }
+        if opens {
+          let bottom = track.y +sat track.size;
+          for (k in r..rows) {
+            let more = k +sat 1_u64;
+            let inside = if more < rows {
+              let later = group_at(context: context, at: more);
+              let same = later.element == group.element;
+              let named = bnot(later.anonymous);
+              give band(same, named);
+            } else {
+              give False();
+            }
+            let reached = track_get(tracks: tracks, at: k);
+            set bottom = reached.y +sat reached.size;
+            if inside {
+            } else {
+              break;
+            }
+          }
+          let height = bottom -sat track.y;
+          add_fragment(context: context, kind: placed_element, owner: group.element, x: left, y: track.y, width: span, height: height);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn add_column_fragments(context: &Context, tracks: &Box<Slots<Track>>, grid_top: i32) -> result: unit reads(tracks), writes(context) {
+  doc "Reports the boxes of the col elements and the colgroup elements: a column box spans the rows' extent and its columns' widths, one box for the columns of one element (a span), a colgroup's the box of its columns.";
+  let columns = context^.columns.inner.len;
+  let rows = tracks^.inner.len;
+  let top = if rows > 0_u64 {
+    let first = track_get(tracks: tracks, at: 0_u64);
+    give first.y;
+  } else {
+    give grid_top;
+  }
+  let bottom = if rows > 0_u64 {
+    let last_row = rows - 1_u64;
+    let last = track_get(tracks: tracks, at: last_row);
+    give last.y +sat last.size;
+  } else {
+    give top;
+  }
+  let height = bottom -sat top;
+  for (c in 0_u64..columns) {
+    if c < context^.columns.inner.len {
+      let column = table_column(context: context, at: c);
+      let real = bnot(column.style.anonymous);
+      let shown = band(column.styled, real);
+      let opens = if c == 0_u64 {
+        give True();
+      } else {
+        let before = c - 1_u64;
+        let earlier = table_column(context: context, at: before);
+        let other = earlier.style.element != column.style.element;
+        let plain = bnot(earlier.styled);
+        give bor(other, plain);
+      }
+      let reported = band(shown, opens);
+      if reported {
+        let right = column.x +sat column.width;
+        for (k in c..columns) {
+          let more = k +sat 1_u64;
+          let same = if more < columns {
+            let later = table_column(context: context, at: more);
+            let equal = later.style.element == column.style.element;
+            give band(equal, later.styled);
+          } else {
+            give False();
+          }
+          let reached = table_column(context: context, at: k);
+          set right = reached.x +sat reached.width;
+          if same {
+          } else {
+            break;
+          }
+        }
+        let width = right -sat column.x;
+        add_fragment(context: context, kind: placed_element, owner: column.style.element, x: column.x, y: top, width: width, height: height);
+      }
+      let held = bnot(column.group.anonymous);
+      let group_opens = if c == 0_u64 {
+        give True();
+      } else {
+        let before = c - 1_u64;
+        let earlier = table_column(context: context, at: before);
+        let other = earlier.group.element != column.group.element;
+        let plain = earlier.group.anonymous;
+        give bor(other, plain);
+      }
+      let group_reported = band(held, group_opens);
+      if group_reported {
+        let right = column.x +sat column.width;
+        for (k in c..columns) {
+          let more = k +sat 1_u64;
+          let same = if more < columns {
+            let later = table_column(context: context, at: more);
+            let equal = later.group.element == column.group.element;
+            let named = bnot(later.group.anonymous);
+            give band(equal, named);
+          } else {
+            give False();
+          }
+          let reached = table_column(context: context, at: k);
+          set right = reached.x +sat reached.width;
+          if same {
+          } else {
+            break;
+          }
+        }
+        let width = right -sat column.x;
+        add_fragment(context: context, kind: placed_element, owner: column.group.element, x: column.x, y: top, width: width, height: height);
+      }
+    }
+  }
+  return unit;
 }
