@@ -567,6 +567,98 @@ fn add_box_rects(stack: &Box<Slots<OpenBox>>, at: u64, rect: Pending, list: &Box
   return unit;
 }
 
+fn framed_box(styles: &Styles, style: StyleRef) -> framed: Bool reads(styles) {
+  doc "Tells whether an inline box styled style has a margin, border or padding.";
+  let borders = border_edges(styles: styles, style: style);
+  let paddings = padding_edges(styles: styles, style: style, basis: 0_i32);
+  let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
+  let across_border = horizontal(edges: borders);
+  let down_border = vertical(edges: borders);
+  let across_padding = horizontal(edges: paddings);
+  let down_padding = vertical(edges: paddings);
+  let bordered_x = across_border != 0_i32;
+  let bordered_y = down_border != 0_i32;
+  let padded_x = across_padding != 0_i32;
+  let padded_y = down_padding != 0_i32;
+  let left_margin = margins.left != 0_i32;
+  let right_margin = margins.right != 0_i32;
+  let top_margin = margins.top != 0_i32;
+  let bottom_margin = margins.bottom != 0_i32;
+  let bordered = bor(bordered_x, bordered_y);
+  let padded = bor(padded_x, padded_y);
+  let side_margins = bor(left_margin, right_margin);
+  let end_margins = bor(top_margin, bottom_margin);
+  let margined = bor(side_margins, end_margins);
+  let framed_box_edges = bor(bordered, padded);
+  let made = bor(framed_box_edges, margined);
+  return made;
+}
+
+fn framed_inside(paragraph: &Paragraph, styles: &Styles) -> inside: Box<Array<u8>> reads(paragraph), reads(styles) {
+  doc "For each of the paragraph's marks, 1 when it opens an inline box inside which another inline box has a margin, border or padding; the reference keeps such a box whole rather than culled.";
+  let marks = paragraph^.marks.inner.len;
+  let count = imin(marks, item_ceiling);
+  let inside = box_array_filled::<u8>(count: count, value: 0_u8);
+  let open_marks = box_slots_new::<u64>(capacity: 8_u64);
+  let open_framed = box_slots_new::<u8>(capacity: 8_u64);
+  for (m in 0_u64..count) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Open(style: owner, ..) => {
+        let framed = framed_box(styles: styles, style: owner);
+        let flag = if framed {
+          give 1_u8;
+        } else {
+          give 0_u8;
+        }
+        let pushed = push_item::<u64>(cell: &open_marks, value: m, ceiling: 4096_u64);
+        let pushed_flag = push_item::<u8>(cell: &open_framed, value: flag, ceiling: 4096_u64);
+      }
+      Close(..) => {
+        let depth = open_marks.inner.len;
+        let depth_flags = open_framed.inner.len;
+        let marks_open = depth > 0_u64;
+        let flags_open = depth_flags > 0_u64;
+        let both = band(marks_open, flags_open);
+        if both {
+          let last = depth - 1_u64;
+          let last_flag = depth_flags - 1_u64;
+          let opened_at = open_marks.inner[last];
+          let own_framed = open_framed.inner[last_flag];
+          let carried = if opened_at < inside.inner.len {
+            give inside.inner[opened_at];
+          } else {
+            give 0_u8;
+          }
+          let removed = take_back(window: &open_marks.inner);
+          let present = open_framed.inner.len;
+          if present > 0_u64 {
+            let removed_flag = take_back(window: &open_framed.inner);
+          }
+          let own_raised = own_framed != 0_u8;
+          let carried_raised = carried != 0_u8;
+          let raised = bor(own_raised, carried_raised);
+          let outer_depth = open_marks.inner.len;
+          if raised {
+            if outer_depth > 0_u64 {
+              let outer = outer_depth - 1_u64;
+              let outer_mark = open_marks.inner[outer];
+              if outer_mark < inside.inner.len {
+                set inside.inner[outer_mark] = 1_u8;
+              }
+            }
+          }
+        }
+      }
+      Atomic(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return move inside;
+}
+
 fn culled_box(styles: &Styles, style: StyleRef) -> culled: Bool reads(styles) {
   doc "Tells whether an inline box styled style is culled, as the reference culls one that paints and offsets nothing of its own: static position, no border, padding or margin and a transparent background; the reference then reports the runs of its own content and its children's rectangles rather than one rectangle per line. Opacity, outlines and shadows, which also keep a box, are outside the style stage's scope.";
   let group = box_of(styles: styles, style: style);
@@ -784,6 +876,7 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
   let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: paragraph^.style);
   let text = text_of(styles: styles, style: paragraph^.style);
   let align = text.text_align;
+  let framed_marks = framed_inside(paragraph: paragraph, styles: styles);
   let marks = paragraph^.marks.inner.len;
   let mark = 0_u64;
   let top = 0_i32;
@@ -933,7 +1026,15 @@ fn finish_lines(paragraph: &Paragraph, sizes: &Measure, children: &[Context], st
                 }
               }
             }
-            let culled = culled_box(styles: styles, style: owner);
+            let own_culled = culled_box(styles: styles, style: owner);
+            let this_mark = mark -sat 1_u64;
+            let framed_below = if this_mark < framed_marks.inner.len {
+              give framed_marks.inner[this_mark] != 0_u8;
+            } else {
+              give False();
+            }
+            let open_inside = bnot(framed_below);
+            let culled = band(own_culled, open_inside);
             let no_run = False();
             let opened = OpenBox(style: owner, shift: shift, metrics: own, start: x, began: began, dx: moved_x, dy: moved_y, edge: edge, group: group, culled: culled, seg_start: x, seg_items: no_run, emitted: no_run);
             let pushed = push_item::<OpenBox>(cell: &stack, value: opened, ceiling: 4096_u64);
