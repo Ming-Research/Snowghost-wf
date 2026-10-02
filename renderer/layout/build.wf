@@ -1824,6 +1824,240 @@ fn add_column_group(document: &Document, styles: &Styles, walk: &Walk, node: Nod
   return Ok<unit, LayoutError>(value: unit);
 }
 
+fn place_cell(table: &Context, busy: &Box<Slots<u32>>, row: u32, column: u64, content: Context, row_span: u32, column_span: u32) -> result: Result<u64, LayoutError> writes(table), writes(busy) {
+  doc "Adds the cell content to the table in row row, at the first column from column that no cell of an earlier row spans into, with its spans (a cell occupies its columns for its rows: busy holds, for each column, the first row it is free again), and returns the column after it.";
+  let column_here = column;
+  let columns = busy^.inner.len;
+  for (skip in 0_u64..columns) {
+    if column_here < busy^.inner.len {
+      let wide_row = cvt::<u32, u64>(row);
+      let held = cvt::<u32, u64>(busy^.inner[column_here]);
+      if held > wide_row {
+        set column_here = column_here +sat 1_u64;
+      } else {
+        break;
+      }
+    } else {
+      break;
+    }
+  }
+  let child_index = table^.children.inner.len;
+  if child_index < 4294967295_u64 {
+  } else {
+    return too_large::<u64>();
+  }
+  let kept = propagate push_or_fail::<Context>(cell: &table^.children, value: move content);
+  if column_here < 4294967295_u64 {
+  } else {
+    return too_large::<u64>();
+  }
+  let child_at = cvt::<u64, u32>(child_index);
+  let column_at = cvt::<u64, u32>(column_here);
+  let placed = TableCell(context: child_at, row: row, column: column_at, row_span: row_span, column_span: column_span);
+  let listed = propagate push_or_fail::<TableCell>(cell: &table^.cells, value: placed);
+  let width = cvt::<u32, u64>(column_span);
+  let free_from = row +sat row_span;
+  for (k in 0_u64..width) {
+    let target = column_here +sat k;
+    let length = busy^.inner.len;
+    if target >= length {
+      let missing_gap = target - length;
+      let missing = missing_gap + 1_u64;
+      for (fill in 0_u64..missing) {
+        let grown = propagate push_or_fail::<u32>(cell: busy, value: 0_u32);
+      }
+    }
+    if target < busy^.inner.len {
+      set busy^.inner[target] = free_from;
+    }
+  }
+  let next = column_here +sat width;
+  return Ok<u64, LayoutError>(value: next);
+}
+
+fn is_table_child(display: u8) -> part: Bool pure {
+  doc "Tells whether a box of display is a proper child of a table: a caption, a column or column group, a row group or a row.";
+  let caption = display == display_caption;
+  let column = display == display_column;
+  let column_group = display == display_column_group;
+  let body = display == display_row_group;
+  let header = display == display_header_group;
+  let footer = display == display_footer_group;
+  let row = display == display_row;
+  let first = bor(caption, column);
+  let second = bor(column_group, body);
+  let third = bor(header, footer);
+  let fourth = bor(first, second);
+  let fifth = bor(third, row);
+  let made = bor(fourth, fifth);
+  return made;
+}
+
+fn walk_run(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, first: NodeId, context: &Context, open: &Open) -> result: Result<Option<NodeId>, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
+  doc "Adds the siblings from first on to the flow context and its open paragraph, as walk_children does the children of a parent, up to the first sibling that is a table part or a table cell, which is returned; None when the siblings end.";
+  let nodes = document^.nodes.inner.len;
+  let cursor = Some<NodeId>(value: first);
+  for (step in 0_u64..nodes) {
+    let node = match cursor {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        let ended = None<NodeId>();
+        return Ok<Option<NodeId>, LayoutError>(value: ended);
+      }
+    }
+    let at = cvt::<u32, u64>(node.index);
+    if at < nodes {
+    } else {
+      return inconsistent::<Option<NodeId>>();
+    }
+    let data = &document^.nodes.inner[at].data;
+    match data^ {
+      Text(data: span) => {
+        let start = cvt::<u32, u64>(span^.start);
+        let end = cvt::<u32, u64>(span^.end);
+        let size = end -sat start;
+        if size > 0_u64 {
+          let owner = current_style(open: open);
+          let piece = Piece::Bytes(start: span^.start, end: span^.end, style: owner, node: node.index);
+          let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
+        }
+      }
+      Element(..) => {
+        let element = element_at(walk: walk, node: node);
+        if element != unlisted {
+          let style = element_ref(element: element);
+          let group = box_of(styles: styles, style: style);
+          let part = is_table_child(display: group.display);
+          let cell = group.display == display_cell;
+          let stop = bor(part, cell);
+          if stop {
+            let found_at = Some<NodeId>(value: node);
+            return Ok<Option<NodeId>, LayoutError>(value: found_at);
+          }
+          let added = propagate walk_element(document: document, styles: styles, atoms: atoms, walk: walk, node: node, context: context, open: open);
+        }
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+    set cursor = document^.nodes.inner[at].links.next_sibling;
+  }
+  return inconsistent::<Option<NodeId>>();
+}
+
+fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, first: NodeId, group: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<Option<NodeId>, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(table), writes(busy) {
+  doc "Adds the anonymous table-row (CSS 2.2 17.2.1) around the siblings from first on that are not proper children of a table or row group: each cell element among them is a cell of the row, and each run of other content (text with more than white space, inline and block boxes) is the content of an anonymous cell. Returns the first sibling that is a proper child, None when the siblings end.";
+  let row_index = table^.rows.inner.len;
+  if row_index < 4294967295_u64 {
+  } else {
+    return too_large::<Option<NodeId>>();
+  }
+  let row = cvt::<u64, u32>(row_index);
+  let row_style = anonymous_of(style: table^.style);
+  let made = TableRow(style: row_style, group: group, group_kind: group_kind, y: 0_i32, height: 0_i32);
+  let pushed = propagate push_or_fail::<TableRow>(cell: &table^.rows, value: made);
+  let nodes = document^.nodes.inner.len;
+  let cursor = Some<NodeId>(value: first);
+  let column = 0_u64;
+  for (step in 0_u64..nodes) {
+    let child = match cursor {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        let ended = None<NodeId>();
+        return Ok<Option<NodeId>, LayoutError>(value: ended);
+      }
+    }
+    let at = cvt::<u32, u64>(child.index);
+    if at < nodes {
+    } else {
+      return inconsistent::<Option<NodeId>>();
+    }
+    let next_sibling = document^.nodes.inner[at].links.next_sibling;
+    let next_cursor = next_sibling;
+    let data = &document^.nodes.inner[at].data;
+    match data^ {
+      Text(data: span) => {
+        let start = cvt::<u32, u64>(span^.start);
+        let end = cvt::<u32, u64>(span^.end);
+        let ordered = start <= end;
+        let inside = end <= document^.text.inner.len;
+        let usable = band(ordered, inside);
+        if usable {
+          let blank = is_blank(bytes: &document^.text.inner[start..end]);
+          if blank {
+          } else {
+            let content = new_context(kind: ctx_flow, style: row_style);
+            let open = new_open(style: row_style, first: 0_u64);
+            let rest = propagate walk_run(document: document, styles: styles, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
+            let ended = propagate end_paragraph(context: &content, open: &open);
+            let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: 1_u32, column_span: 1_u32);
+            set column = next;
+            set next_cursor = rest;
+          }
+        }
+      }
+      Element(..) => {
+        let element = element_at(walk: walk, node: child);
+        if element != unlisted {
+          let style = element_ref(element: element);
+          let box_group = box_of(styles: styles, style: style);
+          let part = is_table_child(display: box_group.display);
+          if part {
+            let found_at = Some<NodeId>(value: child);
+            return Ok<Option<NodeId>, LayoutError>(value: found_at);
+          }
+          if box_group.display == display_none {
+          } else if box_group.display == display_cell {
+            let column_span = span_attribute(document: document, node: child, name: atom_colspan, fallback: 1_u32, least: 1_u32, most: 1000_u32);
+            let raw_rows = span_attribute(document: document, node: child, name: atom_rowspan, fallback: 1_u32, least: 0_u32, most: 65534_u32);
+            let row_span = if raw_rows == 0_u32 {
+              give 65534_u32;
+            } else {
+              give raw_rows;
+            }
+            set walk^.depth = walk^.depth +sat 1_u64;
+            let not_item = False();
+            let counted = propagate apply_counters(styles: styles, walk: walk, style: style, list_item: not_item);
+            let content = propagate build_box(document: document, styles: styles, atoms: atoms, walk: walk, node: child, element: element, style: style, kind: ctx_flow);
+            leave_scope(walk: walk);
+            set walk^.depth = walk^.depth -sat 1_u64;
+            let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: row_span, column_span: column_span);
+            set column = next;
+          } else {
+            let content = new_context(kind: ctx_flow, style: row_style);
+            let open = new_open(style: row_style, first: 0_u64);
+            let rest = propagate walk_run(document: document, styles: styles, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
+            let ended = propagate end_paragraph(context: &content, open: &open);
+            let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: 1_u32, column_span: 1_u32);
+            set column = next;
+            set next_cursor = rest;
+          }
+        }
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+    set cursor = next_cursor;
+  }
+  return inconsistent::<Option<NodeId>>();
+}
+
 fn add_row(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, group: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(table), writes(busy) {
   doc "Adds the row node and its cells: each cell takes the first column, from the left, that no cell of an earlier row spans into, and occupies its colspan columns for its rowspan rows; busy holds, for each column, the first row it is free again.";
   let row_index = table^.rows.inner.len;
@@ -1862,18 +2096,6 @@ fn add_row(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk,
       let cell_style = element_ref(element: element);
       let cell_group = box_of(styles: styles, style: cell_style);
       if cell_group.display == display_cell {
-        let columns = busy^.inner.len;
-        for (skip in 0_u64..columns) {
-          if column < busy^.inner.len {
-            if busy^.inner[column] > row {
-              set column = column +sat 1_u64;
-            } else {
-              break;
-            }
-          } else {
-            break;
-          }
-        }
         let column_span = span_attribute(document: document, node: child, name: atom_colspan, fallback: 1_u32, least: 1_u32, most: 1000_u32);
         let raw_rows = span_attribute(document: document, node: child, name: atom_rowspan, fallback: 1_u32, least: 0_u32, most: 65534_u32);
         let row_span = if raw_rows == 0_u32 {
@@ -1887,37 +2109,8 @@ fn add_row(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk,
         let content = propagate build_box(document: document, styles: styles, atoms: atoms, walk: walk, node: child, element: element, style: cell_style, kind: ctx_flow);
         leave_scope(walk: walk);
         set walk^.depth = walk^.depth -sat 1_u64;
-        let child_index = table^.children.inner.len;
-        if child_index < 4294967295_u64 {
-        } else {
-          return too_large::<unit>();
-        }
-        let kept = propagate push_or_fail::<Context>(cell: &table^.children, value: move content);
-        if column < 4294967295_u64 {
-        } else {
-          return too_large::<unit>();
-        }
-        let child_at = cvt::<u64, u32>(child_index);
-        let column_at = cvt::<u64, u32>(column);
-        let placed = TableCell(context: child_at, row: row, column: column_at, row_span: row_span, column_span: column_span);
-        let listed = propagate push_or_fail::<TableCell>(cell: &table^.cells, value: placed);
-        let width = cvt::<u32, u64>(column_span);
-        let free_from = row +sat row_span;
-        for (k in 0_u64..width) {
-          let target = column +sat k;
-          let length = busy^.inner.len;
-          if target >= length {
-            let missing_gap = target - length;
-            let missing = missing_gap + 1_u64;
-            for (fill in 0_u64..missing) {
-              let grown = propagate push_or_fail::<u32>(cell: busy, value: 0_u32);
-            }
-          }
-          if target < busy^.inner.len {
-            set busy^.inner[target] = free_from;
-          }
-        }
-        set column = column +sat width;
+        let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: row_span, column_span: column_span);
+        set column = next;
       }
     }
   }
@@ -1959,6 +2152,43 @@ fn add_group(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
         let added = propagate add_row(document: document, styles: styles, atoms: atoms, walk: walk, node: child, style: row_style, group: style, group_kind: group_kind, table: table, busy: busy);
         leave_scope(walk: walk);
         set walk^.depth = walk^.depth -sat 1_u64;
+      } else if row_group.display == display_none {
+      } else {
+        let part = is_table_child(display: row_group.display);
+        if part {
+        } else {
+          let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
+          set cursor = rest;
+        }
+      }
+    } else {
+      let data = &document^.nodes.inner[at].data;
+      match data^ {
+        Text(data: span) => {
+          let start = cvt::<u32, u64>(span^.start);
+          let end = cvt::<u32, u64>(span^.end);
+          let ordered = start <= end;
+          let inside = end <= document^.text.inner.len;
+          let usable = band(ordered, inside);
+          if usable {
+            let blank = is_blank(bytes: &document^.text.inner[start..end]);
+            if blank {
+            } else {
+              let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
+              set cursor = rest;
+            }
+          }
+        }
+        Element(..) => {
+        }
+        DocumentRoot(..) => {
+        }
+        DocumentType(..) => {
+        }
+        Comment(..) => {
+        }
+        Fragment() => {
+        }
       }
     }
   }
@@ -1966,7 +2196,7 @@ fn add_group(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
 }
 
 fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, table: &Context) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(table) {
-  doc "Builds a table's structure: captions as child contexts listed in captions; columns from col and colgroup; rows from the first header group, then the body groups and bare rows in order (further header and footer groups count as body groups), then the first footer group; each cell a child context listed in cells. Content outside rows and cells is skipped.";
+  doc "Builds a table's structure: captions as child contexts listed in captions; columns from col and colgroup; rows from the first header group, then the body groups and bare rows in order (further header and footer groups count as body groups), then the first footer group; each cell a child context listed in cells. Cells and other content that are children of the table or of a row group, not of a row, are in an anonymous row, other content in an anonymous cell of it (CSS 2.2 17.2.1).";
   let nodes = document^.nodes.inner.len;
   let index = cvt::<u32, u64>(node.index);
   if index < nodes {
@@ -2080,6 +2310,41 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
           set walk^.depth = walk^.depth +sat 1_u64;
           let added = propagate add_group(document: document, styles: styles, atoms: atoms, walk: walk, node: child, style: child_style, group_kind: kind_body, table: table, busy: &busy);
           set walk^.depth = walk^.depth -sat 1_u64;
+        } else if display == display_none {
+        } else {
+          let none = anonymous_of(style: table^.style);
+          let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
+          set cursor = rest;
+        }
+      }
+    } else if fresh {
+      let data = &document^.nodes.inner[at].data;
+      match data^ {
+        Text(data: span) => {
+          let start = cvt::<u32, u64>(span^.start);
+          let end = cvt::<u32, u64>(span^.end);
+          let ordered = start <= end;
+          let inside = end <= document^.text.inner.len;
+          let usable_text = band(ordered, inside);
+          if usable_text {
+            let blank = is_blank(bytes: &document^.text.inner[start..end]);
+            if blank {
+            } else {
+              let none = anonymous_of(style: table^.style);
+              let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
+              set cursor = rest;
+            }
+          }
+        }
+        Element(..) => {
+        }
+        DocumentRoot(..) => {
+        }
+        DocumentType(..) => {
+        }
+        Comment(..) => {
+        }
+        Fragment() => {
         }
       }
     }
