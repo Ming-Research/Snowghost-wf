@@ -16,9 +16,9 @@ positions per parent, the candidate when the position pass's cost or
 incremental style needs it. The prototypes under `renderer/proto/` stay as
 the measurement drivers until the real style and layout stages replace them.
 Added after the close: shape D, a level cascade that Whitefoot's range facts
-make parallel, measured on a branch pinned to mbbill/Whitefoot#203's head
-([Shape D](#shape-d-a-proved-level-cascade)); it decides nothing until that
-pull request reaches Whitefoot's main.
+make parallel, measured on a branch pinned to mbbill/Whitefoot#203's head and now to
+Whitefoot's main, which carries it
+([Shape D](#shape-d-a-proved-level-cascade)).
 
 ## Question
 
@@ -1070,13 +1070,17 @@ empty.
 
 No criterion was written before these measurements, so they decide nothing:
 they show what the port costs and gains, and `design/pipeline/style.md`
-keeps the stage's pass in document order sequential until that pull
-request reaches Whitefoot's main (`docs/todo.md`). Everything below was run
+keeps the stage's pass in document order sequential, its reopening recorded
+in `docs/todo.md`. Everything below was run
 at Snowghost 5a01982 with the pinned compiler, Whitefoot 4a58c4d8 (binary
 719d9ad47d00fd81), on the four-processor development machine, except run
 25, which checked the ceiling page before and after a fix to
 `cascade_levels` and a negative control at 399661d with Whitefoot 145f6e9e.
-These figures are the prototype's cascade; the real stage's pass in
+The pin then moved to Whitefoot 5fc912d9, its `main` with that pull request
+and mbbill/Whitefoot#204, which changed only the range judgment: built by
+both compilers, `proto_style` emits byte-identical LLVM sequentially and
+with `--par`, so these runs stand for it. These figures are the prototype's
+cascade; the real stage's pass in
 document order, which a level loop would replace, is 26 percent of its
 four-worker stage on ecma262 (`research/investigations/style/DESIGN.md`,
 criterion 2).

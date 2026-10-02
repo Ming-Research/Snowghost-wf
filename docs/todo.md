@@ -23,7 +23,7 @@ example apart from the renderer code that exposed it
   builder's map from node to style index is the same scatter. Whitefoot's
   owner selected range facts (candidate N of its unique-keys investigation)
   over an affine key that only its container mints, and
-  mbbill/Whitefoot#203 adds them: each pass
+  mbbill/Whitefoot#203 adds them, in Whitefoot's main at the pin: each pass
   derives its index arrays from the tree with loops whose invariants state
   that a level lists distinct elements and that a parent lies one level
   above its element, and a counted loop's `apart` certificate proves two
@@ -33,10 +33,14 @@ example apart from the renderer code that exposed it
   cascade"). The real style stage's pass in document order is what a
   rewrite compares against: it takes 0.164 s, 26 percent of the four-worker
   stage, on ecma262 and 8 and 3 percent on html5 and apollo11
-  (`research/investigations/style/DESIGN.md`, criterion 2). Reopen that
-  pass, and the layout builder's map, when the pull request reaches
-  Whitefoot's main and the pin moves; `design/pipeline/style.md`'s first
-  decision reopens then.
+  (`research/investigations/style/DESIGN.md`, criterion 2). As a level
+  loop each element reads the custom-property set of its parent's owner
+  while the level writes the sets of the elements that declare their own,
+  separated by a fact that an owner lies at or above its element; since
+  mbbill/Whitefoot#204 Whitefoot proves it in about 1 s
+  (`research/investigations/unique-keys/owner_loop.wf`). Reopen that pass,
+  and the layout builder's map, now that the pin is at Whitefoot's main;
+  `design/pipeline/style.md`'s first decision reopens with it.
 
 - **A parallel loop's body cannot bind an ordered result list.** Minimal
   example: a counted loop whose body is `let (value, known) = f(k);` followed
@@ -60,24 +64,6 @@ example apart from the renderer code that exposed it
   are passed at run time" (mbbill/Whitefoot#203). Change: a parameter that
   only contracts read, erased by lowering. Reopen when that lands or the
   calls' cost shows in a profile.
-
-- **Proving an index that points at an ancestor costs seconds per loop.**
-  Minimal example: after a loop that derives each element's depth from its
-  parent, a loop over the elements sets `owners[e]` to `e` or to
-  `owners[parents[e]]` with the invariant
-  `depths[owners[e]] <= depths[e]` for every `e` already visited. With
-  that invariant Whitefoot checks the program in 12.5 s against 0.84 s
-  without it, at 9208728e, and took 392.6 s at 9ea2818b with the owners
-  written in the depth loop itself
-  (`research/investigations/unique-keys/owner_loop.wf` and POINTWISE.md's
-  "Snowghost's inherited pass" in mbbill/Whitefoot#203). The real style
-  stage's pass in document order needs that fact to run as a level loop:
-  each element reads the custom-property set of its parent's owner while
-  the level writes the sets of the elements that declare their own, and
-  the fact separates the two. Whitefoot records the cause in its
-  `docs/todo.md`, "The range judgment splits every open read pair".
-  Change: a derivation that skips the read pairs a contradiction does not
-  use. Reopen when that lands, before the pass is rewritten.
 
 - **A file named by bytes cannot be opened through a symbolic link.**
   `std::fs::open_directory` and `std::fs::open_file` open one component with
