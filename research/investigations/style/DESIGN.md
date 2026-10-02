@@ -882,11 +882,12 @@ description in the renderer:
 
 **What these results rest on.** The equality, the hashes and the
 Chromium comparison at the final revision are in
-`runs/level-cascade-check-final.txt`, written by `run.sh check`. The
-shares of nodes the loops compute, the count of nodes the
-recommendation's rule would have sent to the sequential path (65,100 and
-8,500 on ecma262), the ledger's denials of `level_index`'s passes and of
-the loop without `apart`, the declined split at 26 captured bindings, and
+`runs/level-cascade-check-final.txt`, written by `run.sh check`, with
+the ledger's verdict on each loop of `levels.wf`. The shares of nodes the
+loops compute, the count of nodes the recommendation's rule would have
+sent to the sequential path (65,100 and 8,500 on ecma262), the denial of
+the level loop without `apart`, the declined split at 26 captured
+bindings, and
 the controls of the facts were observed by the agent that implemented
 the port, with temporary counters and edited copies, and are not in a run
 file; repeating them needs the same edits.
