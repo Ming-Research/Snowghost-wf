@@ -15,6 +15,10 @@ tokenizer, which the owner placed after style; and counting sibling
 positions per parent, the candidate when the position pass's cost or
 incremental style needs it. The prototypes under `renderer/proto/` stay as
 the measurement drivers until the real style and layout stages replace them.
+Added after the close: shape D, a level cascade that Whitefoot's range facts
+make parallel, measured on a branch pinned to mbbill/Whitefoot#203's head and now to
+Whitefoot's main, which carries it
+([Shape D](#shape-d-a-proved-level-cascade)).
 
 ## Question
 
@@ -62,7 +66,7 @@ values:
   inherited from the parent when no matched rule sets them; the groups stand
   in for the computed-value groups the vocabulary proposes interning.
 
-Three traversal shapes compute the same result, which the driver checks:
+Four traversal shapes compute the same result, which the driver checks:
 
 - **A, level order** (the vocabulary proposal): the elements of each tree
   level sit contiguously; one counted loop per level, iteration k writing
@@ -76,6 +80,14 @@ Three traversal shapes compute the same result, which the driver checks:
   preorder matches rules and writes each element's matched-rule summary to
   its own slot, since matching reads only the document. A sequential
   preorder pass then cascades and inherits.
+- **D, flat match then level cascade:** C's match, then a cascade one tree
+  level at a time whose loop writes each element's values at its preorder
+  index. A validating walk derives each element's depth, refusing a parent
+  that does not precede its element, and a second pass groups the elements
+  by depth into a `Segments` with each one's position in its level; the two
+  passes' loop invariants are the range facts that let Whitefoot prove two
+  iterations of a level disjoint (mbbill/Whitefoot#203). `cascade-c` and
+  `cascade-d` time C's and D's cascade alone, over one match.
 
 After the style pass, a sequential **intern post-pass** interns each group
 into a per-group hash table and replaces it by the table's index. It is
@@ -1039,6 +1051,102 @@ the pass could count per parent in parallel and, after a change, recount
 only the parents whose children changed. That form is not built or
 measured here; it is the candidate when the pass's cost or incremental
 style needs it.
+
+### Shape D: a proved level cascade
+
+Shape D (Prototypes) keeps C's match and cascades level by level, writing
+each element's values at its preorder index, so it needs no copy back into
+document order. Its level loop is parallel only because Whitefoot can now
+prove that two elements of one level are distinct and that a parent lies
+one level above its element: range facts and the `apart` certificate of
+mbbill/Whitefoot#203, whose derivation and limits are in that repository's
+`research/investigations/unique-keys/POINTWISE.md`. `level_index` derives
+the facts each time the stage runs, with a validating depth walk and a
+grouping by depth whose loop invariants state them, and hands them back as
+range postconditions of the `LevelIndex` it returns under `Some`;
+`cascade_levels` calls it and passes them to `cascade_level`'s
+requirements, which carry them into the level loop, whose certificate is
+empty.
+
+No criterion was written before these measurements, so they decide nothing:
+they show what the port costs and gains, and `design/pipeline/style.md`
+keeps the stage's pass in document order sequential, its reopening recorded
+in `docs/todo.md`. Everything below was run
+at Snowghost 5a01982 with the pinned compiler, Whitefoot 4a58c4d8 (binary
+719d9ad47d00fd81), on the four-processor development machine, except run
+25, which checked the ceiling page before and after a fix to
+`cascade_levels` and a negative control at 399661d with Whitefoot 145f6e9e.
+The pin then moved to Whitefoot 5fc912d9, its `main` with that pull request
+and mbbill/Whitefoot#204, which changed only the range judgment: built by
+both compilers, `proto_style` emits byte-identical LLVM sequentially and
+with `--par`, so these runs stand for it. These figures are the prototype's
+cascade; the real stage's pass in
+document order, which a level loop would replace, is 26 percent of its
+four-worker stage on ecma262 (`research/investigations/style/DESIGN.md`,
+criterion 2).
+
+- **Correctness.** `run.sh check` agrees on all six pages present on this
+  host, in the `--par` and the sequential build, with every checksum equal
+  to run 16's at 0c66df9, and on a page whose deepest element
+  lies at `depth_ceiling` (`runs/26-style-check-5a01982.txt`); `check`
+  compares A, B and D with C element by element. apollo11 is absent here.
+  An earlier D refused that page, which the traversal and C accept; a D
+  left with its roots' level uncascaded fails `check` with exit 1
+  (`runs/25-style-ceiling-and-control-399661d.txt`).
+- **The producer's facts.** `level_index` proves its `listed` and `up`
+  postconditions at its `Some` return, and `cascade_levels` holds them in
+  the `Some` arm of its match. Each fact is needed: without the `listed` or
+  the `up` postcondition, or the length postcondition on `depths`, the call
+  of `cascade_level` is rejected; without the depth walk's `above`
+  invariant or the grouping's `grouped` invariant the return is, and
+  without the grouping's `fresh` invariant its backedge
+  (`runs/29-level-index-controls-5a01982.txt`). The loop invariants are
+  named `above` and `grouped`, not `up` and `listed`, because a range
+  fact's name shares one scope with the function's postconditions and the
+  same name is a collision (Whitefoot's TYPE-6).
+- **The index is derived again.** `level_index` repeats the depth walk and
+  a grouping by depth that `renderer/proto/style/traversal.wf`'s `Walk` and
+  `Levels` already hold for shape A, and `cascade-d` includes both; a
+  pipeline would derive the levels once and state the postconditions where
+  the traversal builds them (`docs/todo.md`).
+- **Permission.** `--par-ledger` permits D's level loop (`shapes.wf:296`,
+  one accumulator under `band`) and splits it; C's cascade loop stays
+  denied, as do `level_index`'s depth walk and grouping and
+  `cascade_levels`' loop over levels, each of which depends on what earlier
+  iterations wrote (`runs/27-style-ledger-5a01982.txt`).
+- **Cost.** The style stage, C against D, and the cascade alone over one
+  match, `cascade-c` against `cascade-d`, the best of five runs under the
+  check lock (`runs/28-style-shape-d-5a01982.txt`), seconds:
+
+| Page | C seq | C W4 | D seq | D W4 | cascade-c seq | cascade-c W4 | cascade-d seq | cascade-d W4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | 0.6800 | 0.2300 | 0.7033 | 0.2367 | 0.0392 | 0.0403 | 0.0565 | 0.0340 |
+| html5 | 0.5967 | 0.1833 | 0.5700 | 0.1800 | 0.0202 | 0.0190 | 0.0152 | 0.0068 |
+| flat | 0.0087 | 0.0045 | 0.0090 | 0.0039 | 0.0012 | 0.0011 | 0.0013 | 0.0009 |
+| unbalanced | 0.0042 | 0.0021 | 0.0042 | 0.0019 | 0.0006 | 0.0006 | 0.0006 | 0.0004 |
+
+  The deep and paragraph pages stay below the timer's resolution in every
+  build.
+
+- **What it shows.** At four workers D's cascade is 1.19 times faster than
+  C's on ecma262, 2.79 times on html5, 1.2 on flat and 1.5 on unbalanced;
+  `cascade-d` includes the depth walk and the grouping, which stay
+  sequential. The cascade is 5.8 percent of C's sequential style stage on
+  ecma262 and 3.4 percent on html5, which matching dominates, and 14
+  percent on flat and unbalanced. Over the whole stage at four workers D
+  saves 0.0006 s on flat and 0.0002 s on unbalanced, where its cascade
+  gains 0.0002 s each; on the real pages D takes 0.2367 s against C's
+  0.2300 s on ecma262 and 0.1800 s against 0.1833 s on html5, and this run
+  does not separate the cascade's gain, 0.006 s and 0.012 s, from the
+  variation of the match around it. In the sequential build D's cascade is
+  slower than C's on ecma262 (0.0565 s against 0.0392 s) and faster on
+  html5 (0.0152 s against 0.0202 s); neither difference was attributed
+  further.
+- **Port cost.** `cascade_level` takes `positions`, `depths` and `level`
+  only so its requirements can name them, and its call of
+  `cascade_element` moved into `cascade_into`, because Whitefoot's counted
+  permission refuses a loop body that binds an ordered result list; both
+  are recorded under *Whitefoot requirements* in `docs/todo.md`.
 
 ### Whitefoot: an equality requirement over range lengths
 

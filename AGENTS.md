@@ -172,8 +172,10 @@ approval or merge precondition.
 
 - `make check`, the gate, in CI on every push and on the revision to merge.
   It needs git, Rust stable at least at the `rust-version` in
-  `whitefoot/compiler/Cargo.toml`, Python 3 and the submodule
-  (`git clone --recurse-submodules` or `git submodule update --init`). It
+  `whitefoot/compiler/Cargo.toml`, Python 3, the submodule
+  (`git clone --recurse-submodules` or `git submodule update --init`) and
+  the pinned compiler's locked crates, which it builds offline
+  (`cargo fetch --locked --manifest-path whitefoot/compiler/Cargo.toml`). It
   builds the pinned compiler to `whitefoot/compiler/target/gate/whitefootc`,
   builds the renderer and runs the design lint.
 - `make design-ready`, before marking ready and in CI on ready PRs and main:

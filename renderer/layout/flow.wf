@@ -412,8 +412,8 @@ fn overlaps_floats(stack: &Stack, top: i32, bottom: i32) -> overlapping: Bool re
     let float_box = stack^.floats.inner[k];
     let below = float_box.bottom <= top;
     let above = float_box.top >= bottom;
-    let apart = bor(below, above);
-    if apart {
+    let disjoint_span = bor(below, above);
+    if disjoint_span {
     } else {
       return True();
     }
@@ -466,6 +466,38 @@ fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts:
     lay_out_child(child: &context^.children.inner[child], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   }
   return True();
+}
+
+const no_line: i32 = -2147483647_i32;
+
+fn open_unresolved(frames: &Box<Slots<Frame>>) -> unresolved: Bool reads(frames) {
+  doc "Tells whether an open block's top still waits on the margins that follow, so a block starting now has its top margin collapse through that block's.";
+  let count = frames^.inner.len;
+  for (k in 0_u64..count) {
+    if frames^.inner[k].known {
+    } else {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn line_splits(context: &Context, from: u64, flow: u64, line: i32) -> next: u64 writes(context) {
+  doc "Gives the block-in-inline records from from on whose block opens at flow entry flow the top line of the line before it, and returns the first record past them.";
+  let at = from;
+  let count = context^.splits.inner.len;
+  for (step in from..count) {
+    if at < context^.splits.inner.len {
+      let opens = cvt::<u32, u64>(context^.splits.inner[at].open);
+      if opens == flow {
+        set context^.splits.inner[at].line = line;
+        set at = at +sat 1_u64;
+      } else {
+        break;
+      }
+    }
+  }
+  return at;
 }
 
 fn place_splits(context: &Context, from: u64, flow: u64, left: i32, width: i32) -> next: u64 writes(context) {
@@ -705,7 +737,7 @@ fn entry_margin(context: &Context, styles: &Styles, flow: u32, basis: i32, below
 }
 
 fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> result: unit reads(styles), writes(context) {
-  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one at the run's top margin edge or bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
+  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
   let count = context^.splits.inner.len;
   let bounded = imin(count, item_ceiling);
   let used = box_array_filled::<u8>(count: bounded, value: 0_u8);
@@ -750,9 +782,12 @@ fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> res
             give False();
           }
           if bnot(has_before) {
-            let above = entry_margin(context: context, styles: styles, flow: first.open, basis: first.width, below: no);
-            let line_top = top -sat above;
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_top, width: 0_i32, height: 0_i32);
+            let line_y = if first.line == no_line {
+              give top;
+            } else {
+              give first.line;
+            }
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_y, width: 0_i32, height: 0_i32);
           }
           add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
           let after = run_close +sat 1_u64;
@@ -946,12 +981,23 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let width = content_width;
   let baseline = 0_i32;
   let has_baseline = False();
+  let next_split = 0_u64;
   let flow_count = context^.flow.inner.len;
   for (k in 0_u64..flow_count) {
     if k >= context^.flow.inner.len {
       break;
     }
     let item = context^.flow.inner[k];
+    let waiting_line = pending_margin(stack: &stack);
+    let line_offset = stack.cursor +sat waiting_line;
+    let line_at = content_top +sat line_offset;
+    let through = open_unresolved(frames: &frames);
+    let line_top = if through {
+      give no_line;
+    } else {
+      give line_at;
+    }
+    set next_split = line_splits(context: context, from: next_split, flow: k, line: line_top);
     match item {
       Open(block: b) => {
         let at = cvt::<u32, u64>(b);
@@ -1496,15 +1542,39 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   } else {
     give unknown;
   }
-  prepare_spaces(context: context, styles: styles, content_width: content_width, content_height: definite);
+  let columned = multicol(styles: styles, style: style);
+  let (column_count, column_width, column_gap) = column_shape(styles: styles, style: style, available: content_width);
+  let flow_width = if columned {
+    give column_width;
+  } else {
+    give content_width;
+  }
+  let cleared_map = context^.column_map.inner.len;
+  for (step in 0_u64..cleared_map) {
+    let length = context^.column_map.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &context^.column_map.inner);
+  }
+  prepare_spaces(context: context, styles: styles, content_width: flow_width, content_height: definite);
   lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   break_all(context: context, styles: styles, fonts: fonts, picks: picks);
-  let (height, baseline, has_baseline) = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: content_left, content_top: content_top, content_width: content_width, basis_height: definite);
+  let (laid_height, baseline, has_baseline) = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: content_left, content_top: content_top, content_width: flow_width, basis_height: definite);
+  let height = if columned {
+    give fragment_columns(context: context, styles: styles, count: column_count, width: column_width, gap: column_gap, content_top: content_top, laid_height: laid_height);
+  } else {
+    give laid_height;
+  }
   let used = used_height(context: context, styles: styles, content: height);
   set context^.height = used;
   let group = box_of(styles: styles, style: style);
-  let visible_x = group.overflow_x == overflow_visible;
-  let visible_y = group.overflow_y == overflow_visible;
+  let shown_x = group.overflow_x == overflow_visible;
+  let clipped_x = group.overflow_x == overflow_clip;
+  let shown_y = group.overflow_y == overflow_visible;
+  let clipped_y = group.overflow_y == overflow_clip;
+  let visible_x = bor(shown_x, clipped_x);
+  let visible_y = bor(shown_y, clipped_y);
   let visible = band(visible_x, visible_y);
   set context^.baseline = baseline;
   set context^.has_baseline = band(has_baseline, visible);
@@ -1738,7 +1808,27 @@ fn natural_size(natural: u8) -> (width: i32, height: i32) pure {
   if natural == natural_empty {
     return 0_i32, 0_i32;
   }
+  if natural == natural_toggle {
+    return 832_i32, 832_i32;
+  }
   return 19200_i32, 9600_i32;
+}
+
+fn replaced_size(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> (width: i32, height: i32) reads(context), reads(styles), reads(fonts), reads(picks) {
+  doc "The natural content size of a replaced box: natural_size's, or for a text input, as the reference sizes one of the default twenty characters, about 13.27 times its font size wide and its line tall.";
+  if context^.natural == natural_text_input {
+    let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: context^.style);
+    let size = cvt::<i32, i64>(metrics.font_size);
+    let scaled = size *sat 1327_i64;
+    let wide = scaled / 100_i64;
+    let bounded_low = imax(wide, 0_i64);
+    let bounded = imin(bounded_low, 2147483647_i64);
+    let width = cvt::<i64, i32>(bounded);
+    let height = metrics.ascent +sat metrics.descent;
+    return width, height;
+  }
+  let (width, height) = natural_size(natural: context^.natural);
+  return width, height;
 }
 
 fn marker_width(metrics: Metrics) -> width: i32 pure {
@@ -1762,13 +1852,14 @@ fn intrinsic_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks
     let wide = marker_width(metrics: metrics);
     return wide, wide;
   }
-  let (width, height) = natural_size(natural: context^.natural);
+  let (width, height) = replaced_size(context: context, styles: styles, fonts: fonts, picks: picks);
   return width, width;
 }
 
 fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(styles), reads(fonts), reads(picks), writes(context) {
-  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given; the ratio of an img, video or svg element is that of its width and height attributes when it has both, and a replaced box without one takes the natural size on an axis that is auto (research/investigations/layout/runs/replaced-ratio.txt). The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it.";
-  let (natural_width_base, natural_height_base) = natural_size(natural: context^.natural);
+  doc "Lays out a replaced box at its given size, or its natural size, keeping the natural ratio when only one dimension is given; the ratio of an img, video or svg element is that of its width and height attributes when it has both, and a replaced box without one takes the natural size on an axis that is auto (research/investigations/layout/runs/replaced-ratio.txt). The icon before an img's alt text sits on the text's bottom, as the reference draws it: its baseline lies the font's descent above its bottom. An inside bullet marker takes its advance and its font's content area. A block-level img showing the broken-image icon or nothing fills its line, as the reference draws it. A text input's baseline is its line's, centred in its content box.";
+  let (natural_width_base, natural_height_base) = replaced_size(context: context, styles: styles, fonts: fonts, picks: picks);
+  let field = context^.natural == natural_text_input;
   let has_ratio = context^.ratio_width > 0_i32;
   let natural_width = if has_ratio {
     give context^.ratio_width;
@@ -1871,6 +1962,16 @@ fn lay_out_replaced(context: &Context, styles: &Styles, fonts: &FontSet, picks: 
   let height = used_height(context: context, styles: styles, content: natural_tall);
   set context^.height = height;
   set context^.has_baseline = False();
+  if field {
+    let metrics = box_metrics(styles: styles, fonts: fonts, picks: picks, style: style);
+    let above_content = border.top +sat padding.top;
+    let content_box = height -sat frame_vertical;
+    let spare = content_box -sat natural_height;
+    let centred = spare / 2_i32;
+    let line_top = above_content +sat centred;
+    set context^.baseline = line_top +sat metrics.ascent;
+    set context^.has_baseline = True();
+  }
   add_own_fragment(context: context);
   return unit;
 }
@@ -1941,19 +2042,79 @@ fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSe
   return unit;
 }
 
-fn place_context(context: &Context, x: i32, y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(context), writes(out) {
-  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin.";
-  let count = context^.fragments.inner.len;
-  for (f in 0_u64..count) {
-    let fragment = context^.fragments.inner[f];
-    let left = x +sat fragment.x;
-    let top = y +sat fragment.y;
+fn place_rect(fragment: Fragment, x: i32, y: i32, map: &[ColumnPiece], map_y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(map), writes(out) {
+  doc "Appends fragment at the absolute origin x, y, moved by the column map whose context's border box lies at map_y: the parts of a rectangle that fall in several columns become one rectangle per column, as the reference reports a box split across columns.";
+  let left = x +sat fragment.x;
+  let top = y +sat fragment.y;
+  let bottom = top +sat fragment.height;
+  let pieces = map^.len;
+  let px_width = pixels(raw: fragment.width);
+  if pieces == 0_u64 {
     let px_x = pixels(raw: left);
     let px_y = pixels(raw: top);
-    let px_width = pixels(raw: fragment.width);
     let px_height = pixels(raw: fragment.height);
     let made = PlacedRect(kind: fragment.kind, owner: fragment.owner, x: px_x, y: px_y, width: px_width, height: px_height);
     let pushed = push_item::<PlacedRect>(cell: out, value: made, ceiling: item_ceiling);
+    return unit;
+  }
+  let local_top = top -sat map_y;
+  let local_bottom = bottom -sat map_y;
+  let flat = fragment.height == 0_i32;
+  for (k in 0_u64..pieces) {
+    let piece = map^[k];
+    let starts_before_end = local_top < piece.to;
+    let ends_after_start = local_bottom > piece.from;
+    let overlaps = band(starts_before_end, ends_after_start);
+    let at_or_after = local_top >= piece.from;
+    let inside_point = band(at_or_after, starts_before_end);
+    let point = band(flat, inside_point);
+    let takes = bor(overlaps, point);
+    if takes {
+      let clipped_top = imax(local_top, piece.from);
+      let moved_top = clipped_top +sat piece.dy;
+      let continues = local_bottom > piece.to;
+      let moved_bottom = if continues {
+        give piece.bottom;
+      } else {
+        give local_bottom +sat piece.dy;
+      }
+      let part = moved_bottom -sat moved_top;
+      let part_height = imax(part, 0_i32);
+      let absolute_top = moved_top +sat map_y;
+      let moved_left = left +sat piece.dx;
+      let px_x = pixels(raw: moved_left);
+      let px_y = pixels(raw: absolute_top);
+      let px_height = pixels(raw: part_height);
+      let made = PlacedRect(kind: fragment.kind, owner: fragment.owner, x: px_x, y: px_y, width: px_width, height: px_height);
+      let pushed = push_item::<PlacedRect>(cell: out, value: made, ceiling: item_ceiling);
+      if flat {
+        return unit;
+      }
+    }
+  }
+  return unit;
+}
+
+fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(context), reads(map), writes(out) {
+  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin, moving them by the innermost multi-column context's column map: a multi-column context's own box by its parent's map, its content by its own.";
+  let own_pieces = context^.column_map.inner.len;
+  let own_map = own_pieces > 0_u64;
+  let style = context^.style;
+  let count = context^.fragments.inner.len;
+  for (f in 0_u64..count) {
+    let fragment = context^.fragments.inner[f];
+    let element_kind = fragment.kind == placed_element;
+    let same_owner = fragment.owner == style.element;
+    let named = bnot(style.anonymous);
+    let owned_pair = band(element_kind, same_owner);
+    let own_box = band(owned_pair, named);
+    let no_map = bnot(own_map);
+    let outer = bor(own_box, no_map);
+    if outer {
+      place_rect(fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+    } else {
+      place_rect(fragment: fragment, x: x, y: y, map: &context^.column_map.inner[0_u64..own_pieces], map_y: y, out: out);
+    }
   }
   let children = context^.children.inner.len;
   for (c in 0_u64..children) {
@@ -1970,7 +2131,11 @@ fn place_context(context: &Context, x: i32, y: i32, out: &Box<Slots<PlacedRect>>
     } else {
       give moved_y;
     }
-    place_context(context: child, x: child_x, y: child_y, out: out);
+    if own_map {
+      place_context(context: child, x: child_x, y: child_y, map: &context^.column_map.inner[0_u64..own_pieces], map_y: y, out: out);
+    } else {
+      place_context(context: child, x: child_x, y: child_y, map: map, map_y: map_y, out: out);
+    }
   }
   return unit;
 }
@@ -1978,6 +2143,7 @@ fn place_context(context: &Context, x: i32, y: i32, out: &Box<Slots<PlacedRect>>
 fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) {
   doc "The walk that turns every context's relative fragments into viewport coordinates.";
   let out = box_slots_new::<PlacedRect>(capacity: 1024_u64);
-  place_context(context: &layout^.root, x: layout^.root.x, y: layout^.root.y, out: &out);
+  let none = box_slots_new::<ColumnPiece>(capacity: 0_u64);
+  place_context(context: &layout^.root, x: layout^.root.x, y: layout^.root.y, map: &none.inner[0_u64..0_u64], map_y: 0_i32, out: &out);
   return move out;
 }
