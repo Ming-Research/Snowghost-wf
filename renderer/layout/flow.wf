@@ -630,8 +630,60 @@ fn shows_owner(context: &Context, flow: u64, owner: u32, opening: Bool) -> shown
   return False();
 }
 
-fn split_fragments(context: &Context, content_left: i32) -> result: unit writes(context) {
-  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one at the run's top or bottom where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
+fn entry_margin(context: &Context, styles: &Styles, flow: u32, basis: i32, below: Bool) -> margin: i32 reads(context), reads(styles) {
+  doc "The top margin (or the bottom one, when below) of the block or child context whose flow entry is flow.";
+  let at = cvt::<u32, u64>(flow);
+  if at < context^.flow.inner.len {
+  } else {
+    return 0_i32;
+  }
+  let item = context^.flow.inner[at];
+  let style = match item {
+    Open(block: b) => {
+      let index = cvt::<u32, u64>(b);
+      if index < context^.blocks.inner.len {
+        give context^.blocks.inner[index].style;
+      } else {
+        give context^.style;
+      }
+    }
+    Close(block: b) => {
+      let index = cvt::<u32, u64>(b);
+      if index < context^.blocks.inner.len {
+        give context^.blocks.inner[index].style;
+      } else {
+        give context^.style;
+      }
+    }
+    Child(context: c) => {
+      let index = cvt::<u32, u64>(c);
+      if index < context^.children.inner.len {
+        if below {
+          return context^.children.inner[index].margin_bottom;
+        }
+        return context^.children.inner[index].margin_top;
+      }
+      give context^.style;
+    }
+    Text(..) => {
+      return 0_i32;
+    }
+    Float(..) => {
+      return 0_i32;
+    }
+    Out(..) => {
+      return 0_i32;
+    }
+  }
+  let margins = margin_edges(styles: styles, style: style, basis: basis);
+  if below {
+    return margins.bottom;
+  }
+  return margins.top;
+}
+
+fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> result: unit reads(styles), writes(context) {
+  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one at the run's top margin edge or bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts.";
   let count = context^.splits.inner.len;
   let bounded = imin(count, item_ceiling);
   let used = box_array_filled::<u8>(count: bounded, value: 0_u8);
@@ -676,13 +728,17 @@ fn split_fragments(context: &Context, content_left: i32) -> result: unit writes(
             give False();
           }
           if bnot(has_before) {
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: 0_i32, height: 0_i32);
+            let above = entry_margin(context: context, styles: styles, flow: first.open, basis: first.width, below: no);
+            let line_top = top -sat above;
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_top, width: 0_i32, height: 0_i32);
           }
           add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
           let after = run_close +sat 1_u64;
           let has_after = shows_owner(context: context, flow: after, owner: first.owner, opening: yes);
           if bnot(has_after) {
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: bottom, width: 0_i32, height: 0_i32);
+            let beneath = entry_margin(context: context, styles: styles, flow: last_close, basis: first.width, below: yes);
+            let line_bottom = bottom +sat beneath;
+            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_bottom, width: 0_i32, height: 0_i32);
           }
         }
       }
@@ -1420,7 +1476,7 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
   copy_fragments(context: context);
-  split_fragments(context: context, content_left: content_left);
+  split_fragments(context: context, styles: styles, content_left: content_left);
   return unit;
 }
 
