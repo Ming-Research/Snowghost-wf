@@ -666,6 +666,39 @@ The classes of mismatch the second batch adds, with their causes:
   properties getting no style, since its content is `none` and it generates
   no box.
 
+## The level cascade
+
+The stage's second part, the pass in document order that computes what the
+parent decides (font size, custom properties and inherited values), is
+sequential: about a quarter of the four-worker stage on ecma262 at its
+first measurement (Criterion 2). Shape D of the concurrency investigation
+cascaded level by level in the prototype, its level loop proved parallel
+by Whitefoot's range facts and `apart` certificate
+(`research/investigations/concurrency/DESIGN.md`, Shape D). The owner
+agreed, after the layout stage's handoff (mbbill/Snowghost#27), to port it
+to the real stage.
+
+**What the pass shares.** Most nodes compute their values from their
+parent's and the store's alone and write only their own slots. A node that
+declares custom properties, or whose winning value of an inherited or a
+stored longhand holds `var()`, appends to stores the pass shares (the
+custom-property sets, entries and text, and the list of resolved values,
+kept in node order for the third part) and may intern atoms. The port
+keeps that work, and only that, out of the parallel loop.
+
+**Criteria**, recorded before the code:
+
+1. **Equal results.** The style oracle's dumps of the three pages and the
+   case page are byte-identical to those of the stage before the port, in
+   the sequential and the `--par` build.
+2. **Speed.** At four workers the pass is at least 1.5 times faster than
+   before the port on ecma262 and html5, and the whole stage is not slower
+   on any of the three pages, each the best of five runs of `run.sh time`
+   on the same host with no other job running.
+3. **Record.** The pass's time before and after, at one, two and four
+   workers and in the sequential build, and the share of nodes the
+   parallel loop handles on each page.
+
 ## Owner rulings
 
 - **2026-10-02, Q61.** Where the HTML Standard and Chromium differ, Snowghost
