@@ -60,6 +60,7 @@ alias lh_visibility = pkg::css::values::lh_visibility;
 alias lh_white_space = pkg::css::values::lh_white_space;
 alias lh_word_spacing = pkg::css::values::lh_word_spacing;
 alias parse_component_values = pkg::css::syntax::parse_component_values;
+alias parse_pending = pkg::css::values::parse_pending;
 alias parse_pending_named = pkg::css::values::parse_pending_named;
 alias sizing_keyword = pkg::css::values::sizing_keyword;
 alias sizing_normal = pkg::css::values::sizing_normal;
@@ -80,6 +81,44 @@ const fixed_sizes: Array<f32, 8> =[9.0_f32, 10.0_f32, 12.0_f32, 13.0_f32, 16.0_f
 const state_pending: u8 = 0_u8;
 
 const state_done: u8 = 1_u8;
+
+struct NodeInherited {
+  font: FontGroup;
+  text: TextGroup;
+  visibility: u8;
+  keyword: u8;
+  scale: f32;
+  ex: f32;
+  ch: f32;
+  lh: f32;
+  table: TableGroup;
+  quotes: u32;
+  marker: u8;
+}
+
+struct NodeDeclared {
+  family: Option<Declared>;
+  size: Option<Declared>;
+  weight: Option<Declared>;
+  style: Option<Declared>;
+  line: Option<Declared>;
+  color: Option<Declared>;
+  align: Option<Declared>;
+  indent: Option<Declared>;
+  transform: Option<Declared>;
+  white: Option<Declared>;
+  letter: Option<Declared>;
+  word: Option<Declared>;
+  list: Option<Declared>;
+  visibility: Option<Declared>;
+  wrapping: Option<Declared>;
+  breaking: Option<Declared>;
+  collapse: Option<Declared>;
+  caption: Option<Declared>;
+  spacing: Option<Declared>;
+  quotes: Option<Declared>;
+  marker: Option<Declared>;
+}
 
 struct OwnCustom {
   name: u32;
@@ -910,26 +949,37 @@ fn custom_set(state: &Inherited, store: &RuleStore, cascade: &Cascade, atoms: &A
   return Ok<u32, StyleError>(value: id);
 }
 
-fn set_bounds(state: &Inherited, set_id: u32) -> (first: u64, end: u64) reads(state) contract {
+fn entry_range(sets: &[CustomSet], entries_length: u64, set_id: u32) -> (first: u64, end: u64) reads(sets) contract {
   ensures first <= end;
-  ensures end <= state^.custom_entries.inner.len;
+  ensures end <= entries_length;
 } {
-  doc "The entry range of a custom-property set, empty for an unknown set.";
+  doc "The entry range of a custom-property set among entries_length entries, empty for an unknown set or one that does not lie among them.";
   let index = cvt::<u32, u64>(set_id);
-  let known = index < state^.custom_sets.inner.len;
+  let known = index < sets^.len;
   if known {
   } else {
     return 0_u64, 0_u64;
   }
-  let first = cvt::<u32, u64>(state^.custom_sets.inner[index].first);
-  let end = cvt::<u32, u64>(state^.custom_sets.inner[index].end);
+  let first = cvt::<u32, u64>(sets^[index].first);
+  let end = cvt::<u32, u64>(sets^[index].end);
   let ordered = first <= end;
-  let inside = end <= state^.custom_entries.inner.len;
+  let inside = end <= entries_length;
   let usable = band(ordered, inside);
   if usable {
     return first, end;
   }
   return 0_u64, 0_u64;
+}
+
+fn set_bounds(state: &Inherited, set_id: u32) -> (first: u64, end: u64) reads(state) contract {
+  ensures first <= end;
+  ensures end <= state^.custom_entries.inner.len;
+} {
+  doc "The entry range of a custom-property set of the pass, empty for an unknown set.";
+  let sets = state^.custom_sets.inner.len;
+  let entries = state^.custom_entries.inner.len;
+  let (first, end) = entry_range(sets: &state^.custom_sets.inner[0_u64..sets], entries_length: entries, set_id: set_id);
+  return first, end;
 }
 
 fn declared_inherited(state: &Inherited, store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8, set_id: u32, atoms: &AtomTable) -> result: Result<Option<Declared>, StyleError> reads(store), reads(cascade), writes(state), writes(atoms) {
@@ -940,84 +990,290 @@ fn declared_inherited(state: &Inherited, store: &RuleStore, cascade: &Cascade, e
   return Ok<Option<Declared>, StyleError>(value: made);
 }
 
-fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, environment: Environment, position: u64) -> result: Result<unit, StyleError> reads(store), reads(cascade), reads(document), writes(state), writes(atoms) {
-  doc "Computes one styled node's custom properties, font and inherited text, table and generated-content values from its parent's, which the order of the nodes has already computed: an element's parent precedes it in preorder, and a pseudo-element follows every element. It also resolves the node's pending values of the longhands that are not inherited but fill shared tables, since only this pass may write them.";
-  let count = cascade^.nodes.inner.len;
-  let inside = position < count;
-  let listed_parent = position < cascade^.parents.inner.len;
-  let listed_kind = position < cascade^.kinds.inner.len;
-  let listed = band(listed_parent, listed_kind);
-  let known = band(inside, listed);
-  if known {
-  } else {
-    let failure = StyleError::Inconsistent();
-    return Err<unit, StyleError>(error: failure);
-  }
-  let element = cascade^.nodes.inner[position];
-  let kind = cascade^.kinds.inner[position];
-  let parent = cvt::<u32, u64>(cascade^.parents.inner[position]);
-  let has_parent = parent < position;
-  let sized = position < state^.fonts.inner.len;
-  let texts_sized = position < state^.texts.inner.len;
-  let flags_sized = position < state^.visibility.inner.len;
-  let scales_listed = position < state^.font_scales.inner.len;
-  let keywords_listed = position < state^.font_keywords.inner.len;
-  let keywords_sized = band(scales_listed, keywords_listed);
-  let sets_sized = position < state^.sets.inner.len;
-  let some_sized = band(sized, texts_sized);
-  let more_sized = band(flags_sized, keywords_sized);
-  let all_some = band(some_sized, more_sized);
-  let all_sized = band(all_some, sets_sized);
-  if all_sized {
-  } else {
-    let failure = StyleError::Inconsistent();
-    return Err<unit, StyleError>(error: failure);
-  }
-  let parent_font = initial_font(state: state);
-  let parent_text = initial_text(state: state);
-  let parent_visibility = 0_u8;
-  let parent_keyword = 4_u8;
-  let parent_scale = 1.0_f32;
-  let parent_set = 0_u32;
-  let initial_ex = fmul.strict(environment.serif.x_height, 16.0_f32);
-  let parent_ex = initial_ex;
-  let parent_ch = fmul.strict(environment.serif.zero_advance, 16.0_f32);
-  let parent_lh = fmul.strict(16.0_f32, 1.15_f32);
-  let ex_sized = position < state^.ex.inner.len;
-  let ch_sized = position < state^.ch.inner.len;
-  let lh_sized = position < state^.lh.inner.len;
-  let units_sized = band(ex_sized, ch_sized);
-  let metrics_sized = band(units_sized, lh_sized);
-  if metrics_sized {
-  } else {
-    let failure = StyleError::Inconsistent();
-    return Err<unit, StyleError>(error: failure);
-  }
-  if has_parent {
-    set parent_ex = state^.ex.inner[parent];
-    set parent_ch = state^.ch.inner[parent];
-    set parent_lh = state^.lh.inner[parent];
-    set parent_font = state^.fonts.inner[parent];
-    set parent_text = state^.texts.inner[parent];
-    set parent_visibility = state^.visibility.inner[parent];
-    set parent_keyword = state^.font_keywords.inner[parent];
-    set parent_scale = state^.font_scales.inner[parent];
-    set parent_set = state^.sets.inner[parent];
-  }
-  let set_id = propagate custom_set(state: state, store: store, cascade: cascade, atoms: atoms, position: position, parent_set: parent_set);
-  let sets_room = position < state^.sets.inner.len;
-  if sets_room {
-    set state^.sets.inner[position] = set_id;
-  }
+fn gather_declared(state: &Inherited, store: &RuleStore, cascade: &Cascade, position: u64, set_id: u32, atoms: &AtomTable) -> result: Result<NodeDeclared, StyleError> reads(store), reads(cascade), writes(state), writes(atoms) {
+  doc "The node's declared values of the longhands this pass computes, by declared_inherited against its custom-property set, in a fixed order of longhands, since substituting a pending value may intern atoms and append to the pass's named store.";
   let family = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_family, set_id: set_id, atoms: atoms);
-  let families_start = parent_font.families_start;
-  let families_end = parent_font.families_end;
-  match family {
+  let size = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_size, set_id: set_id, atoms: atoms);
+  let weight = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_weight, set_id: set_id, atoms: atoms);
+  let style = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_style, set_id: set_id, atoms: atoms);
+  let line = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_line_height, set_id: set_id, atoms: atoms);
+  let color = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_color, set_id: set_id, atoms: atoms);
+  let align = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_align, set_id: set_id, atoms: atoms);
+  let indent = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_indent, set_id: set_id, atoms: atoms);
+  let transform = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_transform, set_id: set_id, atoms: atoms);
+  let white = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_white_space, set_id: set_id, atoms: atoms);
+  let letter = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_letter_spacing, set_id: set_id, atoms: atoms);
+  let word = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_word_spacing, set_id: set_id, atoms: atoms);
+  let list = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_list_style_type, set_id: set_id, atoms: atoms);
+  let visibility = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_visibility, set_id: set_id, atoms: atoms);
+  let wrapping = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_overflow_wrap, set_id: set_id, atoms: atoms);
+  let breaking = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_word_break, set_id: set_id, atoms: atoms);
+  let collapse = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_border_collapse, set_id: set_id, atoms: atoms);
+  let caption = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_caption_side, set_id: set_id, atoms: atoms);
+  let spacing = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_border_spacing, set_id: set_id, atoms: atoms);
+  let quotes = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_quotes, set_id: set_id, atoms: atoms);
+  let marker = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_list_style_position, set_id: set_id, atoms: atoms);
+  let made = NodeDeclared(family: family, size: size, weight: weight, style: style, line: line, color: color, align: align, indent: indent, transform: transform, white: white, letter: letter, word: word, list: list, visibility: visibility, wrapping: wrapping, breaking: breaking, collapse: collapse, caption: caption, spacing: spacing, quotes: quotes, marker: marker);
+  return Ok<NodeDeclared, StyleError>(value: made);
+}
+
+fn plain_resolved(store: &RuleStore, pending: PendingRef, longhand: u8, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable) -> (plain: Bool, declared: Option<Declared>) reads(store), reads(entries), reads(text), reads(atoms) {
+  doc "resolve_named for a pending value whose substituted value parse_pending parses, which interns no name and appends to no store: its value, or None when the value is invalid at computed-value time. plain is false, with None, when parse_pending gives nothing for a value that substitutes and tokenizes, which only parse_pending_named can parse: a name, a family list, a value of a side table, or an invalid one.";
+  let none = None<Declared>();
+  let yes = True();
+  let scratch = box_slots_new::<u8>(capacity: 0_u64);
+  let substituted = substitute_pending(store: store, pending: pending, entries: entries, text: text, atoms: atoms, out: &scratch);
+  if substituted {
+  } else {
+    return yes, none;
+  }
+  let size = scratch.inner.len;
+  let small = size <= 16777216_u64;
+  if small {
+  } else {
+    return yes, none;
+  }
+  let parsed = parse_component_values(source: &scratch.inner[0_u64..size]);
+  match move parsed {
+    Ok(value: list) => {
+      let count = list.components.inner.len;
+      let last = cvt.wrap::<u64, u32>(count);
+      let whole = ComponentRange(start: 0_u32, end: last);
+      match parse_pending(values: &list, range: whole, shorthand: pending.shorthand, longhand: longhand) {
+        Some(value: found) => {
+          let value = Some<Declared>(value: found);
+          return yes, value;
+        }
+        None() => {
+          let named_only = False();
+          return named_only, none;
+        }
+      }
+    }
+    Err(..) => {
+      return yes, none;
+    }
+  }
+}
+
+fn plain_declared(store: &RuleStore, cascade: &Cascade, element: u64, longhand: u8, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable) -> (plain: Bool, declared: Option<Declared>) reads(store), reads(cascade), reads(entries), reads(text), reads(atoms) {
+  doc "inherited_declared without writing: a pending winning value is substituted against entries and text and parsed by plain_resolved. plain is false, with None, when plain_resolved's is, so only inherited_declared can parse the value.";
+  let none = None<Declared>();
+  let yes = True();
+  match winner_value(store: store, cascade: cascade, element: element, longhand: longhand) {
+    Some(value: declared) => {
+      match declared_pending(declared: declared) {
+        Some(value: pending) => {
+          let (resolvable, resolved) = plain_resolved(store: store, pending: pending, longhand: longhand, entries: entries, text: text, atoms: atoms);
+          if resolvable {
+          } else {
+            return resolvable, none;
+          }
+          match resolved {
+            Some(value: inner) => {
+              let inherits = inherits_value(declared: inner);
+              if inherits {
+                return yes, none;
+              }
+              return yes, resolved;
+            }
+            None() => {
+              return yes, none;
+            }
+          }
+        }
+        None() => {
+          let inherits = inherits_value(declared: declared);
+          if inherits {
+            return yes, none;
+          }
+          let own = Some<Declared>(value: declared);
+          return yes, own;
+        }
+      }
+    }
+    None() => {
+      return yes, none;
+    }
+  }
+}
+
+fn gather_plain(store: &RuleStore, cascade: &Cascade, position: u64, entries: &[CustomEntry], text: &[u8], atoms: &AtomTable) -> (plain: Bool, declared: NodeDeclared) reads(store), reads(cascade), reads(entries), reads(text), reads(atoms) {
+  doc "gather_declared for a node that declares no custom property, against its parent's custom properties, entries and text, by plain_declared, so it writes nothing; plain is false when a pending value is one only parse_pending_named parses, and the node is then computed by inherit_element.";
+  let (family_plain, family) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_family, entries: entries, text: text, atoms: atoms);
+  let (size_plain, size) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_size, entries: entries, text: text, atoms: atoms);
+  let (weight_plain, weight) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_weight, entries: entries, text: text, atoms: atoms);
+  let (style_plain, style) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_font_style, entries: entries, text: text, atoms: atoms);
+  let (line_plain, line) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_line_height, entries: entries, text: text, atoms: atoms);
+  let (color_plain, color) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_color, entries: entries, text: text, atoms: atoms);
+  let (align_plain, align) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_align, entries: entries, text: text, atoms: atoms);
+  let (indent_plain, indent) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_indent, entries: entries, text: text, atoms: atoms);
+  let (transform_plain, transform) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_text_transform, entries: entries, text: text, atoms: atoms);
+  let (white_plain, white) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_white_space, entries: entries, text: text, atoms: atoms);
+  let (letter_plain, letter) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_letter_spacing, entries: entries, text: text, atoms: atoms);
+  let (word_plain, word) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_word_spacing, entries: entries, text: text, atoms: atoms);
+  let (list_plain, list) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_list_style_type, entries: entries, text: text, atoms: atoms);
+  let (visibility_plain, visibility) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_visibility, entries: entries, text: text, atoms: atoms);
+  let (wrapping_plain, wrapping) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_overflow_wrap, entries: entries, text: text, atoms: atoms);
+  let (breaking_plain, breaking) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_word_break, entries: entries, text: text, atoms: atoms);
+  let (collapse_plain, collapse) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_border_collapse, entries: entries, text: text, atoms: atoms);
+  let (caption_plain, caption) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_caption_side, entries: entries, text: text, atoms: atoms);
+  let (spacing_plain, spacing) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_border_spacing, entries: entries, text: text, atoms: atoms);
+  let (quotes_plain, quotes) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_quotes, entries: entries, text: text, atoms: atoms);
+  let (marker_plain, marker) = plain_declared(store: store, cascade: cascade, element: position, longhand: lh_list_style_position, entries: entries, text: text, atoms: atoms);
+  let plain_1 = band(family_plain, size_plain);
+  let plain_2 = band(plain_1, weight_plain);
+  let plain_3 = band(plain_2, style_plain);
+  let plain_4 = band(plain_3, line_plain);
+  let plain_5 = band(plain_4, color_plain);
+  let plain_6 = band(plain_5, align_plain);
+  let plain_7 = band(plain_6, indent_plain);
+  let plain_8 = band(plain_7, transform_plain);
+  let plain_9 = band(plain_8, white_plain);
+  let plain_10 = band(plain_9, letter_plain);
+  let plain_11 = band(plain_10, word_plain);
+  let plain_12 = band(plain_11, list_plain);
+  let plain_13 = band(plain_12, visibility_plain);
+  let plain_14 = band(plain_13, wrapping_plain);
+  let plain_15 = band(plain_14, breaking_plain);
+  let plain_16 = band(plain_15, collapse_plain);
+  let plain_17 = band(plain_16, caption_plain);
+  let plain_18 = band(plain_17, spacing_plain);
+  let plain_19 = band(plain_18, quotes_plain);
+  let plain_20 = band(plain_19, marker_plain);
+  let made = NodeDeclared(family: family, size: size, weight: weight, style: style, line: line, color: color, align: align, indent: indent, transform: transform, white: white, letter: letter, word: word, list: list, visibility: visibility, wrapping: wrapping, breaking: breaking, collapse: collapse, caption: caption, spacing: spacing, quotes: quotes, marker: marker);
+  return plain_20, made;
+}
+
+fn initial_inherited(state: &Inherited, environment: Environment) -> made: NodeInherited reads(state) {
+  doc "What a node without a parent inherits: the initial font and text values, visible, the medium keyword at scale 1, the default serif font's ex and ch at 16px, a line height of 1.15 times 16px, the initial table values, quotes auto and markers outside.";
+  let font = initial_font(state: state);
+  let text = initial_text(state: state);
+  let ex = fmul.strict(environment.serif.x_height, 16.0_f32);
+  let ch = fmul.strict(environment.serif.zero_advance, 16.0_f32);
+  let lh = fmul.strict(16.0_f32, 1.15_f32);
+  let table = initial_table();
+  return NodeInherited(font: font, text: text, visibility: 0_u8, keyword: 4_u8, scale: 1.0_f32, ex: ex, ch: ch, lh: lh, table: table, quotes: quotes_auto_ref, marker: 0_u8);
+}
+
+fn node_sized(state: &Inherited, at: u64) -> sized: Bool reads(state) {
+  doc "True when every per-node array of the pass has a slot at.";
+  let fonts = at < state^.fonts.inner.len;
+  let texts = at < state^.texts.inner.len;
+  let visibility = at < state^.visibility.inner.len;
+  let keywords = at < state^.font_keywords.inner.len;
+  let scales = at < state^.font_scales.inner.len;
+  let ex = at < state^.ex.inner.len;
+  let ch = at < state^.ch.inner.len;
+  let lh = at < state^.lh.inner.len;
+  let sets = at < state^.sets.inner.len;
+  let tables = at < state^.tables.inner.len;
+  let quotes = at < state^.quotes.inner.len;
+  let markers = at < state^.list_positions.inner.len;
+  let a = band(fonts, texts);
+  let b = band(visibility, keywords);
+  let c = band(scales, ex);
+  let d = band(ch, lh);
+  let e = band(sets, tables);
+  let f = band(quotes, markers);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let abcd = band(ab, cd);
+  let all = band(abcd, ef);
+  return all;
+}
+
+fn stored_node(state: &Inherited, at: u64) -> found: Option<NodeInherited> reads(state) {
+  doc "The values the pass computed for the node at at, or None when an array has no slot there.";
+  let fonts = at < state^.fonts.inner.len;
+  let texts = at < state^.texts.inner.len;
+  let visibility = at < state^.visibility.inner.len;
+  let keywords = at < state^.font_keywords.inner.len;
+  let scales = at < state^.font_scales.inner.len;
+  let ex = at < state^.ex.inner.len;
+  let ch = at < state^.ch.inner.len;
+  let lh = at < state^.lh.inner.len;
+  let tables = at < state^.tables.inner.len;
+  let quotes = at < state^.quotes.inner.len;
+  let markers = at < state^.list_positions.inner.len;
+  let a = band(fonts, texts);
+  let b = band(visibility, keywords);
+  let c = band(scales, ex);
+  let d = band(ch, lh);
+  let e = band(tables, quotes);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let em = band(e, markers);
+  let abcd = band(ab, cd);
+  let sized = band(abcd, em);
+  if sized {
+  } else {
+    return None<NodeInherited>();
+  }
+  let made = NodeInherited(font: state^.fonts.inner[at], text: state^.texts.inner[at], visibility: state^.visibility.inner[at], keyword: state^.font_keywords.inner[at], scale: state^.font_scales.inner[at], ex: state^.ex.inner[at], ch: state^.ch.inner[at], lh: state^.lh.inner[at], table: state^.tables.inner[at], quotes: state^.quotes.inner[at], marker: state^.list_positions.inner[at]);
+  return Some<NodeInherited>(value: made);
+}
+
+fn store_node(state: &Inherited, at: u64, values: NodeInherited) -> result: unit writes(state) {
+  doc "Writes the node's computed values at at of each per-node array that has a slot there.";
+  let fonts_room = at < state^.fonts.inner.len;
+  if fonts_room {
+    set state^.fonts.inner[at] = values.font;
+  }
+  let texts_room = at < state^.texts.inner.len;
+  if texts_room {
+    set state^.texts.inner[at] = values.text;
+  }
+  let visibility_room = at < state^.visibility.inner.len;
+  if visibility_room {
+    set state^.visibility.inner[at] = values.visibility;
+  }
+  let keywords_room = at < state^.font_keywords.inner.len;
+  if keywords_room {
+    set state^.font_keywords.inner[at] = values.keyword;
+  }
+  let scales_room = at < state^.font_scales.inner.len;
+  if scales_room {
+    set state^.font_scales.inner[at] = values.scale;
+  }
+  let ex_room = at < state^.ex.inner.len;
+  if ex_room {
+    set state^.ex.inner[at] = values.ex;
+  }
+  let ch_room = at < state^.ch.inner.len;
+  if ch_room {
+    set state^.ch.inner[at] = values.ch;
+  }
+  let lh_room = at < state^.lh.inner.len;
+  if lh_room {
+    set state^.lh.inner[at] = values.lh;
+  }
+  let tables_room = at < state^.tables.inner.len;
+  if tables_room {
+    set state^.tables.inner[at] = values.table;
+  }
+  let quotes_room = at < state^.quotes.inner.len;
+  if quotes_room {
+    set state^.quotes.inner[at] = values.quotes;
+  }
+  let markers_room = at < state^.list_positions.inner.len;
+  if markers_room {
+    set state^.list_positions.inner[at] = values.marker;
+  }
+  return unit;
+}
+
+fn compute_node(declared: NodeDeclared, parent: NodeInherited, has_parent: Bool, root_font_size: f32, named: &DeclarationStore, atoms: &AtomTable, document: &Document, store: &RuleStore, cascade: &Cascade, position: u64, environment: Environment, initial_family: u32, disc: Atom, monospace_name_atom: Atom) -> (values: NodeInherited, root_size: f32) reads(named), reads(atoms), reads(document), reads(store), reads(cascade) {
+  doc "Computes one styled node's font and inherited text, table and generated-content values from its declared values and its parent's computed ones, reading the pass's named store and writing nothing shared; root_size is the root font size the node's rem lengths use, root_font_size for a node with a parent and its own font size for one without, which the caller records.";
+  let families_start = parent.font.families_start;
+  let families_end = parent.font.families_end;
+  match declared.family {
     Some(value: d) => {
       let initial = is_initial(declared: d);
       if initial {
-        set families_start = state^.initial_family;
-        set families_end = state^.initial_family +sat 1_u32;
+        set families_start = initial_family;
+        set families_end = initial_family +sat 1_u32;
       }
       match declared_families(declared: d) {
         Some(value: range) => {
@@ -1031,14 +1287,13 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
     None() => {
     }
   }
-  let monospace = monospace_only(named: &state^.named, start: families_start, end: families_end, monospace: state^.monospace);
-  let size_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_size, set_id: set_id, atoms: atoms);
+  let monospace = monospace_only(named: named, start: families_start, end: families_end, monospace: monospace_name_atom);
   let size_environment = if has_parent {
-    give Environment(width: environment.width, height: environment.height, root_font_size: state^.root_font_size, serif: environment.serif, sans: environment.sans, mono: environment.mono);
+    give Environment(width: environment.width, height: environment.height, root_font_size: root_font_size, serif: environment.serif, sans: environment.sans, mono: environment.mono);
   } else {
     give environment;
   }
-  let (raw_size, size_keyword, size_scale) = font_size_of(declared: size_declared, parent_size: parent_font.size, parent_keyword: parent_keyword, parent_scale: parent_scale, parent_ex: parent_ex, parent_ch: parent_ch, parent_lh: parent_lh, monospace: monospace, environment: size_environment);
+  let (raw_size, size_keyword, size_scale) = font_size_of(declared: declared.size, parent_size: parent.font.size, parent_keyword: parent.keyword, parent_scale: parent.scale, parent_ex: parent.ex, parent_ch: parent.ch, parent_lh: parent.lh, monospace: monospace, environment: size_environment);
   let tiny = flt(raw_size, 6.0_f32);
   let positive = fgt(raw_size, 0.0_f32);
   let derived = size_keyword != 0_u8;
@@ -1049,28 +1304,34 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   } else {
     give raw_size;
   }
-  let metrics = metrics_for(named: &state^.named, start: families_start, end: families_end, atoms: atoms, environment: environment);
+  let metrics = metrics_for(named: named, start: families_start, end: families_end, atoms: atoms, environment: environment);
   let (own_ex, own_ch) = font_units(metrics: metrics, size: size);
-  if has_parent {
+  let root_size = if has_parent {
+    give root_font_size;
   } else {
-    set state^.root_font_size = size;
+    give size;
   }
-  let own_environment = Environment(width: environment.width, height: environment.height, root_font_size: state^.root_font_size, serif: environment.serif, sans: environment.sans, mono: environment.mono);
-  let weight_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_weight, set_id: set_id, atoms: atoms);
-  let weight = weight_of(declared: weight_declared, parent: parent_font.weight);
-  let style_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_font_style, set_id: set_id, atoms: atoms);
-  let style = keyword_or(declared: style_declared, parent: parent_font.style, initial: 0_u8);
-  let line_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_line_height, set_id: set_id, atoms: atoms);
-  let line_height = line_height_of(declared: line_declared, parent: parent_font.line_height, size: size, ex: own_ex, ch: own_ch, lh: parent_lh, environment: own_environment);
+  let own_environment = Environment(width: environment.width, height: environment.height, root_font_size: root_size, serif: environment.serif, sans: environment.sans, mono: environment.mono);
+  let weight = weight_of(declared: declared.weight, parent: parent.font.weight);
+  let style = keyword_or(declared: declared.style, parent: parent.font.style, initial: 0_u8);
+  let line_height = line_height_of(declared: declared.line, parent: parent.font.line_height, size: size, ex: own_ex, ch: own_ch, lh: parent.lh, environment: own_environment);
   let own_lh = line_height_px(line_height: line_height, size: size);
   let font = FontGroup(families_start: families_start, families_end: families_end, size: size, weight: weight, style: style, line_height: line_height);
-  let color_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_color, set_id: set_id, atoms: atoms);
-  let color = color_of(declared: color_declared, parent: parent_text.color);
-  let align_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_align, set_id: set_id, atoms: atoms);
-  let declared_align = align_of(declared: align_declared, parent: parent_text.text_align);
-  let element_node = kind == 0_u8;
-  let html_th = is_html_th(document: document, element: element);
-  let header_cell = band(element_node, html_th);
+  let color = color_of(declared: declared.color, parent: parent.text.color);
+  let declared_align = align_of(declared: declared.align, parent: parent.text.text_align);
+  let nodes_listed = position < cascade^.nodes.inner.len;
+  let kinds_listed = position < cascade^.kinds.inner.len;
+  let listed = band(nodes_listed, kinds_listed);
+  let header_cell = if listed {
+    let element = cascade^.nodes.inner[position];
+    let kind = cascade^.kinds.inner[position];
+    let element_node = kind == 0_u8;
+    let html_th = is_html_th(document: document, element: element);
+    let header = band(element_node, html_th);
+    give header;
+  } else {
+    give False();
+  }
   let align_winner = winner_value(store: store, cascade: cascade, element: position, longhand: lh_text_align);
   let undeclared = match align_winner {
     Some(..) => {
@@ -1080,7 +1341,7 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
       give True();
     }
   }
-  let parent_initial = parent_text.text_align == 0_u8;
+  let parent_initial = parent.text.text_align == 0_u8;
   let centred_cell = band(header_cell, undeclared);
   let centred = band(centred_cell, parent_initial);
   let align = if centred {
@@ -1088,23 +1349,17 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
   } else {
     give declared_align;
   }
-  let indent_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_indent, set_id: set_id, atoms: atoms);
-  let indent = indent_of(declared: indent_declared, parent: parent_text.text_indent, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
-  let transform_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_text_transform, set_id: set_id, atoms: atoms);
-  let transform = keyword_or(declared: transform_declared, parent: parent_text.text_transform, initial: 0_u8);
-  let white_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_white_space, set_id: set_id, atoms: atoms);
-  let white = keyword_or(declared: white_declared, parent: parent_text.white_space, initial: 0_u8);
-  let letter_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_letter_spacing, set_id: set_id, atoms: atoms);
-  let letter = spacing_of(declared: letter_declared, parent: parent_text.letter_spacing, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
-  let word_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_word_spacing, set_id: set_id, atoms: atoms);
-  let word = spacing_of(declared: word_declared, parent: parent_text.word_spacing, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
-  let list_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_list_style_type, set_id: set_id, atoms: atoms);
-  let list_style = parent_text.list_style_type;
-  match list_declared {
+  let indent = indent_of(declared: declared.indent, parent: parent.text.text_indent, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
+  let transform = keyword_or(declared: declared.transform, parent: parent.text.text_transform, initial: 0_u8);
+  let white = keyword_or(declared: declared.white, parent: parent.text.white_space, initial: 0_u8);
+  let letter = spacing_of(declared: declared.letter, parent: parent.text.letter_spacing, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
+  let word = spacing_of(declared: declared.word, parent: parent.text.word_spacing, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
+  let list_style = parent.text.list_style_type;
+  match declared.list {
     Some(value: d) => {
       let initial = is_initial(declared: d);
       if initial {
-        set list_style = state^.disc;
+        set list_style = disc;
       }
       match declared_list_style(declared: d) {
         Some(value: name) => {
@@ -1117,83 +1372,74 @@ fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, docu
     None() => {
     }
   }
-  let visibility_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_visibility, set_id: set_id, atoms: atoms);
-  let visibility = keyword_or(declared: visibility_declared, parent: parent_visibility, initial: 0_u8);
-  let wrap_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_overflow_wrap, set_id: set_id, atoms: atoms);
-  let wrapping = keyword_or(declared: wrap_declared, parent: parent_text.overflow_wrap, initial: 0_u8);
-  let break_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_word_break, set_id: set_id, atoms: atoms);
-  let breaking = keyword_or(declared: break_declared, parent: parent_text.word_break, initial: 0_u8);
+  let visibility = keyword_or(declared: declared.visibility, parent: parent.visibility, initial: 0_u8);
+  let wrapping = keyword_or(declared: declared.wrapping, parent: parent.text.overflow_wrap, initial: 0_u8);
+  let breaking = keyword_or(declared: declared.breaking, parent: parent.text.word_break, initial: 0_u8);
   let baseline = sizing_kind(kind: sizing_keyword);
   let text = TextGroup(color: color, text_align: align, text_indent: indent, text_transform: transform, white_space: white, letter_spacing: letter, word_spacing: word, vertical_align: baseline, decoration_line: 0_u8, list_style_type: list_style, overflow_wrap: wrapping, word_break: breaking);
-  let parent_table = initial_table();
-  let parent_quotes = quotes_auto_ref;
-  let parent_position = 0_u8;
-  let tables_sized = position < state^.tables.inner.len;
-  let quotes_sized = position < state^.quotes.inner.len;
-  let positions_sized = position < state^.list_positions.inner.len;
-  let generated_sized = band(quotes_sized, positions_sized);
-  let second_sized = band(tables_sized, generated_sized);
-  if second_sized {
+  let collapse = keyword_or(declared: declared.collapse, parent: parent.table.border_collapse, initial: 0_u8);
+  let caption = keyword_or(declared: declared.caption, parent: parent.table.caption_side, initial: 0_u8);
+  let spacing = border_spacing_of(named: named, declared: declared.spacing, parent: parent.table, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
+  let table = TableGroup(border_collapse: collapse, spacing_horizontal: spacing.spacing_horizontal, spacing_vertical: spacing.spacing_vertical, table_layout: 0_u8, caption_side: caption);
+  let quotes = quotes_of(declared: declared.quotes, parent: parent.quotes);
+  let marker = keyword_or(declared: declared.marker, parent: parent.marker, initial: 0_u8);
+  let made = NodeInherited(font: font, text: text, visibility: visibility, keyword: size_keyword, scale: size_scale, ex: own_ex, ch: own_ch, lh: own_lh, table: table, quotes: quotes, marker: marker);
+  return made, root_size;
+}
+
+fn inherit_element(state: &Inherited, store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, environment: Environment, position: u64) -> result: Result<unit, StyleError> reads(store), reads(cascade), reads(document), writes(state), writes(atoms) {
+  doc "Computes one styled node's custom properties, font and inherited text, table and generated-content values from its parent's, which cascade_levels has already computed: an element's parent lies one level above it, and a pseudo-element's parent is an element, computed before every pseudo-element. It also resolves the node's pending values of the longhands that are not inherited but fill shared tables, since only this pass may write them.";
+  let count = cascade^.nodes.inner.len;
+  let inside = position < count;
+  let listed_parent = position < cascade^.parents.inner.len;
+  let listed_kind = position < cascade^.kinds.inner.len;
+  let listed = band(listed_parent, listed_kind);
+  let known = band(inside, listed);
+  let sized = node_sized(state: state, at: position);
+  let usable = band(known, sized);
+  if usable {
   } else {
     let failure = StyleError::Inconsistent();
     return Err<unit, StyleError>(error: failure);
   }
+  let parent = cvt::<u32, u64>(cascade^.parents.inner[position]);
+  let has_parent = parent < position;
+  let inherited = initial_inherited(state: state, environment: environment);
+  let parent_set = 0_u32;
   if has_parent {
-    set parent_table = state^.tables.inner[parent];
-    set parent_quotes = state^.quotes.inner[parent];
-    set parent_position = state^.list_positions.inner[parent];
+    match stored_node(state: state, at: parent) {
+      Some(value: found) => {
+        set inherited = found;
+      }
+      None() => {
+        let failure = StyleError::Inconsistent();
+        return Err<unit, StyleError>(error: failure);
+      }
+    }
+    let parent_listed = parent < state^.sets.inner.len;
+    if parent_listed {
+      set parent_set = state^.sets.inner[parent];
+    }
   }
-  let collapse_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_border_collapse, set_id: set_id, atoms: atoms);
-  let collapse = keyword_or(declared: collapse_declared, parent: parent_table.border_collapse, initial: 0_u8);
-  let caption_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_caption_side, set_id: set_id, atoms: atoms);
-  let caption = keyword_or(declared: caption_declared, parent: parent_table.caption_side, initial: 0_u8);
-  let spacing_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_border_spacing, set_id: set_id, atoms: atoms);
-  let spacing = border_spacing_of(named: &state^.named, declared: spacing_declared, parent: parent_table, size: size, ex: own_ex, ch: own_ch, lh: own_lh, environment: own_environment);
-  let table = TableGroup(border_collapse: collapse, spacing_horizontal: spacing.spacing_horizontal, spacing_vertical: spacing.spacing_vertical, table_layout: 0_u8, caption_side: caption);
-  let quotes_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_quotes, set_id: set_id, atoms: atoms);
-  let quotes = quotes_of(declared: quotes_declared, parent: parent_quotes);
-  let position_declared = propagate declared_inherited(state: state, store: store, cascade: cascade, element: position, longhand: lh_list_style_position, set_id: set_id, atoms: atoms);
-  let list_position = keyword_or(declared: position_declared, parent: parent_position, initial: 0_u8);
-  let table_room = position < state^.tables.inner.len;
-  let quotes_room = position < state^.quotes.inner.len;
-  let positions_room = position < state^.list_positions.inner.len;
-  if table_room {
-    set state^.tables.inner[position] = table;
+  let set_id = propagate custom_set(state: state, store: store, cascade: cascade, atoms: atoms, position: position, parent_set: parent_set);
+  let sets_room = position < state^.sets.inner.len;
+  if sets_room {
+    set state^.sets.inner[position] = set_id;
   }
-  if quotes_room {
-    set state^.quotes.inner[position] = quotes;
-  }
-  if positions_room {
-    set state^.list_positions.inner[position] = list_position;
+  let declared = propagate gather_declared(state: state, store: store, cascade: cascade, position: position, set_id: set_id, atoms: atoms);
+  let root_font_size = state^.root_font_size;
+  let initial_family = state^.initial_family;
+  let disc = state^.disc;
+  let monospace = state^.monospace;
+  let (values, root_size) = compute_node(declared: declared, parent: inherited, has_parent: has_parent, root_font_size: root_font_size, named: &state^.named, atoms: atoms, document: document, store: store, cascade: cascade, position: position, environment: environment, initial_family: initial_family, disc: disc, monospace_name_atom: monospace);
+  if has_parent {
+  } else {
+    set state^.root_font_size = root_size;
   }
   if state^.resolves {
     let resolved = propagate resolve_stored(state: state, store: store, cascade: cascade, position: position, set_id: set_id, atoms: atoms);
   }
-  let fonts_room = position < state^.fonts.inner.len;
-  let texts_room = position < state^.texts.inner.len;
-  let flags_room = position < state^.visibility.inner.len;
-  let scales_room = position < state^.font_scales.inner.len;
-  let keywords_present = position < state^.font_keywords.inner.len;
-  let keywords_room = band(scales_room, keywords_present);
-  let first_rooms = band(fonts_room, texts_room);
-  let second_rooms = band(flags_room, keywords_room);
-  let some_rooms = band(first_rooms, second_rooms);
-  let ex_room = position < state^.ex.inner.len;
-  let ch_room = position < state^.ch.inner.len;
-  let lh_room = position < state^.lh.inner.len;
-  let two_rooms = band(ex_room, ch_room);
-  let unit_rooms = band(two_rooms, lh_room);
-  let rooms = band(some_rooms, unit_rooms);
-  if rooms {
-    set state^.ex.inner[position] = own_ex;
-    set state^.ch.inner[position] = own_ch;
-    set state^.lh.inner[position] = own_lh;
-    set state^.fonts.inner[position] = font;
-    set state^.font_keywords.inner[position] = size_keyword;
-    set state^.font_scales.inner[position] = size_scale;
-    set state^.texts.inner[position] = text;
-    set state^.visibility.inner[position] = visibility;
-  }
+  store_node(state: state, at: position, values: values);
   return Ok<unit, StyleError>(value: unit);
 }
 
@@ -1216,7 +1462,7 @@ fn intern_name(atoms: &AtomTable, name: &[u8]) -> result: Result<Atom, StyleErro
 }
 
 fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Inherited, StyleError> reads(store), reads(cascade), reads(document), reads(traversal), writes(atoms) {
-  doc "Copies the store's family lists and side stores, adds the initial family, and computes every styled node in order: the elements in preorder, then the pseudo-elements.";
+  doc "Copies the store's family lists and side stores, adds the initial family, and computes every styled node by cascade_levels, a parent before its children.";
   let count = cascade^.nodes.inner.len;
   let small = count <= 4294967294_u64;
   let elements = traversal^.elements.inner.len;
@@ -1269,6 +1515,8 @@ fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, ato
   let quotes = box_array_filled::<u32>(count: count, value: quotes_auto_ref);
   let list_positions = box_array_filled::<u8>(count: count, value: 0_u8);
   let resolved = box_slots_new::<Resolved>(capacity: 0_u64);
+  let resolved_first = box_array_filled::<u32>(count: count, value: 0_u32);
+  let resolved_end = box_array_filled::<u32>(count: count, value: 0_u32);
   let pseudo_parents = box_slots_new::<u32>(capacity: 0_u64);
   let pseudo_kinds = box_slots_new::<u8>(capacity: 0_u64);
   let node_total = cascade^.parents.inner.len;
@@ -1297,10 +1545,8 @@ fn inherited_pass(store: &RuleStore, cascade: &Cascade, document: &Document, ato
   let first_set = propagate push::<CustomSet>(cell: &custom_sets, value: empty, ceiling: 4294967295_u64);
   let custom_entries = box_slots_new::<CustomEntry>(capacity: 0_u64);
   let custom_text = box_slots_new::<u8>(capacity: 0_u64);
-  let state = Inherited(fonts: move fonts, texts: move texts, visibility: move visibility, font_keywords: move font_keywords, font_scales: move font_scales, ex: move ex, ch: move ch, lh: move lh, sets: move sets, custom_sets: move custom_sets, custom_entries: move custom_entries, custom_text: move custom_text, named: move named, initial_family: initial_index, disc: disc, monospace: monospace, root_font_size: environment.root_font_size, tables: move tables, quotes: move quotes, list_positions: move list_positions, resolved: move resolved, resolves: resolves, environment: environment, pseudo_parents: move pseudo_parents, pseudo_kinds: move pseudo_kinds);
-  for (position in 0_u64..count) {
-    let done = propagate inherit_element(state: &state, store: store, cascade: cascade, document: document, atoms: atoms, environment: environment, position: position);
-  }
+  let state = Inherited(fonts: move fonts, texts: move texts, visibility: move visibility, font_keywords: move font_keywords, font_scales: move font_scales, ex: move ex, ch: move ch, lh: move lh, sets: move sets, custom_sets: move custom_sets, custom_entries: move custom_entries, custom_text: move custom_text, named: move named, initial_family: initial_index, disc: disc, monospace: monospace, root_font_size: environment.root_font_size, tables: move tables, quotes: move quotes, list_positions: move list_positions, resolved: move resolved, resolved_first: move resolved_first, resolved_end: move resolved_end, resolves: resolves, environment: environment, pseudo_parents: move pseudo_parents, pseudo_kinds: move pseudo_kinds);
+  let done = propagate cascade_levels(state: &state, store: store, cascade: cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
   return Ok<Inherited, StyleError>(value: move state);
 }
 
@@ -1715,8 +1961,9 @@ fn pending_stored(store: &RuleStore) -> found: Bool reads(store) {
 }
 
 fn resolve_stored(state: &Inherited, store: &RuleStore, cascade: &Cascade, position: u64, set_id: u32, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(store), reads(cascade), writes(state), writes(atoms) {
-  doc "Substitutes and parses, with parse_pending_named, each pending winning value of a stored longhand of the node at position, and records it, or that it is invalid at computed-value time, in the pass's resolved list, which stays in node order for the third part to search.";
+  doc "Substitutes and parses, with parse_pending_named, each pending winning value of a stored longhand of the node at position, and records it, or that it is invalid at computed-value time, in the pass's resolved list, and the node's run of that list in resolved_first and resolved_end at position, for the third part to look up.";
   let node = cvt.wrap::<u64, u32>(position);
+  let run_start = state^.resolved.inner.len;
   for (code in 55_u64..97_u64) {
     let longhand = cvt::<u64, u8>(code);
     let stored = stored_longhand(longhand: longhand);
@@ -1749,6 +1996,15 @@ fn resolve_stored(state: &Inherited, store: &RuleStore, cascade: &Cascade, posit
         }
       }
     }
+  }
+  let run_end = state^.resolved.inner.len;
+  let first_room = position < state^.resolved_first.inner.len;
+  if first_room {
+    set state^.resolved_first.inner[position] = cvt.wrap::<u64, u32>(run_start);
+  }
+  let end_room = position < state^.resolved_end.inner.len;
+  if end_room {
+    set state^.resolved_end.inner[position] = cvt.wrap::<u64, u32>(run_end);
   }
   return Ok<unit, StyleError>(value: unit);
 }

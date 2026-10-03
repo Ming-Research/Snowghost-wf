@@ -31,7 +31,8 @@ What does the style stage of the first milestone, headless static rendering,
 compute for every element, from which inputs, and how is it judged correct?
 The stage's shape is decided (`design/pipeline/style.md`: matching in one
 parallel loop in document order with a rule index and sibling positions,
-then a cascade pass in document order), and so are its value types
+then a cascade pass in document order, which "The level cascade" below
+later replaced), and so are its value types
 (`design/vocabulary.md`: `LayoutUnit` lengths rounded once at computed-value
 time, atoms for names, interned groups of computed values). What remains is
 which CSS the stage implements first and the oracle that judges it.
@@ -659,15 +660,243 @@ The classes of mismatch the second batch adds, with their causes:
 - **Shapes the decisions do not settle,** each taken as the one with the
   fewest true dependencies and described in "How the second batch keeps
   only true dependencies": pending values of stored longhands resolved in
-  the pass in document order, ordered by the shared atom table and store; the
+  the pass in document order (as it then was), ordered by the shared atom
+  table and store; the
   third part as two loops, for the runtime's lane frame; hints written in one
   walk before matching, as style attributes are; lists computed where they
   are interned; and a pseudo-element whose matched rules set only custom
   properties getting no style, since its content is `none` and it generates
   no box.
 
+## The level cascade
+
+The stage's second part, the pass in document order that computes what the
+parent decides (font size, custom properties and inherited values), is
+sequential: about a quarter of the four-worker stage on ecma262 at its
+first measurement (Criterion 2). Shape D of the concurrency investigation
+cascaded level by level in the prototype, its level loop proved parallel
+by Whitefoot's range facts and `apart` certificate
+(`research/investigations/concurrency/DESIGN.md`, Shape D). The owner
+agreed, after the layout stage's handoff (mbbill/Snowghost#27), to port it
+to the real stage.
+
+**What the pass shares.** Most nodes compute their values from their
+parent's and the store's alone and write only their own slots. A node that
+declares custom properties, or whose winning value of an inherited or a
+stored longhand holds `var()`, appends to stores the pass shares (the
+custom-property sets, entries and text, and the list of resolved values,
+kept, before the port, in node order for the third part) and may intern
+atoms. The port
+keeps that work, and only that, out of the parallel loop.
+
+**Criteria**, recorded before the code:
+
+1. **Equal results.** The style oracle's dumps of the three pages and the
+   case page are byte-identical to those of the stage before the port, in
+   the sequential and the `--par` build.
+2. **Speed.** At four workers the pass is at least 1.5 times faster than
+   before the port on ecma262 and html5, and the whole stage is not slower
+   on any of the three pages, each the best of five runs of `run.sh time`
+   on the same host with no other job running.
+3. **Record.** The pass's time before and after, at one, two and four
+   workers and in the sequential build, and the share of nodes the
+   parallel loop handles on each page.
+
+### The port
+
+The dependencies first. A styled node depends on its parent's values, and
+on nothing else of the pass, unless it writes a store the pass shares; a
+level's elements are therefore independent of one another, and a
+pseudo-element depends only on its element. The candidates were:
+
+- **The pass in document order** (before the port): every node waits for
+  the one before it, a chain as long as the document.
+- **Every node of a level in one loop, the shared stores behind a lock or a
+  per-level merge**: it adds an order between nodes that need none, and
+  Whitefoot has no lock a counted loop may take.
+- **The level's nodes that write no shared store in one counted loop, the
+  others after it in document order** (chosen): the chain is the tree's
+  depth, plus, per level, the nodes that do write a shared store, whose
+  appends keep the order of the pass before the port within the level.
+
+The port, in `renderer/style/levels.wf` and `inherited.wf`:
+
+- `node_plain` flags, in one counted loop over the styled nodes, each node
+  that declares a custom property (it gets a set of its own) or has a
+  pending winning value of a stored longhand (it appends to the resolved
+  list). `inherit_level` then leaves to the sequential path a node without
+  a parent element, whose font size every `rem` reads.
+- `level_index` groups the elements by the depths the traversal's walk
+  already records (`Traversal` keeps them), so the walk is not repeated:
+  a counted pass checks that each element's parent precedes it, or is the
+  document, and lies one level above it, and counts each depth; a second
+  groups the elements by depth in preorder. Its loop invariants (`above`,
+  and `fresh` and `grouped`) give its postconditions `up` and `listed`,
+  shape D's facts.
+- For each level from the root, `inherit_level` computes the level's
+  unflagged elements in one counted loop with `apart(i, j) { }`, whose
+  requirements are `level_index`'s postconditions: iteration k reads its
+  parent's slots and writes its own in each per-node array of the state,
+  and its custom-property set is its parent's. `fast_node` gathers the
+  declared values by `gather_plain` and computes them by `compute_node`,
+  which `inherit_element` shares, so the two paths cannot drift apart. A
+  node whose pending value only `parse_pending_named` can parse (a family
+  list, a `list-style-type` name, a `border-spacing` or `quotes` value of a
+  side table) is flagged in its own slot. `inherit_element` then computes
+  the level's flagged nodes in preorder, as before.
+- `inherit_pseudos` computes the pseudo-elements in one counted loop after
+  the last level, each from its element at an index below the first
+  pseudo-element's, which the certificate uses; the flagged ones follow
+  in order.
+- The resolved list is indexed by node (`resolved_first`, `resolved_end`)
+  instead of searched in node order, since the slow nodes now append to it
+  in level order. Custom-property sets, the pass's named store and atoms
+  are numbered in that order too; nothing the dump or the layout stage
+  reads depends on those numbers, only on their contents and equalities.
+
+Two choices depart from the recommendation the work started from, each for
+a shorter chain:
+
+- **A pending value of an inherited longhand stays in the loop** when it
+  needs no shared store. A node that declares no custom property reads
+  only its parent's set, which no iteration of a level writes, so the loop
+  substitutes `var()` against it and parses the result with
+  `parse_pending`, which interns nothing and appends nothing
+  (`plain_resolved`, which the third part's `pending_value` now uses too).
+  `parse_pending_named` gives the same value for every value
+  `parse_pending` parses, since `merge_side` and `shift_stored` change only
+  names and side-table values; only at a resource ceiling do they differ,
+  where `merge_side` cannot intern a name of the expansion or append its
+  side tables (the atom table or the store full) and stops the stage with
+  TooLarge, which the loop, appending nothing, does not. Without it, 65,100 of ecma262's 179,471
+  elements and 8,500 of its 13,368 pseudo-elements, each with a pending
+  winning value of an inherited longhand, took the sequential path.
+- **The facts stay inside the stage's second part.** `todo.md` asks for
+  `level_index`'s postconditions where the traversal builds its levels.
+  `build_traversal` and `inherited_pass` are public, and a public
+  function's contract may name only public fields (Whitefoot's MOD-6), so
+  the facts would have to become public fields' postconditions and every
+  client (the page and layout oracles, which keep the traversal in their
+  own structs) would have to carry them to the call. The pass instead
+  checks the walk's recorded depths in one counted loop, which costs what
+  deriving them did, and the walk runs once.
+
+**Whitefoot finding.** A counted loop whose certified elements are fields
+of a struct behind a reference is denied permission when its body reads a
+scalar field of the same struct, though no iteration writes it: in the
+minimal case, `set state^.one.inner[at] = v` under `apart` with
+`let s = state^.shared.scale;` in the body is denied at the write, while an
+element read `state^.shared.table.inner[0]` or a range reference to it is
+permitted. The loops read the scalars they need once before the loop.
+
+### Results
+
+With Whitefoot 3629be15, the style oracle's check at commit 881eede
+(`runs/level-cascade-check-881eede.txt`), the controls of the facts at the
+same commit and the rest at e6fad78, which changes only a function's
+description in the renderer:
+
+- **Criterion 1.** Every page's sequential and `--par` dumps are
+  byte-identical to the stage's before the port (f4028dc): ecma262
+  c2317cfc58d7dafd, html5 55b66818fc3b7e6d, apollo11 6b2c50185e8c4442,
+  cases 43af18e0ddfcb6b6. The layout oracle's html5 dumps, sequential and
+  `--par`, are byte-identical to the one the layout driver built at
+  f4028dc gives (58deb6d805fce800), and `run.sh check html5` of the layout
+  investigation passes. A level loop that writes the parent's font instead
+  of the computed one changes ecma262's dump and drops `font-size` to 4.41
+  percent against Chromium, so the dumps see the loop's results.
+- **Permission.** `--par-ledger` permits and splits `inherit_level`'s and
+  `inherit_pseudos`' loops (14 and 13 captured bindings) and `node_plain`'s;
+  `level_index`'s two passes, the loop over levels and the sequential loops
+  stay denied, each depending on what earlier iterations wrote. Without
+  `apart`, the level loop is denied at its first write (a `--function`
+  build's ledger). Before the loops
+  wrote through the state, with each per-node array a parameter, they were
+  permitted but declined to split: 26 captured bindings, 1,112 bytes, did
+  not fit the runtime's 256-byte lane frame.
+- **The facts.** Each is needed: without `inherit_level`'s `up` or
+  `listed` requirement, or with the pseudo-element's guard weakened to
+  `raw < count`, the certificate is rejected (RANGE-5); without
+  `level_index`'s `up` or `listed` postcondition the call of
+  `inherit_level` is; without the `above` invariant or the `grouped`
+  invariant `level_index`'s return is, and without `fresh` its grouping
+  loop (RANGE-3).
+- **Criterion 3, the share of nodes the loops compute:**
+
+| Page | Elements | In the level loops | Pseudo-elements | In their loop |
+|---|---:|---:|---:|---:|
+| ecma262 | 179,471 | 179,470 | 13,368 | 13,368 |
+| html5 | 117,179 | 117,178 | 3,129 | 3,129 |
+| apollo11 | 11,845 | 11,795 | 1,596 | 1,596 |
+| cases | 249 | 242 | 63 | 62 |
+
+  The pseudo-elements counted are the styled ones the first part numbers,
+  more than the dump lists. The rest are the root and, on apollo11 and the
+  cases page, nodes that declare custom properties or have a pending value
+  of a stored longhand.
+- **The fallback path.** None of the three pages sends a node of the level
+  loop to the sequential path for a pending value only
+  `parse_pending_named` parses. `tests/css/style-cases.html` now does: a
+  `font-family`, `list-style-type`, `quotes` and `border-spacing` taken
+  from `var()`, with and without a custom property in scope. Its dumps
+  with the case added, sequential and `--par` (b25828cfabd613e5,
+  `runs/level-cascade-check-final.txt`),
+  equal the dump the stage before the port gives of the same page, and a
+  level loop that leaves such a node unflagged, so that neither path
+  computes it, changes the dump from the first added element on.
+- **Criterion 2.** `run.sh time` before the port (f4028dc) and after it
+  (5936e0f, whose renderer is 7e54cc1's), one after the other on the same
+  host's four processors with no other job
+  (`runs/level-cascade-time-before.txt`,
+  `runs/level-cascade-time-after.txt`), the best of five runs, per run of
+  the stage. The pass is the inherited mode less the match mode, a
+  difference of two timed modes, so its smaller values carry the noise of
+  both (apollo11's two-worker 0.0015 s is below the timer's resolution
+  over twenty repetitions):
+
+| Page | Build | Pass before | Pass after | Ratio | Stage before | Stage after |
+|---|---|---:|---:|---:|---:|---:|
+| ecma262 | sequential | 0.262 s | 0.346 s | 0.76 | 2.410 s | 2.436 s |
+| ecma262 | 1 worker | 0.274 s | 0.344 s | 0.80 | 2.394 s | 2.462 s |
+| ecma262 | 2 workers | 0.288 s | 0.184 s | 1.57 | 1.530 s | 1.434 s |
+| ecma262 | 4 workers | 0.284 s | 0.114 s | 2.49 | 1.094 s | 0.926 s |
+| html5 | sequential | 0.058 s | 0.132 s | 0.44 | 1.850 s | 2.024 s |
+| html5 | 1 worker | 0.024 s | 0.128 s | 0.19 | 1.842 s | 1.876 s |
+| html5 | 2 workers | 0.078 s | 0.048 s | 1.63 | 1.100 s | 1.112 s |
+| html5 | 4 workers | 0.074 s | 0.036 s | 2.06 | 0.722 s | 0.718 s |
+| apollo11 | sequential | 0.0205 s | 0.0265 s | 0.77 | 1.009 s | 1.014 s |
+| apollo11 | 1 worker | 0.0175 s | 0.0085 s | 2.06 | 0.997 s | 0.988 s |
+| apollo11 | 2 workers | 0.0160 s | 0.0015 s | 10.67 | 0.543 s | 0.524 s |
+| apollo11 | 4 workers | 0.0170 s | 0.0040 s | 4.25 | 0.2945 s | 0.2815 s |
+
+  Criterion 2 holds: at four workers the pass is 2.49 and 2.06 times
+  faster on ecma262 and html5, and the whole stage is 15 percent faster on
+  ecma262, 4 percent on apollo11 and level on html5 (0.718 against 0.722
+  s). At one worker and in the sequential build the port costs: the pass
+  runs `node_plain`'s loop, `level_index`'s check and grouping, and a loop
+  per level, so on ecma262 it is 20 to 24 percent slower and on html5 two
+  to five times slower, its stage 9 percent slower sequentially, more
+  than the pass's 0.07 s explains, so part of it is the run's noise. The
+  criterion judges four workers, the build the renderer runs; the cost at
+  one worker is the price of the levels and is recorded, not hidden.
+
+**What these results rest on.** The equality, the hashes and the
+Chromium comparison at the final revision are in
+`runs/level-cascade-check-final.txt`, written by `run.sh check`, with
+the ledger's verdict on each loop of `levels.wf`. The shares of nodes the
+loops compute, the count of nodes the recommendation's rule would have
+sent to the sequential path (65,100 and 8,500 on ecma262), the denial of
+the level loop without `apart`, the declined split at 26 captured
+bindings, and
+the controls of the facts were observed by the agent that implemented
+the port, with temporary counters and edited copies, and are not in a run
+file; repeating them needs the same edits.
+
 ## Owner rulings
 
+- **2026-10-02, Q64, the level cascade,** written in Chinese after the
+  handoff of mbbill/Snowghost#28: approved as recommended; the stage's
+  second part computes the inherited values level by level.
 - **2026-10-02, Q61.** Where the HTML Standard and Chromium differ, Snowghost
   follows Chromium: the user-agent sheet gives Chromium's computed values.
   This supersedes the 2026-10-01 choice to keep the Standard's sheet for
