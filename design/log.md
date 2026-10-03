@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-03 Keep platform policy out of the renderer: facts in, policy out
+
+Nodes: processes, pipeline
+
+Owner-approved: 2026-10-03, after the discussion of retained-scene rendering and the shell's per-platform choices, the owner wrote in Chinese that they agreed to Q65 and to continue on that line; then wrote in Chinese that Q66 takes option A; then, shown the tree changes of mbbill/Snowghost#29 including the rename of layer trees to property trees, wrote in Chinese that #29 is confirmed.
+
+Summary: The processes tree records that the renderer sends the shell facts about the page and never decides how they are drawn, while the shell owns every platform policy (how to draw, which pixels to cache, how to scroll and how to present), and that no policy changes the picture at rest, only its cost, because platforms differ in what their compositors and presentation interfaces allow, so these choices are measured and changed in the shell without touching the renderer; it refuses the renderer grouping content into compositing layers from hints. Its one exception (Q66) lets a cached subtree be resampled while a transform animation scales, rotates or moves it by a fraction of a pixel, the frame after the animation being exact again, and refuses holding animation frames to a full redraw's pixels. Since the renderer no longer builds layers, the processes and pipeline trees say property trees where they said layer trees. The grounds, the facts the shell needs and the measurements are in research/investigations/incremental/DESIGN.md, sections 6.3 and 7.
+
 ## 2026-10-02 Cascade the style stage's inherited values level by level
 
 Nodes: pipeline/style
