@@ -172,8 +172,8 @@ example apart from the renderer code that exposed it
   (once at full width, once beside the floats). On apollo11, whose article
   floats an infobox and thumbnails beside most paragraphs, this re-stack
   is the whole cost of 32 of 60 word edits and 20 of 60 sentence edits,
-  4.8 to 5.6 ms each sequentially, against 82 ms for the page's full
-  layout stage (44 ms at four workers)
+  4.5 to 4.8 ms each sequentially, against 71 to 82 ms for the page's
+  full layout stage (37 to 44 ms at four workers)
   (`research/investigations/incremental-layout/runs/step3b.txt`). Change:
   rebuild the exclusions of the floats that reach the paragraph from their
   placed rectangles, break it again beside them in place, and translate
