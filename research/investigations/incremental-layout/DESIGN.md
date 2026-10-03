@@ -143,11 +143,13 @@ tick bump deleted (X11), one key field omitted.
 
 ## Measurement
 
-- **Edit scripts.** `research/investigations/incremental/experiments/x1-x3-x16/`'s
-  generator with its seed, emitting the driver's edit language keyed by the
-  base dump's element index and text-node ordinal: X1's single edits (30 per
-  kind per page, 10 on ecma262), and typing sessions of 100 to 1,000 word
-  edits at one point and scattered (X13).
+- **Edit scripts.** `scripts/edits.py`, with X1's seed and rules
+  (`research/investigations/incremental/experiments/x1-x3-x16/`), emitting
+  the driver's edit language (`renderer/oracle/layout/module.wfm`) keyed by
+  the node identifiers the driver's `nodes` mode lists, and by the base dump
+  for the boxed elements and text: X1's single edits (30 per kind per page,
+  10 on ecma262), and typing sessions of 100 to 1,000 word edits at one point
+  and scattered (X13).
 - **Driver.** A mode `edit` of `layout_oracle`: load, build, then per edit
   apply, update, and dump or time, excluding `place_boxes` and the dump.
   Per script: minimum, median, p90, maximum, best of 5 process runs, every
