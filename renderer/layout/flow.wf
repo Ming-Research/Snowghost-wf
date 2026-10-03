@@ -279,6 +279,12 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
 fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
   doc "Lays out one child context in the space its parent wrote, then resolves its margins against its containing block's width.";
   lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  resolve_margins(child: child, styles: styles);
+  return unit;
+}
+
+fn resolve_margins(child: &Context, styles: &Styles) -> result: unit reads(styles), writes(child) {
+  doc "Resolves a child context's margins against its containing block's width, the basis of the space its parent wrote.";
   let basis = child^.space.basis_width;
   let margins = margin_edges(styles: styles, style: child^.style, basis: basis);
   set child^.margin_top = margins.top;
@@ -1577,12 +1583,21 @@ fn position_out_with(context: &Context, styles: &Styles, document: &Document, fo
   return unit;
 }
 
-fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Lays out a flow context: its width, a pre-pass giving every box its containing width, its child contexts in parallel, its paragraphs broken in parallel at their full widths, the stacking pass, its height and positioned children, then its fragments.";
-  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-  set context^.width = width;
-  let style = context^.style;
-  let basis = context^.space.basis_width;
+struct FlowFrame {
+  doc "The geometry a flow context's passes take from its border-box width and its space: the content box's left and top in the border box, the width its flow is laid out in (a column's for a multi-column context, else the content box's), the definite content height children resolve percentages against (unknown when indefinite), and the column shape of a multi-column context.";
+  content_left: i32;
+  content_top: i32;
+  flow_width: i32;
+  definite: i32;
+  columned: Bool;
+  column_count: i32;
+  column_width: i32;
+  column_gap: i32;
+}
+
+fn flow_frame(styles: &Styles, style: StyleRef, space: Space, width: i32) -> frame: FlowFrame reads(styles) {
+  doc "The geometry of a flow context styled style, width wide in space: a pure function of them, so that an update can compare it with the geometry of the context's previous layout.";
+  let basis = space.basis_width;
   let border = border_edges(styles: styles, style: style);
   let padding = padding_edges(styles: styles, style: style, basis: basis);
   let content_left = border.left +sat padding.left;
@@ -1595,8 +1610,8 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   let frame_vertical_border = vertical(edges: border);
   let frame_vertical_padding = vertical(edges: padding);
   let frame_vertical = frame_vertical_border +sat frame_vertical_padding;
-  let forced = context^.space.forced_height;
-  let specified = specified_height(styles: styles, style: style, basis: context^.space.basis_height, frame: frame_vertical);
+  let forced = space.forced_height;
+  let specified = specified_height(styles: styles, style: style, basis: space.basis_height, frame: frame_vertical);
   let definite = if forced >= 0_i32 {
     give forced -sat frame_vertical;
   } else if specified >= 0_i32 {
@@ -1611,6 +1626,11 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   } else {
     give content_width;
   }
+  return FlowFrame(content_left: content_left, content_top: content_top, flow_width: flow_width, definite: definite, columned: columned, column_count: column_count, column_width: column_width, column_gap: column_gap);
+}
+
+fn clear_column_map(context: &Context) -> result: unit writes(context) {
+  doc "Empties the column map of the context's previous layout.";
   let cleared_map = context^.column_map.inner.len;
   for (step in 0_u64..cleared_map) {
     let length = context^.column_map.inner.len;
@@ -1619,12 +1639,15 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
     }
     let dropped = take_back(window: &context^.column_map.inner);
   }
-  prepare_spaces(context: context, styles: styles, content_width: flow_width, content_height: definite);
-  lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-  break_all(context: context, styles: styles, fonts: fonts, picks: picks);
-  let (laid_height, baseline, has_baseline) = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: content_left, content_top: content_top, content_width: flow_width, basis_height: definite);
-  let height = if columned {
-    give fragment_columns(context: context, styles: styles, count: column_count, width: column_width, gap: column_gap, content_top: content_top, laid_height: laid_height);
+  return unit;
+}
+
+fn finish_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The passes of a flow context after its children are laid out and its paragraphs broken: the stacking pass, its columns, its height and baseline, its positioned children, then its fragments.";
+  let style = context^.style;
+  let (laid_height, baseline, has_baseline) = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite);
+  let height = if frame.columned {
+    give fragment_columns(context: context, styles: styles, count: frame.column_count, width: frame.column_width, gap: frame.column_gap, content_top: frame.content_top, laid_height: laid_height);
   } else {
     give laid_height;
   }
@@ -1643,7 +1666,20 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
   copy_fragments(context: context);
-  split_fragments(context: context, styles: styles, content_left: content_left);
+  split_fragments(context: context, styles: styles, content_left: frame.content_left);
+  return unit;
+}
+
+fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out a flow context: its width, a pre-pass giving every box its containing width, its child contexts in parallel, its paragraphs broken in parallel at their full widths, then finish_flow: the stacking pass, its height and positioned children, then its fragments.";
+  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set context^.width = width;
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: width);
+  clear_column_map(context: context);
+  prepare_spaces(context: context, styles: styles, content_width: frame.flow_width, content_height: frame.definite);
+  lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  break_all(context: context, styles: styles, fonts: fonts, picks: picks);
+  finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   return unit;
 }
 
