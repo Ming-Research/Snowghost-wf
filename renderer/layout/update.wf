@@ -517,6 +517,46 @@ fn fresh_before() -> made: Before pure {
   return Before(space: space, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32);
 }
 
+fn fast_child(child: &Context, result: &UpdateCounts, changed: &Bool, before: Before, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result_unit: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(result), writes(changed) {
+  doc "One iteration of update_flow's first pass: a marked child gets back the space before records, which its parent's pre-pass would give it again, is updated (update_child), and records its counts and whether its outputs changed.";
+  if child^.dirty {
+    set child^.space = before.space;
+    let got = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+    let same = same_outputs(before: before, context: child);
+    set result^ = got;
+    set changed^ = bnot(same);
+  }
+  return unit;
+}
+
+fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked: Bool, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result_unit: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(result) {
+  doc "One iteration of update_flow's children pass after the pre-pass: a marked child is updated; an unmarked child whose space came out as before records is kept, its margins resolved again (the parent's intrinsic sizes may have resolved them against no width); any other is laid out again with lay_out_child, forgetting its intrinsic sizes first when nobody asked for them in this update, as a full layout would first ask in its own layout. Records the counts.";
+  if child^.dirty {
+    let got = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+    set result^ = got;
+    return unit;
+  }
+  let same = same_space(first: before.space, second: child^.space);
+  if same {
+    resolve_margins(child: child, styles: styles);
+    return unit;
+  }
+  if unasked {
+    set child^.intrinsic_known = False();
+  }
+  lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let (contexts, paragraphs) = count_tree(context: child);
+  set result^ = UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
+  return unit;
+}
+
+fn compare_child(child: &Context, changed: &Bool, before: Before) -> result_unit: unit reads(child), writes(changed) {
+  doc "Records whether the child's outputs differ from those before records.";
+  let same = same_outputs(before: before, context: child);
+  set changed^ = bnot(same);
+  return unit;
+}
+
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Brings the marked flow context up to date, before holding its space and outputs from its previous layout, with lay_out_flow's passes: its width; then, when its geometry and space are those of its previous layout, no intrinsic sizes of it or of a marked child were asked for, it has no float and no marked child is positioned, its marked children are updated first in their kept spaces, and the context stops there when none of their outputs changed and none of its paragraphs is marked. Otherwise the pre-pass runs again, each marked child is updated, each unmarked child whose space came out unchanged is kept (its margins resolved again) and every other one laid out again, each paragraph is broken again when it is marked, its flow width changed, it follows a float and holds lines the stacking pass narrowed or moved beside one (full_width_lines), or it holds an atomic inline whose outputs changed, and finish_flow stacks the flow and writes the fragments again. Each loop over the children or the paragraphs is a counted loop whose iteration writes only its own element and its own entry of a local array.";
   let children = context^.children.inner.len;
@@ -573,20 +613,14 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   let fast = band(steady, floatless);
   if fast {
     let present = context^.children.inner.len;
-    for (i in 0_u64..present) {
-      if context^.children.inner[i].dirty {
-        if i < befores.inner.len {
-          let held = befores.inner[i];
-          set context^.children.inner[i].space = held.space;
-          let got = update_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
-          let same = same_outputs(before: held, context: &context^.children.inner[i]);
-          if i < results.inner.len {
-            set results.inner[i] = got;
-          }
-          if i < changed.inner.len {
-            set changed.inner[i] = bnot(same);
-          }
-        }
+    let fits_results = present <= results.inner.len;
+    let fits_changed = present <= changed.inner.len;
+    let fits_befores = present <= befores.inner.len;
+    let fits_pair = band(fits_results, fits_changed);
+    let fits = band(fits_pair, fits_befores);
+    if fits {
+      for (i in 0_u64..present) {
+        fast_child(child: &context^.children.inner[i], result: &results.inner[i], changed: &changed.inner[i], before: befores.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
       }
     }
     let changed_any = any_set(flags: &changed);
@@ -610,39 +644,21 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   clear_column_map(context: context);
   prepare_spaces(context: context, styles: styles, content_width: frame.flow_width, content_height: frame.definite);
   let present = context^.children.inner.len;
-  for (i in 0_u64..present) {
-    if i < befores.inner.len {
-      let held = befores.inner[i];
-      if context^.children.inner[i].dirty {
-        let got = update_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
-        if i < results.inner.len {
-          set results.inner[i] = got;
-        }
-      } else {
-        let same = same_space(first: held.space, second: context^.children.inner[i].space);
-        if same {
-          resolve_margins(child: &context^.children.inner[i], styles: styles);
-        } else {
-          if unasked {
-            set context^.children.inner[i].intrinsic_known = False();
-          }
-          lay_out_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-          let (inner_contexts, inner_paragraphs) = count_tree(context: &context^.children.inner[i]);
-          if i < results.inner.len {
-            set results.inner[i] = UpdateCounts(prepared: 0_u64, contexts: inner_contexts, paragraphs: inner_paragraphs, held_entries: 0_u64, entries: 0_u64);
-          }
-        }
-      }
+  let fits_results = present <= results.inner.len;
+  let fits_befores = present <= befores.inner.len;
+  let fits_pair = band(fits_results, fits_befores);
+  if fits_pair {
+    for (i in 0_u64..present) {
+      settle_child(child: &context^.children.inner[i], result: &results.inner[i], before: befores.inner[i], unasked: unasked, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     }
   }
-  let settled_count = context^.children.inner.len;
-  for (i in 0_u64..settled_count) {
-    if i < befores.inner.len {
-      let held = befores.inner[i];
-      let same = same_outputs(before: held, context: &context^.children.inner[i]);
-      if i < changed.inner.len {
-        set changed.inner[i] = bnot(same);
-      }
+  let compared = context^.children.inner.len;
+  let compare_fits = compared <= changed.inner.len;
+  let compare_befores = compared <= befores.inner.len;
+  let comparable = band(compare_fits, compare_befores);
+  if comparable {
+    for (i in 0_u64..compared) {
+      compare_child(child: &context^.children.inner[i], changed: &changed.inner[i], before: befores.inner[i]);
     }
   }
   let changed_any = any_set(flags: &changed);
