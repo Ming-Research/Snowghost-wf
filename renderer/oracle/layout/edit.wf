@@ -5,7 +5,11 @@ alias AttributeNamespace = pkg::dom::AttributeNamespace;
 alias Document = pkg::dom::Document;
 alias DomError = pkg::dom::DomError;
 alias Environment = pkg::css::values::Environment;
+alias Clock = std::time::Clock;
+alias FontPicks = pkg::layout::text::FontPicks;
 alias FontSet = pkg::layout::text::FontSet;
+alias Layout = pkg::layout::Layout;
+alias Styles = pkg::style::Styles;
 alias HandleFactory = std::io::HandleFactory;
 alias Namespace = pkg::dom::Namespace;
 alias NodeData = pkg::dom::NodeData;
@@ -28,6 +32,16 @@ alias put_byte = pkg::oracle::support::put_byte;
 alias put_decimal = pkg::oracle::support::put_decimal;
 alias put_hex = pkg::oracle::support::put_hex;
 alias put_text = pkg::oracle::support::put_text;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias build_layout = pkg::layout::build_layout;
+alias build_traversal = pkg::style::build_traversal;
+alias compute_styles = pkg::style::compute_styles;
+alias lay_out = pkg::layout::lay_out;
+alias place_boxes = pkg::layout::place_boxes;
+alias now = std::time::now;
+alias text_changed = pkg::layout::text_changed;
+alias update = pkg::layout::update;
+alias update_counts = pkg::layout::update_counts;
 alias set_attribute = pkg::dom::set_attribute;
 alias set_text = pkg::dom::set_text;
 alias store_text = pkg::dom::store_text;
@@ -68,6 +82,35 @@ const operation_reason: Array<u8, 28> = "the operation does not apply";
 const syntax_reason: Array<u8, 20> = "unreadable operation";
 
 const render_reason: Array<u8, 25> = "the pipeline fails (stage";
+
+const inc_same: Array<u8, 9> = " inc same";
+
+const inc_differs: Array<u8, 9> = " inc DIFF";
+
+const inc_refused: Array<u8, 12> = " inc refused";
+
+const inc_failed: Array<u8, 11> = " inc failed";
+
+const us_label: Array<u8, 4> = " us ";
+
+const prepared_label: Array<u8, 10> = " prepared ";
+
+const contexts_label: Array<u8, 10> = " contexts ";
+
+const paragraphs_label: Array<u8, 12> = " paragraphs ";
+
+const held_label: Array<u8, 14> = " held_entries ";
+
+const entries_label: Array<u8, 9> = " entries ";
+
+const full_label: Array<u8, 5> = " full";
+
+struct Built {
+  doc "One run of the pipeline after the traversal: the styles, the font picks and the laid-out layout.";
+  styles: Styles;
+  picks: FontPicks;
+  layout: Layout;
+}
 
 fn fnv1a(bytes: &[u8]) -> hash: u64 reads(bytes) {
   doc "The 64-bit FNV-1a hash of bytes.";
@@ -755,10 +798,132 @@ fn report_dump(buffer: &Box<Slots<u8>>, dump: &Box<Slots<u8>>, label: &[u8], num
   return hashed;
 }
 
-fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(out), writes(err), writes(files) waits {
-  doc "Runs an edit script on the live document of page: it applies the S lines, runs the whole pipeline on the unedited document and reports `base hash H bytes N`, then applies each edit and reports `edit I hash H bytes N`, I counting the edits from 1, after rerunning the whole pipeline; a P line requests the full dump of that edit (0 for the unedited document), which follows its hash line. Returns 0, or 2 after naming the failing line on err.";
+fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport) -> result: Result<Built, u8> reads(fonts), writes(page) {
+  doc "Runs the pipeline on the live document of page up to the laid-out layout: its traversal, the styles, the font matching, the layout's build and lay_out. The refusal is the stage rebuild_dump numbers: 4 the traversal, 5 the styles, 1 the font matching, 2 the layout.";
+  match build_traversal(document: &page^.document) {
+    Ok(value: found) => {
+      set page^.traversal = move found;
+    }
+    Err(..) => {
+      return Err<Built, u8>(error: 4_u8);
+    }
+  }
+  let styles = match compute_styles(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return Err<Built, u8>(error: 5_u8);
+    }
+  }
+  let picks = match pick_all(fonts: fonts, styles: &styles, atoms: &page^.atoms) {
+    Some(value: found) => {
+      give move found;
+    }
+    None() => {
+      return Err<Built, u8>(error: 1_u8);
+    }
+  }
+  let layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: &styles, atoms: &page^.atoms, fonts: fonts, picks: &picks, viewport: viewport) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return Err<Built, u8>(error: 2_u8);
+    }
+  }
+  lay_out(layout: &layout, document: &page^.document, styles: &styles, fonts: fonts, picks: &picks);
+  let built = Built(styles: move styles, picks: move picks, layout: move layout);
+  return Ok<Built, u8>(value: move built);
+}
+
+fn dump_layout(page: &Page, styles: &Styles, layout: &Layout, buffer: &Box<Slots<u8>>) -> stage: u8 reads(page), reads(styles), reads(layout), writes(buffer) {
+  doc "Places the boxes of layout and appends its dump, with the page's traversal and styles, to buffer; 0, or 3 when the dump fails.";
+  let placed = place_boxes(layout: layout);
+  let placed_count = placed.inner.len;
+  let written = write_dump(document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, styles: styles, placed: &placed.inner[0_u64..placed_count], buffer: buffer);
+  if written {
+    return 0_u8;
+  }
+  return 3_u8;
+}
+
+fn text_edit_node(line: &[u8]) -> node: Option<NodeId> reads(line) {
+  doc "The Text node a T or D edit line changes, or None for any other line.";
+  let length = line^.len;
+  if length < 3_u64 {
+    return None<NodeId>();
+  }
+  let kind = line^[0_u64];
+  let inserts = kind == 84_u8;
+  let deletes = kind == 68_u8;
+  let textual = bor(inserts, deletes);
+  if textual {
+  } else {
+    return None<NodeId>();
+  }
+  let (found, value, unused_next) = read_number(line: line, start: 2_u64);
+  if found {
+    let made = node_id_of(value: value);
+    return made;
+  }
+  return None<NodeId>();
+}
+
+fn same_bytes(first: &Box<Slots<u8>>, second: &Box<Slots<u8>>) -> same: Bool reads(first), reads(second) {
+  doc "Tells whether two buffers hold the same bytes.";
+  let length = first^.inner.len;
+  if length != second^.inner.len {
+    return False();
+  }
+  for (at in 0_u64..length) {
+    if first^.inner[at] != second^.inner[at] {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -> applied: Bool reads(page), reads(fonts), writes(kept) {
+  doc "Records the change of the Text node's data in the kept layout with text_changed and brings it up to date with update, in the kept styles and font picks; False when either refuses.";
+  match text_changed(layout: &kept^.layout, document: &page^.document, node: node) {
+    Ok(..) => {
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+  match update(layout: &kept^.layout, document: &page^.document, styles: &kept^.styles, fonts: fonts, picks: &kept^.picks) {
+    Ok(..) => {
+      return True();
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+}
+
+fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(layout), writes(buffer) {
+  doc "Appends what the layout's last update did: ` prepared R contexts C paragraphs P held_entries H entries E`.";
+  let (prepared, contexts, paragraphs, held_entries, entries) = update_counts(layout: layout);
+  put_text(buffer: buffer, text: &prepared_label[0_u64..prepared_label.len]);
+  put_decimal(buffer: buffer, value: prepared);
+  put_text(buffer: buffer, text: &contexts_label[0_u64..contexts_label.len]);
+  put_decimal(buffer: buffer, value: contexts);
+  put_text(buffer: buffer, text: &paragraphs_label[0_u64..paragraphs_label.len]);
+  put_decimal(buffer: buffer, value: paragraphs);
+  put_text(buffer: buffer, text: &held_label[0_u64..held_label.len]);
+  put_decimal(buffer: buffer, value: held_entries);
+  put_text(buffer: buffer, text: &entries_label[0_u64..entries_label.len]);
+  put_decimal(buffer: buffer, value: entries);
+  return unit;
+}
+
+fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
+  doc "Runs an edit script on the live document of page: it applies the S lines, runs the whole pipeline on the unedited document and reports `base hash H bytes N`, then applies each edit. Without timing, it reruns the whole pipeline after each edit and reports `edit I hash H bytes N`, I counting the edits from 1; a P line requests the full dump of that edit (0 for the unedited document), which follows its hash line. A T or D edit is also applied to a layout kept across edits with pkg::layout's text_changed and update, whose dump, with the rebuilt styles, is compared byte for byte with the rebuilt one: the line ends in ` inc same`, ` inc DIFF` or ` inc refused` (text_changed or update refused it); after a refusal or a difference, and after any other edit, the kept layout becomes the rebuilt one. With timing, a T or D edit is applied only to the kept layout and reports `edit I us U prepared R contexts C paragraphs P held_entries H entries E`, U the microseconds text_changed and update took and the rest update_counts' counts, or `edit I inc refused` after rebuilding the layout; any other edit rebuilds it and reports `edit I full`. Returns 0, or 2 after naming the failing line on err.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
   let dump = box_slots_new::<u8>(capacity: 65536_u64);
+  let other = box_slots_new::<u8>(capacity: 65536_u64);
   let dumps = box_slots_new::<u64>(capacity: 16_u64);
   let collected = collect_script(page: page, environment: environment, script: script, dumps: &dumps, report: &report);
   if collected {
@@ -766,10 +931,19 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
     let written = flush(factory: files, output: err, buffer: &report);
     return 2_u8;
   }
-  let stage = rebuild_dump(page: page, fonts: fonts, environment: environment, viewport: viewport, buffer: &dump);
-  if stage == 0_u8 {
+  let kept = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: stage) => {
+      let code = stage_failure(err: err, files: files, stage: stage);
+      return code;
+    }
+  }
+  let dumped = dump_layout(page: page, styles: &kept.styles, layout: &kept.layout, buffer: &dump);
+  if dumped == 0_u8 {
   } else {
-    let code = stage_failure(err: err, files: files, stage: stage);
+    let code = stage_failure(err: err, files: files, stage: dumped);
     return code;
   }
   let print_base = requested(dumps: &dumps, number: 0_u64);
@@ -806,20 +980,119 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
           let reported = flush(factory: files, output: err, buffer: &report);
           return 2_u8;
         }
-        let rebuilt = rebuild_dump(page: page, fonts: fonts, environment: environment, viewport: viewport, buffer: &dump);
-        if rebuilt == 0_u8 {
-        } else {
-          put_failure(report: &report, number: number, reason: &render_reason[0_u64..render_reason.len]);
-          let reported = flush(factory: files, output: err, buffer: &report);
-          let code = stage_failure(err: err, files: files, stage: rebuilt);
-          return code;
+        let textual = text_edit_node(line: &script^[start..end]);
+        let incremental = match textual {
+          Some(value: node) => {
+            if timing {
+              let started = now(clock: clock);
+              let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
+              let finished = now(clock: clock);
+              let elapsed = nanoseconds_from(earlier: started, later: finished);
+              put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
+              put_decimal(buffer: &report, value: edits);
+              if done {
+                let micros = elapsed / 1000_u64;
+                put_text(buffer: &report, text: &us_label[0_u64..us_label.len]);
+                put_decimal(buffer: &report, value: micros);
+                put_counts(buffer: &report, layout: &kept.layout);
+                put_byte(buffer: &report, value: 10_u8);
+                let flushed = flush(factory: files, output: out, buffer: &report);
+                give 1_u8;
+              } else {
+                put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
+                put_byte(buffer: &report, value: 10_u8);
+                give 2_u8;
+              }
+            } else {
+              let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
+              if done {
+                give 3_u8;
+              } else {
+                give 2_u8;
+              }
+            }
+          }
+          None() => {
+            if timing {
+              put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
+              put_decimal(buffer: &report, value: edits);
+              put_text(buffer: &report, text: &full_label[0_u64..full_label.len]);
+              put_byte(buffer: &report, value: 10_u8);
+            }
+            give 0_u8;
+          }
         }
-        let print = requested(dumps: &dumps, number: edits);
-        let hashed = report_dump(buffer: &report, dump: &dump, label: &edit_label[0_u64..edit_label.len], number: edits, print: print);
-        let flushed = flush(factory: files, output: out, buffer: &report);
-        if flushed {
+        if incremental == 1_u8 {
         } else {
-          return 2_u8;
+          let rebuilt = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport) {
+            Ok(value: found) => {
+              give move found;
+            }
+            Err(error: stage) => {
+              put_failure(report: &report, number: number, reason: &render_reason[0_u64..render_reason.len]);
+              let reported = flush(factory: files, output: err, buffer: &report);
+              let code = stage_failure(err: err, files: files, stage: stage);
+              return code;
+            }
+          }
+          if timing {
+            let flushed = flush(factory: files, output: out, buffer: &report);
+            set kept = move rebuilt;
+          } else {
+            let full_stage = dump_layout(page: page, styles: &rebuilt.styles, layout: &rebuilt.layout, buffer: &dump);
+            if full_stage == 0_u8 {
+            } else {
+              let code = stage_failure(err: err, files: files, stage: full_stage);
+              return code;
+            }
+            let same = if incremental == 3_u8 {
+              let kept_stage = dump_layout(page: page, styles: &rebuilt.styles, layout: &kept.layout, buffer: &other);
+              let identical = same_bytes(first: &dump, second: &other);
+              truncate(buffer: &other, length: 0_u64);
+              let kept_dumped = kept_stage == 0_u8;
+              give band(identical, kept_dumped);
+            } else {
+              give False();
+            }
+            let print = requested(dumps: &dumps, number: edits);
+            let silent = False();
+            let hashed = report_dump(buffer: &report, dump: &dump, label: &edit_label[0_u64..edit_label.len], number: edits, print: silent);
+            if incremental == 3_u8 {
+              let size = report.inner.len;
+              if size > 0_u64 {
+                let trimmed = size - 1_u64;
+                truncate(buffer: &report, length: trimmed);
+              }
+              if same {
+                put_text(buffer: &report, text: &inc_same[0_u64..inc_same.len]);
+              } else {
+                put_text(buffer: &report, text: &inc_differs[0_u64..inc_differs.len]);
+              }
+              put_byte(buffer: &report, value: 10_u8);
+            } else if incremental == 2_u8 {
+              let size = report.inner.len;
+              if size > 0_u64 {
+                let trimmed = size - 1_u64;
+                truncate(buffer: &report, length: trimmed);
+              }
+              put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
+              put_byte(buffer: &report, value: 10_u8);
+            }
+            if print {
+              let printed = dump_layout(page: page, styles: &rebuilt.styles, layout: &rebuilt.layout, buffer: &report);
+            }
+            let flushed = flush(factory: files, output: out, buffer: &report);
+            if flushed {
+            } else {
+              return 2_u8;
+            }
+            let resync = bnot(same);
+            if resync {
+              set kept = move rebuilt;
+            } else {
+              let discarded = move rebuilt;
+            }
+          }
         }
       }
     }
