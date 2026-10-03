@@ -1,0 +1,21 @@
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+const require = createRequire(import.meta.url);
+const { chromium } = require('/opt/node22/lib/node_modules/playwright');
+const PAGE_URL = 'http://snowghost.test/page/index.html';
+const dir = 'build/research/concurrency/';
+const pageBody = readFileSync(dir + 'apollo11.html');
+const sheets = [['wikibase.client.init&only=styles&skin=vector-2022', 'apollo11-modules.css'], ['modules=site.styles&only=styles&skin=vector-2022', 'apollo11-site.css']].map(([s, f]) => ({ suffix: s, body: readFileSync(dir + f) }));
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', headless: true });
+const page = await (await browser.newContext({ javaScriptEnabled: false, viewport: { width: 1280, height: 720 } })).newPage();
+await page.route('**/*', (route) => { const url = route.request().url(); if (url === PAGE_URL) return route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: pageBody }); const s = sheets.find((c) => url.endsWith(c.suffix)); if (s) return route.fulfill({ status: 200, contentType: 'text/css; charset=utf-8', body: s.body }); return route.abort(); });
+await page.goto(PAGE_URL, { waitUntil: 'load' });
+console.log(JSON.stringify(await page.evaluate(() => {
+  const d = document.documentElement; const out = { html: d.getBoundingClientRect().height, scroll0: d.scrollHeight, body: document.body.getBoundingClientRect().height };
+  const ps = Array.from(document.querySelectorAll('p')).filter((p) => p.getClientRects().length);
+  const p = ps[Math.floor(ps.length / 2)]; const t = p.firstChild;
+  const old = p.innerHTML; p.insertAdjacentHTML('afterend', '<p>' + 'lorem ipsum '.repeat(60) + '</p>');
+  out.html1 = d.getBoundingClientRect().height; out.scroll1 = d.scrollHeight; out.body1 = document.body.getBoundingClientRect().height;
+  return out;
+})));
+await browser.close();

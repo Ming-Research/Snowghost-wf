@@ -1,0 +1,138 @@
+alias Styles = pkg::style::Styles;
+alias TextRun = pkg::layout::text::TextRun;
+
+fn piece_uses(styles: &Styles, keep: &[u8], style: StyleRef) -> uses: Bool reads(styles), reads(keep) {
+  doc "Tells whether the font group of style is one keep flags.";
+  let font = font_index(styles: styles, style: style);
+  let at = cvt::<u32, u64>(font);
+  if at < keep^.len {
+    let flag = keep^[at];
+    let flagged = flag != 0_u8;
+    return flagged;
+  }
+  return False();
+}
+
+fn paragraph_uses(pieces: &[Piece], first: u64, count: u64, styles: &Styles, keep: &[u8]) -> uses: Bool reads(pieces), reads(styles), reads(keep) {
+  doc "Tells whether any text piece of the paragraph, the pieces from first, count of them, is in a font group keep flags.";
+  let total = pieces^.len;
+  let wanted = first +sat count;
+  let stop = imin(wanted, total);
+  let used = False();
+  for (at in first..stop) {
+    let piece = pieces^[at];
+    match piece {
+      Bytes(start: from, end: to, style: owner, node: source) => {
+        let one = piece_uses(styles: styles, keep: keep, style: owner);
+        set used = bor(used, one);
+      }
+      Generated(start: from, end: to, style: owner) => {
+        let one = piece_uses(styles: styles, keep: keep, style: owner);
+        set used = bor(used, one);
+      }
+      Scalar(value: one_value, style: owner) => {
+        let one = piece_uses(styles: styles, keep: keep, style: owner);
+        set used = bor(used, one);
+      }
+      Begin(style: owner) => {
+      }
+      End(style: owner) => {
+      }
+      Object(context: child, style: owner) => {
+      }
+    }
+  }
+  return used;
+}
+
+fn clear_paragraph(paragraph: &Paragraph) -> result: unit writes(paragraph) {
+  doc "Gives the paragraph no pieces, so that its preparation does nothing.";
+  set paragraph^.count = 0_u64;
+  return unit;
+}
+
+fn restrict_context(context: &Context, styles: &Styles, keep: &[u8]) -> kept: u64 reads(styles), reads(keep), writes(context) {
+  doc "Empties every paragraph of context and its children that has no text in a group keep flags; returns how many it kept.";
+  let count = context^.paragraphs.inner.len;
+  let total = context^.pieces.inner.len;
+  let kept = 0_u64;
+  for (i in 0_u64..count) {
+    let first = context^.paragraphs.inner[i].first;
+    let many = context^.paragraphs.inner[i].count;
+    let uses = paragraph_uses(pieces: &context^.pieces.inner[0_u64..total], first: first, count: many, styles: styles, keep: keep);
+    if uses {
+      set kept = kept +sat 1_u64;
+    } else {
+      clear_paragraph(paragraph: &context^.paragraphs.inner[i]);
+    }
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    let inner = restrict_context(context: &context^.children.inner[k], styles: styles, keep: keep);
+    set kept = kept +sat inner;
+  }
+  return kept;
+}
+
+fn restrict_text(layout: &Layout, styles: &Styles, keep: &[u8]) -> kept: u64 reads(styles), reads(keep), writes(layout) {
+  doc "Empties the paragraphs of layout, which build_boxes returned and prepare_text has not yet prepared, that have no text in a font group keep flags (keep[g] nonzero), so that prepare_text prepares only the paragraphs that use those groups; returns how many paragraphs remain. A diagnostic of the incremental-rendering experiment X8.";
+  let kept = restrict_context(context: &layout^.root, styles: styles, keep: keep);
+  return kept;
+}
+
+fn census_paragraph(paragraph: &Paragraph, cells: &Box<Slots<u64>>, groups: u64) -> result: unit reads(paragraph), writes(cells) {
+  doc "Adds the paragraph's prepared runs to cells: per font group g, cells[3g] gets the run scalars in g, cells[3g+1] one when g has a run, cells[3g+2] one when g is the first run's group.";
+  let runs = paragraph^.runs.inner.len;
+  for (r in 0_u64..runs) {
+    let run = paragraph^.runs.inner[r];
+    let group = cvt::<u32, u64>(run.font);
+    let begin = cvt::<u32, u64>(run.start);
+    let finish = cvt::<u32, u64>(run.end);
+    let length = finish -sat begin;
+    let inside = group < groups;
+    let base = group *sat 3_u64;
+    let slot = base +sat 2_u64;
+    let room = slot < cells^.inner.len;
+    let usable = band(inside, room);
+    if usable {
+      let before = cells^.inner[base];
+      set cells^.inner[base] = before +sat length;
+      let fresh = True();
+      for (q in 0_u64..r) {
+        let earlier = paragraph^.runs.inner[q];
+        let same = earlier.font == run.font;
+        if same {
+          set fresh = False();
+        }
+      }
+      if fresh {
+        let any_before = cells^.inner[base + 1_u64];
+        set cells^.inner[base + 1_u64] = any_before +sat 1_u64;
+      }
+      if r == 0_u64 {
+        let first_before = cells^.inner[slot];
+        set cells^.inner[slot] = first_before +sat 1_u64;
+      }
+    }
+  }
+  return unit;
+}
+
+fn census_context(context: &Context, cells: &Box<Slots<u64>>, groups: u64) -> result: unit reads(context), writes(cells) {
+  doc "Runs census_paragraph over every paragraph of context and its children.";
+  let count = context^.paragraphs.inner.len;
+  for (i in 0_u64..count) {
+    census_paragraph(paragraph: &context^.paragraphs.inner[i], cells: cells, groups: groups);
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    census_context(context: &context^.children.inner[k], cells: cells, groups: groups);
+  }
+  return unit;
+}
+
+fn font_census(layout: &Layout, cells: &Box<Slots<u64>>, groups: u64) -> result: unit reads(layout), writes(cells) {
+  doc "Counts, per font group, the scalars of the prepared runs of layout and the paragraphs that have a run in the group, or start in it, into cells (three per group, as census_paragraph says). A diagnostic of the incremental-rendering experiment X8.";
+  census_context(context: &layout^.root, cells: cells, groups: groups);
+  return unit;
+}
