@@ -381,6 +381,43 @@ fn first_float_paragraph(context: &Context) -> (first: u64, floats: Bool) reads(
   return context^.paragraphs.inner.len, False();
 }
 
+fn full_width_lines(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> full: Bool reads(paragraph), reads(styles), reads(fonts), reads(picks) {
+  doc "Tells whether the paragraph's lines are the ones break_all gives it at its width and left edge, with no float beside them: break_lines with no exclusion gives every line the room its width leaves past a negative left edge, less the first line's indent, and each line a least top one strut below the last; a line the stacking pass narrowed beside a float or moved below one differs in one of them. Lines that differ in neither are the full-width ones, since breaking reads exclusions only through them.";
+  let count = paragraph^.lines.inner.len;
+  let text = paragraph^.text.inner.len;
+  if text == 0_u64 {
+    return True();
+  }
+  let width = paragraph^.width;
+  let origin_x = paragraph^.left;
+  let style = paragraph^.style;
+  let group = text_of(styles: styles, style: style);
+  let indent = resolve_lp(value: group.text_indent, basis: width);
+  let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: style);
+  let strut_height = strut.ascent +sat strut.descent;
+  let shifted_left = 0_i32 -sat origin_x;
+  let line_left = imax(shifted_left, 0_i32);
+  let room = width -sat line_left;
+  let first_room = room -sat indent;
+  let top = 0_i32;
+  for (k in 0_u64..count) {
+    let line = paragraph^.lines.inner[k];
+    let expected = if k == 0_u64 {
+      give first_room;
+    } else {
+      give room;
+    }
+    if line.room != expected {
+      return False();
+    }
+    if line.least_top != top {
+      return False();
+    }
+    set top = top +sat strut_height;
+  }
+  return True();
+}
+
 fn reads_changed(paragraph: &Paragraph, changed: &[Bool]) -> found: Bool reads(paragraph), reads(changed) {
   doc "Tells whether the paragraph holds an atomic inline whose child context's outputs changed.";
   let marks = paragraph^.marks.inner.len;
@@ -481,7 +518,7 @@ fn fresh_before() -> made: Before pure {
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Brings the marked flow context up to date, before holding its space and outputs from its previous layout, with lay_out_flow's passes: its width; then, when its geometry and space are those of its previous layout, no intrinsic sizes of it or of a marked child were asked for, it has no float and no marked child is positioned, its marked children are updated first in their kept spaces, and the context stops there when none of their outputs changed and none of its paragraphs is marked. Otherwise the pre-pass runs again, each marked child is updated, each unmarked child whose space came out unchanged is kept (its margins resolved again) and every other one laid out again, each paragraph is broken again when it is marked, its flow width changed, it follows a float or it holds an atomic inline whose outputs changed, and finish_flow stacks the flow and writes the fragments again. Each loop over the children or the paragraphs is a counted loop whose iteration writes only its own element and its own entry of a local array.";
+  doc "Brings the marked flow context up to date, before holding its space and outputs from its previous layout, with lay_out_flow's passes: its width; then, when its geometry and space are those of its previous layout, no intrinsic sizes of it or of a marked child were asked for, it has no float and no marked child is positioned, its marked children are updated first in their kept spaces, and the context stops there when none of their outputs changed and none of its paragraphs is marked. Otherwise the pre-pass runs again, each marked child is updated, each unmarked child whose space came out unchanged is kept (its margins resolved again) and every other one laid out again, each paragraph is broken again when it is marked, its flow width changed, it follows a float and holds lines the stacking pass narrowed or moved beside one (full_width_lines), or it holds an atomic inline whose outputs changed, and finish_flow stacks the flow and writes the fragments again. Each loop over the children or the paragraphs is a counted loop whose iteration writes only its own element and its own entry of a local array.";
   let children = context^.children.inner.len;
   let bounded = imin(children, item_ceiling);
   let unknown_before = fresh_before();
@@ -622,8 +659,14 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
     } else {
       give False();
     }
+    let narrowed = if beside {
+      let full = full_width_lines(paragraph: &context^.paragraphs.inner[i], styles: styles, fonts: fonts, picks: picks);
+      give bnot(full);
+    } else {
+      give False();
+    }
     let first = bor(marked, moved);
-    let second = bor(beside, holds_changed);
+    let second = bor(narrowed, holds_changed);
     let again = bor(first, second);
     if again {
       break_paragraph(paragraph: &context^.paragraphs.inner[i], children: &context^.children.inner[0_u64..held_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none.inner[0_u64..0_u64], origin_y: 0_i32);
