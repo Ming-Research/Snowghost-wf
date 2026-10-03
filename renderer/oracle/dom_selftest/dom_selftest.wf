@@ -49,6 +49,8 @@ alias put_text = pkg::oracle::support::put_text;
 alias serialize_document = pkg::oracle::dom_serialize::serialize_document;
 alias static_atom_ends = pkg::base::static_atoms::static_atom_ends;
 alias static_atom_text = pkg::base::static_atoms::static_atom_text;
+alias set_attribute = pkg::dom::set_attribute;
+alias set_text = pkg::dom::set_text;
 alias store_text = pkg::dom::store_text;
 alias truncate = pkg::oracle::support::truncate;
 
@@ -143,7 +145,7 @@ fn run(inputs: Inputs) -> status: ExitStatus pure waits {
 }
 
 fn selftest(report: &Box<Slots<u8>>) -> failures: u64 writes(report) {
-  doc "Checks interning, builds the tree, checks every refused operation, then serializes the tree into report and compares it with expected_tree. The refusals run before the serialization, so the comparison also shows that they left the tree unchanged. Returns the number of failed checks.";
+  doc "Checks interning, builds the tree, checks every refused operation, checks the mutations on documents of their own, then serializes the tree into report and compares it with expected_tree. The refusals run before the serialization, so the comparison also shows that they left the tree unchanged. Returns the number of failed checks.";
   let atoms = atom_table_new();
   let atom_failures = check_atoms(atoms: &atoms, report: report);
   let custom = intern_index(atoms: &atoms, name: &custom_word[0_u64..custom_word.len]);
@@ -155,6 +157,7 @@ fn selftest(report: &Box<Slots<u8>>) -> failures: u64 writes(report) {
       let error_failures = check_errors(document: &document, atoms: &atoms, tree: tree, custom: custom, report: report);
       let merge_passed = check_merge_storage();
       let merge_failures = verdict(report: report, number: 24_u64, passed: merge_passed);
+      let mutation_failures = check_mutation(report: report);
       let serialized = box_slots_new::<u8>(capacity: 4096_u64);
       let complete = serialize_document(document: &document, atoms: &atoms, out: &serialized);
       let length = serialized.inner.len;
@@ -170,7 +173,8 @@ fn selftest(report: &Box<Slots<u8>>) -> failures: u64 writes(report) {
         give 1_u64;
       }
       let checks = atom_failures +sat error_failures;
-      let summed = checks +sat merge_failures;
+      let merged = checks +sat merge_failures;
+      let summed = merged +sat mutation_failures;
       let total = summed +sat tree_failures;
       if total == 0_u64 {
         put_text(buffer: report, text: &passed_text[0_u64..passed_text.len]);
@@ -694,4 +698,252 @@ fn detached_links(document: &Document, node: NodeId) -> detached: Bool reads(doc
       return False();
     }
   }
+}
+
+const world_word: Array<u8, 5> = "world";
+
+const note_word: Array<u8, 4> = "note";
+
+const small_word: Array<u8, 1> = "a";
+
+const long_word: Array<u8, 2> = "bb";
+
+const id_word: Array<u8, 1> = "b";
+
+fn check_mutation(report: &Box<Slots<u8>>) -> failed: u64 writes(report) {
+  doc "Checks 30 to 40 of set_text and set_attribute, on documents of their own so that the tree serialized afterwards is unaffected.";
+  let quirks = QuirksMode::NoQuirks();
+  let document = document_new(quirks: quirks);
+  match mutation_steps(document: &document, report: report) {
+    Ok(value: failures) => {
+      return failures;
+    }
+    Err(error: problem) => {
+      let no = False();
+      let broken = verdict(report: report, number: 30_u64, passed: no);
+      return broken;
+    }
+  }
+}
+
+fn mutation_steps(document: &Document, report: &Box<Slots<u8>>) -> result: Result<u64, DomError> writes(document), writes(report) {
+  doc "Builds, under the root, a paragraph (node 1) with class a and id b whose only child is the Text node 2 holding hello, and the Comment node 3 holding note. Checks 30 and 31: set_text gives a Text node and a Comment node their new data and leaves the Text node under its paragraph. Checks 32 and 33: set_text refuses an Element with WrongKind and a node past the count with InvalidNode. Checks 34 and 35: set_attribute replaces the value of class in place, leaving the attribute count and id, and appends lang after the others. Checks 36 and 37: set_attribute refuses a Text node with WrongKind and a node past the count with InvalidNode. Check 38: set_attribute on an element with 65536 attributes replaces one and refuses a new one with TooLarge.";
+  let root = NodeId(index: 0_u32);
+  let html_space = Namespace::Html();
+  let paragraph = propagate element(document: document, space_kind: html_space, name: atom_p);
+  let placed = propagate append_child(document: document, parent: root, child: paragraph);
+  let plain = AttributeNamespace::NoNamespace();
+  let class_added = propagate attribute(document: document, holder: paragraph, space_kind: plain, name: atom_class, value: &small_word[0_u64..small_word.len]);
+  let id_added = propagate attribute(document: document, holder: paragraph, space_kind: plain, name: atom_id, value: &id_word[0_u64..id_word.len]);
+  let none = None<NodeId>();
+  let hello_added = propagate insert_text(document: document, parent: paragraph, before: none, text: &hello_text[0_u64..hello_text.len]);
+  let remark = propagate store_text(document: document, text: &note_word[0_u64..note_word.len]);
+  let comment_data = NodeData::Comment(data: remark);
+  let comment = propagate create_node(document: document, data: move comment_data);
+  let comment_placed = propagate append_child(document: document, parent: root, child: comment);
+  let text_node = NodeId(index: 2_u32);
+  let bad = NodeId(index: invalid_index);
+  let invalid = DomError::InvalidNode();
+  let wrong = DomError::WrongKind();
+  let too_large = DomError::TooLarge();
+  let world = propagate store_text(document: document, text: &world_word[0_u64..world_word.len]);
+  let text_set = propagate set_text(document: document, node: text_node, data: world);
+  let text_held = held_text(document: document, node: text_node, kind: 1_u8, expected: &world_word[0_u64..world_word.len]);
+  let text_under = parent_is(document: document, node: text_node, parent: paragraph);
+  let text_passed = band(text_held, text_under);
+  let x30 = verdict(report: report, number: 30_u64, passed: text_passed);
+  let bold = propagate store_text(document: document, text: &bold_text[0_u64..bold_text.len]);
+  let comment_set = propagate set_text(document: document, node: comment, data: bold);
+  let comment_held = held_text(document: document, node: comment, kind: 2_u8, expected: &bold_text[0_u64..bold_text.len]);
+  let x31 = verdict(report: report, number: 31_u64, passed: comment_held);
+  let r32 = set_text(document: document, node: paragraph, data: world);
+  let x32 = record(report: report, number: 32_u64, result: r32, wanted: wrong);
+  let r33 = set_text(document: document, node: bad, data: world);
+  let x33 = record(report: report, number: 33_u64, result: r33, wanted: invalid);
+  let two = attribute_total(document: document, holder: paragraph);
+  let class_name = Atom(index: atom_class);
+  let replacement = Attribute(namespace: plain, name: class_name, value: world);
+  let class_set = propagate set_attribute(document: document, element: paragraph, attribute: replacement);
+  let three = attribute_total(document: document, holder: paragraph);
+  let class_in_place = attribute_is(document: document, holder: paragraph, position: 0_u64, name: atom_class, expected: &world_word[0_u64..world_word.len]);
+  let id_kept = attribute_is(document: document, holder: paragraph, position: 1_u64, name: atom_id, expected: &id_word[0_u64..id_word.len]);
+  let same_total = two == three;
+  let held = band(class_in_place, id_kept);
+  let replaced = band(held, same_total);
+  let x34 = verdict(report: report, number: 34_u64, passed: replaced);
+  let lang_name = Atom(index: atom_lang);
+  let lang = Attribute(namespace: plain, name: lang_name, value: world);
+  let lang_set = propagate set_attribute(document: document, element: paragraph, attribute: lang);
+  let four = attribute_total(document: document, holder: paragraph);
+  let lang_last = attribute_is(document: document, holder: paragraph, position: 2_u64, name: atom_lang, expected: &world_word[0_u64..world_word.len]);
+  let class_still = attribute_is(document: document, holder: paragraph, position: 0_u64, name: atom_class, expected: &world_word[0_u64..world_word.len]);
+  let grew = four == 3_u64;
+  let appended = band(lang_last, class_still);
+  let added = band(appended, grew);
+  let x35 = verdict(report: report, number: 35_u64, passed: added);
+  let r36 = set_attribute(document: document, element: text_node, attribute: replacement);
+  let x36 = record(report: report, number: 36_u64, result: r36, wanted: wrong);
+  let r37 = set_attribute(document: document, element: bad, attribute: replacement);
+  let x37 = record(report: report, number: 37_u64, result: r37, wanted: invalid);
+  let atoms = atom_table_new();
+  let many = propagate element(document: document, space_kind: html_space, name: atom_div);
+  let empty = TextSpan(start: 0_u32, end: 0_u32);
+  let scratch = box_slots_new::<u8>(capacity: 16_u64);
+  for (number in 0_u64..attribute_count) {
+    let named = propagate numbered_atom(atoms: &atoms, scratch: &scratch, number: number);
+    let made = Attribute(namespace: plain, name: named, value: empty);
+    let filled = propagate add_attribute(document: document, element: many, attribute: made);
+  }
+  let first = propagate numbered_atom(atoms: &atoms, scratch: &scratch, number: 0_u64);
+  let swapped = Attribute(namespace: plain, name: first, value: world);
+  let at_ceiling = set_attribute(document: document, element: many, attribute: swapped);
+  let swap_total = attribute_total(document: document, holder: many);
+  let swap_held = attribute_is(document: document, holder: many, position: 0_u64, name: first.index, expected: &world_word[0_u64..world_word.len]);
+  let swap_ok = match at_ceiling {
+    Ok(value: unused) => {
+      give True();
+    }
+    Err(error: unused) => {
+      give False();
+    }
+  }
+  let swap_size = swap_total == attribute_count;
+  let swapped_in = band(swap_held, swap_ok);
+  let swap_passed = band(swapped_in, swap_size);
+  let last = propagate numbered_atom(atoms: &atoms, scratch: &scratch, number: attribute_count);
+  let extra = Attribute(namespace: plain, name: last, value: empty);
+  let refused = set_attribute(document: document, element: many, attribute: extra);
+  let refused_total = attribute_total(document: document, holder: many);
+  let refused_kept = refused_total == attribute_count;
+  let x38 = record(report: report, number: 38_u64, result: refused, wanted: too_large);
+  let x39 = verdict(report: report, number: 39_u64, passed: swap_passed);
+  let x40 = verdict(report: report, number: 40_u64, passed: refused_kept);
+  let s31 = x30 + x31;
+  let s32 = s31 + x32;
+  let s33 = s32 + x33;
+  let s34 = s33 + x34;
+  let s35 = s34 + x35;
+  let s36 = s35 + x36;
+  let s37 = s36 + x37;
+  let s38 = s37 + x38;
+  let s39 = s38 + x39;
+  let s40 = s39 + x40;
+  return Ok<u64, DomError>(value: s40);
+}
+
+fn parent_is(document: &Document, node: NodeId, parent: NodeId) -> held: Bool reads(document) {
+  doc "Tells whether node is a child of parent.";
+  match links_of(document: document, node: node) {
+    Some(value: links) => {
+      let wanted = Some<NodeId>(value: parent);
+      return same_link(first: links.parent, second: wanted);
+    }
+    None() => {
+      return False();
+    }
+  }
+}
+
+fn held_text(document: &Document, node: NodeId, kind: u8, expected: &[u8]) -> equal: Bool reads(document), reads(expected) {
+  doc "Tells whether node is a Text node (kind 1) or a Comment node (kind 2) whose data is expected.";
+  let index = cvt::<u32, u64>(node.index);
+  if index < document^.nodes.inner.len {
+    let data = &document^.nodes.inner[index].data;
+    let span = match data^ {
+      Text(data: found) => {
+        if kind == 1_u8 {
+          give found^;
+        }
+        give TextSpan(start: 1_u32, end: 0_u32);
+      }
+      Comment(data: found) => {
+        if kind == 2_u8 {
+          give found^;
+        }
+        give TextSpan(start: 1_u32, end: 0_u32);
+      }
+      DocumentRoot(..) => {
+        give TextSpan(start: 1_u32, end: 0_u32);
+      }
+      DocumentType(..) => {
+        give TextSpan(start: 1_u32, end: 0_u32);
+      }
+      Element(..) => {
+        give TextSpan(start: 1_u32, end: 0_u32);
+      }
+      Fragment() => {
+        give TextSpan(start: 1_u32, end: 0_u32);
+      }
+    }
+    let start = cvt::<u32, u64>(span.start);
+    let end = cvt::<u32, u64>(span.end);
+    let length = document^.text.inner.len;
+    if start <= end {
+      if end <= length {
+        let same = same_bytes(first: &document^.text.inner[start..end], second: expected);
+        return same;
+      }
+    }
+  }
+  return False();
+}
+
+fn attribute_total(document: &Document, holder: NodeId) -> count: u64 reads(document) {
+  doc "Returns the number of attributes of an Element, and 2^64 - 1 for a node that is not one.";
+  let index = cvt::<u32, u64>(holder.index);
+  if index < document^.nodes.inner.len {
+    let data = &document^.nodes.inner[index].data;
+    match data^ {
+      Element(namespace: space, local_name: name, attributes: list, template_contents: contents) => {
+        return list^.inner.len;
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Text(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+  }
+  return 18446744073709551615_u64;
+}
+
+fn attribute_is(document: &Document, holder: NodeId, position: u64, name: u32, expected: &[u8]) -> equal: Bool reads(document), reads(expected) {
+  doc "Tells whether the attribute at position of an Element has the name atom index name and the value expected.";
+  let index = cvt::<u32, u64>(holder.index);
+  if index < document^.nodes.inner.len {
+    let data = &document^.nodes.inner[index].data;
+    match data^ {
+      Element(namespace: space, local_name: local, attributes: list, template_contents: contents) => {
+        if position < list^.inner.len {
+          let held = list^.inner[position];
+          let named = held.name.index == name;
+          let start = cvt::<u32, u64>(held.value.start);
+          let end = cvt::<u32, u64>(held.value.end);
+          let length = document^.text.inner.len;
+          if start <= end {
+            if end <= length {
+              let same = same_bytes(first: &document^.text.inner[start..end], second: expected);
+              return band(named, same);
+            }
+          }
+        }
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Text(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+  }
+  return False();
 }
