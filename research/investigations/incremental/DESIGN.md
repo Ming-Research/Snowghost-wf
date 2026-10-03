@@ -53,8 +53,8 @@ English:
   screens (7.3).
 - **The boundary (Q65).** The renderer gives the shell facts about the
   page, and the shell owns every policy that turns them into pixels for
-  its platform. A policy changes cost, not the picture (6.3; the exact
-  invariant is Q66).
+  its platform. A policy changes cost, not the picture at rest; a cached
+  subtree may be resampled while a transform animation runs (6.3, Q66).
 
 ## How to read the tree
 
@@ -662,18 +662,18 @@ the separation, promising in this form.
   - Rewriting 245,000 absolute positions takes 0.2 ms, against 0.04 µs on
     a tree of relative offsets.
 
-6.3 **Facts in, policy out (Q65).** status: the owner's ruling; the
-invariant's exception is open (Q66); the contents of the contract are
-promising, not built.
+6.3 **Facts in, policy out (Q65).** status: the owner's ruling, with the
+invariant's exception (Q66); the contents of the contract are promising,
+not built.
 - **The rule.** The renderer states facts about the page and never decides
   how to draw it. The shell decides, per platform and by measured cost,
   how to draw, which pixels to cache, how to scroll and how to present.
   Chrome decides layerization in paint from hints such as `will-change`
   and overlap; this rule keeps platform policy out of the renderer.
-- **The invariant (Q66, open).** At rest, every combination of shell
+- **The invariant (Q66, the owner's ruling).** At rest, every combination of shell
   policies produces the pixels a full redraw of the scene produces, so a
   policy or a threshold can change without risking a wrong pixel. The one
-  proposed exception: a subtree cached as a texture (7.6) while a
+  exception: a subtree cached as a texture (7.6) while a
   transform animation scales it, rotates it or moves it by a fraction of a
   pixel is resampled, and the first frame after the animation ends is
   exact again. Choices such as subpixel antialiasing for text follow facts
