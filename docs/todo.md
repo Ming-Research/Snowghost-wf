@@ -94,6 +94,18 @@ example apart from the renderer code that exposed it
   loop index with a stride no smaller than its length. Reopen when a stage
   records its reads per unit.
 
+- **No host module shares memory between processes.** Whitefoot's host
+  modules are a closed list of six (`std::time`, `std::io`, `std::text`,
+  `std::fs`, `std::net`, `std::process`), none of which maps a region two
+  processes see; a byte stream through `std::io` is what exists. Minimal
+  example: a renderer that writes a frame's records into a region the shell
+  reads, then publishes an epoch the shell may read only after every record
+  is visible. Impact: `design/processes.md`'s "through shared memory" cannot
+  be built; the contract investigation stages a byte stream first
+  (`research/investigations/contract/DESIGN.md`, Q75). Change: a host module
+  for a shared region with a release-ordered publish. Reopen when the shell
+  exists and the copy over a byte stream is measured (C4 there).
+
 ## Snowghost
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
