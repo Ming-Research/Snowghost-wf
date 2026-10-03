@@ -181,6 +181,7 @@ struct Paragraph {
   height: i32;
   min_content: i32;
   max_content: i32;
+  dirty: Bool;
 }
 
 struct TableCell {
@@ -254,6 +255,21 @@ struct Context {
   intrinsic_known: Bool;
   ratio_width: i32;
   ratio_height: i32;
+  dirty: Bool;
+}
+
+struct TextUnit {
+  doc "Where a text node's data enters the layout: the serial of the context whose pieces hold it, the first of its pieces there and how many, and the paragraph those pieces belong to; serial is no_index for a node that feeds no paragraph.";
+  serial: u32;
+  piece: u32;
+  count: u32;
+  paragraph: u32;
+}
+
+struct ContextPath {
+  doc "Where a context sits in the owned tree, by its serial (its position in a preorder walk of the tree, the initial containing block 0): its parent's serial (no_index for the initial containing block) and its index among its parent's children.";
+  parent: u32;
+  child: u32;
 }
 
 public struct Layout {
@@ -261,6 +277,9 @@ public struct Layout {
   viewport: Viewport;
   paragraphs: u64;
   contexts: u64;
+  text_units: Box<Array<TextUnit>>;
+  paths: Box<Slots<ContextPath>>;
+  dirty: Bool;
 }
 
 public struct PlacedRect {
@@ -272,7 +291,7 @@ public struct PlacedRect {
   public height: f32;
 }
 
-public fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) doc "Builds the owned tree of formatting contexts of document (design/pipeline/layout.md) from its computed styles, which pkg::style::compute_styles returns for traversal's elements and their ::before and ::after boxes, in the viewport: one walk in tree order generates the boxes, with CSS Display 3's and CSS 2.2's anonymous boxes, generated content whose counters and quotes the walk resolves as it visits each element in tree order (Q63), and each paragraph's text as pieces. No paragraph is prepared: pkg::layout::prepare_text does that, and lay_out needs a prepared layout. TooLarge past the storage limits; Inconsistent when the document, traversal and styles disagree.";
+public fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) doc "Builds the owned tree of formatting contexts of document (design/pipeline/layout.md) from its computed styles, which pkg::style::compute_styles returns for traversal's elements and their ::before and ::after boxes, in the viewport: one walk in tree order generates the boxes, with CSS Display 3's and CSS 2.2's anonymous boxes, generated content whose counters and quotes the walk resolves as it visits each element in tree order (Q63), and each paragraph's text as pieces. It also records, for text_changed and update, where each text node enters the layout (text_units, indexed by NodeId index) and where each context sits (paths, by serial), with no mark set. No paragraph is prepared: pkg::layout::prepare_text does that, and lay_out needs a prepared layout. TooLarge past the storage limits; Inconsistent when the document, traversal and styles disagree.";
 
 public fn prepare_text(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Prepares every paragraph of layout, which build_boxes returned: in each context, one counted loop turns each paragraph's pieces into its text, after CSS Text 3's white-space processing and text-transform, and shapes it with pkg::layout::text::shape_paragraph (Q53). picks is pkg::layout::text::pick_fonts for the font groups of the styles layout was built from. Text when shaping refuses a paragraph.";
 
@@ -283,3 +302,7 @@ public fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: 
 public fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) doc "Returns every box of the laid-out layout in viewport coordinates: for each element, the border box of each of its fragments, the rectangles getClientRects reports, and for each text node, each of its line fragments, as a Range's getClientRects reports them, with kind placed_element and owner the element's index in the traversal, or kind placed_text and owner the text node's NodeId index. Rectangles of one owner appear in fragment order; owners appear in no particular order.";
 
 public fn layout_counts(layout: &Layout) -> (contexts: u64, paragraphs: u64) reads(layout) doc "Returns how many contexts and paragraphs build_boxes made.";
+
+public fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: Result<unit, LayoutError> reads(document), writes(layout) doc "Records that the data of the Text node changed (pkg::dom::set_text) in the laid-out layout: the pieces that read it take its new data, and its paragraph and every context from the initial containing block down to the one holding it are marked for update; a node that feeds no paragraph changes nothing. Inconsistent when the node is not a Text node the layout was built from, or when its new data would change the box tree (a text node that was only white space and no longer is, or the reverse), which update cannot follow and a new build_layout must.";
+
+public fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Brings the laid-out layout up to date with the changes marked since it was last laid out or updated: prepares again each marked paragraph, and lays out again each marked context, keeping every unmarked child context whose space comes out unchanged and every unmarked paragraph whose width and left edge come out unchanged, and stopping at a context whose border-box size, baseline and margins come out unchanged; then clears the marks. The layout it leaves places the same boxes as lay_out on the layout build_layout makes from the same document, styles and fonts (place_boxes returns the same rectangles). A layout with no mark costs one test. Text when shaping refuses a paragraph.";
