@@ -125,15 +125,18 @@ example apart from the renderer code that exposed it
   margins to their own layout. Reopen with the next layout correctness
   work or when the update's resets cost measurably.
 
-- **An incremental update lays out again every child a float narrowed.**
-  `narrow_beside` lays an in-flow child out again in the room floats leave
-  and writes that room into its space; the next update's pre-pass gives it
-  the full width again, the spaces differ, and the child is laid out twice
-  more even when no edit reaches it. On html5 each text edit lays out 61
-  such contexts again (X5 step 3, `research/investigations/incremental-layout/runs/step3.txt`).
-  Change: keep the space the pre-pass gave beside the narrowed one, so an
-  unchanged pre-pass space with unchanged floats keeps the child. Reopen
-  with X5's re-stacking work.
+- **An incremental update lays out again every child whose space a later
+  pass replaced.** `narrow_beside` lays an in-flow child out again in the
+  room floats leave, and `position_out_with` lays an absolutely positioned
+  child out again in a forced space, each writing that space into the
+  child; the next update's pre-pass gives the child its first space again,
+  the spaces differ, and the child is laid out again even when no edit
+  reaches it. On html5 each text edit lays out 61 contexts again this way
+  (X5 step 3, `research/investigations/incremental-layout/runs/step3.txt`;
+  how many by each pass was not counted). Change: keep the space the
+  pre-pass gave beside the replaced one, so an unchanged pre-pass space
+  with unchanged floats and positioning keeps the child. Reopen with X5's
+  re-stacking work.
 
 - **`Paragraph.min_content` and `max_content` are never written.** Every
   paragraph keeps the zeros `new_paragraph` gives them; intrinsic sizes

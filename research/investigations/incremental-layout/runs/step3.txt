@@ -235,9 +235,11 @@ $ WHITEFOOT_CHECK_TIMEOUT=7200 perl /home/user/wf-pin/.github/run-check.pl x5s3-
      paragraphs' fragments and the block-in-inline and positioning passes
      each walk all of it. The sequential build spends 23.3 ms per word edit
      at the median, 0.22 us per flow entry of that context, with 61 small
-     contexts laid out again (children a float narrowed in the previous
-     layout, whose pre-pass space therefore differs from the one they
-     kept: docs/todo.md) and 70 paragraphs broken again (the edited one and
+     contexts laid out again (unmarked children whose kept space differs
+     from the one the pre-pass gives them again, because a float narrowed
+     them or the positioning pass laid them out again in a forced space;
+     which of the two on html5 was not counted: docs/todo.md) and 70
+     paragraphs broken again (the edited one and
      the ones a float narrowed) inside the same time. This is the walk
      DESIGN.md's Q70 names as the deciding cost; the δ path that would
      avoid it is not built (it is the primary agent's decision).
@@ -261,7 +263,51 @@ $ WF_WORKERS=W sh research/investigations/incremental-layout/run.sh time par htm
    (research/investigations/layout/run.sh: the layout mode, so boxes, text
    and layout; best of RUNS runs of T(0) and T(REPS); per run
    (T(REPS) - T(0)) / REPS seconds) for main, step 2 (1f2bc73) and step 3
-   (4a04892), by the session's part3.sh, RUNS 5 and run.sh's REPS:
+   (4a04892), with the drivers built above in place of the ones that
+   run.sh builds, RUNS 5 and run.sh's REPS. The session's script, part3.sh
+   ($S a scratch directory holding the drivers as NAME_seq and NAME_par),
+   run as `part3.sh main step2 s3d` (s3d the step 3 drivers):
+     | #!/bin/sh
+     | # part3.sh A B: run.sh time's method (research/investigations/layout/run.sh: the
+     | # layout mode, best of RUNS runs of T(0) and T(REPS), per-run (T(REPS)-T(0))/REPS)
+     | # for the drivers $S/x5s3/A_{par,seq} and B_{par,seq}, at WF_WORKERS=4 (--par)
+     | # and sequential, on the three pages; run from the sg-x5 root under the lock.
+     | S=$S
+     | cd /home/user/sg-x5
+     | data=build/research/concurrency ua=renderer/style/ua.css runs=${RUNS:-5}
+     | sheets_of() {
+     | 	case $1 in
+     | 	ecma262) echo "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css assets/css/print.css=$data/ecma262-print.css" ;;
+     | 	html5) echo "" ;;
+     | 	apollo11) echo "wikibase.client.init&only=styles&skin=vector-2022=$data/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$data/apollo11-site.css" ;;
+     | 	esac
+     | }
+     | reps_of() { case $1 in ecma262) echo 3 ;; html5) echo 3 ;; apollo11) echo 10 ;; esac; }
+     | elapsed() {
+     | 	binary=$1 lanes=$2; shift 2
+     | 	WF_WORKERS=$lanes command time -p sh -c 'exec "$@" >/dev/null 2>&1' sh "$binary" "$@" 2>$S/x5s3/time.txt || { echo "failed: $binary $*" >&2; exit 1; }
+     | 	awk '$1 == "real" { print $2 }' $S/x5s3/time.txt
+     | }
+     | best() {
+     | 	times= i=0
+     | 	while [ "$i" -lt "$runs" ]; do times="$times $(elapsed "$@")"; i=$((i + 1)); done
+     | 	echo "$times" | awk '{ least = $1; for (i = 2; i <= NF; i++) if ($i < least) least = $i; print least }'
+     | }
+     | echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors; runs $runs"
+     | for d in "$@"; do echo "driver $d: par $(sha256sum <$S/x5s3/${d}_par | cut -c1-16) seq $(sha256sum <$S/x5s3/${d}_seq | cut -c1-16)"; done
+     | echo "page mode driver build reps T(0) T(REPS) per-run"
+     | for page in ${PAGES_LIST:-ecma262 html5 apollo11}; do
+     | 	sheets=$(sheets_of $page) reps=${REPS:-$(reps_of $page)}
+     | 	for lanes in 4 seq; do
+     | 		for d in "$@"; do
+     | 			if [ $lanes = seq ]; then bin=$S/x5s3/${d}_seq; w=1; label=seq; else bin=$S/x5s3/${d}_par; w=$lanes; label=par-$lanes; fi
+     | 			zero=$(best $bin $w layout 0 $data/$page.html $ua $sheets)
+     | 			full=$(best $bin $w layout $reps $data/$page.html $ua $sheets)
+     | 			echo "$page layout $d $label $reps $zero $full" | awk '{ printf "%s %s %s %s %s %s %s %.4f\n", $1, $2, $3, $4, $5, $6, $7, ($7 - $6) / $5 }'
+     | 		done
+     | 	done
+     | done
+
   page     build  main    step2   step3   (step2, step3 against main)
   ecma262  par-4  0.5467  0.5500  0.5367  (+0.6%, -1.8%)
   ecma262  seq    1.2633  1.2867  1.2367  (+1.9%, -2.1%)
