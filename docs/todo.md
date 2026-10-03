@@ -94,6 +94,25 @@ example apart from the renderer code that exposed it
   loop index with a stride no smaller than its length. Reopen when a stage
   records its reads per unit.
 
+- **A split loop called with a few iterations pays its dispatch on every
+  call.** Minimal example: `fn mark(frames: &Box<Slots<Frame>>)` whose
+  counted loop sets one field of each element (a certified independent
+  map), called once per entry of a sequential walk over 100,000 entries
+  with two or three frames open each time. At `WF_WORKERS=4` the --par
+  build runs the walk slower than the sequential build; at one worker it
+  costs the same. Measured on X5's html5 text edits, whose update re-stacks
+  a 104,321-entry flow (`research/investigations/incremental-layout/runs/step3b.txt`):
+  the step 3 --par driver takes 55.2 ms per edit at the median at four
+  workers and 22.7 ms at one; the same sources with the stacking pass's
+  three small split loops (`mark_lines`, `float_bottom`,
+  `lowest_bottom_above` in `renderer/layout/flow.wf`) made sequential take
+  28.1 ms at four workers and 22.8 ms at one, so those loops' parallel
+  dispatch costs about 27 ms over the walk's calls. A full layout hides it
+  behind its parallel work. Change: run a split loop whose trip count (or
+  static work) is below a grain inline in the caller, as the call grain
+  already does for calls. Reopen when the runtime offers a loop grain; the
+  layout code needs no change.
+
 ## Snowghost
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
@@ -117,7 +136,12 @@ example apart from the renderer code that exposed it
   `intrinsic_flow` also writes every child's margins resolved against no
   width, which `lay_out_child` overwrites. The incremental update
   (`renderer/layout/update.wf`) reproduces both by returning marked
-  children to the fresh space and resolving kept children's margins again.
+  children to the fresh space, resolving kept children's margins again
+  (also on its in-place path, when the context's own intrinsic sizes were
+  computed in the update), forgetting a relaid child's sizes only where a
+  full layout would compute them against another basis
+  (`intrinsic_basis`), and recomputing a container item's sizes against
+  the basis they were last computed against.
   Impact: percentage paddings on shrink-to-fit boxes size them by request
   order, and every incremental path must mirror that order. Change: resolve
   intrinsic contributions against one fixed basis (CSS Sizing 3 resolves
@@ -125,18 +149,49 @@ example apart from the renderer code that exposed it
   margins to their own layout. Reopen with the next layout correctness
   work or when the update's resets cost measurably.
 
-- **An incremental update lays out again every child whose space a later
-  pass replaced.** `narrow_beside` lays an in-flow child out again in the
-  room floats leave, and `position_out_with` lays an absolutely positioned
-  child out again in a forced space, each writing that space into the
-  child; the next update's pre-pass gives the child its first space again,
-  the spaces differ, and the child is laid out again even when no edit
-  reaches it. On html5 each text edit lays out 61 contexts again this way
-  (X5 step 3, `research/investigations/incremental-layout/runs/step3.txt`;
-  how many by each pass was not counted). Change: keep the space the
-  pre-pass gave beside the replaced one, so an unchanged pre-pass space
-  with unchanged floats and positioning keeps the child. Reopen with X5's
-  re-stacking work.
+- **An incremental re-stack lays out again every child a float narrowed.**
+  `narrow_beside` lays an in-flow child out again in the room floats leave
+  and writes that room into its space; when the update re-stacks the
+  parent, the pre-pass gives the child its full-width space again, which
+  differs from the narrowed one it was last laid out in, so the child is
+  updated at full width and narrowed again even when no edit reaches it.
+  (Absolutely positioned children, which `position_out_with` lays out
+  again in a forced space, are kept since X5 step 3b.) Impact: part of the
+  re-stack cost of an edit beside a float on apollo11
+  (`research/investigations/incremental-layout/runs/step3b.txt`). Change:
+  record the pre-pass space and the width the child needed beside the
+  narrowed layout, and keep the child when the pre-pass space and the room
+  are unchanged. Reopen with X5's next step on edits beside floats.
+
+- **An edit to a paragraph beside a float re-stacks its whole flow
+  context.** X5 step 3b's in-place update requires that no float placed
+  before the changed entry reaches below its top, because the paragraph's
+  lines were broken around the floats' exclusions, which only the stacking
+  pass holds; otherwise the update runs the pre-pass and the stacking pass
+  of the context again, breaking every paragraph beside a float twice
+  (once at full width, once beside the floats). On apollo11, whose article
+  floats an infobox and thumbnails beside most paragraphs, this re-stack
+  is the whole cost of 32 of 60 word edits and 20 of 60 sentence edits,
+  4.8 to 5.6 ms each sequentially, against 82 ms for the page's full
+  layout stage (44 ms at four workers)
+  (`research/investigations/incremental-layout/runs/step3b.txt`). Change:
+  rebuild the exclusions of the floats that reach the paragraph from their
+  placed rectangles, break it again beside them in place, and translate
+  the later entries when its height changes and no later float's placement
+  depends on it. Reopen with X5's next step.
+
+- **`split_fragments` is quadratic in the blocks that interrupt inline
+  boxes.** Its inner loop over the later splits stops only at a split of
+  the same owner that cannot join, so a context with many interrupted
+  inline boxes of different owners scans all later splits for each, and
+  `sibling_above` walks back over the flow for each run
+  (`renderer/layout/flow.wf`). On ecma262, re-stacking the specification
+  body's flow context, `finish_flow` spends 77 percent of its instructions
+  there (585 of 761 million in a callgrind profile of two such re-stacks
+  in X5 step 3b). Impact: a large share of
+  ecma262's full build and of any re-stack of that context. Change: group
+  the splits by owner once and find each run's predecessor from the
+  stacking pass. Reopen with the next layout performance work.
 
 - **`Paragraph.min_content` and `max_content` are never written.** Every
   paragraph keeps the zeros `new_paragraph` gives them; intrinsic sizes
