@@ -81,7 +81,31 @@ example apart from the renderer code that exposed it
   (mbbill/Whitefoot#196). Change: a window created without clearing.
   Reopen when that lands, to move the pin and measure again.
 
+- **A counted loop that writes a fixed-stride window per iteration is not
+  split.** Minimal example: `for (u in 0_u64..n)` takes
+  `&ids^[u * 16_u64 .. u * 16_u64 + 16_u64]` and hands it to a function
+  that writes it; the windows of distinct `u` are disjoint, but `--par`
+  denies the loop as overlapping, so it runs serially
+  (`research/investigations/incremental/experiments/x12/program/x12/x12.wf`,
+  `record_all`). Impact: a per-unit log of recorded reads, the shape 3.3 of
+  the incremental research tree needs, cannot be written in parallel; at
+  ten edges per unit that costs well under 1 percent of the build today.
+  Change: admit a range write whose bounds are an affine function of the
+  loop index with a stride no smaller than its length. Reopen when a stage
+  records its reads per unit.
+
 ## Snowghost
+
+- **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
+  html5 and ecma262.** The sequential style stage takes 0.98 s on apollo11's
+  11,845 elements, almost all in matching (`experiments/x12/efficiency.txt`
+  and `experiments/x1-x3-x16/results/timing.json` under
+  `research/investigations/incremental/`). Not investigated; Wikipedia's
+  sheets are large, so the rule index may leave many candidates per
+  element. Impact: apollo11's style stage is 0.28 s at four workers, the
+  largest share of its full build. Change: count candidate rules per
+  element and profile matching. Reopen with the next style work.
+
 
 - **The style stage checks the walk's depths again to group levels.**
   `level_index` in `renderer/style/levels.wf` runs a counted pass over the

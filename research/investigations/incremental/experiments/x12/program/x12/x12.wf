@@ -1,0 +1,881 @@
+alias Args = std::text::Args;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias OutputStream = std::io::OutputStream;
+alias argument_bytes = pkg::oracle::support::argument_bytes;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias flush = pkg::oracle::support::flush;
+alias line_end = pkg::oracle::support::line_end;
+alias parse_decimal = pkg::oracle::support::parse_decimal;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias read_argument_file = pkg::oracle::support::read_argument_file;
+
+struct Tree {
+  parent: Box<Array<u32>>;
+  kid_start: Box<Array<u32>>;
+  kids: Box<Array<u32>>;
+  tick: Box<Array<u64>>;
+}
+
+fn run(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Destructures the inputs, drives one invocation and closes the working directory.";
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, ..) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &files, directory: move cwd_write);
+  let code = drive(args: &args, cwd: &cwd, out: &out, files: &files);
+  close_directory(factory: &files, directory: move cwd);
+  return exit_status(code: code);
+}
+
+fn arg_number(args: &Args, position: u64) -> result: Option<u64> reads(args) {
+  doc "The decimal argument at position, if any.";
+  match argument_bytes(args: args, position: position) {
+    Some(value: bytes) => {
+      let size = bytes.inner.len;
+      let parsed = parse_decimal(text: &bytes.inner[0_u64..size], start: 0_u64, end: size);
+      return parsed;
+    }
+    None() => {
+      return None<u64>();
+    }
+  }
+}
+
+fn mix(u: u64, j: u64, salt: u64) -> result: u64 pure {
+  doc "A cheap multiplicative hash of a unit, an edge number and a salt.";
+  let a = u *wrap 11400714819323198485_u64;
+  let b = j *wrap 14029467366897019727_u64;
+  let c = ixor(a, b);
+  let d = ixor(c, salt);
+  let e = ishr.wrap(d, 29_u32);
+  let f = ixor(d, e);
+  let g = f *wrap 13787848793156543929_u64;
+  let h = ishr.wrap(g, 32_u32);
+  return ixor(g, h);
+}
+
+fn count_changed(ver: &[u64], stored: &[u64]) -> result: u64 reads(ver), reads(stored) contract {
+  requires ver^.len == stored^.len;
+} {
+  doc "The number of entries of ver that differ from the stored ones: the dense no-change check.";
+  let n = ver^.len;
+  let changed = 0_u64;
+  for (i in 0_u64..n) {
+    let a = ver^[i];
+    let b = stored^[i];
+    let differs = a != b;
+    let one = if differs {
+      give 1_u64;
+    } else {
+      give 0_u64;
+    }
+    set changed = changed +wrap one;
+  }
+  return changed;
+}
+
+fn scan_reps(ver: &Box<Array<u64>>, stored: &Box<Array<u64>>, reps: u64) -> result: u64 writes(ver), writes(stored) {
+  doc "Each repetition changes one entry, counts the changed entries against the stored array and stores the one it changed.";
+  let n = ver^.inner.len;
+  let m = stored^.inner.len;
+  let same = n == m;
+  if same {
+  } else {
+    return 0_u64;
+  }
+  let empty = n == 0_u64;
+  if empty {
+    return 0_u64;
+  }
+  let total = 0_u64;
+  let r = 0_u64;
+  loop @frames {
+    let more = r < reps;
+    if more {
+    } else {
+      break @frames;
+    }
+    let at = r % n;
+    if at < ver^.inner.len {
+      let was = ver^.inner[at];
+      set ver^.inner[at] = was +wrap 1_u64;
+    }
+    let size = ver^.inner.len;
+    let stored_size = stored^.inner.len;
+    let equal = size == stored_size;
+    if equal {
+      let changed = count_changed(ver: &ver^.inner[0_u64..size], stored: &stored^.inner[0_u64..size]);
+      set total = total +wrap changed;
+    }
+    if at < ver^.inner.len {
+      if at < stored^.inner.len {
+        set stored^.inner[at] = ver^.inner[at];
+      }
+    }
+    set r = r +wrap 1_u64;
+  }
+  return total;
+}
+
+fn parse_parents(text: &[u8]) -> result: Option<Box<Array<u32>>> reads(text) contract {
+  ensures when Some(value: p): p.inner.len <= 100000000_u64;
+} {
+  doc "The parents file: the element count, then one parent index per line, the root's being the count.";
+  let first = line_end(text: text, start: 0_u64);
+  match parse_decimal(text: text, start: 0_u64, end: first) {
+    None() => {
+      return None<Box<Array<u32>>>();
+    }
+    Some(value: n) => {
+      let bounded = n <= 100000000_u64;
+      if bounded {
+      } else {
+        return None<Box<Array<u32>>>();
+      }
+      let parents = box_array_filled::<u32>(count: n, value: 0_u32);
+      let at = first +sat 1_u64;
+      let k = 0_u64;
+      loop @lines {
+        let more = k < n;
+        if more {
+        } else {
+          break @lines;
+        }
+        let stop = line_end(text: text, start: at);
+        match parse_decimal(text: text, start: at, end: stop) {
+          None() => {
+            return None<Box<Array<u32>>>();
+          }
+          Some(value: v) => {
+            let narrowed = cvt.wrap::<u64, u32>(v);
+            if k < parents.inner.len {
+              set parents.inner[k] = narrowed;
+            }
+          }
+        }
+        set at = stop +sat 1_u64;
+        set k = k +wrap 1_u64;
+      }
+      return Some<Box<Array<u32>>>(value: move parents);
+    }
+  }
+}
+
+fn build_tree(parents: Box<Array<u32>>) -> result: Tree pure contract {
+  requires parents.inner.len <= 100000000_u64;
+} {
+  doc "The children lists of the parent array in compressed form, and a tick array of zeros.";
+  let n = parents.inner.len;
+  let n_plus = n +sat 1_u64;
+  let counts = box_array_filled::<u32>(count: n_plus, value: 0_u32);
+  let kid_start = box_array_filled::<u32>(count: n_plus, value: 0_u32);
+  let kids = box_array_filled::<u32>(count: n, value: 0_u32);
+  let tick = box_array_filled::<u64>(count: n, value: 0_u64);
+  for (i in 0_u64..n) {
+    let p = cvt::<u32, u64>(parents.inner[i]);
+    if p < counts.inner.len {
+      let was = counts.inner[p];
+      set counts.inner[p] = was +wrap 1_u32;
+    }
+  }
+  let prefix = 0_u32;
+  for (i in 0_u64..n) {
+    if i < kid_start.inner.len {
+      set kid_start.inner[i] = prefix;
+    }
+    let c = counts.inner[i];
+    set prefix = prefix +wrap c;
+  }
+  let last = kid_start.inner.len;
+  if n < last {
+    set kid_start.inner[n] = prefix;
+  }
+  let cursor = box_array_filled::<u32>(count: n_plus, value: 0_u32);
+  for (i in 0_u64..n) {
+    if i < cursor.inner.len {
+      set cursor.inner[i] = kid_start.inner[i];
+    }
+  }
+  for (i in 0_u64..n) {
+    let p = cvt::<u32, u64>(parents.inner[i]);
+    if p < cursor.inner.len {
+      let slot = cvt::<u32, u64>(cursor.inner[p]);
+      if slot < kids.inner.len {
+        set kids.inner[slot] = cvt.wrap::<u64, u32>(i);
+      }
+      let next = cursor.inner[p] +wrap 1_u32;
+      set cursor.inner[p] = next;
+    }
+  }
+  return Tree(parent: move parents, kid_start: move kid_start, kids: move kids, tick: move tick);
+}
+
+fn bump(parent: &[u32], tick: &[u64], leaf: u64, now: u64) -> result: u64 reads(parent), writes(tick) contract {
+  requires parent^.len == tick^.len;
+} {
+  doc "Writes tick now to a node and every ancestor, the maintenance of subtree-max ticks; returns the number written.";
+  let n = parent^.len;
+  let at = leaf;
+  let steps = 0_u64;
+  loop @up {
+    let inside = at < n;
+    if inside {
+    } else {
+      break @up;
+    }
+    set tick^[at] = now;
+    let p = cvt::<u32, u64>(parent^[at]);
+    set at = p;
+    set steps = steps +wrap 1_u64;
+  }
+  return steps;
+}
+
+fn find_dirty(tick: &[u64], kid_start: &[u32], kids: &[u32], seen: u64) -> result: u64 reads(tick), reads(kid_start), reads(kids) contract {
+  requires kid_start^.len == tick^.len + 1_u64;
+  requires kids^.len == tick^.len;
+} {
+  doc "Walks from the root to a node whose children's ticks are all at most seen, at each node scanning its children in order for the first whose tick exceeds seen.";
+  let n = tick^.len;
+  let node = 0_u64;
+  loop @down {
+    let inside = node < n;
+    if inside {
+    } else {
+      return node;
+    }
+    let next = node +wrap 1_u64;
+    let s = cvt::<u32, u64>(kid_start^[node]);
+    let e = cvt::<u32, u64>(kid_start^[next]);
+    let found = n;
+    for (c in s..e) {
+      if c < kids^.len {
+        let child = cvt::<u32, u64>(kids^[c]);
+        if child < n {
+          let t = tick^[child];
+          let hit = t > seen;
+          if hit {
+            set found = child;
+            break;
+          }
+        }
+      }
+    }
+    let none = found == n;
+    if none {
+      return node;
+    }
+    set node = found;
+  }
+  return node;
+}
+
+fn tree_reps(tree: &Tree, reps: u64, mode: u64, target: u64) -> result: u64 reads(tree), writes(tree.tick.inner) {
+  doc "Each repetition changes one node, rewrites the subtree-max ticks above it and, in the finding modes, finds the changed node from the root.";
+  let n = tree^.parent.inner.len;
+  let empty = n == 0_u64;
+  if empty {
+    return 0_u64;
+  }
+  let room = n < 100000000_u64;
+  if room {
+  } else {
+    return 0_u64;
+  }
+  let n_plus = n + 1_u64;
+  let total = 0_u64;
+  let wrong = 0_u64;
+  if tree^.tick.inner.len == n {
+    if tree^.kids.inner.len == n {
+      if tree^.kid_start.inner.len == n_plus {
+        let r = 0_u64;
+        loop @frames {
+          let more = r < reps;
+          if more {
+          } else {
+            break @frames;
+          }
+          let spread = r *wrap 7919_u64;
+          let pick = spread +wrap 13_u64;
+          let random = pick % n;
+          let fixed = mode == 4_u64;
+          let leaf = if fixed {
+            give target;
+          } else {
+            give random;
+          }
+          let now = r +wrap 1_u64;
+          let steps = bump(parent: &tree^.parent.inner[0_u64..n], tick: &tree^.tick.inner[0_u64..n], leaf: leaf, now: now);
+          set total = total +wrap steps;
+          let finding = mode >= 3_u64;
+          if finding {
+            if tree^.kid_start.inner.len == n_plus {
+              if tree^.tick.inner.len == n {
+                if tree^.kids.inner.len == n {
+                  let found = find_dirty(tick: &tree^.tick.inner[0_u64..n], kid_start: &tree^.kid_start.inner[0_u64..n_plus], kids: &tree^.kids.inner[0_u64..n], seen: r);
+                  let miss = found != leaf;
+                  if miss {
+                    set wrong = wrong +wrap 1_u64;
+                  }
+                }
+              }
+            }
+          }
+          set r = r +wrap 1_u64;
+        }
+      }
+    }
+  }
+  let packed = wrong *wrap 1000000007_u64;
+  return total +wrap packed;
+}
+
+fn gather_plain(val: &[u64], out: &[u64], salt: u64, k: u64) -> result: unit reads(val), writes(out) contract {
+  requires val^.len == out^.len;
+  requires val^.len > 0_u64;
+} {
+  doc "Each unit sums the values of ten items it reads, chosen by a hash: the loop without recording.";
+  let n = val^.len;
+  for (u in 0_u64..n) {
+    let acc = 0_u64;
+    for (j in 0_u64..k) {
+      let h = mix(u: u, j: j, salt: salt);
+      let other = h % n;
+      if other < val^.len {
+        let v = val^[other];
+        set acc = acc +wrap v;
+      }
+    }
+    set out^[u] = acc;
+  }
+  return unit;
+}
+
+fn gather_flat(val: &[u64], out: &[u64], edges: &[u32], salt: u64, width: u64, k: u64) -> result: unit reads(val), writes(out), writes(edges) contract {
+  requires val^.len == out^.len;
+  requires val^.len > 0_u64;
+  requires val^.len <= 100000000_u64;
+  requires width <= 16_u64;
+} {
+  doc "As gather_plain, and each unit also writes the ids it read into its own ten-entry window of edges.";
+  let n = val^.len;
+  for (u in 0_u64..n) {
+    let acc = 0_u64;
+    let lo = u * width;
+    let hi = lo + width;
+    let fits = hi <= edges^.len;
+    if fits {
+      let window = &edges^[lo..hi];
+      record_into(window: window, val: val, u: u, salt: salt, acc: &acc, k: k);
+    }
+    set out^[u] = acc;
+  }
+  return unit;
+}
+
+fn record_into(window: &[u32], val: &[u64], u: u64, salt: u64, acc: &u64, k: u64) -> result: unit reads(val), writes(window), writes(acc) {
+  doc "Reads the ten items of unit u and records their ids in window.";
+  let n = val^.len;
+  let nonzero = n > 0_u64;
+  if nonzero {
+    for (j in 0_u64..k) {
+      let h = mix(u: u, j: j, salt: salt);
+      let other = h % n;
+      if other < val^.len {
+        let v = val^[other];
+        set acc^ = acc^ +wrap v;
+        if j < window^.len {
+          set window^[j] = cvt.wrap::<u64, u32>(other);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn record_append(ids: &[u32], vers: &[u64], val: &[u64], ver: &[u64], u: u64, salt: u64, k: u64, acc: &u64) -> result: u64 reads(val), reads(ver), writes(ids), writes(vers), writes(acc) {
+  doc "Reads k items of unit u and appends each distinct consecutive source id and its version to the unit's log; returns the log length.";
+  let n = val^.len;
+  let count = 0_u64;
+  let nonzero = n > 0_u64;
+  if nonzero {
+    for (j in 0_u64..k) {
+      let h = mix(u: u, j: j, salt: salt);
+      let other = h % n;
+      if other < val^.len {
+        let v = val^[other];
+        set acc^ = acc^ +wrap v;
+        if other < ver^.len {
+          let seen = ver^[other];
+          let id = cvt.wrap::<u64, u32>(other);
+          let dupf = if count > 0_u64 {
+            let prev = count -sat 1_u64;
+            if prev < ids^.len {
+              let last = ids^[prev];
+              let same_id = last == id;
+              if same_id {
+                give 1_u64;
+              } else {
+                give 0_u64;
+              }
+            } else {
+              give 0_u64;
+            }
+          } else {
+            give 0_u64;
+          }
+          let dup = dupf != 0_u64;
+          if dup {
+          } else if count < ids^.len {
+            if count < vers^.len {
+              set ids^[count] = id;
+              set vers^[count] = seen;
+              set count = count +wrap 1_u64;
+            }
+          }
+        }
+      }
+    }
+  }
+  return count;
+}
+
+fn record_all(val: &[u64], ver: &[u64], out: &[u64], ids: &[u32], vers: &[u64], cnt: &[u32], salt: u64, k: u64) -> result: unit reads(val), reads(ver), writes(out), writes(ids), writes(vers), writes(cnt) contract {
+  requires val^.len == out^.len;
+  requires val^.len == cnt^.len;
+  requires val^.len <= 100000000_u64;
+  requires k <= 16_u64;
+} {
+  doc "Each unit sums k items it reads and records the ids and versions it read in its sixteen-entry window.";
+  let n = val^.len;
+  for (u in 0_u64..n) {
+    let acc = 0_u64;
+    let lo = u * 16_u64;
+    let hi = lo + 16_u64;
+    let fits = hi <= ids^.len;
+    let fits_v = hi <= vers^.len;
+    if fits {
+      if fits_v {
+        let iw = &ids^[lo..hi];
+        let vw = &vers^[lo..hi];
+        let c = record_append(ids: iw, vers: vw, val: val, ver: ver, u: u, salt: salt, k: k, acc: &acc);
+        set cnt^[u] = cvt.wrap::<u64, u32>(c);
+      }
+    }
+    set out^[u] = acc;
+  }
+  return unit;
+}
+
+fn validate_dense(ver: &[u64], ids: &[u32], vers: &[u64], cnt: &[u32]) -> result: u64 reads(ver), reads(ids), reads(vers), reads(cnt) contract {
+  requires cnt^.len <= 100000000_u64;
+} {
+  doc "No-change frame over recorded edges in unit order: counts the recorded edges whose source version differs from the one recorded.";
+  let n = cnt^.len;
+  let bad = 0_u64;
+  for (u in 0_u64..n) {
+    let c = cvt::<u32, u64>(cnt^[u]);
+    let lo = u * 16_u64;
+    for (j in 0_u64..c) {
+      let at = lo + j;
+      if at < ids^.len {
+        if at < vers^.len {
+          let id = cvt::<u32, u64>(ids^[at]);
+          if id < ver^.len {
+            let now = ver^[id];
+            let was = vers^[at];
+            let differs = now != was;
+            let one = if differs {
+              give 1_u64;
+            } else {
+              give 0_u64;
+            }
+            set bad = bad +wrap one;
+          }
+        }
+      }
+    }
+  }
+  return bad;
+}
+
+fn lookup(hkey: &[u64], hval: &[u32], key: u64, mask: u64) -> result: u64 reads(hkey), reads(hval) {
+  doc "Linear-probing lookup of a key in the memo table; returns the entry, or the table size when absent.";
+  let cap = hkey^.len;
+  let start = iand(key, mask);
+  let slot = start;
+  let probes = 0_u64;
+  loop @probe {
+    let more = probes < cap;
+    if more {
+    } else {
+      break @probe;
+    }
+    if slot < hkey^.len {
+      let k = hkey^[slot];
+      let hit = k == key;
+      if hit {
+        if slot < hval^.len {
+          return cvt::<u32, u64>(hval^[slot]);
+        }
+        break @probe;
+      }
+      let empty = k == 0_u64;
+      if empty {
+        break @probe;
+      }
+    }
+    let next = slot +wrap 1_u64;
+    set slot = iand(next, mask);
+    set probes = probes +wrap 1_u64;
+  }
+  return cap;
+}
+
+fn insert(hkey: &[u64], hval: &[u32], key: u64, target: u64, mask: u64) -> result: unit writes(hkey), writes(hval) {
+  doc "Inserts a key with its entry into the memo table, probing linearly.";
+  let cap = hkey^.len;
+  let slot = iand(key, mask);
+  let probes = 0_u64;
+  loop @probe {
+    let more = probes < cap;
+    if more {
+    } else {
+      break @probe;
+    }
+    if slot < hkey^.len {
+      let k = hkey^[slot];
+      let empty = k == 0_u64;
+      if empty {
+        set hkey^[slot] = key;
+        if slot < hval^.len {
+          set hval^[slot] = cvt.wrap::<u64, u32>(target);
+        }
+        break @probe;
+      }
+    }
+    let next = slot +wrap 1_u64;
+    set slot = iand(next, mask);
+    set probes = probes +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn unit_key(u: u64) -> result: u64 pure {
+  doc "The memo key of unit u: a nonzero hash.";
+  let h = mix(u: u, j: 0_u64, salt: 777_u64);
+  return ior(h, 1_u64);
+}
+
+fn validate_memo(ver: &[u64], ids: &[u32], vers: &[u64], cnt: &[u32], hkey: &[u64], hval: &[u32], mask: u64, deep: u64) -> result: u64 reads(ver), reads(ids), reads(vers), reads(cnt), reads(hkey), reads(hval) contract {
+  requires cnt^.len <= 100000000_u64;
+} {
+  doc "No-change frame through the memo table: looks up each unit's key and, when deep is nonzero, validates the entry's recorded edges; otherwise compares the entry's own recorded version against the unit's version.";
+  let n = cnt^.len;
+  let bad = 0_u64;
+  for (u in 0_u64..n) {
+    let key = unit_key(u: u);
+    let e = lookup(hkey: hkey, hval: hval, key: key, mask: mask);
+    if e < n {
+      if deep == 0_u64 {
+        if e < ver^.len {
+          let now = ver^[e];
+          let differs = now != 1_u64;
+          if differs {
+            set bad = bad +wrap 1_u64;
+          }
+        }
+      } else {
+        let c = cvt::<u32, u64>(cnt^[e]);
+        let lo = e * 16_u64;
+        for (j in 0_u64..c) {
+          let at = lo + j;
+          if at < ids^.len {
+            if at < vers^.len {
+              let id = cvt::<u32, u64>(ids^[at]);
+              if id < ver^.len {
+                let now = ver^[id];
+                let was = vers^[at];
+                let differs = now != was;
+                let one = if differs {
+                  give 1_u64;
+                } else {
+                  give 0_u64;
+                }
+                set bad = bad +wrap one;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return bad;
+}
+
+fn validate_frames(n: u64, k: u64, reps: u64, change: u64, mode: u64) -> result: u64 pure contract {
+  requires n <= 100000000_u64;
+} {
+  doc "Records the reads of n units once, then runs reps frames of validation (mode 8 dense, 9 memo with edges, 10 memo with own version), each bumping one source version when change is nonzero and restoring it afterwards.";
+  let val = box_array_filled::<u64>(count: n, value: 3_u64);
+  let ver = box_array_filled::<u64>(count: n, value: 1_u64);
+  let out_values = box_array_filled::<u64>(count: n, value: 0_u64);
+  let wide = n *sat 16_u64;
+  let ids = box_array_filled::<u32>(count: wide, value: 0_u32);
+  let vers = box_array_filled::<u64>(count: wide, value: 0_u64);
+  let cnt = box_array_filled::<u32>(count: n, value: 0_u32);
+  let ok = n > 0_u64;
+  let ok2 = n <= 100000000_u64;
+  let ok3 = k <= 16_u64;
+  let ok4 = band(ok, ok2);
+  let ok5 = band(ok4, ok3);
+  if ok5 {
+  } else {
+    return 0_u64;
+  }
+  let e1 = val.inner.len == n;
+  let e2 = out_values.inner.len == n;
+  let e3 = cnt.inner.len == n;
+  let e4 = ver.inner.len == n;
+  let e5 = ids.inner.len == wide;
+  let e6 = vers.inner.len == wide;
+  let same = band(e1, e2);
+  let same2 = band(same, e3);
+  let same3 = band(same2, e4);
+  let same4 = band(same3, e5);
+  let same5 = band(same4, e6);
+  if same5 {
+  } else {
+    return 0_u64;
+  }
+  record_all(val: &val.inner[0_u64..n], ver: &ver.inner[0_u64..n], out: &out_values.inner[0_u64..n], ids: &ids.inner[0_u64..wide], vers: &vers.inner[0_u64..wide], cnt: &cnt.inner[0_u64..n], salt: 1_u64, k: k);
+  let cap = 16_u64;
+  let want = n *sat 2_u64;
+  loop @grow {
+    let small = cap < want;
+    if small {
+    } else {
+      break @grow;
+    }
+    set cap = cap *sat 2_u64;
+  }
+  let capok = cap <= 1000000000_u64;
+  if capok {
+  } else {
+    return 0_u64;
+  }
+  let mask = cap -sat 1_u64;
+  let hkey = box_array_filled::<u64>(count: cap, value: 0_u64);
+  let hval = box_array_filled::<u32>(count: cap, value: 0_u32);
+  let hk = hkey.inner.len;
+  let hv = hval.inner.len;
+  for (u in 0_u64..n) {
+    let uk = unit_key(u: u);
+    insert(hkey: &hkey.inner[0_u64..hk], hval: &hval.inner[0_u64..hv], key: uk, target: u, mask: mask);
+  }
+  let total = 0_u64;
+  let r = 0_u64;
+  loop @frames {
+    let more = r < reps;
+    if more {
+    } else {
+      break @frames;
+    }
+    let spread = r *wrap 7919_u64;
+    let pick = spread +wrap 13_u64;
+    let at = pick % n;
+    let bumped = change != 0_u64;
+    if bumped {
+      if at < ver.inner.len {
+        let was = ver.inner[at];
+        set ver.inner[at] = was +wrap 1_u64;
+      }
+    }
+    let m = ver.inner.len;
+    let found = if mode == 8_u64 {
+      give validate_dense(ver: &ver.inner[0_u64..m], ids: &ids.inner[0_u64..wide], vers: &vers.inner[0_u64..wide], cnt: &cnt.inner[0_u64..n]);
+    } else {
+      let deep = if mode == 9_u64 {
+        give 1_u64;
+      } else {
+        give 0_u64;
+      }
+      give validate_memo(ver: &ver.inner[0_u64..m], ids: &ids.inner[0_u64..wide], vers: &vers.inner[0_u64..wide], cnt: &cnt.inner[0_u64..n], hkey: &hkey.inner[0_u64..hk], hval: &hval.inner[0_u64..hv], mask: mask, deep: deep);
+    }
+    set total = total +wrap found;
+    if bumped {
+      if at < ver.inner.len {
+        let was = ver.inner[at];
+        set ver.inner[at] = was -wrap 1_u64;
+      }
+    }
+    set r = r +wrap 1_u64;
+  }
+  return total;
+}
+
+fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(files) waits {
+  doc "Runs one measurement: TEST N REPS [PARENTS TARGET].";
+  let test = match arg_number(args: args, position: 1_u64) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return 2_u8;
+    }
+  }
+  let size = match arg_number(args: args, position: 2_u64) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return 2_u8;
+    }
+  }
+  let reps = match arg_number(args: args, position: 3_u64) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      return 2_u8;
+    }
+  }
+  let result = 0_u64;
+  let bounded = size <= 100000000_u64;
+  if bounded {
+  } else {
+    return 2_u8;
+  }
+  if test == 1_u64 {
+    let ver = box_array_filled::<u64>(count: size, value: 5_u64);
+    let stored = box_array_filled::<u64>(count: size, value: 5_u64);
+    set result = scan_reps(ver: &ver, stored: &stored, reps: reps);
+  }
+  if test >= 2_u64 {
+    if test <= 4_u64 {
+      let target = match arg_number(args: args, position: 5_u64) {
+        Some(value: v) => {
+          give v;
+        }
+        None() => {
+          give 0_u64;
+        }
+      }
+      match read_argument_file(factory: files, cwd: cwd, args: args, position: 4_u64) {
+        Ok(value: text) => {
+          let length = text.inner.len;
+          match parse_parents(text: &text.inner[0_u64..length]) {
+            None() => {
+              return 3_u8;
+            }
+            Some(value: parents) => {
+              let tree = build_tree(parents: move parents);
+              set result = tree_reps(tree: &tree, reps: reps, mode: test, target: target);
+            }
+          }
+        }
+        Err(error: problem) => {
+          return 4_u8;
+        }
+      }
+    }
+  }
+  let kk = match arg_number(args: args, position: 4_u64) {
+    Some(value: v) => {
+      give v;
+    }
+    None() => {
+      give 10_u64;
+    }
+  }
+  let kok = kk <= 16_u64;
+  if kok {
+  } else {
+    return 2_u8;
+  }
+  if test >= 8_u64 {
+    let change = match arg_number(args: args, position: 5_u64) {
+      Some(value: v) => {
+        give v;
+      }
+      None() => {
+        give 1_u64;
+      }
+    }
+    set result = validate_frames(n: size, k: kk, reps: reps, change: change, mode: test);
+  }
+  if test >= 5_u64 {
+    if test <= 7_u64 {
+      let val = box_array_filled::<u64>(count: size, value: 3_u64);
+      let ver = box_array_filled::<u64>(count: size, value: 1_u64);
+      let out_values = box_array_filled::<u64>(count: size, value: 0_u64);
+      let wide = size *sat 16_u64;
+      let edges = box_array_filled::<u32>(count: wide, value: 0_u32);
+      let evers = box_array_filled::<u64>(count: wide, value: 0_u64);
+      let cnt = box_array_filled::<u32>(count: size, value: 0_u32);
+      let n = val.inner.len;
+      let r = 0_u64;
+      let nonempty = n > 0_u64;
+      let okay = n == out_values.inner.len;
+      let n16 = n *sat 16_u64;
+      let roomy = edges.inner.len == n16;
+      let roomy2 = evers.inner.len == edges.inner.len;
+      let s1 = ver.inner.len == n;
+      let s2 = cnt.inner.len == n;
+      let sized = band(s1, s2);
+      let all = band(nonempty, okay);
+      let full0 = band(all, roomy);
+      let full1 = band(full0, roomy2);
+      let full = band(full1, sized);
+      if full {
+        loop @frames {
+          let more = r < reps;
+          if more {
+          } else {
+            break @frames;
+          }
+          let salt = r +wrap 1_u64;
+          let m = edges.inner.len;
+          if test == 5_u64 {
+            gather_plain(val: &val.inner[0_u64..n], out: &out_values.inner[0_u64..n], salt: salt, k: kk);
+          }
+          if test == 6_u64 {
+            record_all(val: &val.inner[0_u64..n], ver: &ver.inner[0_u64..n], out: &out_values.inner[0_u64..n], ids: &edges.inner[0_u64..m], vers: &evers.inner[0_u64..m], cnt: &cnt.inner[0_u64..n], salt: salt, k: kk);
+          }
+          if test == 7_u64 {
+            gather_flat(val: &val.inner[0_u64..n], out: &out_values.inner[0_u64..n], edges: &edges.inner[0_u64..m], salt: salt, width: 16_u64, k: kk);
+          }
+          set r = r +wrap 1_u64;
+        }
+        let sum = 0_u64;
+        for (i in 0_u64..n) {
+          set sum = sum +wrap out_values.inner[i];
+        }
+        let esum = 0_u64;
+        let m = edges.inner.len;
+        for (i in 0_u64..m) {
+          let e = cvt::<u32, u64>(edges.inner[i]);
+          set esum = esum +wrap e;
+        }
+        let vsum = 0_u64;
+        for (i in 0_u64..m) {
+          set vsum = vsum +wrap evers.inner[i];
+        }
+        let sev = sum +wrap esum;
+        set result = sev +wrap vsum;
+      }
+    }
+  }
+  let buffer = box_slots_new::<u8>(capacity: 64_u64);
+  put_decimal(buffer: &buffer, value: result);
+  put_byte(buffer: &buffer, value: 10_u8);
+  let written = flush(factory: files, output: out, buffer: &buffer);
+  if written {
+    return 0_u8;
+  }
+  return 5_u8;
+}

@@ -92,7 +92,8 @@ A node that holds for some cases and not others is split into the cases.
   compositor surfaces, and which of its reasons apply here.
 
 `notes/critique.md` is a separate critique of this tree's first draft,
-which this version answers.
+which this version answers. `experiments/` holds each run experiment's
+report, scripts and aggregated results; Results below summarizes them.
 
 **How to treat the notes' claims.** Each note marks what its author
 fetched, measured or recalled. A recalled claim is a lead, not evidence;
@@ -107,14 +108,14 @@ JSON is not kept, since its aggregates are.
 
 These are the numbers every branch has to meet.
 
-- **A full recompute costs about 50 frames.** status: measured.
-  - html5's layout stage takes 0.59 s at four workers
-    (`research/investigations/layout/runs/time-parts.txt`).
-  - Its style stage takes 0.18 s in the prototype's shape C
-    (`research/investigations/concurrency/DESIGN.md`, Shape D); the real
-    style stage is of the same order.
-  - That is about 0.8 s, against 16.7 ms for a 60 Hz frame and 4.2 ms at
-    240 Hz.
+- **A full recompute costs about 80 to 90 frames.** status: measured.
+  - At four workers, html5's style stage takes 0.72 s and its layout stage
+    0.59 s, 1.31 s together; ecma262 takes 1.51 s and apollo11 0.33 s
+    (`experiments/x12/efficiency.txt`; the style stage's own record agrees,
+    `research/investigations/style/DESIGN.md`, "The level cascade").
+  - The first draft of this tree took the prototype's style stage, 0.18 s,
+    as the real one's order; the real stage is four times that.
+  - That is against 16.7 ms for a 60 Hz frame and 4.2 ms at 240 Hz.
   - Parallelism alone cannot make full recomputation an interactive path.
 - **The unit counts.** status: measured. The real layout stage
   (`research/investigations/layout/runs/time-parts.txt`):
@@ -129,21 +130,28 @@ These are the numbers every branch has to meet.
   (`research/investigations/concurrency/DESIGN.md`). html5's dominant one
   holds 20,919 paragraphs (`notes/architecture.md` §0).
 - **A frame in which nothing changed must cost almost nothing.** status:
-  arithmetic, with recalled constants.
-  - Checking 120,000 memoized units at 100 ns each costs 12 ms.
-  - One scan of a dense version array costs about 1 ms.
-  - Anything else must be push-based: the write marks what it dirties, or
-    the change arrives as an edit list (3.9). See `notes/theory.md` §0.
-- **Dynamic dependency tracing.** status: uncertain, one measurement
-  away.
-  - The arithmetic: at a recalled 100 ns to 1 µs per recorded edge and
-    about ten edges per unit, tracing a full build of html5 would cost
-    14 to 140 ms per context and 61 to 610 ms per paragraph.
-  - Against the 0.8 s full build, that is 2 to 17 percent at context grain
-    and 8 to 76 percent at paragraph grain. `notes/theory.md` takes 5
-    percent as the acceptable bookkeeping share.
-  - Which end of the constant is true decides whether recorded reads (3.3)
-    are affordable at context grain. Experiment X12 measures it.
+  measured (X12, synthetic program at the pages' unit counts).
+  - A dense version-array scan costs 44 µs over html5's 117,179 elements
+    and 82 µs over ecma262's 179,471; html5's elements, paragraphs and
+    contexts together take 68 µs.
+  - A push-based tick tree rewrites a change's ancestors in 27 to 42 ns and
+    finds the changed node from the root in 0.15 to 4.2 µs.
+  - Walking memo keys through a hash table at paragraph grain costs 2.3 to
+    2.6 ms and gains nothing from four workers, so at that grain the
+    no-change check must be dense or push-based (3.9; `notes/theory.md`
+    §0).
+- **Dynamic dependency tracing.** status: measured, under an assumed
+  edge count (X12).
+  - Recording a read costs 3.5 to 3.9 ns per edge, all-in, 25 to 250
+    times below the recalled 100 ns to 1 µs the first draft used; 10 to
+    14 ns once the logs outgrow the cache, at unit counts far above any
+    real page.
+  - At ten edges per unit that is 0.04 percent of html5's four-worker
+    build at context grain and 0.18 percent at paragraph grain, against
+    the 5 percent `notes/theory.md` accepts. The 5 percent line is reached
+    only at 1,336 edges per context or 279 per paragraph.
+  - The open quantity is now the real stages' edges per unit, which the
+    synthetic program assumed.
 
 ## What the census measured
 
@@ -237,7 +245,9 @@ unavoidable.
 
 1.2 **Line breaking inside a paragraph.** status: measured local.
 - **Why it matters.** Most word edits end at the paragraph, since its
-  height, line count and widths stay the same. Text preparation is 60 to 67
+  height, line count and widths stay the same. In Snowghost's own stages a
+  word edit changes one paragraph in 68 of 70 edits and two in the other
+  two (X1). Text preparation is 60 to 67
   percent of the layout stage and runs per paragraph.
 - **Consequence.** The paragraph's line-breaking output is the first
   boundary at which a rerun can stop (`notes/fanout.md` §5).
@@ -248,31 +258,53 @@ all of its extent.
 - **Context-relative positions (Q55).** These confine the coupling to the
   formatting context, but a rewrite inside a context is O(siblings in the
   context), which is large in flat contexts.
-- **Making offsets themselves incremental.** Three candidates, none
-  measured:
+- **Making offsets themselves incremental.** Three candidates, measured
+  by their writes in X3:
   - **Sibling anchoring:** each box anchored to its preceding sibling's
     end. It reduces html5's removal to 1 rewrite, but turns a position
     query into a walk.
   - **Summary tree:** a balanced tree of offsets (3.8).
   - **Prefix sums at the consumer:** flow sizes sent instead, with the
     consumer taking prefix sums (`notes/raster.md` §6).
-- **Decided by:** experiment X3, on Snowghost's own output.
+- **What X3 measured.** At p90, context-relative offsets need 328, 24,213
+  and 33,006 rewrites per edit on apollo11, html5 and ecma262; a summary
+  tree needs 64, 48 and 40, prefix sums 45, 11 and 21, at a per-write cost
+  ratio of 0.5 to 2.1. Parent-relative offsets, outside the criterion,
+  need 42 and 51 on apollo11 and ecma262 and lose only on flat parents
+  (html5: 2,956). The write counts do not separate the tree from prefix
+  sums; their read side does, and is unmeasured
+  (`experiments/x1-x3-x16/report.md`).
+- **What it means.** Q55's context-relative positions cost two to three
+  orders of magnitude more rewrites than a summary tree on flat pages.
+  Revisiting Q55 is a design-tree matter for the incremental layout
+  prototype (X5).
 
 1.4 **Inline size down, and inherited fonts.** status: measured
 non-local.
 - **What happens.** A container's width change re-wraps every paragraph
   inside it, and an inherited font change reaches every descendant.
 - **What might be saved.** Width-keyed reuse saves work only where a
-  paragraph's breaks hold over a range of widths. Experiment X4 measures
-  how often.
-- **Otherwise.** These are full-subtree work: their speed comes from
-  parallelism, or from progressive delivery (4.6), not from
-  incrementality.
+  paragraph's breaks hold over a range of widths. X4 measured it: at a
+  10 px viewport change, 85 to 97 percent of paragraphs keep their breaks
+  (70 to 77 percent of multi-line ones), so reuse keyed by a width
+  interval pays; an exact-width key would not. The saving is bounded:
+  lay_out is 26 to 29 percent of the box, text and layout work, text
+  preparation is already width-independent, and the interval's cost to
+  produce is unmeasured (`experiments/x4/report.md`).
+- **Otherwise.** The paragraphs that do re-break, and font-size changes,
+  are full-subtree work: their speed comes from parallelism, or from
+  progressive delivery (4.6), not from incrementality.
+- **Font arrival.** status: measured local (X8). A loaded font costs
+  re-laying the paragraphs that use it, 1.07 to 1.44 times their text
+  preparation, with no global term; a rare web font costs under 3 ms
+  (`experiments/x8/report.md`).
 
 1.5 **Siblings coupled through their container: tables, flex, grid.**
 status: measured, bounded. A cell or item change can resize its siblings
 through column widths or stretch. The container is one work item, with its
-track or line sizes as its internal key.
+track or line sizes as its internal key. X8 found the cost: a row appended
+to an html5 table with `table-layout: auto` re-lays up to 1,485 boxes, 75
+times the appended content, because the column widths change.
 
 1.6 **Chains in document order.**
 - **The chains:**
@@ -282,6 +314,11 @@ track or line sizes as its internal key.
   - sibling positions for `:nth-*`;
   - the block pass's running height and margin strut;
   - the document's scroll extent.
+- **Parser appends.** status: measured local (X8). An append changes the
+  laid-out prefix only in its open ancestor chain plus a handful of boxes
+  (median 1 to 2, at most 31 outside tables), within 2 times the appended
+  content's cost from about 200 elements up. Tiny appends are dominated by
+  the open chain, so they should be batched.
 - **Checkpoints.** status: promising. A rerun starts from the chain's
   stored state at a unit's entry and stops where the exit state equals the
   stored one (`notes/architecture.md` §5, invariant 5).
@@ -335,7 +372,9 @@ measured in the code. Each has a replacement (`notes/architecture.md`
 1.11 **Edits of time rather than of content.** Animations of layout
 properties change the same key every frame, so both the bookkeeping floor
 and 1.4's full-subtree cost are paid per frame.
-- **Animated layout properties.** status: hard, by 1.4.
+- **Animated layout properties.** status: hard, by 1.4, and not found:
+  none of the running animations on 30 real sites animates a layout
+  property (`experiments/contract/report.md`).
 - **`:hover`, focus and the caret.** status: uncertain. These are mostly
   paint-only and are the most frequent edits of all.
 
@@ -381,6 +420,14 @@ in part).
 
   Each must be in the key or versioned (`notes/architecture.md` §5,
   invariant 2).
+- **Keys split by consumer.** status: measured (X1). A colour edit changes
+  no layout, yet a paragraph keyed by its whole style recomputes in 27 of
+  30 apollo11 edits and every html5 and ecma262 one; keyed by the
+  layout-relevant groups only, none does.
+- **Root-level style edits.** status: measured non-local. Root custom
+  properties and `html` font size reach 10^2 to 10^5 times their minimal
+  restyle set under a restyle-subtree rule; an invalidation map was not
+  measured.
 
 ### 3. How results are reused: families of incremental computation
 
@@ -406,7 +453,8 @@ the frame for this tree.
   (`notes/architecture.md` §3.e1).
 
 3.3 **Recorded reads for the long edges, at context grain.** status:
-uncertain, decided by X12.
+promising: X12 measured recording at 0.04 percent of the build at ten
+edges per unit; the real edge count is open (The budget).
 - **The idea.** Static edges follow the owned tree. Only the few couplings
   that leave it record their reads dynamically, per context: floats
   crossing blocks, counters read far ahead, an absolute box's containing
@@ -533,8 +581,15 @@ Blink's lifecycle. It is the control the others must beat (X6).
 
 4.6 **Progressive and anytime delivery for whole-page changes.** status:
 promising for loading and for whole-page edits; needs a design.
-- **The problem.** A container-width or root font-size change costs about
-  50 frames, and parallelism cannot reach 16 ms from 0.8 s.
+- **The problem.** A root font-size change costs about 1.1 s on apollo11
+  and 3.1 s on html5 in X16's sequential cost model, and parallelism
+  cannot reach 16 ms from there.
+- **Viewport first (X16).** status: measured. Of 457 edits, 13 cost more
+  than a frame, all whole-document or root-level; for them a median 1.7
+  percent of the dirty units lies within one viewport height of the edit,
+  so a correct viewport is 15 to 67 ms away on apollo11 and 3 to 7 ms on
+  html5. Edits under a frame have all their work at the edit point, so
+  viewport priority does nothing for them.
 - **The options.**
   - viewport-first layout with estimates (`notes/architecture.md` §3.d,
     E7);
@@ -701,6 +756,15 @@ not built.
   | external surfaces: video, canvas | hands them to hardware planes (7.8) |
   | viewport priority, and which deltas are urgent | orders prepainting and background work (X16) |
 
+- **How large the contract is on real pages** (30 sites and the three
+  local pages; `experiments/contract/report.md`). Per page, at the median
+  and p90: fixed 1.5 and 5, sticky 1 and 3, nested scroll roots 1 and 4,
+  backdrop-filter 0 and 3, video 0 and 6, running animations 0 and 40, of
+  which none animates a layout property. Chromium itself makes 13.5 and 82
+  layers (228 at most). A fact can arrive in bulk: ecma262's 33,422
+  `mix-blend-mode` users come from one rule, so per-style facts must not
+  be expanded per chunk.
+
 ### 7. From changed content to pixels
 
 From `notes/raster.md`, `notes/gpu2d.md`, `notes/webrender.md` and
@@ -826,6 +890,14 @@ touch. Per frame, windowed, derived:
 - **Fullscreen reverses the order.** With direct scanout the OS composites
   nothing, so A costs 33 MB and C stays near 66 MB, since many layers
   likely prevent direct scanout (recalled).
+- **X17 measured how often strips need more.** status: measured. Over 300
+  scroll frames of 22 real sites, the interleaved part needed drawing in 2
+  frames by a paint-order detector that ignores clipping and 0 by sampling
+  what is painted, against the 5 percent criterion; non-scrolling content
+  was present in 295 of the 300 frames, nearly always painted above. So
+  the one rule stands, and drawing the non-scrolling part each frame above
+  the strips is the common case, which must be cheap
+  (`experiments/contract/report.md`).
 - **What may go into strips.** Only content that moves rigidly with that
   scroll root. Fixed and sticky content, and other scroll roots, are drawn
   above each frame or get their own strips. Where paint order interleaves
@@ -947,13 +1019,35 @@ Each criterion is written before the experiment runs, and each can fail.
 - Needing an incremental layout prototype: X5 to X7 and X11 to X13.
 - Needing paint and real hardware: X9, X10 and X18.
 
+## Results
+
+Run 2026-10-02 and 2026-10-03 on Snowghost main fcb80cb in this container
+(4 vCPU, no GPU), except the real sites, which the owner ran on a Mac. Each
+verdict is against the criterion in the table above.
+
+| Id | Verdict | Headline | Report |
+|---|---|---|---|
+| X1 | pass for paragraphs and contexts; styled nodes fail on root-level edits | a word edit changes one paragraph in 68 of 70 edits; root custom properties and `html` font size are global | `experiments/x1-x3-x16/report.md` |
+| X3 | pass on all three pages | at p90 a summary tree needs 5 to 819 times fewer rewrites than context-relative offsets, prefix sums 7 to 2,124 times | same |
+| X4 | pass | 85 to 97 percent of paragraphs keep their breaks across a 10 px resize | `experiments/x4/report.md` |
+| X8 | appends pass from about 200 elements, fail for auto-layout tables and tiny appends; font arrival misses by 7 to 44 percent | appends touch the open chain plus a handful of boxes; a font re-lays only its paragraphs | `experiments/x8/report.md` |
+| X12 | pass | recording 3.5 to 3.9 ns per edge, 0.04 percent of the build at context grain; a dense no-change scan 44 to 82 µs | `experiments/x12/report.md` |
+| X16 | pass, on 13 edits | the edits over a frame are whole-document ones, with 1.7 percent of their work near the viewport | `experiments/x1-x3-x16/report.md` |
+| X17 | pass | 0 to 0.7 percent of 300 scroll frames over 22 real sites | `experiments/contract/report.md` |
+
+X15 was dropped with frame pipelining (4.7). Not yet run: X2, X5 to X7, X9 to
+X11, X13, X14 and X18. The next step the results point to is X5, the
+incremental layout prototype, with keys split by consumer (2.3), an
+offset structure chosen with its read side (1.3), and checkpoints for
+appends (1.6).
+
 ## Leads, and what each would foreclose
 
 These are leads for discussion, not decisions. Each says what choosing it
 early would close off.
 
-- **Measure first: X1, X3, X4, X8, X12.** All five notes agree on this.
-  It closes nothing.
+- **Measure first: X1, X3, X4, X8, X12.** Done (Results). Next, X5 on
+  the owned context tree, which Results says how to key.
 - **4.1 as the execution model, with recorded reads (3.3) for the long
   edges.** This is `notes/architecture.md`'s landing. `notes/theory.md`
   proposes the spawned pipeline (4.5) instead, and the others are silent.
