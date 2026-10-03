@@ -1,0 +1,277 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias TextRun = pkg::layout::text::TextRun;
+alias TextSpan = pkg::dom::TextSpan;
+alias shaped_empty = pkg::layout::text::shaped_empty;
+
+fn text_span_of(document: &Document, node: NodeId) -> span: Option<TextSpan> reads(document) {
+  doc "The data span of the Text node within the document's text, or None for any other node or a span outside the text.";
+  let at = cvt::<u32, u64>(node.index);
+  if at < document^.nodes.inner.len {
+  } else {
+    return None<TextSpan>();
+  }
+  let data = &document^.nodes.inner[at].data;
+  match data^ {
+    Text(data: found) => {
+      let held = found^;
+      let start = cvt::<u32, u64>(held.start);
+      let end = cvt::<u32, u64>(held.end);
+      let ordered = start <= end;
+      let inside = end <= document^.text.inner.len;
+      let usable = band(ordered, inside);
+      if usable {
+        return Some<TextSpan>(value: held);
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Element(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return None<TextSpan>();
+}
+
+fn span_blank(document: &Document, start: u32, end: u32) -> blank: Bool reads(document) {
+  doc "Tells whether the bytes start to end of the document's text hold only white space (is_blank); an empty or unusable span is blank.";
+  let low = cvt::<u32, u64>(start);
+  let high = cvt::<u32, u64>(end);
+  let ordered = low <= high;
+  let inside = high <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    let made = is_blank(bytes: &document^.text.inner[low..high]);
+    return made;
+  }
+  return True();
+}
+
+fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, data: TextSpan) -> result: Result<unit, LayoutError> reads(document), writes(context) {
+  doc "Gives the pieces unit names in context the text node's new data, and marks their paragraph and context; Inconsistent when the pieces do not read that node, or when the new data is empty or differs from the old in being only white space, which would change the box tree.";
+  let first = cvt::<u32, u64>(text_unit.piece);
+  let count = cvt::<u32, u64>(text_unit.count);
+  let end = first +sat count;
+  let paragraph = cvt::<u32, u64>(text_unit.paragraph);
+  let pieces = context^.pieces.inner.len;
+  let held = end <= pieces;
+  let present = paragraph < context^.paragraphs.inner.len;
+  let single = count == 1_u64;
+  let both = band(held, present);
+  let usable = band(both, single);
+  if usable {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let new_blank = span_blank(document: document, start: data.start, end: data.end);
+  let empty = data.start >= data.end;
+  if empty {
+    return inconsistent::<unit>();
+  }
+  if first < context^.pieces.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let piece = context^.pieces.inner[first];
+  match piece {
+    Bytes(start: from, end: to, style: owner, node: source) => {
+      let wrong = source == no_index;
+      if wrong {
+        return inconsistent::<unit>();
+      }
+      let old_blank = span_blank(document: document, start: from, end: to);
+      let same = eeq(old_blank, new_blank);
+      let changed = bnot(same);
+      if changed {
+        return inconsistent::<unit>();
+      }
+      set context^.pieces.inner[first] = Piece::Bytes(start: data.start, end: data.end, style: owner, node: source);
+    }
+    Generated(..) => {
+      return inconsistent::<unit>();
+    }
+    Scalar(..) => {
+      return inconsistent::<unit>();
+    }
+    Begin(..) => {
+      return inconsistent::<unit>();
+    }
+    End(..) => {
+      return inconsistent::<unit>();
+    }
+    Object(..) => {
+      return inconsistent::<unit>();
+    }
+  }
+  if paragraph < context^.paragraphs.inner.len {
+    set context^.paragraphs.inner[paragraph].dirty = True();
+  }
+  set context^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn mark_path(context: &Context, document: &Document, steps: &[u32], depth: u64, text_unit: TextUnit, data: TextSpan) -> result: Result<unit, LayoutError> reads(document), reads(steps), writes(context) {
+  doc "Descends from context by the child indices in steps from depth on, which lead to the context holding unit, patches its pieces (patch_pieces) and, once that succeeds, marks every context on the way back up.";
+  let count = steps^.len;
+  if depth >= count {
+    let patched = propagate patch_pieces(context: context, document: document, text_unit: text_unit, data: data);
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let child = cvt::<u32, u64>(steps^[depth]);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let next = depth +sat 1_u64;
+  let marked = propagate mark_path(context: &context^.children.inner[child], document: document, steps: steps, depth: next, text_unit: text_unit, data: data);
+  set context^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn path_steps(layout: &Layout, serial: u32) -> result: Result<Box<Slots<u32>>, LayoutError> reads(layout) {
+  doc "The child indices that lead from the initial containing block to the context with serial, read from paths by following parents up and reversing; Inconsistent when paths does not lead there.";
+  let count = layout^.paths.inner.len;
+  let upward = box_slots_new::<u32>(capacity: 16_u64);
+  let at = cvt::<u32, u64>(serial);
+  for (step in 0_u64..count) {
+    if at < count {
+    } else {
+      return inconsistent::<Box<Slots<u32>>>();
+    }
+    let place = layout^.paths.inner[at];
+    if place.parent == no_index {
+      let length = upward.inner.len;
+      let reserve = imin(length, 4096_u64);
+      let steps = box_slots_new::<u32>(capacity: reserve);
+      for (back in 0_u64..length) {
+        let top = length - 1_u64;
+        let k = top - back;
+        let index = upward.inner[k];
+        let pushed = push_item::<u32>(cell: &steps, value: index, ceiling: item_ceiling);
+      }
+      return Ok<Box<Slots<u32>>, LayoutError>(value: move steps);
+    }
+    let pushed = propagate push_or_fail::<u32>(cell: &upward, value: place.child);
+    set at = cvt::<u32, u64>(place.parent);
+  }
+  return inconsistent::<Box<Slots<u32>>>();
+}
+
+fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: Result<unit, LayoutError> reads(document), writes(layout) {
+  doc "Finds where the Text node's data enters the layout (text_units), refuses a node the layout was not built from and data that would change the box tree, and otherwise patches the pieces that read it and marks its paragraph and the contexts from the initial containing block down to the one holding it.";
+  let index = cvt::<u32, u64>(node.index);
+  if index < layout^.text_units.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let data = match text_span_of(document: document, node: node) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return inconsistent::<unit>();
+    }
+  }
+  let text_unit = layout^.text_units.inner[index];
+  if text_unit.serial == skipped_text {
+    let empty = data.start >= data.end;
+    if empty {
+      return Ok<unit, LayoutError>(value: unit);
+    }
+    return inconsistent::<unit>();
+  }
+  if text_unit.serial == no_index {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let steps = propagate path_steps(layout: layout, serial: text_unit.serial);
+  let depth = steps.inner.len;
+  let marked = propagate mark_path(context: &layout^.root, document: document, steps: &steps.inner[0_u64..depth], depth: 0_u64, text_unit: text_unit, data: data);
+  set layout^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn reset_paragraph(paragraph: &Paragraph) -> result: unit writes(paragraph) {
+  doc "Empties what preparation fills (text, runs, run styles, marks and the shaped text), so that prepare_paragraph can fill it again.";
+  let text = box_slots_new::<u32>(capacity: 0_u64);
+  let runs = box_slots_new::<TextRun>(capacity: 0_u64);
+  let run_styles = box_slots_new::<StyleRef>(capacity: 0_u64);
+  let marks = box_slots_new::<Mark>(capacity: 0_u64);
+  let shaped = shaped_empty();
+  set paragraph^.text = move text;
+  set paragraph^.runs = move runs;
+  set paragraph^.run_styles = move run_styles;
+  set paragraph^.marks = move marks;
+  set paragraph^.shaped = move shaped;
+  return unit;
+}
+
+fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Prepares again each marked paragraph of the marked context, in one counted loop whose iterations test their own paragraph's mark, then does the same in each marked child context; False when shaping refuses a paragraph.";
+  let count = context^.paragraphs.inner.len;
+  let total = context^.pieces.inner.len;
+  let stored = document^.text.inner.len;
+  let made = styles^.generated_text.inner.len;
+  let ok = True();
+  for (i in 0_u64..count) {
+    if context^.paragraphs.inner[i].dirty {
+      reset_paragraph(paragraph: &context^.paragraphs.inner[i]);
+      let done = prepare_paragraph(pieces: &context^.pieces.inner[0_u64..total], bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i]);
+      set ok = band(ok, done);
+    }
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    if context^.children.inner[k].dirty {
+      let done = prepare_marked(context: &context^.children.inner[k], document: document, styles: styles, fonts: fonts, picks: picks);
+      set ok = band(ok, done);
+    }
+  }
+  return ok;
+}
+
+fn fresh_space() -> made: Space pure {
+  doc "The space of a context no parent has laid out yet, as new_context gives it.";
+  let no = False();
+  return Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
+}
+
+fn reset_tree(context: &Context) -> result: unit writes(context) {
+  doc "Returns the context and every context below it to the state build_boxes leaves for lay_out to start from: no intrinsic sizes known, the fresh space, and no marks on it or its paragraphs.";
+  set context^.intrinsic_known = False();
+  set context^.space = fresh_space();
+  set context^.dirty = False();
+  let count = context^.paragraphs.inner.len;
+  for (i in 0_u64..count) {
+    set context^.paragraphs.inner[i].dirty = False();
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    reset_tree(context: &context^.children.inner[k]);
+  }
+  return unit;
+}
+
+fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) {
+  doc "Prepares the marked paragraphs again, then, without incrementality, returns the whole tree to the state lay_out starts from and lays it out again.";
+  if layout^.dirty {
+  } else {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let prepared = prepare_marked(context: &layout^.root, document: document, styles: styles, fonts: fonts, picks: picks);
+  reset_tree(context: &layout^.root);
+  lay_out(layout: layout, document: document, styles: styles, fonts: fonts, picks: picks);
+  set layout^.dirty = False();
+  if prepared {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let failure = LayoutError::Text();
+  return Err<unit, LayoutError>(error: failure);
+}
