@@ -9,6 +9,25 @@ Author's note on evidence marks used throughout:
 
 Status vocabulary: established / promising / uncertain / hard / likely dead end.
 
+**Corrections after the GPU survey and the owner's discussion.** This note
+was the first pass. Where the sections below disagree with these, these
+win; `DESIGN.md` §7 holds the current tree.
+- §3.1, Metal: confirmed that `CAMetalLayer` has no partial update; on macOS
+  the only way to have the OS recomposite less than the window is several
+  CALayers, so presentation tiles are needed there as a presentation unit
+  (`webrender.md` I4; `DESIGN.md` 7.4).
+- §3.2 P1: wgpu 30 exposes no buffer age or swapchain image index, so P1
+  needs buffers the shell owns and presents through each platform's own
+  interface (`gpu2d.md` §4.3; `DESIGN.md` 7.3).
+- §3.2 P2: a dead end rather than the default fallback. Copying a full
+  target to the swapchain every frame moves more bytes than a plain full
+  redraw writes (`DESIGN.md` 7.3).
+- §3.2 P5: OS layers are revived for scrolling where the OS takes several
+  surfaces: prepainted strips moved by one container transform remove the
+  shell's drawing from a scroll frame (`DESIGN.md` 7.5, method C).
+- §5.1: the rule for caching an animated subtree, and where its texture
+  goes, is in `DESIGN.md` 7.6.
+
 ---------------------------------------------------------------------------
 ## 0. What this container can and cannot measure (read first)
 

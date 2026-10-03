@@ -27,6 +27,30 @@ inputs. This tree is what that decision needs before it can be built, and
 it finds one place where the decision claims more than the language gives
 (5.1).
 
+## The owner's direction
+
+The owner ruled on the tree's first draft in conversation, in Chinese. In
+English:
+
+- **Priorities.**
+  1. The main line is the minimal end-to-end update: each change updates
+     only what it affects, through every stage to the screen.
+  2. Concurrency inside one frame is auxiliary: use the cores to finish a
+     frame's work within the frame. It constrains the main line's design
+     rather than following it as a later phase.
+  3. Next comes priority by viewport: work the viewport needs first,
+     the rest later (X16).
+- **Frame pipelining is a fallback, not the main line** (4.7). Starting
+  frame N+1 while frame N still runs adds a frame of latency, which is
+  worse at 60 Hz, and script and frame callbacks that read layout chain
+  successive frames anyway.
+- **Pixels.** Layers and tiles are not the unit of invalidation. The shell
+  keeps a retained scene and redraws the damaged region from vectors;
+  pixels are cached only where cost and stability call for it (7).
+- **The boundary (Q65).** The renderer gives the shell facts about the
+  page, and the shell owns every policy that turns them into pixels for
+  its platform. No policy may change a pixel (6.3).
+
 ## How to read the tree
 
 Every node carries exactly one of these statuses, so the tree can be
@@ -44,7 +68,7 @@ filtered by them:
 
 A node that holds for some cases and not others is split into the cases.
 
-**Where the detail lives.** The tree is drawn from five explorations under
+**Where the detail lives.** The tree is drawn from seven explorations under
 `notes/`:
 
 - `theory.md`: incremental computation families and Whitefoot's language
@@ -54,7 +78,13 @@ A node that holds for some cases and not others is split into the cases.
 - `engines.md`: what Blink, Gecko, WebRender, Servo and UI toolkits do;
 - `fanout.md`: the census in Chromium of how far edits propagate on the
   three pages;
-- `raster.md`: from changed content to pixels without tiles.
+- `raster.md`: from changed content to pixels without tiles, the first
+  pass, corrected at its top by the next two;
+- `gpu2d.md`: a survey of GPU 2D backends, text and the operating
+  systems' presentation interfaces, with an experiment plan for a GPU
+  machine;
+- `webrender.md`: why WebRender added picture caching and operating-system
+  compositor surfaces, and which of its reasons apply here.
 
 `notes/critique.md` is a separate critique of this tree's first draft,
 which this version answers.
@@ -508,9 +538,11 @@ promising for loading and for whole-page edits; needs a design.
   - a frame-miss policy (`notes/raster.md` §3.4).
 
 4.7 **Frame pipelining and optimistic speculation across stages.**
-- **Frame pipelining.** status: uncertain. Overlapping frames needs a
-  snapshot of the document while script runs, which versioned slots
-  (3.11) could provide.
+- **Frame pipelining.** status: a fallback only, by the owner's ruling
+  (see The owner's direction). Overlapping frames needs a snapshot of the
+  document while script runs, which versioned slots (3.11) could provide,
+  and successive frames' edits overlap fully only where their dirty sets
+  are disjoint (X15).
 - **Speculation.** status: promising only where a misprediction is found
   early and fixed locally, as floats were (`notes/architecture.md`
   §3.e2–e3).
@@ -625,55 +657,216 @@ the separation, promising in this form.
   - Rewriting 245,000 absolute positions takes 0.2 ms, against 0.04 µs on
     a tree of relative offsets.
 
+6.3 **Facts in, policy out (Q65).** status: the owner's ruling; the
+contents of the contract are promising, not built.
+- **The rule.** The renderer states facts about the page and never decides
+  how to draw it. The shell decides, per platform and by measured cost,
+  how to draw, which pixels to cache, how to scroll and how to present.
+  Chrome decides layerization in paint from hints such as `will-change`
+  and overlap; this rule keeps platform policy out of the renderer.
+- **The invariant.** Every combination of shell policies produces the
+  pixels a full redraw of the scene produces. X14's software rasterizer
+  checks it, so a policy or a threshold can change without risking a
+  wrong pixel.
+- **Facts, not hints.** "This transform node is driven by a CSS
+  animation" is a fact; "this element will change" is a hint. Stability
+  and cost that the renderer cannot state, the shell observes across
+  frames and measures.
+- **What the shell needs, from the discussion of 7:**
+
+  | Fact | What the shell does with it |
+  |---|---|
+  | each chunk's stable identity and content hash | finds what changed |
+  | bounds including effect outsets | computes damage |
+  | the transform, scroll, clip and effect nodes each chunk hangs from | scrolls and animates by rewriting nodes, not chunks |
+  | paint order | redraws in order; tells whether anything above a subtree overlaps it, which decides whether that subtree can be an OS layer (7.6) |
+  | each chunk's opaque area | skips what is fully covered; decides whether text may use subpixel antialiasing |
+  | whether a chunk reads its backdrop (`backdrop-filter`, blend modes) | widens damage |
+  | per scroll root, the content that moves rigidly with it; where fixed and sticky content hangs | prepaints strips and moves them (7.5) |
+  | animation descriptions: node, property, values, duration, easing | runs the animation itself; knows only a property changes |
+  | per delta, whether a chunk changed in content or only in geometry | decides whether a subtree may be cached as a texture (7.6) |
+  | cost estimates: glyph count, blur radius, path complexity | chooses what to cache |
+  | external surfaces: video, canvas | hands them to hardware planes (7.8) |
+  | viewport priority, and which deltas are urgent | orders prepainting and background work (X16) |
+
 ### 7. From changed content to pixels
 
-From `notes/raster.md` and `notes/engines.md` §4 and §6. This container
-has no GPU, so every GPU figure here is cited or derived.
+From `notes/raster.md`, `notes/gpu2d.md`, `notes/webrender.md` and
+`notes/engines.md` §4 and §6. This container has no GPU, so every GPU
+figure here is cited or derived. Derived byte counts assume 4 bytes per
+pixel, a 3840×2160 screen (33 MB per full frame) and no framebuffer
+compression, so they are upper bounds; compression and tile-based GPUs
+lower them by amounts only hardware shows.
 
 7.1 **Redrawing the whole scene on the GPU every frame.** status:
 established as a control.
-- **Who does it.** Zed's GPUI, Vello-based Masonry and early WebRender,
-  all recalled.
-- **Its limit.** Power, memory bandwidth, weak GPUs and 4K at 240 Hz,
-  rather than frame time on a discrete GPU.
+- **Who does it.** Zed's GPUI, Vello-based Masonry and early WebRender
+  (`notes/webrender.md` §1 and §6).
+- **Its limit.** Power and memory bandwidth on integrated GPUs at high
+  resolution, rather than frame time on a discrete GPU. Mozilla found
+  energy "strongly correlated with the amount of pixels that are
+  manipulated" (`notes/webrender.md` §2.2). Zed spends 1 to 2.7 ms of GPU
+  per frame at 120 Hz presenting frames in which nothing changed (Zed
+  issue 32588, `notes/webrender.md` §6.1).
 
 7.2 **Redrawing exactly the damaged region from a retained scene.**
-status: promising.
+status: promising; the main line.
 - **The mechanism.** The damage is the union of the old and new bounds of
   the changed chunks. Scissor to it, find the intersecting chunks with a
-  spatial index, and redraw only those.
-- **Precedent.** WebRender scissors to dirty rectangles smaller than a
-  tile (recalled).
+  spatial index, and redraw only those, in paint order. A frame with no
+  damage draws and presents nothing.
+- **Precedent.** WebRender's redraw grain is the dirty rectangle inside a
+  tile, not the tile (`notes/webrender.md` §0, W5).
 
-7.3 **Tiles and layers.**
-- **As the unit of invalidation.** status: dead end for this goal. They
-  are a hand-placed partition, so a change repaints whatever its tile
-  holds.
-- **As a pixel cache for scrolling and expensive subtrees.** status:
-  uncertain, decided by X10.
-  - Scrolling must be served without the main thread.
-  - On tile-based mobile GPUs the hardware tile is a floor.
-  - The notes' alternative is caches promoted by measured cost with
-    hysteresis (`notes/raster.md` §5, `notes/architecture.md` §3.e4).
+7.3 **Knowing what the buffer holds.** Redrawing only the damage needs a
+buffer whose contents are known.
+- **wgpu's surface cannot provide it.** status: established from wgpu
+  30's source. It exposes no buffer age or swapchain image index, its DX12
+  backend calls `Present` rather than `Present1`, its Metal backend has no
+  damage path, and damage-aware presentation is an open pull request for
+  Vulkan and EGL only (`notes/gpu2d.md` §4.3).
+- **A persistent full-page target copied to the swapchain.** status: dead
+  end, derived. The copy reads and writes a full frame every frame, 66 MB
+  even for a caret blink, more than a plain full redraw writes (33 MB).
+  The owner rejected it.
+- **Buffers the shell owns, handed to the OS compositor.** status:
+  promising; the main path. The shell knows which frame each buffer last
+  held, so it redraws the damage of the frames that buffer missed plus
+  this frame's, from vectors; copying those regions from another buffer
+  is an option only for content expensive to redraw. wgpu may still
+  record the drawing; the presentation is the shell's own:
+  - macOS: IOSurfaces as the contents of CALayers;
+  - Windows: DirectComposition surfaces, or a flip-model swap chain with
+    `Present1`;
+  - Wayland: the shell's own buffers with `damage_buffer`;
+  - Android: EGL buffer age.
 
-7.4 **Partial presentation.** status: established on some platforms.
-- **What exists.** Buffer age and partial update in EGL, Wayland damage,
-  DXGI dirty and scroll rectangles, and KMS damage clips, all recalled.
-- **The limits.** Vulkan has no buffer-age query (recalled), and the
-  Metal and CoreAnimation behavior is unverified.
-- **What it saves.** Mostly power and memory traffic.
+7.4 **Telling the OS compositor what changed.** Without it, the OS
+recomposites the whole window at every present (`notes/webrender.md` I4).
+- **Where a damage interface exists.** status: established from the
+  specifications. DXGI dirty rectangles and DirectComposition update
+  rectangles, Wayland `damage_buffer` (Mesa forwards Vulkan's incremental
+  present to it), EGL partial update (`notes/gpu2d.md` §4.1).
+- **macOS.** status: established; Firefox ships it. Neither `CAMetalLayer`
+  nor a layer's `contents` has a partial update; in Mozilla's words, "there
+  are no APIs for partial updates of CAMetalLayers either, so you'd need to
+  implement a solution with smaller layers". Only a CALayer whose contents
+  change is recomposited, so on macOS the window is split into tiles, each
+  a CALayer with its own IOSurfaces. These tiles are the presentation
+  unit, not the invalidation unit: a change redraws its damage inside the
+  tile.
+- **Tile size.** status: uncertain, decided by X18. A small change costs
+  the redraw of the damage plus the OS's recompositing of its tile, about
+  twice the tile's bytes (derived):
 
-7.5 **Text.** status: uncertain. Glyph drawing is expected to dominate on
+  | Tile | Per small change |
+  |---|---:|
+  | 256×256 | 0.5 MB |
+  | 512×512 | 2 MB |
+  | 1024×512 | 4 MB |
+  | one layer for the window | 66 MB |
+
+  Smaller tiles mean more layers: a 4K viewport at 256×256 is 135 tiles
+  before prepainting, each with two or three buffers. WebRender uses
+  1024×512 on macOS and 512×512 on Windows (`notes/webrender.md` §3.2).
+- **What others measured.** status: measured by them, not reproduced.
+  Firefox on macOS, with CoreAnimation tiles and partial update together:
+  a blinking caret in a blank document went from about 30 W to 7 W
+  (BZ 1429522), scrolling from 16.4 W to 9.4 W with three changes bundled.
+  Firefox's Windows tile compositor once raised power, 20 W against 15.5 W
+  on an Iris 550, until tiles stopped being invalidated when clip
+  rectangles moved under scrolling (BZ 1602803) (`notes/gpu2d.md` §5).
+
+7.5 **Scrolling.** A scroll changes every pixel of the viewport, so every
+method writes a full frame at least once; they differ in what else they
+touch. Per frame, windowed, derived:
+
+| Method | The shell | The OS compositor | Total |
+|---|---|---|---:|
+| A: redraw the viewport from vectors | write 33 MB | read and write 66 MB | 99 MB |
+| B: cached tiles composited by the shell | read and write 66 MB | read and write 66 MB | 132 MB |
+| C: prepainted strips as OS layers, moved by one container transform | nothing | read and write 66 MB | 66 MB |
+
+- **A.** status: promising as the default. For text and rectangles its
+  shading is near the floor; WebRender's team found redrawing everything
+  per scroll frame too much for complex pages on most GPUs
+  (`notes/webrender.md` §2.1).
+- **B.** status: dead end, derived: it is the most traffic of the three.
+- **C.** status: promising where the OS takes several surfaces. Strips
+  span the viewport's width and form a ring; one that scrolls out is
+  reused at the other end. The prepainted margin is the fastest fling's
+  speed times the time to paint a strip, and prepainting is low-priority
+  work (the owner's third priority).
+- **Fullscreen reverses the order.** With direct scanout the OS composites
+  nothing, so A costs 33 MB and C stays near 66 MB, since many layers
+  likely prevent direct scanout (recalled).
+- **What may go into strips.** Only content that moves rigidly with that
+  scroll root. Fixed and sticky content, and other scroll roots, are drawn
+  above each frame or get their own strips. Where paint order interleaves
+  them, as a fixed header between two scrolled boxes, the interleaved part
+  is drawn each frame rather than split into more layers: this is the case
+  from which Chrome's overlap testing and squashing grew. How often it
+  occurs is X17.
+- **Scroll offsets snap to device pixels**, so strip pixels are never
+  resampled and text stays sharp.
+
+7.6 **Animated subtrees.** status: promising.
+- **The problem.** A large subtree that moves or rotates damages its old
+  and new bounds every frame, across many tiles.
+- **What a texture saves.** Drawing the subtree and what it uncovers, not
+  the recompositing of the swept region, which changes every frame
+  anyway. It pays where the subtree is expensive to draw; a plain
+  rectangle redraws as fast as it composites.
+- **The rule.** Cache the subtree as a texture while a property node above
+  it animates, its content stays the same and its draw cost passes a
+  threshold. The shell knows the first two: it runs CSS animations itself,
+  and for script-driven changes a run of deltas that change geometry only
+  shows it (WebRender waits 15 stable frames before promoting a video
+  surface, `notes/webrender.md` §3.5). Release the texture when the
+  animation ends or the content changes.
+- **Where the texture goes.** To an OS layer if nothing above it in paint
+  order overlaps it, so the shell draws nothing per frame; otherwise the
+  shell composites it into the affected tiles itself, which is always
+  correct. Overlap therefore never forces more layers.
+- **Costs.** Rotation and scaling resample the texture and soften text;
+  scaled content is redrawn at its final scale when the animation ends.
+  This is the same mechanism as the offscreen target a group opacity
+  needs.
+
+7.7 **Tiles and layers as the unit of invalidation.** status: dead end
+for this goal. They are a hand-placed partition, so a change repaints
+whatever its tile holds; WebRender's over-invalidation under scrolling
+(BZ 1602803) is this failure (`notes/webrender.md` W3).
+
+7.8 **Video and canvas.** status: established. Content already in a GPU
+buffer goes to an OS surface or hardware plane rather than through the
+frame: with DirectComposition and compositor surfaces, WebRender on a
+Surface Go played video at about 10 percent GPU and 1.8 to 2 W, against 30
+percent and 3.3 W without WebRender (BZ 1569767, measured by them,
+`notes/webrender.md` §2.4).
+
+7.9 **Text.** status: uncertain. Glyph drawing is expected to dominate on
 text-heavy pages; that is derived from an assumed scene, not measured. A
-glyph atlas, Slug-style curve rendering and Vello's compute rasterization
-need hardware to compare (X10).
+glyph atlas, Slug-style curve rendering (its patent was dedicated to the
+public domain in 2026) and Vello's compute rasterization need hardware to
+compare (X10, `notes/gpu2d.md` §3).
 
-7.6 **A software damage rasterizer in Whitefoot.** status: promising, as
+7.10 **A software damage rasterizer in Whitefoot.** status: promising, as
 a proposal for the owner.
 - **What it provides.** Writes to disjoint rows are provable, and it would
-  serve as a pixel-exact test oracle, a headless target and a fallback.
+  serve as a pixel-exact test oracle (6.3's invariant), a headless target
+  and a fallback.
 - **What it does not do.** It does not replace the shell's GPU path
   (`notes/raster.md` §7).
+
+7.11 **What WebRender's history adds.** status: established from Mozilla's
+sources (`notes/webrender.md` §0, §7). WebRender kept redrawing from
+primitives; it added a pixel cache for scrolling and static content, a
+per-frame diff because Gecko sends whole display lists, sub-tile dirty
+rectangles, and OS compositor surfaces. With deltas and stable identities
+(6.2) the diff is unnecessary. The rest maps to 7.3 to 7.8: never touch
+unchanged pixels, tell the OS what changed, cache only expensive effect
+outputs, and hand video to the OS.
 
 ### 8. The oracle for every incremental step
 
@@ -712,16 +905,21 @@ Each criterion is written before the experiment runs, and each can fail.
 | X7 | A pipeline of spawned stages (4.5) against the sequential chain | X5 and edit lists | the pipeline is worth it if, for a stream of edits, latency per edit is at most 1/1.3 of the chain's (`notes/theory.md` E5) |
 | X8 | Edits the census missed: parser appends and font arrival | the existing drivers | an append re-lays out only what follows, within 2 times the appended content's own cost; a font arrival costs no more than the text preparation of the paragraphs using it |
 | X9 | Whole-page paint with culling in the shell, or viewport-dependent paint | paint, shell | viewport-dependent paint is adopted only if the whole-page list exceeds the shared-memory budget or delays the first frame by more than one frame on ecma262 |
-| X10 | Pixels: full redraw, damage-scissored redraw, pixel caches, scroll by redraw or copy, and text rendering approaches | a GPU host and paint | damage-limited rendering is justified if full redraw exceeds 25 percent of the frame budget or damage saves more than 20 percent of power; a glyph atlas stays the default if it beats the others by more than 20 percent (`notes/raster.md` X3–X5) |
+| X10 | Pixels on a GPU machine, at 1080p and 4K, windowed and fullscreen: full redraw against damage redraw into shell-owned buffers with damage reported to the OS (7.3, 7.4); scrolling by A against C (7.5); a large animated subtree redrawn, cached and composited by the shell, and cached as an OS layer, in plain and text-and-image variants (7.6); text approaches (7.9) | a GPU host, a scene dump of the three pages, edit scripts (`notes/gpu2d.md` §7) | damage-limited rendering is justified if full redraw exceeds 25 percent of the frame budget or damage saves more than 20 percent of system energy; C replaces A where it saves more than 20 percent of energy or A misses the frame budget; an animated subtree is cached where caching saves more than 20 percent; a glyph atlas stays the default if it beats the others by more than 20 percent |
 | X11 | Does the oracle catch a forgotten version bump? | ticks as library code, X5 | delete one bump deliberately and run the edit script. If the oracle misses it, 5.3's language mechanism has its first ground |
 | X12 | The cost of recording reads and validating versions | X5 with recording | a no-change frame under 0.5 ms; recorded reads at context grain within 5 percent of the full build, or 3.3 is out |
 | X13 | An editing session | X5 | 100 to 1,000 edits typed at one point and scattered, the oracle checked after every prefix; no growth of interning tables or arenas beyond the content added |
-| X14 | A CPU damage-redraw oracle | a software rasterizer of chunks (7.6) | damage-scissored and age-tracked redraws byte-identical to a full redraw; each deliberate breakage (missing spread, omitted overlap, wrong buffer age) fails once (`notes/raster.md` X1) |
+| X14 | A CPU damage-redraw oracle | a software rasterizer of chunks (7.10) | damage-scissored and age-tracked redraws byte-identical to a full redraw; each deliberate breakage (missing spread, omitted overlap, wrong buffer age) fails once (`notes/raster.md` X1) |
+| X15 | How often do successive frames' edits touch disjoint parts of the page? | X1's dirty sets over edit streams | frame pipelining (4.7) is worth reopening only if most successive edits in a typing or scattered-edit stream have disjoint dirty sets in every stage |
+| X16 | What fraction of an edit's recomputation lies in or near the viewport? | X1's dirty sets and the layout rectangles | viewport-first scheduling pays if, for edits costing more than one frame, the median share of dirty units within one viewport height of the viewport is under one half |
+| X17 | How often does paint order interleave a scroll root's content with content that does not scroll with it? | a sample of real pages in Chromium, scrolled | the one-rule strip placement of 7.5 stands if the interleaved part needs drawing in under 5 percent of viewport frames over the sample; otherwise strips need splitting by paint order |
+| X18 | macOS presentation: does one `CAMetalLayer` recomposite the whole layer at every present, and which tile size costs least? | a Mac, Quartz Debug's update flashing, `powermetrics` | tiles are used on macOS if they save more than 20 percent of energy over one layer on a blinking caret and on typing; the tile size with the least energy over caret, typing and scrolling at the Mac's native resolution is chosen |
 
 **Where each can run.**
-- In this container with the existing stages: X1 to X4, X8 and X14.
+- In this container with the existing stages: X1 to X4, X8, X14 to X16.
+- In Chromium: X17.
 - Needing an incremental layout prototype: X5 to X7 and X11 to X13.
-- Needing paint and real hardware: X9 and X10.
+- Needing paint and real hardware: X9, X10 and X18.
 
 ## Leads, and what each would foreclose
 
@@ -735,10 +933,10 @@ early would close off.
   proposes the spawned pipeline (4.5) instead, and the others are silent.
   Choosing it before X6 and X7 would foreclose 4.5, spineless traversal
   (5.4) and edit lists (3.9) as the main interface.
-- **Fix the paint boundary's properties (6.1) before writing paint.**
-  These hold under whole-page and viewport-dependent paint alike. Choosing
-  how damage is computed, or that tiles stay out entirely, would foreclose
-  X9 and X10.
+- **Fix the paint boundary's properties (6.1) and the contract of facts
+  (6.3) before writing paint.** The owner ruled the boundary (Q65); the
+  contract's contents hold under whole-page and viewport-dependent paint
+  alike. Choosing a shell policy before X10 and X18 would foreclose them.
 - **Correct the record in `design/pipeline.md`** about what the compiler
   proves (5.1). This is a design-tree change for the owner.
 
@@ -756,5 +954,11 @@ early would close off.
 - **`Segments`.** Can it carry a distinctness fact per segment?
 - **The shell channel.** Is viewport-dependent paint worth a channel from
   the shell back to the renderer (4.4, X9)?
+- **wgpu's surface.** Does any wgpu or wgpu-hal path expose the swapchain
+  image index or age (`notes/gpu2d.md` §7.0)? If not, the shell presents
+  through each platform's own interface (7.3).
+- **Display process.** `design/processes.md` builds the shell first on
+  libraries such as Skia for rasterization and compositing. Which library
+  draws into shell-owned buffers is for X10 to decide.
 - **Reflecting rows.** Can an effect row, or a finer read set, be reflected
   into data to derive invalidation tables (1.1)?
