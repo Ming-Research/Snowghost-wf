@@ -17,6 +17,14 @@ URL conventions: BZ n = https://bugzilla.mozilla.org/show_bug.cgi?id=n.
 "tip" means the file fetched this session from
 https://hg.mozilla.org/mozilla-central/raw-file/tip/gfx/wr/webrender/src/.
 
+
+**Where `DESIGN.md` departs from this note.** `DESIGN.md` §7 holds the
+current tree; where they disagree it wins.
+- §5.4 advises against OS surfaces for page scrolling, and §5.3 makes
+  scroll-by-copy the first fallback. `DESIGN.md` 7.5 keeps redraw (A) as
+  the default and adds prepainted strips as OS layers (C), measured
+  against A by X10; copying inside the shell (B) is a dead end there.
+
 ---------------------------------------------------------------------------
 ## 0. The one-paragraph answer
 

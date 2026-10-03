@@ -12,13 +12,15 @@ Status vocabulary: established / promising / uncertain / hard / likely dead end.
 **Corrections after the GPU survey and the owner's discussion.** This note
 was the first pass. Where the sections below disagree with these, these
 win; `DESIGN.md` §7 holds the current tree.
-- §3.1, Metal: confirmed that `CAMetalLayer` has no partial update; on macOS
-  the only way to have the OS recomposite less than the window is several
-  CALayers, so presentation tiles are needed there as a presentation unit
-  (`webrender.md` I4; `DESIGN.md` 7.4).
-- §3.2 P1: wgpu 30 exposes no buffer age or swapchain image index, so P1
-  needs buffers the shell owns and presents through each platform's own
-  interface (`gpu2d.md` §4.3; `DESIGN.md` 7.3).
+- §3.1, Metal: Mozilla stated in 2019 that `CAMetalLayer` has no partial
+  update and that smaller layers are the way around it; that has not been
+  rechecked since (X18). Presentation tiles are then needed on macOS as a
+  presentation unit (`webrender.md` I4; `DESIGN.md` 7.4).
+- §3.2 P1: wgpu 30's surface appears to expose no buffer age or swapchain
+  image index (an open question), and its DX12 and Metal backends have no
+  damage path, so P1 is planned on buffers the shell owns, presented
+  through each platform's own interface (`gpu2d.md` §4.3; `DESIGN.md`
+  7.3).
 - §3.2 P2: a dead end rather than the default fallback. Copying a full
   target to the swapchain every frame moves more bytes than a plain full
   redraw writes (`DESIGN.md` 7.3).

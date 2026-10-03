@@ -40,16 +40,21 @@ English:
      rather than following it as a later phase.
   3. Next comes priority by viewport: work the viewport needs first,
      the rest later (X16).
-- **Frame pipelining is a fallback, not the main line** (4.7). Starting
-  frame N+1 while frame N still runs adds a frame of latency, which is
-  worse at 60 Hz, and script and frame callbacks that read layout chain
-  successive frames anyway.
+- **Frame pipelining is a fallback, not the main line** (4.7). In the
+  owner's words: where the quickest response to an action matters it
+  adds latency, which is worse at 60 Hz; scrolling is not purely
+  compositing; and script animations and other frame callbacks run every
+  frame, while most animations on the web are written badly.
 - **Pixels.** Layers and tiles are not the unit of invalidation. The shell
   keeps a retained scene and redraws the damaged region from vectors;
-  pixels are cached only where cost and stability call for it (7).
+  beyond the buffers it presents, pixels are cached only where cost and
+  stability call for it (7). The owner rejected a full-page target copied
+  to the swapchain every frame as certainly slow on high-resolution
+  screens (7.3).
 - **The boundary (Q65).** The renderer gives the shell facts about the
   page, and the shell owns every policy that turns them into pixels for
-  its platform. No policy may change a pixel (6.3).
+  its platform. A policy changes cost, not the picture (6.3; the exact
+  invariant is Q66).
 
 ## How to read the tree
 
@@ -651,23 +656,30 @@ the separation, promising in this form.
 - **What is sent.** Only changed chunks, order lists and property nodes,
   through shared memory with epoch acknowledgement.
 - **What the CPU measured, on a synthetic scene of 250,000 chunks.** The
-  scene size is an assumption (`notes/raster.md` §1).
+  scene size is an assumption (`notes/raster.md` §0).
   - The cost of a reflow is the bytes crossing the boundary.
   - A spatial index answers a viewport query in under 1 µs.
   - Rewriting 245,000 absolute positions takes 0.2 ms, against 0.04 µs on
     a tree of relative offsets.
 
 6.3 **Facts in, policy out (Q65).** status: the owner's ruling; the
-contents of the contract are promising, not built.
+invariant's exception is open (Q66); the contents of the contract are
+promising, not built.
 - **The rule.** The renderer states facts about the page and never decides
   how to draw it. The shell decides, per platform and by measured cost,
   how to draw, which pixels to cache, how to scroll and how to present.
   Chrome decides layerization in paint from hints such as `will-change`
   and overlap; this rule keeps platform policy out of the renderer.
-- **The invariant.** Every combination of shell policies produces the
-  pixels a full redraw of the scene produces. X14's software rasterizer
-  checks it, so a policy or a threshold can change without risking a
-  wrong pixel.
+- **The invariant (Q66, open).** At rest, every combination of shell
+  policies produces the pixels a full redraw of the scene produces, so a
+  policy or a threshold can change without risking a wrong pixel. The one
+  proposed exception: a subtree cached as a texture (7.6) while a
+  transform animation scales it, rotates it or moves it by a fraction of a
+  pixel is resampled, and the first frame after the animation ends is
+  exact again. Choices such as subpixel antialiasing for text follow facts
+  the renderer states (opaque areas), so a full redraw makes the same
+  choice. X14, extended to CPU models of the policies, checks frames at
+  rest.
 - **Facts, not hints.** "This transform node is driven by a CSS
   animation" is a fact; "this element will change" is a hint. Stability
   and cost that the renderer cannot state, the shell observes across
@@ -693,10 +705,13 @@ contents of the contract are promising, not built.
 
 From `notes/raster.md`, `notes/gpu2d.md`, `notes/webrender.md` and
 `notes/engines.md` §4 and §6. This container has no GPU, so every GPU
-figure here is cited or derived. Derived byte counts assume 4 bytes per
-pixel, a 3840×2160 screen (33 MB per full frame) and no framebuffer
-compression, so they are upper bounds; compression and tile-based GPUs
-lower them by amounts only hardware shows.
+figure here is cited or derived. Derived byte counts are approximate.
+They assume 4 bytes per pixel, a 3840×2160 screen (33 MB per full frame),
+no framebuffer compression, and an OS compositor that reads and writes
+each window pixel once. Compression and tile-based GPUs lower them;
+Mozilla's own model counts three passes of a screenful per compositing
+layer (`notes/webrender.md` §2.3), which raises the compositor's share.
+Only hardware settles them (X10).
 
 7.1 **Redrawing the whole scene on the GPU every frame.** status:
 established as a control.
@@ -720,15 +735,18 @@ status: promising; the main line.
 
 7.3 **Knowing what the buffer holds.** Redrawing only the damage needs a
 buffer whose contents are known.
-- **wgpu's surface cannot provide it.** status: established from wgpu
-  30's source. It exposes no buffer age or swapchain image index, its DX12
-  backend calls `Present` rather than `Present1`, its Metal backend has no
-  damage path, and damage-aware presentation is an open pull request for
-  Vulkan and EGL only (`notes/gpu2d.md` §4.3).
+- **wgpu's surface cannot provide it.**
+  - status: established from wgpu 30's source. Its DX12 backend calls
+    `Present` rather than `Present1`, its Metal backend has no damage path,
+    and damage-aware presentation is an open pull request for Vulkan and
+    EGL only (`notes/gpu2d.md` §4.3).
+  - status: uncertain. That its public API exposes no buffer age or
+    swapchain image index is the survey's reading of `SurfaceTexture`, not
+    a search of every path; the open question on wgpu below decides it.
 - **A persistent full-page target copied to the swapchain.** status: dead
   end, derived. The copy reads and writes a full frame every frame, 66 MB
   even for a caret blink, more than a plain full redraw writes (33 MB).
-  The owner rejected it.
+  The owner rejected it in conversation.
 - **Buffers the shell owns, handed to the OS compositor.** status:
   promising; the main path. The shell knows which frame each buffer last
   held, so it redraws the damage of the frames that buffer missed plus
@@ -744,15 +762,17 @@ buffer whose contents are known.
 7.4 **Telling the OS compositor what changed.** Without it, the OS
 recomposites the whole window at every present (`notes/webrender.md` I4).
 - **Where a damage interface exists.** status: established from the
-  specifications. DXGI dirty rectangles and DirectComposition update
-  rectangles, Wayland `damage_buffer` (Mesa forwards Vulkan's incremental
-  present to it), EGL partial update (`notes/gpu2d.md` §4.1).
-- **macOS.** status: established; Firefox ships it. Neither `CAMetalLayer`
-  nor a layer's `contents` has a partial update; in Mozilla's words, "there
-  are no APIs for partial updates of CAMetalLayers either, so you'd need to
-  implement a solution with smaller layers". Only a CALayer whose contents
-  change is recomposited, so on macOS the window is split into tiles, each
-  a CALayer with its own IOSurfaces. These tiles are the presentation
+  specifications for DXGI dirty rectangles, Wayland `damage_buffer` (Mesa
+  forwards Vulkan's incremental present to it) and EGL partial update
+  (`notes/gpu2d.md` §4.1). DirectComposition surfaces taking an update
+  rectangle when drawing begins is recalled, not read.
+- **macOS.** status: established for 2019, not rechecked since; X18 checks
+  it. In Mozilla's words, "there are no APIs for partial updates of
+  CAMetalLayers either, so you'd need to implement a solution with smaller
+  layers" (`notes/webrender.md` I4). Firefox ships that: the window split
+  into tiles, each a CALayer with its own IOSurfaces (`notes/webrender.md`
+  §2.3). That the OS then recomposites only the tiles whose contents
+  changed is inferred from that design. These tiles are the presentation
   unit, not the invalidation unit: a change redraws its damage inside the
   tile.
 - **Tile size.** status: uncertain, decided by X18. A small change costs
@@ -766,13 +786,18 @@ recomposites the whole window at every present (`notes/webrender.md` I4).
   | 1024×512 | 4 MB |
   | one layer for the window | 66 MB |
 
+  The table assumes the OS reads and writes a recomposited tile once.
   Smaller tiles mean more layers: a 4K viewport at 256×256 is 135 tiles
-  before prepainting, each with two or three buffers. WebRender uses
+  before prepainting, and each needs at least two buffers so that the shell
+  never draws into one the OS is reading (derived). WebRender uses
   1024×512 on macOS and 512×512 on Windows (`notes/webrender.md` §3.2).
 - **What others measured.** status: measured by them, not reproduced.
-  Firefox on macOS, with CoreAnimation tiles and partial update together:
-  a blinking caret in a blank document went from about 30 W to 7 W
-  (BZ 1429522), scrolling from 16.4 W to 9.4 W with three changes bundled.
+  Firefox 70 on macOS, with its own IOSurfaces, partial redraw and CALayer
+  tiles together, went from 16.4 W to 9.4 W scrolling and from 7.4 W to
+  1.6 W on an idle Google Docs page; Mozilla credits partial redraw with
+  "most of the power savings" (`notes/webrender.md` §2.3). A blinking
+  caret in a blank Google document went from about 30 W to 7 W in
+  BZ 1429522 (`notes/gpu2d.md` §5).
   Firefox's Windows tile compositor once raised power, 20 W against 15.5 W
   on an Iris 550, until tiles stopped being invalidated when clip
   rectangles moved under scrolling (BZ 1602803) (`notes/gpu2d.md` §5).
@@ -783,14 +808,15 @@ touch. Per frame, windowed, derived:
 
 | Method | The shell | The OS compositor | Total |
 |---|---|---|---:|
-| A: redraw the viewport from vectors | write 33 MB | read and write 66 MB | 99 MB |
-| B: cached tiles composited by the shell | read and write 66 MB | read and write 66 MB | 132 MB |
-| C: prepainted strips as OS layers, moved by one container transform | nothing | read and write 66 MB | 66 MB |
+| A: redraw the viewport from vectors | write 33 MB | read and write 66 MB | about 100 MB |
+| B: cached tiles composited by the shell | read and write 66 MB | read and write 66 MB | about 133 MB |
+| C: prepainted strips as OS layers, moved by one container transform | prepainting, amortized | read and write 66 MB | about 66 MB plus prepainting |
 
 - **A.** status: promising as the default. For text and rectangles its
-  shading is near the floor; WebRender's team found redrawing everything
-  per scroll frame too much for complex pages on most GPUs
-  (`notes/webrender.md` §2.1).
+  shading is near the floor. WebRender's team found redrawing everything
+  per scroll frame "too much" on most GPUs for a pathological page, a CSS
+  reproduction of an oil painting, with no numbers; no source isolates
+  plain text and rectangles as a problem (`notes/webrender.md` §2.1, §8).
 - **B.** status: dead end, derived: it is the most traffic of the three.
 - **C.** status: promising where the OS takes several surfaces. Strips
   span the viewport's width and form a ring; one that scrolls out is
@@ -909,7 +935,7 @@ Each criterion is written before the experiment runs, and each can fail.
 | X11 | Does the oracle catch a forgotten version bump? | ticks as library code, X5 | delete one bump deliberately and run the edit script. If the oracle misses it, 5.3's language mechanism has its first ground |
 | X12 | The cost of recording reads and validating versions | X5 with recording | a no-change frame under 0.5 ms; recorded reads at context grain within 5 percent of the full build, or 3.3 is out |
 | X13 | An editing session | X5 | 100 to 1,000 edits typed at one point and scattered, the oracle checked after every prefix; no growth of interning tables or arenas beyond the content added |
-| X14 | A CPU damage-redraw oracle | a software rasterizer of chunks (7.10) | damage-scissored and age-tracked redraws byte-identical to a full redraw; each deliberate breakage (missing spread, omitted overlap, wrong buffer age) fails once (`notes/raster.md` X1) |
+| X14 | A CPU oracle for the shell's policies | a software rasterizer of chunks (7.10) and CPU models of the policies | damage-scissored and age-tracked redraws, strips and cached subtrees at rest byte-identical to a full redraw (6.3); each deliberate breakage (missing spread, omitted overlap, wrong buffer age) fails once (`notes/raster.md` X1) |
 | X15 | How often do successive frames' edits touch disjoint parts of the page? | X1's dirty sets over edit streams | frame pipelining (4.7) is worth reopening only if most successive edits in a typing or scattered-edit stream have disjoint dirty sets in every stage |
 | X16 | What fraction of an edit's recomputation lies in or near the viewport? | X1's dirty sets and the layout rectangles | viewport-first scheduling pays if, for edits costing more than one frame, the median share of dirty units within one viewport height of the viewport is under one half |
 | X17 | How often does paint order interleave a scroll root's content with content that does not scroll with it? | a sample of real pages in Chromium, scrolled | the one-rule strip placement of 7.5 stands if the interleaved part needs drawing in under 5 percent of viewport frames over the sample; otherwise strips need splitting by paint order |

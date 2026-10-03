@@ -3,6 +3,13 @@
 Prepared 2026-10-02 for the Snowghost "raster" branch question. It updates `research/investigations/incremental/notes/raster.md` on branch `research/incremental` (prior note, called "raster.md" below).
 No GPU in this container; **no number here was measured by me**. Every figure is someone else's, or arithmetic that I mark as such.
 
+**Where `DESIGN.md` departs from this note.** `DESIGN.md` §7 holds the
+current tree; where they disagree it wins.
+- §6.3 and arm (b) of §7.1 treat a persistent target copied to the
+  swapchain (P2) as a working model. `DESIGN.md` 7.3 makes it a dead end:
+  the copy moves a full frame every frame. Experiments follow `DESIGN.md`'s
+  X10 rather than §7.1's arms where they differ.
+
 ## 0. How to read the evidence marks
 
 Each claim carries a status and an evidence-quality tag.
