@@ -107,6 +107,41 @@ example apart from the renderer code that exposed it
   element and profile matching. Reopen with the next style work.
 
 
+- **A context's cached intrinsic sizes depend on when they are first
+  asked for.** `intrinsic_sizes` (`renderer/layout/box.wf`) resolves a
+  percentage padding against `space.basis_width` when first asked and keeps
+  the result (`intrinsic_known`): a parent computing its own intrinsic
+  sizes asks before it has written its children's spaces (the fresh space,
+  basis 0), a child's own layout asks after (its real basis), so the same
+  box's min- and max-content widths differ with the order of requests.
+  `intrinsic_flow` also writes every child's margins resolved against no
+  width, which `lay_out_child` overwrites. The incremental update
+  (`renderer/layout/update.wf`) reproduces both by returning marked
+  children to the fresh space and resolving kept children's margins again.
+  Impact: percentage paddings on shrink-to-fit boxes size them by request
+  order, and every incremental path must mirror that order. Change: resolve
+  intrinsic contributions against one fixed basis (CSS Sizing 3 resolves
+  cyclic percentages against zero for them) and leave the children's
+  margins to their own layout. Reopen with the next layout correctness
+  work or when the update's resets cost measurably.
+
+- **An incremental update lays out again every child a float narrowed.**
+  `narrow_beside` lays an in-flow child out again in the room floats leave
+  and writes that room into its space; the next update's pre-pass gives it
+  the full width again, the spaces differ, and the child is laid out twice
+  more even when no edit reaches it. On html5 each text edit lays out 61
+  such contexts again (X5 step 3, `research/investigations/incremental-layout/runs/step3.txt`).
+  Change: keep the space the pre-pass gave beside the narrowed one, so an
+  unchanged pre-pass space with unchanged floats keeps the child. Reopen
+  with X5's re-stacking work.
+
+- **`Paragraph.min_content` and `max_content` are never written.** Every
+  paragraph keeps the zeros `new_paragraph` gives them; intrinsic sizes
+  are computed per request by `paragraph_intrinsic`. Impact: two dead
+  fields in `renderer/layout/module.wfm` that read as a cache. Change:
+  remove them, or cache there if a measurement shows paragraph intrinsic
+  sizes repeated. Reopen with the next change to the layout interface.
+
 - **The style stage checks the walk's depths again to group levels.**
   `level_index` in `renderer/style/levels.wf` runs a counted pass over the
   depths `walk_elements` records, to state the facts the level loops need,
