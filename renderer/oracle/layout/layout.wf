@@ -1,4 +1,5 @@
 alias Args = std::text::Args;
+alias Environment = pkg::css::values::Environment;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias DirectoryRead = std::fs::DirectoryRead;
 alias Document = pkg::dom::Document;
@@ -6,6 +7,7 @@ alias FontPicks = pkg::layout::text::FontPicks;
 alias FontSet = pkg::layout::text::FontSet;
 alias HandleFactory = std::io::HandleFactory;
 alias NodeId = pkg::dom::NodeId;
+alias Page = pkg::oracle::page::Page;
 alias OutputStream = std::io::OutputStream;
 alias PlacedRect = pkg::layout::PlacedRect;
 alias Styles = pkg::style::Styles;
@@ -15,6 +17,7 @@ alias argument_bytes = pkg::oracle::support::argument_bytes;
 alias args_count = std::text::args_count;
 alias build_boxes = pkg::layout::build_boxes;
 alias build_layout = pkg::layout::build_layout;
+alias build_traversal = pkg::style::build_traversal;
 alias close_directory = std::fs::close_directory;
 alias compute_styles = pkg::style::compute_styles;
 alias default_environment = pkg::oracle::page::default_environment;
@@ -36,10 +39,11 @@ alias put_argument = pkg::oracle::support::put_argument;
 alias put_byte = pkg::oracle::support::put_byte;
 alias put_decimal = pkg::oracle::support::put_decimal;
 alias put_text = pkg::oracle::support::put_text;
+alias read_argument_file = pkg::oracle::support::read_argument_file;
 
-const usage_text: Array<u8, 76> = "usage: layout_oracle dump|boxes|text|layout REPS PAGE UA [SUFFIX=SHEET ...]\n";
+const usage_text: Array<u8, 94> = "usage: layout_oracle dump|boxes|text|layout|nodes|edit REPS|SCRIPT PAGE UA [SUFFIX=SHEET ...]\n";
 
-const mode_words: Array<u8, 22> = "dump boxes text layout";
+const mode_words: Array<u8, 33> = "dump boxes text layout nodes edit";
 
 const failed_text: Array<u8, 23> = "layout_oracle: failed: ";
 
@@ -159,7 +163,7 @@ fn mode_of(args: &Args) -> mode: Option<u64> reads(args) {
   match argument_bytes(args: args, position: 1_u64) {
     Some(value: bytes) => {
       let size = bytes.inner.len;
-      for (k in 0_u64..4_u64) {
+      for (k in 0_u64..6_u64) {
         let (start, end) = word_bounds(list: &mode_words[0_u64..mode_words.len], index: k);
         let ordered = start <= end;
         let inside = end <= mode_words.len;
@@ -397,8 +401,8 @@ fn put_rects(buffer: &Box<Slots<u8>>, placed: &[PlacedRect], starts: &[u64], ord
   return written;
 }
 
-fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &Styles, placed: &[PlacedRect], out: &OutputStream, files: &HandleFactory) -> written: Bool reads(document), reads(atoms), reads(traversal), reads(styles), reads(placed), writes(out), writes(files) waits {
-  doc "Writes every element's E line, every rendered text node's T line and the H line.";
+fn write_dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &Styles, placed: &[PlacedRect], buffer: &Box<Slots<u8>>) -> written: Bool reads(document), reads(atoms), reads(traversal), reads(styles), reads(placed), writes(buffer) {
+  doc "Appends to buffer every element's E line, every rendered text node's T line and the H line, in the format of tests/layout/layout_oracle.mjs.";
   let nodes = document^.nodes.inner.len;
   let count = traversal^.elements.inner.len;
   let small = count < 4294967295_u64;
@@ -488,7 +492,6 @@ fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &
   }
   let texts = text_nodes.inner.len;
   let (text_starts, text_order) = bucket(placed: placed, kind: placed_text, keys: &ordinal_of.inner[0_u64..nodes], count: texts);
-  let buffer = box_slots_new::<u8>(capacity: 65536_u64);
   let starts_count = element_starts.inner.len;
   let order_count = element_order.inner.len;
   let total = placed^.len;
@@ -499,45 +502,38 @@ fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &
     set bottom = fmax(bottom, rect_bottom);
   }
   for (i in 0_u64..count) {
-    put_text(buffer: &buffer, text: &element_line[0_u64..2_u64]);
-    put_decimal(buffer: &buffer, value: i);
-    put_byte(buffer: &buffer, value: 9_u8);
+    put_text(buffer: buffer, text: &element_line[0_u64..2_u64]);
+    put_decimal(buffer: buffer, value: i);
+    put_byte(buffer: buffer, value: 9_u8);
     let node = traversal^.elements.inner[i];
-    put_name(buffer: &buffer, atoms: atoms, document: document, node: node);
-    put_byte(buffer: &buffer, value: 9_u8);
+    put_name(buffer: buffer, atoms: atoms, document: document, node: node);
+    put_byte(buffer: buffer, value: 9_u8);
     let parent = if i < traversal^.parents.inner.len {
       give cvt::<u32, u64>(traversal^.parents.inner[i]);
     } else {
       give count;
     }
     if parent < count {
-      put_decimal(buffer: &buffer, value: parent);
+      put_decimal(buffer: buffer, value: parent);
     } else {
-      put_text(buffer: &buffer, text: &minus_one[0_u64..2_u64]);
+      put_text(buffer: buffer, text: &minus_one[0_u64..2_u64]);
     }
-    put_byte(buffer: &buffer, value: 9_u8);
-    let mark = buffer.inner.len;
-    put_byte(buffer: &buffer, value: 110_u8);
-    put_byte(buffer: &buffer, value: 9_u8);
-    let shown = put_rects(buffer: &buffer, placed: placed, starts: &element_starts.inner[0_u64..starts_count], order: &element_order.inner[0_u64..order_count], key: i);
+    put_byte(buffer: buffer, value: 9_u8);
+    let mark = buffer^.inner.len;
+    put_byte(buffer: buffer, value: 110_u8);
+    put_byte(buffer: buffer, value: 9_u8);
+    let shown = put_rects(buffer: buffer, placed: placed, starts: &element_starts.inner[0_u64..starts_count], order: &element_order.inner[0_u64..order_count], key: i);
     if shown > 0_u64 {
       let inline = display_inline_level(styles: styles, element: i);
-      if mark < buffer.inner.len {
+      if mark < buffer^.inner.len {
         if inline {
-          set buffer.inner[mark] = 105_u8;
+          set buffer^.inner[mark] = 105_u8;
         } else {
-          set buffer.inner[mark] = 98_u8;
+          set buffer^.inner[mark] = 98_u8;
         }
       }
     }
-    put_byte(buffer: &buffer, value: 10_u8);
-    if buffer.inner.len > 60000_u64 {
-      let flushed = flush(factory: files, output: out, buffer: &buffer);
-      if flushed {
-      } else {
-        return False();
-      }
-    }
+    put_byte(buffer: buffer, value: 10_u8);
   }
   let text_starts_count = text_starts.inner.len;
   let text_order_count = text_order.inner.len;
@@ -549,9 +545,9 @@ fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &
       give False();
     }
     if has {
-      put_text(buffer: &buffer, text: &text_line[0_u64..2_u64]);
-      put_decimal(buffer: &buffer, value: t);
-      put_byte(buffer: &buffer, value: 9_u8);
+      put_text(buffer: buffer, text: &text_line[0_u64..2_u64]);
+      put_decimal(buffer: buffer, value: t);
+      put_byte(buffer: buffer, value: 9_u8);
       let node_index = cvt::<u32, u64>(text_nodes.inner[t]);
       let parent_element = if node_index < nodes {
         let parent_link = document^.nodes.inner[node_index].links.parent;
@@ -572,24 +568,17 @@ fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &
         give 4294967295_u32;
       }
       if parent_element == 4294967295_u32 {
-        put_text(buffer: &buffer, text: &minus_one[0_u64..2_u64]);
+        put_text(buffer: buffer, text: &minus_one[0_u64..2_u64]);
       } else {
         let wide = cvt::<u32, u64>(parent_element);
-        put_decimal(buffer: &buffer, value: wide);
+        put_decimal(buffer: buffer, value: wide);
       }
-      put_byte(buffer: &buffer, value: 9_u8);
-      let shown = put_rects(buffer: &buffer, placed: placed, starts: &text_starts.inner[0_u64..text_starts_count], order: &text_order.inner[0_u64..text_order_count], key: t);
-      put_byte(buffer: &buffer, value: 10_u8);
-      if buffer.inner.len > 60000_u64 {
-        let flushed = flush(factory: files, output: out, buffer: &buffer);
-        if flushed {
-        } else {
-          return False();
-        }
-      }
+      put_byte(buffer: buffer, value: 9_u8);
+      let shown = put_rects(buffer: buffer, placed: placed, starts: &text_starts.inner[0_u64..text_starts_count], order: &text_order.inner[0_u64..text_order_count], key: t);
+      put_byte(buffer: buffer, value: 10_u8);
     }
   }
-  put_text(buffer: &buffer, text: &height_line[0_u64..2_u64]);
+  put_text(buffer: buffer, text: &height_line[0_u64..2_u64]);
   let floor = ftrunc(bottom);
   let viewport_floor = fmax(floor, 7.2e2_f32);
   let fits = cvt.defined::<f32, u64>(viewport_floor);
@@ -598,10 +587,9 @@ fn dump(document: &Document, atoms: &AtomTable, traversal: &Traversal, styles: &
   } else {
     give 0_u64;
   }
-  put_decimal(buffer: &buffer, value: height);
-  put_byte(buffer: &buffer, value: 10_u8);
-  let flushed = flush(factory: files, output: out, buffer: &buffer);
-  return flushed;
+  put_decimal(buffer: buffer, value: height);
+  put_byte(buffer: buffer, value: 10_u8);
+  return True();
 }
 
 fn push_node(stack: &Box<Slots<NodeId>>, node: NodeId) -> pushed: Bool writes(stack) {
@@ -665,6 +653,93 @@ fn pick_all(fonts: &FontSet, styles: &Styles, atoms: &AtomTable) -> picks: Optio
   }
 }
 
+fn lay_out_page(page: &Page, styles: &Styles, fonts: &FontSet, viewport: Viewport, buffer: &Box<Slots<u8>>) -> stage: u8 reads(page), reads(styles), reads(fonts), writes(buffer) {
+  doc "Matches the fonts, builds and lays out the page and appends its dump to buffer. Returns 0 when every step succeeds, and otherwise the number of the first that fails: 1 the font matching, 2 the layout, 3 the dump.";
+  let picks = match pick_all(fonts: fonts, styles: styles, atoms: &page^.atoms) {
+    Some(value: found) => {
+      give move found;
+    }
+    None() => {
+      return 1_u8;
+    }
+  }
+  let layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: styles, atoms: &page^.atoms, fonts: fonts, picks: &picks, viewport: viewport) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return 2_u8;
+    }
+  }
+  lay_out(layout: &layout, document: &page^.document, styles: styles, fonts: fonts, picks: &picks);
+  let placed = place_boxes(layout: &layout);
+  let placed_count = placed.inner.len;
+  let written = write_dump(document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, styles: styles, placed: &placed.inner[0_u64..placed_count], buffer: buffer);
+  if written {
+    return 0_u8;
+  }
+  return 3_u8;
+}
+
+fn rebuild_dump(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, buffer: &Box<Slots<u8>>) -> stage: u8 reads(fonts), writes(page), writes(buffer) {
+  doc "Runs the whole pipeline on the live document of page: its traversal, the styles, then lay_out_page. Returns lay_out_page's stage, or 4 when the traversal and 5 when the style stage fails.";
+  match build_traversal(document: &page^.document) {
+    Ok(value: found) => {
+      set page^.traversal = move found;
+    }
+    Err(..) => {
+      return 4_u8;
+    }
+  }
+  let styles = match compute_styles(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return 5_u8;
+    }
+  }
+  let stage = lay_out_page(page: page, styles: &styles, fonts: fonts, viewport: viewport, buffer: buffer);
+  return stage;
+}
+
+fn reps_argument(args: &Args, mode: u64) -> reps: Option<u64> reads(args) {
+  doc "The REPS argument of a timing mode, and 0 for the modes whose position 2 does not hold a count.";
+  if mode >= 4_u64 {
+    return Some<u64>(value: 0_u64);
+  }
+  match argument_bytes(args: args, position: 2_u64) {
+    Some(value: bytes) => {
+      let size = bytes.inner.len;
+      return parse_decimal(text: &bytes.inner[0_u64..size], start: 0_u64, end: size);
+    }
+    None() => {
+      return None<u64>();
+    }
+  }
+}
+
+fn stage_failure(err: &OutputStream, files: &HandleFactory, stage: u8) -> code: u8 writes(err), writes(files) waits {
+  doc "Reports the failure of the stage lay_out_page or rebuild_dump numbers; a failed dump has no message, as before.";
+  if stage == 1_u8 {
+    let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
+    return code;
+  }
+  if stage == 2_u8 {
+    let code = fail(err: err, files: files, what: &layout_word[0_u64..layout_word.len]);
+    return code;
+  }
+  if stage == 5_u8 {
+    let code = fail(err: err, files: files, what: &style_word[0_u64..style_word.len]);
+    return code;
+  }
+  if stage == 4_u8 {
+    let code = fail(err: err, files: files, what: &traversal_word[0_u64..traversal_word.len]);
+    return code;
+  }
+  return 2_u8;
+}
+
 fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
   doc "Reads the invocation, loads and styles the page, loads the fonts, and runs the mode.";
   let count = args_count(args: args);
@@ -681,18 +756,9 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
     let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
     return code;
   }
-  let reps = match argument_bytes(args: args, position: 2_u64) {
-    Some(value: bytes) => {
-      let size = bytes.inner.len;
-      match parse_decimal(text: &bytes.inner[0_u64..size], start: 0_u64, end: size) {
-        Some(value: n) => {
-          give n;
-        }
-        None() => {
-          let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
-          return code;
-        }
-      }
+  let reps = match reps_argument(args: args, mode: mode) {
+    Some(value: n) => {
+      give n;
     }
     None() => {
       let code = fail(err: err, files: files, what: &usage_text[0_u64..usage_text.len]);
@@ -709,14 +775,16 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
       return code;
     }
   }
-  let styles = match compute_styles(store: &page.store, document: &page.document, atoms: &page.atoms, traversal: &page.traversal, environment: environment) {
-    Ok(value: found) => {
-      give move found;
+  if mode == 4_u64 {
+    let buffer = box_slots_new::<u8>(capacity: 65536_u64);
+    let listed = list_nodes(page: &page, buffer: &buffer);
+    let written = flush(factory: files, output: out, buffer: &buffer);
+    if listed {
+      if written {
+        return 0_u8;
+      }
     }
-    Err(..) => {
-      let code = fail(err: err, files: files, what: &style_word[0_u64..style_word.len]);
-      return code;
-    }
+    return 2_u8;
   }
   let fonts = match load_fonts(factory: files, cwd: cwd, directory: &fonts_directory[0_u64..fonts_directory.len]) {
     Ok(value: found) => {
@@ -728,33 +796,41 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
     }
   }
   let viewport = Viewport(width: 1.28e3_f32, height: 7.2e2_f32);
-  if mode == 0_u64 {
-    let picks = match pick_all(fonts: &fonts, styles: &styles, atoms: &page.atoms) {
-      Some(value: found) => {
-        give move found;
-      }
-      None() => {
-        let code = fail(err: err, files: files, what: &fonts_word[0_u64..fonts_word.len]);
-        return code;
-      }
-    }
-    let layout = match build_layout(document: &page.document, traversal: &page.traversal, styles: &styles, atoms: &page.atoms, fonts: &fonts, picks: &picks, viewport: viewport) {
+  if mode == 5_u64 {
+    let script = match read_argument_file(factory: files, cwd: cwd, args: args, position: 2_u64) {
       Ok(value: found) => {
         give move found;
       }
       Err(..) => {
-        let code = fail(err: err, files: files, what: &layout_word[0_u64..layout_word.len]);
+        let code = fail(err: err, files: files, what: &script_word[0_u64..script_word.len]);
         return code;
       }
     }
-    lay_out(layout: &layout, document: &page.document, styles: &styles, fonts: &fonts, picks: &picks);
-    let placed = place_boxes(layout: &layout);
-    let placed_count = placed.inner.len;
-    let written = dump(document: &page.document, atoms: &page.atoms, traversal: &page.traversal, styles: &styles, placed: &placed.inner[0_u64..placed_count], out: out, files: files);
-    if written {
-      return 0_u8;
+    let script_size = script.inner.len;
+    let code = run_edits(page: &page, fonts: &fonts, environment: environment, viewport: viewport, script: &script.inner[0_u64..script_size], out: out, err: err, files: files);
+    return code;
+  }
+  let styles = match compute_styles(store: &page.store, document: &page.document, atoms: &page.atoms, traversal: &page.traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
     }
-    return 2_u8;
+    Err(..) => {
+      let code = fail(err: err, files: files, what: &style_word[0_u64..style_word.len]);
+      return code;
+    }
+  }
+  if mode == 0_u64 {
+    let buffer = box_slots_new::<u8>(capacity: 65536_u64);
+    let stage = lay_out_page(page: &page, styles: &styles, fonts: &fonts, viewport: viewport, buffer: &buffer);
+    if stage == 0_u8 {
+      let written = flush(factory: files, output: out, buffer: &buffer);
+      if written {
+        return 0_u8;
+      }
+      return 2_u8;
+    }
+    let code = stage_failure(err: err, files: files, stage: stage);
+    return code;
   }
   let contexts = 0_u64;
   let paragraphs = 0_u64;
@@ -816,3 +892,7 @@ const style_word: Array<u8, 11> = "style stage";
 const fonts_word: Array<u8, 5> = "fonts";
 
 const layout_word: Array<u8, 12> = "layout stage";
+
+const traversal_word: Array<u8, 9> = "traversal";
+
+const script_word: Array<u8, 11> = "edit script";
