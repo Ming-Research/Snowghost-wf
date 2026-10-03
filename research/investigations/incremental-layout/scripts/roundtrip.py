@@ -20,7 +20,7 @@ for line in open(sys.argv[1]):
     m = re.match(r'base hash ([0-9a-f]{16}) bytes (\d+)$', line)
     if m:
         base = m.group(1)
-    m = re.match(r'edit (\d+) hash ([0-9a-f]{16}) bytes (\d+)$', line)
+    m = re.match(r'edit (\d+) hash ([0-9a-f]{16}) bytes (\d+)( inc (same|DIFF|refused))?$', line)
     if m:
         hashes[int(m.group(1))] = m.group(2)
 if base is None or len(hashes) != expected:

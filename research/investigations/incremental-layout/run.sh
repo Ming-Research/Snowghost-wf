@@ -24,6 +24,23 @@
 #   run.sh dumps MAIN PAGE...       compares the dump mode with the driver
 #                                   MAIN (a build of the commit before the
 #                                   edit modes) byte for byte
+#   run.sh inc BUILD PAGE KIND...   runs each script with `edit` (as run.sh
+#                                   edit) and counts its T and D edits whose
+#                                   incremental dump (text_changed and update
+#                                   on a layout kept across edits) is the
+#                                   same as the rebuilt one, differs, or was
+#                                   refused
+#   run.sh time BUILD PAGE KIND [RUNS]
+#                                   times text_changed + update per edit
+#                                   with the driver's incremental mode, RUNS
+#                                   process runs (3 by default) under the
+#                                   host lock, keeps each run's lines in
+#                                   build/x5/time/ and prints
+#                                   scripts/inctime.py's summary; WF_WORKERS
+#                                   passes through to the --par build;
+#                                   RUN_CHECK names the lock script (by
+#                                   default the pinned checkout's
+#                                   .github/run-check.pl)
 #
 # PAGE is ecma262, html5 or apollo11, fetched to build/research/concurrency by
 # research/investigations/concurrency/run.sh and run with the sheets of
@@ -32,7 +49,8 @@
 #   cd renderer && whitefootc --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq
 #   cd renderer && whitefootc --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par
 # under the host-wide lock (.github/run-check.pl of the pinned checkout). The
-# runs here check results and are not timed, so they do not take the lock.
+# other runs here check results and are not timed, so only time takes the
+# lock.
 # POSIX sh plus python3.
 
 set -eu
@@ -128,6 +146,43 @@ reparse() {
 	done <"$work/out/$page-$kind.reparse.txt"
 }
 
+inc() {
+	build=$1 page=$2
+	shift 2
+	for kind in "$@"; do
+		edit "$build" "$page" "$kind" || {
+			echo "$page $kind: run failed"
+			continue
+		}
+		out=$work/out/$page-$kind.$build.txt
+		same=$(grep -c ' inc same$' "$out" || true)
+		differs=$(grep -c ' inc DIFF$' "$out" || true)
+		refused=$(grep -c ' inc refused$' "$out" || true)
+		edits=$(grep -c '^edit [0-9]* hash ' "$out" || true)
+		echo "$page $kind ($build): $edits edits, inc same $same, DIFF $differs, refused $refused"
+	done
+}
+
+time_edits() {
+	build=$1 page=$2 kind=$3 runs=${4:-3}
+	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+		exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-time sh "$here/run.sh" time "$@"
+	fi
+	mkdir -p "$work/time"
+	files=
+	i=1
+	while [ "$i" -le "$runs" ]; do
+		out=$work/time/$page-$kind.$build.w${WF_WORKERS:-none}.r$i.txt
+		# shellcheck disable=SC2046
+		"$(driver "$build")" incremental "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") >"$out"
+		files="$files $out"
+		i=$((i + 1))
+	done
+	echo "$page $kind $build WF_WORKERS=${WF_WORKERS:-unset}:"
+	# shellcheck disable=SC2086
+	python3 "$here/scripts/inctime.py" $files
+}
+
 dumps() {
 	main=$1
 	shift
@@ -151,8 +206,10 @@ roundtrip) roundtrip "$@" ;;
 same) same "$@" ;;
 reparse) reparse "$@" ;;
 dumps) dumps "$@" ;;
+inc) inc "$@" ;;
+time) time_edits "$@" ;;
 *)
-	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps ..." >&2
+	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
 	exit 2
 	;;
 esac
