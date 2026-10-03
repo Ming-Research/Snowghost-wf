@@ -21,12 +21,13 @@ struct Frame {
 }
 
 struct Stack {
-  doc "The stacking pass's vertical state: the bottom of the last placed content (cursor), the margins waiting to collapse (the largest positive and the most negative), the floats placed so far, and the lowest top any later float may take.";
+  doc "The stacking pass's vertical state: the bottom of the last placed content (cursor), the margins waiting to collapse (the largest positive and the most negative), the floats placed so far, the lowest top any later float may take, and the lowest bottom of the floats placed so far (reach).";
   cursor: i32;
   positive: i32;
   negative: i32;
   floats: Box<Slots<Exclusion>>;
   float_floor: i32;
+  reach: i32;
 }
 
 fn pending_margin(stack: &Stack) -> margin: i32 reads(stack) {
@@ -172,6 +173,52 @@ fn relative_offset(styles: &Styles, style: StyleRef, basis_width: i32, basis_hei
   return dx, dy;
 }
 
+fn flow_index(at: u64) -> index: u32 pure {
+  doc "A flow position as the u32 the records keep, no_index past its range.";
+  if at < 4294967295_u64 {
+    let made = cvt::<u64, u32>(at);
+    return made;
+  }
+  return no_index;
+}
+
+fn height_relative(styles: &Styles, style: StyleRef) -> relative: Bool reads(styles) {
+  doc "Tells whether style's height, min-height or max-height is a percentage, which its containing block's height resolves.";
+  let sizes = size_of(styles: styles, style: style);
+  let height_value = sizes.height.kind == sizing_value;
+  let min_value = sizes.min_height.kind == sizing_value;
+  let max_value = sizes.max_height.kind == sizing_value;
+  let height_percent = band(height_value, sizes.height.value.has_percent);
+  let min_percent = band(min_value, sizes.min_height.value.has_percent);
+  let max_percent = band(max_value, sizes.max_height.value.has_percent);
+  let limits = bor(min_percent, max_percent);
+  let made = bor(height_percent, limits);
+  return made;
+}
+
+fn equivalent_space(styles: &Styles, style: StyleRef, first: Space, second: Space) -> same: Bool reads(styles) {
+  doc "Tells whether a context styled style lays out the same in the two spaces: they are equal field by field, but for the height percentage basis when its height, min-height and max-height are not percentages, which is the only thing that reads it.";
+  let relative = height_relative(styles: styles, style: style);
+  if relative {
+    let made = same_space(first: first, second: second);
+    return made;
+  }
+  let rebased = Space(available: second.available, basis_width: second.basis_width, basis_height: first.basis_height, forced_width: second.forced_width, forced_height: second.forced_height, shrink: second.shrink);
+  let made = same_space(first: first, second: rebased);
+  return made;
+}
+
+fn innermost_block(frames: &Box<Slots<Frame>>) -> block: u32 reads(frames) {
+  doc "The block of the innermost open frame, or no_index when none is open.";
+  let count = frames^.inner.len;
+  if count == 0_u64 {
+    return no_index;
+  }
+  let last = count - 1_u64;
+  let found = frames^.inner[last].block;
+  return found;
+}
+
 fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, content_height: i32) -> result: unit reads(styles), writes(context) {
   doc "The pre-pass of a flow context: walks its flow with the containing widths of the open block boxes, sets each block's width and left offset, each paragraph's width and left offset, and each child context's space: in-flow children fill their containing block, floats, out-of-flow boxes and atomic inlines shrink to fit.";
   let frames = box_slots_new::<Frame>(capacity: 8_u64);
@@ -179,17 +226,26 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
   let left = 0_i32;
   let width = content_width;
   let next_split = 0_u64;
+  set context^.has_out = False();
+  let free = True();
   for (k in 0_u64..flow_count) {
     if k >= context^.flow.inner.len {
       break;
     }
     let item = context^.flow.inner[k];
     set next_split = place_splits(context: context, from: next_split, flow: k, left: left, width: width);
+    let around = innermost_block(frames: &frames);
+    let here = flow_index(at: k);
     match item {
       Open(block: b) => {
         let at = cvt::<u32, u64>(b);
         if at < context^.blocks.inner.len {
+          set context^.blocks.inner[at].parent = around;
+          set context^.blocks.inner[at].flow_at = here;
           let style = context^.blocks.inner[at].style;
+          let relative = height_relative(styles: styles, style: style);
+          let absolute_height = bnot(relative);
+          set free = band(free, absolute_height);
           let (box_width, offset, margin_left, margin_right) = block_width(styles: styles, style: style, available: width);
           let x = left +sat offset;
           set context^.blocks.inner[at].x = x;
@@ -222,6 +278,8 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
         if at < context^.paragraphs.inner.len {
           set context^.paragraphs.inner[at].width = width;
           set context^.paragraphs.inner[at].left = left;
+          set context^.paragraphs.inner[at].flow_at = here;
+          set context^.paragraphs.inner[at].block = around;
           let marks = context^.paragraphs.inner[at].marks.inner.len;
           for (m in 0_u64..marks) {
             let mark = context^.paragraphs.inner[at].marks.inner[m];
@@ -231,6 +289,8 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
                 if child_at < context^.children.inner.len {
                   let yes = True();
                   set context^.children.inner[child_at].space = child_space(available: width, basis_width: width, basis_height: unknown, shrink: yes);
+                  set context^.children.inner[child_at].flow_at = here;
+                  set context^.children.inner[child_at].block = around;
                 }
               }
               Open(..) => {
@@ -253,6 +313,11 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
           let fits = bor(table, replaced);
           set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: content_height, shrink: fits);
           set context^.children.inner[at].x = left;
+          set context^.children.inner[at].flow_at = here;
+          set context^.children.inner[at].block = around;
+          let child_relative = height_relative(styles: styles, style: context^.children.inner[at].style);
+          let child_absolute = bnot(child_relative);
+          set free = band(free, child_absolute);
         }
       }
       Float(context: c) => {
@@ -261,6 +326,11 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
           let yes = True();
           set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: content_height, shrink: yes);
           set context^.children.inner[at].x = left;
+          set context^.children.inner[at].flow_at = here;
+          set context^.children.inner[at].block = around;
+          let child_relative = height_relative(styles: styles, style: context^.children.inner[at].style);
+          let child_absolute = bnot(child_relative);
+          set free = band(free, child_absolute);
         }
       }
       Out(context: c) => {
@@ -269,15 +339,39 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
           let yes = True();
           set context^.children.inner[at].space = child_space(available: content_width, basis_width: content_width, basis_height: content_height, shrink: yes);
           set context^.children.inner[at].x = left;
+          set context^.children.inner[at].flow_at = here;
+          set context^.children.inner[at].block = around;
+          let child_relative = height_relative(styles: styles, style: context^.children.inner[at].style);
+          let child_absolute = bnot(child_relative);
+          set free = band(free, child_absolute);
+          set context^.has_out = True();
         }
       }
     }
   }
+  set context^.definite_free = free;
   return unit;
 }
 
-fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
-  doc "Lays out one child context in the space its parent wrote, then resolves its margins against its containing block's width.";
+fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Lays out one child context in the space its parent wrote, then resolves its margins against its containing block's width. When its parent is being updated (updating, pkg::layout's update), a child marked for update is updated (update_child), an unmarked one whose space is the one it was last laid out in keeps that layout, and an unmarked flow context in another space is updated in it from its last layout; any other child is laid out in full.";
+  if updating {
+    let marked = child^.dirty;
+    let same = equivalent_space(styles: styles, style: child^.style, first: child^.laid, second: child^.space);
+    let flowing = child^.kind == ctx_flow;
+    let unmarked = bnot(marked);
+    let kept = band(same, unmarked);
+    if kept {
+      resolve_margins(child: child, styles: styles);
+      return unit;
+    }
+    let incremental = bor(marked, flowing);
+    if incremental {
+      let held = before_of(context: child);
+      let counted = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
+      return unit;
+    }
+  }
   lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   resolve_margins(child: child, styles: styles);
   return unit;
@@ -297,8 +391,9 @@ fn resolve_margins(child: &Context, styles: &Styles) -> result: unit reads(style
 fn lay_out_children(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Lays out every child context, one per iteration of a counted loop, each iteration writing only its own child.";
   let count = context^.children.inner.len;
+  let whole = False();
   for (i in 0_u64..count) {
-    lay_out_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    lay_out_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
   }
   return unit;
 }
@@ -392,6 +487,7 @@ fn place_float(context: &Context, stack: &Stack, child: u64, side_left: Bool, co
   let made = Exclusion(left: side_left, top: y, bottom: bottom, edge: edge);
   let pushed = push_item::<Exclusion>(cell: &stack^.floats, value: made, ceiling: item_ceiling);
   set stack^.float_floor = imax(stack^.float_floor, y);
+  set stack^.reach = imax(stack^.reach, bottom);
   return unit;
 }
 
@@ -466,10 +562,20 @@ fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts:
     return False();
   }
   let room_left = imax(room, 0_i32);
+  let updating = context^.dirty;
   set context^.children.inner[child].space.available = room_left;
-  set context^.children.inner[child].intrinsic_known = False();
+  let laid = context^.children.inner[child].laid;
+  let now = context^.children.inner[child].space;
+  let same = equivalent_space(styles: styles, style: style, first: laid, second: now);
+  let unmarked = bnot(context^.children.inner[child].dirty);
+  let unchanged = band(same, unmarked);
+  let keeps = band(updating, unchanged);
+  if keeps {
+  } else {
+    set context^.children.inner[child].intrinsic_known = False();
+  }
   if child < context^.children.inner.len {
-    lay_out_child(child: &context^.children.inner[child], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    lay_out_child(child: &context^.children.inner[child], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
   }
   return True();
 }
@@ -1003,15 +1109,27 @@ fn last_baseline(context: &Context, at: u64) -> (baseline: i32, found: Bool) rea
 }
 
 fn place_paragraph(context: &Context, at: u64, content_left: i32, dx: i32, top: i32) -> result: unit writes(context) {
-  doc "Sets paragraph at's origin in the context's border box, its left moved by the content box's left and the relative offset dx, and places its atomic inlines' child contexts.";
+  doc "Sets paragraph at's origin in the context's border box, x its left moved by the content box's left and the relative offset dx, and places its atomic inlines' child contexts (place_atomics).";
   if at < context^.paragraphs.inner.len {
   } else {
     return unit;
   }
   let shifted_left = context^.paragraphs.inner[at].left +sat dx;
   let left = content_left +sat shifted_left;
-  set context^.paragraphs.inner[at].left = left;
+  set context^.paragraphs.inner[at].x = left;
   set context^.paragraphs.inner[at].top = top;
+  place_atomics(context: context, at: at);
+  return unit;
+}
+
+fn place_atomics(context: &Context, at: u64) -> result: unit writes(context) {
+  doc "Places the child contexts of paragraph at's atomic inlines at its origin plus their offsets.";
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return unit;
+  }
+  let left = context^.paragraphs.inner[at].x;
+  let top = context^.paragraphs.inner[at].top;
   let atomics = context^.paragraphs.inner[at].atomics.inner.len;
   for (a in 0_u64..atomics) {
     if at < context^.paragraphs.inner.len {
@@ -1031,7 +1149,8 @@ fn place_paragraph(context: &Context, at: u64, content_left: i32, dx: i32, top: 
 fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, content_left: i32, content_top: i32, content_width: i32, basis_height: i32) -> (height: i32, baseline: i32, has_baseline: Bool) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions, and returns the content height, which contains the floats, and the last line's baseline.";
   let empty_floats = box_slots_new::<Exclusion>(capacity: 0_u64);
-  let stack = Stack(cursor: 0_i32, positive: 0_i32, negative: 0_i32, floats: move empty_floats, float_floor: -2147483647_i32);
+  let stack = Stack(cursor: 0_i32, positive: 0_i32, negative: 0_i32, floats: move empty_floats, float_floor: -2147483647_i32, reach: -2147483647_i32);
+  set context^.baseline_entry = no_index;
   let frames = box_slots_new::<Frame>(capacity: 8_u64);
   let left = 0_i32;
   let width = content_width;
@@ -1222,6 +1341,10 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
             let from_top = y +sat line_base;
             set baseline = content_top +sat from_top;
             set has_baseline = True();
+            set context^.baseline_entry = flow_index(at: k);
+          }
+          if at < context^.paragraphs.inner.len {
+            set context^.paragraphs.inner[at].beside = stack.reach > y;
           }
           set stack.cursor = y +sat placed_height;
           let shifted_top = y +sat dy;
@@ -1297,10 +1420,12 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
           if at < context^.children.inner.len {
             set context^.children.inner[at].x = content_left +sat x_total;
             set context^.children.inner[at].y = content_top +sat y_total;
+            set context^.children.inner[at].beside = stack.reach > y;
             if context^.children.inner[at].has_baseline {
               let child_base = y +sat context^.children.inner[at].baseline;
               set baseline = content_top +sat child_base;
               set has_baseline = True();
+              set context^.baseline_entry = flow_index(at: k);
               mark_lines(frames: &frames);
             }
             let margin_bottom = context^.children.inner[at].margin_bottom;
@@ -1346,45 +1471,9 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let end = stack.cursor +sat end_term;
   let float_end = float_bottom(stack: &stack, side: clear_both);
   let height = imax(end, float_end);
+  set context^.content_raw = height;
   let positive = imax(height, 0_i32);
   return positive, baseline, has_baseline;
-}
-
-fn copy_fragments(context: &Context) -> result: unit writes(context) {
-  doc "Adds the fragments of the context's shown block boxes and of its paragraphs, moved by each paragraph's origin, to the context's fragments.";
-  let blocks = context^.blocks.inner.len;
-  for (b in 0_u64..blocks) {
-    if b >= context^.blocks.inner.len {
-      break;
-    }
-    let block = context^.blocks.inner[b];
-    let shown = shown_owner(style: block.style);
-    if shown {
-      add_fragment(context: context, kind: placed_element, owner: block.style.element, x: block.x, y: block.y, width: block.width, height: block.height);
-    }
-  }
-  let paragraphs = context^.paragraphs.inner.len;
-  for (p in 0_u64..paragraphs) {
-    if p >= context^.paragraphs.inner.len {
-      break;
-    }
-    let left = context^.paragraphs.inner[p].left;
-    let top = context^.paragraphs.inner[p].top;
-    let count = context^.paragraphs.inner[p].fragments.inner.len;
-    for (f in 0_u64..count) {
-      if p >= context^.paragraphs.inner.len {
-        break;
-      }
-      if f >= context^.paragraphs.inner[p].fragments.inner.len {
-        break;
-      }
-      let fragment = context^.paragraphs.inner[p].fragments.inner[f];
-      let x = left +sat fragment.x;
-      let y = top +sat fragment.y;
-      add_fragment(context: context, kind: fragment.kind, owner: fragment.owner, x: x, y: y, width: fragment.width, height: fragment.height);
-    }
-  }
-  return unit;
 }
 
 fn positioned_block(context: &Context, styles: &Styles, open_blocks: &[u32]) -> (found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles), reads(open_blocks) {
@@ -1414,21 +1503,38 @@ fn positioned_block(context: &Context, styles: &Styles, open_blocks: &[u32]) -> 
   return no, 0_i32, 0_i32, 0_i32, 0_i32;
 }
 
+fn laid_out_by_position(styles: &Styles, style: StyleRef) -> again: Bool reads(styles) {
+  doc "Tells whether position_out_with lays an absolutely or fixed positioned box of style out again in the space its insets leave: when both insets of an axis are set and its size on that axis is auto, or when its width or height is a percentage.";
+  let sizes = size_of(styles: styles, style: style);
+  let left_set = sizes.left.kind == sizing_value;
+  let right_set = sizes.right.kind == sizing_value;
+  let top_set = sizes.top.kind == sizing_value;
+  let bottom_set = sizes.bottom.kind == sizing_value;
+  let width_auto = sizes.width.kind != sizing_value;
+  let height_auto = sizes.height.kind != sizing_value;
+  let stretch_width_pair = band(left_set, right_set);
+  let stretch_width = band(stretch_width_pair, width_auto);
+  let stretch_height_pair = band(top_set, bottom_set);
+  let stretch_height = band(stretch_height_pair, height_auto);
+  let width_is_value = sizes.width.kind == sizing_value;
+  let height_is_value = sizes.height.kind == sizing_value;
+  let width_percent = band(width_is_value, sizes.width.value.has_percent);
+  let height_percent = band(height_is_value, sizes.height.value.has_percent);
+  let percent_axis = bor(width_percent, height_percent);
+  let stretch_axis = bor(stretch_width, stretch_height);
+  let made = bor(stretch_axis, percent_axis);
+  return made;
+}
+
 fn position_out(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Positions the context's absolutely and fixed positioned children against its border box and the borders of its style.";
   let border = border_edges(styles: styles, style: context^.style);
-  position_out_with(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, dx: 0_i32, dy: 0_i32);
+  position_out_with(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border);
   return unit;
 }
 
-fn position_out_with(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges, dx: i32, dy: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Positions the context's absolutely and fixed positioned children (CSS 2.2 10.3.7 and 10.6.4): against the padding box of the innermost positioned block of the context around it, else the context's padding box inside the borders border, or the viewport for a fixed box, by left or right and top or bottom, keeping the static position on an axis where both are auto; a box whose opposite insets are both set and whose size is auto is laid out again at the size they leave, and one with a percentage width or height against the padding box. The blocks of the context are placed dx, dy away from where its flow recorded them, as a table cell's content is moved.";
-  let box_width_term = horizontal(edges: border);
-  let box_width = context^.width -sat box_width_term;
-  let box_height_term = vertical(edges: border);
-  let box_height = context^.height -sat box_height_term;
-  let viewport_width = units(px: viewport.width);
-  let viewport_height = units(px: viewport.height);
+fn position_out_with(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Positions the context's absolutely and fixed positioned children (CSS 2.2 10.3.7 and 10.6.4): against the padding box of the innermost positioned block of the context around it, else the context's padding box inside the borders border, or the viewport for a fixed box, by left or right and top or bottom, keeping the static position on an axis where both are auto; a box whose opposite insets are both set and whose size is auto is laid out again at the size they leave, and one with a percentage width or height against the padding box. While the context is being updated, its children's layouts follow lay_out_child's rules for that.";
   let open_blocks = box_slots_new::<u32>(capacity: 8_u64);
   let flow_count = context^.flow.inner.len;
   for (k in 0_u64..flow_count) {
@@ -1439,129 +1545,9 @@ fn position_out_with(context: &Context, styles: &Styles, document: &Document, fo
     match item {
       Out(context: c) => {
         let at = cvt::<u32, u64>(c);
-        if at < context^.children.inner.len {
-          let style = context^.children.inner[at].style;
-          let group = box_of(styles: styles, style: style);
-          let fixed = group.position == position_fixed;
-          let depth = open_blocks.inner.len;
-          let (anchor_found, anchor_left, anchor_top, anchor_width, anchor_height) = positioned_block(context: context, styles: styles, open_blocks: &open_blocks.inner[0_u64..depth]);
-          let not_fixed = bnot(fixed);
-          let in_block = band(anchor_found, not_fixed);
-          let own_left = if in_block {
-            give anchor_left +sat dx;
-          } else {
-            give border.left;
-          }
-          let own_top = if in_block {
-            give anchor_top +sat dy;
-          } else {
-            give border.top;
-          }
-          let own_width = if in_block {
-            give anchor_width;
-          } else {
-            give box_width;
-          }
-          let own_height = if in_block {
-            give anchor_height;
-          } else {
-            give box_height;
-          }
-          let cb_left = if fixed {
-            give 0_i32;
-          } else {
-            give own_left;
-          }
-          let cb_top = if fixed {
-            give 0_i32;
-          } else {
-            give own_top;
-          }
-          let cb_width = if fixed {
-            give viewport_width;
-          } else {
-            give own_width;
-          }
-          let cb_height = if fixed {
-            give viewport_height;
-          } else {
-            give own_height;
-          }
-          let sizes = size_of(styles: styles, style: style);
-          let left = inset_value(value: sizes.left, basis: cb_width);
-          let right = inset_value(value: sizes.right, basis: cb_width);
-          let top = inset_value(value: sizes.top, basis: cb_height);
-          let bottom = inset_value(value: sizes.bottom, basis: cb_height);
-          let left_set = sizes.left.kind == sizing_value;
-          let right_set = sizes.right.kind == sizing_value;
-          let top_set = sizes.top.kind == sizing_value;
-          let bottom_set = sizes.bottom.kind == sizing_value;
-          let width_auto = sizes.width.kind != sizing_value;
-          let height_auto = sizes.height.kind != sizing_value;
-          let stretch_width_pair = band(left_set, right_set);
-          let stretch_width = band(stretch_width_pair, width_auto);
-          let stretch_height_pair = band(top_set, bottom_set);
-          let stretch_height = band(stretch_height_pair, height_auto);
-          let width_is_value = sizes.width.kind == sizing_value;
-          let height_is_value = sizes.height.kind == sizing_value;
-          let width_percent = band(width_is_value, sizes.width.value.has_percent);
-          let height_percent = band(height_is_value, sizes.height.value.has_percent);
-          let percent_axis = bor(width_percent, height_percent);
-          let stretch_axis = bor(stretch_width, stretch_height);
-          let again = bor(stretch_axis, percent_axis);
-          if again {
-            let margin_lr = context^.children.inner[at].margin_left +sat context^.children.inner[at].margin_right;
-            let margin_tb = context^.children.inner[at].margin_top +sat context^.children.inner[at].margin_bottom;
-            let inset_lr = left +sat right;
-            let inset_tb = top +sat bottom;
-            let width_left = cb_width -sat inset_lr;
-            let height_left = cb_height -sat inset_tb;
-            let forced_width = if stretch_width {
-              let width_room = width_left -sat margin_lr;
-              give imax(width_room, 0_i32);
-            } else {
-              give unknown;
-            }
-            let forced_height = if stretch_height {
-              let height_room = height_left -sat margin_tb;
-              give imax(height_room, 0_i32);
-            } else {
-              give unknown;
-            }
-            let no = False();
-            set context^.children.inner[at].space = Space(available: cb_width, basis_width: cb_width, basis_height: cb_height, forced_width: forced_width, forced_height: forced_height, shrink: no);
-            set context^.children.inner[at].intrinsic_known = False();
-            lay_out_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-          }
-          let width = context^.children.inner[at].width;
-          let height = context^.children.inner[at].height;
-          let margin_left = context^.children.inner[at].margin_left;
-          let margin_right = context^.children.inner[at].margin_right;
-          let margin_top = context^.children.inner[at].margin_top;
-          let margin_bottom = context^.children.inner[at].margin_bottom;
-          if left_set {
-            let from = cb_left +sat left;
-            set context^.children.inner[at].x = from +sat margin_left;
-          } else if right_set {
-            let edge = cb_left +sat cb_width;
-            let inner = edge -sat right;
-            let outer = inner -sat margin_right;
-            set context^.children.inner[at].x = outer -sat width;
-          }
-          if top_set {
-            let from = cb_top +sat top;
-            set context^.children.inner[at].y = from +sat margin_top;
-          } else if bottom_set {
-            let edge = cb_top +sat cb_height;
-            let inner = edge -sat bottom;
-            let outer = inner -sat margin_bottom;
-            set context^.children.inner[at].y = outer -sat height;
-          }
-          let placed = bor(left_set, right_set);
-          let placed_vertically = bor(top_set, bottom_set);
-          let anchored = band(placed, placed_vertically);
-          set context^.children.inner[at].viewport_origin = band(fixed, anchored);
-        }
+        let depth = open_blocks.inner.len;
+        let (anchor_found, anchor_left, anchor_top, anchor_width, anchor_height) = positioned_block(context: context, styles: styles, open_blocks: &open_blocks.inner[0_u64..depth]);
+        position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: anchor_found, anchor_left: anchor_left, anchor_top: anchor_top, anchor_width: anchor_width, anchor_height: anchor_height);
       }
       Open(block: b) => {
         let pushed = push_item::<u32>(cell: &open_blocks, value: b, ceiling: item_ceiling);
@@ -1643,7 +1629,7 @@ fn clear_column_map(context: &Context) -> result: unit writes(context) {
 }
 
 fn finish_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The passes of a flow context after its children are laid out and its paragraphs broken: the stacking pass, its columns, its height and baseline, its positioned children, then its fragments.";
+  doc "The passes of a flow context after its children are laid out and its paragraphs broken: the stacking pass, its columns, its height and baseline, its positioned children, then its own fragments, those of the inline boxes blocks interrupt and of the paragraphs without lines; its blocks' and paragraphs' fragments stay with them, and place_boxes reads them there.";
   let style = context^.style;
   let (laid_height, baseline, has_baseline) = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite);
   let height = if frame.columned {
@@ -1665,8 +1651,197 @@ fn finish_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   set context^.has_baseline = band(has_baseline, visible);
   position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
-  copy_fragments(context: context);
   split_fragments(context: context, styles: styles, content_left: frame.content_left);
+  return unit;
+}
+
+fn position_child(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges, at: u64, anchor_found: Bool, anchor_left: i32, anchor_top: i32, anchor_width: i32, anchor_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Positions the absolutely or fixed positioned child at of the context, as position_out_with describes, its containing block the padding box the anchor gives when anchor_found (the innermost positioned block around it), else the context's padding box inside border, or the viewport for a fixed box.";
+  if at < context^.children.inner.len {
+  } else {
+    return unit;
+  }
+  let box_width_term = horizontal(edges: border);
+  let box_width = context^.width -sat box_width_term;
+  let box_height_term = vertical(edges: border);
+  let box_height = context^.height -sat box_height_term;
+  let viewport_width = units(px: viewport.width);
+  let viewport_height = units(px: viewport.height);
+  let style = context^.children.inner[at].style;
+  let group = box_of(styles: styles, style: style);
+  let fixed = group.position == position_fixed;
+  let not_fixed = bnot(fixed);
+  let in_block = band(anchor_found, not_fixed);
+  let own_left = if in_block {
+    give anchor_left;
+  } else {
+    give border.left;
+  }
+  let own_top = if in_block {
+    give anchor_top;
+  } else {
+    give border.top;
+  }
+  let own_width = if in_block {
+    give anchor_width;
+  } else {
+    give box_width;
+  }
+  let own_height = if in_block {
+    give anchor_height;
+  } else {
+    give box_height;
+  }
+  let cb_left = if fixed {
+    give 0_i32;
+  } else {
+    give own_left;
+  }
+  let cb_top = if fixed {
+    give 0_i32;
+  } else {
+    give own_top;
+  }
+  let cb_width = if fixed {
+    give viewport_width;
+  } else {
+    give own_width;
+  }
+  let cb_height = if fixed {
+    give viewport_height;
+  } else {
+    give own_height;
+  }
+  let sizes = size_of(styles: styles, style: style);
+  let left = inset_value(value: sizes.left, basis: cb_width);
+  let right = inset_value(value: sizes.right, basis: cb_width);
+  let top = inset_value(value: sizes.top, basis: cb_height);
+  let bottom = inset_value(value: sizes.bottom, basis: cb_height);
+  let left_set = sizes.left.kind == sizing_value;
+  let right_set = sizes.right.kind == sizing_value;
+  let top_set = sizes.top.kind == sizing_value;
+  let bottom_set = sizes.bottom.kind == sizing_value;
+  let width_auto = sizes.width.kind != sizing_value;
+  let height_auto = sizes.height.kind != sizing_value;
+  let stretch_width_pair = band(left_set, right_set);
+  let stretch_width = band(stretch_width_pair, width_auto);
+  let stretch_height_pair = band(top_set, bottom_set);
+  let stretch_height = band(stretch_height_pair, height_auto);
+  let again = laid_out_by_position(styles: styles, style: style);
+  if again {
+    let margin_lr = context^.children.inner[at].margin_left +sat context^.children.inner[at].margin_right;
+    let margin_tb = context^.children.inner[at].margin_top +sat context^.children.inner[at].margin_bottom;
+    let inset_lr = left +sat right;
+    let inset_tb = top +sat bottom;
+    let width_left = cb_width -sat inset_lr;
+    let height_left = cb_height -sat inset_tb;
+    let forced_width = if stretch_width {
+      let width_room = width_left -sat margin_lr;
+      give imax(width_room, 0_i32);
+    } else {
+      give unknown;
+    }
+    let forced_height = if stretch_height {
+      let height_room = height_left -sat margin_tb;
+      give imax(height_room, 0_i32);
+    } else {
+      give unknown;
+    }
+    let no = False();
+    let forced_space = Space(available: cb_width, basis_width: cb_width, basis_height: cb_height, forced_width: forced_width, forced_height: forced_height, shrink: no);
+    let updating = context^.dirty;
+    let laid = context^.children.inner[at].laid;
+    let same = equivalent_space(styles: styles, style: style, first: laid, second: forced_space);
+    let unmarked = bnot(context^.children.inner[at].dirty);
+    let unchanged = band(same, unmarked);
+    let keeps = band(updating, unchanged);
+    set context^.children.inner[at].space = forced_space;
+    if keeps {
+    } else {
+      set context^.children.inner[at].intrinsic_known = False();
+    }
+    lay_out_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+  }
+  let width = context^.children.inner[at].width;
+  let height = context^.children.inner[at].height;
+  let margin_left = context^.children.inner[at].margin_left;
+  let margin_right = context^.children.inner[at].margin_right;
+  let margin_top = context^.children.inner[at].margin_top;
+  let margin_bottom = context^.children.inner[at].margin_bottom;
+  if left_set {
+    let from = cb_left +sat left;
+    set context^.children.inner[at].x = from +sat margin_left;
+  } else if right_set {
+    let edge = cb_left +sat cb_width;
+    let inner = edge -sat right;
+    let outer = inner -sat margin_right;
+    set context^.children.inner[at].x = outer -sat width;
+  }
+  if top_set {
+    let from = cb_top +sat top;
+    set context^.children.inner[at].y = from +sat margin_top;
+  } else if bottom_set {
+    let edge = cb_top +sat cb_height;
+    let inner = edge -sat bottom;
+    let outer = inner -sat margin_bottom;
+    set context^.children.inner[at].y = outer -sat height;
+  }
+  let placed = bor(left_set, right_set);
+  let placed_vertically = bor(top_set, bottom_set);
+  let anchored = band(placed, placed_vertically);
+  set context^.children.inner[at].viewport_origin = band(fixed, anchored);
+  return unit;
+}
+
+fn chain_anchor(context: &Context, styles: &Styles, block: u32) -> (found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles) {
+  doc "positioned_block's answer for a box sitting in block, read from the blocks' parents the pre-pass records rather than from a walk of the flow.";
+  let count = context^.blocks.inner.len;
+  let at = block;
+  for (step in 0_u64..count) {
+    if at == no_index {
+      break;
+    }
+    let b = cvt::<u32, u64>(at);
+    if b < context^.blocks.inner.len {
+    } else {
+      break;
+    }
+    let found_block = context^.blocks.inner[b];
+    let group = box_of(styles: styles, style: found_block.style);
+    if group.position != position_static {
+      let edges = border_edges(styles: styles, style: found_block.style);
+      let left = found_block.x +sat edges.left;
+      let top = found_block.y +sat edges.top;
+      let across = horizontal(edges: edges);
+      let down = vertical(edges: edges);
+      let width = found_block.width -sat across;
+      let height = found_block.height -sat down;
+      let yes = True();
+      return yes, left, top, width, height;
+    }
+    set at = found_block.parent;
+  }
+  let no = False();
+  return no, 0_i32, 0_i32, 0_i32, 0_i32;
+}
+
+fn position_out_children(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "position_out for a flow context whose pre-pass recorded each child's flow entry and block: positions each out-of-flow child found among the children, its anchor from chain_anchor, with no walk of the flow.";
+  let border = border_edges(styles: styles, style: context^.style);
+  let count = context^.children.inner.len;
+  for (at in 0_u64..count) {
+    if at < context^.children.inner.len {
+      let block = context^.children.inner[at].block;
+      let (kind, index) = entry_kind(context: context, flow_at: context^.children.inner[at].flow_at);
+      let out_kind = kind == 3_u8;
+      let this_child = index == at;
+      let out = band(out_kind, this_child);
+      if out {
+        let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
+        position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
+      }
+    }
+  }
   return unit;
 }
 
@@ -2160,24 +2335,53 @@ fn place_rect(fragment: Fragment, x: i32, y: i32, map: &[ColumnPiece], map_y: i3
 }
 
 fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(context), reads(map), writes(out) {
-  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin, moving them by the innermost multi-column context's column map: a multi-column context's own box by its parent's map, its content by its own.";
+  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin, moving them by the innermost multi-column context's column map: a multi-column context's own box by its parent's map, its content by its own. Its own box's fragment comes first, then each shown block box's border box and each paragraph's fragments at the paragraph's origin, then the rest of its fragments, the order lay_out_flow made them in when it copied the blocks' and paragraphs' into its list.";
   let own_pieces = context^.column_map.inner.len;
   let own_map = own_pieces > 0_u64;
   let style = context^.style;
   let count = context^.fragments.inner.len;
-  for (f in 0_u64..count) {
-    let fragment = context^.fragments.inner[f];
-    let element_kind = fragment.kind == placed_element;
-    let same_owner = fragment.owner == style.element;
-    let named = bnot(style.anonymous);
-    let owned_pair = band(element_kind, same_owner);
-    let own_box = band(owned_pair, named);
-    let no_map = bnot(own_map);
-    let outer = bor(own_box, no_map);
-    if outer {
-      place_rect(fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
-    } else {
-      place_rect(fragment: fragment, x: x, y: y, map: &context^.column_map.inner[0_u64..own_pieces], map_y: y, out: out);
+  let owned = owns_fragment(style: style);
+  let own_count = if owned {
+    give imin(count, 1_u64);
+  } else {
+    give 0_u64;
+  }
+  for (f in 0_u64..own_count) {
+    if f < context^.fragments.inner.len {
+      let fragment = context^.fragments.inner[f];
+      place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+    }
+  }
+  let blocks = context^.blocks.inner.len;
+  for (b in 0_u64..blocks) {
+    let block = context^.blocks.inner[b];
+    let shown = shown_owner(style: block.style);
+    if shown {
+      let fragment = Fragment(kind: placed_element, owner: block.style.element, x: block.x, y: block.y, width: block.width, height: block.height);
+      place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+    }
+  }
+  let paragraphs = context^.paragraphs.inner.len;
+  for (p in 0_u64..paragraphs) {
+    let left = context^.paragraphs.inner[p].x;
+    let top = context^.paragraphs.inner[p].top;
+    let pieces = context^.paragraphs.inner[p].fragments.inner.len;
+    for (f in 0_u64..pieces) {
+      if p < context^.paragraphs.inner.len {
+        if f < context^.paragraphs.inner[p].fragments.inner.len {
+          let piece = context^.paragraphs.inner[p].fragments.inner[f];
+          let moved_x = left +sat piece.x;
+          let moved_y = top +sat piece.y;
+          let fragment = Fragment(kind: piece.kind, owner: piece.owner, x: moved_x, y: moved_y, width: piece.width, height: piece.height);
+          place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+        }
+      }
+    }
+  }
+  for (f in own_count..count) {
+    if f < context^.fragments.inner.len {
+      let fragment = context^.fragments.inner[f];
+      place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
     }
   }
   let children = context^.children.inner.len;
@@ -2200,6 +2404,26 @@ fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: 
     } else {
       place_context(context: child, x: child_x, y: child_y, map: map, map_y: map_y, out: out);
     }
+  }
+  return unit;
+}
+
+fn place_fragment(context: &Context, fragment: Fragment, x: i32, y: i32, map: &[ColumnPiece], map_y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(context), reads(map), writes(out) {
+  doc "Appends one of context's fragments at its absolute origin x, y: the context's own box by the column map around it, anything else by the context's own column map when it has one.";
+  let own_pieces = context^.column_map.inner.len;
+  let own_map = own_pieces > 0_u64;
+  let style = context^.style;
+  let element_kind = fragment.kind == placed_element;
+  let same_owner = fragment.owner == style.element;
+  let named = bnot(style.anonymous);
+  let owned_pair = band(element_kind, same_owner);
+  let own_box = band(owned_pair, named);
+  let no_map = bnot(own_map);
+  let outer = bor(own_box, no_map);
+  if outer {
+    place_rect(fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+  } else {
+    place_rect(fragment: fragment, x: x, y: y, map: &context^.column_map.inner[0_u64..own_pieces], map_y: y, out: out);
   }
   return unit;
 }
