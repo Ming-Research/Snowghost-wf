@@ -1056,9 +1056,10 @@ fn translate_fragments(context: &Context, top: i32, bottom: i32, delta: i32) -> 
 }
 
 fn finish_in_place(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, delta: i32) -> moved: Bool reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The end of an in-place update: the content height grows by delta, the context's height follows from it in its current space (used_height, which a forced or percentage height may fix), its own fragment takes that height, and its out-of-flow children are positioned again (position_out_children) when content moved or the height changed. Tells whether anything moved.";
+  doc "The end of an in-place update: the content height and the flow's end grow by delta, the context's height follows from it in its current space (used_height, which a forced or percentage height may fix), its own fragment takes that height, and its out-of-flow children are positioned again (position_out_children) when content moved or the height changed. Tells whether anything moved.";
   let raw = context^.content_raw +sat delta;
   set context^.content_raw = raw;
+  set context^.flow_end = context^.flow_end +sat delta;
   let content = imax(raw, 0_i32);
   let old_height = context^.height;
   let height = used_height(context: context, styles: styles, content: content);
@@ -1342,6 +1343,8 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
   let walked = if moved {
     translate_after(context: context, flow_at: change.flow_at, delta: change.delta);
     translate_fragments(context: context, top: change.top, bottom: change.bottom, delta: change.delta);
+    let changed_at = cvt::<u32, u64>(change.flow_at);
+    shift_naturals(context: context, after: changed_at, delta: change.delta);
     grow_blocks(context: context, first: change.block, delta: change.delta);
     let total = context^.flow.inner.len;
     let at = cvt::<u32, u64>(change.flow_at);
@@ -1404,6 +1407,21 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   let nothing = no_updates();
   let early = nothing;
   if steady {
+    let (from, p, inline_child) = restack_entry(context: context);
+    let unscaled = bnot(frame.columned);
+    let found = from != 18446744073709551615_u64;
+    let restackable = band(found, unscaled);
+    let old_top = if p < context^.paragraphs.inner.len {
+      give context^.paragraphs.inner[p].top;
+    } else {
+      give 0_i32;
+    }
+    let old_height = paragraph_height(context: context, at: p);
+    let old_lines = if p < context^.paragraphs.inner.len {
+      give context^.paragraphs.inner[p].lines.inner.len > 0_u64;
+    } else {
+      give False();
+    }
     let (handled, local) = update_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, measured: own_asked);
     if handled {
       clear_marks(context: context);
@@ -1411,6 +1429,20 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
       return local;
     }
     set early = local;
+    let waiting = if inline_child < context^.children.inner.len {
+      give context^.children.inner[inline_child].dirty;
+    } else {
+      give False();
+    }
+    let ready = bnot(waiting);
+    let restacking = band(restackable, ready);
+    if restacking {
+      let restacked = restack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, from: from, at: p, old_top: old_top, old_height: old_height, old_lines: old_lines, unasked: unasked);
+      clear_marks(context: context);
+      set context^.dirty = False();
+      let total = add_counts(first: restacked, second: early);
+      return total;
+    }
   }
   let children = context^.children.inner.len;
   let bounded = imin(children, item_ceiling);
@@ -1526,4 +1558,159 @@ fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet
   }
   let failure = LayoutError::Text();
   return Err<unit, LayoutError>(error: failure);
+}
+
+fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, from: u64, at: u64, old_top: i32, old_height: i32, old_lines: Bool, unasked: Bool) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "X5 step 3c's re-stack from the edited entry, for a flow context whose geometry and space are unchanged and whose one mark restack_entry turns into flow entry from (and paragraph at, or none), which update_in_place refused (a float beside it, a block that cannot grow with it, or margins it changes): the paragraph is broken again at full width, as the pre-pass path breaks a marked paragraph or one holding a changed atomic inline, and stack_flow replays the entries before it from their placed positions (no pre-pass, no breaking and no child layout there) and stacks it and what follows again, from the previous pass's state of the paragraph (old_top, old_height, old_lines), until restack_settles lets it stop. When it stopped after entry k, every later paragraph, child and block moves by its delta (translate_after), so do each later block-in-inline's line and each later entry's natural position, and the content height and the flow's end move by delta; the baseline is the previous one moved by delta when it came from after k. Then, as finish_flow does, the height, the baseline, the own fragment and the block-in-inline rectangles (split_fragments) and the out-of-flow children (position_out_children).";
+  let held = context^.children.inner.len;
+  let none = box_slots_new::<Exclusion>(capacity: 0_u64);
+  if at < context^.paragraphs.inner.len {
+    break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..held], styles: styles, fonts: fonts, picks: picks, exclusions: &none.inner[0_u64..0_u64], origin_y: 0_i32);
+  }
+  let old_entry = context^.baseline_entry;
+  let old_baseline = context^.baseline;
+  let old_based = context^.has_baseline;
+  let old_raw = context^.content_raw;
+  let old_end = context^.flow_end;
+  let yes = True();
+  let plan = Restack(partial: yes, from: from, unasked: unasked, old_top: old_top, old_height: old_height, old_lines: old_lines, old_flow_end: old_end);
+  let cleared = context^.fragments.inner.len;
+  for (step in 0_u64..cleared) {
+    let length = context^.fragments.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &context^.fragments.inner);
+  }
+  let stacked = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite, plan: plan);
+  let baseline = stacked.baseline;
+  let has_baseline = stacked.has_baseline;
+  let content = if stacked.stopped {
+    let delta = stacked.delta;
+    let stop = flow_index(at: stacked.stop_at);
+    if delta != 0_i32 {
+      translate_after(context: context, flow_at: stop, delta: delta);
+      shift_split_lines(context: context, flow_at: stop, delta: delta);
+      shift_naturals(context: context, after: stacked.stop_at, delta: delta);
+    }
+    let raw = old_raw +sat delta;
+    set context^.content_raw = raw;
+    set context^.flow_end = old_end +sat delta;
+    let later = if old_entry == no_index {
+      give False();
+    } else {
+      give old_entry > stop;
+    }
+    if later {
+      set baseline = old_baseline +sat delta;
+      set has_baseline = old_based;
+      set context^.baseline_entry = old_entry;
+    }
+    give imax(raw, 0_i32);
+  } else {
+    give stacked.height;
+  }
+  let used = used_height(context: context, styles: styles, content: content);
+  set context^.height = used;
+  let group = box_of(styles: styles, style: context^.style);
+  let shown_x = group.overflow_x == overflow_visible;
+  let clipped_x = group.overflow_x == overflow_clip;
+  let shown_y = group.overflow_y == overflow_visible;
+  let clipped_y = group.overflow_y == overflow_clip;
+  let visible_x = bor(shown_x, clipped_x);
+  let visible_y = bor(shown_y, clipped_y);
+  let visible = band(visible_x, visible_y);
+  set context^.baseline = baseline;
+  set context^.has_baseline = band(has_baseline, visible);
+  if context^.has_out {
+    position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  }
+  add_own_fragment(context: context);
+  split_fragments(context: context, styles: styles, content_left: frame.content_left);
+  let total = context^.flow.inner.len;
+  let walked = if stacked.stopped {
+    let after = stacked.stop_at +sat 1_u64;
+    give total -sat after;
+  } else {
+    give 0_u64;
+  }
+  let entries = stacked.restacked +sat walked;
+  return UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 1_u64, held_entries: stacked.restacked, entries: entries);
+}
+
+fn shift_split_lines(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
+  doc "Moves the line recorded for each block-in-inline whose block opens after flow_at by delta.";
+  let count = context^.splits.inner.len;
+  for (k in 0_u64..count) {
+    shift_split_line(split: &context^.splits.inner[k], flow_at: flow_at, delta: delta);
+  }
+  return unit;
+}
+
+fn shift_split_line(split: &Split, flow_at: u32, delta: i32) -> result: unit writes(split) {
+  doc "Moves one block-in-inline's recorded line by delta when its block opens after flow_at and it has one.";
+  if split^.open > flow_at {
+    if split^.line != no_line {
+      set split^.line = split^.line +sat delta;
+    }
+  }
+  return unit;
+}
+
+fn shift_naturals(context: &Context, after: u64, delta: i32) -> result: unit writes(context) {
+  doc "Moves the natural position of every flow entry after after by delta, leaving the largest i32 of an entry no float moves as it is.";
+  let count = context^.naturals.inner.len;
+  let first = after +sat 1_u64;
+  for (k in first..count) {
+    shift_natural(natural: &context^.naturals.inner[k], delta: delta);
+  }
+  return unit;
+}
+
+fn shift_natural(natural: &i32, delta: i32) -> result: unit writes(natural) {
+  doc "Moves one natural position by delta unless it is the largest i32.";
+  if natural^ != 2147483647_i32 {
+    set natural^ = natural^ +sat delta;
+  }
+  return unit;
+}
+
+fn restack_entry(context: &Context) -> (from: u64, paragraph: u64, inline_child: u64) reads(context) {
+  doc "The flow entry a re-stack starts from for the context's one mark (restack_flow), the paragraph it breaks again and the atomic inline it waits for (the largest u64 for none): a marked paragraph's own entry; for one marked child and no marked paragraph, an in-flow child's or a float's entry (stack_flow settles it there), or, for an atomic inline, the entry of the paragraph holding it, which update_in_place must have updated first; the largest u64 for anything else (several marks, an out-of-flow child). It reads the marks text_changed recorded, not the children's own, which update_in_place may already have cleared.";
+  let none = 18446744073709551615_u64;
+  let no_child = context^.marked_children == 0_u32;
+  let (one_paragraph, p) = single_marked_paragraph(context: context);
+  let paragraph_only = band(no_child, one_paragraph);
+  if paragraph_only {
+    if p < context^.paragraphs.inner.len {
+      let at = cvt::<u32, u64>(context^.paragraphs.inner[p].flow_at);
+      return at, p, none;
+    }
+    return none, none, none;
+  }
+  let no_paragraph = context^.marked_paragraphs == 0_u32;
+  let one_child = context^.marked_children == 1_u32;
+  let child_only = band(no_paragraph, one_child);
+  if child_only {
+  } else {
+    return none, none, none;
+  }
+  let c = cvt::<u32, u64>(context^.marked_child);
+  if c < context^.children.inner.len {
+  } else {
+    return none, none, none;
+  }
+  let flow_at = context^.children.inner[c].flow_at;
+  let (kind, index) = entry_kind(context: context, flow_at: flow_at);
+  let at = cvt::<u32, u64>(flow_at);
+  if kind == 1_u8 {
+    return at, none, none;
+  }
+  if kind == 2_u8 {
+    return at, none, none;
+  }
+  if kind == 0_u8 {
+    return at, index, c;
+  }
+  return none, none, none;
 }
