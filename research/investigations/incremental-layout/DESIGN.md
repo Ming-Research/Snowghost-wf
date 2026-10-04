@@ -56,7 +56,7 @@ and the dump stay untimed, as in `run.sh time`.
 
 ## Decisions
 
-Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q80
+Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q81
 remain open recommendations; their implementation and validation do not
 constitute owner approval. Here are the choices and their grounds.
 
@@ -244,6 +244,44 @@ explicit refusal. Cover empty strings, multibyte strings, before/after and
 repeated separators. Mutating preparation to read Styles.generated_text again
 must fail the relocation case. Record copied bytes and retained buffer sizes
 on the workloads; rerun the unchanged full-build overhead criterion.
+
+**Q81, stable source-local layout routes (open).** A structural edit changes
+preorder serials in the current global ContextPath table, although unrelated
+context bodies have not changed. Recommended: identify each complete body by
+its source NodeId and number only that body's derived contexts locally,
+stopping at real child sources. Each parent source owns its child-source
+entry routes; each source owns its text-node records and derived paths.
+Rebuilding one source therefore does not rename another source's contents.
+The alternative global serial rebuild adds an ordering and a full-tree scan
+that neither text ownership nor path lookup requires. A global allocator for
+new context identities would add shared allocation ordering between sources.
+
+Resolve a route in two phases: collect source-parent hops in the dense
+NodeId table, then descend from the document context, resolving each hop's
+local path in its already located source. Every actual context edge is
+visited a constant number of times. Do not assume parent NodeIds precede
+children: a later insertion invalidates that assumption. This adds a source
+lookup per source boundary compared with the old single serial chain.
+
+Dense text and source tables keep absent records in spare capacity and grow
+geometrically only when a newly allocated NodeId exceeds capacity. Growth
+copies independent slots; deletion writes tombstones. This avoids both
+copying every table on each insertion and a runtime Slots initialization
+append chain. Report capacity, live records, growth copies and lookup cost.
+The proposed publication of independent source patches still requires a
+compiler-verified ownership proof; native apart and disjoint-range publication
+are candidates, not measured conclusions. No language change is presumed.
+
+Before acceptance: insertion and removal followed by text edits in the
+changed source and unrelated later sources must match full construction and
+independent reparsing, including nonmonotonic NodeIds and derived contexts.
+Record all routes changed; untouched source-local routes must stay equal.
+Exercise growth and tombstones, and reject invalid or cyclic routes in a
+bounded number of steps. A fault that leaves one moved source's parent entry
+unchanged must fail a later text edit. Compile and inspect the publication
+ledger; a sequential shared-table helper is not proof of independence.
+The unchanged full-build overhead limit still applies. The owner has not
+ruled on Q81.
 
 ## Measurement
 

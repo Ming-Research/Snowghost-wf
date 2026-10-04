@@ -277,6 +277,8 @@ struct Context {
   pieces: Box<Slots<Piece>>;
   generated_text: Box<Slots<u8>>;
   source: ContextSource;
+  local_paths: Box<Slots<LocalPath>>;
+  skipped_nodes: Box<Slots<NodeId>>;
   blocks: Box<Slots<Block>>;
   paragraphs: Box<Slots<Paragraph>>;
   children: Box<Slots<Context>>;
@@ -327,16 +329,25 @@ struct Context {
 }
 
 struct TextUnit {
-  doc "Where a text node's data enters the layout: the serial of the context whose pieces hold it, the first of its pieces there and how many, and the paragraph those pieces belong to; serial is no_index for a node that feeds no paragraph, and skipped_text (pkg::layout's build.wf) for one the walk met where its data made no piece, so that data which would make one is a box-tree change.";
-  serial: u32;
+  doc "Where a text node enters layout: the stable source NodeId and its source-local context ordinal, the first piece and count, and the paragraph. source.index is no_index for an unvisited node; local_context is skipped_text when the owning source visited the node without a text piece. A source numbers only itself and its derived contexts, so unrelated source bodies keep their routes across insertion.";
+  source: NodeId;
+  local_context: u32;
   piece: u32;
   count: u32;
   paragraph: u32;
 }
 
-struct ContextPath {
-  doc "Where a context sits in the owned tree, by its serial (its position in a preorder walk of the tree, the initial containing block 0): its parent's serial (no_index for the initial containing block) and its index among its parent's children.";
+struct LocalPath {
+  doc "The parent local ordinal and child index of a derived context within one source. Local zero is the source root, with no_index as its parent. Real child sources terminate this local numbering.";
   parent: u32;
+  child: u32;
+}
+
+struct SourcePath {
+  doc "The entry of a source root, indexed by its stable NodeId. A parent source owns this route: parent_local selects a derived context in that source, and child selects this source among its children. The document source is present with parent_source.index no_index. Absent and removed sources have present False; NodeId order is not tree order.";
+  present: Bool;
+  parent_source: NodeId;
+  parent_local: u32;
   child: u32;
 }
 
@@ -355,7 +366,7 @@ public struct Layout {
   paragraphs: u64;
   contexts: u64;
   text_units: Box<Array<TextUnit>>;
-  paths: Box<Slots<ContextPath>>;
+  source_paths: Box<Array<SourcePath>>;
   dirty: Bool;
   last_update: UpdateCounts;
 }
@@ -369,7 +380,7 @@ public struct PlacedRect {
   public height: f32;
 }
 
-public fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) doc "Builds the owned tree of formatting contexts of document (design/pipeline/layout.md) from its computed styles, which pkg::style::compute_styles returns for traversal's elements and their ::before and ::after boxes, in the viewport: one walk in tree order generates the boxes, with CSS Display 3's and CSS 2.2's anonymous boxes, generated content whose counters and quotes the walk resolves as it visits each element in tree order (Q63), and each paragraph's text as pieces. It also records, for text_changed and update, where each text node enters the layout (text_units, indexed by NodeId index) and where each context sits (paths, by serial), with no mark set. No paragraph is prepared: pkg::layout::prepare_text does that, and lay_out needs a prepared layout. TooLarge past the storage limits; Inconsistent when the document, traversal and styles disagree.";
+public fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) doc "Builds the owned tree of formatting contexts of document (design/pipeline/layout.md) from its computed styles, which pkg::style::compute_styles returns for traversal's elements and their ::before and ::after boxes, in the viewport: one walk in tree order generates the boxes, with CSS Display 3's and CSS 2.2's anonymous boxes, generated content whose counters and quotes the walk resolves as it visits each element in tree order (Q63), and each paragraph's text as pieces. It also records, for text_changed and update, where each text node enters the layout (text_units, indexed by NodeId index) and where each source root sits (source_paths, by NodeId), and source-local paths through derived contexts, with no mark set. No paragraph is prepared: pkg::layout::prepare_text does that, and lay_out needs a prepared layout. TooLarge past the storage limits; Inconsistent when the document, traversal and styles disagree.";
 
 public fn prepare_text(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Prepares every paragraph of layout, which build_boxes returned: in each context, one counted loop turns each paragraph's pieces into its text, after CSS Text 3's white-space processing and text-transform, and shapes it with pkg::layout::text::shape_paragraph (Q53). picks is pkg::layout::text::pick_fonts for the font groups of the styles layout was built from. Text when shaping refuses a paragraph.";
 

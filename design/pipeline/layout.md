@@ -22,6 +22,8 @@ Decision: A style update compares only the background predicate that inline frag
 
 Decision: A retained formatting context owns the generated UTF-8 bytes its pieces read, provisionally because preparation can read a local slice without depending on a replaced style arena or resolving several style tables, instead of retaining run-local arena offsets, resolving symbolic item handles on every preparation, or keeping whole old style results alive; copying and retained storage are measured against the existing full-build limit ([Q80](../../research/investigations/incremental-layout/DESIGN.md#decisions)).
 
+Decision: A retained layout routes text by its source NodeId and a local ordinal within that source's derived contexts, provisionally because changing one body's contents need not rename unrelated bodies and independent sources need no shared identity allocator, instead of rebuilding global preorder serials after structural edits; source-parent routes use geometrically grown NodeId tables and resolve in two phases from the document root ([Q81](../../research/investigations/incremental-layout/DESIGN.md#decisions)).
+
 Rejected:
 - Leaving multi-column layout out of scope: rejected because 20.7 percent of html5's block boxes and 14 percent of apollo11's lie in multi-column containers, so the layout criterion could not hold on those pages ([Q59](../../research/investigations/layout/DESIGN.md#owner-rulings)).
 - Decoding text during the walk: rejected because it keeps four fifths of the builder's work, turning text into scalar values, inside the walk's chain.
