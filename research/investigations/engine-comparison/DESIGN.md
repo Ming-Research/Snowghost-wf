@@ -55,7 +55,13 @@ would mean the style stage is not what decides those kinds.
 
 ## Measurement
 
-Every run under the host lock. Probe one script per page first; then one
+Chromium, from the repository root, after X5's `run.sh prepare`:
+
+    node research/investigations/engine-comparison/chromium.mjs PAGE.html build/x5/PAGE.nodes build/x5/scripts/PAGE-KIND.edits [SUFFIX=SHEET ...]
+
+with the sheets of X5's `run.sh` (`sheets_of`); Snowghost with X5's
+`run.sh time BUILD PAGE KIND RUNS`, which reports `style_us` for class and
+block edits. Every run under the host lock. Probe one script per page first; then one
 process run per script and kind, repeated only where the spread of
 per-edit times is too wide to read a median. Report per page, kind and
 build the median and maximum, Chromium's and Snowghost's, and their ratio.

@@ -12,11 +12,11 @@
 // every listed text node's data is checked against the page before any edit.
 // Each edit of SCRIPT is applied by DOM calls, followed by a forced style
 // recalculation and layout (documentElement.offsetHeight), and prints
-// `edit I us U style_us S layout_us L`: U the microseconds of the edit and
-// the forced layout by performance.now (100 us resolution), S and L the
-// durations of the main thread's UpdateLayoutTree and Layout trace events
-// between the edit's two console.timeStamp markers; then a summary line.
-// Exits 2 on any mismatch or failure.
+// `edit I us U`, U the microseconds of both by performance.now; with
+// TRACE=1 also `style_us S layout_us L`, the main thread's UpdateLayoutTree
+// and Layout trace events between the edit's console.timeStamp markers,
+// which tracing itself slows. Then a summary line. Exits 2 on any mismatch
+// or failure, including a served stylesheet that did not load.
 import { spawn } from 'node:child_process';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
