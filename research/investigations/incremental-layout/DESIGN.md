@@ -56,7 +56,7 @@ and the dump stay untimed, as in `run.sh time`.
 
 ## Decisions
 
-Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q81
+Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q82
 remain open recommendations; their implementation and validation do not
 constitute owner approval. Here are the choices and their grounds.
 
@@ -282,6 +282,32 @@ unchanged must fail a later text edit. Compile and inspect the publication
 ledger; a sequential shared-table helper is not proof of independence.
 The unchanged full-build overhead limit still applies. The owner has not
 ruled on Q81.
+
+**Q82, restoring a runtime-sized counter window (open).** A checkpoint
+contains a runtime-sized immutable counter array, whereas the builder must
+subsequently push and pop scoped counters. At the pinned language revision,
+PRE-1's `slots_from_array<T, const n>` accepts a fixed-capacity array only;
+TYPE-9 also forbids moving a runtime-sized array into an inline local. The
+current attempted dynamic conversion is unsupported, not a validated
+implementation.
+
+Recommended direction: resolve this general initialized-storage conversion
+in Whitefoot under its own specification and review, then deliberately adopt
+an accepted compiler revision. The precise language operation remains under
+investigation. Independent element copies have no ordering dependency;
+restoring a window by repeated appends would add one shared-length chain.
+A renderer-specific capacity limit or a replacement window abstraction would
+hide the language gap and is not proposed. Immutable retirement facts need
+no growable window and can instead remain owned immutable data.
+
+Before selecting a language change, reduce the requirement to runtime-sized
+owned initialized storage followed by window operations, check the existing
+specification and maintained examples, and state the before/after ownership,
+measure and drop rules. Record the rejection of the unsupported operation,
+then test the selected operation's normal and failing cases, including empty
+storage and affine elements, without weakening a safety requirement. The
+Snowghost pin and the X5 performance criteria stay unchanged until that
+separate change is validated. The owner has not ruled on Q82.
 
 ## Measurement
 

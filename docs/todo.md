@@ -113,6 +113,21 @@ example apart from the renderer code that exposed it
   already does for calls. Reopen when the runtime offers a loop grain; the
   layout code needs no change.
 
+- **A runtime-sized initialized array cannot become a mutable window.**
+  Minimal example: independently fill `Box<Array<T>>` for runtime `n`, then
+  consume it into a growable `Box<Slots<T>>` for later push/pop operations.
+  The pinned specification's PRE-1 `slots_from_array<T, const n>` accepts
+  only the fixed-capacity form, and TYPE-9 forbids binding a runtime-capacity
+  array outside its Box. Repeated `place_back` calls would introduce a
+  shared-length chain into independent initialization. Impact: X5 cannot
+  restore its runtime-sized counter checkpoint into the builder's stack
+  through the attempted conversion. Change: investigate a general owned
+  initialized-storage conversion in Whitefoot, with explicit ownership,
+  window measures and drop behavior; do not replace it with a renderer-only
+  window implementation. Reopen now for X5 child-list reconstruction
+  (`research/investigations/incremental-layout/DESIGN.md`, Q82). The exact
+  language operation and compiler adoption remain open.
+
 ## Snowghost
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
