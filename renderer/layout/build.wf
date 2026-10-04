@@ -116,8 +116,7 @@ struct Counter {
 }
 
 struct Walk {
-  doc "The state the walk in tree order carries: each node's element index (unlisted for a node that is no element of the traversal), the counter instances in scope, the quote depth and the element depth.";
-  order: Box<Array<u32>>;
+  doc "The state the walk in tree order carries: the counter instances in scope, the quote depth and the element depth. Node lookup reads the current Styles order map directly.";
   counters: Box<Slots<Counter>>;
   quote_depth: i32;
   depth: u64;
@@ -1343,11 +1342,11 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn element_at(walk: &Walk, node: NodeId) -> element: u32 reads(walk) {
+fn element_at(styles: &Styles, node: NodeId) -> element: u32 reads(styles) {
   doc "Returns node's element index in the traversal, or unlisted.";
   let at = cvt::<u32, u64>(node.index);
-  if at < walk^.order.inner.len {
-    let found = walk^.order.inner[at];
+  if at < styles^.order.inner.len {
+    let found = styles^.order.inner[at];
     return found;
   }
   return unlisted;
@@ -1855,7 +1854,7 @@ fn walk_children(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
 
 fn walk_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
   doc "Adds the element node and its subtree to the flow context by its computed display, float and position: nothing for display none; its children for display contents; an inline box; an atomic inline, floated or positioned child context; an in-flow child context for a block-level box that establishes one; otherwise a block box of the context, bracketing its content.";
-  let element = element_at(walk: walk, node: node);
+  let element = element_at(styles: styles, node: node);
   if element == unlisted {
     return Ok<unit, LayoutError>(value: unit);
   }
@@ -2245,7 +2244,7 @@ fn build_item_children(document: &Document, styles: &Styles, atoms: &AtomTable, 
         }
       }
       Element(..) => {
-        let element = element_at(walk: walk, node: node);
+        let element = element_at(styles: styles, node: node);
         if element != unlisted {
           let style = element_ref(element: node);
           let group = box_of(styles: styles, style: style);
@@ -2394,7 +2393,7 @@ fn add_column_group(document: &Document, styles: &Styles, walk: &Walk, node: Nod
       return inconsistent::<unit>();
     }
     set cursor = document^.nodes.inner[at].links.next_sibling;
-    let element = element_at(walk: walk, node: child);
+    let element = element_at(styles: styles, node: child);
     if element != unlisted {
       let child_style = element_ref(element: child);
       let group = box_of(styles: styles, style: child_style);
@@ -2518,7 +2517,7 @@ fn walk_run(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk
         }
       }
       Element(..) => {
-        let element = element_at(walk: walk, node: node);
+        let element = element_at(styles: styles, node: node);
         if element != unlisted {
           let style = element_ref(element: node);
           let group = box_of(styles: styles, style: style);
@@ -2601,7 +2600,7 @@ fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, wa
         }
       }
       Element(..) => {
-        let element = element_at(walk: walk, node: child);
+        let element = element_at(styles: styles, node: child);
         if element != unlisted {
           let style = element_ref(element: child);
           let box_group = box_of(styles: styles, style: style);
@@ -2685,7 +2684,7 @@ fn add_row(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk,
       return inconsistent::<unit>();
     }
     set cursor = document^.nodes.inner[at].links.next_sibling;
-    let element = element_at(walk: walk, node: child);
+    let element = element_at(styles: styles, node: child);
     if element != unlisted {
       let cell_style = element_ref(element: child);
       let cell_group = box_of(styles: styles, style: cell_style);
@@ -2735,7 +2734,7 @@ fn add_group(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
       return inconsistent::<unit>();
     }
     set cursor = document^.nodes.inner[at].links.next_sibling;
-    let element = element_at(walk: walk, node: child);
+    let element = element_at(styles: styles, node: child);
     if element != unlisted {
       let row_style = element_ref(element: child);
       let row_group = box_of(styles: styles, style: row_style);
@@ -2817,7 +2816,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
       return inconsistent::<unit>();
     }
     set scan = document^.nodes.inner[at].links.next_sibling;
-    let child_element = element_at(walk: walk, node: child);
+    let child_element = element_at(styles: styles, node: child);
     if child_element != unlisted {
       let child_style = element_ref(element: child);
       let group = box_of(styles: styles, style: child_style);
@@ -2862,7 +2861,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
     let chosen_header = child.index == header;
     let chosen_footer = child.index == footer;
     let chosen = bor(chosen_header, chosen_footer);
-    let child_element = element_at(walk: walk, node: child);
+    let child_element = element_at(styles: styles, node: child);
     let listed = child_element != unlisted;
     let fresh = bnot(chosen);
     let usable = band(listed, fresh);
@@ -3414,13 +3413,12 @@ fn publish_route_patch(patch: &RoutePatch, texts: &[TextUnit], sources: &[Source
 }
 
 fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) {
-  doc "Copies the traversal's NodeId map independently per slot and walks the document from its root into the initial containing block, a flow context whose root element is a child context of it, since the root element's margins do not collapse with its children's (CSS 2.2 8.3.1); every paragraph keeps its pieces and none is prepared.";
+  doc "Reads the current Styles NodeId map and walks the document from its root into the initial containing block, a flow context whose root element is a child context of it, since the root element's margins do not collapse with its children's (CSS 2.2 8.3.1); every paragraph keeps its pieces and none is prepared.";
   let nodes = document^.nodes.inner.len;
   if nodes <= item_ceiling {
   } else {
     return too_large::<Layout>();
   }
-  let order = box_array_filled::<u32>(count: nodes, value: unlisted);
   let count = traversal^.elements.inner.len;
   if count < 4294967295_u64 {
   } else {
@@ -3429,9 +3427,6 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   if nodes == traversal^.order.inner.len {
   } else {
     return inconsistent::<Layout>();
-  }
-  for (index in 0_u64..nodes) {
-    set order.inner[index] = traversal^.order.inner[index];
   }
   let word_n = list_item_word.len;
   let list_item_atom = atom_find(table: atoms, name: &list_item_word[0_u64..word_n]);
@@ -3444,7 +3439,7 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
     }
   }
   let counters = box_slots_new::<Counter>(capacity: 0_u64);
-  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item);
+  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item);
   let root_node = if 0_u64 < traversal^.elements.inner.len {
     give traversal^.elements.inner[0_u64];
   } else {

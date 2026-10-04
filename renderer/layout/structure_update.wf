@@ -1,0 +1,191 @@
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias AtomTable = pkg::base::atom::AtomTable;
+
+fn same_build_state(first: &BuildState, second: &BuildState) -> same: Bool reads(first), reads(second) {
+  doc "Compares the complete semantic walk state. Counter entries compare independently, while their order distinguishes simultaneously scoped instances of the same name.";
+  if first^.depth != second^.depth {
+    return False();
+  }
+  if first^.quote_depth != second^.quote_depth {
+    return False();
+  }
+  let count = first^.counters.inner.len;
+  if count != second^.counters.inner.len {
+    return False();
+  }
+  let equal = True();
+  for (i in 0_u64..count) {
+    let a = first^.counters.inner[i];
+    let b = second^.counters.inner[i];
+    let name = a.name == b.name;
+    let value = a.value == b.value;
+    let level = a.level == b.level;
+    let fields = band(name, value);
+    let entry_equal = band(fields, level);
+    set equal = band(equal, entry_equal);
+  }
+  return equal;
+}
+
+fn restore_build_state(walk: &Walk, state: &BuildState) -> result: Result<unit, LayoutError> reads(state), writes(walk) {
+  doc "Restores a body's complete entry or exit checkpoint. Each counter copy is independent; consuming the full array into a Slots window preserves the stack order without an append dependency.";
+  let count = state^.counters.inner.len;
+  if count > item_ceiling {
+    return too_large::<unit>();
+  }
+  let empty = Counter(name: 0_u32, value: 0_i32, level: 0_u64);
+  let copied = box_array_filled::<Counter>(count: count, value: empty);
+  for (i in 0_u64..count) {
+    let saved = state^.counters.inner[i];
+    let counter = Counter(name: saved.name, value: saved.value, level: saved.level);
+    set copied.inner[i] = counter;
+  }
+  let slots = slots_from_array(values: move copied.inner);
+  let counters = box_new(value: move slots);
+  set walk^.counters = move counters;
+  set walk^.depth = state^.depth;
+  set walk^.quote_depth = state^.quote_depth;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn source_exit_same(first: &Context, second: &Context) -> same: Bool reads(first), reads(second) {
+  doc "Tests whether replacing this complete body preserves the state its caller observes before leaving the body's scope.";
+  let old_source = &first^.source;
+  let new_source = &second^.source;
+  match old_source^ {
+    ElementBody(node: old_node, recipe: old_recipe, end: old_end, ..) => {
+      match new_source^ {
+        ElementBody(node: new_node, recipe: new_recipe, end: new_end, ..) => {
+          let node_equal = old_node^.index == new_node^.index;
+          let recipe_equal = old_recipe^ == new_recipe^;
+          let identity = band(node_equal, recipe_equal);
+          let state = same_build_state(first: old_end, second: new_end);
+          return band(identity, state);
+        }
+        _ => {
+
+          return False();
+
+        }
+      }
+    }
+    DocumentBody(node: old_node, end: old_end, ..) => {
+      match new_source^ {
+        DocumentBody(node: new_node, end: new_end, ..) => {
+          let identity = old_node^.index == new_node^.index;
+          let state = same_build_state(first: old_end, second: new_end);
+          return band(identity, state);
+        }
+        _ => {
+
+          return False();
+
+        }
+      }
+    }
+    Derived() => {
+
+      return False();
+
+    }
+  }
+}
+
+fn take_source_child_at(context: &Context, upward: &[u32], left: u64, child: u32, node: NodeId) -> result: Result<Context, LayoutError> reads(upward), writes(context) {
+  doc "Follows the old source-local path, then moves one complete child source into its caller's private pool. Swapping with an empty derived context preserves valid owned places and keeps every old local-path index stable.";
+  if left > 0_u64 {
+    let next = left - 1_u64;
+    if next < upward^.len {
+    } else {
+      return inconsistent::<Context>();
+    }
+    let at = cvt::<u32, u64>(upward^[next]);
+    if at < context^.children.inner.len {
+    } else {
+      return inconsistent::<Context>();
+    }
+    return take_source_child_at(context: &context^.children.inner[at], upward: upward, left: next, child: child, node: node);
+  }
+  let at = cvt::<u32, u64>(child);
+  if at < context^.children.inner.len {
+  } else {
+    return inconsistent::<Context>();
+  }
+  let held = context_source_node(context: &context^.children.inner[at]);
+  if held.index != node.index {
+    return inconsistent::<Context>();
+  }
+  let style = context^.children.inner[at].style;
+  let moved = new_context(kind: ctx_flow, style: style);
+  swap(first: &context^.children.inner[at], second: &moved);
+  return Ok<Context, LayoutError>(value: move moved);
+}
+
+fn take_source_child(context: &Context, paths: &[SourcePath], node: NodeId) -> result: Result<Option<Context>, LayoutError> reads(paths), writes(context) {
+  doc "Looks up a child through immutable old routes, without searching other source bodies or sharing a mutable ownership map. A node outside this source's pool has no reusable child here; a second claim of a consumed slot is inconsistent.";
+  let at = cvt::<u32, u64>(node.index);
+  if at < paths^.len {
+  } else {
+    let none = None<Context>();
+    return Ok<Option<Context>, LayoutError>(value: move none);
+  }
+  let route = paths^[at];
+  let owner = context_source_node(context: context);
+  let owned = route.parent_source.index == owner.index;
+  let present = band(route.present, owned);
+  if present {
+  } else {
+    let none = None<Context>();
+    return Ok<Option<Context>, LayoutError>(value: move none);
+  }
+  let upward = propagate local_steps(context: context, local: route.parent_local);
+  let count = upward.inner.len;
+  let child = propagate take_source_child_at(context: context, upward: &upward.inner[0_u64..count], left: count, child: route.child, node: node);
+  let found = Some<Context>(value: move child);
+  return Ok<Option<Context>, LayoutError>(value: move found);
+}
+
+fn finish_generated_source(context: &Context, styles: &Styles) -> status: u8 reads(styles), writes(context) {
+  doc "Finalizes raw generated spans in one rebuilt source and its derived contexts. Retained complete child sources already own their bytes and are not read through the current Styles arena again.";
+  let own = match finish_generated(context: context, styles: styles) {
+    Ok(..) => {
+
+      give 0_u8;
+
+    }
+    Err(error: failure) => {
+      let code = match failure {
+        Inconsistent() => {
+
+          give 1_u8;
+
+        }
+        TooLarge() => {
+
+          give 2_u8;
+
+        }
+        Text() => {
+
+          give 3_u8;
+
+        }
+      }
+      give code;
+    }
+  }
+  let count = context^.children.inner.len;
+  let copied = own;
+  for (i in 0_u64..count) {
+    let source = context_source_node(context: &context^.children.inner[i]);
+    let code = if source.index == no_index {
+      give finish_generated_source(context: &context^.children.inner[i], styles: styles);
+    } else {
+      give 0_u8;
+    }
+    set copied = imax(copied, code);
+  }
+  return copied;
+}
