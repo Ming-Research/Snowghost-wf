@@ -479,45 +479,27 @@ fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, documen
   return True();
 }
 
-fn attribute_style_of(store: &RuleStore, element: u64) -> found: Option<u64> reads(store) {
-  doc "The index of the style attribute record of the element at preorder index element.";
-  let found = record_of(records: &store^.attributes, element: element);
+fn attribute_style_of(store: &RuleStore, node: u64) -> found: Option<u64> reads(store) {
+  doc "The index of the style attribute record of the element whose NodeId index is node.";
+  let found = record_of(index: &store^.attribute_at, node: node);
   return found;
 }
 
-fn record_of(records: &Box<Slots<AttributeStyle>>, element: u64) -> found: Option<u64> reads(records) {
-  doc "The index of the record of records, which are in preorder, that belongs to the element at preorder index element, by binary search.";
-  let count = records^.inner.len;
-  let low = 0_u64;
-  let high = count;
-  for (step in 0_u64..64_u64) {
-    if low >= high {
-      return None<u64>();
-    }
-    let span = high - low;
-    let half = span / 2_u64;
-    let middle = low + half;
-    let inside = middle < count;
-    if inside {
-    } else {
-      return None<u64>();
-    }
-    let at = cvt::<u32, u64>(records^.inner[middle].element);
-    if at == element {
-      return Some<u64>(value: middle);
-    }
-    if at < element {
-      set low = middle + 1_u64;
-    } else {
-      set high = middle;
+fn record_of(index: &Box<Array<u32>>, node: u64) -> found: Option<u64> reads(index) {
+  doc "The position of the record that index, written at load by NodeId index, gives the element whose NodeId index is node; None for a node with no record or created after the load.";
+  if node < index^.inner.len {
+    let slot = index^.inner[node];
+    if slot != no_slot {
+      let made = cvt::<u32, u64>(slot);
+      return Some<u64>(value: made);
     }
   }
   return None<u64>();
 }
 
-fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slots<AttributeStyle>>, element: u64, origin: u8, packed: u64) -> result: unit reads(store), reads(records), writes(keys), writes(out) {
-  doc "Offers the declarations of the record of records, which are in preorder, that belongs to the element at preorder index element, when there is one.";
-  match record_of(records: records, element: element) {
+fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slots<AttributeStyle>>, index: &Box<Array<u32>>, node: u64, origin: u8, packed: u64) -> result: unit reads(store), reads(records), reads(index), writes(keys), writes(out) {
+  doc "Offers the declarations of the record of records that index gives the element whose NodeId index is node, when there is one.";
+  match record_of(index: index, node: node) {
     Some(value: record) => {
       let inside = record < records^.inner.len;
       if inside {
@@ -532,15 +514,16 @@ fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slot
   return unit;
 }
 
-fn match_element(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8, position: u64) -> fits: Bool reads(index), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
-  doc "Selects one styled node's winners. An element takes the rules the element index offers, its presentational hints in the user-agent layer above every user-agent selector, and its style attribute; a pseudo-element of kind pseudo_element_before or pseudo_element_after takes the rules the pseudo-element index offers for its originating element, at position.";
+fn match_element(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8) -> fits: Bool reads(index), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+  doc "Selects one styled node's winners. An element takes the rules the element index offers, its presentational hints in the user-agent layer above every user-agent selector, and its style attribute; a pseudo-element of kind pseudo_element_before or pseudo_element_after takes the rules the pseudo-element index offers for its originating element.";
   if kind != pseudo_element_none {
     let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind);
     return fits;
   }
   let fits = match_indexed(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind);
-  offer_record(keys: keys, out: out, store: store, records: &store^.hints, element: position, origin: origin_user_agent, packed: hint_specificity);
-  offer_record(keys: keys, out: out, store: store, records: &store^.attributes, element: position, origin: origin_author, packed: attribute_specificity);
+  let node = cvt::<u32, u64>(element.index);
+  offer_record(keys: keys, out: out, store: store, records: &store^.hints, index: &store^.hint_at, node: node, origin: origin_user_agent, packed: hint_specificity);
+  offer_record(keys: keys, out: out, store: store, records: &store^.attributes, index: &store^.attribute_at, node: node, origin: origin_author, packed: attribute_specificity);
   return fits;
 }
 
@@ -631,7 +614,7 @@ fn match_all(winners: &[u32], bits: &[u64], words: u64, nodes: &[NodeId], kinds:
       use winner_words times (i + 1_u64 <= count);
     }
     let keys = array_filled::<u64, 97>(value: 0_u64);
-    let fits = match_element(keys: &keys[0_u64..97_u64], out: &winners^[winner_start..winner_end], bits: &bits^[bit_start..bit_end], index: index, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: node, kind: kind, position: i);
+    let fits = match_element(keys: &keys[0_u64..97_u64], out: &winners^[winner_start..winner_end], bits: &bits^[bit_start..bit_end], index: index, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: node, kind: kind);
     set all = band(all, fits);
   }
   return all;

@@ -5,8 +5,10 @@ usage: python3 inctime.py SCRIPT RUN...
        python3 inctime.py --reparse SCRIPT EDIT_OUTPUT REPARSE_OUTPUT COUNT
 
 The script defines the exact, nonempty edit sequence. Each run must report
-one base and every edit once in order: T/D/C/K must succeed incrementally;
-B/X use the full path, hash-only in checking mode and `full` in timing mode.
+one base and every edit once in order: T/D/C/K/B/X must succeed
+incrementally. C/K/B/X carry a style edit line, and B/X a structure edit
+line with the contexts and paragraphs built again and those that kept their
+preparation.
 Checking validates raw driver stdout before run.sh extracts comparable
 lines, so malformed, duplicate and incomplete records cannot disappear in
 a filter. Raw dumps and the separate style diagnostics are accepted only
@@ -23,7 +25,10 @@ HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|ref
 BASE = re.compile(r'base hash [0-9a-f]{16} bytes \d+$')
 STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
 STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)$')
+STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) reused (\d+)$')
 CREATED = re.compile(r'created \d+$')
+INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'X')
+RESTYLED = ('C', 'K', 'B', 'X')
 
 
 def script_operations(path):
@@ -43,8 +48,8 @@ def script_operations(path):
 
 
 def read(path, operations, checking=False):
-    timed, other, styled = {}, {}, {}
-    seen, auxiliary = set(), set()
+    timed, other, styled, built = {}, {}, {}, {}
+    seen, auxiliary, structural = set(), set(), set()
     base_count = 0
     created_count = 0
     for line_number, raw in enumerate(open(path), 1):
@@ -57,11 +62,19 @@ def read(path, operations, checking=False):
         style = (STYLE_COUNTS if checking else STYLE_TIME).fullmatch(line)
         if style:
             edit = int(style.group(1))
-            if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('C', 'K'):
+            if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in RESTYLED:
                 raise ValueError('%s:%d: unexpected style edit' % (path, line_number))
             auxiliary.add(edit)
             if not checking:
                 styled[edit] = [int(value) for value in style.groups()[1:]]
+            continue
+        structure = STRUCTURE.fullmatch(line)
+        if structure:
+            edit = int(structure.group(1))
+            if edit in structural or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'X'):
+                raise ValueError('%s:%d: unexpected structure edit' % (path, line_number))
+            structural.add(edit)
+            built[edit] = [int(value) for value in structure.groups()[1:]]
             continue
         if CREATED.fullmatch(line):
             created_count += 1
@@ -77,13 +90,13 @@ def read(path, operations, checking=False):
         if base_count != 1 or edit in seen or edit != len(seen) + 1 or edit > len(operations):
             raise ValueError('%s:%d: duplicate, missing or unordered edit ID %d' % (path, line_number, edit))
         seen.add(edit)
-        incremental = operations[edit - 1] in ('T', 'D', 'C', 'K')
+        incremental = operations[edit - 1] in INCREMENTAL
         if checking:
             status = match.group(2)
             if incremental and status != 'same':
                 raise ValueError('%s: edit %d: expected inc same, got %s' % (path, edit, status or 'full'))
             if not incremental and status is not None:
-                raise ValueError('%s: edit %d: structural edit did not use full path' % (path, edit))
+                raise ValueError('%s: edit %d: an edit of no incremental kind reported an incremental status' % (path, edit))
         elif match:
             if not incremental:
                 raise ValueError('%s: edit %d: unexpected timed structural edit' % (path, edit))
@@ -99,9 +112,11 @@ def read(path, operations, checking=False):
         raise ValueError('%s: %d created records for %d insertions' % (path, created_count, operations.count('B')))
     if not checking and not timed:
         raise ValueError(path + ': no edits were timed')
-    if not checking and set(styled) != {edit for edit in timed if operations[edit - 1] in ('C', 'K')}:
+    if not checking and set(styled) != {edit for edit in timed if operations[edit - 1] in RESTYLED}:
         raise ValueError(path + ': a timed style edit lacks its style edit line')
-    return timed, other, styled
+    if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'X')}:
+        raise ValueError(path + ': a timed structural edit lacks its structure edit line')
+    return timed, other, styled, built
 
 
 def rank(values, fraction):
@@ -158,8 +173,8 @@ def main():
     if not runs:
         print('no runs')
         return 1
-    first_timed, first_other, first_styled = runs[0]
-    for timed, other, _ in runs[1:]:
+    first_timed, first_other, first_styled, first_built = runs[0]
+    for timed, other, _, _ in runs[1:]:
         if set(timed) != set(first_timed) or other != first_other:
             print('the runs list different edits')
             return 1
@@ -167,7 +182,7 @@ def main():
             if values[1:] != first_timed[edit][1:]:
                 print('edit %d: the runs disagree on the counts' % edit)
                 return 1
-    best = {edit: min(timed[edit][0] for timed, _, _ in runs) for edit in first_timed}
+    best = {edit: min(timed[edit][0] for timed, _, _, _ in runs) for edit in first_timed}
     times = list(best.values())
     refused = sum(1 for kind in first_other.values() if kind == 'inc refused')
     full = sum(1 for kind in first_other.values() if kind == 'full')
@@ -186,17 +201,22 @@ def main():
         # the best full layout over the runs, each chosen independently.
         ratios, deltas, picks = [], [], []
         for edit in sorted(first_styled):
-            full = min(styled[edit][2] for _, _, styled in runs)
+            full = min(styled[edit][2] for _, _, styled, _ in runs)
             if full <= 0:
                 raise ValueError('edit %d: full layout timed at 0 us' % edit)
             ratios.append(best[edit] / full)
-            deltas.append(min(styled[edit][0] for _, _, styled in runs))
-            picks.append(min(styled[edit][1] for _, _, styled in runs))
+            deltas.append(min(styled[edit][0] for _, _, styled, _ in runs))
+            picks.append(min(styled[edit][1] for _, _, styled, _ in runs))
         print('update/full min %.3f median %.3f max %.3f; at most 1.2: %d of %d'
               % (min(ratios), rank(ratios, 0.5), max(ratios),
                  sum(1 for r in ratios if r <= 1.2), len(ratios)))
         print('delta_us median %d max %d; picks_us median %d max %d'
               % (rank(deltas, 0.5), max(deltas), rank(picks, 0.5), max(picks)))
+    if first_built:
+        names = ['built contexts', 'built paragraphs', 'reused paragraphs']
+        for k, name in enumerate(names):
+            values = [first_built[edit][k] for edit in first_built]
+            print('%s min %d median %d max %d' % (name, min(values), rank(values, 0.5), max(values)))
     return 0
 
 

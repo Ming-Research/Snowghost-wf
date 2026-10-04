@@ -799,17 +799,17 @@ fn pseudo_slots(styles: &Styles, count: u64) -> slots: Box<Array<u32>> reads(sty
   return move slots;
 }
 
-fn same_pseudo(old: &Styles, new: &Styles, old_classes: &Classes, new_classes: &Classes, old_slots: &Box<Array<u32>>, new_slots: &Box<Array<u32>>, at: u64) -> same: Bool reads(old), reads(new), reads(old_classes), reads(new_classes), reads(old_slots), reads(new_slots) {
-  doc "True when the pseudo-element slot at is empty in both results, or holds in both a pseudo-element of the same style.";
-  let old_listed = at < old_slots^.inner.len;
-  let new_listed = at < new_slots^.inner.len;
+fn same_pseudo(old: &Styles, new: &Styles, old_classes: &Classes, new_classes: &Classes, old_slots: &Box<Array<u32>>, new_slots: &Box<Array<u32>>, old_slot: u64, new_slot: u64) -> same: Bool reads(old), reads(new), reads(old_classes), reads(new_classes), reads(old_slots), reads(new_slots) {
+  doc "True when the pseudo-element slots old_slot of old and new_slot of new, one element's in each result, are both empty, or hold pseudo-elements of the same style.";
+  let old_listed = old_slot < old_slots^.inner.len;
+  let new_listed = new_slot < new_slots^.inner.len;
   let listed = band(old_listed, new_listed);
   if listed {
   } else {
     return False();
   }
-  let old_index = old_slots^.inner[at];
-  let new_index = new_slots^.inner[at];
+  let old_index = old_slots^.inner[old_slot];
+  let new_index = new_slots^.inner[new_slot];
   let old_absent = old_index == absent_pseudo;
   let new_absent = new_index == absent_pseudo;
   let both_absent = band(old_absent, new_absent);
@@ -836,23 +836,25 @@ fn same_pseudo(old: &Styles, new: &Styles, old_classes: &Classes, new_classes: &
 }
 
 fn layout_changes(old: &Styles, new: &Styles) -> changed: Box<Array<Bool>> reads(old), reads(new) {
-  doc "Maps the tables of both results onto classes by value, then compares each element's ten group classes, its background presence and its two pseudo-element slots; the result has one slot per element of the longer result, and a slot past the end of the shorter one is true. Group identifiers are not comparable across runs, so every entry of every compared table of both results is written as a sequence of words that holds all of its value, a list a group names written by the class of the list, and the sequences of both runs are interned in one WordTable per table: two entries have one class exactly when their sequences are equal word for word, which is equality of every field and not a comparison of hashes, so no group or list compare is simplified. A list is written by its contents: computed tracks with their line names, area names and corners, content items with their text bytes, counter changes, quote pairs with their text bytes, and a font group by the names of the families of its range. A pseudo-element whose content is normal or none generates no box and counts as absent, as pkg::layout treats it. Content lists 0 and 1 and quote lists 0 and 1 are empty lists of different meanings and are written as words of their own. Background presence compares whether its colour is currentColor or has positive alpha, which inline fragment generation reads. The exact background colour, the colour of the text group, the four colours of the border group and custom groups are left out because pkg::layout reads none of them.";
+  doc "Maps the tables of both results onto classes by value, then compares each element's ten group classes, its background presence and its two pseudo-element slots, aligning the two results by NodeId through their order maps; the result has one slot per NodeId index of the longer map, true for an element of one result only and false for a node that is an element of neither. Group identifiers are not comparable across runs, so every entry of every compared table of both results is written as a sequence of words that holds all of its value, a list a group names written by the class of the list, and the sequences of both runs are interned in one WordTable per table: two entries have one class exactly when their sequences are equal word for word, which is equality of every field and not a comparison of hashes, so no group or list compare is simplified. A list is written by its contents: computed tracks with their line names, area names and corners, content items with their text bytes, counter changes, quote pairs with their text bytes, and a font group by the names of the families of its range. A pseudo-element whose content is normal or none generates no box and counts as absent, as pkg::layout treats it. Content lists 0 and 1 and quote lists 0 and 1 are empty lists of different meanings and are written as words of their own. Background presence compares whether its colour is currentColor or has positive alpha, which inline fragment generation reads. The exact background colour, the colour of the text group, the four colours of the border group and custom groups are left out because pkg::layout reads none of them.";
   let old_count = old^.elements.inner.len;
   let new_count = new^.elements.inner.len;
-  let longer = old_count > new_count;
+  let old_nodes = old^.order.inner.len;
+  let new_nodes = new^.order.inner.len;
+  let longer = old_nodes > new_nodes;
   let count = if longer {
-    give old_count;
+    give old_nodes;
   } else {
-    give new_count;
+    give new_nodes;
   }
-  let yes = True();
+  let no = False();
   let small = count <= 1073741824_u64;
   let room = if small {
     give count;
   } else {
     give 0_u64;
   }
-  let changed = box_array_filled::<Bool>(count: room, value: yes);
+  let changed = box_array_filled::<Bool>(count: room, value: no);
   let shared = class_tables_new(old: old, new: new);
   let key = box_slots_new::<u64>(capacity: 64_u64);
   let new_classes = classes_new(styles: new);
@@ -863,30 +865,37 @@ fn layout_changes(old: &Styles, new: &Styles) -> changed: Box<Array<Bool>> reads
   classify_groups(shared: &shared, key: &key, styles: old, classes: &old_classes);
   let old_slots = pseudo_slots(styles: old, count: old_count);
   let new_slots = pseudo_slots(styles: new, count: new_count);
-  let shorter = if longer {
-    give new_count;
-  } else {
-    give old_count;
-  }
-  for (i in 0_u64..shorter) {
-    let old_listed = i < old^.elements.inner.len;
-    let new_listed = i < new^.elements.inner.len;
-    let slot_listed = i < changed.inner.len;
-    let listed_pair = band(old_listed, new_listed);
-    let listed = band(listed_pair, slot_listed);
-    if listed {
-      let old_style = old^.elements.inner[i];
-      let new_style = new^.elements.inner[i];
+  for (n in 0_u64..room) {
+    let old_at = if n < old^.order.inner.len {
+      give cvt::<u32, u64>(old^.order.inner[n]);
+    } else {
+      give old_count;
+    }
+    let new_at = if n < new^.order.inner.len {
+      give cvt::<u32, u64>(new^.order.inner[n]);
+    } else {
+      give new_count;
+    }
+    let old_listed = old_at < old^.elements.inner.len;
+    let new_listed = new_at < new^.elements.inner.len;
+    let both = band(old_listed, new_listed);
+    let flag = if both {
+      let old_style = old^.elements.inner[old_at];
+      let new_style = new^.elements.inner[new_at];
       let same = same_style(old: old, new: new, old_classes: &old_classes, new_classes: &new_classes, old_style: old_style, new_style: new_style);
-      let twice = i +sat i;
-      let after = twice +sat 1_u64;
-      let same_before = same_pseudo(old: old, new: new, old_classes: &old_classes, new_classes: &new_classes, old_slots: &old_slots, new_slots: &new_slots, at: twice);
-      let same_after = same_pseudo(old: old, new: new, old_classes: &old_classes, new_classes: &new_classes, old_slots: &old_slots, new_slots: &new_slots, at: after);
+      let old_twice = old_at +sat old_at;
+      let new_twice = new_at +sat new_at;
+      let old_after = old_twice +sat 1_u64;
+      let new_after = new_twice +sat 1_u64;
+      let same_before = same_pseudo(old: old, new: new, old_classes: &old_classes, new_classes: &new_classes, old_slots: &old_slots, new_slots: &new_slots, old_slot: old_twice, new_slot: new_twice);
+      let same_after = same_pseudo(old: old, new: new, old_classes: &old_classes, new_classes: &new_classes, old_slots: &old_slots, new_slots: &new_slots, old_slot: old_after, new_slot: new_after);
       let pseudos = band(same_before, same_after);
       let unchanged = band(same, pseudos);
-      let flag = bnot(unchanged);
-      set changed.inner[i] = flag;
+      give bnot(unchanged);
+    } else {
+      give bor(old_listed, new_listed);
     }
+    set changed.inner[n] = flag;
   }
   return move changed;
 }

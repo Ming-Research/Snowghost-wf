@@ -40,6 +40,8 @@ alias compute_styles = pkg::style::compute_styles;
 alias lay_out = pkg::layout::lay_out;
 alias layout_changes = pkg::style::layout_changes;
 alias styles_changed = pkg::layout::styles_changed;
+alias structure_changed = pkg::layout::structure_changed;
+alias structure_counts = pkg::layout::structure_counts;
 alias place_boxes = pkg::layout::place_boxes;
 alias now = std::time::now;
 alias text_changed = pkg::layout::text_changed;
@@ -111,6 +113,10 @@ const full_label: Array<u8, 5> = " full";
 const inc_dump_label: Array<u8, 9> = "inc dump\n";
 
 const style_edit_label: Array<u8, 11> = "style edit ";
+
+const structure_edit_label: Array<u8, 15> = "structure edit ";
+
+const reused_label: Array<u8, 8> = " reused ";
 
 const delta_us_label: Array<u8, 10> = " delta_us ";
 
@@ -553,6 +559,44 @@ fn make_paragraph(page: &Page, parent: NodeId, before: Option<NodeId>, text: &[u
   return Ok<NodeId, DomError>(value: paragraph);
 }
 
+fn structure_parent(page: &Page, line: &[u8]) -> parent: Option<NodeId> reads(page), reads(line) {
+  doc "The element whose children a B or X line changes, read before the edit: B's PARENT, or the parent X's node has in the live document; None for any other line or a node that has no parent.";
+  let length = line^.len;
+  if length < 3_u64 {
+    return None<NodeId>();
+  }
+  let kind = line^[0_u64];
+  let inserting = kind == 66_u8;
+  let removing = kind == 88_u8;
+  let structural = bor(inserting, removing);
+  if structural {
+  } else {
+    return None<NodeId>();
+  }
+  let (node_found, node_value, after_node) = read_number(line: line, start: 2_u64);
+  if node_found {
+  } else {
+    return None<NodeId>();
+  }
+  let node = match node_id_of(value: node_value) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return None<NodeId>();
+    }
+  }
+  if inserting {
+    return Some<NodeId>(value: node);
+  }
+  let at = cvt::<u32, u64>(node.index);
+  if at < page^.document.nodes.inner.len {
+    let parent = page^.document.nodes.inner[at].links.parent;
+    return parent;
+  }
+  return None<NodeId>();
+}
+
 fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool reads(line), writes(page), writes(report) {
   doc "Applies the edit line spells to the live document: T inserts text, D deletes text, C and K add and remove a class token, B inserts a paragraph (and appends `created NODE` to report), X detaches a node. False when the line does not parse or the operation is refused.";
   let length = line^.len;
@@ -922,8 +966,26 @@ fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -
   }
 }
 
-fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
-  doc "Recomputes the styles outside the incremental interval, forms the edited node's class attribute fact outside the interval, then times the style delta, new font picks, retained marking and update. On success replaces the kept styles and picks. Timing reports a separate style edit line with delta_us, picks_us and full_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A layout refusal leaves the kept styles and picks unchanged and is reported as a refusal by the caller; a style, font or full-comparator failure names its pipeline stage.";
+fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, structure: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+  doc "Recomputes the styles outside the incremental interval (after the traversal, for a B or X edit, whose parent structure names), forms the edited node's class attribute fact outside the interval, then times the style delta, new font picks, retained marking (styles_changed, or structure_changed for a B or X edit) and update. On success replaces the kept styles and picks. Timing reports a separate style edit line with delta_us, picks_us and full_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A layout refusal leaves the kept styles and picks unchanged and is reported as a refusal by the caller; a style, font or full-comparator failure names its pipeline stage.";
+  let structural = match structure {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give False();
+    }
+  }
+  if structural {
+    match build_traversal(document: &page^.document) {
+      Ok(value: found) => {
+        set page^.traversal = move found;
+      }
+      Err(..) => {
+        return Err<StyleUpdate, u8>(error: 4_u8);
+      }
+    }
+  }
   let styles = match compute_styles(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
     Ok(value: found) => {
       give move found;
@@ -949,7 +1011,15 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
   }
   let after_picks = now(clock: clock);
   let changed_count = changed.inner.len;
-  match styles_changed(layout: &kept^.layout, old: &kept^.styles, new: &styles, traversal: &page^.traversal, changed: &changed.inner[0_u64..changed_count], attributes: &attributes[0_u64..1_u64]) {
+  let marked = match structure {
+    Some(value: parent) => {
+      give structure_changed(layout: &kept^.layout, document: &page^.document, old: &kept^.styles, new: &styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &changed.inner[0_u64..changed_count], parent: parent);
+    }
+    None() => {
+      give styles_changed(layout: &kept^.layout, old: &kept^.styles, new: &styles, traversal: &page^.traversal, changed: &changed.inner[0_u64..changed_count], attributes: &attributes[0_u64..1_u64]);
+    }
+  }
+  match marked {
     Ok(..) => {
     }
     Err(..) => {
@@ -1010,6 +1080,18 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
     put_counts(buffer: report, layout: &kept^.layout);
   }
   put_byte(buffer: report, value: 10_u8);
+  if structural {
+    let (built_contexts, built_paragraphs, reused) = structure_counts(layout: &kept^.layout);
+    put_text(buffer: report, text: &structure_edit_label[0_u64..structure_edit_label.len]);
+    put_decimal(buffer: report, value: number);
+    put_text(buffer: report, text: &contexts_label[0_u64..contexts_label.len]);
+    put_decimal(buffer: report, value: built_contexts);
+    put_text(buffer: report, text: &paragraphs_label[0_u64..paragraphs_label.len]);
+    put_decimal(buffer: report, value: built_paragraphs);
+    put_text(buffer: report, text: &reused_label[0_u64..reused_label.len]);
+    put_decimal(buffer: report, value: reused);
+    put_byte(buffer: report, value: 10_u8);
+  }
   set kept^.styles = move styles;
   set kept^.picks = move picks;
   let yes = True();
@@ -1034,7 +1116,7 @@ fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(la
 }
 
 fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
-  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes compute_styles and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us. Other edits rebuild and report full. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
+  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits also rebuild the traversal first and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes compute_styles and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us. No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
   let dump = box_slots_new::<u8>(capacity: 65536_u64);
   let other = box_slots_new::<u8>(capacity: 65536_u64);
@@ -1087,6 +1169,7 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
       if skipped {
       } else {
         set edits = edits +sat 1_u64;
+        let structure = structure_parent(page: page, line: &script^[start..end]);
         let applied = apply_edit(page: page, line: &script^[start..end], report: &report);
         if applied {
         } else {
@@ -1129,7 +1212,16 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
           None() => {
             let class_added = kind == 67_u8;
             let class_removed = kind == 75_u8;
-            let styled = bor(class_added, class_removed);
+            let structural = match structure {
+              Some(..) => {
+                give True();
+              }
+              None() => {
+                give False();
+              }
+            }
+            let restyled = bor(class_added, class_removed);
+            let styled = bor(restyled, structural);
             if styled {
               let (node_found, node_value, unused_next) = read_number(line: &script^[start..end], start: 2_u64);
               let node = match node_id_of(value: node_value) {
@@ -1148,7 +1240,7 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
                 let reported = flush(factory: files, output: err, buffer: &report);
                 return 2_u8;
               }
-              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
+              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, structure: structure, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
                 Ok(value: done) => {
                   give done;
                 }

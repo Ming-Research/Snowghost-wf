@@ -165,6 +165,43 @@ Q69 left backgrounds out of the keys. Recommended: compare the predicate in
 reads; a changed predicate marks its paragraph, which is prepared and
 broken again although only its fragments change (`docs/todo.md`).
 
+**Q85, style attribute and hint records by NodeId.** `pkg::style` recorded
+each element's style attribute and presentational hints once, at load, by
+preorder position, and looked them up by binary search on that position, so
+an inserted or removed element left every later record on the wrong element:
+step 1's finding 6, where every apollo11 block edit differed from a re-parse
+(`runs/step1.txt`, section 6). Recommended: a dense array from NodeId to the
+record, filled by the recording loop at load, which is already sequential
+because it appends to the store; each element then reads its own slot.
+Rejected: keeping the records sorted by NodeId with a binary search, because
+the tree builder creates some nodes out of tree order (foster parenting,
+adoption), so load order is not NodeId order; and recording them again after
+every edit, which parses every style attribute per frame.
+
+**Q86, the structural update.** A `B` or `X` edit changes the children of one
+element. Recommended: build again the context of the nearest element at or
+above it that establishes one (C), from the walk's state as `build_box`
+entered C, recorded in each context with the state as it left (Q69's walk
+state at entry); keep every other context; give each new paragraph whose
+pieces and styles equal an old paragraph's that paragraph's preparation
+(Q69's paragraph key); record text units and paths again over the whole tree.
+Refuse, before changing the layout, when the walk leaves C in another state
+(counters or quotes a later context reads), when the delta flags an element
+outside C or C's own element, or when the generated text or the
+pseudo-element list changed, which retained pieces index. Dependencies: the
+walk inside C is the builder's one chain in document order, as in a full
+build; finding each paragraph's old counterpart reads only its own first text
+node's unit; taking the preparation swaps into an old paragraph whose index
+the compiler cannot prove apart from another iteration's, so that loop is
+sequential (`docs/todo.md`, Whitefoot requirements); recording units and
+paths again is one walk, linear in the tree, and is measured. Against copying
+the preparation (no source constructor of `ShapedText` outside
+`pkg::layout::text`), against keeping C's unchanged child contexts by their
+entry state (deferred: on html5 C is the root element's context and most of
+its paragraphs sit in its own flow, so paragraphs dominate), and against
+stable per-source routing of every context (the stopped branch's Q81),
+which renames nothing but adds a routing layer to every update.
+
 ## Measurement
 
 - **Edit scripts.** `scripts/edits.py`, with X1's seed and rules
@@ -256,6 +293,40 @@ pseudo-element edits must be refused; every other edit must be `inc same`.
 Run from the repository root:
 
     build/layout_oracle_seq edit research/investigations/incremental-layout/scripts/style-case.edits research/investigations/incremental-layout/scripts/style-case.html renderer/style/ua.css
+
+## Structural update plan (step 5)
+
+Step 2 recorded text units and paths but not Q67's identity: `StyleRef.element`
+and `Fragment.owner` were still preorder positions, so step 5 has two parts.
+
+5a, identity. `Traversal.order` and its copy `Styles.order` map NodeId to
+preorder; `StyleRef.element` and element owners hold NodeIds, resolved
+through `element_position` (`root_element` names the root's style); the style
+delta is one flag per NodeId; style attribute and hint records follow Q85.
+Checks: every dump of the three pages and of `scripts/style-case.html`
+byte-identical to main's; every step 3 and step 4 check still passing, seq
+and par; the five apollo11 block edits of step 1's re-parse check now equal
+to the re-parse; part 3 within 5 percent.
+
+5b, structure (Q86). Checks, with the `block` scripts of the three pages,
+seq and par:
+- every edit `inc same` or `inc refused`, every refusal counted and
+  explained, none differing; seq and par output lines identical;
+- falsifiers, each required to fail on a script or case: the exit state not
+  compared (a case where an inserted list item changes a later counter); the
+  old context's outputs not carried into the new one; the piece comparison
+  of the paragraph key dropped (a reused paragraph whose text differs);
+- recorded per edit: the microseconds of structure_changed and update, the
+  contexts and paragraphs built again, the paragraphs that kept their
+  preparation, against the same build's full layout. No latency threshold is
+  set before this first measurement.
+- part 3 with the checkpoints of every context, within 5 percent.
+
+`scripts/block-case.html` and `scripts/block-case.edits` hold the cases, each
+insertion followed by its removal: at the end of a box, splitting an inline
+paragraph, inside a counted box whose counter a later box shows (must be
+refused), in the root element's context, and inside a box of fixed height.
+Run as the style case is, with `block-case` for `style-case`.
 
 ## Risks
 
