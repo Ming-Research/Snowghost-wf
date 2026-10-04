@@ -56,7 +56,7 @@ and the dump stay untimed, as in `run.sh time`.
 
 ## Decisions
 
-Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q79
+Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q80
 remain open recommendations; their implementation and validation do not
 constitute owner approval. Here are the choices and their grounds.
 
@@ -219,6 +219,31 @@ An empty slot or a newly allocated node must not acquire another node's
 record. Restoring preorder-indexed lookup must make the shifted-attribute
 case fail. This lookup choice does not change attribute parsing or CSS
 precedence.
+
+**Q80, retained generated-text ownership (open).** Generated pieces currently
+retain offsets into one Styles run's generated_text arena. A later full style
+run can relocate identical strings, so retaining an otherwise unchanged child
+would read unrelated bytes. Recommended: each Context owns the UTF-8 strings,
+counter separators and explicit quote strings its Generated pieces consume;
+the piece offsets refer to that local buffer. Scalars produced by counters
+and automatic quotes retain their existing representation. Rebuilding a
+Context copies its current strings; keeping it keeps the matching buffer.
+
+Dependencies favor local owned bytes over a symbolic style/list-item handle:
+preparation reads one context-local slice, instead of resolving NodeId,
+pseudo kind, group, list and item before reading the string. Both permit
+independent paragraphs; the copy and duplicate storage are extra work accepted
+to shorten the read chain and remove arena-lifetime coupling. Retaining whole
+old Styles arenas would couple reclamation to unrelated contexts. The choice
+is provisional until the owner rules on Q80.
+
+Before adoption, relocate identical generated strings, separators and quote
+pairs across style runs, then edit retained text and require the same complete
+layout as a fresh build. Changed generated values must still force rebuild or
+explicit refusal. Cover empty strings, multibyte strings, before/after and
+repeated separators. Mutating preparation to read Styles.generated_text again
+must fail the relocation case. Record copied bytes and retained buffer sizes
+on the workloads; rerun the unchanged full-build overhead criterion.
 
 ## Measurement
 

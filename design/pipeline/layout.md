@@ -20,6 +20,8 @@ Decision: Counter and quote values are resolved by the box tree builder's walk a
 
 Decision: A style update compares only the background predicate that inline fragment generation reads, currentColor or positive alpha, provisionally because the existing fragment rule changes geometry when that predicate changes, instead of either ignoring background changes or comparing their exact colours, which respectively miss that dependency or invalidate on colours that do not change geometry ([Q77](../../research/investigations/incremental-layout/DESIGN.md#decisions)); reopen if fragment generation ceases to read it.
 
+Decision: A retained formatting context owns the generated UTF-8 bytes its pieces read, provisionally because preparation can read a local slice without depending on a replaced style arena or resolving several style tables, instead of retaining run-local arena offsets, resolving symbolic item handles on every preparation, or keeping whole old style results alive; copying and retained storage are measured against the existing full-build limit ([Q80](../../research/investigations/incremental-layout/DESIGN.md#decisions)).
+
 Rejected:
 - Leaving multi-column layout out of scope: rejected because 20.7 percent of html5's block boxes and 14 percent of apollo11's lie in multi-column containers, so the layout criterion could not hold on those pages ([Q59](../../research/investigations/layout/DESIGN.md#owner-rulings)).
 - Decoding text during the walk: rejected because it keeps four fifths of the builder's work, turning text into scalar values, inside the walk's chain.
