@@ -22,7 +22,7 @@ OTHER = re.compile(r'edit (\d+) (inc refused|full)$')
 HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|refused))?$')
 BASE = re.compile(r'base hash [0-9a-f]{16} bytes \d+$')
 STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
-STYLE_TIME = re.compile(r'style edit (\d+) delta_us \d+ picks_us \d+ full_us \d+$')
+STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)$')
 CREATED = re.compile(r'created \d+$')
 
 
@@ -43,7 +43,7 @@ def script_operations(path):
 
 
 def read(path, operations, checking=False):
-    timed, other = {}, {}
+    timed, other, styled = {}, {}, {}
     seen, auxiliary = set(), set()
     base_count = 0
     created_count = 0
@@ -60,6 +60,8 @@ def read(path, operations, checking=False):
             if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('C', 'K'):
                 raise ValueError('%s:%d: unexpected style edit' % (path, line_number))
             auxiliary.add(edit)
+            if not checking:
+                styled[edit] = [int(value) for value in style.groups()[1:]]
             continue
         if CREATED.fullmatch(line):
             created_count += 1
@@ -97,7 +99,9 @@ def read(path, operations, checking=False):
         raise ValueError('%s: %d created records for %d insertions' % (path, created_count, operations.count('B')))
     if not checking and not timed:
         raise ValueError(path + ': no edits were timed')
-    return timed, other
+    if not checking and set(styled) != {edit for edit in timed if operations[edit - 1] in ('C', 'K')}:
+        raise ValueError(path + ': a timed style edit lacks its style edit line')
+    return timed, other, styled
 
 
 def rank(values, fraction):
@@ -154,8 +158,8 @@ def main():
     if not runs:
         print('no runs')
         return 1
-    first_timed, first_other = runs[0]
-    for timed, other in runs[1:]:
+    first_timed, first_other, first_styled = runs[0]
+    for timed, other, _ in runs[1:]:
         if set(timed) != set(first_timed) or other != first_other:
             print('the runs list different edits')
             return 1
@@ -163,7 +167,7 @@ def main():
             if values[1:] != first_timed[edit][1:]:
                 print('edit %d: the runs disagree on the counts' % edit)
                 return 1
-    best = {edit: min(timed[edit][0] for timed, _ in runs) for edit in first_timed}
+    best = {edit: min(timed[edit][0] for timed, _, _ in runs) for edit in first_timed}
     times = list(best.values())
     refused = sum(1 for kind in first_other.values() if kind == 'inc refused')
     full = sum(1 for kind in first_other.values() if kind == 'full')
@@ -177,6 +181,22 @@ def main():
     for k, name in enumerate(names):
         values = [first_timed[edit][k + 1] for edit in first_timed]
         print('%s min %d median %d max %d' % (name, min(values), rank(values, 0.5), max(values)))
+    if first_styled:
+        # Criterion 2: per style edit, the best update over the runs against
+        # the best full layout over the runs, each chosen independently.
+        ratios, deltas, picks = [], [], []
+        for edit in sorted(first_styled):
+            full = min(styled[edit][2] for _, _, styled in runs)
+            if full <= 0:
+                raise ValueError('edit %d: full layout timed at 0 us' % edit)
+            ratios.append(best[edit] / full)
+            deltas.append(min(styled[edit][0] for _, _, styled in runs))
+            picks.append(min(styled[edit][1] for _, _, styled in runs))
+        print('update/full min %.3f median %.3f max %.3f; at most 1.2: %d of %d'
+              % (min(ratios), rank(ratios, 0.5), max(ratios),
+                 sum(1 for r in ratios if r <= 1.2), len(ratios)))
+        print('delta_us median %d max %d; picks_us median %d max %d'
+              % (rank(deltas, 0.5), max(deltas), rank(picks, 0.5), max(picks)))
     return 0
 
 
