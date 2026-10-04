@@ -240,3 +240,207 @@ fn collect_source_candidates(previous: &Context, new_sources: &[NodeId], width: 
   let count = previous^.children.inner.len;
   return candidate_collect_children(children: &previous^.children.inner[0_u64..count], new_sources: new_sources, width: width);
 }
+
+fn candidate_take_at(candidates: &CandidatePatch, width: u64, key: u64, node: NodeId) -> result: Result<Option<Candidate>, LayoutError> writes(candidates) {
+  doc "Follows one relative interval key and swaps only its leaf with Empty. The leaf's source identity must match the requested stable NodeId before ownership is consumed.";
+  if key >= width {
+    return inconsistent::<Option<Candidate>>();
+  }
+  match candidates^ {
+    Empty() => {
+      let none = None<Candidate>();
+      return Ok<Option<Candidate>, LayoutError>(value: move none);
+    }
+    Leaf(candidate: held) => {
+      if width != 1_u64 {
+        return inconsistent::<Option<Candidate>>();
+      }
+      let origin = context_source_node(context: &held^.context);
+      if origin.index != node.index {
+        return inconsistent::<Option<Candidate>>();
+      }
+    }
+    Fork(left: left_branch, right: right_branch) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return inconsistent::<Option<Candidate>>();
+      }
+      if half >= width {
+        return inconsistent::<Option<Candidate>>();
+      }
+      if key < half {
+        return candidate_take_at(candidates: &left_branch^.inner, width: half, key: key, node: node);
+      }
+      let right_width = width - half;
+      let right_key = key - half;
+      return candidate_take_at(candidates: &right_branch^.inner, width: right_width, key: right_key, node: node);
+    }
+  }
+  let taken = CandidatePatch::Empty();
+  swap(first: candidates, second: &taken);
+  match move taken {
+    Leaf(candidate: held) => {
+      let some = Some<Candidate>(value: move held);
+      return Ok<Option<Candidate>, LayoutError>(value: move some);
+    }
+    _ => {
+      return inconsistent::<Option<Candidate>>();
+    }
+  }
+}
+
+fn take_candidate(candidates: &CandidatePatch, width: u64, node: NodeId) -> result: Result<Option<Candidate>, LayoutError> writes(candidates) {
+  doc "Claims exactly one owned source; an Empty leaf on a later claim returns None. Invalid NodeIds and malformed intervals reject without overwriting another candidate.";
+  if node.index == no_index {
+    return inconsistent::<Option<Candidate>>();
+  }
+  let key = cvt::<u32, u64>(node.index);
+  return candidate_take_at(candidates: candidates, width: width, key: key, node: node);
+}
+
+fn candidate_dom_contains(document: &Document, ancestor: NodeId, node: NodeId) -> result: Result<Bool, LayoutError> reads(document) {
+  doc "Tests DOM ancestry through actual parent links, bounded by the allocation count to reject cycles. Stable NodeId ordering is never treated as preorder.";
+  let count = document^.nodes.inner.len;
+  let ancestor_at = cvt::<u32, u64>(ancestor.index);
+  let node_at = cvt::<u32, u64>(node.index);
+  if ancestor_at >= count {
+    return inconsistent::<Bool>();
+  }
+  if node_at >= count {
+    return inconsistent::<Bool>();
+  }
+  let current = node;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(current.index);
+    if at < document^.nodes.inner.len {
+    } else {
+      return inconsistent::<Bool>();
+    }
+    if current.index == ancestor.index {
+      let yes = True();
+      return Ok<Bool, LayoutError>(value: yes);
+    }
+    let parent = document^.nodes.inner[at].links.parent;
+    match parent {
+      None() => {
+        let no = False();
+        return Ok<Bool, LayoutError>(value: no);
+      }
+      Some(value: upward) => {
+        set current = upward;
+      }
+    }
+  }
+  return inconsistent::<Bool>();
+}
+
+fn candidate_empty_split() -> made: CandidateSplit pure {
+  doc "Returns two empty owned patches without accessing a pool or publication table.";
+  let inside = CandidatePatch::Empty();
+  let outside = CandidatePatch::Empty();
+  return CandidateSplit(inside: move inside, outside: move outside);
+}
+
+fn candidate_join_splits(first: Result<CandidateSplit, LayoutError>, second: Result<CandidateSplit, LayoutError>) -> result: Result<CandidateSplit, LayoutError> pure {
+  doc "Joins independently partitioned inputs. Inside and outside ownership merges are themselves independent and both refuse duplicate source destinations.";
+  let left = propagate first;
+  let right = propagate second;
+  let inside_result = merge_candidate_patches(first: move left.inside, second: move right.inside);
+  let outside_result = merge_candidate_patches(first: move left.outside, second: move right.outside);
+  let inside = propagate inside_result;
+  let outside = propagate outside_result;
+  let split = CandidateSplit(inside: move inside, outside: move outside);
+  return Ok<CandidateSplit, LayoutError>(value: move split);
+}
+
+fn candidate_partition_leaf(candidate: Candidate, document: &Document, new_sources: &[NodeId], root: NodeId, width: u64) -> result: Result<CandidateSplit, LayoutError> reads(document), reads(new_sources) {
+  doc "Moves maximal sources inside the requested DOM subtree whole. A covering wrapper relinquishes child source ownership but keeps its original facts and counts outside, with complete False forbidding whole-body reuse.";
+  let node = context_source_node(context: &candidate.context);
+  if node.index == no_index {
+    return inconsistent::<CandidateSplit>();
+  }
+  let key = cvt::<u32, u64>(node.index);
+  let inside_result = candidate_dom_contains(document: document, ancestor: root, node: node);
+  let covering_result = candidate_dom_contains(document: document, ancestor: node, node: root);
+  let inside = propagate inside_result;
+  let covering = propagate covering_result;
+  if inside {
+    let patch = propagate candidate_singleton(width: width, key: key, candidate: move candidate);
+    let empty = CandidatePatch::Empty();
+    let split = CandidateSplit(inside: move patch, outside: move empty);
+    return Ok<CandidateSplit, LayoutError>(value: move split);
+  }
+  if covering {
+    let children = propagate collect_source_candidates(previous: &candidate.context, new_sources: new_sources, width: width);
+    set candidate.complete = False();
+    let descendants_result = partition_candidates(candidates: move children, document: document, new_sources: new_sources, root: root, width: width);
+    let wrapper_result = candidate_singleton(width: width, key: key, candidate: move candidate);
+    let descendants = propagate descendants_result;
+    let wrapper = propagate wrapper_result;
+    let outside = propagate merge_candidate_patches(first: move descendants.outside, second: move wrapper);
+    let split = CandidateSplit(inside: move descendants.inside, outside: move outside);
+    return Ok<CandidateSplit, LayoutError>(value: move split);
+  }
+  let patch = propagate candidate_singleton(width: width, key: key, candidate: move candidate);
+  let empty = CandidatePatch::Empty();
+  let split = CandidateSplit(inside: move empty, outside: move patch);
+  return Ok<CandidateSplit, LayoutError>(value: move split);
+}
+
+fn candidate_partition_at(candidates: CandidatePatch, document: &Document, new_sources: &[NodeId], root: NodeId, total: u64, base: u64, width: u64) -> result: Result<CandidateSplit, LayoutError> reads(document), reads(new_sources) {
+  doc "Partitions independent owned interval branches, validating leaf identity against its interval. Results use the same global width because a wrapper's descendant NodeIds need not lie near its own index.";
+  if width == 0_u64 {
+    return inconsistent::<CandidateSplit>();
+  }
+  let room = 18446744073709551615_u64 - width;
+  if base > room {
+    return inconsistent::<CandidateSplit>();
+  }
+  let end = base + width;
+  if end > total {
+    return inconsistent::<CandidateSplit>();
+  }
+  match move candidates {
+    Empty() => {
+      let split = candidate_empty_split();
+      return Ok<CandidateSplit, LayoutError>(value: move split);
+    }
+    Leaf(candidate: held) => {
+      if width != 1_u64 {
+        return inconsistent::<CandidateSplit>();
+      }
+      let node = context_source_node(context: &held.context);
+      let key = cvt::<u32, u64>(node.index);
+      if key != base {
+        return inconsistent::<CandidateSplit>();
+      }
+      return candidate_partition_leaf(candidate: move held, document: document, new_sources: new_sources, root: root, width: total);
+    }
+    Fork(left: left_branch, right: right_branch) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return inconsistent::<CandidateSplit>();
+      }
+      if half >= width {
+        return inconsistent::<CandidateSplit>();
+      }
+      let right_width = width - half;
+      let right_base = base + half;
+      let left = candidate_partition_at(candidates: move left_branch.inner, document: document, new_sources: new_sources, root: root, total: total, base: base, width: half);
+      let right = candidate_partition_at(candidates: move right_branch.inner, document: document, new_sources: new_sources, root: root, total: total, base: right_base, width: right_width);
+      return candidate_join_splits(first: move left, second: move right);
+    }
+  }
+}
+
+fn partition_candidates(candidates: CandidatePatch, document: &Document, new_sources: &[NodeId], root: NodeId, width: u64) -> result: Result<CandidateSplit, LayoutError> reads(document), reads(new_sources) {
+  doc "Partitions a source-private owned candidate tree by DOM ancestry. Width remains positive and contains every source key; covering wrappers retain their pre-extraction metadata while nested bodies retain independently determined Styles bases.";
+  if width == 0_u64 {
+    return inconsistent::<CandidateSplit>();
+  }
+  let root_at = cvt::<u32, u64>(root.index);
+  if root_at >= document^.nodes.inner.len {
+    return inconsistent::<CandidateSplit>();
+  }
+  return candidate_partition_at(candidates: move candidates, document: document, new_sources: new_sources, root: root, total: width, base: 0_u64, width: width);
+}
