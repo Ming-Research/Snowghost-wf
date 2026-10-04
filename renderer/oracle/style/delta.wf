@@ -14,6 +14,11 @@ alias Styles = pkg::style::Styles;
 alias TextSpan = pkg::dom::TextSpan;
 alias Traversal = pkg::style::Traversal;
 alias add_sheet = pkg::style::add_sheet;
+alias Cascade = pkg::style::Cascade;
+alias RestyleSet = pkg::style::RestyleSet;
+alias class_restyle = pkg::style::class_restyle;
+alias match_elements = pkg::style::match_elements;
+alias rematched = pkg::style::rematched;
 alias atom_intern = pkg::base::atom::atom_intern;
 alias compute_styles = pkg::style::compute_styles;
 alias flush = pkg::oracle::support::flush;
@@ -32,6 +37,18 @@ alias store_text = pkg::dom::store_text;
 const class_name: Array<u8, 5> = "class";
 
 const edit_label: Array<u8, 5> = "edit ";
+
+const restyle_label: Array<u8, 8> = "restyle ";
+
+const set_label: Array<u8, 5> = " set ";
+
+const full_label: Array<u8, 5> = " full";
+
+const rematched_label: Array<u8, 11> = " rematched ";
+
+const missing_label: Array<u8, 9> = " missing ";
+
+const first_label: Array<u8, 7> = " first ";
 
 const changed_label: Array<u8, 9> = " changed ";
 
@@ -571,4 +588,154 @@ fn put_u64(cell: &Box<Slots<u64>>, value: u64) -> result: unit writes(cell) {
     place_back(window: &cell^.inner, value: value);
   }
   return unit;
+}
+
+fn run_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, script: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(traversal), reads(script), writes(document), writes(atoms), writes(out), writes(err), writes(files) waits {
+  doc "Checks pkg::style::class_restyle against a full rematch. For each C or K line of the script, in order: the restyle set class_restyle gives for the line's element and class token, then the edit, then the elements whose winning declarations differ between match_elements before and after it (pkg::style::rematched). Reports `restyle I set S rematched R missing M`, or `restyle I full rematched R` when the set is full, I counting the C and K lines from 1, S the set's size, R the elements rematched flags and M those of them outside the set, followed by ` first P`, the preorder index of the first, when M is not 0. S lines were added before; N lines change nothing; any other line is refused. Returns 0, or 2 after naming the failure on err.";
+  let notes = box_slots_new::<u8>(capacity: 4096_u64);
+  let class_atom = class_index(atoms: atoms);
+  let old = match match_elements(store: store, document: document, atoms: atoms, traversal: traversal) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, failure: failure);
+      return 2_u8;
+    }
+  }
+  let length = script^.len;
+  let at = 0_u64;
+  let number = 0_u64;
+  let edits = 0_u64;
+  for (step in 0_u64..length) {
+    if at >= length {
+      break;
+    }
+    let end = line_end(text: script, start: at);
+    let start = at;
+    set at = end +sat 1_u64;
+    set number = number +sat 1_u64;
+    if end > length {
+      return 2_u8;
+    }
+    if start < end {
+      let kind = script^[start];
+      let is_s = kind == 83_u8;
+      let is_p = kind == 80_u8;
+      let is_n = kind == 78_u8;
+      let is_c = kind == 67_u8;
+      let is_k = kind == 75_u8;
+      let passive = bor(is_s, is_p);
+      let quiet = bor(passive, is_n);
+      let class_edit = bor(is_c, is_k);
+      let known = bor(quiet, class_edit);
+      if known {
+      } else {
+        put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+        let reported = flush(factory: files, output: err, buffer: &notes);
+        return 2_u8;
+      }
+      if class_edit {
+        set edits = edits +sat 1_u64;
+        let line = &script^[start..end];
+        let (node_found, node_value, after_node) = read_number(line: line, start: 2_u64);
+        let size = line^.len;
+        let token_ok = after_node < size;
+        let parsed = band(node_found, token_ok);
+        let node = match node_id_of(value: node_value) {
+          Some(value: found) => {
+            give found;
+          }
+          None() => {
+            put_failure(notes: &notes, number: number, reason: &syntax_reason[0_u64..syntax_reason.len]);
+            let reported = flush(factory: files, output: err, buffer: &notes);
+            return 2_u8;
+          }
+        }
+        if parsed {
+        } else {
+          put_failure(notes: &notes, number: number, reason: &syntax_reason[0_u64..syntax_reason.len]);
+          let reported = flush(factory: files, output: err, buffer: &notes);
+          return 2_u8;
+        }
+        let restyle = match class_restyle(store: store, document: document, atoms: atoms, traversal: traversal, node: node, class: &line^[after_node..size]) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let applied = apply_class_edit(document: document, class_atom: class_atom, line: line);
+        if applied {
+        } else {
+          put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+          let reported = flush(factory: files, output: err, buffer: &notes);
+          return 2_u8;
+        }
+        let new = match match_elements(store: store, document: document, atoms: atoms, traversal: traversal) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let changed = rematched(old: &old, new: &new);
+        let count = changed.inner.len;
+        let outside = False();
+        let bounded = count <= 4294967296_u64;
+        if bounded {
+        } else {
+          return 2_u8;
+        }
+        let in_set = box_array_filled::<Bool>(count: count, value: outside);
+        let listed = restyle.elements.inner.len;
+        for (k in 0_u64..listed) {
+          let index = cvt::<u32, u64>(restyle.elements.inner[k]);
+          if index < in_set.inner.len {
+            set in_set.inner[index] = True();
+          }
+        }
+        let flagged = 0_u64;
+        let missing = 0_u64;
+        let first_missing = 0_u64;
+        for (i in 0_u64..count) {
+          if changed.inner[i] {
+            set flagged = flagged +sat 1_u64;
+            let covered = bor(restyle.full, in_set.inner[i]);
+            if covered {
+            } else {
+              if missing == 0_u64 {
+                set first_missing = i;
+              }
+              set missing = missing +sat 1_u64;
+            }
+          }
+        }
+        put_text(buffer: &notes, text: &restyle_label[0_u64..restyle_label.len]);
+        put_decimal(buffer: &notes, value: edits);
+        if restyle.full {
+          put_text(buffer: &notes, text: &full_label[0_u64..full_label.len]);
+        } else {
+          put_text(buffer: &notes, text: &set_label[0_u64..set_label.len]);
+          put_decimal(buffer: &notes, value: listed);
+        }
+        put_text(buffer: &notes, text: &rematched_label[0_u64..rematched_label.len]);
+        put_decimal(buffer: &notes, value: flagged);
+        put_text(buffer: &notes, text: &missing_label[0_u64..missing_label.len]);
+        put_decimal(buffer: &notes, value: missing);
+        if missing > 0_u64 {
+          put_text(buffer: &notes, text: &first_label[0_u64..first_label.len]);
+          put_decimal(buffer: &notes, value: first_missing);
+        }
+        put_byte(buffer: &notes, value: 10_u8);
+        let flushed = flush(factory: files, output: out, buffer: &notes);
+        set old = move new;
+      }
+    }
+  }
+  return 0_u8;
 }

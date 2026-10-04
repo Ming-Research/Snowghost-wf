@@ -217,3 +217,11 @@ same host and Chromium build:
   Q90's NodeId-indexed state only matters once an edit moves preorder
   positions, which no edit of M1 does before structural edits, so it is
   proposed for M2.
+- **Step 2** (`runs/step2.txt`). Selectors record, per class, which
+  elements around the edited one a change can reach and the subject key
+  they must carry; a class edit's restyle set holds every element whose
+  matched rules a full rematch changes on 788 edits of the three pages
+  (X5's class scripts, random toggles of the pages' own classes, a `body`
+  toggle against descendant and sibling rules), and a version that keeps
+  only the edited element misses elements on all three pages. Colour and
+  font-size edits restyle the edited element alone.
