@@ -180,6 +180,43 @@ tick bump deleted (X11), one key field omitted.
 6. Sessions, falsifiers and the far-read counter; results here; the rulings
    into `design/pipeline/layout.md`.
 
+## Style update validation plan
+
+Before step 4b's implementation and runs: retain the box tree only when the
+same traversal, generated-content references and pseudo-element identities
+still describe it. A style delta marks actual consumers in independent
+context and paragraph loops, then gathers child marks up the owned tree.
+Each paragraph depends on its pieces and styles; each context's local mark
+is independent of its siblings. Only propagation to a parent needs a
+child's mark. Repeated root-to-unit marking would impose an avoidable order
+on changes to unrelated elements, so use Q71's recursion and counted loops.
+No mark skips the tree, as Q72 requires, after validating retained references.
+
+A local style change must not take a cutoff whose premise was an unchanged
+style. Record each paragraph's actual line-breaking width and left edge;
+the pre-pass may change these through a block's em-based spacing while its
+context width stays constant. Keep preparation only for paragraphs whose
+layout-relevant style consumers did not change, and keep lines only when
+their actual inputs still match. The caller recomputes FontPicks for the
+new style tables before using them.
+
+Checks, required before claiming this step complete:
+- Text colour changes prepare and lay out zero units; font-size and root
+  font-size edits must succeed incrementally, without a full-rebuild fallback.
+- Every edit and its inverse match the full build byte for byte, including
+  a font-size edit followed by a text edit, em padding, empty inline boxes,
+  and unchanged paragraphs whose font groups were renumbered.
+- A box topology or generated-reference change that cannot be retained is
+  refused before marks are written; inserted non-generating pseudo-elements
+  must not silently move retained references to the wrong pseudo-element.
+- Compare a paragraph's saved width and left with the pre-pass results;
+  omit that comparison once and require the em-padding case to fail.
+- Omit one style mark once and require a font-size case to fail. Run both
+  sequential and four-worker drivers and compare their checked outputs.
+- Measure criterion 2 against the same build's full layout stage, excluding
+  the full style computation from both. Report style-delta and font-picking
+  costs explicitly; do not describe the still-full style stage as incremental.
+
 ## Risks
 
 - A certified loop is denied when it reads an unwritten scalar of a shared
