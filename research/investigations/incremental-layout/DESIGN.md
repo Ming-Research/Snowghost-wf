@@ -141,21 +141,29 @@ document and to a re-parse of the edited source; and the sequential build
 identical to `--par`. Falsifiers, each run once and required to fail: one
 tick bump deleted (X11), one key field omitted.
 
-**Q77, background presence in layout keys (open).** Layout's
-`culled_box` reads whether a background is currentColor or has positive
-alpha to choose the inline box's fragments (`renderer/layout/inline.wf`).
-Recommended: compare that predicate for elements and generated pseudo-elements
-in the style delta, while continuing to ignore exact colours. A paragraph's
-predicate depends only on its own style table entry, so comparisons of
-unrelated elements remain independent. Ignoring the entire background group
-misses this actual dependency. Comparing full colours has the same dependency
-chain but recomputes paragraphs when the observed predicate has not changed.
-Before claiming this fix: a transparent-to-visible background changes the
-flag and the retained dump agrees with the full build; changing one visible
-colour to another leaves the flag false, as does an ordinary text-colour
-edit; removing the predicate comparison makes the transparency case fail.
-This qualifies Q69's exclusion of backgrounds by the value layout actually
-reads. The owner has not ruled on this qualification.
+**Q83, the style delta's identifiers (Q68 revised).** Step 4a did not
+implement Q68's interning into the previous run's tables: each style run
+interns on its own, and `layout_changes` maps both runs' tables onto
+classes by value, once per table, then compares each element's classes
+(`renderer/style/delta.wf`). Interning into the previous tables makes them
+grow over a session with every value ever seen, and makes each run's
+interning wait on the last. The alternative tried after step 4a, comparing
+every element's values deeply with no table, failed criterion 2 at four
+workers on ecma262 (root-font update/full median 1.31; colour delta 217 ms
+against 3 ms; `runs/step4b.txt` on the archive branch named in Results).
+Marking follows from the delta by a recursion over the tree in which each
+paragraph and context tests its own pieces' styles (Q71's loops), rather than
+by each changed element marking its unit through `unit_of`; both are linear
+while the style stage is a full rerun.
+
+**Q84, background presence in the style delta.** Layout's `culled_box`
+(`renderer/layout/inline.wf`) reads whether a background is currentColor or
+has positive alpha, and a culled inline box reports its content's
+rectangles instead of its own, so the dump depends on that predicate while
+Q69 left backgrounds out of the keys. Recommended: compare the predicate in
+`layout_changes` and keep ignoring exact colours, which no layout reader
+reads; a changed predicate marks its paragraph, which is prepared and
+broken again although only its fragments change (`docs/todo.md`).
 
 ## Measurement
 
@@ -188,8 +196,7 @@ reads. The owner has not ruled on this qualification.
    re-stack with the δ path and the size cutoff, recursion over ticks. Check:
    parts 1 and 4 on `word` and `sentence`; the measured re-stack walk decides
    whether Q70's recommendation stands.
-4. The style delta with interning into the previous tables; `colour`,
-   `fontsize` and `rootfont`. Check: part 2; colour edits recompute no
+4. The style delta (Q83); `colour`, `fontsize` and `rootfont`. Check: part 2; colour edits recompute no
    paragraph.
 5. `block`: rebuild a context from its checkpoint, reusing its paragraphs'
    preparation by key. Check: part 4; its cost and entries moved recorded.
@@ -238,6 +245,18 @@ Checks, required before claiming this step complete:
   the full style computation from both. Report style-delta and font-picking
   costs explicitly; do not describe the still-full style stage as incremental.
 
+`scripts/style-case.html` holds one element for each of these cases, and
+`scripts/style-case.edits` edits them in order, each edit followed by its
+inverse: em padding around a paragraph whose own style is fixed, a
+background turning visible, another colour and transparent, an empty inline
+box gaining padding, `attr(class)` and `attr(title)` read by `::before`, a
+font size followed by a text edit, `display: none` removed, a pseudo-element
+added, a colour and the root font size. The attribute, display and
+pseudo-element edits must be refused; every other edit must be `inc same`.
+Run from the repository root:
+
+    build/layout_oracle_seq edit research/investigations/incremental-layout/scripts/style-case.edits research/investigations/incremental-layout/scripts/style-case.html renderer/style/ua.css
+
 ## Risks
 
 - A certified loop is denied when it reads an unwritten scalar of a shared
@@ -265,3 +284,9 @@ bytes per edit), Q71 (recursion over marked subtrees), Q72 (push-based
 marks) and Q73 (the byte-identity oracle with falsifiers). They go into
 `design/pipeline/layout.md` with step 6, and `design/log.md` records them
 then.
+
+2026-10-04: the owner chose Q83's option A, the per-run tables mapped by
+value, over interning into the previous run's tables and over deep
+comparison without tables. With the owner's agreement, Q77 to Q82, proposed
+on the stopped branch `codex/x5-handoff-2026-10-03`, are withdrawn; Q84
+takes up Q77's background predicate, which the byte-identity oracle needs.

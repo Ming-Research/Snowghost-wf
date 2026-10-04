@@ -194,6 +194,16 @@ example apart from the renderer code that exposed it
   so a translation leaves them; or reopen Q70's summary tree. Reopen with
   the next update performance work on ecma262.
 
+- **A changed background predicate prepares and breaks its paragraph
+  again.** `layout_changes` reports an element whose background turns
+  transparent or visible (Q84 in
+  `research/investigations/incremental-layout/DESIGN.md`), and
+  `styles_changed` marks every paragraph reading it, although `culled_box`
+  only selects which fragments the paragraph's lines report. Impact:
+  unmeasured; no X5 edit kind changes a background. Change: a separate
+  per-element flag that regenerates the paragraph's fragments from its
+  kept lines. Reopen when an edit kind or a page measures background edits.
+
 - **`Paragraph.min_content` and `max_content` are never written.** Every
   paragraph keeps the zeros `new_paragraph` gives them; intrinsic sizes
   are computed per request by `paragraph_intrinsic`. Impact: two dead
