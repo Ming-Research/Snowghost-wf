@@ -71,8 +71,8 @@ const scalar_ceiling: u64 = 1073741824_u64;
 const item_ceiling: u64 = 1073741824_u64;
 
 struct StyleRef {
-  doc "The style a box takes: element's computed style, or the computed style of entry pseudo of the style stage's pseudo-element list when pseudo is not no_pseudo. An anonymous box inherits from that style and takes the initial value of every property that is not inherited: no margin, border or padding, and auto sizes.";
-  element: u32;
+  doc "The style a box takes: element is the stable originating NodeId, resolved through Styles.order; pseudo is no_pseudo for the element itself or the stable kind 0 for before and 1 for after, resolved in that run's sorted pseudo list. No traversal position or pseudo list slot is retained. An anonymous box inherits from that style and takes the initial value of every property that is not inherited: no margin, border or padding, and auto sizes.";
+  element: NodeId;
   pseudo: u32;
   anonymous: Bool;
 }
@@ -158,7 +158,7 @@ struct ColumnPiece {
 
 struct Split {
   doc "A block-level box inside an open inline box, the block-in-inline of CSS 2.2 9.2.1.1: the inline box's element owner, the flow entries open and close of the block (one entry for a child context), the left offset and width of the content box it sits in, which the reference reports as one of owner's rectangles, and the top of the line the inline box would continue on before the block, after the margins before it collapse.";
-  owner: u32;
+  owner: NodeId;
   open: u32;
   close: u32;
   left: i32;
@@ -167,9 +167,9 @@ struct Split {
 }
 
 struct Fragment {
-  doc "One rectangle a box or text node reports, relative to the border box of the context that holds it: kind is pkg::layout's placed_element or placed_text, owner the element's index or the text node's NodeId index.";
+  doc "One rectangle a box or text node reports, relative to the border box of the context that holds it: kind is pkg::layout's placed_element or placed_text, owner the stable NodeId of the element or text node.";
   kind: u8;
-  owner: u32;
+  owner: NodeId;
   x: i32;
   y: i32;
   width: i32;
@@ -333,7 +333,7 @@ public struct Layout {
 
 public struct PlacedRect {
   public kind: u8;
-  public owner: u32;
+  public owner: NodeId;
   public x: f32;
   public y: f32;
   public width: f32;
@@ -348,13 +348,13 @@ public fn build_layout(document: &Document, traversal: &Traversal, styles: &Styl
 
 public fn lay_out(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: unit reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Lays out every context of the prepared layout in the viewport given to build_boxes: CSS 2.2's block and inline formatting with floats and positioning, CSS Flexbox 1, CSS Grid 1 without subgrid and CSS Tables 3's table layout, each context writing its boxes and fragments with offsets from its own border box (Q55) and computing intrinsic sizes when a parent's algorithm needs them (Q56); computed lengths become LayoutUnit when read by the reference's conversion for their use (a line height given as a length rounds to the nearest unit, one given as a number is the font size rounded to the nearest unit times the number, truncated, every other length truncates) and a text fragment's width is its advances' sum rounded up (Q54).";
 
-public fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) doc "Returns every box of the laid-out layout in viewport coordinates: for each element, the border box of each of its fragments, the rectangles getClientRects reports, and for each text node, each of its line fragments, as a Range's getClientRects reports them, with kind placed_element and owner the element's index in the traversal, or kind placed_text and owner the text node's NodeId index. Rectangles of one owner appear in fragment order; owners appear in no particular order.";
+public fn place_boxes(layout: &Layout) -> placed: Box<Slots<PlacedRect>> reads(layout) doc "Returns every box of the laid-out layout in viewport coordinates: for each element, the border box of each of its fragments, the rectangles getClientRects reports, and for each text node, each of its line fragments, as a Range's getClientRects reports them, with kind placed_element or placed_text and owner the stable NodeId in both cases. Rectangles of one owner appear in fragment order; owners appear in no particular order.";
 
 public fn layout_counts(layout: &Layout) -> (contexts: u64, paragraphs: u64) reads(layout) doc "Returns how many contexts and paragraphs build_boxes made.";
 
 public fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: Result<unit, LayoutError> reads(document), writes(layout) doc "Records that the data of the Text node changed (pkg::dom::set_text) in the laid-out layout: the pieces that read it take its new data, and its paragraph and every context from the initial containing block down to the one holding it are marked for update; a node that feeds no paragraph changes nothing. Inconsistent when the node is not a Text node the layout was built from, or when its new data would change the box tree (a text node that was only white space and no longer is, or the reverse), which update cannot follow and a new build_layout must.";
 
-public fn styles_changed(layout: &Layout, old: &Styles, new: &Styles, traversal: &Traversal, changed: &[Bool], attributes: &[AttributeChange]) -> result: Result<unit, LayoutError> reads(old), reads(new), reads(traversal), reads(changed), reads(attributes), writes(layout) doc "Records a style delta for a laid-out layout built with old, with the same document nodes and text, traversal and font set: changed is layout_changes(old, new), and attributes lists every attribute change, currently class edits only. Marks every paragraph and context that reads a changed element or its pseudo-element, and the ancestors needed to propagate their outputs. Before marking, checks the retained box topology, generated-content references and pseudo-element positions remain valid and no changed attribute is read by generated content; returns Inconsistent without changing layout when they cannot be retained, so the caller must build_boxes again. Font-size and colour changes that preserve these dependencies are supported. A delta with no layout consumer changed adds no marks. After success the caller supplies new and its matching FontPicks to update and subsequent operations; group identifiers from old and new are never compared as values.";
+public fn styles_changed(layout: &Layout, old: &Styles, new: &Styles, traversal: &Traversal, changed: &[Bool], attributes: &[AttributeChange]) -> result: Result<unit, LayoutError> reads(old), reads(new), reads(traversal), reads(changed), reads(attributes), writes(layout) doc "Records a style delta for a laid-out layout built with old, with the same document nodes and text, traversal and font set: changed is the NodeId-indexed result of layout_changes(old, new), and attributes lists every attribute change, currently class edits only. Marks every paragraph and context that reads a changed element or its pseudo-element, and the ancestors needed to propagate their outputs. Before marking, checks the retained box topology, generated-content references and generated pseudo-element identities remain valid and no changed attribute is read by generated content; returns Inconsistent without changing layout when they cannot be retained, so the caller must build_boxes again. Font-size and colour changes that preserve these dependencies are supported. A delta with no layout consumer changed adds no marks. After success the caller supplies new and its matching FontPicks to update and subsequent operations; group identifiers from old and new are never compared as values.";
 
 public fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) doc "Brings the laid-out layout up to date with the changes marked since it was last laid out or updated: prepares again each marked paragraph, and lays out again each marked context, keeping every unmarked child context whose space comes out unchanged and every unmarked paragraph whose width and left edge come out unchanged, and stopping at a context whose border-box size, baseline and margins come out unchanged; then clears the marks. The layout it leaves places the same boxes as lay_out on the layout build_layout makes from the same document, styles and fonts (place_boxes returns the same rectangles). A layout with no mark costs one test. Text when shaping refuses a paragraph.";
 

@@ -56,7 +56,7 @@ and the dump stay untimed, as in `run.sh time`.
 
 ## Decisions
 
-Q67 through Q73 are approved as recorded under Owner rulings. Q77 and Q78
+Q67 through Q73 are approved as recorded under Owner rulings. Q77 through Q79
 remain open recommendations; their implementation and validation do not
 constitute owner approval. Here are the choices and their grounds.
 
@@ -193,6 +193,32 @@ and retain criterion 2 unchanged. A correctness or certification failure
 rejects the implementation; a criterion 2 failure leaves the experiment
 unsatisfied and requires locating the cost, without restoring unnecessary
 ordering merely because its measured time is lower.
+
+
+**Q79, node-indexed attribute records (open).** Inline style and
+presentational-hint records currently retain element preorder positions;
+block insertion moves those positions and gives declarations to the wrong
+node. Recommended: each table is a dense array of optional declaration
+records indexed directly by NodeId. Its records and custom declarations
+stay with the node when preorder changes. A node outside a retained table
+has no recorded declarations; registering attributes again replaces that
+table from the current traversal.
+
+Dependencies distinguish the representations. A direct node slot is one
+independent read per element. Sparse records plus a dense slot map add a
+map-to-record dependency to each read; a sorted sparse table adds dependent
+binary-search reads and a preceding ordering operation. The direct table
+uses space for nodes without attributes. It is provisional pending the
+owner's ruling; report allocated slots and estimated record bytes on all
+three workloads, and retain the full-build overhead criterion unchanged.
+Before claiming correctness, insertion and removal before styled nodes
+must preserve inline longhands, inline custom-property inheritance and
+presentational hints, including DOM order that differs from NodeId order;
+each edited layout must agree with reparsing the independently edited HTML.
+An empty slot or a newly allocated node must not acquire another node's
+record. Restoring preorder-indexed lookup must make the shifted-attribute
+case fail. This lookup choice does not change attribute parsing or CSS
+precedence.
 
 ## Measurement
 
