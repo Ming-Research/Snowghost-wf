@@ -944,7 +944,9 @@ fn generated_sum(pieces: &[Piece], sums: &[u64]) -> total: u64 reads(pieces), wr
   let total = if count == 1_u64 {
     let size = match pieces^[0_u64] {
       Generated(start: a, end: b, ..) => {
-        give cvt::<u32, u64>(b -sat a);
+        let span = b -sat a;
+        let size = cvt::<u32, u64>(span);
+        give size;
       }
       Bytes(..) => {
         give 0_u64;
@@ -1010,7 +1012,8 @@ fn generated_copy(pieces: &[Piece], sums: &[u64], bytes: &[u8], styles: &Styles,
           }
         }
         let local_start = cvt.wrap::<u64, u32>(base);
-        let local_end = cvt.wrap::<u64, u32>(base +sat size);
+        let local_stop = base +sat size;
+        let local_end = cvt.wrap::<u64, u32>(local_stop);
         let local = Piece::Generated(start: local_start, end: local_end, style: owner);
         set pieces^[0_u64] = local;
       }
@@ -1043,8 +1046,73 @@ fn generated_copy(pieces: &[Piece], sums: &[u64], bytes: &[u8], styles: &Styles,
     return False();
   }
   let left = generated_copy(pieces: &pieces^[0_u64..middle], sums: &sums^[1_u64..split], bytes: &bytes^[0_u64..left_size], styles: styles, base: base);
-  let right = generated_copy(pieces: &pieces^[middle..count], sums: &sums^[split..sums^.len], bytes: &bytes^[left_size..bytes^.len], styles: styles, base: base +sat left_size);
+  let right_base = base +sat left_size;
+  let right = generated_copy(pieces: &pieces^[middle..count], sums: &sums^[split..sums^.len], bytes: &bytes^[left_size..bytes^.len], styles: styles, base: right_base);
   return band(left, right);
+}
+
+fn generated_present(pieces: &[Piece]) -> result: Bool reads(pieces) {
+  doc "Reduces independent per-piece generated presence with one Boolean accumulator.";
+  let count = pieces^.len;
+  let result = False();
+  for (i in 0_u64..count) {
+    let current = match pieces^[i] {
+        Generated(start: a, end: b, ..) => {
+          give True();
+        }
+        Bytes(..) => {
+          give False();
+        }
+        Scalar(..) => {
+          give False();
+        }
+        Begin(..) => {
+          give False();
+        }
+        End(..) => {
+          give False();
+        }
+        Object(..) => {
+          give False();
+        }
+    }
+    set result = bor(result, current);
+  }
+  return result;
+}
+
+fn generated_valid(pieces: &[Piece], styles: &Styles) -> result: Bool reads(pieces), reads(styles) {
+  doc "Reduces independent per-piece generated span validity with one Boolean accumulator.";
+  let count = pieces^.len;
+  let result = True();
+  for (i in 0_u64..count) {
+    let current = match pieces^[i] {
+        Generated(start: a, end: b, ..) => {
+          let ordered = a <= b;
+          let stop = cvt::<u32, u64>(b);
+          let inside = stop <= styles^.generated_text.inner.len;
+          let valid = band(ordered, inside);
+          give valid;
+        }
+        Bytes(..) => {
+          give True();
+        }
+        Scalar(..) => {
+          give True();
+        }
+        Begin(..) => {
+          give True();
+        }
+        End(..) => {
+          give True();
+        }
+        Object(..) => {
+          give True();
+        }
+    }
+    set result = band(result, current);
+  }
+  return result;
 }
 
 fn finish_generated(context: &Context, styles: &Styles) -> result: Result<unit, LayoutError> writes(context.pieces), writes(context.generated_text), reads(styles) {
@@ -1053,38 +1121,18 @@ fn finish_generated(context: &Context, styles: &Styles) -> result: Result<unit, 
   if count > item_ceiling {
     return too_large::<unit>();
   }
-  let generated = False();
-  for (i in 0_u64..count) {
-    if i < context^.pieces.inner.len {
-      match context^.pieces.inner[i] {
-        Generated(start: a, end: b, ..) => {
-          let ordered = a <= b;
-          let inside = cvt::<u32, u64>(b) <= styles^.generated_text.inner.len;
-          let valid = band(ordered, inside);
-          if valid {
-          } else {
-            return inconsistent::<unit>();
-          }
-          set generated = True();
-        }
-        Bytes(..) => {
-        }
-        Scalar(..) => {
-        }
-        Begin(..) => {
-        }
-        End(..) => {
-        }
-        Object(..) => {
-        }
-      }
-    }
+  let valid = generated_valid(pieces: &context^.pieces.inner[0_u64..count], styles: styles);
+  let generated = generated_present(pieces: &context^.pieces.inner[0_u64..count]);
+  if valid {
+  } else {
+    return inconsistent::<unit>();
   }
   if generated {
   } else {
     return Ok<unit, LayoutError>(value: unit);
   }
-  let nodes = count * 2_u64 -sat 1_u64;
+  let doubled = count * 2_u64;
+  let nodes = doubled -sat 1_u64;
   let sums = box_array_filled::<u64>(count: nodes, value: 0_u64);
   let total = generated_sum(pieces: &context^.pieces.inner[0_u64..count], sums: &sums.inner[0_u64..nodes]);
   if total > item_ceiling {
