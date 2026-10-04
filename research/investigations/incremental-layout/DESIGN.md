@@ -614,6 +614,10 @@ mismatches and failed subprocesses. It retains its raw evidence under
 
 ## Results
 
+Work stopped at the owner's request. The [consolidated handoff](runs/handoff-2026-10-03.md)
+records all preserved work, failed and unrun validation, and the unresolved
+Q77/Q78 reasoning corrections. Earlier recommendations remain provisional.
+
 The experiment is incomplete. Step 3c's recovered measurements and remaining
 limits are recorded in [runs/step3c.txt](runs/step3c.txt). Step 4b's frozen
 independent-comparison candidate passes ECMA-262 output and zero-layout-work
