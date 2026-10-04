@@ -1,6 +1,7 @@
 """Validates X5 outputs and summarizes incremental timings.
 
 usage: python3 inctime.py SCRIPT RUN...
+       python3 inctime.py --self-test
        python3 inctime.py --check SCRIPT OUTPUT
        python3 inctime.py --reparse SCRIPT EDIT_OUTPUT REPARSE_OUTPUT COUNT
 
@@ -15,6 +16,7 @@ error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
 """
 import re
 import sys
+import tempfile
 
 TIMED = re.compile(r'edit (\d+) us (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)$')
 OTHER = re.compile(r'edit (\d+) (inc refused|full)$')
@@ -144,7 +146,45 @@ def check_reparse(script, edited, reparsed, count):
     return 1 if failed else 0
 
 
+def self_test():
+    """Exercise raw-record acceptance and each new child-parser refusal."""
+    base = 'base hash 0000000000000000 bytes 1\n'
+    counts = ' prepared 1 contexts 2 paragraphs 3 held_entries 4 entries 5'
+    controls = []
+    for checking in (True, False):
+        auxiliary = counts if checking else ' delta_us 1 picks_us 2 full_us 3'
+        first = 'edit 1 hash 0000000000000001 bytes 2 inc same' if checking else 'edit 1 us 4' + counts
+        last = 'edit 2 hash 0000000000000000 bytes 1 inc same' if checking else 'edit 2 us 4' + counts
+        good = base + 'created 8\nchild edit 1' + auxiliary + '\n' + first + '\nchild edit 2' + auxiliary + '\n' + last + '\n'
+        controls.append((checking, good, True))
+        mutations = [('child edit 1', 'child edit 0'), ('child edit 1', 'child edit 3'),
+                     ('child edit 1', 'style edit 1'), ('child edit 2', 'child edit 1'),
+                     ('child edit 1', 'child edit 01 unexpected'),
+                     (last, last.replace('edit 2', 'edit 1')), ('created 8\n', ''),
+                     (base, ''), (last + '\n', '')]
+        for status in ('DIFF', 'refused') if checking else ('inc refused', 'full'):
+            mutations.append((first, first.replace('inc same', 'inc ' + status) if checking else 'edit 1 ' + status))
+        controls.extend((checking, good.replace(old, new, 1), False) for old, new in mutations)
+    with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as output:
+        for checking, raw, expected in controls:
+            output.seek(0)
+            output.truncate()
+            output.write(raw)
+            output.flush()
+            try:
+                read(output.name, ['B', 'X'], checking=checking)
+                accepted = True
+            except ValueError:
+                accepted = False
+            if accepted != expected:
+                raise ValueError('child parser control failed: ' + raw)
+    return len(controls)
+
+
 def main():
+    if sys.argv[1:] == ['--self-test']:
+        print('%d child parser controls passed' % self_test())
+        return 0
     if len(sys.argv) >= 2 and sys.argv[1] == '--reparse':
         if len(sys.argv) != 6:
             raise ValueError('usage: inctime.py --reparse SCRIPT EDIT_OUTPUT REPARSE_OUTPUT COUNT')
