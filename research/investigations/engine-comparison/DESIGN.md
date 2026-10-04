@@ -62,10 +62,13 @@ build the median and maximum, Chromium's and Snowghost's, and their ratio.
 
 ## Results
 
-First pass (`runs/e1.txt`, one run per script): Snowghost leads on text
-edits on html5 (12 to 40 times) and ecma262 (1.1 to 3.5 times), is level on
-apollo11 (behind on word edits at four workers, 1.34), which rejects the
-proposal as written there; it is 150 to 7,000 times slower on class and
-block edits, the full style stage (0.18 to 0.62 s at four workers) being
-nearly all of it. Next: Chromium's durations from trace events, below its
-timer's 100 us resolution.
+`runs/e1.txt`: on text edits Snowghost is 11 to 35 times faster than
+Chromium on html5 and between 0.28 and 1.44 of it on ecma262 and apollo11,
+ahead on every page sequentially but behind at four workers on ecma262's
+sentence (1.44) and apollo11's word (1.34) edits, which rejects the
+proposal as written at four workers. Class and block edits are 150 to
+23,000 times slower, from the full style stage and from the style delta
+and marking walk that visit the whole tree; a root font change is 1.2 to
+3.7 times, while its layout part alone is 0.34 to 0.73 of Chromium's.
+An incremental style stage therefore has to replace the whole-tree delta
+and marking as well as the full restyle.

@@ -2,7 +2,8 @@
 //
 // usage: node chromium.mjs PAGE NODES SCRIPT [SUFFIX=SHEET ...]
 //
-// Loads PAGE as http://snowghost.test/page/index.html, serving it and each
+// Loads PAGE as http://localhost/page/index.html, cross-origin isolated so
+// that performance.now resolves 5 us, serving it and each
 // stylesheet whose URL ends in SUFFIX from local files, in a 1280 by 720
 // viewport with page scripts disabled, through the DevTools protocol of the
 // Chromium build CHROME names (Playwright's 1194 build by default). NODES is
@@ -11,8 +12,11 @@
 // every listed text node's data is checked against the page before any edit.
 // Each edit of SCRIPT is applied by DOM calls, followed by a forced style
 // recalculation and layout (documentElement.offsetHeight), and prints
-// `edit I us U`, U the microseconds of the edit and the forced layout by
-// performance.now, then a summary line. Exits 2 on any mismatch or failure.
+// `edit I us U style_us S layout_us L`: U the microseconds of the edit and
+// the forced layout by performance.now (100 us resolution), S and L the
+// durations of the main thread's UpdateLayoutTree and Layout trace events
+// between the edit's two console.timeStamp markers; then a summary line.
+// Exits 2 on any mismatch or failure.
 import { spawn } from 'node:child_process';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,7 +25,7 @@ import { join } from 'node:path';
 const [pagePath, nodesPath, scriptPath, ...sheetArgs] = process.argv.slice(2);
 if (!scriptPath) { console.error('usage: node chromium.mjs PAGE NODES SCRIPT [SUFFIX=SHEET ...]'); process.exit(2); }
 const CHROME = process.env.CHROME || join(process.env.HOME, 'Library/Caches/ms-playwright/chromium-1194/chrome-mac/Chromium.app/Contents/MacOS/Chromium');
-const PAGE_URL = 'http://snowghost.test/page/index.html';
+const PAGE_URL = 'http://localhost/page/index.html';
 const sheets = sheetArgs.map((a) => { const k = a.lastIndexOf('='); return { suffix: a.slice(0, k), body: readFileSync(a.slice(k + 1)) }; });
 const pageBody = readFileSync(pagePath);
 
@@ -52,11 +56,13 @@ handlers.push(async (d) => {
   if (d.method !== 'Fetch.requestPaused') return;
   const { requestId, request } = d.params;
   const css = sheets.find((s) => request.url.endsWith(s.suffix));
-  if (request.url === PAGE_URL) await send('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }], body: pageBody.toString('base64') });
-  else if (css) await send('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/css; charset=utf-8' }], body: css.body.toString('base64') });
+  if (request.url === PAGE_URL) await send('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/html; charset=utf-8' }, { name: 'Cross-Origin-Opener-Policy', value: 'same-origin' }, { name: 'Cross-Origin-Embedder-Policy', value: 'require-corp' }], body: pageBody.toString('base64') });
+  else if (css) await send('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: 'text/css; charset=utf-8' }, { name: 'Cross-Origin-Resource-Policy', value: 'cross-origin' }], body: css.body.toString('base64') });
   else await send('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' });
 });
 let loaded = false;
+const traceEvents = []; let traceDone = false;
+handlers.push((d) => { if (d.method === 'Tracing.dataCollected') traceEvents.push(...d.params.value); if (d.method === 'Tracing.tracingComplete') traceDone = true; });
 handlers.push((d) => { if (d.method === 'Page.loadEventFired') loaded = true; });
 await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false });
 await send('Emulation.setScriptExecutionDisabled', { value: true });
@@ -93,6 +99,12 @@ for (let k = 0; k < listing.length; k++) {
 const position = new Map(listing.map((l, k) => [l.id, k]));
 const node = (id) => { if (position.has(id)) return `window.__list[${position.get(id)}]`; return `window.__created.get(${id})`; };
 
+const tracing = process.env.TRACE === '1';
+if (tracing) await send('Tracing.start', { categories: 'devtools.timeline', transferMode: 'ReportEvents' });
+if (!(await evaluate('self.crossOriginIsolated'))) fail('the page is not cross-origin isolated, so performance.now is coarse');
+const linked = await evaluate(`JSON.stringify([...document.querySelectorAll('link[rel~=stylesheet]')].map((l) => { let rules = -1; try { rules = l.sheet ? l.sheet.cssRules.length : -1; } catch { rules = -2; } return [l.href, rules > 0]; }))`);
+const served = JSON.parse(linked).filter(([href]) => sheets.some((s) => href.endsWith(s.suffix)));
+if (served.length < sheets.length || served.some(([, loaded]) => !loaded)) fail('a served stylesheet did not load: ' + JSON.stringify(served).slice(0, 300));
 const times = [];
 let edits = 0; let next = nodeCount;
 for (const line of script) {
@@ -111,10 +123,31 @@ for (const line of script) {
     next += 2;
   } else if (kind === 'X') op = `${node(+f[1])}.remove()`;
   else fail('unknown edit line: ' + line);
-  const us = await evaluate(`window.__time(() => ${op})`);
+  const us = await evaluate(`(() => { console.timeStamp('e1-begin-${edits}'); const us = window.__time(() => ${op}); console.timeStamp('e1-end-${edits}'); return us; })()`);
   times.push(us);
-  console.log(`edit ${edits} us ${us}`);
+}
+if (tracing) {
+await send('Tracing.end');
+for (let i = 0; i < 400 && !traceDone; i++) await new Promise((r) => setTimeout(r, 50));
+if (!traceDone) fail('the trace did not complete');
+}
+const marks = new Map(); const spans = [];
+for (const e of traceEvents) {
+  const message = e.name === 'TimeStamp' && e.args?.data?.message;
+  if (message && message.startsWith('e1-')) marks.set(message, { ts: e.ts, tid: e.tid });
+  else if ((e.name === 'UpdateLayoutTree' || e.name === 'Layout') && e.ph === 'X') spans.push(e);
+}
+const traced = [];
+for (let k = 1; k <= edits; k++) {
+  const a = marks.get('e1-begin-' + k); const b = marks.get('e1-end-' + k);
+  if (!tracing) { traced.push(times[k - 1]); console.log(`edit ${k} us ${times[k - 1]}`); continue; }
+  if (!a || !b) fail('missing trace markers for edit ' + k);
+  let style = 0; let layout = 0;
+  for (const e of spans) if (e.tid === a.tid && e.ts >= a.ts && e.ts + e.dur <= b.ts) { if (e.name === 'Layout') layout += e.dur; else style += e.dur; }
+  traced.push(style + layout);
+  console.log(`edit ${k} us ${times[k - 1]} style_us ${Math.round(style)} layout_us ${Math.round(layout)}`);
 }
 const sorted = times.slice().sort((a, b) => a - b);
-console.log(`summary edits ${times.length} median_us ${sorted[Math.floor(sorted.length / 2)]} max_us ${sorted[sorted.length - 1]}`);
+const tsorted = traced.slice().sort((a, b) => a - b);
+console.log(`summary edits ${times.length} median_us ${sorted[Math.floor(sorted.length / 2)]} max_us ${sorted[sorted.length - 1]} traced_median_us ${Math.round(tsorted[Math.floor(tsorted.length / 2)])} traced_max_us ${Math.round(tsorted[tsorted.length - 1])}`);
 ws.close(); proc.kill();
