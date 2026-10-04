@@ -391,7 +391,15 @@ mismatches and failed subprocesses. It retains its raw evidence under
 
 ## Results
 
-None yet.
+The experiment is incomplete. Step 3c's recovered measurements and remaining
+limits are recorded in [runs/step3c.txt](runs/step3c.txt). Step 4b's frozen
+independent-comparison candidate passes ECMA-262 output and zero-layout-work
+colour checks, but fails criterion 2 on all 20 four-worker root-font edits:
+independent best-of-three update/full ratios range from 1.202939 to 1.344708.
+The sequential run passes. [runs/step4b.txt](runs/step4b.txt) names the source,
+workload, binary provenance, timing boundaries and still unmeasured cases.
+This failure remains open while its cost is investigated; it does not settle
+Q78 or weaken criterion 2.
 
 ## Owner rulings
 
