@@ -361,3 +361,7 @@ value, over interning into the previous run's tables and over deep
 comparison without tables. With the owner's agreement, Q77 to Q82, proposed
 on the stopped branch `codex/x5-handoff-2026-10-03`, are withdrawn; Q84
 takes up Q77's background predicate, which the byte-identity oracle needs.
+
+2026-10-04: the owner approved Q84, Q85 and Q86 as recommended. They go
+into `design/pipeline/layout.md` and `design/pipeline/style.md` with step 6,
+with Q67 to Q73 and Q83.

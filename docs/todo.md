@@ -204,7 +204,13 @@ example apart from the renderer code that exposed it
   part (prepare_marked against prepare_text, update_flow's general path
   against lay_out_context) on one edit, then either make the marked walk's
   loops as parallel as the full ones or let a context whose every child and
-  paragraph is marked take lay_out_context. Reopen now, before step 6.
+  paragraph is marked take lay_out_context. Attribution (`runs/step4b.txt`,
+  section 5): the update's preparation and layout cost what the full
+  path's cost when called on their own; prepare_text is about 100 ms faster
+  at four workers only when called inside build_layout, so the gap is a
+  Whitefoot scheduling effect of the call site. Reopen with a minimal
+  Whitefoot example of call-site-dependent parallel efficiency, and with
+  the owner's choice of criterion 2's denominator.
 
 - **A style update that changes no layout costs 5 to 9 times more at four
   workers.** Colour edits do no layout work but take 27.6 ms at four
