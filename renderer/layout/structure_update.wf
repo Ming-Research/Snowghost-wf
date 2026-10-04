@@ -87,53 +87,6 @@ fn source_exit_same(first: &Context, second: &Context) -> same: Bool reads(first
   }
 }
 
-fn take_source_child_at(context: &Context, upward: &[u32], left: u64, child: u32, node: NodeId) -> result: Result<Context, LayoutError> reads(upward), writes(context) {
-  doc "Follows the old source-local path, then moves one complete child source into its caller's private pool. Swapping with an empty derived context preserves valid owned places and keeps every old local-path index stable.";
-  if left > 0_u64 {
-    let next = left - 1_u64;
-    if next < upward^.len {
-    } else {
-      return inconsistent::<Context>();
-    }
-    let at = cvt::<u32, u64>(upward^[next]);
-    if at < context^.children.inner.len {
-    } else {
-      return inconsistent::<Context>();
-    }
-    return take_source_child_at(context: &context^.children.inner[at], upward: upward, left: next, child: child, node: node);
-  }
-  let at = cvt::<u32, u64>(child);
-  if at < context^.children.inner.len {
-  } else {
-    return inconsistent::<Context>();
-  }
-  let held = context_source_node(context: &context^.children.inner[at]);
-  if held.index != node.index {
-    return inconsistent::<Context>();
-  }
-  let style = context^.children.inner[at].style;
-  let moved = new_context(kind: ctx_flow, style: style);
-  swap(first: &context^.children.inner[at], second: &moved);
-  return Ok<Context, LayoutError>(value: move moved);
-}
-
-fn take_source_child(context: &Context, route: SourcePath, node: NodeId) -> result: Result<Option<Context>, LayoutError> writes(context) {
-  doc "Takes a child from its source-private pool using a route captured before any ownership moves. A second claim cannot match the source identity in the consumed slot.";
-  let owner = context_source_node(context: context);
-  let owned = route.parent_source.index == owner.index;
-  let present = band(route.present, owned);
-  if present {
-  } else {
-    let none = None<Context>();
-    return Ok<Option<Context>, LayoutError>(value: move none);
-  }
-  let upward = propagate local_steps(context: context, local: route.parent_local);
-  let count = upward.inner.len;
-  let child = propagate take_source_child_at(context: context, upward: &upward.inner[0_u64..count], left: count, child: route.child, node: node);
-  let found = Some<Context>(value: move child);
-  return Ok<Option<Context>, LayoutError>(value: move found);
-}
-
 fn finish_generated_source(context: &Context, styles: &Styles) -> status: u8 reads(styles), writes(context) {
   doc "Finalizes raw generated spans in one rebuilt source and its derived contexts. Retained complete child sources already own their bytes and are not read through the current Styles arena again.";
   let own = match finish_generated(context: context, styles: styles) {
@@ -170,85 +123,26 @@ fn finish_generated_source(context: &Context, styles: &Styles) -> status: u8 rea
 }
 
 struct SourcePool {
-  doc "One builder's privately owned previous body and its immutable local routes, captured before moving children. Independent source builders never share this pool or a mutable lookup table.";
-  previous: Option<Context>;
-  routes: RoutePatch;
+  doc "One builder's previous source donor and owned child candidates. A new source receives ownership partitioned by its DOM range; independent builders never borrow a caller's mutable pool.";
+  previous: Option<Candidate>;
+  candidates: CandidatePatch;
   width: u64;
 }
 
 fn empty_source_pool(width: u64) -> made: SourcePool pure {
-  doc "A builder with no previous source body, used for initial construction and newly attached sources.";
-  let previous = None<Context>();
-  let routes = RoutePatch::Empty();
-  return SourcePool(previous: move previous, routes: move routes, width: width);
+  doc "A builder with no previous source body or candidates.";
+  let previous = None<Candidate>();
+  let candidates = CandidatePatch::Empty();
+  return SourcePool(previous: move previous, candidates: move candidates, width: width);
 }
 
-fn make_source_pool(context: Context, width: u64) -> result: Result<SourcePool, LayoutError> pure {
-  doc "Captures this body's lookup routes before any child is claimed. Only this source and its derived contexts are collected; complete child bodies remain separate owners.";
-  let routes = propagate context_route_patch(context: &context, width: width);
-  let previous = Some<Context>(value: move context);
-  let made = SourcePool(previous: move previous, routes: move routes, width: width);
+fn make_source_pool(prior: Candidate, incoming: CandidatePatch, new_sources: &[NodeId], width: u64) -> result: Result<SourcePool, LayoutError> reads(new_sources) {
+  doc "Extracts the donor's remaining real children and combines them with ownership transferred across a changed source boundary. The donor's saved facts and counts predate all holes.";
+  let children = propagate collect_source_candidates(previous: &prior.context, new_sources: new_sources, width: width);
+  let candidates = propagate merge_candidate_patches(first: move children, second: move incoming);
+  let previous = Some<Candidate>(value: move prior);
+  let made = SourcePool(previous: move previous, candidates: move candidates, width: width);
   return Ok<SourcePool, LayoutError>(value: move made);
-}
-
-fn route_source_at(patch: &RoutePatch, width: u64, key: u64) -> result: Option<SourcePath> reads(patch) {
-  doc "Reads one source entry from an immutable source-local interval patch; generated text and omitted nodes have no source entry.";
-  if key >= width {
-    return None<SourcePath>();
-  }
-  match patch^ {
-    Empty() => {
-      return None<SourcePath>();
-    }
-    Leaf(value: stored) => {
-      if width != 1_u64 {
-        return None<SourcePath>();
-      }
-      match stored^ {
-        Source(value: route) => {
-          return Some<SourcePath>(value: route^);
-        }
-        Text(..) => {
-          return None<SourcePath>();
-        }
-      }
-    }
-    Fork(left: lower, right: upper) => {
-      let half = width / 2_u64;
-      if half == 0_u64 {
-        return None<SourcePath>();
-      }
-      if key < half {
-        return route_source_at(patch: &lower^.inner, width: half, key: key);
-      }
-      let rest = width - half;
-      let offset = key - half;
-      return route_source_at(patch: &upper^.inner, width: rest, key: offset);
-    }
-  }
-}
-
-fn pool_take_source(pool: &SourcePool, node: NodeId) -> result: Result<Option<Context>, LayoutError> writes(pool) {
-  doc "Looks up one requested child before borrowing its owned previous body. The route is Copy; only the source-private body is mutated by the transfer.";
-  let at = cvt::<u32, u64>(node.index);
-  let found = route_source_at(patch: &pool^.routes, width: pool^.width, key: at);
-  match found {
-    None() => {
-      let absent = None<Context>();
-      return Ok<Option<Context>, LayoutError>(value: move absent);
-    }
-    Some(value: route) => {
-      let previous = &pool^.previous;
-      match previous^ {
-        Some(value: context) => {
-          return take_source_child(context: context, route: route, node: node);
-        }
-        None() => {
-          return inconsistent::<Option<Context>>();
-        }
-      }
-    }
-  }
 }
 
 fn source_entry_matches(context: &Context, state: &BuildState, node: NodeId, recipe: u8, kind: u8, style: StyleRef) -> same: Bool reads(context), reads(state) {
@@ -333,7 +227,7 @@ fn mark_new_source(context: &Context) -> result: unit writes(context) {
 }
 
 fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Document, old: &Styles, new: &Styles) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), writes(context), writes(pool) {
-  doc "Finalizes a replacement's own generated storage before exact preparation-key matching. A previous speculative replacement has never been laid out and already uses new Styles; an original donor came from the caller's last laid-out layout and uses old Styles.";
+  doc "Finalizes a replacement's own generated storage before exact preparation-key matching. Each donor carries its explicit old or new Styles basis; geometry is not used to infer preparation inputs.";
   let routed = propagate finish_source_paths(context: context);
   let generated = finish_generated_source(context: context, styles: new);
   if generated == 2_u8 {
@@ -346,11 +240,11 @@ fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Docu
   let previous = &pool^.previous;
   match previous^ {
     Some(value: donor) => {
-      let fresh = donor^.laid.available == laid_never;
-      if fresh {
-        let reused = propagate reuse_source_paragraphs(previous: donor, replacement: context, document: document, old: new, new: new);
+      retain_output_summary(previous: &donor^.context, replacement: context);
+      if donor^.styles_new {
+        let reused = propagate reuse_source_paragraphs(previous: &donor^.context, replacement: context, document: document, old: new, new: new);
       } else {
-        let reused = propagate reuse_source_paragraphs(previous: donor, replacement: context, document: document, old: old, new: new);
+        let reused = propagate reuse_source_paragraphs(previous: &donor^.context, replacement: context, document: document, old: old, new: new);
       }
     }
     None() => {
@@ -359,40 +253,53 @@ fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Docu
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8, recipe: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(new), reads(atoms), writes(walk) {
-  doc "Uses the current caller's construction recipe and actual counter/quote entry. Matching retained bodies restore their exit without walking their DOM; other bodies rebuild with a private child pool, then transfer only exact prepared paragraphs.";
+fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8, recipe: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(new), reads(new_sources), reads(atoms), writes(walk) {
+  doc "Validates the current caller's actual entry and recipe. Ownership for a new source is partitioned into a private candidate patch before construction, including reusable children crossing an old wrapper boundary.";
   let begin = propagate capture_build_state(walk: walk);
-  let previous = propagate pool_take_source(pool: &walk^.pool, node: node);
   let width = walk^.pool.width;
+  let previous = propagate take_candidate(candidates: &walk^.pool.candidates, width: width, node: node);
+  let empty = CandidatePatch::Empty();
+  swap(first: &walk^.pool.candidates, second: &empty);
+  let partitioned = propagate partition_candidates(candidates: move empty, document: document, new_sources: new_sources, root: node, width: width);
+  set walk^.pool.candidates = move partitioned.outside;
   let child_pool = match move previous {
     Some(value: prior) => {
-      let entry_matches = source_entry_matches(context: &prior, state: &begin, node: node, recipe: recipe, kind: kind, style: style);
-      let fresh = prior.laid.available == laid_never;
-      let construction = if fresh {
+      let entry_matches = source_entry_matches(context: &prior.context, state: &begin, node: node, recipe: recipe, kind: kind, style: style);
+      let construction = if prior.styles_new {
         give True();
       } else {
         give retained_style(old: old, new: new, style: style);
       }
-      let retained = band(entry_matches, construction);
+      let transferred = candidate_patch_empty(candidates: &partitioned.inside);
+      let whole = band(prior.complete, transferred);
+      let compatible = band(entry_matches, construction);
+      let retained = band(whole, compatible);
       if retained {
-        let restored = propagate restore_source_exit(walk: walk, context: &prior);
-        return Ok<Context, LayoutError>(value: move prior);
+        let restored = propagate restore_source_exit(walk: walk, context: &prior.context);
+        return Ok<Context, LayoutError>(value: move prior.context);
       }
-      let pool = propagate make_source_pool(context: move prior, width: width);
+      let pool = propagate make_source_pool(prior: move prior, incoming: move partitioned.inside, new_sources: new_sources, width: width);
       give move pool;
     }
     None() => {
-      let pool = empty_source_pool(width: width);
+      let absent = None<Candidate>();
+      let pool = SourcePool(previous: move absent, candidates: move partitioned.inside, width: width);
       give move pool;
     }
   }
   swap(first: &walk^.pool, second: &child_pool);
-  let context = propagate build_box_body(document: document, old: old, styles: new, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
+  let context = propagate build_box_body(document: document, old: old, styles: new, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
   let end = propagate capture_build_state(walk: walk);
   let source = ContextSource::ElementBody(node: node, recipe: recipe, begin: move begin, end: move end);
   set context.source = move source;
   let finished = propagate finish_incremental_body(context: &context, pool: &walk^.pool, document: document, old: old, new: new);
   swap(first: &walk^.pool, second: &child_pool);
+  let retired = propagate retire_source_pool(pool: move child_pool, new_sources: new_sources, width: width);
+  let previous_retired = empty_retired_bodies();
+  swap(first: &walk^.retired, second: &previous_retired);
+  let combined = propagate join_retired_bodies(first: move previous_retired, second: move retired);
+  set walk^.retired = move combined;
+  let recorded = propagate record_completed_source(walk: walk, node: node, width: width);
   return Ok<Context, LayoutError>(value: move context);
 }
 
@@ -400,7 +307,7 @@ enum SourceMarks {
   doc "An immutable sparse NodeId set. A leaf distinguishes a body whose own inputs changed from an ancestor visited only to integrate independently rebuilt children.";
   Empty();
   Leaf(direct: Bool);
-  Fork(left: Box<SourceMarks>, right: Box<SourceMarks>);
+  Fork(left: Box<SourceMarks>, right: Box<SourceMarks>, size: u64);
 }
 
 fn source_mark_single(width: u64, key: u64, direct: Bool) -> result: Result<SourceMarks, LayoutError> pure {
@@ -418,7 +325,7 @@ fn source_mark_single(width: u64, key: u64, direct: Bool) -> result: Result<Sour
     let lower = box_new(value: move below);
     let empty = SourceMarks::Empty();
     let upper = box_new(value: move empty);
-    let made = SourceMarks::Fork(left: move lower, right: move upper);
+    let made = SourceMarks::Fork(left: move lower, right: move upper, size: 1_u64);
     return Ok<SourceMarks, LayoutError>(value: move made);
   }
   let rest = width - half;
@@ -427,7 +334,7 @@ fn source_mark_single(width: u64, key: u64, direct: Bool) -> result: Result<Sour
   let upper = box_new(value: move above);
   let empty = SourceMarks::Empty();
   let lower = box_new(value: move empty);
-  let made = SourceMarks::Fork(left: move lower, right: move upper);
+  let made = SourceMarks::Fork(left: move lower, right: move upper, size: 1_u64);
   return Ok<SourceMarks, LayoutError>(value: move made);
 }
 
@@ -453,23 +360,26 @@ fn merge_source_marks(first: SourceMarks, second: SourceMarks) -> result: Result
         }
       }
     }
-    Fork(left: a_left, right: a_right) => {
+    Fork(left: a_left, right: a_right, size: first_size) => {
       match move second {
         Empty() => {
-          let made = SourceMarks::Fork(left: move a_left, right: move a_right);
+          let made = SourceMarks::Fork(left: move a_left, right: move a_right, size: first_size);
           return Ok<SourceMarks, LayoutError>(value: move made);
         }
         Leaf(..) => {
           return inconsistent::<SourceMarks>();
         }
-        Fork(left: b_left, right: b_right) => {
+        Fork(left: b_left, right: b_right, ..) => {
           let low = merge_source_marks(first: move a_left.inner, second: move b_left.inner);
           let high = merge_source_marks(first: move a_right.inner, second: move b_right.inner);
           let lower = propagate low;
           let upper = propagate high;
+          let low_size = source_mark_size(marks: &lower);
+          let high_size = source_mark_size(marks: &upper);
+          let size = low_size +sat high_size;
           let lower_box = box_new(value: move lower);
           let upper_box = box_new(value: move upper);
-          let made = SourceMarks::Fork(left: move lower_box, right: move upper_box);
+          let made = SourceMarks::Fork(left: move lower_box, right: move upper_box, size: size);
           return Ok<SourceMarks, LayoutError>(value: move made);
         }
       }
@@ -492,7 +402,7 @@ fn source_mark_at(marks: &SourceMarks, width: u64, key: u64) -> marked: Option<B
       }
       return None<Bool>();
     }
-    Fork(left: lower, right: upper) => {
+    Fork(left: lower, right: upper, ..) => {
       let half = width / 2_u64;
       if key < half {
         return source_mark_at(marks: &lower^.inner, width: half, key: key);
@@ -646,7 +556,9 @@ fn walk_from_source(context: &Context, atoms: &AtomTable, width: u64) -> result:
   let counters = box_slots_new::<Counter>(capacity: 0_u64);
   let pool = empty_source_pool(width: width);
   let incremental = True();
-  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool);
+  let completed = SourceMarks::Empty();
+  let retired = empty_retired_bodies();
+  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool, completed: move completed, retired: move retired);
   let source = &context^.source;
   match source^ {
     ElementBody(begin: before, ..) => {
@@ -660,4 +572,328 @@ fn walk_from_source(context: &Context, atoms: &AtomTable, width: u64) -> result:
     }
   }
   return Ok<Walk, LayoutError>(value: move walk);
+}
+
+fn child_change_valid(layout: &Layout, document: &Document, old: &Styles, new: &Styles, changed: &[Bool], change: ChildChange) -> valid: Bool reads(layout), reads(document), reads(old), reads(new), reads(changed) {
+  doc "Checks detectable single-edit preconditions without recomputing the caller's complete style delta or pretending to reconstruct the old DOM. The old parent of a detach is the supplied fact; fresh attachment must name a node allocated after the old styles' NodeId domain.";
+  if layout^.dirty {
+    return False();
+  }
+  let nodes = document^.nodes.inner.len;
+  if changed^.len != nodes {
+    return False();
+  }
+  if new^.order.inner.len != nodes {
+    return False();
+  }
+  if layout^.text_units.inner.len != layout^.source_paths.inner.len {
+    return False();
+  }
+  let parent = cvt::<u32, u64>(change.parent.index);
+  let child = cvt::<u32, u64>(change.child.index);
+  let parent_exists = parent < nodes;
+  let child_exists = child < nodes;
+  let both = band(parent_exists, child_exists);
+  if both {
+  } else {
+    return False();
+  }
+  if parent == child {
+    return False();
+  }
+  let root = parent == 0_u64;
+  let listed = new^.order.inner[parent] != no_index;
+  let parent_attached = bor(root, listed);
+  if parent_attached {
+  } else {
+    return False();
+  }
+  let actual_parent = document^.nodes.inner[child].links.parent;
+  if change.attached {
+    if child < old^.order.inner.len {
+      return False();
+    }
+    match actual_parent {
+      Some(value: origin) => {
+        return origin.index == change.parent.index;
+      }
+      None() => {
+        return False();
+      }
+    }
+  }
+  if child >= old^.order.inner.len {
+    return False();
+  }
+  match actual_parent {
+    None() => {
+      return True();
+    }
+    Some(..) => {
+      return False();
+    }
+  }
+}
+
+fn structural_source_marks(layout: &Layout, document: &Document, styles: &Styles, changed: &[Bool], change: ChildChange) -> result: Result<SourceMarks, LayoutError> reads(layout), reads(document), reads(styles), reads(changed) {
+  doc "Combines the child-list consumer with independent structural-selector consumers. An edit below an unchanged complete child source does not directly mark the document or every ancestor for reconstruction.";
+  let old_width = layout^.source_paths.inner.len;
+  let width = document^.nodes.inner.len;
+  let source = propagate enclosing_old_source(document: document, paths: &layout^.source_paths.inner[0_u64..old_width], node: change.parent);
+  let direct = True();
+  let structural_result = mark_source_ancestors(paths: &layout^.source_paths.inner[0_u64..old_width], node: source, width: width, remaining: old_width, direct: direct);
+  let style_result = changed_source_marks(document: document, styles: styles, paths: &layout^.source_paths.inner[0_u64..old_width], changed: changed, base: 0_u64, width: width);
+  let structural = propagate structural_result;
+  let style = propagate style_result;
+  return merge_source_marks(first: move structural, second: move style);
+}
+
+fn source_mark_size(marks: &SourceMarks) -> size: u64 reads(marks) {
+  doc "The number of unique destinations cached by an owned sparse union, used to assign output intervals without a shared append counter.";
+  match marks^ {
+    Empty() => {
+      return 0_u64;
+    }
+    Leaf(..) => {
+      return 1_u64;
+    }
+    Fork(size: count, ..) => {
+      return count^;
+    }
+  }
+}
+
+fn copy_source_ids(marks: &SourceMarks, width: u64, base: u64, output: &[NodeId]) -> valid: Bool reads(marks), writes(output) {
+  doc "Materializes sorted completed-source identities into disjoint output intervals. Each child's output length is known from its immutable subtree, so neither copy depends on the other's result.";
+  match marks^ {
+    Empty() => {
+      return output^.len == 0_u64;
+    }
+    Leaf(..) => {
+      let singleton = width == 1_u64;
+      let one = output^.len == 1_u64;
+      let shaped = band(singleton, one);
+      if shaped {
+      } else {
+        return False();
+      }
+      if base < 4294967295_u64 {
+        let index = cvt::<u64, u32>(base);
+        let node = NodeId(index: index);
+        set output^[0_u64] = node;
+        return True();
+      }
+      return False();
+    }
+    Fork(left: lower, right: upper, ..) => {
+      let total = output^.len;
+      let count = source_mark_size(marks: &lower^.inner);
+      if count <= total {
+      } else {
+        return False();
+      }
+      let half = width / 2_u64;
+      let rest = width - half;
+      let upper_base = base +sat half;
+      let low = copy_source_ids(marks: &lower^.inner, width: half, base: base, output: &output^[0_u64..count]);
+      let high = copy_source_ids(marks: &upper^.inner, width: rest, base: upper_base, output: &output^[count..total]);
+      return band(low, high);
+    }
+  }
+}
+
+fn completed_source_ids(marks: &SourceMarks, width: u64) -> result: Result<Box<Array<NodeId>>, LayoutError> reads(marks) {
+  doc "Creates a read-only style-basis snapshot for one builder from completed child candidates. It contains only sparse completed identities, not every layout source.";
+  let count = source_mark_size(marks: marks);
+  if count > item_ceiling {
+    return too_large::<Box<Array<NodeId>>>();
+  }
+  let absent = NodeId(index: no_index);
+  let output = box_array_filled::<NodeId>(count: count, value: absent);
+  let copied = copy_source_ids(marks: marks, width: width, base: 0_u64, output: &output.inner[0_u64..count]);
+  if copied {
+    return Ok<Box<Array<NodeId>>, LayoutError>(value: move output);
+  }
+  return inconsistent::<Box<Array<NodeId>>>();
+}
+
+struct RetiredBodies {
+  doc "Original source-local outputs revoked by one independent reconstruction. Counts exclude retained real child sources and derived placeholders left by ownership transfers.";
+  facts: SourceFacts;
+  contexts: u64;
+  paragraphs: u64;
+}
+
+fn empty_source_facts() -> made: SourceFacts pure {
+  doc "An empty owned list of route facts.";
+  let texts = box_slots_new::<TextFact>(capacity: 0_u64);
+  let sources = box_slots_new::<SourceFact>(capacity: 0_u64);
+  return SourceFacts(texts: move texts, sources: move sources);
+}
+
+fn empty_retired_bodies() -> made: RetiredBodies pure {
+  doc "An unchanged source produces neither retirements nor count adjustments.";
+  let facts = empty_source_facts();
+  return RetiredBodies(facts: move facts, contexts: 0_u64, paragraphs: 0_u64);
+}
+
+fn copy_text_facts(input: &[TextFact], output: &[TextFact]) -> result: unit reads(input), writes(output) contract {
+  requires input^.len == output^.len;
+} {
+  doc "Copies already collected route facts independently by slot.";
+  let count = input^.len;
+  for (i in 0_u64..count) {
+    set output^[i] = input^[i];
+  }
+}
+
+fn copy_source_facts(input: &[SourceFact], output: &[SourceFact]) -> result: unit reads(input), writes(output) contract {
+  requires input^.len == output^.len;
+} {
+  doc "Copies already collected source ownership facts independently by slot.";
+  let count = input^.len;
+  for (i in 0_u64..count) {
+    set output^[i] = input^[i];
+  }
+}
+
+fn join_source_facts(first: SourceFacts, second: SourceFacts) -> result: Result<SourceFacts, LayoutError> pure {
+  doc "Combines independent source outputs by assigning disjoint copy ranges. The lists retain facts, not ordering constraints on their later destination-keyed publication.";
+  let text_a = first.texts.inner.len;
+  let text_b = second.texts.inner.len;
+  let source_a = first.sources.inner.len;
+  let source_b = second.sources.inner.len;
+  let texts = text_a +sat text_b;
+  let sources = source_a +sat source_b;
+  let text_limit = texts <= item_ceiling;
+  let source_limit = sources <= item_ceiling;
+  let bounded = band(text_limit, source_limit);
+  if bounded {
+  } else {
+    return too_large::<SourceFacts>();
+  }
+  let absent = NodeId(index: no_index);
+  let no = False();
+  let text_unit = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+  let source_path = SourcePath(present: no, parent_source: absent, parent_local: no_index, child: no_index);
+  let text_fact = TextFact(node: absent, value: text_unit);
+  let source_fact = SourceFact(node: absent, value: source_path);
+  let text_array = box_array_filled::<TextFact>(count: texts, value: text_fact);
+  let source_array = box_array_filled::<SourceFact>(count: sources, value: source_fact);
+  copy_text_facts(input: &first.texts.inner[0_u64..text_a], output: &text_array.inner[0_u64..text_a]);
+  copy_text_facts(input: &second.texts.inner[0_u64..text_b], output: &text_array.inner[text_a..texts]);
+  copy_source_facts(input: &first.sources.inner[0_u64..source_a], output: &source_array.inner[0_u64..source_a]);
+  copy_source_facts(input: &second.sources.inner[0_u64..source_b], output: &source_array.inner[source_a..sources]);
+  let text_slots = slots_from_array(values: move text_array.inner);
+  let source_slots = slots_from_array(values: move source_array.inner);
+  let joined_texts = box_new(value: move text_slots);
+  let joined_sources = box_new(value: move source_slots);
+  let made = SourceFacts(texts: move joined_texts, sources: move joined_sources);
+  return Ok<SourceFacts, LayoutError>(value: move made);
+}
+
+fn join_retired_bodies(first: RetiredBodies, second: RetiredBodies) -> result: Result<RetiredBodies, LayoutError> pure {
+  doc "Combines retirement results from disjoint old source owners; no retained subtree is counted again.";
+  let contexts = first.contexts +sat second.contexts;
+  let paragraphs = first.paragraphs +sat second.paragraphs;
+  let facts = propagate join_source_facts(first: move first.facts, second: move second.facts);
+  let made = RetiredBodies(facts: move facts, contexts: contexts, paragraphs: paragraphs);
+  return Ok<RetiredBodies, LayoutError>(value: move made);
+}
+
+fn candidate_patch_empty(candidates: &CandidatePatch) -> empty: Bool reads(candidates) {
+  doc "Tests whether a transferred ownership patch contains a candidate, including empty branches left by earlier claims.";
+  match candidates^ {
+    Empty() => {
+      return True();
+    }
+    Leaf(..) => {
+      return False();
+    }
+    Fork(left: lower, right: upper) => {
+      let first = candidate_patch_empty(candidates: &lower^.inner);
+      let second = candidate_patch_empty(candidates: &upper^.inner);
+      return band(first, second);
+    }
+  }
+}
+
+fn retire_unused_candidates(candidates: CandidatePatch, new_sources: &[NodeId], width: u64) -> result: Result<RetiredBodies, LayoutError> reads(new_sources) {
+  doc "Revokes only original bodies left unclaimed after reconstruction. A discarded speculative body has no published facts to revoke, but original children still owned by it must be visited; expanded wrappers retain their pre-extraction snapshots.";
+  match move candidates {
+    Empty() => {
+      let made = empty_retired_bodies();
+      return Ok<RetiredBodies, LayoutError>(value: move made);
+    }
+    Leaf(candidate: prior) => {
+      let children = propagate collect_source_candidates(previous: &prior.context, new_sources: new_sources, width: width);
+      let below = propagate retire_unused_candidates(candidates: move children, new_sources: new_sources, width: width);
+      if prior.styles_new {
+        return Ok<RetiredBodies, LayoutError>(value: move below);
+      }
+      let own = RetiredBodies(facts: move prior.facts, contexts: prior.contexts, paragraphs: prior.paragraphs);
+      return join_retired_bodies(first: move own, second: move below);
+    }
+    Fork(left: lower, right: upper) => {
+      let first_result = retire_unused_candidates(candidates: move lower.inner, new_sources: new_sources, width: width);
+      let second_result = retire_unused_candidates(candidates: move upper.inner, new_sources: new_sources, width: width);
+      let first = propagate first_result;
+      let second = propagate second_result;
+      return join_retired_bodies(first: move first, second: move second);
+    }
+  }
+}
+
+fn retire_source_pool(pool: SourcePool, new_sources: &[NodeId], width: u64) -> result: Result<RetiredBodies, LayoutError> reads(new_sources) {
+  doc "The replaced original body and unused original candidate sources are exactly this builder's retirements. Retained children were consumed out of the pool and cannot be rescanned or counted here.";
+  let children = propagate retire_unused_candidates(candidates: move pool.candidates, new_sources: new_sources, width: width);
+  match move pool.previous {
+    None() => {
+      return Ok<RetiredBodies, LayoutError>(value: move children);
+    }
+    Some(value: prior) => {
+      if prior.styles_new {
+        return Ok<RetiredBodies, LayoutError>(value: move children);
+      }
+      let own = RetiredBodies(facts: move prior.facts, contexts: prior.contexts, paragraphs: prior.paragraphs);
+      return join_retired_bodies(first: move own, second: move children);
+    }
+  }
+}
+
+fn record_completed_source(walk: &Walk, node: NodeId, width: u64) -> result: Result<unit, LayoutError> writes(walk.completed) {
+  doc "Records one source actually built from current Styles in this private walk. The walk already carries the causal counter/quote chain; independently checkpointed walks return separate sets for balanced union.";
+  let key = cvt::<u32, u64>(node.index);
+  let direct = True();
+  let own = propagate source_mark_single(width: width, key: key, direct: direct);
+  let previous = SourceMarks::Empty();
+  swap(first: &walk^.completed, second: &previous);
+  let combined = propagate merge_source_marks(first: move previous, second: move own);
+  set walk^.completed = move combined;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn retain_output_summary(previous: &Context, replacement: &Context) -> result: unit reads(previous), writes(replacement) {
+  doc "Preserves only the previous source's outward layout summary for its unchanged caller's delta comparison. New internal boxes and paragraph geometry remain fresh; restyled prevents this source from taking its old-content shortcut before recomputation.";
+  set replacement^.space = previous^.space;
+  set replacement^.laid = previous^.laid;
+  set replacement^.x = previous^.x;
+  set replacement^.y = previous^.y;
+  set replacement^.width = previous^.width;
+  set replacement^.height = previous^.height;
+  set replacement^.baseline = previous^.baseline;
+  set replacement^.has_baseline = previous^.has_baseline;
+  set replacement^.margin_top = previous^.margin_top;
+  set replacement^.margin_right = previous^.margin_right;
+  set replacement^.margin_bottom = previous^.margin_bottom;
+  set replacement^.margin_left = previous^.margin_left;
+  set replacement^.flow_at = previous^.flow_at;
+  set replacement^.block = previous^.block;
+  set replacement^.beside = previous^.beside;
+  set replacement^.viewport_origin = previous^.viewport_origin;
+  set replacement^.min_content = previous^.min_content;
+  set replacement^.max_content = previous^.max_content;
+  set replacement^.intrinsic_known = previous^.intrinsic_known;
+  set replacement^.intrinsic_basis = previous^.intrinsic_basis;
+  set replacement^.content_raw = previous^.content_raw;
 }
