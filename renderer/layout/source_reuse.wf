@@ -1,0 +1,1151 @@
+alias ReuseSizing = pkg::css::values::Sizing;
+alias ReuseFontGroup = pkg::css::values::FontGroup;
+alias reuse_shaped_empty = pkg::layout::text::shaped_empty;
+
+// Private support for reuse_source_paragraphs and its structure-update caller.
+// Remove this file if that source-body reuse boundary is retired.
+struct ReuseLocal {
+  valid: Bool;
+  paragraphs: u64;
+  children: u64;
+}
+
+struct ReuseAddress {
+  local: u32;
+  paragraph: u64;
+}
+
+enum ReuseKeys {
+  Empty();
+  Leaf(address: ReuseAddress, words: Box<Array<u64>>, objects: Box<Array<u32>>);
+  Fork(count: u64, left: Box<ReuseKeys>, right: Box<ReuseKeys>);
+}
+
+fn reuse_key_count(keys: &ReuseKeys) -> count: u64 reads(keys) {
+  match keys^ {
+    Empty() => { return 0_u64; }
+    Leaf(..) => { return 1_u64; }
+    Fork(count: total, ..) => { return total^; }
+  }
+}
+
+fn reuse_join_keys(first: ReuseKeys, second: ReuseKeys) -> result: Result<ReuseKeys, LayoutError> pure {
+  let a = reuse_key_count(keys: &first);
+  let b = reuse_key_count(keys: &second);
+  let total = a +sat b;
+  if total > item_ceiling { return too_large::<ReuseKeys>(); }
+  let left = box_new::<ReuseKeys>(value: move first);
+  let right = box_new::<ReuseKeys>(value: move second);
+  let joined = ReuseKeys::Fork(count: total, left: move left, right: move right);
+  return Ok<ReuseKeys, LayoutError>(value: move joined);
+}
+
+fn reuse_float(value: f32) -> word: u64 pure {
+  let reflexive = feq(value, value);
+  if reflexive {} else { return 18446744073709551615_u64; }
+  if feq(value, 0.0_f32) { return 0_u64; }
+  let bits = reinterpret::<f32, u32>(value);
+  return cvt::<u32, u64>(bits);
+}
+
+fn reuse_bool(value: Bool) -> word: u64 pure {
+  if value { return 1_u64; }
+  return 0_u64;
+}
+
+fn reuse_concat(first: &[u64], second: &[u64]) -> result: Result<Box<Array<u64>>, LayoutError> reads(first), reads(second) {
+  let total = first^.len +sat second^.len;
+  if total > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let words = box_array_filled::<u64>(count: total, value: 0_u64);
+  let left_count = first^.len;
+  for (i in 0_u64..total) {
+    if i < left_count {
+      set words.inner[i] = first^[i];
+    } else {
+      let j = i - left_count;
+      if j < second^.len { set words.inner[i] = second^[j]; }
+    }
+  }
+  return Ok<Box<Array<u64>>, LayoutError>(value: move words);
+}
+
+fn reuse_concat_owned(first: Box<Array<u64>>, second: Box<Array<u64>>) -> result: Result<Box<Array<u64>>, LayoutError> pure {
+  let a = first.inner.len;
+  let b = second.inner.len;
+  return reuse_concat(first: &first.inner[0_u64..a], second: &second.inner[0_u64..b]);
+}
+
+fn reuse_style_words(styles: &Styles, style: StyleRef) -> result: Result<Box<Array<u64>>, LayoutError> reads(styles) {
+  doc "The complete preparation inputs by value: stable run identity, font fields and family values, non-colour text values, and the two inline-boundary shaping predicates. Geometry and arena offsets are not preparation identity.";
+  let font = font_of(styles: styles, style: style);
+  let text = text_of(styles: styles, style: style);
+  let opening = Mark::Open(at: 0_u32, style: style);
+  let closing = Mark::Close(at: 0_u32, style: style);
+  let breaks_open = breaks_shaping(styles: styles, mark: opening);
+  let breaks_close = breaks_shaping(styles: styles, mark: closing);
+  let start = cvt::<u32, u64>(font.families_start);
+  let end = cvt::<u32, u64>(font.families_end);
+  if start > end { return inconsistent::<Box<Array<u64>>>(); }
+  if end > styles^.families.inner.len { return inconsistent::<Box<Array<u64>>>(); }
+  let count = end - start;
+  let family_words = count *sat 2_u64;
+  let length = family_words +sat 39_u64;
+  if length > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let words = box_array_filled::<u64>(count: length, value: 0_u64);
+  let word_0 = cvt::<u32, u64>(style.element.index);
+  if 0_u64 < words.inner.len { set words.inner[0_u64] = word_0; }
+  let word_1 = cvt::<u32, u64>(style.pseudo);
+  if 1_u64 < words.inner.len { set words.inner[1_u64] = word_1; }
+  let word_2 = reuse_bool(value: style.anonymous);
+  if 2_u64 < words.inner.len { set words.inner[2_u64] = word_2; }
+  let word_3 = reuse_float(value: font.size);
+  if 3_u64 < words.inner.len { set words.inner[3_u64] = word_3; }
+  let word_4 = reuse_float(value: font.weight);
+  if 4_u64 < words.inner.len { set words.inner[4_u64] = word_4; }
+  let word_5 = cvt::<u8, u64>(font.style);
+  if 5_u64 < words.inner.len { set words.inner[5_u64] = word_5; }
+  let word_6 = cvt::<u8, u64>(font.line_height.kind);
+  if 6_u64 < words.inner.len { set words.inner[6_u64] = word_6; }
+  let word_7 = cvt::<u8, u64>(font.line_height.keyword);
+  if 7_u64 < words.inner.len { set words.inner[7_u64] = word_7; }
+  let word_8 = reuse_float(value: font.line_height.value.px);
+  if 8_u64 < words.inner.len { set words.inner[8_u64] = word_8; }
+  let word_9 = reuse_float(value: font.line_height.value.percent);
+  if 9_u64 < words.inner.len { set words.inner[9_u64] = word_9; }
+  let word_10 = reuse_bool(value: font.line_height.value.has_percent);
+  if 10_u64 < words.inner.len { set words.inner[10_u64] = word_10; }
+  let word_11 = cvt::<u8, u64>(text.text_align);
+  if 11_u64 < words.inner.len { set words.inner[11_u64] = word_11; }
+  let word_12 = reuse_float(value: text.text_indent.px);
+  if 12_u64 < words.inner.len { set words.inner[12_u64] = word_12; }
+  let word_13 = reuse_float(value: text.text_indent.percent);
+  if 13_u64 < words.inner.len { set words.inner[13_u64] = word_13; }
+  let word_14 = reuse_bool(value: text.text_indent.has_percent);
+  if 14_u64 < words.inner.len { set words.inner[14_u64] = word_14; }
+  let word_15 = cvt::<u8, u64>(text.text_transform);
+  if 15_u64 < words.inner.len { set words.inner[15_u64] = word_15; }
+  let word_16 = cvt::<u8, u64>(text.white_space);
+  if 16_u64 < words.inner.len { set words.inner[16_u64] = word_16; }
+  let word_17 = cvt::<u8, u64>(text.letter_spacing.kind);
+  if 17_u64 < words.inner.len { set words.inner[17_u64] = word_17; }
+  let word_18 = cvt::<u8, u64>(text.letter_spacing.keyword);
+  if 18_u64 < words.inner.len { set words.inner[18_u64] = word_18; }
+  let word_19 = reuse_float(value: text.letter_spacing.value.px);
+  if 19_u64 < words.inner.len { set words.inner[19_u64] = word_19; }
+  let word_20 = reuse_float(value: text.letter_spacing.value.percent);
+  if 20_u64 < words.inner.len { set words.inner[20_u64] = word_20; }
+  let word_21 = reuse_bool(value: text.letter_spacing.value.has_percent);
+  if 21_u64 < words.inner.len { set words.inner[21_u64] = word_21; }
+  let word_22 = cvt::<u8, u64>(text.word_spacing.kind);
+  if 22_u64 < words.inner.len { set words.inner[22_u64] = word_22; }
+  let word_23 = cvt::<u8, u64>(text.word_spacing.keyword);
+  if 23_u64 < words.inner.len { set words.inner[23_u64] = word_23; }
+  let word_24 = reuse_float(value: text.word_spacing.value.px);
+  if 24_u64 < words.inner.len { set words.inner[24_u64] = word_24; }
+  let word_25 = reuse_float(value: text.word_spacing.value.percent);
+  if 25_u64 < words.inner.len { set words.inner[25_u64] = word_25; }
+  let word_26 = reuse_bool(value: text.word_spacing.value.has_percent);
+  if 26_u64 < words.inner.len { set words.inner[26_u64] = word_26; }
+  let word_27 = cvt::<u8, u64>(text.vertical_align.kind);
+  if 27_u64 < words.inner.len { set words.inner[27_u64] = word_27; }
+  let word_28 = cvt::<u8, u64>(text.vertical_align.keyword);
+  if 28_u64 < words.inner.len { set words.inner[28_u64] = word_28; }
+  let word_29 = reuse_float(value: text.vertical_align.value.px);
+  if 29_u64 < words.inner.len { set words.inner[29_u64] = word_29; }
+  let word_30 = reuse_float(value: text.vertical_align.value.percent);
+  if 30_u64 < words.inner.len { set words.inner[30_u64] = word_30; }
+  let word_31 = reuse_bool(value: text.vertical_align.value.has_percent);
+  if 31_u64 < words.inner.len { set words.inner[31_u64] = word_31; }
+  let word_32 = cvt::<u8, u64>(text.decoration_line);
+  if 32_u64 < words.inner.len { set words.inner[32_u64] = word_32; }
+  let word_33 = cvt::<u32, u64>(text.list_style_type.index);
+  if 33_u64 < words.inner.len { set words.inner[33_u64] = word_33; }
+  let word_34 = cvt::<u8, u64>(text.overflow_wrap);
+  if 34_u64 < words.inner.len { set words.inner[34_u64] = word_34; }
+  let word_35 = cvt::<u8, u64>(text.word_break);
+  if 35_u64 < words.inner.len { set words.inner[35_u64] = word_35; }
+  let word_36 = reuse_bool(value: breaks_open);
+  if 36_u64 < words.inner.len { set words.inner[36_u64] = word_36; }
+  let word_37 = reuse_bool(value: breaks_close);
+  if 37_u64 < words.inner.len { set words.inner[37_u64] = word_37; }
+  let word_38 = count;
+  if 38_u64 < words.inner.len { set words.inner[38_u64] = word_38; }
+  for (i in 39_u64..length) {
+    let relative = i - 39_u64;
+    let family = relative / 2_u64;
+    let field = relative % 2_u64;
+    let at = start +sat family;
+    if at < styles^.families.inner.len {
+      let word = if field == 0_u64 {
+        give cvt::<u32, u64>(styles^.families.inner[at].name.index);
+      } else {
+        give reuse_bool(value: styles^.families.inner[at].generic);
+      }
+      set words.inner[i] = word;
+    }
+  }
+  return Ok<Box<Array<u64>>, LayoutError>(value: move words);
+}
+
+fn reuse_piece_header(tag: u64, detail: u64, styles: &Styles, style: StyleRef) -> result: Result<Box<Array<u64>>, LayoutError> reads(styles) {
+  let header = box_array_filled::<u64>(count: 2_u64, value: 0_u64);
+  set header.inner[0_u64] = tag;
+  set header.inner[1_u64] = detail;
+  let style_words = propagate reuse_style_words(styles: styles, style: style);
+  return reuse_concat_owned(first: move header, second: move style_words);
+}
+
+fn reuse_bytes_words(bytes: &[u8], start: u32, end: u32) -> result: Result<Box<Array<u64>>, LayoutError> reads(bytes) {
+  let a = cvt::<u32, u64>(start);
+  let b = cvt::<u32, u64>(end);
+  if a > b { return inconsistent::<Box<Array<u64>>>(); }
+  if b > bytes^.len { return inconsistent::<Box<Array<u64>>>(); }
+  let count = b - a;
+  let length = count +sat 1_u64;
+  if length > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let words = box_array_filled::<u64>(count: length, value: 0_u64);
+  if 0_u64 < words.inner.len { set words.inner[0_u64] = count; }
+  for (i in 1_u64..length) {
+    let relative = i - 1_u64;
+    let at = a +sat relative;
+    if at < bytes^.len {
+      let word = cvt::<u8, u64>(bytes^[at]);
+      set words.inner[i] = word;
+    }
+  }
+  return Ok<Box<Array<u64>>, LayoutError>(value: move words);
+}
+
+fn reuse_piece_words(piece: Piece, bytes: &[u8], generated: &[u8], styles: &Styles) -> result: Result<Box<Array<u64>>, LayoutError> reads(bytes), reads(generated), reads(styles) {
+  match piece {
+    Bytes(start: from, end: to, style: owner, node: origin) => {
+      let node_word = cvt::<u32, u64>(origin);
+      let header_result = reuse_piece_header(tag: 0_u64, detail: node_word, styles: styles, style: owner);
+      let data_result = reuse_bytes_words(bytes: bytes, start: from, end: to);
+      let header = propagate move header_result;
+      let data = propagate move data_result;
+      return reuse_concat_owned(first: move header, second: move data);
+    }
+    Generated(start: from, end: to, style: owner) => {
+      let header_result = reuse_piece_header(tag: 1_u64, detail: 0_u64, styles: styles, style: owner);
+      let data_result = reuse_bytes_words(bytes: generated, start: from, end: to);
+      let header = propagate move header_result;
+      let data = propagate move data_result;
+      return reuse_concat_owned(first: move header, second: move data);
+    }
+    Scalar(value: scalar, style: owner) => {
+      let word = cvt::<u32, u64>(scalar);
+      return reuse_piece_header(tag: 2_u64, detail: word, styles: styles, style: owner);
+    }
+    Begin(style: owner) => { return reuse_piece_header(tag: 3_u64, detail: 0_u64, styles: styles, style: owner); }
+    End(style: owner) => { return reuse_piece_header(tag: 4_u64, detail: 0_u64, styles: styles, style: owner); }
+    Object(style: owner, ..) => { return reuse_piece_header(tag: 5_u64, detail: 0_u64, styles: styles, style: owner); }
+  }
+}
+
+fn reuse_pieces_words(pieces: &[Piece], bytes: &[u8], generated: &[u8], styles: &Styles) -> result: Result<Box<Array<u64>>, LayoutError> reads(pieces), reads(bytes), reads(generated), reads(styles) {
+  let count = pieces^.len;
+  if count == 0_u64 {
+    let empty = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
+    return Ok<Box<Array<u64>>, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 { return reuse_piece_words(piece: pieces^[0_u64], bytes: bytes, generated: generated, styles: styles); }
+  let half = count / 2_u64;
+  if half == 0_u64 { return inconsistent::<Box<Array<u64>>>(); }
+  if half >= count { return inconsistent::<Box<Array<u64>>>(); }
+  let left_result = reuse_pieces_words(pieces: &pieces^[0_u64..half], bytes: bytes, generated: generated, styles: styles);
+  let right_result = reuse_pieces_words(pieces: &pieces^[half..count], bytes: bytes, generated: generated, styles: styles);
+  let left = propagate move left_result;
+  let right = propagate move right_result;
+  return reuse_concat_owned(first: move left, second: move right);
+}
+
+fn reuse_meta_descend(context: &Context, steps: &[u32], remaining: u64) -> result: Result<ReuseLocal, LayoutError> reads(context), reads(steps) {
+  if remaining == 0_u64 {
+    let valid = True();
+    let made = ReuseLocal(valid: valid, paragraphs: context^.paragraphs.inner.len, children: context^.children.inner.len);
+    return Ok<ReuseLocal, LayoutError>(value: made);
+  }
+  let next = remaining - 1_u64;
+  if next >= steps^.len { return inconsistent::<ReuseLocal>(); }
+  let child = cvt::<u32, u64>(steps^[next]);
+  if child >= context^.children.inner.len { return inconsistent::<ReuseLocal>(); }
+  let identity = context_source_node(context: &context^.children.inner[child]);
+  if identity.index != no_index { return inconsistent::<ReuseLocal>(); }
+  return reuse_meta_descend(context: &context^.children.inner[child], steps: steps, remaining: next);
+}
+
+fn reuse_metadata(context: &Context) -> result: Result<Box<Array<ReuseLocal>>, LayoutError> reads(context) {
+  let count = context^.local_paths.inner.len;
+  if count == 0_u64 { return inconsistent::<Box<Array<ReuseLocal>>>(); }
+  if count > item_ceiling { return too_large::<Box<Array<ReuseLocal>>>(); }
+  if context^.local_paths.inner[0_u64].parent != no_index { return inconsistent::<Box<Array<ReuseLocal>>>(); }
+  let no = False();
+  let empty = ReuseLocal(valid: no, paragraphs: 0_u64, children: 0_u64);
+  let records = box_array_filled::<ReuseLocal>(count: count, value: empty);
+  let valid = True();
+  for (i in 0_u64..count) {
+    let local = cvt::<u64, u32>(i);
+    let one = reuse_local_metadata(context: context, local: local);
+    match one {
+      Ok(value: found) => { set records.inner[i] = found; }
+      Err(..) => { set valid = band(valid, no); }
+    }
+  }
+  if valid { return Ok<Box<Array<ReuseLocal>>, LayoutError>(value: move records); }
+  return inconsistent::<Box<Array<ReuseLocal>>>();
+}
+
+fn reuse_local_metadata(context: &Context, local: u32) -> result: Result<ReuseLocal, LayoutError> reads(context) {
+  let at = cvt::<u32, u64>(local);
+  if at >= context^.local_paths.inner.len { return inconsistent::<ReuseLocal>(); }
+  let parent = context^.local_paths.inner[at].parent;
+  if local != 0_u32 {
+    if parent >= local { return inconsistent::<ReuseLocal>(); }
+  }
+  let steps = propagate local_steps(context: context, local: local);
+  let count = steps.inner.len;
+  return reuse_meta_descend(context: context, steps: &steps.inner[0_u64..count], remaining: count);
+}
+
+fn reuse_paragraph_keys(paragraphs: &[Paragraph], first: u64, local: u32, child_count: u64, pieces: &[Piece], bytes: &[u8], generated: &[u8], styles: &Styles, donor: Bool) -> result: Result<ReuseKeys, LayoutError> reads(paragraphs), reads(pieces), reads(bytes), reads(generated), reads(styles) {
+  let count = paragraphs^.len;
+  if count == 0_u64 {
+    let empty = ReuseKeys::Empty();
+    return Ok<ReuseKeys, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let paragraph = &paragraphs^[0_u64];
+    let start = paragraph^.first;
+    if start > pieces^.len { return inconsistent::<ReuseKeys>(); }
+    let room = pieces^.len - start;
+    let many = paragraph^.count;
+    if many > room { return inconsistent::<ReuseKeys>(); }
+    let end = start + many;
+    let unavailable = band(donor, paragraph^.dirty);
+    let eligible = bnot(unavailable);
+    let eligible_word = reuse_bool(value: eligible);
+    let header = box_array_filled::<u64>(count: 2_u64, value: 0_u64);
+    set header.inner[0_u64] = eligible_word;
+    set header.inner[1_u64] = many;
+    let style_result = reuse_style_words(styles: styles, style: paragraph^.style);
+    let pieces_result = reuse_pieces_words(pieces: &pieces^[start..end], bytes: bytes, generated: generated, styles: styles);
+    let style_words = propagate move style_result;
+    let piece_words = propagate move pieces_result;
+    let prefix = propagate reuse_concat_owned(first: move header, second: move style_words);
+    let words = propagate reuse_concat_owned(first: move prefix, second: move piece_words);
+    let length = words.inner.len;
+    let reflexive = True();
+    for (i in 0_u64..length) {
+      let ordinary = words.inner[i] != 18446744073709551615_u64;
+      set reflexive = band(reflexive, ordinary);
+    }
+    if reflexive {} else {
+      // Distinct domains prevent even identical NaN words from matching.
+      let domain = if donor { give 2_u64; } else { give 3_u64; }
+      if 0_u64 < words.inner.len { set words.inner[0_u64] = domain; }
+    }
+    if many > item_ceiling { return too_large::<ReuseKeys>(); }
+    let objects = box_array_filled::<u32>(count: many, value: no_index);
+    let objects_valid = True();
+    for (i in 0_u64..many) {
+      let at = start +sat i;
+      if at < pieces^.len {
+        let piece = pieces^[at];
+        match piece {
+          Object(context: child, ..) => {
+            let child_index = cvt::<u32, u64>(child);
+            let inside = child_index < child_count;
+            set objects_valid = band(objects_valid, inside);
+            set objects.inner[i] = child;
+          }
+          Bytes(..) => {}
+          Generated(..) => {}
+          Scalar(..) => {}
+          Begin(..) => {}
+          End(..) => {}
+        }
+      }
+    }
+    if objects_valid {} else { return inconsistent::<ReuseKeys>(); }
+    let address = ReuseAddress(local: local, paragraph: first);
+    let leaf = ReuseKeys::Leaf(address: address, words: move words, objects: move objects);
+    return Ok<ReuseKeys, LayoutError>(value: move leaf);
+  }
+  let half = count / 2_u64;
+  if half == 0_u64 { return inconsistent::<ReuseKeys>(); }
+  if half >= count { return inconsistent::<ReuseKeys>(); }
+  let right_first = first +sat half;
+  let left_result = reuse_paragraph_keys(paragraphs: &paragraphs^[0_u64..half], first: first, local: local, child_count: child_count, pieces: pieces, bytes: bytes, generated: generated, styles: styles, donor: donor);
+  let right_result = reuse_paragraph_keys(paragraphs: &paragraphs^[half..count], first: right_first, local: local, child_count: child_count, pieces: pieces, bytes: bytes, generated: generated, styles: styles, donor: donor);
+  let left = propagate move left_result;
+  let right = propagate move right_result;
+  return reuse_join_keys(first: move left, second: move right);
+}
+
+fn reuse_keys_descend(context: &Context, steps: &[u32], remaining: u64, local: u32, bytes: &[u8], styles: &Styles, donor: Bool) -> result: Result<ReuseKeys, LayoutError> reads(context), reads(steps), reads(bytes), reads(styles) {
+  if remaining == 0_u64 {
+    let paragraphs = context^.paragraphs.inner.len;
+    let pieces = context^.pieces.inner.len;
+    let generated = context^.generated_text.inner.len;
+    return reuse_paragraph_keys(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs], first: 0_u64, local: local, child_count: context^.children.inner.len, pieces: &context^.pieces.inner[0_u64..pieces], bytes: bytes, generated: &context^.generated_text.inner[0_u64..generated], styles: styles, donor: donor);
+  }
+  let next = remaining - 1_u64;
+  if next >= steps^.len { return inconsistent::<ReuseKeys>(); }
+  let child = cvt::<u32, u64>(steps^[next]);
+  if child >= context^.children.inner.len { return inconsistent::<ReuseKeys>(); }
+  return reuse_keys_descend(context: &context^.children.inner[child], steps: steps, remaining: next, local: local, bytes: bytes, styles: styles, donor: donor);
+}
+
+fn reuse_source_keys(context: &Context, first: u64, end: u64, bytes: &[u8], styles: &Styles, donor: Bool) -> result: Result<ReuseKeys, LayoutError> reads(context), reads(bytes), reads(styles) {
+  doc "Independent local contexts and paragraphs produce complete keys. Source sequence means local_paths ordinal followed by paragraph index, without imposing a flow walk on equal donors.";
+  if first >= end {
+    let empty = ReuseKeys::Empty();
+    return Ok<ReuseKeys, LayoutError>(value: move empty);
+  }
+  let count = end - first;
+  if count == 1_u64 {
+    if first >= item_ceiling { return too_large::<ReuseKeys>(); }
+    let local = cvt::<u64, u32>(first);
+    let steps = propagate local_steps(context: context, local: local);
+    let length = steps.inner.len;
+    return reuse_keys_descend(context: context, steps: &steps.inner[0_u64..length], remaining: length, local: local, bytes: bytes, styles: styles, donor: donor);
+  }
+  let half = count / 2_u64;
+  let middle = first +sat half;
+  if middle <= first { return inconsistent::<ReuseKeys>(); }
+  if middle >= end { return inconsistent::<ReuseKeys>(); }
+  let left_result = reuse_source_keys(context: context, first: first, end: middle, bytes: bytes, styles: styles, donor: donor);
+  let right_result = reuse_source_keys(context: context, first: middle, end: end, bytes: bytes, styles: styles, donor: donor);
+  let left = propagate move left_result;
+  let right = propagate move right_result;
+  return reuse_join_keys(first: move left, second: move right);
+}
+
+fn reuse_words_compare(first: &[u64], second: &[u64]) -> order: i32 reads(first), reads(second) {
+  doc "Exact lexicographic equality is the final authority. The earliest unequal word is an independent minimum reduction, not a hash acceptance.";
+  let common = imin(first^.len, second^.len);
+  let mismatch = common;
+  for (i in 0_u64..common) {
+    if first^[i] != second^[i] { set mismatch = imin(mismatch, i); }
+  }
+  if mismatch < common {
+    if mismatch < first^.len {
+      if mismatch < second^.len {
+        if first^[mismatch] < second^[mismatch] { return -1_i32; }
+        return 1_i32;
+      }
+    }
+  }
+  if first^.len < second^.len { return -1_i32; }
+  if first^.len > second^.len { return 1_i32; }
+  return 0_i32;
+}
+
+fn reuse_compare_words(first: &[u64], second: &ReuseKeys, index: u64) -> order: i32 reads(first), reads(second) {
+  match second^ {
+    Empty() => { return -1_i32; }
+    Leaf(words: word_data, ..) => {
+      let count = word_data^.inner.len;
+      return reuse_words_compare(first: first, second: &word_data^.inner[0_u64..count]);
+    }
+    Fork(left: left_branch, right: right_branch, ..) => {
+      let count = reuse_key_count(keys: &left_branch^.inner);
+      if index < count { return reuse_compare_words(first: first, second: &left_branch^.inner, index: index); }
+      let next = index - count;
+      return reuse_compare_words(first: first, second: &right_branch^.inner, index: next);
+    }
+  }
+}
+
+fn reuse_compare(first: &ReuseKeys, first_index: u64, second: &ReuseKeys, second_index: u64) -> order: i32 reads(first), reads(second) {
+  match first^ {
+    Empty() => { return 1_i32; }
+    Leaf(words: word_data, ..) => {
+      let count = word_data^.inner.len;
+      return reuse_compare_words(first: &word_data^.inner[0_u64..count], second: second, index: second_index);
+    }
+    Fork(left: left_branch, right: right_branch, ..) => {
+      let count = reuse_key_count(keys: &left_branch^.inner);
+      if first_index < count { return reuse_compare(first: &left_branch^.inner, first_index: first_index, second: second, second_index: second_index); }
+      let next = first_index - count;
+      return reuse_compare(first: &right_branch^.inner, first_index: next, second: second, second_index: second_index);
+    }
+  }
+}
+
+fn reuse_bound(needle_keys: &ReuseKeys, needle: u64, keys: &ReuseKeys, sorted: &[u64], upper: Bool, stable: Bool) -> bound: u64 reads(needle_keys), reads(keys), reads(sorted) {
+  let low = 0_u64;
+  let high = sorted^.len;
+  loop {
+    if low >= high { break; }
+    let distance = high - low;
+    let half = distance / 2_u64;
+    let middle = low +sat half;
+    if middle >= sorted^.len { return sorted^.len; }
+    let candidate = sorted^[middle];
+    let order = reuse_compare(first: keys, first_index: candidate, second: needle_keys, second_index: needle);
+    let equal = order == 0_i32;
+    let tie_before = if stable {
+      give candidate < needle;
+    } else { give upper; }
+    let equal_before = band(equal, tie_before);
+    let less = order < 0_i32;
+    let precedes = bor(less, equal_before);
+    if precedes { set low = middle +sat 1_u64; }
+    else { set high = middle; }
+  }
+  return low;
+}
+
+fn reuse_merge_order(keys: &ReuseKeys, first: &[u64], second: &[u64], output: &[u64]) -> valid: Bool reads(keys), reads(first), reads(second), writes(output) {
+  doc "A pivot and binary search partition the destination into disjoint ranges; independent halves never publish through a shared append cursor.";
+  let total = first^.len +sat second^.len;
+  if total != output^.len { return False(); }
+  if first^.len == 0_u64 {
+    for (i in 0_u64..total) {
+      if i < second^.len { set output^[i] = second^[i]; }
+    }
+    return True();
+  }
+  let pivot = first^.len / 2_u64;
+  if pivot >= first^.len { return False(); }
+  let value = first^[pivot];
+  let no = False();
+  let yes = True();
+  let cut = reuse_bound(needle_keys: keys, needle: value, keys: keys, sorted: second, upper: no, stable: yes);
+  if cut > second^.len { return False(); }
+  let at = pivot +sat cut;
+  if at >= output^.len { return False(); }
+  let after = at + 1_u64;
+  let after_pivot = pivot + 1_u64;
+  set output^[at] = value;
+  let left = reuse_merge_order(keys: keys, first: &first^[0_u64..pivot], second: &second^[0_u64..cut], output: &output^[0_u64..at]);
+  let right = reuse_merge_order(keys: keys, first: &first^[after_pivot..first^.len], second: &second^[cut..second^.len], output: &output^[after..output^.len]);
+  return band(left, right);
+}
+
+fn reuse_sorted(keys: &ReuseKeys, first: u64, end: u64) -> result: Result<Box<Array<u64>>, LayoutError> reads(keys) {
+  if first > end { return inconsistent::<Box<Array<u64>>>(); }
+  let count = end - first;
+  if count > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let output = box_array_filled::<u64>(count: count, value: first);
+  if count <= 1_u64 { return Ok<Box<Array<u64>>, LayoutError>(value: move output); }
+  let half = count / 2_u64;
+  let middle = first +sat half;
+  if middle <= first { return inconsistent::<Box<Array<u64>>>(); }
+  if middle >= end { return inconsistent::<Box<Array<u64>>>(); }
+  let left_result = reuse_sorted(keys: keys, first: first, end: middle);
+  let right_result = reuse_sorted(keys: keys, first: middle, end: end);
+  let left = propagate move left_result;
+  let right = propagate move right_result;
+  let a = left.inner.len;
+  let b = right.inner.len;
+  let length = output.inner.len;
+  let merged = reuse_merge_order(keys: keys, first: &left.inner[0_u64..a], second: &right.inner[0_u64..b], output: &output.inner[0_u64..length]);
+  if merged { return Ok<Box<Array<u64>>, LayoutError>(value: move output); }
+  return inconsistent::<Box<Array<u64>>>();
+}
+
+fn reuse_targets(old_keys: &ReuseKeys, new_keys: &ReuseKeys, old_order: &[u64], new_order: &[u64]) -> targets: Box<Array<u64>> reads(old_keys), reads(new_keys), reads(old_order), reads(new_order) {
+  doc "Equal-key occurrences pair by source-local storage order. Every donor computes its own target read-only; there is no shared claimed table or hash-only acceptance.";
+  let count = old_order^.len;
+  let targets = box_array_filled::<u64>(count: count, value: 4294967295_u64);
+  let no = False();
+  let yes = True();
+  for (i in 0_u64..count) {
+    let position = reuse_bound(needle_keys: old_keys, needle: i, keys: old_keys, sorted: old_order, upper: no, stable: yes);
+    let old_start = reuse_bound(needle_keys: old_keys, needle: i, keys: old_keys, sorted: old_order, upper: no, stable: no);
+    let new_start = reuse_bound(needle_keys: old_keys, needle: i, keys: new_keys, sorted: new_order, upper: no, stable: no);
+    let new_end = reuse_bound(needle_keys: old_keys, needle: i, keys: new_keys, sorted: new_order, upper: yes, stable: no);
+    if position >= old_start {
+      let rank = position - old_start;
+      let target = new_start +sat rank;
+      if target < new_end {
+        if target < new_order^.len { set targets.inner[i] = new_order^[target]; }
+      }
+    }
+  }
+  return move targets;
+}
+
+fn reuse_address(keys: &ReuseKeys, index: u64) -> result: Result<ReuseAddress, LayoutError> reads(keys) {
+  match keys^ {
+    Empty() => { return inconsistent::<ReuseAddress>(); }
+    Leaf(address: found, ..) => {
+      if index != 0_u64 { return inconsistent::<ReuseAddress>(); }
+      return Ok<ReuseAddress, LayoutError>(value: found^);
+    }
+    Fork(left: left_branch, right: right_branch, ..) => {
+      let count = reuse_key_count(keys: &left_branch^.inner);
+      if index < count { return reuse_address(keys: &left_branch^.inner, index: index); }
+      let next = index - count;
+      return reuse_address(keys: &right_branch^.inner, index: next);
+    }
+  }
+}
+
+fn reuse_sum(values: &[u64]) -> total: u64 reads(values) {
+  let total = 0_u64;
+  let count = values^.len;
+  for (i in 0_u64..count) { set total = total +wrap values^[i]; }
+  return total;
+}
+
+fn reuse_prefix(values: &[u64], output: &[u64], base: u64) -> valid: Bool reads(values), writes(output) {
+  doc "Independent prefix halves consume their own input range; sums are read-only reductions. Counts are bounded before callers use these offsets.";
+  let count = values^.len;
+  if count != output^.len { return False(); }
+  if count == 0_u64 { return True(); }
+  if count == 1_u64 {
+    set output^[0_u64] = base;
+    return True();
+  }
+  let half = count / 2_u64;
+  if half == 0_u64 { return False(); }
+  if half >= count { return False(); }
+  let left_sum = reuse_sum(values: &values^[0_u64..half]);
+  let right_base = base +sat left_sum;
+  let left = reuse_prefix(values: &values^[0_u64..half], output: &output^[0_u64..half], base: base);
+  let right = reuse_prefix(values: &values^[half..count], output: &output^[half..count], base: right_base);
+  return band(left, right);
+}
+
+fn reuse_offsets(metadata: &[ReuseLocal]) -> result: Result<Box<Array<u64>>, LayoutError> reads(metadata) {
+  let count = metadata^.len;
+  if count > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let values = box_array_filled::<u64>(count: count, value: 0_u64);
+  let output = box_array_filled::<u64>(count: count, value: 0_u64);
+  let valid = True();
+  for (i in 0_u64..count) {
+    let many = metadata^[i].paragraphs;
+    let small = many <= item_ceiling;
+    set valid = band(valid, small);
+    set values.inner[i] = imin(many, item_ceiling);
+  }
+  if valid {} else { return too_large::<Box<Array<u64>>>(); }
+  let total = reuse_sum(values: &values.inner[0_u64..count]);
+  if total > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let built = reuse_prefix(values: &values.inner[0_u64..count], output: &output.inner[0_u64..count], base: 0_u64);
+  if built { return Ok<Box<Array<u64>>, LayoutError>(value: move output); }
+  return inconsistent::<Box<Array<u64>>>();
+}
+
+struct ReusePayload {
+  text: Box<Slots<u32>>;
+  runs: Box<Slots<TextRun>>;
+  run_styles: Box<Slots<StyleRef>>;
+  marks: Box<Slots<Mark>>;
+  shaped: ShapedText;
+}
+
+enum ReusePatch {
+  Empty();
+  Payload(value: ReusePayload);
+  Branch(left: Box<ReusePatch>, right: Box<ReusePatch>);
+  Context(paragraphs: Box<ReusePatch>, children: Box<ReusePatch>);
+}
+
+fn reuse_singleton(width: u64, index: u64, value: ReusePatch) -> result: Result<ReusePatch, LayoutError> pure {
+  if index >= width { return inconsistent::<ReusePatch>(); }
+  if width == 1_u64 { return Ok<ReusePatch, LayoutError>(value: move value); }
+  let half = width / 2_u64;
+  if half == 0_u64 { return inconsistent::<ReusePatch>(); }
+  if half >= width { return inconsistent::<ReusePatch>(); }
+  let empty = ReusePatch::Empty();
+  let empty_box = box_new::<ReusePatch>(value: move empty);
+  if index < half {
+    let left = propagate reuse_singleton(width: half, index: index, value: move value);
+    let left_box = box_new::<ReusePatch>(value: move left);
+    let made = ReusePatch::Branch(left: move left_box, right: move empty_box);
+    return Ok<ReusePatch, LayoutError>(value: move made);
+  }
+  let right_width = width - half;
+  let right_index = index - half;
+  let right = propagate reuse_singleton(width: right_width, index: right_index, value: move value);
+  let right_box = box_new::<ReusePatch>(value: move right);
+  let made = ReusePatch::Branch(left: move empty_box, right: move right_box);
+  return Ok<ReusePatch, LayoutError>(value: move made);
+}
+
+fn reuse_join_results(first: Result<ReusePatch, LayoutError>, second: Result<ReusePatch, LayoutError>) -> result: Result<ReusePatch, LayoutError> pure {
+  let left = propagate move first;
+  let right = propagate move second;
+  return reuse_merge_patches(first: move left, second: move right);
+}
+
+fn reuse_merge_patches(first: ReusePatch, second: ReusePatch) -> result: Result<ReusePatch, LayoutError> pure {
+  match move first {
+    Empty() => { return Ok<ReusePatch, LayoutError>(value: move second); }
+    Payload(value: first_value) => {
+      match move second {
+        Empty() => {
+          let made = ReusePatch::Payload(value: move first_value);
+          return Ok<ReusePatch, LayoutError>(value: move made);
+        }
+        Payload(..) => { return inconsistent::<ReusePatch>(); }
+        Branch(..) => { return inconsistent::<ReusePatch>(); }
+        Context(..) => { return inconsistent::<ReusePatch>(); }
+      }
+    }
+    Branch(left: first_left, right: first_right) => {
+      match move second {
+        Empty() => {
+          let made = ReusePatch::Branch(left: move first_left, right: move first_right);
+          return Ok<ReusePatch, LayoutError>(value: move made);
+        }
+        Payload(..) => { return inconsistent::<ReusePatch>(); }
+        Context(..) => { return inconsistent::<ReusePatch>(); }
+        Branch(left: second_left, right: second_right) => {
+          let left_result = reuse_merge_patches(first: move first_left.inner, second: move second_left.inner);
+          let right_result = reuse_merge_patches(first: move first_right.inner, second: move second_right.inner);
+          let left = propagate move left_result;
+          let right = propagate move right_result;
+          let left_box = box_new::<ReusePatch>(value: move left);
+          let right_box = box_new::<ReusePatch>(value: move right);
+          let made = ReusePatch::Branch(left: move left_box, right: move right_box);
+          return Ok<ReusePatch, LayoutError>(value: move made);
+        }
+      }
+    }
+    Context(paragraphs: first_paragraphs, children: first_children) => {
+      match move second {
+        Empty() => {
+          let made = ReusePatch::Context(paragraphs: move first_paragraphs, children: move first_children);
+          return Ok<ReusePatch, LayoutError>(value: move made);
+        }
+        Payload(..) => { return inconsistent::<ReusePatch>(); }
+        Branch(..) => { return inconsistent::<ReusePatch>(); }
+        Context(paragraphs: second_paragraphs, children: second_children) => {
+          let own_result = reuse_merge_patches(first: move first_paragraphs.inner, second: move second_paragraphs.inner);
+          let child_result = reuse_merge_patches(first: move first_children.inner, second: move second_children.inner);
+          let own_patch = propagate move own_result;
+          let child_patch = propagate move child_result;
+          let own_box = box_new::<ReusePatch>(value: move own_patch);
+          let child_box = box_new::<ReusePatch>(value: move child_patch);
+          let made = ReusePatch::Context(paragraphs: move own_box, children: move child_box);
+          return Ok<ReusePatch, LayoutError>(value: move made);
+        }
+      }
+    }
+  }
+}
+
+fn reuse_wrap_context(paragraphs: ReusePatch, children: ReusePatch) -> made: ReusePatch pure {
+  let own_box = box_new::<ReusePatch>(value: move paragraphs);
+  let child_box = box_new::<ReusePatch>(value: move children);
+  return ReusePatch::Context(paragraphs: move own_box, children: move child_box);
+}
+
+fn reuse_destination(payload: ReusePayload, address: ReuseAddress, paths: &[LocalPath], metadata: &[ReuseLocal]) -> result: Result<ReusePatch, LayoutError> reads(paths), reads(metadata) {
+  let local = cvt::<u32, u64>(address.local);
+  if local >= metadata^.len { return inconsistent::<ReusePatch>(); }
+  let leaf = ReusePatch::Payload(value: move payload);
+  let own_patch = propagate reuse_singleton(width: metadata^[local].paragraphs, index: address.paragraph, value: move leaf);
+  let empty = ReusePatch::Empty();
+  let patch = reuse_wrap_context(paragraphs: move own_patch, children: move empty);
+  return reuse_ascend(patch: move patch, local: local, paths: paths, metadata: metadata);
+}
+
+fn reuse_ascend(patch: ReusePatch, local: u64, paths: &[LocalPath], metadata: &[ReuseLocal]) -> result: Result<ReusePatch, LayoutError> reads(paths), reads(metadata) {
+  doc "The only chain is the destination's ancestor path; every recursive call consumes its own patch rather than carrying a moved value across a loop backedge.";
+  if local >= paths^.len { return inconsistent::<ReusePatch>(); }
+  let route = paths^[local];
+  if route.parent == no_index {
+    if local != 0_u64 { return inconsistent::<ReusePatch>(); }
+    return Ok<ReusePatch, LayoutError>(value: move patch);
+  }
+  let parent = cvt::<u32, u64>(route.parent);
+  if parent >= local { return inconsistent::<ReusePatch>(); }
+  if parent >= metadata^.len { return inconsistent::<ReusePatch>(); }
+  let child = cvt::<u32, u64>(route.child);
+  let child_patch = propagate reuse_singleton(width: metadata^[parent].children, index: child, value: move patch);
+  let vacant = ReusePatch::Empty();
+  let enclosing = reuse_wrap_context(paragraphs: move vacant, children: move child_patch);
+  return reuse_ascend(patch: move enclosing, local: parent, paths: paths, metadata: metadata);
+}
+
+fn reuse_inclusive(flags: &[u64]) -> result: Result<Box<Array<u64>>, LayoutError> reads(flags) {
+  let count = flags^.len;
+  if count > item_ceiling { return too_large::<Box<Array<u64>>>(); }
+  let prefix = box_array_filled::<u64>(count: count, value: 0_u64);
+  let valid = reuse_prefix(values: flags, output: &prefix.inner[0_u64..count], base: 0_u64);
+  if valid {} else { return inconsistent::<Box<Array<u64>>>(); }
+  for (i in 0_u64..count) { set prefix.inner[i] = prefix.inner[i] +sat flags^[i]; }
+  return Ok<Box<Array<u64>>, LayoutError>(value: move prefix);
+}
+
+fn reuse_first_count(prefix: &[u64], count: u64) -> index: u64 reads(prefix) {
+  let low = 0_u64;
+  let high = prefix^.len;
+  loop {
+    if low >= high { break; }
+    let width = high - low;
+    let half = width / 2_u64;
+    let middle = low +sat half;
+    if middle >= prefix^.len { return prefix^.len; }
+    if prefix^[middle] < count { set low = middle +sat 1_u64; }
+    else { set high = middle; }
+  }
+  return low;
+}
+
+fn reuse_rebind_marks(marks: &[Mark], old_objects: &[u32], new_objects: &[u32]) -> result: Result<unit, LayoutError> reads(old_objects), reads(new_objects), writes(marks) {
+  let pieces = old_objects^.len;
+  if pieces != new_objects^.len { return inconsistent::<unit>(); }
+  let many = marks^.len;
+  if many > item_ceiling { return too_large::<unit>(); }
+  if pieces > item_ceiling { return too_large::<unit>(); }
+  let object_flags = box_array_filled::<u64>(count: pieces, value: 0_u64);
+  let mark_flags = box_array_filled::<u64>(count: many, value: 0_u64);
+  let objects_valid = True();
+  for (i in 0_u64..pieces) {
+    let old_has = old_objects^[i] != no_index;
+    let new_has = new_objects^[i] != no_index;
+    let agrees = eeq(old_has, new_has);
+    set objects_valid = band(objects_valid, agrees);
+    if old_has { set object_flags.inner[i] = 1_u64; }
+  }
+  for (i in 0_u64..many) {
+    let mark = marks^[i];
+    match mark {
+      Atomic(..) => { set mark_flags.inner[i] = 1_u64; }
+      Open(..) => {}
+      Close(..) => {}
+      Node(..) => {}
+    }
+  }
+  let object_count = reuse_sum(values: &object_flags.inner[0_u64..pieces]);
+  let mark_count = reuse_sum(values: &mark_flags.inner[0_u64..many]);
+  if object_count != mark_count { return inconsistent::<unit>(); }
+  if objects_valid {} else { return inconsistent::<unit>(); }
+  let object_prefix_result = reuse_inclusive(flags: &object_flags.inner[0_u64..pieces]);
+  let mark_prefix_result = reuse_inclusive(flags: &mark_flags.inner[0_u64..many]);
+  let object_prefix = propagate move object_prefix_result;
+  let mark_prefix = propagate move mark_prefix_result;
+  let object_length = object_prefix.inner.len;
+  let valid = True();
+  for (i in 0_u64..many) {
+    let mark = marks^[i];
+    let one = match mark {
+      Atomic(at: text_at, context: old_child) => {
+        if i < mark_prefix.inner.len {
+          let rank = mark_prefix.inner[i];
+          let piece = reuse_first_count(prefix: &object_prefix.inner[0_u64..object_length], count: rank);
+          if piece < old_objects^.len {
+            if piece < new_objects^.len {
+              let agrees = old_objects^[piece] == old_child;
+              let rebound = Mark::Atomic(at: text_at, context: new_objects^[piece]);
+              set marks^[i] = rebound;
+              give agrees;
+            } else { give False(); }
+          } else { give False(); }
+        } else { give False(); }
+      }
+      Open(..) => { give True(); }
+      Close(..) => { give True(); }
+      Node(..) => { give True(); }
+    }
+    set valid = band(valid, one);
+  }
+  if valid { return Ok<unit, LayoutError>(value: unit); }
+  return inconsistent::<unit>();
+}
+
+fn reuse_rebind_new(marks: &[Mark], old_objects: &[u32], keys: &ReuseKeys, index: u64) -> result: Result<unit, LayoutError> reads(old_objects), reads(keys), writes(marks) {
+  match keys^ {
+    Empty() => { return inconsistent::<unit>(); }
+    Leaf(objects: objects_data, ..) => {
+      if index != 0_u64 { return inconsistent::<unit>(); }
+      let count = objects_data^.inner.len;
+      return reuse_rebind_marks(marks: marks, old_objects: old_objects, new_objects: &objects_data^.inner[0_u64..count]);
+    }
+    Fork(left: left_branch, right: right_branch, ..) => {
+      let count = reuse_key_count(keys: &left_branch^.inner);
+      if index < count { return reuse_rebind_new(marks: marks, old_objects: old_objects, keys: &left_branch^.inner, index: index); }
+      let next = index - count;
+      return reuse_rebind_new(marks: marks, old_objects: old_objects, keys: &right_branch^.inner, index: next);
+    }
+  }
+}
+
+fn reuse_rebind(marks: &[Mark], old_keys: &ReuseKeys, old_index: u64, new_keys: &ReuseKeys, new_index: u64) -> result: Result<unit, LayoutError> reads(old_keys), reads(new_keys), writes(marks) {
+  match old_keys^ {
+    Empty() => { return inconsistent::<unit>(); }
+    Leaf(objects: objects_data, ..) => {
+      if old_index != 0_u64 { return inconsistent::<unit>(); }
+      let count = objects_data^.inner.len;
+      return reuse_rebind_new(marks: marks, old_objects: &objects_data^.inner[0_u64..count], keys: new_keys, index: new_index);
+    }
+    Fork(left: left_branch, right: right_branch, ..) => {
+      let count = reuse_key_count(keys: &left_branch^.inner);
+      if old_index < count { return reuse_rebind(marks: marks, old_keys: &left_branch^.inner, old_index: old_index, new_keys: new_keys, new_index: new_index); }
+      let next = old_index - count;
+      return reuse_rebind(marks: marks, old_keys: &right_branch^.inner, old_index: next, new_keys: new_keys, new_index: new_index);
+    }
+  }
+}
+
+fn reuse_take_paragraphs(paragraphs: &[Paragraph], first: u64, targets: &[u64], old_keys: &ReuseKeys, new_keys: &ReuseKeys, new_paths: &[LocalPath], new_metadata: &[ReuseLocal]) -> result: Result<ReusePatch, LayoutError> reads(targets), reads(old_keys), reads(new_keys), reads(new_paths), reads(new_metadata), writes(paragraphs) {
+  doc "Each donor range is exclusively owned. Only a matched clean leaf swaps its five prepared fields into an owned patch; no donor lookup mutates another donor or a shared index.";
+  let count = paragraphs^.len;
+  if count == 0_u64 {
+    let empty = ReusePatch::Empty();
+    return Ok<ReusePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    if first >= targets^.len { return inconsistent::<ReusePatch>(); }
+    let target = targets^[first];
+    if target == 4294967295_u64 {
+      let empty = ReusePatch::Empty();
+      return Ok<ReusePatch, LayoutError>(value: move empty);
+    }
+    let paragraph = &paragraphs^[0_u64];
+    if paragraph^.dirty { return inconsistent::<ReusePatch>(); }
+    let text_count = paragraph^.text.inner.len;
+    if text_count != paragraph^.shaped.advances.inner.len { return inconsistent::<ReusePatch>(); }
+    if text_count != paragraph^.shaped.breaks.inner.len { return inconsistent::<ReusePatch>(); }
+    if text_count != paragraph^.shaped.clusters.inner.len { return inconsistent::<ReusePatch>(); }
+    if paragraph^.runs.inner.len != paragraph^.run_styles.inner.len { return inconsistent::<ReusePatch>(); }
+    let marks_count = paragraph^.marks.inner.len;
+    let rebound = propagate reuse_rebind(marks: &paragraph^.marks.inner[0_u64..marks_count], old_keys: old_keys, old_index: first, new_keys: new_keys, new_index: target);
+    let address = propagate reuse_address(keys: new_keys, index: target);
+    let text = box_slots_new::<u32>(capacity: 0_u64);
+    let runs = box_slots_new::<TextRun>(capacity: 0_u64);
+    let run_styles = box_slots_new::<StyleRef>(capacity: 0_u64);
+    let marks = box_slots_new::<Mark>(capacity: 0_u64);
+    let shaped = reuse_shaped_empty();
+    swap(first: &paragraph^.text, second: &text);
+    swap(first: &paragraph^.runs, second: &runs);
+    swap(first: &paragraph^.run_styles, second: &run_styles);
+    swap(first: &paragraph^.marks, second: &marks);
+    swap(first: &paragraph^.shaped, second: &shaped);
+    set paragraph^.dirty = True();
+    let payload = ReusePayload(text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped);
+    return reuse_destination(payload: move payload, address: address, paths: new_paths, metadata: new_metadata);
+  }
+  let half = count / 2_u64;
+  if half == 0_u64 { return inconsistent::<ReusePatch>(); }
+  if half >= count { return inconsistent::<ReusePatch>(); }
+  let right_first = first +sat half;
+  let left = reuse_take_paragraphs(paragraphs: &paragraphs^[0_u64..half], first: first, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  let right = reuse_take_paragraphs(paragraphs: &paragraphs^[half..count], first: right_first, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  return reuse_join_results(first: move left, second: move right);
+}
+
+fn reuse_child_local(paths: &[LocalPath], parent: u32, child: u32) -> result: Result<u32, LayoutError> reads(paths) {
+  doc "Membership is the retained local_paths table, never the mutable child source tag. A consumed real source's Derived placeholder is therefore not a donor subtree.";
+  let total = paths^.len;
+  let matches = 0_u64;
+  let found = 0_u64;
+  for (i in 1_u64..total) {
+    let same_parent = paths^[i].parent == parent;
+    let same_child = paths^[i].child == child;
+    let selected = band(same_parent, same_child);
+    if selected {
+      set matches = matches +wrap 1_u64;
+      set found = imax(found, i);
+    }
+  }
+  if matches == 0_u64 { return Ok<u32, LayoutError>(value: no_index); }
+  if matches != 1_u64 { return inconsistent::<u32>(); }
+  if found >= 4294967295_u64 { return too_large::<u32>(); }
+  let local = cvt::<u64, u32>(found);
+  return Ok<u32, LayoutError>(value: local);
+}
+
+fn reuse_take_children(children: &[Context], first: u64, local: u32, old_paths: &[LocalPath], old_offsets: &[u64], targets: &[u64], old_keys: &ReuseKeys, new_keys: &ReuseKeys, new_paths: &[LocalPath], new_metadata: &[ReuseLocal]) -> result: Result<ReusePatch, LayoutError> reads(old_paths), reads(old_offsets), reads(targets), reads(old_keys), reads(new_keys), reads(new_paths), reads(new_metadata), writes(children) {
+  let count = children^.len;
+  if count == 0_u64 {
+    let empty = ReusePatch::Empty();
+    return Ok<ReusePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    if first >= 4294967295_u64 { return too_large::<ReusePatch>(); }
+    let child = cvt::<u64, u32>(first);
+    let next = propagate reuse_child_local(paths: old_paths, parent: local, child: child);
+    if next == no_index {
+      let empty = ReusePatch::Empty();
+      return Ok<ReusePatch, LayoutError>(value: move empty);
+    }
+    return reuse_take_context(context: &children^[0_u64], local: next, old_paths: old_paths, old_offsets: old_offsets, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  }
+  let half = count / 2_u64;
+  if half == 0_u64 { return inconsistent::<ReusePatch>(); }
+  if half >= count { return inconsistent::<ReusePatch>(); }
+  let right_first = first +sat half;
+  let left = reuse_take_children(children: &children^[0_u64..half], first: first, local: local, old_paths: old_paths, old_offsets: old_offsets, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  let right = reuse_take_children(children: &children^[half..count], first: right_first, local: local, old_paths: old_paths, old_offsets: old_offsets, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  return reuse_join_results(first: move left, second: move right);
+}
+
+fn reuse_take_context(context: &Context, local: u32, old_paths: &[LocalPath], old_offsets: &[u64], targets: &[u64], old_keys: &ReuseKeys, new_keys: &ReuseKeys, new_paths: &[LocalPath], new_metadata: &[ReuseLocal]) -> result: Result<ReusePatch, LayoutError> reads(old_paths), reads(old_offsets), reads(targets), reads(old_keys), reads(new_keys), reads(new_paths), reads(new_metadata), writes(context) {
+  let at = cvt::<u32, u64>(local);
+  if at >= old_offsets^.len { return inconsistent::<ReusePatch>(); }
+  let first = old_offsets^[at];
+  let own = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  let own_result = reuse_take_paragraphs(paragraphs: &context^.paragraphs.inner[0_u64..own], first: first, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  let child_result = reuse_take_children(children: &context^.children.inner[0_u64..children], first: 0_u64, local: local, old_paths: old_paths, old_offsets: old_offsets, targets: targets, old_keys: old_keys, new_keys: new_keys, new_paths: new_paths, new_metadata: new_metadata);
+  return reuse_join_results(first: move own_result, second: move child_result);
+}
+
+fn reuse_publish_paragraphs(patch: ReusePatch, paragraphs: &[Paragraph]) -> result: Result<u64, LayoutError> writes(paragraphs) {
+  let count = paragraphs^.len;
+  match move patch {
+    Empty() => { return Ok<u64, LayoutError>(value: 0_u64); }
+    Payload(value: payload) => {
+      if count != 1_u64 { return inconsistent::<u64>(); }
+      swap(first: &paragraphs^[0_u64].text, second: &payload.text);
+      swap(first: &paragraphs^[0_u64].runs, second: &payload.runs);
+      swap(first: &paragraphs^[0_u64].run_styles, second: &payload.run_styles);
+      swap(first: &paragraphs^[0_u64].marks, second: &payload.marks);
+      swap(first: &paragraphs^[0_u64].shaped, second: &payload.shaped);
+      set paragraphs^[0_u64].dirty = False();
+      return Ok<u64, LayoutError>(value: 1_u64);
+    }
+    Context(..) => { return inconsistent::<u64>(); }
+    Branch(left: left_patch, right: right_patch) => {
+      let half = count / 2_u64;
+      if half == 0_u64 { return inconsistent::<u64>(); }
+      if half >= count { return inconsistent::<u64>(); }
+      let left_result = reuse_publish_paragraphs(patch: move left_patch.inner, paragraphs: &paragraphs^[0_u64..half]);
+      let right_result = reuse_publish_paragraphs(patch: move right_patch.inner, paragraphs: &paragraphs^[half..count]);
+      let left = propagate left_result;
+      let right = propagate right_result;
+      let total = left +sat right;
+      return Ok<u64, LayoutError>(value: total);
+    }
+  }
+}
+
+fn reuse_publish_children(patch: ReusePatch, children: &[Context]) -> result: Result<u64, LayoutError> writes(children) {
+  let count = children^.len;
+  match move patch {
+    Empty() => { return Ok<u64, LayoutError>(value: 0_u64); }
+    Payload(..) => { return inconsistent::<u64>(); }
+    Context(paragraphs: own_patch, children: child_patch) => {
+      if count != 1_u64 { return inconsistent::<u64>(); }
+      let one = ReusePatch::Context(paragraphs: move own_patch, children: move child_patch);
+      return reuse_publish_context(patch: move one, context: &children^[0_u64]);
+    }
+    Branch(left: left_patch, right: right_patch) => {
+      let half = count / 2_u64;
+      if half == 0_u64 { return inconsistent::<u64>(); }
+      if half >= count { return inconsistent::<u64>(); }
+      let left_result = reuse_publish_children(patch: move left_patch.inner, children: &children^[0_u64..half]);
+      let right_result = reuse_publish_children(patch: move right_patch.inner, children: &children^[half..count]);
+      let left = propagate left_result;
+      let right = propagate right_result;
+      let total = left +sat right;
+      return Ok<u64, LayoutError>(value: total);
+    }
+  }
+}
+
+fn reuse_publish_context(patch: ReusePatch, context: &Context) -> result: Result<u64, LayoutError> writes(context) {
+  match move patch {
+    Empty() => { return Ok<u64, LayoutError>(value: 0_u64); }
+    Payload(..) => { return inconsistent::<u64>(); }
+    Branch(..) => { return inconsistent::<u64>(); }
+    Context(paragraphs: own_patch, children: child_patch) => {
+      let own = context^.paragraphs.inner.len;
+      let children = context^.children.inner.len;
+      let own_result = reuse_publish_paragraphs(patch: move own_patch.inner, paragraphs: &context^.paragraphs.inner[0_u64..own]);
+      let child_result = reuse_publish_children(patch: move child_patch.inner, children: &context^.children.inner[0_u64..children]);
+      let own_count = propagate own_result;
+      let child_count = propagate child_result;
+      let total = own_count +sat child_count;
+      return Ok<u64, LayoutError>(value: total);
+    }
+  }
+}
+
+fn reuse_mark_source(context: &Context, local: u32, paths: &[LocalPath], reset: Bool) -> valid: Bool reads(paths), writes(context) {
+  doc "Only local_paths members are updated. Every unmatched new paragraph needs preparation; all newly built local contexts still need geometry. Real child source marks are read for summaries but never changed.";
+  let own = context^.paragraphs.inner.len;
+  if reset {
+    for (i in 0_u64..own) { set context^.paragraphs.inner[i].dirty = True(); }
+  }
+  let children = context^.children.inner.len;
+  let valid = True();
+  for (i in 0_u64..children) {
+    let one = if i < 4294967295_u64 {
+      let child = cvt::<u64, u32>(i);
+      let membership = reuse_child_local(paths: paths, parent: local, child: child);
+      match membership {
+        Ok(value: next) => {
+          if next == no_index { give True(); }
+          else { give reuse_mark_source(context: &context^.children.inner[i], local: next, paths: paths, reset: reset); }
+        }
+        Err(..) => { give False(); }
+      }
+    } else { give False(); }
+    set valid = band(valid, one);
+  }
+  if reset {} else {
+    let marked = paragraph_mark_count(paragraphs: &context^.paragraphs.inner[0_u64..own]);
+    let index = paragraph_mark_index(paragraphs: &context^.paragraphs.inner[0_u64..own]);
+    let child_count = child_mark_count(children: &context^.children.inner[0_u64..children]);
+    let child_index = child_mark_index(children: &context^.children.inner[0_u64..children]);
+    set context^.marked_paragraphs = marked;
+    set context^.marked_paragraph = index;
+    set context^.marked_children = child_count;
+    set context^.marked_child = child_index;
+    set context^.dirty = True();
+  }
+  return valid;
+}
+
+fn reuse_paths(context: &Context) -> paths: Box<Array<LocalPath>> reads(context) {
+  let count = context^.local_paths.inner.len;
+  let empty = LocalPath(parent: no_index, child: 0_u32);
+  let copied = box_array_filled::<LocalPath>(count: count, value: empty);
+  for (i in 0_u64..count) { set copied.inner[i] = context^.local_paths.inner[i]; }
+  return move copied;
+}
+
+fn reuse_source_paragraphs(previous: &Context, replacement: &Context, document: &Document, old: &Styles, new: &Styles) -> result: Result<u64, LayoutError> reads(document), reads(old), reads(new), writes(previous), writes(replacement) {
+  doc "Read-only complete-key sorting establishes one-to-one matches before ownership moves. Donor extraction and destination publication recurse through disjoint ranges with owned sparse patches between them. Only the five prepared fields move; all replacement structure and geometry stay in place.";
+  let old_source = context_source_node(context: previous);
+  let new_source = context_source_node(context: replacement);
+  if old_source.index == no_index { return inconsistent::<u64>(); }
+  if old_source.index != new_source.index { return inconsistent::<u64>(); }
+  let old_meta_result = reuse_metadata(context: previous);
+  let new_meta_result = reuse_metadata(context: replacement);
+  let old_meta = propagate move old_meta_result;
+  let new_meta = propagate move new_meta_result;
+  let old_local_count = old_meta.inner.len;
+  let new_local_count = new_meta.inner.len;
+  let old_paths = reuse_paths(context: previous);
+  let new_paths = reuse_paths(context: replacement);
+  let old_offsets = propagate reuse_offsets(metadata: &old_meta.inner[0_u64..old_local_count]);
+  let bytes = document^.text.inner.len;
+  let yes = True();
+  let no = False();
+  let old_keys_result = reuse_source_keys(context: previous, first: 0_u64, end: old_local_count, bytes: &document^.text.inner[0_u64..bytes], styles: old, donor: yes);
+  let new_keys_result = reuse_source_keys(context: replacement, first: 0_u64, end: new_local_count, bytes: &document^.text.inner[0_u64..bytes], styles: new, donor: no);
+  let old_keys = propagate move old_keys_result;
+  let new_keys = propagate move new_keys_result;
+  let old_count = reuse_key_count(keys: &old_keys);
+  let new_count = reuse_key_count(keys: &new_keys);
+  let old_order_result = reuse_sorted(keys: &old_keys, first: 0_u64, end: old_count);
+  let new_order_result = reuse_sorted(keys: &new_keys, first: 0_u64, end: new_count);
+  let old_order = propagate move old_order_result;
+  let new_order = propagate move new_order_result;
+  let old_order_length = old_order.inner.len;
+  let new_order_length = new_order.inner.len;
+  let targets = reuse_targets(old_keys: &old_keys, new_keys: &new_keys, old_order: &old_order.inner[0_u64..old_order_length], new_order: &new_order.inner[0_u64..new_order_length]);
+  let targets_length = targets.inner.len;
+  let old_path_count = old_paths.inner.len;
+  let new_path_count = new_paths.inner.len;
+  let offsets_count = old_offsets.inner.len;
+  let patch_result = reuse_take_context(context: previous, local: 0_u32, old_paths: &old_paths.inner[0_u64..old_path_count], old_offsets: &old_offsets.inner[0_u64..offsets_count], targets: &targets.inner[0_u64..targets_length], old_keys: &old_keys, new_keys: &new_keys, new_paths: &new_paths.inner[0_u64..new_path_count], new_metadata: &new_meta.inner[0_u64..new_local_count]);
+  let reset = reuse_mark_source(context: replacement, local: 0_u32, paths: &new_paths.inner[0_u64..new_path_count], reset: yes);
+  let patch = propagate move patch_result;
+  if reset {} else { return inconsistent::<u64>(); }
+  let reused = propagate reuse_publish_context(patch: move patch, context: replacement);
+  let marked = reuse_mark_source(context: replacement, local: 0_u32, paths: &new_paths.inner[0_u64..new_path_count], reset: no);
+  if marked { return Ok<u64, LayoutError>(value: reused); }
+  return inconsistent::<u64>();
+}
