@@ -206,6 +206,11 @@ Checks, required before claiming this step complete:
 - Every edit and its inverse match the full build byte for byte, including
   a font-size edit followed by a text edit, em padding, empty inline boxes,
   and unchanged paragraphs whose font groups were renumbered.
+- DOM class changes carry NodeId and attribute-name facts under Q68;
+  computed style equality alone does not cover `content: attr(class)`.
+  Refuse a changed attribute consumed by that element's generated content
+  before marking, while accepting an unrelated element's class edit. The
+  scope remains colour/font-size updates, not arbitrary attribute updates.
 - A box topology or generated-reference change that cannot be retained is
   refused before marks are written; inserted non-generating pseudo-elements
   must not silently move retained references to the wrong pseudo-element.
