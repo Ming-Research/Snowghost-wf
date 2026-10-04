@@ -52,7 +52,8 @@ fn same_content_items(old: &Styles, new: &Styles, first: u32, second: u32) -> sa
       let item_same = band(kind, value);
       set equal = band(equal, item_same);
     } else {
-      set equal = False();
+      let outside = False();
+      set equal = band(equal, outside);
     }
   }
   return equal;
@@ -94,7 +95,8 @@ fn same_counter_items(old: &Styles, new: &Styles, first: u32, second: u32) -> sa
       let item_same = band(name, value);
       set equal = band(equal, item_same);
     } else {
-      set equal = False();
+      let outside = False();
+      set equal = band(equal, outside);
     }
   }
   return equal;
@@ -146,7 +148,8 @@ fn same_quote_items(old: &Styles, new: &Styles, first: u32, second: u32) -> same
       let item_same = band(opening, closing);
       set equal = band(equal, item_same);
     } else {
-      set equal = False();
+      let outside = False();
+      set equal = band(equal, outside);
     }
   }
   return equal;
@@ -289,6 +292,68 @@ fn mark_style_paragraph(paragraph: &Paragraph, pieces: &[Piece], changed: &[Bool
   return unit;
 }
 
+fn paragraph_mark_count(paragraphs: &[Paragraph]) -> count: u32 reads(paragraphs) {
+  doc "Counts independently marked paragraphs; this reads the completed paragraph marks and does not depend on their largest index.";
+  let length = paragraphs^.len;
+  let count = 0_u32;
+  for (i in 0_u64..length) {
+    if paragraphs^[i].dirty {
+      set count = count +wrap 1_u32;
+    }
+  }
+  return count;
+}
+
+fn paragraph_mark_index(paragraphs: &[Paragraph]) -> index: u32 reads(paragraphs) {
+  doc "The largest marked paragraph index, or zero when none is marked; only the caller's single-mark case uses it, and finding it is independent of counting marks.";
+  let length = paragraphs^.len;
+  let index = 0_u32;
+  for (i in 0_u64..length) {
+    if paragraphs^[i].dirty {
+      let at = cvt.wrap::<u64, u32>(i);
+      set index = imax(index, at);
+    }
+  }
+  return index;
+}
+
+fn child_mark_count(children: &[Context]) -> count: u32 reads(children) {
+  doc "Counts marked child contexts after their independent marking calls have finished.";
+  let length = children^.len;
+  let count = 0_u32;
+  for (i in 0_u64..length) {
+    if children^[i].dirty {
+      set count = count +wrap 1_u32;
+    }
+  }
+  return count;
+}
+
+fn child_mark_index(children: &[Context]) -> index: u32 reads(children) {
+  doc "The largest marked child index, or zero when none is marked; it depends on the completed child marks, not on the count or the child-style reduction.";
+  let length = children^.len;
+  let index = 0_u32;
+  for (i in 0_u64..length) {
+    if children^[i].dirty {
+      let at = cvt.wrap::<u64, u32>(i);
+      set index = imax(index, at);
+    }
+  }
+  return index;
+}
+
+fn child_style_change(children: &[Context], changed: &[Bool]) -> found: Bool reads(children), reads(changed) {
+  doc "Whether a child's own style changed; this reads only the style inputs and delta, independently of the child-mark count and index.";
+  let length = children^.len;
+  let found = False();
+  for (i in 0_u64..length) {
+    let style = children^[i].style;
+    let own = style_is_changed(changed: changed, style: style);
+    set found = bor(found, own);
+  }
+  return found;
+}
+
 fn mark_style_context(context: &Context, changed: &[Bool]) -> result: unit reads(changed), writes(context) {
   doc "Marks independent local consumers and child contexts, then gathers their marks. The parent reads each child's own style for its placement as well as its outputs, so a changed child style also invalidates the parent's text-only geometry cutoff.";
   let local = style_is_changed(changed: changed, style: context^.style);
@@ -326,29 +391,14 @@ fn mark_style_context(context: &Context, changed: &[Bool]) -> result: unit reads
   for (i in 0_u64..children) {
     mark_style_context(context: &context^.children.inner[i], changed: changed);
   }
-  let marked_paragraphs = 0_u32;
-  let marked_paragraph = 0_u32;
-  let marked_children = 0_u32;
-  let marked_child = 0_u32;
   let paragraphs_now = context^.paragraphs.inner.len;
-  for (i in 0_u64..paragraphs_now) {
-    if context^.paragraphs.inner[i].dirty {
-      set marked_paragraphs = marked_paragraphs +wrap 1_u32;
-      let paragraph_index = cvt.wrap::<u64, u32>(i);
-      set marked_paragraph = imax(marked_paragraph, paragraph_index);
-    }
-  }
   let children_now = context^.children.inner.len;
-  for (i in 0_u64..children_now) {
-    let child_style = context^.children.inner[i].style;
-    let own = style_is_changed(changed: changed, style: child_style);
-    set local = bor(local, own);
-    if context^.children.inner[i].dirty {
-      set marked_children = marked_children +wrap 1_u32;
-      let child_index = cvt.wrap::<u64, u32>(i);
-      set marked_child = imax(marked_child, child_index);
-    }
-  }
+  let marked_paragraphs = paragraph_mark_count(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs_now]);
+  let marked_paragraph = paragraph_mark_index(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs_now]);
+  let marked_children = child_mark_count(children: &context^.children.inner[0_u64..children_now]);
+  let marked_child = child_mark_index(children: &context^.children.inner[0_u64..children_now]);
+  let child_styles = child_style_change(children: &context^.children.inner[0_u64..children_now], changed: changed);
+  set local = bor(local, child_styles);
   let prepared = marked_paragraphs > 0_u32;
   let descendants = marked_children > 0_u32;
   let content = bor(prepared, descendants);
@@ -404,7 +454,8 @@ fn content_reads_attribute(styles: &Styles, style: StyleRef, name: Atom) -> read
       let matches = band(attribute, named);
       set reads_name = bor(reads_name, matches);
     } else {
-      set reads_name = True();
+      let outside = True();
+      set reads_name = bor(reads_name, outside);
     }
   }
   return reads_name;
