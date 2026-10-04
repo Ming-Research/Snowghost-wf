@@ -244,6 +244,9 @@ dumps() {
 	return "$dumps_status"
 }
 
+# Validate the strict child-record parser before the harness trusts its output.
+python3 "$here/scripts/inctime.py" --self-test >/dev/null
+
 cmd=$1
 shift
 case $cmd in
