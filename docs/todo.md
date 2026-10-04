@@ -113,20 +113,19 @@ example apart from the renderer code that exposed it
   already does for calls. Reopen when the runtime offers a loop grain; the
   layout code needs no change.
 
-- **A runtime-sized initialized array cannot become a mutable window.**
-  Minimal example: independently fill `Box<Array<T>>` for runtime `n`, then
-  consume it into a growable `Box<Slots<T>>` for later push/pop operations.
-  The pinned specification's PRE-1 `slots_from_array<T, const n>` accepts
-  only the fixed-capacity form, and TYPE-9 forbids binding a runtime-capacity
-  array outside its Box. Repeated `place_back` calls would introduce a
-  shared-length chain into independent initialization. Impact: X5 cannot
-  restore its runtime-sized counter checkpoint into the builder's stack
-  through the attempted conversion. Change: investigate a general owned
-  initialized-storage conversion in Whitefoot, with explicit ownership,
-  window measures and drop behavior; do not replace it with a renderer-only
-  window implementation. Reopen now for X5 child-list reconstruction
-  (`research/investigations/incremental-layout/DESIGN.md`, Q82). The exact
-  language operation and compiler adoption remain open.
+- **Direct bulk initialization of a runtime prefix window is missing.**
+  Minimal example: restore runtime `n` Copy values by independent indexed
+  assignments into `Box<Slots<T>>`, then use ordinary push/pop operations.
+  The pin constructs runtime windows only empty and offers no boxed full-array
+  conversion; a sequential append loop adds a shared-length chain. A balanced
+  tree of temporary windows can express parallel restoration, but adds merge
+  dependencies and repeated element transfers. Impact: X5's attempted
+  runtime Array-to-Slots conversion cannot restore its counter checkpoint.
+  Change: a full Copy-filled runtime Slots constructor in Whitefoot, keeping
+  the existing initialized-window, ownership and bounds rules. Reopen now for
+  X5 child-list reconstruction (`research/investigations/incremental-layout/DESIGN.md`,
+  Q82); the language draft and deliberate compiler adoption remain unapproved.
+
 
 ## Snowghost
 

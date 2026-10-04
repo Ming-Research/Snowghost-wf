@@ -291,14 +291,23 @@ TYPE-9 also forbids moving a runtime-sized array into an inline local. The
 current attempted dynamic conversion is unsupported, not a validated
 implementation.
 
-Recommended direction: resolve this general initialized-storage conversion
-in Whitefoot under its own specification and review, then deliberately adopt
-an accepted compiler revision. The precise language operation remains under
-investigation. Independent element copies have no ordering dependency;
-restoring a window by repeated appends would add one shared-length chain.
-A renderer-specific capacity limit or a replacement window abstraction would
-hide the language gap and is not proposed. Immutable retirement facts need
-no growable window and can instead remain owned immutable data.
+Recommended direction: add a Copy-filled runtime Slots constructor in
+Whitefoot under its own specification and review, so restoration writes
+independent elements directly into its final initialized window. This avoids
+an intermediate array conversion as well as per-element length updates.
+Existing operations can express parallel restoration through a balanced tree
+of temporary windows and grow/append merges, but that algorithm adds merge
+dependencies and repeated element transfers; the program is not claimed to
+be inexpressible. A renderer-specific capacity limit or a replacement window
+abstraction is not proposed. Immutable retirement facts need no growable
+window and now use owned leaves flattened once into final arrays.
+
+The draft Whitefoot investigation is
+`research/investigations/runtime-window-initialization/DESIGN.md` in that
+repository. Its exact constructor, safety checks, tests and compiler adoption
+remain unapproved; no Snowghost pin has moved. Adopting a newer base also
+requires listing its already merged changes, including allocation-exhaustion
+rules, separately from this constructor's rule delta.
 
 Before selecting a language change, reduce the requirement to runtime-sized
 owned initialized storage followed by window operations, check the existing
