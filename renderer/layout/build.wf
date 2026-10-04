@@ -192,6 +192,7 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   doc "A context of kind and style that holds nothing and has not been laid out.";
   let flow = box_slots_new::<Flow>(capacity: 0_u64);
   let pieces = box_slots_new::<Piece>(capacity: 0_u64);
+  let generated_text = box_slots_new::<u8>(capacity: 0_u64);
   let blocks = box_slots_new::<Block>(capacity: 0_u64);
   let paragraphs = box_slots_new::<Paragraph>(capacity: 0_u64);
   let children = box_slots_new::<Context>(capacity: 0_u64);
@@ -206,7 +207,7 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let no = False();
   let space = Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
   let never = Space(available: laid_never, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
-  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no);
+  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, generated_text: move generated_text, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no);
 }
 
 fn new_open(style: StyleRef, first: u64) -> made: Open pure {
@@ -915,6 +916,37 @@ fn add_scalars(context: &Context, open: &Open, scalars: &[u32], style: StyleRef)
   return Ok<unit, LayoutError>(value: unit);
 }
 
+fn add_generated(styles: &Styles, context: &Context, open: &Open, style: StyleRef, start: u32, end: u32) -> result: Result<unit, LayoutError> reads(styles), writes(context), writes(open) {
+  doc "Copies a generated UTF-8 span into its owning context and emits its local span, including an empty string; refuses malformed spans and storage overflow.";
+  let first = cvt::<u32, u64>(start);
+  let stop = cvt::<u32, u64>(end);
+  let ordered = first <= stop;
+  let inside = stop <= styles^.generated_text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let size = stop - first;
+  let local = context^.generated_text.inner.len;
+  let limit = local +sat size;
+  if limit > item_ceiling {
+    return too_large::<unit>();
+  }
+  for (i in first..stop) {
+    if i < styles^.generated_text.inner.len {
+      let byte = styles^.generated_text.inner[i];
+      let copied = propagate push_or_fail::<u8>(cell: &context^.generated_text, value: byte);
+    } else {
+      return inconsistent::<unit>();
+    }
+  }
+  let from = cvt.wrap::<u64, u32>(local);
+  let to = cvt.wrap::<u64, u32>(limit);
+  let piece = Piece::Generated(start: from, end: to, style: style);
+  return add_piece(context: context, open: open, piece: piece, size: size);
+}
+
 fn add_quote(styles: &Styles, context: &Context, open: &Open, style: StyleRef, depth: i32, closing: Bool) -> result: Result<unit, LayoutError> reads(styles), writes(context), writes(open) {
   doc "Adds the open or closing quote of nesting level depth from style's quotes: auto gives the English quotes, double at level 0 and single deeper; a list repeats its last pair past its end; none gives nothing.";
   let group = content_of(styles: styles, style: style);
@@ -952,11 +984,7 @@ fn add_quote(styles: &Styles, context: &Context, open: &Open, style: StyleRef, d
         } else {
           give pair.open_end;
         }
-        let first = cvt::<u32, u64>(start);
-        let stop = cvt::<u32, u64>(end);
-        let size = stop -sat first;
-        let piece = Piece::Generated(start: start, end: end, style: style);
-        let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
+        let added = propagate add_generated(styles: styles, context: context, open: open, style: style, start: start, end: end);
       }
     }
     return Ok<unit, LayoutError>(value: unit);
@@ -998,11 +1026,7 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
     if k < styles^.content_items.inner.len {
       let item = styles^.content_items.inner[k];
       if item.kind == item_string {
-        let first = cvt::<u32, u64>(item.text_start);
-        let stop = cvt::<u32, u64>(item.text_end);
-        let size = stop -sat first;
-        let piece = Piece::Generated(start: item.text_start, end: item.text_end, style: style);
-        let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
+        let added = propagate add_generated(styles: styles, context: context, open: open, style: style, start: item.text_start, end: item.text_end);
       } else if item.kind == item_counter {
         let value = match find_counter(walk: walk, name: item.name.index) {
           Some(value: at) => {
@@ -1029,11 +1053,7 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
             let instance = walk^.counters.inner[c];
             if instance.name == item.name.index {
               if shown > 0_u64 {
-                let first = cvt::<u32, u64>(item.text_start);
-                let stop = cvt::<u32, u64>(item.text_end);
-                let size = stop -sat first;
-                let separator = Piece::Generated(start: item.text_start, end: item.text_end, style: style);
-                let added = propagate add_piece(context: context, open: open, piece: separator, size: size);
+                let added = propagate add_generated(styles: styles, context: context, open: open, style: style, start: item.text_start, end: item.text_end);
               }
               let scalars = box_slots_new::<u32>(capacity: 16_u64);
               format_counter(atoms: atoms, value: instance.value, style: item.list_style.index, out: &scalars);
