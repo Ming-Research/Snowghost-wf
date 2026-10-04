@@ -235,15 +235,15 @@ fn mark_new_source(context: &Context) -> result: unit writes(context) {
   set context^.restyled = True();
 }
 
-fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Document, old: &Styles, new: &Styles) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), writes(context), writes(pool) {
-  doc "Finalizes a replacement's own generated storage before exact preparation-key matching. Each donor carries its explicit old or new Styles basis; geometry is not used to infer preparation inputs.";
+fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Document, old: &Styles, new: &Styles) -> result: Result<u64, LayoutError> reads(document), reads(old), reads(new), writes(context), writes(pool) {
+  doc "Finalizes a replacement's own generated storage before exact preparation-key matching. Each donor carries its explicit old or new Styles basis; geometry is not used to infer preparation inputs. Returns the number of prepared payloads actually transferred, including a transfer into a speculative replacement.";
   let routed = propagate finish_source_paths(context: context);
   let generated = finish_generated_source(context: context, styles: new);
   if generated == 2_u8 {
-    return too_large::<unit>();
+    return too_large::<u64>();
   }
   if generated != 0_u8 {
-    return inconsistent::<unit>();
+    return inconsistent::<u64>();
   }
   mark_new_source(context: context);
   let previous = &pool^.previous;
@@ -251,15 +251,15 @@ fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Docu
     Some(value: donor) => {
       retain_output_summary(previous: &donor^.context, replacement: context);
       if donor^.styles_new {
-        let reused = propagate reuse_source_paragraphs(previous: &donor^.context, replacement: context, document: document, old: new, new: new);
+        return reuse_source_paragraphs(previous: &donor^.context, replacement: context, document: document, old: new, new: new);
       } else {
-        let reused = propagate reuse_source_paragraphs(previous: &donor^.context, replacement: context, document: document, old: old, new: new);
+        return reuse_source_paragraphs(previous: &donor^.context, replacement: context, document: document, old: old, new: new);
       }
     }
     None() => {
     }
   }
-  return Ok<unit, LayoutError>(value: unit);
+  return Ok<u64, LayoutError>(value: 0_u64);
 }
 
 fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8, recipe: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(new), reads(new_sources), reads(atoms), writes(walk) {
@@ -286,6 +286,9 @@ fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, new_
       let retained = band(whole, compatible);
       if retained {
         let restored = propagate restore_source_exit(walk: walk, context: &prior.context);
+        let retained_work = SourceWork(sources_built: 0_u64, sources_retained: 1_u64, paragraphs_reused: 0_u64);
+        let counted = propagate add_source_work(first: walk^.work, second: retained_work);
+        set walk^.work = counted;
         return Ok<Context, LayoutError>(value: move prior.context);
       }
       let pool = propagate make_source_pool(prior: move prior, incoming: move incoming_candidates, new_sources: new_sources, width: width);
@@ -302,7 +305,10 @@ fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, new_
   let end = propagate capture_build_state(walk: walk);
   let source = ContextSource::ElementBody(node: node, recipe: recipe, begin: move begin, end: move end);
   set context.source = move source;
-  let finished = propagate finish_incremental_body(context: &context, pool: &walk^.pool, document: document, old: old, new: new);
+  let reused = propagate finish_incremental_body(context: &context, pool: &walk^.pool, document: document, old: old, new: new);
+  let built_work = SourceWork(sources_built: 1_u64, sources_retained: 0_u64, paragraphs_reused: reused);
+  let counted = propagate add_source_work(first: walk^.work, second: built_work);
+  set walk^.work = counted;
   swap(first: &walk^.pool, second: &child_pool);
   let retired = propagate retire_source_pool(pool: move child_pool, new_sources: new_sources, width: width);
   let previous_retired = empty_retired_bodies();
@@ -568,7 +574,8 @@ fn walk_from_source(context: &Context, atoms: &AtomTable, width: u64) -> result:
   let incremental = True();
   let completed = SourceMarks::Empty();
   let retired = empty_retired_bodies();
-  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool, completed: move completed, retired: move retired);
+  let work = no_source_work();
+  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool, completed: move completed, retired: move retired, work: work);
   let source = &context^.source;
   match source^ {
     ElementBody(begin: before, ..) => {
@@ -1012,12 +1019,14 @@ struct SourceUpdate {
   retired: RetiredBodies;
   completed: SourceMarks;
   exit_changed: Bool;
+  work: SourceWork;
 }
 
 struct ChildUpdates {
   retired: RetiredBodies;
   completed: SourceMarks;
   exit_changed: Bool;
+  work: SourceWork;
 }
 
 struct BodyRecipe {
@@ -1112,7 +1121,10 @@ fn rebuild_selected_source(previous: Context, document: &Document, traversal: &T
     give move made;
   }
   set context.source = move source;
-  let finished = propagate finish_incremental_body(context: &context, pool: &walk.pool, document: document, old: old, new: new);
+  let reused = propagate finish_incremental_body(context: &context, pool: &walk.pool, document: document, old: old, new: new);
+  let built_work = SourceWork(sources_built: 1_u64, sources_retained: 0_u64, paragraphs_reused: reused);
+  let counted = propagate add_source_work(first: walk.work, second: built_work);
+  set walk.work = counted;
   let donor = &walk.pool.previous;
   let equal = match donor^ {
     Some(value: held) => {
@@ -1124,23 +1136,24 @@ fn rebuild_selected_source(previous: Context, document: &Document, traversal: &T
   }
   let exit_changed = bnot(equal);
   let recorded = propagate record_completed_source(walk: &walk, node: recipe.node, width: width);
-  let Walk(counters: saved_counters, quote_depth: saved_quotes, depth: saved_depth, list_item: saved_list_item, incremental: was_incremental, pool: finished_pool, completed: built_sources, retired: child_retirements) = move walk;
+  let Walk(counters: saved_counters, quote_depth: saved_quotes, depth: saved_depth, list_item: saved_list_item, incremental: was_incremental, pool: finished_pool, completed: built_sources, retired: child_retirements, work: actual_work) = move walk;
   let own = propagate retire_source_pool(pool: move finished_pool, new_sources: new_sources, width: width);
   let retired = propagate join_retired_bodies(first: move child_retirements, second: move own);
-  let made = SourceUpdate(context: move context, retired: move retired, completed: move built_sources, exit_changed: exit_changed);
+  let made = SourceUpdate(context: move context, retired: move retired, completed: move built_sources, exit_changed: exit_changed, work: actual_work);
   return Ok<SourceUpdate, LayoutError>(value: move made);
 }
 
 fn join_child_updates(first: ChildUpdates, second: ChildUpdates) -> result: Result<ChildUpdates, LayoutError> pure {
   doc "Combines independent children only after their separate reconstruction results exist. Geometry does not serialize their checkpointed construction.";
-  let ChildUpdates(retired: first_retired, completed: first_completed, exit_changed: first_exit) = move first;
-  let ChildUpdates(retired: second_retired, completed: second_completed, exit_changed: second_exit) = move second;
+  let ChildUpdates(retired: first_retired, completed: first_completed, exit_changed: first_exit, work: first_work) = move first;
+  let ChildUpdates(retired: second_retired, completed: second_completed, exit_changed: second_exit, work: second_work) = move second;
   let exit_changed = bor(first_exit, second_exit);
+  let work = propagate add_source_work(first: first_work, second: second_work);
   let retired_result = join_retired_bodies(first: move first_retired, second: move second_retired);
   let completed_result = merge_source_marks(first: move first_completed, second: move second_completed);
   let retired = propagate move retired_result;
   let completed = propagate move completed_result;
-  let made = ChildUpdates(retired: move retired, completed: move completed, exit_changed: exit_changed);
+  let made = ChildUpdates(retired: move retired, completed: move completed, exit_changed: exit_changed, work: work);
   return Ok<ChildUpdates, LayoutError>(value: move made);
 }
 
@@ -1151,7 +1164,8 @@ fn update_selected_children(children: &[Context], marks: &SourceMarks, document:
     let retired = empty_retired_bodies();
     let completed = SourceMarks::Empty();
     let no = False();
-    let made = ChildUpdates(retired: move retired, completed: move completed, exit_changed: no);
+    let work = no_source_work();
+    let made = ChildUpdates(retired: move retired, completed: move completed, exit_changed: no, work: work);
     return Ok<ChildUpdates, LayoutError>(value: move made);
   }
   if count == 1_u64 {
@@ -1164,7 +1178,8 @@ fn update_selected_children(children: &[Context], marks: &SourceMarks, document:
           let retired = empty_retired_bodies();
           let completed = SourceMarks::Empty();
           let no = False();
-          let made = ChildUpdates(retired: move retired, completed: move completed, exit_changed: no);
+          let work = no_source_work();
+          let made = ChildUpdates(retired: move retired, completed: move completed, exit_changed: no, work: work);
           return Ok<ChildUpdates, LayoutError>(value: move made);
         }
         Some(..) => {
@@ -1175,9 +1190,9 @@ fn update_selected_children(children: &[Context], marks: &SourceMarks, document:
     let held = new_context(kind: ctx_flow, style: style);
     swap(first: &children^[0_u64], second: &held);
     let updated = propagate update_selected_source(context: move held, marks: marks, document: document, traversal: traversal, old: old, new: new, atoms: atoms, width: width);
-    let SourceUpdate(context: replacement, retired: retired_bodies, completed: completed_ids, exit_changed: changed_exit) = move updated;
+    let SourceUpdate(context: replacement, retired: retired_bodies, completed: completed_ids, exit_changed: changed_exit, work: actual_work) = move updated;
     set children^[0_u64] = move replacement;
-    let made = ChildUpdates(retired: move retired_bodies, completed: move completed_ids, exit_changed: changed_exit);
+    let made = ChildUpdates(retired: move retired_bodies, completed: move completed_ids, exit_changed: changed_exit, work: actual_work);
     return Ok<ChildUpdates, LayoutError>(value: move made);
   }
   let half = count / 2_u64;
@@ -1200,7 +1215,8 @@ fn update_selected_source(context: Context, marks: &SourceMarks, document: &Docu
         let retired = empty_retired_bodies();
         let completed = SourceMarks::Empty();
         let no = False();
-        let made = SourceUpdate(context: move context, retired: move retired, completed: move completed, exit_changed: no);
+        let work = no_source_work();
+        let made = SourceUpdate(context: move context, retired: move retired, completed: move completed, exit_changed: no, work: work);
         return Ok<SourceUpdate, LayoutError>(value: move made);
       }
       Some(value: local) => {
@@ -1212,7 +1228,7 @@ fn update_selected_source(context: Context, marks: &SourceMarks, document: &Docu
   }
   let children = context.children.inner.len;
   let below = propagate update_selected_children(children: &context.children.inner[0_u64..children], marks: marks, document: document, traversal: traversal, old: old, new: new, atoms: atoms, width: width);
-  let ChildUpdates(retired: below_retired, completed: below_completed, exit_changed: below_exit) = move below;
+  let ChildUpdates(retired: below_retired, completed: below_completed, exit_changed: below_exit, work: below_work) = move below;
   refresh_structure_marks(context: &context);
   if context.marked_children > 0_u32 {
     set context.dirty = True();
@@ -1225,12 +1241,13 @@ fn update_selected_source(context: Context, marks: &SourceMarks, document: &Docu
       let ids = propagate completed_source_ids(marks: &below_completed, width: width);
       let length = ids.inner.len;
       let rebuilt = propagate rebuild_selected_source(previous: move context, document: document, traversal: traversal, old: old, new: new, atoms: atoms, new_sources: &ids.inner[0_u64..length], width: width);
-      let SourceUpdate(context: replacement, retired: own_retired, completed: own_completed, exit_changed: own_exit) = move rebuilt;
+      let SourceUpdate(context: replacement, retired: own_retired, completed: own_completed, exit_changed: own_exit, work: own_work) = move rebuilt;
+      let work = propagate add_source_work(first: below_work, second: own_work);
       let retired_result = join_retired_bodies(first: move below_retired, second: move own_retired);
       let completed_result = merge_source_marks(first: move below_completed, second: move own_completed);
       let retired = propagate move retired_result;
       let completed = propagate move completed_result;
-      let made = SourceUpdate(context: move replacement, retired: move retired, completed: move completed, exit_changed: own_exit);
+      let made = SourceUpdate(context: move replacement, retired: move retired, completed: move completed, exit_changed: own_exit, work: work);
       return Ok<SourceUpdate, LayoutError>(value: move made);
     }
   }
@@ -1239,7 +1256,7 @@ fn update_selected_source(context: Context, marks: &SourceMarks, document: &Docu
   } else {
     give below_exit;
   }
-  let made = SourceUpdate(context: move context, retired: move below_retired, completed: move below_completed, exit_changed: exit_changed);
+  let made = SourceUpdate(context: move context, retired: move below_retired, completed: move below_completed, exit_changed: exit_changed, work: below_work);
   return Ok<SourceUpdate, LayoutError>(value: move made);
 }
 
@@ -1307,9 +1324,9 @@ fn children_changed(layout: Layout, document: &Document, traversal: &Traversal, 
     return inconsistent::<Layout>();
   }
   let marks = propagate structural_source_marks(layout: &layout, document: document, styles: new, changed: changed, change: change);
-  let Layout(root: previous, viewport: kept_viewport, paragraphs: old_paragraphs, contexts: old_contexts, text_units: texts, source_paths: sources, dirty: was_dirty, last_update: last) = move layout;
+  let Layout(root: previous, viewport: kept_viewport, paragraphs: old_paragraphs, contexts: old_contexts, text_units: texts, source_paths: sources, dirty: was_dirty, last_update: last, last_child_update: prior_child_update) = move layout;
   let updated = propagate update_selected_source(context: move previous, marks: &marks, document: document, traversal: traversal, old: old, new: new, atoms: atoms, width: nodes);
-  let SourceUpdate(context: replacement, retired: retired_bodies, completed: completed_ids, exit_changed: final_exit) = move updated;
+  let SourceUpdate(context: replacement, retired: retired_bodies, completed: completed_ids, exit_changed: final_exit, work: actual_work) = move updated;
   let current = propagate collect_updated_bodies(context: &replacement, completed: &completed_ids, width: nodes);
   if retired_bodies.contexts > old_contexts {
     return inconsistent::<Layout>();
@@ -1336,7 +1353,51 @@ fn children_changed(layout: Layout, document: &Document, traversal: &Traversal, 
   let current_source_count = current_facts.sources.inner.len;
   let published = propagate replace_source_routes(texts: &texts, sources: &sources, nodes: nodes, retired_texts: &retired_facts.texts.inner[0_u64..retired_text_count], retired_sources: &retired_facts.sources.inner[0_u64..retired_source_count], next_texts: &current_facts.texts.inner[0_u64..current_text_count], next_sources: &current_facts.sources.inner[0_u64..current_source_count]);
   let dirty = replacement.dirty;
+  let child_counts = ChildUpdateCounts(sources_built: actual_work.sources_built, sources_retained: actual_work.sources_retained, paragraphs_reused: actual_work.paragraphs_reused, text_routes_written: published.text_routes_written, source_routes_written: published.source_routes_written, text_routes_changed: published.text_routes_changed, source_routes_changed: published.source_routes_changed, old_route_capacity: published.old_capacity, route_capacity: published.capacity, route_slots_copied: published.copied_slots);
   let none = no_updates();
-  let made = Layout(root: move replacement, viewport: kept_viewport, paragraphs: paragraphs, contexts: contexts, text_units: move texts, source_paths: move sources, dirty: dirty, last_update: none);
+  let made = Layout(root: move replacement, viewport: kept_viewport, paragraphs: paragraphs, contexts: contexts, text_units: move texts, source_paths: move sources, dirty: dirty, last_update: none, last_child_update: child_counts);
   return Ok<Layout, LayoutError>(value: move made);
+}
+
+struct SourceWork {
+  doc "Actual source construction and ownership operations performed by one private builder or independent candidate result. This record counts occurrences, not unique final source identities.";
+  sources_built: u64;
+  sources_retained: u64;
+  paragraphs_reused: u64;
+}
+
+fn no_source_work() -> made: SourceWork pure {
+  doc "A source not visited by construction or candidate claiming contributes no work.";
+  return SourceWork(sources_built: 0_u64, sources_retained: 0_u64, paragraphs_reused: 0_u64);
+}
+
+fn add_source_work(first: SourceWork, second: SourceWork) -> result: Result<SourceWork, LayoutError> pure {
+  doc "Adds already completed independent work, including speculative work later superseded. Refuses count overflow rather than wrapping or saturating an observation.";
+  let built_room = 18446744073709551615_u64 - first.sources_built;
+  let retained_room = 18446744073709551615_u64 - first.sources_retained;
+  let reused_room = 18446744073709551615_u64 - first.paragraphs_reused;
+  if second.sources_built > built_room {
+    return too_large::<SourceWork>();
+  }
+  if second.sources_retained > retained_room {
+    return too_large::<SourceWork>();
+  }
+  if second.paragraphs_reused > reused_room {
+    return too_large::<SourceWork>();
+  }
+  let built = first.sources_built + second.sources_built;
+  let retained = first.sources_retained + second.sources_retained;
+  let reused = first.paragraphs_reused + second.paragraphs_reused;
+  let made = SourceWork(sources_built: built, sources_retained: retained, paragraphs_reused: reused);
+  return Ok<SourceWork, LayoutError>(value: made);
+}
+
+fn no_child_updates() -> made: ChildUpdateCounts pure {
+  doc "The initial child-list work report. Initial full construction is not a child-list update, so even its route capacities are reported as zero here.";
+  return ChildUpdateCounts(sources_built: 0_u64, sources_retained: 0_u64, paragraphs_reused: 0_u64, text_routes_written: 0_u64, source_routes_written: 0_u64, text_routes_changed: 0_u64, source_routes_changed: 0_u64, old_route_capacity: 0_u64, route_capacity: 0_u64, route_slots_copied: 0_u64);
+}
+
+fn child_update_counts(layout: &Layout) -> counts: ChildUpdateCounts reads(layout) {
+  doc "Returns the latest successful child-list operation's report. Geometry updates and text or style marking leave this separate observation unchanged.";
+  return layout^.last_child_update;
 }
