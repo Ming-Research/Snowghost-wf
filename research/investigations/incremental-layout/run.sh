@@ -6,7 +6,8 @@
 #                                   scripts/edits.py generates from them
 #   run.sh edit BUILD PAGE KIND     runs the script PAGE-KIND.edits with the
 #                                   driver build/layout_oracle_BUILD (seq or
-#                                   par) and keeps its output lines in
+#                                   par), validates raw stdout (*.txt.raw),
+#                                   and keeps comparable output lines in
 #                                   build/x5/out/PAGE-KIND.BUILD.txt
 #   run.sh roundtrip BUILD PAGE...  runs every kind with inverses (word,
 #                                   sentence, colour, fontsize, rootfont,
@@ -28,8 +29,8 @@
 #                                   edit) and counts its T and D edits whose
 #                                   incremental dump (text_changed and update
 #                                   on a layout kept across edits) is the
-#                                   same as the rebuilt one, differs, or was
-#                                   refused
+#                                   same as the rebuilt one; differences,
+#                                   refusals and incomplete runs fail
 #   run.sh time BUILD PAGE KIND [RUNS]
 #                                   times text_changed + update per edit
 #                                   with the driver's incremental mode, RUNS
@@ -95,63 +96,84 @@ edit() {
 	build=$1 page=$2 kind=$3
 	mkdir -p "$work/out"
 	out=$work/out/$page-$kind.$build.txt
-	status=0
-	# The driver's output holds the hash lines and any requested dumps; keep
-	# only the lines this harness compares.
+	raw=$out.raw
+	: >"$out"
+	# Save stdout before filtering; a pipeline would hide the driver's exit.
 	# shellcheck disable=SC2046
-	"$(driver "$build")" edit "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") |
-		grep -a '^base hash \|^edit [0-9]* hash \|^created ' >"$out" || status=$?
-	return "$status"
+	if "$(driver "$build")" edit "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") >"$raw"; then
+		:
+	else
+		edit_status=$?
+		return "$edit_status"
+	fi
+	python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$raw" || return "$?"
+	grep -a '^base hash \|^edit [0-9]* hash \|^created ' "$raw" >"$out"
 }
 
 roundtrip() {
 	build=$1
 	shift
+	roundtrip_status=0
 	for page in "$@"; do
 		for kind in $kinds; do
 			printf '%s %s: ' "$page" "$kind"
 			edit "$build" "$page" "$kind" || {
 				echo "run failed"
+				roundtrip_status=1
 				continue
 			}
-			python3 "$here/scripts/roundtrip.py" "$work/out/$page-$kind.$build.txt" "$work/scripts/$page-$kind.edits" || echo "  ^ an inverse edit did not restore the base hash"
+			python3 "$here/scripts/roundtrip.py" "$work/out/$page-$kind.$build.txt" "$work/scripts/$page-$kind.edits" || {
+				echo "  ^ an inverse edit did not restore the base hash"
+				roundtrip_status=1
+			}
 		done
 	done
+	return "$roundtrip_status"
 }
 
 same() {
 	page=$1
 	shift
+	same_status=0
 	for kind in "$@"; do
+		if ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.seq.txt" ||
+		   ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.par.txt"; then
+			same_status=1
+			continue
+		fi
 		if cmp "$work/out/$page-$kind.seq.txt" "$work/out/$page-$kind.par.txt"; then
 			echo "$page $kind: seq and par identical ($(wc -l <"$work/out/$page-$kind.seq.txt") lines)"
 		else
 			echo "$page $kind: seq and par DIFFER"
+			same_status=1
 		fi
 	done
+	return "$same_status"
 }
 
 reparse() {
 	page=$1 kind=$2 count=$3
+	mkdir -p "$work/out"
 	# shellcheck disable=SC2046
-	python3 "$here/scripts/reparse.py" "$data/$page.html" "$work/$page.nodes" "$work/scripts/$page-$kind.edits" \
-		"$work" "$(driver seq)" "$ua" "$count" $(sheets_of "$page") >"$work/out/$page-$kind.reparse.txt"
-	while read -r _ number _ hash _ size; do
-		edit=$(grep -a "^edit $number hash " "$work/out/$page-$kind.seq.txt" | cut -d' ' -f4,6)
-		if [ "$edit" = "$hash $size" ]; then
-			echo "$page $kind edit $number: edit mode and re-parse agree (hash $hash, $size bytes)"
-		else
-			echo "$page $kind edit $number: DIFFER, edit mode '$edit', re-parse '$hash $size'"
-		fi
-	done <"$work/out/$page-$kind.reparse.txt"
+	if python3 "$here/scripts/reparse.py" "$data/$page.html" "$work/$page.nodes" "$work/scripts/$page-$kind.edits" \
+		"$work" "$(driver seq)" "$ua" "$count" $(sheets_of "$page") >"$work/out/$page-$kind.reparse.txt"; then
+		:
+	else
+		reparse_status=$?
+		return "$reparse_status"
+	fi
+	python3 "$here/scripts/inctime.py" --reparse "$work/scripts/$page-$kind.edits" \
+		"$work/out/$page-$kind.seq.txt" "$work/out/$page-$kind.reparse.txt" "$count"
 }
 
 inc() {
 	build=$1 page=$2
 	shift 2
+	inc_status=0
 	for kind in "$@"; do
 		edit "$build" "$page" "$kind" || {
 			echo "$page $kind: run failed"
+			inc_status=1
 			continue
 		}
 		out=$work/out/$page-$kind.$build.txt
@@ -161,6 +183,7 @@ inc() {
 		edits=$(grep -c '^edit [0-9]* hash ' "$out" || true)
 		echo "$page $kind ($build): $edits edits, inc same $same, DIFF $differs, refused $refused"
 	done
+	return "$inc_status"
 }
 
 time_edits() {
@@ -168,33 +191,53 @@ time_edits() {
 	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-time sh "$here/run.sh" time "$@"
 	fi
+	case $runs in
+	''|*[!0-9]*) echo "run.sh: RUNS must be a positive integer" >&2; return 2 ;;
+	esac
+	if [ "$runs" -le 0 ]; then
+		echo "run.sh: RUNS must be a positive integer" >&2
+		return 2
+	fi
 	mkdir -p "$work/time"
 	files=
 	i=1
 	while [ "$i" -le "$runs" ]; do
 		out=$work/time/$page-$kind.$build.w${WF_WORKERS:-none}.r$i.txt
 		# shellcheck disable=SC2046
-		"$(driver "$build")" incremental "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") >"$out"
+		if "$(driver "$build")" incremental "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") >"$out"; then
+			:
+		else
+			time_status=$?
+			return "$time_status"
+		fi
 		files="$files $out"
 		i=$((i + 1))
 	done
 	echo "$page $kind $build WF_WORKERS=${WF_WORKERS:-unset}:"
 	# shellcheck disable=SC2086
-	python3 "$here/scripts/inctime.py" $files
+	python3 "$here/scripts/inctime.py" "$work/scripts/$page-$kind.edits" $files
 }
 
 dumps() {
 	main=$1
 	shift
+	dumps_status=0
 	for page in "$@"; do
 		# shellcheck disable=SC2046
-		"$main" dump 1 "$data/$page.html" "$ua" $(sheets_of "$page") >"$work/$page.main.dump"
+		if "$main" dump 1 "$data/$page.html" "$ua" $(sheets_of "$page") >"$work/$page.main.dump"; then
+			:
+		else
+			dumps_status=1
+			continue
+		fi
 		if cmp "$work/$page.main.dump" "$work/$page.dump"; then
 			echo "$page: dump identical to the main driver's ($(wc -c <"$work/$page.dump") bytes)"
 		else
 			echo "$page: dump DIFFERS"
+			dumps_status=1
 		fi
 	done
+	return "$dumps_status"
 }
 
 cmd=$1
