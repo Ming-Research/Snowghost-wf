@@ -195,3 +195,15 @@ tick bump deleted (X11), one key field omitted.
 ## Results
 
 None yet.
+
+## Owner rulings
+
+2026-10-04: after a comparison of each card's performance and feasibility,
+the owner wrote in Chinese that they agree to all, as recommended: Q67
+(NodeId with a dense order array), Q68 (push-based marks and the style
+delta), Q69 (keys of the layout-relevant groups), Q70 (keep Q55 with the δ
+path; revisit at the paint boundary when the contract's C3 measures the
+bytes per edit), Q71 (recursion over marked subtrees), Q72 (push-based
+marks) and Q73 (the byte-identity oracle with falsifiers). They go into
+`design/pipeline/layout.md` with step 6, and `design/log.md` records them
+then.
