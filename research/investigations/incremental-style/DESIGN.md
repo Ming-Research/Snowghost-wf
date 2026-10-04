@@ -205,4 +205,15 @@ same host and Chromium build:
 
 ## Results
 
-None yet.
+- **Step 1** (`runs/step1.txt`). The value tables of the eleven groups and
+  the list tables they name are kept in `Styles` and a full build fills
+  them from empty: every style and layout dump and every table size equals
+  main's on the three pages and four case pages, seq and par; a variant that
+  forces the tables to grow agrees, and one that loses entries on growth
+  fails the table sizes while the dumps cannot see it. The full build is
+  within 5 percent (at most +3.3%, ecma262 at four workers). Two parts of
+  step 1 moved: the custom-property sets name sets of the inherited pass's
+  per-run store, so their kept table comes with that store in step 3; and
+  Q90's NodeId-indexed state only matters once an edit moves preorder
+  positions, which no edit of M1 does before structural edits, so it is
+  proposed for M2.

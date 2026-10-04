@@ -16,6 +16,19 @@ alias SpacingGroup = pkg::css::values::SpacingGroup;
 alias TextGroup = pkg::css::values::TextGroup;
 alias ContentGroup = pkg::css::values::ContentGroup;
 alias TableGroup = pkg::css::values::TableGroup;
+alias ItemGroup = pkg::css::values::ItemGroup;
+alias ContainerGroup = pkg::css::values::ContainerGroup;
+alias Track = pkg::css::values::Track;
+alias TrackList = pkg::css::values::TrackList;
+alias AreaMap = pkg::css::values::AreaMap;
+alias NamedArea = pkg::css::values::NamedArea;
+alias Atom = pkg::base::atom::Atom;
+alias ContentList = pkg::css::values::ContentList;
+alias ContentItem = pkg::css::values::ContentItem;
+alias CounterList = pkg::css::values::CounterList;
+alias CounterChange = pkg::css::values::CounterChange;
+alias QuoteList = pkg::css::values::QuoteList;
+alias QuotePair = pkg::css::values::QuotePair;
 alias pseudo_element_after = pkg::css::selectors::pseudo_element_after;
 
 fn append_group<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: unit writes(cell) {
@@ -686,21 +699,14 @@ fn same_color(first: Color, second: Color) -> same: Bool pure {
   return True();
 }
 
-fn intern_box_group(values: &[BoxGroup], ids: &[u32]) -> table: Box<Slots<BoxGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<BoxGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_box_group(table: &Box<Slots<BoxGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -708,10 +714,45 @@ fn intern_box_group(values: &[BoxGroup], ids: &[u32]) -> table: Box<Slots<BoxGro
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_box_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_box_group(table: &Box<Slots<BoxGroup>>, index: &Box<Array<u32>>, values: &[BoxGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_box_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_box_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_box_group(hash: 14695981039346656037_u64, value: value);
@@ -719,26 +760,26 @@ fn intern_box_group(values: &[BoxGroup], ids: &[u32]) -> table: Box<Slots<BoxGro
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<BoxGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<BoxGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_box_group(first: table.inner[item], second: value);
+        let same = same_box_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -749,24 +790,17 @@ fn intern_box_group(values: &[BoxGroup], ids: &[u32]) -> table: Box<Slots<BoxGro
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
-fn intern_size_group(values: &[SizeGroup], ids: &[u32]) -> table: Box<Slots<SizeGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<SizeGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_size_group(table: &Box<Slots<SizeGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -774,10 +808,45 @@ fn intern_size_group(values: &[SizeGroup], ids: &[u32]) -> table: Box<Slots<Size
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_size_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_size_group(table: &Box<Slots<SizeGroup>>, index: &Box<Array<u32>>, values: &[SizeGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_size_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_size_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_size_group(hash: 14695981039346656037_u64, value: value);
@@ -785,26 +854,26 @@ fn intern_size_group(values: &[SizeGroup], ids: &[u32]) -> table: Box<Slots<Size
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<SizeGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<SizeGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_size_group(first: table.inner[item], second: value);
+        let same = same_size_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -815,24 +884,17 @@ fn intern_size_group(values: &[SizeGroup], ids: &[u32]) -> table: Box<Slots<Size
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
-fn intern_spacing_group(values: &[SpacingGroup], ids: &[u32]) -> table: Box<Slots<SpacingGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<SpacingGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_spacing_group(table: &Box<Slots<SpacingGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -840,10 +902,45 @@ fn intern_spacing_group(values: &[SpacingGroup], ids: &[u32]) -> table: Box<Slot
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_spacing_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_spacing_group(table: &Box<Slots<SpacingGroup>>, index: &Box<Array<u32>>, values: &[SpacingGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_spacing_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_spacing_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_spacing_group(hash: 14695981039346656037_u64, value: value);
@@ -851,26 +948,26 @@ fn intern_spacing_group(values: &[SpacingGroup], ids: &[u32]) -> table: Box<Slot
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<SpacingGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<SpacingGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_spacing_group(first: table.inner[item], second: value);
+        let same = same_spacing_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -881,24 +978,17 @@ fn intern_spacing_group(values: &[SpacingGroup], ids: &[u32]) -> table: Box<Slot
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
-fn intern_border_group(values: &[BorderGroup], ids: &[u32]) -> table: Box<Slots<BorderGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<BorderGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_border_group(table: &Box<Slots<BorderGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -906,10 +996,45 @@ fn intern_border_group(values: &[BorderGroup], ids: &[u32]) -> table: Box<Slots<
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_border_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_border_group(table: &Box<Slots<BorderGroup>>, index: &Box<Array<u32>>, values: &[BorderGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_border_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_border_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_border_group(hash: 14695981039346656037_u64, value: value);
@@ -917,26 +1042,26 @@ fn intern_border_group(values: &[BorderGroup], ids: &[u32]) -> table: Box<Slots<
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<BorderGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<BorderGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_border_group(first: table.inner[item], second: value);
+        let same = same_border_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -947,24 +1072,17 @@ fn intern_border_group(values: &[BorderGroup], ids: &[u32]) -> table: Box<Slots<
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
-fn intern_font_group(values: &[FontGroup], ids: &[u32]) -> table: Box<Slots<FontGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<FontGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_font_group(table: &Box<Slots<FontGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -972,10 +1090,45 @@ fn intern_font_group(values: &[FontGroup], ids: &[u32]) -> table: Box<Slots<Font
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_font_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_font_group(table: &Box<Slots<FontGroup>>, index: &Box<Array<u32>>, values: &[FontGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_font_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_font_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_font_group(hash: 14695981039346656037_u64, value: value);
@@ -983,26 +1136,26 @@ fn intern_font_group(values: &[FontGroup], ids: &[u32]) -> table: Box<Slots<Font
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<FontGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<FontGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_font_group(first: table.inner[item], second: value);
+        let same = same_font_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -1013,24 +1166,17 @@ fn intern_font_group(values: &[FontGroup], ids: &[u32]) -> table: Box<Slots<Font
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
-fn intern_text_group(values: &[TextGroup], ids: &[u32]) -> table: Box<Slots<TextGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<TextGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_text_group(table: &Box<Slots<TextGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -1038,10 +1184,45 @@ fn intern_text_group(values: &[TextGroup], ids: &[u32]) -> table: Box<Slots<Text
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_text_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_text_group(table: &Box<Slots<TextGroup>>, index: &Box<Array<u32>>, values: &[TextGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_text_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_text_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_text_group(hash: 14695981039346656037_u64, value: value);
@@ -1049,26 +1230,26 @@ fn intern_text_group(values: &[TextGroup], ids: &[u32]) -> table: Box<Slots<Text
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<TextGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<TextGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_text_group(first: table.inner[item], second: value);
+        let same = same_text_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -1079,24 +1260,17 @@ fn intern_text_group(values: &[TextGroup], ids: &[u32]) -> table: Box<Slots<Text
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
-fn intern_background_group(values: &[BackgroundGroup], ids: &[u32]) -> table: Box<Slots<BackgroundGroup>> reads(values), writes(ids) {
-  doc "Interns values in order into a new table, writing each value's identifier, the index of the first equal value in the table, to ids; open addressing over a power-of-two table at least twice the input. It returns an empty table, which intern_styles has ruled out, when ids is not as long as values or values passes 2^30.";
-  let count = values^.len;
-  let table = box_slots_new::<BackgroundGroup>(capacity: 0_u64);
-  let equal_count = ids^.len == count;
-  let small = count <= 1073741824_u64;
-  let usable = band(equal_count, small);
-  if usable {
-  } else {
-    return move table;
-  }
+fn index_background_group(table: &Box<Slots<BackgroundGroup>>, index: &Box<Array<u32>>, more: u64) -> result: unit reads(table), writes(index) {
+  doc "Makes index, the open-addressing slots of table's values, a power of two at least twice the values table will hold after more, placing every value again when it grows; identifiers are positions in table and do not change.";
+  let held = table^.inner.len;
+  let total = held +sat more;
   let capacity = 16_u64;
   for (step in 0_u64..64_u64) {
     let half = capacity / 2_u64;
-    if half >= count {
+    if half >= total {
       break;
     }
     set capacity = capacity *sat 2_u64;
@@ -1104,10 +1278,45 @@ fn intern_background_group(values: &[BackgroundGroup], ids: &[u32]) -> table: Bo
   let fits = capacity <= 4294967296_u64;
   if fits {
   } else {
-    return move table;
+    return unit;
+  }
+  if capacity <= index^.inner.len {
+    return unit;
   }
   let mask = capacity -sat 1_u64;
   let slots = box_array_filled::<u32>(count: capacity, value: 0_u32);
+  for (e in 0_u64..held) {
+    let hash = hash_background_group(hash: 14695981039346656037_u64, value: table^.inner[e]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..capacity) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set index^ = move slots;
+  return unit;
+}
+
+fn intern_background_group(table: &Box<Slots<BackgroundGroup>>, index: &Box<Array<u32>>, values: &[BackgroundGroup], ids: &[u32]) -> result: unit reads(values), writes(table), writes(index), writes(ids) {
+  doc "Interns values in order into table, kept across style runs, writing each value's identifier, the index of the first equal value in table, to ids; index holds table's open-addressing slots and is grown first (index_background_group) to at least twice the values the table can then hold. A full build interns every element into an empty table; a restyle interns only the restyled ones, appending what is new. Writes nothing when ids is not as long as values or values passes 2^30.";
+  let count = values^.len;
+  let equal_count = ids^.len == count;
+  let small = count <= 1073741824_u64;
+  let usable = band(equal_count, small);
+  if usable {
+  } else {
+    return unit;
+  }
+  index_background_group(table: table, index: index, more: count);
+  let capacity = index^.inner.len;
+  let mask = capacity -sat 1_u64;
   for (i in 0_u64..count) {
     let value = values^[i];
     let hash = hash_background_group(hash: 14695981039346656037_u64, value: value);
@@ -1115,26 +1324,26 @@ fn intern_background_group(values: &[BackgroundGroup], ids: &[u32]) -> table: Bo
     let found = 0_u32;
     for (step in 0_u64..capacity) {
       let at = iand(probe, mask);
-      let inside = at < slots.inner.len;
+      let inside = at < index^.inner.len;
       if inside {
       } else {
         break;
       }
-      let held = slots.inner[at];
+      let held = index^.inner[at];
       if held == 0_u32 {
-        let id = table.inner.len;
-        append_group::<BackgroundGroup>(cell: &table, value: value);
+        let id = table^.inner.len;
+        append_group::<BackgroundGroup>(cell: table, value: value);
         let one_based = id +sat 1_u64;
         let narrowed = cvt.wrap::<u64, u32>(one_based);
-        set slots.inner[at] = narrowed;
+        set index^.inner[at] = narrowed;
         set found = narrowed;
         break;
       }
-      let index = cvt::<u32, u64>(held);
-      let item = index -sat 1_u64;
-      let listed = item < table.inner.len;
+      let position = cvt::<u32, u64>(held);
+      let item = position -sat 1_u64;
+      let listed = item < table^.inner.len;
       if listed {
-        let same = same_background_group(first: table.inner[item], second: value);
+        let same = same_background_group(first: table^.inner[item], second: value);
         if same {
           set found = held;
           break;
@@ -1145,7 +1354,7 @@ fn intern_background_group(values: &[BackgroundGroup], ids: &[u32]) -> table: Bo
     let id = found -sat 1_u32;
     set ids^[i] = id;
   }
-  return move table;
+  return unit;
 }
 
 fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) -> result: Result<Styles, StyleError> reads(inherited), reads(resets), reads(traversal) {
@@ -1251,18 +1460,59 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
     give 0_u64;
   }
   let canon = box_array_filled::<u32>(count: set_count, value: 0_u32);
-  let boxes = intern_box_group(values: &resets^.boxes.inner[0_u64..count], ids: &box_ids.inner[0_u64..count]);
-  let sizes = intern_size_group(values: &resets^.sizes.inner[0_u64..count], ids: &size_ids.inner[0_u64..count]);
-  let spacings = intern_spacing_group(values: &resets^.spacings.inner[0_u64..count], ids: &spacing_ids.inner[0_u64..count]);
-  let borders = intern_border_group(values: &resets^.borders.inner[0_u64..count], ids: &border_ids.inner[0_u64..count]);
-  let fonts = intern_font_group(values: &inherited^.fonts.inner[0_u64..count], ids: &font_ids.inner[0_u64..count]);
-  let text_table = intern_text_group(values: &texts.inner[0_u64..count], ids: &text_ids.inner[0_u64..count]);
-  let backgrounds = intern_background_group(values: &resets^.backgrounds.inner[0_u64..count], ids: &background_ids.inner[0_u64..count]);
+  let boxes = box_slots_new::<BoxGroup>(capacity: 0_u64);
+  let box_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_box_group(table: &boxes, index: &box_index, values: &resets^.boxes.inner[0_u64..count], ids: &box_ids.inner[0_u64..count]);
+  let sizes = box_slots_new::<SizeGroup>(capacity: 0_u64);
+  let size_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_size_group(table: &sizes, index: &size_index, values: &resets^.sizes.inner[0_u64..count], ids: &size_ids.inner[0_u64..count]);
+  let spacings = box_slots_new::<SpacingGroup>(capacity: 0_u64);
+  let spacing_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_spacing_group(table: &spacings, index: &spacing_index, values: &resets^.spacings.inner[0_u64..count], ids: &spacing_ids.inner[0_u64..count]);
+  let borders = box_slots_new::<BorderGroup>(capacity: 0_u64);
+  let border_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_border_group(table: &borders, index: &border_index, values: &resets^.borders.inner[0_u64..count], ids: &border_ids.inner[0_u64..count]);
+  let fonts = box_slots_new::<FontGroup>(capacity: 0_u64);
+  let font_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_font_group(table: &fonts, index: &font_index, values: &inherited^.fonts.inner[0_u64..count], ids: &font_ids.inner[0_u64..count]);
+  let text_table = box_slots_new::<TextGroup>(capacity: 0_u64);
+  let text_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_text_group(table: &text_table, index: &text_index, values: &texts.inner[0_u64..count], ids: &text_ids.inner[0_u64..count]);
+  let backgrounds = box_slots_new::<BackgroundGroup>(capacity: 0_u64);
+  let background_index = box_array_filled::<u32>(count: 0_u64, value: 0_u32);
+  intern_background_group(table: &backgrounds, index: &background_index, values: &resets^.backgrounds.inner[0_u64..count], ids: &background_ids.inner[0_u64..count]);
   let custom_distinct = intern_custom_sets(inherited: inherited, canon: &canon.inner[0_u64..set_count]);
-  let container_tables = intern_container_group(values: &resets^.containers.inner[0_u64..count], nodes: &resets^.track_nodes.inner[0_u64..count], inherited: inherited, ids: &container_ids.inner[0_u64..count]);
-  let items = intern_item_group(values: &resets^.items.inner[0_u64..count], ids: &item_ids.inner[0_u64..count]);
-  let tables = intern_table_group(values: &tables_in.inner[0_u64..count], ids: &table_ids.inner[0_u64..count]);
-  let content_tables = intern_content_group(values: &contents_in.inner[0_u64..count], inherited: inherited, ids: &content_ids.inner[0_u64..count]);
+  let containers = box_slots_new::<ContainerGroup>(capacity: 0_u64);
+  let tracks_made = box_slots_new::<Track>(capacity: 0_u64);
+  let track_lists_made = box_slots_new::<TrackList>(capacity: 0_u64);
+  let line_names_made = box_slots_new::<Atom>(capacity: 0_u64);
+  let area_maps_made = box_slots_new::<AreaMap>(capacity: 0_u64);
+  let named_areas_made = box_slots_new::<NamedArea>(capacity: 0_u64);
+  let track_out = TrackOut(tracks: move tracks_made, track_lists: move track_lists_made, line_names: move line_names_made, area_maps: move area_maps_made, named_areas: move named_areas_made);
+  let container_words = word_table_new(expected: count);
+  let track_words = word_table_new(expected: count);
+  let area_words = word_table_new(expected: count);
+  intern_container_group(groups: &containers, out: &track_out, group_table: &container_words, track_table: &track_words, area_table: &area_words, values: &resets^.containers.inner[0_u64..count], nodes: &resets^.track_nodes.inner[0_u64..count], inherited: inherited, ids: &container_ids.inner[0_u64..count]);
+  let items = box_slots_new::<ItemGroup>(capacity: 0_u64);
+  let item_words = word_table_new(expected: count);
+  intern_item_group(groups: &items, words: &item_words, values: &resets^.items.inner[0_u64..count], ids: &item_ids.inner[0_u64..count]);
+  let tables = box_slots_new::<TableGroup>(capacity: 0_u64);
+  let table_words = word_table_new(expected: count);
+  intern_table_group(groups: &tables, words: &table_words, values: &tables_in.inner[0_u64..count], ids: &table_ids.inner[0_u64..count]);
+  let contents = box_slots_new::<ContentGroup>(capacity: 0_u64);
+  let content_lists_made = box_slots_new::<ContentList>(capacity: 0_u64);
+  let content_items_made = box_slots_new::<ContentItem>(capacity: 0_u64);
+  let counter_lists_made = box_slots_new::<CounterList>(capacity: 0_u64);
+  let counter_changes_made = box_slots_new::<CounterChange>(capacity: 0_u64);
+  let quote_lists_made = box_slots_new::<QuoteList>(capacity: 0_u64);
+  let quote_pairs_made = box_slots_new::<QuotePair>(capacity: 0_u64);
+  let text_made = box_slots_new::<u8>(capacity: 0_u64);
+  let content_out = ContentOut(content_lists: move content_lists_made, content_items: move content_items_made, counter_lists: move counter_lists_made, counter_changes: move counter_changes_made, quote_lists: move quote_lists_made, quote_pairs: move quote_pairs_made, text: move text_made);
+  let content_words = word_table_new(expected: count);
+  let content_list_words = word_table_new(expected: count);
+  let counter_words = word_table_new(expected: count);
+  let quote_words = word_table_new(expected: count);
+  intern_content_group(groups: &contents, out: &content_out, group_table: &content_words, content_table: &content_list_words, counter_table: &counter_words, quote_table: &quote_words, values: &contents_in.inner[0_u64..count], inherited: inherited, ids: &content_ids.inner[0_u64..count]);
   let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32, container: 0_u32, item: 0_u32, table: 0_u32, content: 0_u32);
   let elements = box_array_filled::<ComputedStyle>(count: element_count, value: blank);
   let pseudos = box_slots_new::<PseudoStyle>(capacity: 0_u64);
@@ -1302,9 +1552,7 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
     let placed = propagate push::<Family>(cell: &families, value: family, ceiling: 4294967295_u64);
   }
   let custom_sets = custom_distinct;
-  let ContainerTables(groups: containers, lists: track_out) = move container_tables;
   let TrackOut(tracks: tracks, track_lists: track_lists, line_names: line_names, area_maps: area_maps, named_areas: named_areas) = move track_out;
-  let ContentTables(groups: contents, lists: content_out) = move content_tables;
   let ContentOut(content_lists: content_lists, content_items: content_items, counter_lists: counter_lists, counter_changes: counter_changes, quote_lists: quote_lists, quote_pairs: quote_pairs, text: generated_text) = move content_out;
   let order_length = traversal^.order.inner.len;
   let order_fits = order_length <= node_ceiling;
@@ -1317,7 +1565,7 @@ fn intern_styles(inherited: &Inherited, resets: &Resets, traversal: &Traversal) 
   for (k in 0_u64..order_count) {
     set order.inner[k] = traversal^.order.inner[k];
   }
-  let made = Styles(elements: move elements, boxes: move boxes, sizes: move sizes, spacings: move spacings, borders: move borders, fonts: move fonts, texts: move text_table, backgrounds: move backgrounds, families: move families, custom_sets: custom_sets, containers: move containers, items: move items, tables: move tables, contents: move contents, tracks: move tracks, track_lists: move track_lists, line_names: move line_names, area_maps: move area_maps, named_areas: move named_areas, content_lists: move content_lists, content_items: move content_items, counter_lists: move counter_lists, counter_changes: move counter_changes, quote_lists: move quote_lists, quote_pairs: move quote_pairs, generated_text: move generated_text, pseudos: move pseudos, order: move order);
+  let made = Styles(elements: move elements, boxes: move boxes, sizes: move sizes, spacings: move spacings, borders: move borders, fonts: move fonts, texts: move text_table, backgrounds: move backgrounds, families: move families, custom_sets: custom_sets, containers: move containers, items: move items, tables: move tables, contents: move contents, tracks: move tracks, track_lists: move track_lists, line_names: move line_names, area_maps: move area_maps, named_areas: move named_areas, content_lists: move content_lists, content_items: move content_items, counter_lists: move counter_lists, counter_changes: move counter_changes, quote_lists: move quote_lists, quote_pairs: move quote_pairs, generated_text: move generated_text, pseudos: move pseudos, order: move order, box_index: move box_index, size_index: move size_index, spacing_index: move spacing_index, border_index: move border_index, font_index: move font_index, text_index: move text_index, background_index: move background_index, item_words: move item_words, table_words: move table_words, container_words: move container_words, track_words: move track_words, area_words: move area_words, content_words: move content_words, content_list_words: move content_list_words, counter_words: move counter_words, quote_words: move quote_words);
   return Ok<Styles, StyleError>(value: move made);
 }
 
