@@ -1002,10 +1002,10 @@ fn delta_pseudo_index(styles: &Styles, element: u64, kind: u8) -> index: Option<
   return Some<u64>(value: at);
 }
 
-fn same_pseudo(old: &Styles, new: &Styles, element: u64, kind: u8) -> same: Bool reads(old), reads(new) {
-  doc "Compares the two independently located generated pseudo styles, or regards two absent slots as equal.";
-  let old_index = delta_pseudo_index(styles: old, element: element, kind: kind);
-  let new_index = delta_pseudo_index(styles: new, element: element, kind: kind);
+fn same_pseudo(old: &Styles, new: &Styles, old_element: u64, new_element: u64, kind: u8) -> same: Bool reads(old), reads(new) {
+  doc "Compares generated pseudo styles by the originating node's independently resolved old and new preorder positions and kind, or regards two absent slots as equal.";
+  let old_index = delta_pseudo_index(styles: old, element: old_element, kind: kind);
+  let new_index = delta_pseudo_index(styles: new, element: new_element, kind: kind);
   match old_index {
     None() => {
       match new_index {
@@ -1040,37 +1040,55 @@ fn same_pseudo(old: &Styles, new: &Styles, element: u64, kind: u8) -> same: Bool
 }
 
 fn layout_changes(old: &Styles, new: &Styles) -> changed: Box<Array<Bool>> reads(old), reads(new) {
-  doc "Each element independently compares its referenced layout values and generated pseudo slots, reading both Styles and writing only its own flag. Nested lists compare corresponding entries under band reductions; shared references may repeat comparisons without ordering elements. Float words preserve exact bits except negative zero is zero. Normal and none pseudo content are absent. Exact colours and custom groups are excluded except the currentColor-or-positive-alpha background predicate that inline fragments read. The longer element array determines the result length, with an element absent from either result changed; there is no temporary classification table or shared pseudo scatter.";
+  doc "Each NodeId independently resolves both runs' preorder positions, compares referenced layout values and generated pseudo slots, and writes only its own flag. Two absent elements are unchanged and an element in only one run is changed. Nested lists compare corresponding entries under band reductions; shared references may repeat comparisons without ordering nodes. Float words preserve exact bits except negative zero is zero. Normal and none pseudo content are absent. Exact colours and custom groups are excluded except the currentColor-or-positive-alpha background predicate that inline fragments read. The longer order map determines the result length; there is no temporary classification table or shared pseudo scatter.";
   let old_count = old^.elements.inner.len;
   let new_count = new^.elements.inner.len;
-  let count = imax(old_count, new_count);
-  let yes = True();
-  let small = count <= 1073741824_u64;
+  let old_nodes = old^.order.inner.len;
+  let new_nodes = new^.order.inner.len;
+  let count = imax(old_nodes, new_nodes);
+  let no = False();
+  let small = count <= node_ceiling;
   let room = if small {
     give count;
   } else {
     give 0_u64;
   }
-  let changed = box_array_filled::<Bool>(count: room, value: yes);
+  let changed = box_array_filled::<Bool>(count: room, value: no);
   let slots = changed.inner.len;
-  let shorter = imin(old_count, new_count);
-  for (i in 0_u64..shorter) {
-    let old_listed = i < old^.elements.inner.len;
-    let new_listed = i < new^.elements.inner.len;
-    let slot_listed = i < slots;
-    let listed_pair = band(old_listed, new_listed);
-    let listed = band(listed_pair, slot_listed);
-    if listed {
-      let old_style = old^.elements.inner[i];
-      let new_style = new^.elements.inner[i];
+  for (i in 0_u64..slots) {
+    let old_position = if i < old_nodes {
+      let position = old^.order.inner[i];
+      give cvt::<u32, u64>(position);
+    } else {
+      give 4294967295_u64;
+    }
+    let new_position = if i < new_nodes {
+      let position = new^.order.inner[i];
+      give cvt::<u32, u64>(position);
+    } else {
+      give 4294967295_u64;
+    }
+    let old_visited = old_position != 4294967295_u64;
+    let new_visited = new_position != 4294967295_u64;
+    let old_listed = old_position < old_count;
+    let new_listed = new_position < new_count;
+    let old_element = band(old_visited, old_listed);
+    let new_element = band(new_visited, new_listed);
+    let both = band(old_element, new_element);
+    let flag = if both {
+      let old_style = old^.elements.inner[old_position];
+      let new_style = new^.elements.inner[new_position];
       let same = same_style(old: old, new: new, old_style: old_style, new_style: new_style);
-      let same_before = same_pseudo(old: old, new: new, element: i, kind: 0_u8);
-      let same_after = same_pseudo(old: old, new: new, element: i, kind: 1_u8);
+      let same_before = same_pseudo(old: old, new: new, old_element: old_position, new_element: new_position, kind: 0_u8);
+      let same_after = same_pseudo(old: old, new: new, old_element: old_position, new_element: new_position, kind: 1_u8);
       let pseudos = band(same_before, same_after);
       let unchanged = band(same, pseudos);
-      let flag = bnot(unchanged);
-      set changed.inner[i] = flag;
+      give bnot(unchanged);
+    } else {
+      let same_presence = eeq(old_element, new_element);
+      give bnot(same_presence);
     }
+    set changed.inner[i] = flag;
   }
   return move changed;
 }
