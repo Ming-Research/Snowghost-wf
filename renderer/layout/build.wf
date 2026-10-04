@@ -191,7 +191,7 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   doc "A context of kind and style that holds nothing and has not been laid out.";
   let flow = box_slots_new::<Flow>(capacity: 0_u64);
   let pieces = box_slots_new::<Piece>(capacity: 0_u64);
-  let generated_text = box_slots_new::<u8>(capacity: 0_u64);
+  let generated_text = box_array_filled::<u8>(count: 0_u64, value: 0_u8);
   let source = ContextSource::Derived();
   let local_paths = box_slots_new::<LocalPath>(capacity: 0_u64);
   let skipped_nodes = box_slots_new::<NodeId>(capacity: 0_u64);
@@ -919,7 +919,7 @@ fn add_scalars(context: &Context, open: &Open, scalars: &[u32], style: StyleRef)
 }
 
 fn add_generated(styles: &Styles, context: &Context, open: &Open, style: StyleRef, start: u32, end: u32) -> result: Result<unit, LayoutError> reads(styles), writes(context), writes(open) {
-  doc "Copies a generated UTF-8 span into its owning context and emits its local span, including an empty string; refuses malformed spans and storage overflow.";
+  doc "Records a checked raw Styles span, including an empty string; finish_generated copies and localizes it after this context is built.";
   let first = cvt::<u32, u64>(start);
   let stop = cvt::<u32, u64>(end);
   let ordered = first <= stop;
@@ -930,23 +930,256 @@ fn add_generated(styles: &Styles, context: &Context, open: &Open, style: StyleRe
     return inconsistent::<unit>();
   }
   let size = stop - first;
-  let local = context^.generated_text.inner.len;
-  let limit = local +sat size;
-  if limit > item_ceiling {
-    return too_large::<unit>();
+  let piece = Piece::Generated(start: start, end: end, style: style);
+  return add_piece(context: context, open: open, piece: piece, size: size);
+}
+
+fn generated_sum(pieces: &[Piece], sums: &[u64]) -> total: u64 reads(pieces), writes(sums) {
+  doc "Builds a packed balanced sum tree: each node owns one sum and its two disjoint child ranges, giving logarithmic prefix dependencies.";
+  let count = pieces^.len;
+  if count == 0_u64 {
+    return 0_u64;
   }
-  for (i in first..stop) {
-    if i < styles^.generated_text.inner.len {
-      let byte = styles^.generated_text.inner[i];
-      let copied = propagate push_or_fail::<u8>(cell: &context^.generated_text, value: byte);
+  if sums^.len == 0_u64 {
+    return 0_u64;
+  }
+  let total = if count == 1_u64 {
+    let size = match pieces^[0_u64] {
+      Generated(start: a, end: b, ..) => {
+        let span = b -sat a;
+        let size = cvt::<u32, u64>(span);
+        give size;
+      }
+      Bytes(..) => {
+        give 0_u64;
+      }
+      Scalar(..) => {
+        give 0_u64;
+      }
+      Begin(..) => {
+        give 0_u64;
+      }
+      End(..) => {
+        give 0_u64;
+      }
+      Object(..) => {
+        give 0_u64;
+      }
+    }
+    give size;
+  } else {
+    let middle = count / 2_u64;
+    let split = middle * 2_u64;
+    if split <= sums^.len {
+      let left = generated_sum(pieces: &pieces^[0_u64..middle], sums: &sums^[1_u64..split]);
+      let right = generated_sum(pieces: &pieces^[middle..count], sums: &sums^[split..sums^.len]);
+      give left +sat right;
     } else {
-      return inconsistent::<unit>();
+      give item_ceiling + 1_u64;
     }
   }
-  let from = cvt.wrap::<u64, u32>(local);
-  let to = cvt.wrap::<u64, u32>(limit);
-  let piece = Piece::Generated(start: from, end: to, style: style);
-  return add_piece(context: context, open: open, piece: piece, size: size);
+  set sums^[0_u64] = total;
+  return total;
+}
+
+fn generated_copy(pieces: &[Piece], sums: &[u64], bytes: &[u8], styles: &Styles, base: u64) -> copied: Bool writes(pieces), reads(sums), writes(bytes), reads(styles) {
+  doc "Copies each generated span into disjoint byte ranges while replacing its raw Styles offsets with local offsets; each byte within a leaf is independent.";
+  let count = pieces^.len;
+  if count == 0_u64 {
+    return True();
+  }
+  if sums^.len == 0_u64 {
+    return False();
+  }
+  if count == 1_u64 {
+    match pieces^[0_u64] {
+      Generated(start: a, end: b, style: owner) => {
+        let first = cvt::<u32, u64>(a);
+        let end = cvt::<u32, u64>(b);
+        let ordered = first <= end;
+        let inside = end <= styles^.generated_text.inner.len;
+        let valid = band(ordered, inside);
+        if valid {
+        } else {
+          return False();
+        }
+        let size = end - first;
+        if size != bytes^.len {
+          return False();
+        }
+        for (i in 0_u64..size) {
+          let from = first +sat i;
+          if from < styles^.generated_text.inner.len {
+            set bytes^[i] = styles^.generated_text.inner[from];
+          }
+        }
+        let local_start = cvt.wrap::<u64, u32>(base);
+        let local_stop = base +sat size;
+        let local_end = cvt.wrap::<u64, u32>(local_stop);
+        let local = Piece::Generated(start: local_start, end: local_end, style: owner);
+        set pieces^[0_u64] = local;
+      }
+      Bytes(..) => {
+      }
+      Scalar(..) => {
+      }
+      Begin(..) => {
+      }
+      End(..) => {
+      }
+      Object(..) => {
+      }
+    }
+    return True();
+  }
+  let middle = count / 2_u64;
+  let split = middle * 2_u64;
+  if split <= sums^.len {
+  } else {
+    return False();
+  }
+  if 1_u64 < sums^.len {
+  } else {
+    return False();
+  }
+  let left_size = sums^[1_u64];
+  if left_size <= bytes^.len {
+  } else {
+    return False();
+  }
+  let left = generated_copy(pieces: &pieces^[0_u64..middle], sums: &sums^[1_u64..split], bytes: &bytes^[0_u64..left_size], styles: styles, base: base);
+  let right_base = base +sat left_size;
+  let right = generated_copy(pieces: &pieces^[middle..count], sums: &sums^[split..sums^.len], bytes: &bytes^[left_size..bytes^.len], styles: styles, base: right_base);
+  return band(left, right);
+}
+
+fn generated_present(pieces: &[Piece]) -> result: Bool reads(pieces) {
+  doc "Reduces independent per-piece generated presence with one Boolean accumulator.";
+  let count = pieces^.len;
+  let result = False();
+  for (i in 0_u64..count) {
+    let current = match pieces^[i] {
+        Generated(start: a, end: b, ..) => {
+          give True();
+        }
+        Bytes(..) => {
+          give False();
+        }
+        Scalar(..) => {
+          give False();
+        }
+        Begin(..) => {
+          give False();
+        }
+        End(..) => {
+          give False();
+        }
+        Object(..) => {
+          give False();
+        }
+    }
+    set result = bor(result, current);
+  }
+  return result;
+}
+
+fn generated_valid(pieces: &[Piece], styles: &Styles) -> result: Bool reads(pieces), reads(styles) {
+  doc "Reduces independent per-piece generated span validity with one Boolean accumulator.";
+  let count = pieces^.len;
+  let result = True();
+  for (i in 0_u64..count) {
+    let current = match pieces^[i] {
+        Generated(start: a, end: b, ..) => {
+          let ordered = a <= b;
+          let stop = cvt::<u32, u64>(b);
+          let inside = stop <= styles^.generated_text.inner.len;
+          let valid = band(ordered, inside);
+          give valid;
+        }
+        Bytes(..) => {
+          give True();
+        }
+        Scalar(..) => {
+          give True();
+        }
+        Begin(..) => {
+          give True();
+        }
+        End(..) => {
+          give True();
+        }
+        Object(..) => {
+          give True();
+        }
+    }
+    set result = band(result, current);
+  }
+  return result;
+}
+
+fn finish_generated(context: &Context, styles: &Styles) -> result: Result<unit, LayoutError> writes(context.pieces), writes(context.generated_text), reads(styles) {
+  doc "Finalizes only this newly built context's raw Generated spans, before they are consumed or retained; never reapplies Styles offsets to already owned children.";
+  let count = context^.pieces.inner.len;
+  if count > item_ceiling {
+    return too_large::<unit>();
+  }
+  let valid = generated_valid(pieces: &context^.pieces.inner[0_u64..count], styles: styles);
+  let generated = generated_present(pieces: &context^.pieces.inner[0_u64..count]);
+  if valid {
+  } else {
+    return inconsistent::<unit>();
+  }
+  if generated {
+  } else {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let doubled = count * 2_u64;
+  let nodes = doubled -sat 1_u64;
+  let sums = box_array_filled::<u64>(count: nodes, value: 0_u64);
+  let total = generated_sum(pieces: &context^.pieces.inner[0_u64..count], sums: &sums.inner[0_u64..nodes]);
+  if total > item_ceiling {
+    return too_large::<unit>();
+  }
+  let bytes = box_array_filled::<u8>(count: total, value: 0_u8);
+  let copied = generated_copy(pieces: &context^.pieces.inner[0_u64..count], sums: &sums.inner[0_u64..nodes], bytes: &bytes.inner[0_u64..total], styles: styles, base: 0_u64);
+  if copied {
+  } else {
+    return inconsistent::<unit>();
+  }
+  set context^.generated_text = move bytes;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn finish_generated_tree(context: &Context, styles: &Styles) -> status: u8 writes(context), reads(styles) {
+  doc "Finalizes the newly constructed tree once; each context reads only its own raw pieces and Styles, never its parent's or siblings' results.";
+  let own = match finish_generated(context: context, styles: styles) {
+    Ok(..) => {
+      give 0_u8;
+    }
+    Err(error: failure) => {
+      let code = match failure {
+        Inconsistent() => {
+          give 1_u8;
+        }
+        TooLarge() => {
+          give 2_u8;
+        }
+        Text() => {
+          give 3_u8;
+        }
+      }
+      give code;
+    }
+  }
+  let count = context^.children.inner.len;
+  let copied = own;
+  for (i in 0_u64..count) {
+    if i < context^.children.inner.len {
+      let child = finish_generated_tree(context: &context^.children.inner[i], styles: styles);
+      set copied = imax(copied, child);
+    }
+  }
+  return copied;
 }
 
 fn add_quote(styles: &Styles, context: &Context, open: &Open, style: StyleRef, depth: i32, closing: Bool) -> result: Result<unit, LayoutError> reads(styles), writes(context), writes(open) {
@@ -3230,6 +3463,13 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   set initial.source = move source;
   let ended = propagate end_paragraph(context: &initial, open: &open);
   let routed = propagate finish_source_paths(context: &initial);
+  let finished = finish_generated_tree(context: &initial, styles: styles);
+  if finished == 2_u8 {
+    return too_large::<Layout>();
+  }
+  if finished != 0_u8 {
+    return inconsistent::<Layout>();
+  }
   let (contexts, paragraphs) = count_tree(context: &initial);
   let absent = NodeId(index: no_index);
   let unreached = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
