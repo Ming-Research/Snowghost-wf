@@ -310,6 +310,7 @@ fn clear_tree_marks(context: &Context) -> result: unit writes(context) {
 fn clear_subtree(context: &Context) -> result: unit writes(context) {
   doc "Clears the mark of context and of its paragraphs and its counts of marked ones, then does the same below it (clear_tree_marks).";
   set context^.dirty = False();
+  set context^.restyled = False();
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   let count = context^.paragraphs.inner.len;
@@ -325,6 +326,7 @@ fn reset_tree(context: &Context) -> result: unit writes(context) {
   set context^.intrinsic_known = False();
   set context^.space = fresh_space();
   set context^.dirty = False();
+  set context^.restyled = False();
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   let count = context^.paragraphs.inner.len;
@@ -537,6 +539,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
     let (stopped, item_counts) = update_container(container: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     if stopped {
       set child^.dirty = False();
+      set child^.restyled = False();
       set child^.marked_paragraphs = 0_u32;
       set child^.marked_children = 0_u32;
       resolve_margins(child: child, styles: styles);
@@ -548,6 +551,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
   }
   lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   set child^.dirty = False();
+  set child^.restyled = False();
   set child^.marked_paragraphs = 0_u32;
   set child^.marked_children = 0_u32;
   resolve_margins(child: child, styles: styles);
@@ -568,6 +572,9 @@ fn one_context_count() -> made: UpdateCounts pure {
 fn update_container(container: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (stopped: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(container) {
   doc "Decision 3 of X5's step 3b: a marked flex or grid container laid out in the space it was last laid out in (equivalent_space), with exactly one marked item, in flow, updates that item first in the space it was last laid out in; when the item's intrinsic sizes were known before the edit (intrinsic_held), they are computed again first against the percentage basis they were computed against (intrinsic_basis), as the container's algorithm would ask for them, and must come out as before (held_min, held_max). The container's result is then unchanged, and the update stops at it, when the item lays out as before in every space the algorithm may give it (update_held's still): its outputs and content height as before, its content not reading a definite height; the algorithm reads nothing else of an item. That holds for a grid container and a row flex container, which lay an item out at one width in every pass; a column flex container may lay an item out at its natural width and again at its line's cross size when it stretches, so it never stops here. False when any of that does not hold; the item, when already updated, is then kept or updated again by the container's algorithm, which the caller runs.";
   let none = no_updates();
+  if container^.restyled {
+    return False(), none;
+  }
   let kept_space = equivalent_space(styles: styles, style: container^.style, first: container^.laid, second: container^.space);
   if kept_space {
   } else {
@@ -1403,7 +1410,9 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   let kept_geometry = band(kept_frame, same_width);
   let unasked = bnot(asked);
   let in_flow = bnot(out_marked);
-  let steady = band(kept_geometry, in_flow);
+  let unchanged_style = bnot(context^.restyled);
+  let steady_geometry = band(kept_geometry, in_flow);
+  let steady = band(steady_geometry, unchanged_style);
   let nothing = no_updates();
   let early = nothing;
   if steady {
@@ -1426,6 +1435,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
     if handled {
       clear_marks(context: context);
       set context^.dirty = False();
+      set context^.restyled = False();
       return local;
     }
     set early = local;
@@ -1440,6 +1450,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
       let restacked = restack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, from: from, at: p, old_top: old_top, old_height: old_height, old_lines: old_lines, unasked: unasked);
       clear_marks(context: context);
       set context^.dirty = False();
+      set context^.restyled = False();
       let total = add_counts(first: restacked, second: early);
       return total;
     }
@@ -1507,7 +1518,12 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
     } else {
       give False();
     }
-    let first = bor(marked, moved);
+    let same_width = context^.paragraphs.inner[i].width == context^.paragraphs.inner[i].broken_width;
+    let same_left = context^.paragraphs.inner[i].left == context^.paragraphs.inner[i].broken_left;
+    let same_input = band(same_width, same_left);
+    let input_changed = bnot(same_input);
+    let geometry_changed = bor(moved, input_changed);
+    let first = bor(marked, geometry_changed);
     let second = bor(narrowed, holds_changed);
     let again = bor(first, second);
     if again {
@@ -1518,6 +1534,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   clear_marks(context: context);
   finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   set context^.dirty = False();
+  set context^.restyled = False();
   let summed = sum_counts(results: &results);
   let below = add_counts(first: summed, second: early);
   let walked = context^.flow.inner.len;
