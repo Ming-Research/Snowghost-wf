@@ -202,6 +202,17 @@ its paragraphs sit in its own flow, so paragraphs dominate), and against
 stable per-source routing of every context (the stopped branch's Q81),
 which renames nothing but adds a routing layer to every update.
 
+**Q87, criterion 2's denominator.** Step 4b measured the update against a
+full layout run in the same process right after it (fresh picks,
+build_layout, lay_out on the same styles), while the Criterion section
+defined the full stage by `run.sh time`'s stage parts. On html5 at four
+workers the two are 240 and 357 to 390 ms, mostly because prepare_text runs
+about 100 ms faster when called inside build_layout than when called on its
+own (`runs/step4b.txt`, section 5). Recommended and approved: the same-process
+comparator, which compares one build on one process's inputs; the gap is a
+Whitefoot scheduling effect to be fixed in Whitefoot, not hidden by the
+denominator or worked around in the renderer's call structure.
+
 ## Measurement
 
 - **Edit scripts.** `scripts/edits.py`, with X1's seed and rules
@@ -365,3 +376,5 @@ takes up Q77's background predicate, which the byte-identity oracle needs.
 2026-10-04: the owner approved Q84, Q85 and Q86 as recommended. They go
 into `design/pipeline/layout.md` and `design/pipeline/style.md` with step 6,
 with Q67 to Q73 and Q83.
+
+2026-10-04: the owner approved Q87 as recommended.

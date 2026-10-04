@@ -113,6 +113,17 @@ example apart from the renderer code that exposed it
   already does for calls. Reopen when the runtime offers a loop grain; the
   layout code needs no change.
 
+- **A function's parallel speed depends on its call site.** At four
+  workers, preparing html5's tree (prepare_text) takes about 100 ms more
+  when called directly after build_boxes than when both run inside
+  build_layout, on the same input, 343-346 ms against 230-250 ms in all;
+  sequentially the two are equal. Turning call grain off slows everything
+  tenfold and leaves the ratio (`research/investigations/incremental-layout/runs/step4b.txt`,
+  section 5). Impact: X5's criterion 2 at four workers (Q87). Change: none
+  in Snowghost; reduce to a standalone program (a tree built, then a
+  recursive counted-loop pass over it, called from one function and from
+  two) and take it to Whitefoot. Reopen with that reduction.
+
 ## Snowghost
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
