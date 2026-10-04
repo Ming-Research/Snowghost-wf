@@ -18,6 +18,8 @@ Decision: A multi-column container is laid out as one column of its used column 
 
 Decision: Counter and quote values are resolved by the box tree builder's walk as it visits each element in tree order, every list item incrementing `list-item`, because the walk is already the one chain in document order that a counter's value needs and a counter change costs each element one check of its style, instead of a separate pass in the style stage over only the elements that change or read a counter, which would add a second chain in document order over the same elements.
 
+Decision: A style update compares only the background predicate that inline fragment generation reads, currentColor or positive alpha, provisionally because the existing fragment rule changes geometry when that predicate changes, instead of either ignoring background changes or comparing their exact colours, which respectively miss that dependency or invalidate on colours that do not change geometry ([Q77](../../research/investigations/incremental-layout/DESIGN.md#decisions)); reopen if fragment generation ceases to read it.
+
 Rejected:
 - Leaving multi-column layout out of scope: rejected because 20.7 percent of html5's block boxes and 14 percent of apollo11's lie in multi-column containers, so the layout criterion could not hold on those pages ([Q59](../../research/investigations/layout/DESIGN.md#owner-rulings)).
 - Decoding text during the walk: rejected because it keeps four fifths of the builder's work, turning text into scalar values, inside the walk's chain.
