@@ -113,6 +113,7 @@ edit() {
 roundtrip() {
 	build=$1
 	shift
+	[ "$#" -gt 0 ] || return 2
 	roundtrip_status=0
 	for page in "$@"; do
 		for kind in $kinds; do
@@ -134,6 +135,7 @@ roundtrip() {
 same() {
 	page=$1
 	shift
+	[ "$#" -gt 0 ] || return 2
 	same_status=0
 	for kind in "$@"; do
 		if ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.seq.txt" ||
@@ -169,6 +171,7 @@ reparse() {
 inc() {
 	build=$1 page=$2
 	shift 2
+	[ "$#" -gt 0 ] || return 2
 	inc_status=0
 	for kind in "$@"; do
 		edit "$build" "$page" "$kind" || {
@@ -221,6 +224,7 @@ time_edits() {
 dumps() {
 	main=$1
 	shift
+	[ "$#" -gt 0 ] || return 2
 	dumps_status=0
 	for page in "$@"; do
 		# shellcheck disable=SC2046
