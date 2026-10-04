@@ -184,7 +184,7 @@ setup_reps_of() {
 }
 
 verified() {
-	[ -f "$1" ] && echo "$2  $1" | sha256sum -c --status
+	[ -f "$1" ] && echo "$2  $1" | sha256sum -c - >/dev/null 2>&1
 }
 
 fetch() {
