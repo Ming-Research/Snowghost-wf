@@ -1,0 +1,574 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Attribute = pkg::dom::Attribute;
+alias AttributeNamespace = pkg::dom::AttributeNamespace;
+alias Clock = std::time::Clock;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias HandleFactory = std::io::HandleFactory;
+alias NodeId = pkg::dom::NodeId;
+alias OutputStream = std::io::OutputStream;
+alias RuleStore = pkg::style::RuleStore;
+alias StyleError = pkg::style::StyleError;
+alias Styles = pkg::style::Styles;
+alias TextSpan = pkg::dom::TextSpan;
+alias Traversal = pkg::style::Traversal;
+alias add_sheet = pkg::style::add_sheet;
+alias atom_intern = pkg::base::atom::atom_intern;
+alias compute_styles = pkg::style::compute_styles;
+alias flush = pkg::oracle::support::flush;
+alias layout_changes = pkg::style::layout_changes;
+alias line_end = pkg::oracle::support::line_end;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+alias origin_author = pkg::style::origin_author;
+alias parse_decimal = pkg::oracle::support::parse_decimal;
+alias put_byte = pkg::oracle::support::put_byte;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_text = pkg::oracle::support::put_text;
+alias set_attribute = pkg::dom::set_attribute;
+alias store_text = pkg::dom::store_text;
+
+const class_name: Array<u8, 5> = "class";
+
+const edit_label: Array<u8, 5> = "edit ";
+
+const changed_label: Array<u8, 9> = " changed ";
+
+const time_label: Array<u8, 9> = " time_us ";
+
+const flags_label: Array<u8, 6> = "flags ";
+
+const dump_label: Array<u8, 5> = "dump ";
+
+const line_label: Array<u8, 17> = "edit script line ";
+
+const refused_label: Array<u8, 10> = " refused: ";
+
+const operation_reason: Array<u8, 28> = "the operation does not apply";
+
+const syntax_reason: Array<u8, 20> = "unreadable operation";
+
+const sheet_late_reason: Array<u8, 34> = "a style sheet line follows an edit";
+
+fn field_end(line: &[u8], start: u64) -> end: u64 reads(line) {
+  doc "The index of the first space at or after start in line, or the length of line when there is none.";
+  let length = line^.len;
+  if start >= length {
+    return length;
+  }
+  for (at in start..length) {
+    if line^[at] == 32_u8 {
+      return at;
+    }
+  }
+  return length;
+}
+
+fn read_number(line: &[u8], start: u64) -> (found: Bool, value: u64, next: u64) reads(line) {
+  doc "Parses the field of line that starts at start as a decimal number, and returns where the next field starts, past the space that ends this one.";
+  let length = line^.len;
+  let no = False();
+  let yes = True();
+  if start >= length {
+    return no, 0_u64, length;
+  }
+  let end = field_end(line: line, start: start);
+  match parse_decimal(text: line, start: start, end: end) {
+    Some(value: number) => {
+      let next = end +sat 1_u64;
+      return yes, number, next;
+    }
+    None() => {
+      return no, 0_u64, length;
+    }
+  }
+}
+
+fn node_id_of(value: u64) -> node: Option<NodeId> pure {
+  doc "The node identifier with index value, or None when value does not fit one.";
+  if value < 4294967295_u64 {
+    let index = cvt::<u64, u32>(value);
+    let id = NodeId(index: index);
+    return Some<NodeId>(value: id);
+  }
+  return None<NodeId>();
+}
+
+fn class_span(document: &Document, holder: NodeId, class_atom: u32) -> (is_element: Bool, has_class: Bool, span: TextSpan) reads(document) {
+  doc "Whether holder is an Element, whether it has an attribute class without a namespace, and the span of that attribute's value, within the document's text.";
+  let no = False();
+  let yes = True();
+  let none = TextSpan(start: 0_u32, end: 0_u32);
+  let at = cvt::<u32, u64>(holder.index);
+  if at < document^.nodes.inner.len {
+    let data = &document^.nodes.inner[at].data;
+    match data^ {
+      Element(namespace: space, local_name: name, attributes: list, template_contents: contents) => {
+        let count = list^.inner.len;
+        for (k in 0_u64..count) {
+          let held = list^.inner[k];
+          let plain_space = AttributeNamespace::NoNamespace();
+          let plain = eeq(held.namespace, plain_space);
+          let named = held.name.index == class_atom;
+          let same = band(plain, named);
+          if same {
+            let start = cvt::<u32, u64>(held.value.start);
+            let end = cvt::<u32, u64>(held.value.end);
+            let ordered = start <= end;
+            let inside = end <= document^.text.inner.len;
+            let usable = band(ordered, inside);
+            if usable {
+              return yes, yes, held.value;
+            }
+            return yes, no, none;
+          }
+        }
+        return yes, no, none;
+      }
+      DocumentRoot(..) => {
+      }
+      DocumentType(..) => {
+      }
+      Text(..) => {
+      }
+      Comment(..) => {
+      }
+      Fragment() => {
+      }
+    }
+  }
+  return no, no, none;
+}
+
+fn put_without_token(buffer: &Box<Slots<u8>>, value: &[u8], token: &[u8]) -> found: Bool reads(value), reads(token), writes(buffer) {
+  doc "Appends value without its last whole token equal to token, and the space before it (the space after it for a first token); False, with nothing appended, when value has no such token. A token is a run between spaces.";
+  let length = value^.len;
+  let size = token^.len;
+  if size == 0_u64 {
+    return False();
+  }
+  let best = length;
+  let seen = False();
+  for (start in 0_u64..length) {
+    let end = start +sat size;
+    if end <= length {
+      let before_ok = if start == 0_u64 {
+        give True();
+      } else {
+        let previous = start - 1_u64;
+        give value^[previous] == 32_u8;
+      }
+      let after_ok = if end == length {
+        give True();
+      } else {
+        give value^[end] == 32_u8;
+      }
+      let edges = band(before_ok, after_ok);
+      if edges {
+        let same = True();
+        for (k in 0_u64..size) {
+          let at = start +sat k;
+          if at < length {
+            if value^[at] != token^[k] {
+              set same = False();
+            }
+          }
+        }
+        if same {
+          set best = start;
+          set seen = True();
+        }
+      }
+    }
+  }
+  if seen {
+  } else {
+    return False();
+  }
+  let end = best +sat size;
+  let cut_start = if best > 0_u64 {
+    give best - 1_u64;
+  } else {
+    give best;
+  }
+  let cut_end = if best > 0_u64 {
+    give end;
+  } else {
+    let after = end +sat 1_u64;
+    give imin(after, length);
+  }
+  if cut_start <= cut_end {
+    if cut_end <= length {
+      put_text(buffer: buffer, text: &value^[0_u64..cut_start]);
+      put_text(buffer: buffer, text: &value^[cut_end..length]);
+      return True();
+    }
+  }
+  return False();
+}
+
+fn edit_class(document: &Document, holder: NodeId, class_atom: u32, token: &[u8], add: Bool) -> ok: Bool reads(token), writes(document) {
+  doc "Adds token to the class attribute of the Element holder, after the other tokens and creating the attribute when it has none, or removes it from there; False when holder is no Element, when a removed token is not in the class attribute, or when the attribute cannot be stored.";
+  let (is_element, has_class, span) = class_span(document: document, holder: holder, class_atom: class_atom);
+  if is_element {
+  } else {
+    return False();
+  }
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let scratch = box_slots_new::<u8>(capacity: 256_u64);
+  if add {
+    if has_class {
+      if start < end {
+        if end <= document^.text.inner.len {
+          put_text(buffer: &scratch, text: &document^.text.inner[start..end]);
+          put_byte(buffer: &scratch, value: 32_u8);
+        }
+      }
+    }
+    put_text(buffer: &scratch, text: token);
+  } else {
+    if has_class {
+    } else {
+      return False();
+    }
+    let removed = if start <= end {
+      if end <= document^.text.inner.len {
+        give put_without_token(buffer: &scratch, value: &document^.text.inner[start..end], token: token);
+      } else {
+        give False();
+      }
+    } else {
+      give False();
+    }
+    if removed {
+    } else {
+      return False();
+    }
+  }
+  let size = scratch.inner.len;
+  if size > 1073741824_u64 {
+    return False();
+  }
+  match store_text(document: document, text: &scratch.inner[0_u64..size]) {
+    Ok(value: stored) => {
+      let plain = AttributeNamespace::NoNamespace();
+      let name = Atom(index: class_atom);
+      let attribute = Attribute(namespace: plain, name: name, value: stored);
+      match set_attribute(document: document, element: holder, attribute: attribute) {
+        Ok(..) => {
+          return True();
+        }
+        Err(..) => {
+          return False();
+        }
+      }
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+}
+
+fn class_index(atoms: &AtomTable) -> index: u32 writes(atoms) {
+  doc "The atom of the attribute name class, or 4294967295 when the table refuses it, which no attribute carries.";
+  match atom_intern(table: atoms, name: &class_name[0_u64..class_name.len]) {
+    Ok(value: found) => {
+      return found.index;
+    }
+    Err(..) => {
+      return 4294967295_u32;
+    }
+  }
+}
+
+fn add_script_sheets(store: &RuleStore, script: &[u8], environment: Environment, atoms: &AtomTable, notes: &Box<Slots<u8>>) -> ok: Bool reads(script), writes(store), writes(atoms), writes(notes) {
+  doc "Adds the text of each S line of the script as an author style sheet, and checks that every other line is empty, an edit (C, K or N) or a request (P), and that no S line follows an edit.";
+  let length = script^.len;
+  let at = 0_u64;
+  let number = 0_u64;
+  let edited = False();
+  for (step in 0_u64..length) {
+    if at >= length {
+      break;
+    }
+    let end = line_end(text: script, start: at);
+    let start = at;
+    set at = end +sat 1_u64;
+    set number = number +sat 1_u64;
+    if end > length {
+      return False();
+    }
+    if start < end {
+      let kind = script^[start];
+      let body = start +sat 2_u64;
+      if kind == 83_u8 {
+        if edited {
+          put_failure(notes: notes, number: number, reason: &sheet_late_reason[0_u64..sheet_late_reason.len]);
+          return False();
+        }
+        if body <= end {
+          let width = end - body;
+          if width > 16777216_u64 {
+            put_failure(notes: notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+            return False();
+          }
+          match add_sheet(store: store, source: &script^[body..end], origin: origin_author, environment: environment, atoms: atoms) {
+            Ok(..) => {
+            }
+            Err(..) => {
+              put_failure(notes: notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+              return False();
+            }
+          }
+        }
+      } else if kind == 80_u8 {
+      } else {
+        let is_c = kind == 67_u8;
+        let is_k = kind == 75_u8;
+        let is_n = kind == 78_u8;
+        let class_edit = bor(is_c, is_k);
+        let known = bor(class_edit, is_n);
+        if known {
+          set edited = True();
+        } else {
+          put_failure(notes: notes, number: number, reason: &syntax_reason[0_u64..syntax_reason.len]);
+          return False();
+        }
+      }
+    }
+  }
+  return True();
+}
+
+fn put_failure(notes: &Box<Slots<u8>>, number: u64, reason: &[u8]) -> result: unit reads(reason), writes(notes) {
+  doc "Appends `edit script line NUMBER refused: REASON` to notes.";
+  put_text(buffer: notes, text: &line_label[0_u64..line_label.len]);
+  put_decimal(buffer: notes, value: number);
+  put_text(buffer: notes, text: &refused_label[0_u64..refused_label.len]);
+  put_text(buffer: notes, text: reason);
+  put_byte(buffer: notes, value: 10_u8);
+  return unit;
+}
+
+fn requested(dumps: &Box<Slots<u64>>, number: u64) -> found: Bool reads(dumps) {
+  doc "Whether the script has a P line for edit number.";
+  let count = dumps^.inner.len;
+  for (k in 0_u64..count) {
+    if dumps^.inner[k] == number {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn collect_requests(script: &[u8], dumps: &Box<Slots<u64>>) -> result: unit reads(script), writes(dumps) {
+  doc "Lists the edit numbers of the P lines of the script.";
+  let length = script^.len;
+  let at = 0_u64;
+  for (step in 0_u64..length) {
+    if at >= length {
+      break;
+    }
+    let end = line_end(text: script, start: at);
+    let start = at;
+    set at = end +sat 1_u64;
+    let listed = end <= length;
+    let second = start +sat 1_u64;
+    let long = second < end;
+    let usable = band(listed, long);
+    if usable {
+      if script^[start] == 80_u8 {
+        let (found, wanted, unused_next) = read_number(line: &script^[start..end], start: 2_u64);
+        if found {
+          put_u64(cell: dumps, value: wanted);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn count_flags(changed: &Box<Array<Bool>>) -> count: u64 reads(changed) {
+  doc "The number of true slots.";
+  let total = changed^.inner.len;
+  let count = 0_u64;
+  for (k in 0_u64..total) {
+    if changed^.inner[k] {
+      set count = count +sat 1_u64;
+    }
+  }
+  return count;
+}
+
+fn put_flags(buffer: &Box<Slots<u8>>, changed: &Box<Array<Bool>>, traversal: &Traversal) -> result: unit reads(changed), reads(traversal), writes(buffer) {
+  doc "Appends, each after a space, the preorder index in traversal of every element whose slot, at its NodeId index, is true.";
+  let total = traversal^.elements.inner.len;
+  for (k in 0_u64..total) {
+    let at = cvt::<u32, u64>(traversal^.elements.inner[k].index);
+    if at < changed^.inner.len {
+      if changed^.inner[at] {
+        put_byte(buffer: buffer, value: 32_u8);
+        put_decimal(buffer: buffer, value: k);
+      }
+    }
+  }
+  return unit;
+}
+
+fn run_delta(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, script: &[u8], clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(traversal), reads(script), writes(document), writes(atoms), writes(clock), writes(out), writes(err), writes(files) waits {
+  doc "Computes the styles of the document, then applies each edit line of the script (C and K add and remove a class token, N changes nothing), recomputes the styles after it, and reports `edit I changed COUNT time_us US`, I counting the edits from 1, COUNT the elements pkg::style::layout_changes flags between the styles before and after the edit and US the microseconds that call took; the new styles become the old ones. For an edit number a P line names, the line `flags I` and the flagged indices, then the line `dump I` and the style dump of the styles after the edit, follow (P 0 names the unedited document and prints the dump alone). Returns 0, or 2 after naming the failure on err.";
+  let notes = box_slots_new::<u8>(capacity: 4096_u64);
+  let dumps = box_slots_new::<u64>(capacity: 16_u64);
+  collect_requests(script: script, dumps: &dumps);
+  let class_atom = class_index(atoms: atoms);
+  let old = match compute_styles(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, failure: failure);
+      return 2_u8;
+    }
+  }
+  let base_requested = requested(dumps: &dumps, number: 0_u64);
+  if base_requested {
+    put_text(buffer: &notes, text: &dump_label[0_u64..dump_label.len]);
+    put_decimal(buffer: &notes, value: 0_u64);
+    put_byte(buffer: &notes, value: 10_u8);
+    let flushed = flush(factory: files, output: out, buffer: &notes);
+    let written = dump(styles: &old, document: document, atoms: atoms, traversal: traversal, out: out, files: files);
+    if written {
+    } else {
+      return 2_u8;
+    }
+  }
+  let length = script^.len;
+  let at = 0_u64;
+  let number = 0_u64;
+  let edits = 0_u64;
+  for (step in 0_u64..length) {
+    if at >= length {
+      break;
+    }
+    let end = line_end(text: script, start: at);
+    let start = at;
+    set at = end +sat 1_u64;
+    set number = number +sat 1_u64;
+    if end > length {
+      return 2_u8;
+    }
+    if start < end {
+      let kind = script^[start];
+      let skipped_s = kind == 83_u8;
+      let skipped_p = kind == 80_u8;
+      let skipped = bor(skipped_s, skipped_p);
+      if skipped {
+      } else {
+        set edits = edits +sat 1_u64;
+        let is_n = kind == 78_u8;
+        if is_n {
+        } else {
+          let applied = apply_class_edit(document: document, class_atom: class_atom, line: &script^[start..end]);
+          if applied {
+          } else {
+            put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+            let reported = flush(factory: files, output: err, buffer: &notes);
+            return 2_u8;
+          }
+        }
+        let new = match compute_styles(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let started = now(clock: clock);
+        let changed = layout_changes(old: &old, new: &new);
+        let finished = now(clock: clock);
+        let elapsed = nanoseconds_from(earlier: started, later: finished);
+        let micros = elapsed / 1000_u64;
+        let flagged = count_flags(changed: &changed);
+        put_text(buffer: &notes, text: &edit_label[0_u64..edit_label.len]);
+        put_decimal(buffer: &notes, value: edits);
+        put_text(buffer: &notes, text: &changed_label[0_u64..changed_label.len]);
+        put_decimal(buffer: &notes, value: flagged);
+        put_text(buffer: &notes, text: &time_label[0_u64..time_label.len]);
+        put_decimal(buffer: &notes, value: micros);
+        put_byte(buffer: &notes, value: 10_u8);
+        let wanted = requested(dumps: &dumps, number: edits);
+        if wanted {
+          put_text(buffer: &notes, text: &flags_label[0_u64..flags_label.len]);
+          put_decimal(buffer: &notes, value: edits);
+          put_flags(buffer: &notes, changed: &changed, traversal: traversal);
+          put_byte(buffer: &notes, value: 10_u8);
+          put_text(buffer: &notes, text: &dump_label[0_u64..dump_label.len]);
+          put_decimal(buffer: &notes, value: edits);
+          put_byte(buffer: &notes, value: 10_u8);
+        }
+        let flushed = flush(factory: files, output: out, buffer: &notes);
+        if wanted {
+          let written = dump(styles: &new, document: document, atoms: atoms, traversal: traversal, out: out, files: files);
+          if written {
+          } else {
+            return 2_u8;
+          }
+        }
+        set old = move new;
+      }
+    }
+  }
+  return 0_u8;
+}
+
+fn apply_class_edit(document: &Document, class_atom: u32, line: &[u8]) -> ok: Bool reads(line), writes(document) {
+  doc "Applies a C or K line, `C NODE TOKEN` or `K NODE TOKEN`, to the live document: adds the token to the class attribute of the element, or removes it.";
+  let length = line^.len;
+  if length < 5_u64 {
+    return False();
+  }
+  let kind = line^[0_u64];
+  let (node_found, node_value, after_node) = read_number(line: line, start: 2_u64);
+  if node_found {
+  } else {
+    return False();
+  }
+  let node = match node_id_of(value: node_value) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return False();
+    }
+  }
+  if after_node < length {
+  } else {
+    return False();
+  }
+  let add = kind == 67_u8;
+  let done = edit_class(document: document, holder: node, class_atom: class_atom, token: &line^[after_node..length], add: add);
+  return done;
+}
+
+fn put_u64(cell: &Box<Slots<u64>>, value: u64) -> result: unit writes(cell) {
+  doc "Appends value, doubling the window when full.";
+  let length = cell^.inner.len;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    let doubled = capacity *sat 2_u64;
+    let wanted = imax(doubled, 16_u64);
+    let bounded = imin(wanted, 1073741824_u64);
+    if bounded <= length {
+      return unit;
+    }
+    grow(cell: cell, capacity: bounded);
+  }
+  if cell^.inner.len < cell^.inner.cap {
+    place_back(window: &cell^.inner, value: value);
+  }
+  return unit;
+}

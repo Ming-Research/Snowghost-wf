@@ -106,6 +106,25 @@ example apart from the renderer code that exposed it
   for a shared region with a release-ordered publish. Reopen when the shell
   exists and the copy over a byte stream is measured (C4 there).
 
+- **A split loop called with a few iterations pays its dispatch on every
+  call.** Minimal example: `fn mark(frames: &Box<Slots<Frame>>)` whose
+  counted loop sets one field of each element (a certified independent
+  map), called once per entry of a sequential walk over 100,000 entries
+  with two or three frames open each time. At `WF_WORKERS=4` the --par
+  build runs the walk slower than the sequential build; at one worker it
+  costs the same. Measured on X5's html5 text edits, whose update re-stacks
+  a 104,321-entry flow (`research/investigations/incremental-layout/runs/step3b.txt`):
+  the step 3 --par driver takes 55.2 ms per edit at the median at four
+  workers and 22.7 ms at one; the same sources with the stacking pass's
+  three small split loops (`mark_lines`, `float_bottom`,
+  `lowest_bottom_above` in `renderer/layout/flow.wf`) made sequential take
+  28.1 ms at four workers and 22.8 ms at one, so those loops' parallel
+  dispatch costs about 27 ms over the walk's calls. A full layout hides it
+  behind its parallel work. Change: run a split loop whose trip count (or
+  static work) is below a grain inline in the caller, as the call grain
+  already does for calls. Reopen when the runtime offers a loop grain; the
+  layout code needs no change.
+
 ## Snowghost
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
@@ -118,6 +137,119 @@ example apart from the renderer code that exposed it
   largest share of its full build. Change: count candidate rules per
   element and profile matching. Reopen with the next style work.
 
+
+- **A context's cached intrinsic sizes depend on when they are first
+  asked for.** `intrinsic_sizes` (`renderer/layout/box.wf`) resolves a
+  percentage padding against `space.basis_width` when first asked and keeps
+  the result (`intrinsic_known`): a parent computing its own intrinsic
+  sizes asks before it has written its children's spaces (the fresh space,
+  basis 0), a child's own layout asks after (its real basis), so the same
+  box's min- and max-content widths differ with the order of requests.
+  `intrinsic_flow` also writes every child's margins resolved against no
+  width, which `lay_out_child` overwrites. The incremental update
+  (`renderer/layout/update.wf`) reproduces both by returning marked
+  children to the fresh space, resolving kept children's margins again
+  (also on its in-place path, when the context's own intrinsic sizes were
+  computed in the update), forgetting a relaid child's sizes only where a
+  full layout would compute them against another basis
+  (`intrinsic_basis`), and recomputing a container item's sizes against
+  the basis they were last computed against.
+  Impact: percentage paddings on shrink-to-fit boxes size them by request
+  order, and every incremental path must mirror that order. Change: resolve
+  intrinsic contributions against one fixed basis (CSS Sizing 3 resolves
+  cyclic percentages against zero for them) and leave the children's
+  margins to their own layout. Reopen with the next layout correctness
+  work or when the update's resets cost measurably.
+
+- **An incremental re-stack lays out again every child a float narrowed.**
+  `narrow_beside` lays an in-flow child out again in the room floats leave
+  and writes that room into its space; when the update re-stacks the
+  parent from an entry before the child, the re-stack gives the child its
+  full-width space again, which differs from the narrowed one it was last
+  laid out in, so the child is updated at full width (its pre-pass, its
+  children and its paragraphs again) and narrowed again even when no edit
+  reaches it. (Absolutely positioned children, which `position_out_with`
+  lays out again in a forced space, are kept since X5 step 3b; entries
+  before the edited one are replayed without layout since step 3c.)
+  Impact: since X5 step 3c the cause of the apollo11 sentence edits 31
+  and 32, 0.8 ms each sequentially against the page's 0.44 ms bound
+  (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
+  record the pre-pass space and the width the child needed beside the
+  narrowed layout, and keep the child when the pre-pass space and the room
+  are unchanged. Reopen with X5's next step on edits beside floats.
+
+- **An update breaks a paragraph at full width before breaking it beside
+  floats.** The stacking pass decides whether floats narrow a paragraph
+  from its full-width height, so the update's paths break a marked
+  paragraph, and X5 step 3c's re-stack every later paragraph a float had
+  narrowed, at full width first and again beside the floats. Impact: in
+  the re-stack of apollo11 sentence edit 45 the full-width break of the
+  edited paragraph is 1.0 of 6.9 million instructions (the paragraph's
+  text preparation, 4.3 million, is the largest part)
+  (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
+  keep each paragraph's full-width height from its last full-width break
+  and break a later paragraph once, beside the floats, when that height
+  shows they narrow it. Reopen when apollo11's edits beside floats are
+  measured again against its bound.
+
+- **The update's translation walks every child of a large context.**
+  `translate_after` (`renderer/layout/update.wf`) tests the flow entry of
+  every child context, not only those after the changed entry, and
+  `shift_naturals` moves each later entry's natural position in a further
+  pass; both run on every height change of an in-place update. Impact:
+  on ecma262's specification container they are 0.9 and 0.9 million
+  instructions of the 2.8 million of sentence edit 3, one of the three
+  ecma262 sentence edits above 1 ms
+  (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
+  find the first later child by binary search where children are in flow
+  order, and keep the naturals relative to their entry's placed position
+  so a translation leaves them; or reopen Q70's summary tree. Reopen with
+  the next update performance work on ecma262.
+
+- **A root font-size update on apollo11 misses criterion 2 at four
+  workers.** The update takes 46 ms against about 30 ms for the full layout
+  (median ratio 1.55, 1 of 60 edits within 1.2), while sequentially it is
+  0.97, and on html5 and ecma262 it passes at four workers
+  (`research/investigations/incremental-layout/runs/step4b.txt`). Impact:
+  X5's criterion 2 on the smallest page. Change: time the update's parts on
+  one edit with clock readings ordered after the work (the delta, the
+  marking walk, preparation, layout); if the fixed per-update walks dominate
+  a 30 ms page, scale them with the marked work. Reopen with the incremental
+  style stage, which replaces the delta.
+
+- **A style update that changes no layout costs 5 to 9 times more at four
+  workers.** Colour edits do no layout work but take 27.6 ms at four
+  workers against 3.8 ms sequentially on html5 (45 against 6 ms on
+  ecma262): styles_changed's validation of every element and its marking
+  walk over every context (`runs/step4b.txt`). Impact: the latency of every
+  style edit at four workers. Change: measure that walk alone; if the cost
+  is the split loops' dispatch on small trees, it is the Whitefoot item on
+  split loops with few iterations above. Reopen with the item before it.
+
+- **X5's far-read counter was not built.** Step 6 planned to count, per
+  unit, the reads of another element's style, to price Q69's refused
+  alternative of recorded reads per unit. Q69 chose keys of the
+  layout-relevant groups, and every X5 edit on three pages matched a full
+  build, so the count decides nothing now. Change: count calls of
+  `computed_of` whose element is outside the reading unit. Reopen if an
+  edit kind shows a missed dependency or recorded reads are reconsidered.
+
+- **A changed background predicate prepares and breaks its paragraph
+  again.** `layout_changes` reports an element whose background turns
+  transparent or visible (Q84 in
+  `research/investigations/incremental-layout/DESIGN.md`), and
+  `styles_changed` marks every paragraph reading it, although `culled_box`
+  only selects which fragments the paragraph's lines report. Impact:
+  unmeasured; no X5 edit kind changes a background. Change: a separate
+  per-element flag that regenerates the paragraph's fragments from its
+  kept lines. Reopen when an edit kind or a page measures background edits.
+
+- **`Paragraph.min_content` and `max_content` are never written.** Every
+  paragraph keeps the zeros `new_paragraph` gives them; intrinsic sizes
+  are computed per request by `paragraph_intrinsic`. Impact: two dead
+  fields in `renderer/layout/module.wfm` that read as a cache. Change:
+  remove them, or cache there if a measurement shows paragraph intrinsic
+  sizes repeated. Reopen with the next change to the layout interface.
 
 - **The style stage checks the walk's depths again to group levels.**
   `level_index` in `renderer/style/levels.wf` runs a counted pass over the

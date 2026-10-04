@@ -1,0 +1,814 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias atom_find = pkg::base::atom::atom_find;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias Traversal = pkg::style::Traversal;
+
+struct Rebuild {
+  doc "What structure_changed reads of the context it builds again: its kind, its style and the walk's state as build_box entered and left it.";
+  kind: u8;
+  style: StyleRef;
+  entered: WalkPoint;
+  left: WalkPoint;
+}
+
+fn empty_point() -> made: WalkPoint pure {
+  doc "A walk point with no counter in scope, quote depth 0 and depth 0, which the contexts build_box does not make keep.";
+  let counters = box_slots_new::<Counter>(capacity: 0_u64);
+  return WalkPoint(counters: move counters, quote_depth: 0_i32, depth: 0_u64);
+}
+
+fn copy_point(point: &WalkPoint) -> made: WalkPoint reads(point) {
+  doc "A copy of point.";
+  let count = point^.counters.inner.len;
+  let reserve = imin(count, item_ceiling);
+  let counters = box_slots_new::<Counter>(capacity: reserve);
+  for (k in 0_u64..count) {
+    let counter = point^.counters.inner[k];
+    let pushed = push_item::<Counter>(cell: &counters, value: counter, ceiling: item_ceiling);
+  }
+  return WalkPoint(counters: move counters, quote_depth: point^.quote_depth, depth: point^.depth);
+}
+
+fn walk_point(walk: &Walk) -> made: WalkPoint reads(walk) {
+  doc "The walk's counters in scope, quote depth and depth, copied.";
+  let count = walk^.counters.inner.len;
+  let reserve = imin(count, item_ceiling);
+  let counters = box_slots_new::<Counter>(capacity: reserve);
+  for (k in 0_u64..count) {
+    let counter = walk^.counters.inner[k];
+    let pushed = push_item::<Counter>(cell: &counters, value: counter, ceiling: item_ceiling);
+  }
+  return WalkPoint(counters: move counters, quote_depth: walk^.quote_depth, depth: walk^.depth);
+}
+
+fn restore_point(walk: &Walk, point: &WalkPoint) -> result: unit reads(point), writes(walk) {
+  doc "Gives the walk point's counters in scope, quote depth and depth.";
+  let restored = copy_point(point: point);
+  let WalkPoint(counters: counters, quote_depth: quote_depth, depth: depth) = move restored;
+  set walk^.counters = move counters;
+  set walk^.quote_depth = quote_depth;
+  set walk^.depth = depth;
+  return unit;
+}
+
+fn same_point(first: &WalkPoint, second: &WalkPoint) -> same: Bool reads(first), reads(second) {
+  doc "True when the two points hold the same counters, each with the same name, value and scope depth, the same quote depth and the same depth.";
+  let count = first^.counters.inner.len;
+  if count != second^.counters.inner.len {
+    return False();
+  }
+  if first^.quote_depth != second^.quote_depth {
+    return False();
+  }
+  if first^.depth != second^.depth {
+    return False();
+  }
+  let equal = True();
+  for (k in 0_u64..count) {
+    if k < second^.counters.inner.len {
+      let a = first^.counters.inner[k];
+      let b = second^.counters.inner[k];
+      let name = a.name == b.name;
+      let value = a.value == b.value;
+      let level = a.level == b.level;
+      let named = band(name, value);
+      let same = band(named, level);
+      set equal = band(equal, same);
+    }
+  }
+  return equal;
+}
+
+fn same_ref(first: StyleRef, second: StyleRef) -> same: Bool pure {
+  doc "True when the two style references name the same element, pseudo-element and anonymity.";
+  let element = first.element == second.element;
+  let pseudo = first.pseudo == second.pseudo;
+  let anonymous = eeq(first.anonymous, second.anonymous);
+  let named = band(element, pseudo);
+  let same = band(named, anonymous);
+  return same;
+}
+
+fn same_piece(first: Piece, second: Piece) -> same: Bool pure {
+  doc "True when the two pieces are the same variant with equal fields, so that preparation reads the same input from both.";
+  match first {
+    Bytes(start: a_start, end: a_end, style: a_style, node: a_node) => {
+      match second {
+        Bytes(start: b_start, end: b_end, style: b_style, node: b_node) => {
+          let start = a_start == b_start;
+          let end = a_end == b_end;
+          let node = a_node == b_node;
+          let style = same_ref(first: a_style, second: b_style);
+          let span = band(start, end);
+          let source = band(node, style);
+          let same = band(span, source);
+          return same;
+        }
+        Generated(..) => {
+          return False();
+        }
+        Scalar(..) => {
+          return False();
+        }
+        Begin(..) => {
+          return False();
+        }
+        End(..) => {
+          return False();
+        }
+        Object(..) => {
+          return False();
+        }
+      }
+    }
+    Generated(start: a_start, end: a_end, style: a_style) => {
+      match second {
+        Bytes(..) => {
+          return False();
+        }
+        Generated(start: b_start, end: b_end, style: b_style) => {
+          let start = a_start == b_start;
+          let end = a_end == b_end;
+          let style = same_ref(first: a_style, second: b_style);
+          let span = band(start, end);
+          let same = band(span, style);
+          return same;
+        }
+        Scalar(..) => {
+          return False();
+        }
+        Begin(..) => {
+          return False();
+        }
+        End(..) => {
+          return False();
+        }
+        Object(..) => {
+          return False();
+        }
+      }
+    }
+    Scalar(value: a_value, style: a_style) => {
+      match second {
+        Bytes(..) => {
+          return False();
+        }
+        Generated(..) => {
+          return False();
+        }
+        Scalar(value: b_value, style: b_style) => {
+          let value = a_value == b_value;
+          let style = same_ref(first: a_style, second: b_style);
+          let same = band(value, style);
+          return same;
+        }
+        Begin(..) => {
+          return False();
+        }
+        End(..) => {
+          return False();
+        }
+        Object(..) => {
+          return False();
+        }
+      }
+    }
+    Begin(style: a_style) => {
+      match second {
+        Bytes(..) => {
+          return False();
+        }
+        Generated(..) => {
+          return False();
+        }
+        Scalar(..) => {
+          return False();
+        }
+        Begin(style: b_style) => {
+          let same = same_ref(first: a_style, second: b_style);
+          return same;
+        }
+        End(..) => {
+          return False();
+        }
+        Object(..) => {
+          return False();
+        }
+      }
+    }
+    End(style: a_style) => {
+      match second {
+        Bytes(..) => {
+          return False();
+        }
+        Generated(..) => {
+          return False();
+        }
+        Scalar(..) => {
+          return False();
+        }
+        Begin(..) => {
+          return False();
+        }
+        End(style: b_style) => {
+          let same = same_ref(first: a_style, second: b_style);
+          return same;
+        }
+        Object(..) => {
+          return False();
+        }
+      }
+    }
+    Object(context: a_context, style: a_style) => {
+      match second {
+        Bytes(..) => {
+          return False();
+        }
+        Generated(..) => {
+          return False();
+        }
+        Scalar(..) => {
+          return False();
+        }
+        Begin(..) => {
+          return False();
+        }
+        End(..) => {
+          return False();
+        }
+        Object(context: b_context, style: b_style) => {
+          let context = a_context == b_context;
+          let style = same_ref(first: a_style, second: b_style);
+          let same = band(context, style);
+          return same;
+        }
+      }
+    }
+  }
+}
+
+fn retained_outside(old: &Styles, new: &Styles, traversal: &Traversal) -> same: Bool reads(old), reads(new), reads(traversal) {
+  doc "Checks what the contexts outside the one built again keep from old: the style stage's generated text, which Generated pieces index, byte for byte, and every pseudo-element at the same index in the list, of the same element by NodeId and the same kind, which StyleRef.pseudo indexes.";
+  let bytes = old^.generated_text.inner.len;
+  let pseudos = old^.pseudos.inner.len;
+  let same_bytes = bytes == new^.generated_text.inner.len;
+  let same_pseudos = pseudos == new^.pseudos.inner.len;
+  let same_sizes = band(same_bytes, same_pseudos);
+  if same_sizes {
+  } else {
+    return False();
+  }
+  let equal = True();
+  for (i in 0_u64..bytes) {
+    let same = old^.generated_text.inner[i] == new^.generated_text.inner[i];
+    set equal = band(equal, same);
+  }
+  for (i in 0_u64..pseudos) {
+    let a = old^.pseudos.inner[i];
+    let b = new^.pseudos.inner[i];
+    let kind = a.kind == b.kind;
+    let position = cvt::<u32, u64>(b.element);
+    let owner = if position < traversal^.elements.inner.len {
+      let node = cvt::<u32, u64>(traversal^.elements.inner[position].index);
+      let listed = if node < old^.order.inner.len {
+        give old^.order.inner[node] == a.element;
+      } else {
+        give False();
+      }
+      give listed;
+    } else {
+      give False();
+    }
+    let same = band(kind, owner);
+    set equal = band(equal, same);
+  }
+  return equal;
+}
+
+fn parent_of(document: &Document, node: u64) -> parent: u64 reads(document) {
+  doc "The NodeId index of node's parent, or the number of nodes when node has none or is no node.";
+  let count = document^.nodes.inner.len;
+  if node < count {
+    match document^.nodes.inner[node].links.parent {
+      Some(value: found) => {
+        let made = cvt::<u32, u64>(found^.index);
+        return made;
+      }
+      None() => {
+      }
+    }
+  }
+  return count;
+}
+
+fn inside_element(document: &Document, node: u64, element: u64) -> inside: Bool reads(document) {
+  doc "True when element is node or one of its ancestors, climbing at most one step per node of the document.";
+  let count = document^.nodes.inner.len;
+  let at = node;
+  for (step in 0_u64..count) {
+    if at == element {
+      return True();
+    }
+    if at >= count {
+      return False();
+    }
+    set at = parent_of(document: document, node: at);
+  }
+  return False();
+}
+
+fn changed_outside(document: &Document, old: &Styles, new: &Styles, changed: &[Bool], element: u64) -> outside: Bool reads(document), reads(old), reads(new), reads(changed) {
+  doc "True when the delta flags an element of both results that is not element or inside it, or flags element itself; an element of one result only was inserted or removed by the edit and is not counted. Each node's test reads only its own slot and its ancestors.";
+  let count = changed^.len;
+  let found = False();
+  for (n in 0_u64..count) {
+    let flagged = changed^[n];
+    let in_old = if n < old^.order.inner.len {
+      let at = cvt::<u32, u64>(old^.order.inner[n]);
+      give at < old^.elements.inner.len;
+    } else {
+      give False();
+    }
+    let in_new = if n < new^.order.inner.len {
+      let at = cvt::<u32, u64>(new^.order.inner[n]);
+      give at < new^.elements.inner.len;
+    } else {
+      give False();
+    }
+    let both = band(in_old, in_new);
+    let counted = band(flagged, both);
+    let out = if counted {
+      let itself = n == element;
+      let within = inside_element(document: document, node: n, element: element);
+      let away = bnot(within);
+      give bor(itself, away);
+    } else {
+      give False();
+    }
+    set found = bor(found, out);
+  }
+  return found;
+}
+
+fn fill_serials(context: &Context, next: u32, serial_of: &Box<Array<u32>>) -> after: u32 reads(context), writes(serial_of) {
+  doc "Numbers context and the contexts below it in the preorder record_tree gives them from next, writes each serial at the NodeId index of the element that establishes the context (one with a style of its own element, neither anonymous nor a pseudo-element's), and returns the next serial.";
+  let serial = next;
+  let style = context^.style;
+  let own = bnot(style.anonymous);
+  let element = style.pseudo == no_pseudo;
+  let named = style.element != root_element;
+  let plain = band(own, element);
+  let established = band(plain, named);
+  if established {
+    let at = cvt::<u32, u64>(style.element);
+    if at < serial_of^.inner.len {
+      if serial_of^.inner[at] == no_index {
+        set serial_of^.inner[at] = serial;
+      }
+    }
+  }
+  let following = serial +wrap 1_u32;
+  let count = context^.children.inner.len;
+  for (k in 0_u64..count) {
+    set following = fill_serials(context: &context^.children.inner[k], next: following, serial_of: serial_of);
+  }
+  return following;
+}
+
+fn contexts_at(context: &Context, steps: &[u32], depth: u64) -> count: u64 reads(context), reads(steps) {
+  doc "The contexts of the tree under the context that steps lead to from depth on, or 0 when they lead nowhere.";
+  let length = steps^.len;
+  if depth >= length {
+    let (contexts, paragraphs) = count_tree(context: context);
+    return contexts;
+  }
+  let child = cvt::<u32, u64>(steps^[depth]);
+  if child < context^.children.inner.len {
+    let next = depth +sat 1_u64;
+    let count = contexts_at(context: &context^.children.inner[child], steps: steps, depth: next);
+    return count;
+  }
+  return 0_u64;
+}
+
+fn rebuild_of(context: &Context, steps: &[u32], depth: u64) -> result: Result<Rebuild, LayoutError> reads(context), reads(steps) {
+  doc "Descends from context by the child indices in steps from depth on and returns the kind, style, entry and exit of the context they lead to.";
+  let count = steps^.len;
+  if depth >= count {
+    let entered = copy_point(point: &context^.entered);
+    let left = copy_point(point: &context^.left);
+    let made = Rebuild(kind: context^.kind, style: context^.style, entered: move entered, left: move left);
+    return Ok<Rebuild, LayoutError>(value: move made);
+  }
+  let child = cvt::<u32, u64>(steps^[depth]);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<Rebuild>();
+  }
+  let next = depth +sat 1_u64;
+  let found = propagate rebuild_of(context: &context^.children.inner[child], steps: steps, depth: next);
+  return Ok<Rebuild, LayoutError>(value: move found);
+}
+
+fn relative_steps(paths: &Box<Slots<ContextPath>>, from: u32, to: u32) -> found: Option<Box<Slots<u32>>> reads(paths) {
+  doc "The child indices that lead from the context with serial from down to the one with serial to, read from paths by following parents up from to; None when from is not to or one of its ancestors.";
+  let count = paths^.inner.len;
+  let upward = box_slots_new::<u32>(capacity: 16_u64);
+  let at = cvt::<u32, u64>(to);
+  let goal = cvt::<u32, u64>(from);
+  for (step in 0_u64..count) {
+    if at == goal {
+      let length = upward.inner.len;
+      let reserve = imin(length, 4096_u64);
+      let steps = box_slots_new::<u32>(capacity: reserve);
+      for (back in 0_u64..length) {
+        let top = length - 1_u64;
+        let k = top - back;
+        let index = upward.inner[k];
+        let pushed = push_item::<u32>(cell: &steps, value: index, ceiling: item_ceiling);
+      }
+      return Some<Box<Slots<u32>>>(value: move steps);
+    }
+    if at < count {
+    } else {
+      return None<Box<Slots<u32>>>();
+    }
+    let place = paths^.inner[at];
+    if place.parent == no_index {
+      return None<Box<Slots<u32>>>();
+    }
+    let pushed = push_item::<u32>(cell: &upward, value: place.child, ceiling: item_ceiling);
+    set at = cvt::<u32, u64>(place.parent);
+  }
+  return None<Box<Slots<u32>>>();
+}
+
+fn take_prepared(fresh: &Paragraph, fresh_pieces: &[Piece], old: &Context, steps: &[u32], depth: u64, paragraph: u64, changed: &[Bool], root: u32) -> taken: Bool reads(fresh_pieces), reads(steps), reads(changed), writes(fresh), writes(old) {
+  doc "Descends from old by steps from depth on to the context holding the old paragraph at index paragraph; when its pieces equal fresh's piece by piece, its own style is fresh's and no style either reads changed, swaps its prepared text, runs, run styles, marks and shaped text into fresh, which then needs no preparation. The runs keep the font group identifiers of the style run that prepared them, which only shaping reads; the shaped faces they chose stay right because the groups are equal in value.";
+  let count = steps^.len;
+  if depth < count {
+    let child = cvt::<u32, u64>(steps^[depth]);
+    if child < old^.children.inner.len {
+      let next = depth +sat 1_u64;
+      let taken = take_prepared(fresh: fresh, fresh_pieces: fresh_pieces, old: &old^.children.inner[child], steps: steps, depth: next, paragraph: paragraph, changed: changed, root: root);
+      return taken;
+    }
+    return False();
+  }
+  if paragraph < old^.paragraphs.inner.len {
+  } else {
+    return False();
+  }
+  let held = old^.paragraphs.inner[paragraph].dirty;
+  if held {
+    return False();
+  }
+  let style = same_ref(first: fresh^.style, second: old^.paragraphs.inner[paragraph].style);
+  let restyled = style_is_changed(changed: changed, root: root, style: fresh^.style);
+  let kept_style = bnot(restyled);
+  let usable = band(style, kept_style);
+  if usable {
+  } else {
+    return False();
+  }
+  let length = fresh^.count;
+  if length != old^.paragraphs.inner[paragraph].count {
+    return False();
+  }
+  let fresh_first = fresh^.first;
+  let old_first = old^.paragraphs.inner[paragraph].first;
+  let total = old^.pieces.inner.len;
+  let equal = True();
+  for (k in 0_u64..length) {
+    let a = fresh_first +sat k;
+    let b = old_first +sat k;
+    let fresh_inside = a < fresh_pieces^.len;
+    let old_inside = b < total;
+    let inside = band(fresh_inside, old_inside);
+    let same = if inside {
+      let piece = fresh_pieces^[a];
+      let equal_piece = same_piece(first: piece, second: old^.pieces.inner[b]);
+      let reads_change = piece_is_changed(changed: changed, root: root, piece: piece);
+      let kept = bnot(reads_change);
+      give band(equal_piece, kept);
+    } else {
+      give False();
+    }
+    set equal = band(equal, same);
+  }
+  if equal {
+  } else {
+    return False();
+  }
+  swap(first: &fresh^.text, second: &old^.paragraphs.inner[paragraph].text);
+  swap(first: &fresh^.runs, second: &old^.paragraphs.inner[paragraph].runs);
+  swap(first: &fresh^.run_styles, second: &old^.paragraphs.inner[paragraph].run_styles);
+  swap(first: &fresh^.marks, second: &old^.paragraphs.inner[paragraph].marks);
+  swap(first: &fresh^.shaped, second: &old^.paragraphs.inner[paragraph].shaped);
+  set old^.paragraphs.inner[paragraph].dirty = True();
+  return True();
+}
+
+fn first_text_node(pieces: &[Piece], first: u64, count: u64) -> node: u32 reads(pieces) {
+  doc "The NodeId index of the text node of the first Bytes piece from first that has one, among count pieces, or no_index.";
+  let end = first +sat count;
+  let total = pieces^.len;
+  let bounded = imin(end, total);
+  for (k in first..bounded) {
+    let piece = pieces^[k];
+    match piece {
+      Bytes(node: source, ..) => {
+        if source != no_index {
+          return source;
+        }
+      }
+      Generated(..) => {
+      }
+      Scalar(..) => {
+      }
+      Begin(..) => {
+      }
+      End(..) => {
+      }
+      Object(..) => {
+      }
+    }
+  }
+  return no_index;
+}
+
+fn reuse_prepared(fresh: &Context, old_root: &Context, base: &[u32], from: u32, old_units: &Box<Array<TextUnit>>, paths: &Box<Slots<ContextPath>>, changed: &[Bool], root: u32) -> reused: u64 reads(base), reads(old_units), reads(paths), reads(changed), writes(fresh), writes(old_root) {
+  doc "For each paragraph of fresh and of the contexts below it, finds the old paragraph its first text node's unit names, inside the old context with serial from that base leads to from old_root, and takes its preparation when it is the same input (take_prepared); a paragraph that takes none is marked for preparation. Returns the paragraphs that took one. The loop is sequential: each iteration swaps into an old paragraph the compiler cannot prove apart from another iteration's.";
+  let reused = 0_u64;
+  let count = fresh^.paragraphs.inner.len;
+  let pieces = fresh^.pieces.inner.len;
+  for (i in 0_u64..count) {
+    let first = fresh^.paragraphs.inner[i].first;
+    let length = fresh^.paragraphs.inner[i].count;
+    let node = first_text_node(pieces: &fresh^.pieces.inner[0_u64..pieces], first: first, count: length);
+    let at = cvt::<u32, u64>(node);
+    let named = node != no_index;
+    let taken = if at < old_units^.inner.len {
+      let held = old_units^.inner[at];
+      let listed = held.serial != no_index;
+      let unskipped = held.serial != skipped_text;
+      let recorded = band(listed, unskipped);
+      let usable = band(named, recorded);
+      let found = if usable {
+        let relative = relative_steps(paths: paths, from: from, to: held.serial);
+        let done = match move relative {
+          Some(value: tail) => {
+            let base_length = base^.len;
+            let tail_length = tail.inner.len;
+            let total = base_length +sat tail_length;
+            let reserve = imin(total, 4096_u64);
+            let steps = box_slots_new::<u32>(capacity: reserve);
+            for (k in 0_u64..base_length) {
+              let pushed = push_item::<u32>(cell: &steps, value: base^[k], ceiling: item_ceiling);
+            }
+            for (k in 0_u64..tail_length) {
+              let pushed = push_item::<u32>(cell: &steps, value: tail.inner[k], ceiling: item_ceiling);
+            }
+            let paragraph = cvt::<u32, u64>(held.paragraph);
+            let made = steps.inner.len;
+            let swapped = take_prepared(fresh: &fresh^.paragraphs.inner[i], fresh_pieces: &fresh^.pieces.inner[0_u64..pieces], old: old_root, steps: &steps.inner[0_u64..made], depth: 0_u64, paragraph: paragraph, changed: changed, root: root);
+            give swapped;
+          }
+          None() => {
+            give False();
+          }
+        }
+        give done;
+      } else {
+        give False();
+      }
+      give found;
+    } else {
+      give False();
+    }
+    if taken {
+      set reused = reused +sat 1_u64;
+    } else {
+      set fresh^.paragraphs.inner[i].dirty = True();
+    }
+  }
+  let children = fresh^.children.inner.len;
+  for (k in 0_u64..children) {
+    let below = reuse_prepared(fresh: &fresh^.children.inner[k], old_root: old_root, base: base, from: from, old_units: old_units, paths: paths, changed: changed, root: root);
+    set reused = reused +sat below;
+  }
+  return reused;
+}
+
+fn mark_fresh(context: &Context) -> result: unit writes(context) {
+  doc "Marks a context structure_changed built again, and every context below it, for update: each is marked, its marked paragraphs and children counted and the last of each recorded, as text_changed records them.";
+  let paragraphs = context^.paragraphs.inner.len;
+  let marked_paragraphs = 0_u32;
+  let marked_paragraph = no_index;
+  for (i in 0_u64..paragraphs) {
+    if context^.paragraphs.inner[i].dirty {
+      set marked_paragraphs = marked_paragraphs +sat 1_u32;
+      set marked_paragraph = cvt.wrap::<u64, u32>(i);
+    }
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    mark_fresh(context: &context^.children.inner[k]);
+  }
+  let child_count = imin(children, 4294967295_u64);
+  set context^.marked_paragraphs = marked_paragraphs;
+  set context^.marked_paragraph = marked_paragraph;
+  set context^.marked_children = cvt::<u64, u32>(child_count);
+  let marked_child = if children > 0_u64 {
+    let last = children - 1_u64;
+    give cvt.wrap::<u64, u32>(last);
+  } else {
+    give no_index;
+  }
+  set context^.marked_child = marked_child;
+  set context^.dirty = True();
+  return unit;
+}
+
+fn keep_outputs(from: &Context, to: &Context) -> result: unit reads(from), writes(to) {
+  doc "Gives the context built again what its parent gave the old one and what the old one's last layout produced: the space it was last laid out in (laid, which a parent's update writes back as its space before updating it) and its space, flow entry, block and beside, its position, size, margins and baseline. Its update then compares its new outputs with those, as for any marked child; restyled forbids the cutoffs that assume its last layout still holds, and its intrinsic sizes stay unknown.";
+  set to^.laid = from^.laid;
+  set to^.restyled = True();
+  set to^.space = from^.space;
+  set to^.flow_at = from^.flow_at;
+  set to^.block = from^.block;
+  set to^.beside = from^.beside;
+  set to^.x = from^.x;
+  set to^.y = from^.y;
+  set to^.width = from^.width;
+  set to^.height = from^.height;
+  set to^.margin_top = from^.margin_top;
+  set to^.margin_right = from^.margin_right;
+  set to^.margin_bottom = from^.margin_bottom;
+  set to^.margin_left = from^.margin_left;
+  set to^.baseline = from^.baseline;
+  set to^.has_baseline = from^.has_baseline;
+  set to^.viewport_origin = from^.viewport_origin;
+  return unit;
+}
+
+fn place_rebuilt(context: &Context, steps: &[u32], depth: u64, built: &Context) -> result: Result<unit, LayoutError> reads(steps), writes(context), writes(built) {
+  doc "Descends from context by the child indices in steps from depth on, swaps built with the context they lead to, and marks every context on the way back up, as mark_path does.";
+  let count = steps^.len;
+  if depth >= count {
+    keep_outputs(from: context, to: built);
+    swap(first: context, second: built);
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let child = cvt::<u32, u64>(steps^[depth]);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let next = depth +sat 1_u64;
+  let was = context^.children.inner[child].dirty;
+  let placed = propagate place_rebuilt(context: &context^.children.inner[child], steps: steps, depth: next, built: built);
+  if was {
+  } else {
+    set context^.marked_children = context^.marked_children +sat 1_u32;
+    set context^.marked_child = steps^[depth];
+  }
+  set context^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) {
+  doc "Builds again the context of the nearest element at or above parent that establishes one, from the walk's state as it entered that context, keeps every other context, takes the preparation of each unchanged paragraph from the old context, then records the layout's text units and paths again and marks the new context and its ancestors for update. Every check runs before the layout changes.";
+  let none = StructureCounts(contexts: 0_u64, paragraphs: 0_u64, reused: 0_u64);
+  set layout^.last_structure = none;
+  let nodes = document^.nodes.inner.len;
+  let small = nodes <= item_ceiling;
+  let sized = changed^.len == new^.order.inner.len;
+  let usable = band(small, sized);
+  if usable {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let kept = retained_outside(old: old, new: new, traversal: traversal);
+  if kept {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let serial_of = box_array_filled::<u32>(count: nodes, value: no_index);
+  let numbered = fill_serials(context: &layout^.root, next: 0_u32, serial_of: &serial_of);
+  let at = cvt::<u32, u64>(parent.index);
+  let element = nodes;
+  let serial = no_index;
+  for (step in 0_u64..nodes) {
+    if at >= nodes {
+      break;
+    }
+    let held = if at < serial_of.inner.len {
+      give serial_of.inner[at];
+    } else {
+      give no_index;
+    }
+    if held != no_index {
+      set element = at;
+      set serial = held;
+      break;
+    }
+    set at = parent_of(document: document, node: at);
+  }
+  if serial == no_index {
+    return inconsistent::<unit>();
+  }
+  let outside = changed_outside(document: document, old: old, new: new, changed: changed, element: element);
+  if outside {
+    return inconsistent::<unit>();
+  }
+  let base = propagate path_steps(layout: layout, serial: serial);
+  let base_count = base.inner.len;
+  let rebuild = propagate rebuild_of(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64);
+  let order_length = traversal^.order.inner.len;
+  let order_fits = order_length <= item_ceiling;
+  let order_count = if order_fits {
+    give order_length;
+  } else {
+    give 0_u64;
+  }
+  let order = box_array_filled::<u32>(count: order_count, value: unlisted);
+  for (k in 0_u64..order_count) {
+    set order.inner[k] = traversal^.order.inner[k];
+  }
+  let word_n = list_item_word.len;
+  let list_item = match atom_find(table: atoms, name: &list_item_word[0_u64..word_n]) {
+    Some(value: atom) => {
+      give atom.index;
+    }
+    None() => {
+      give unlisted;
+    }
+  }
+  let counters = box_slots_new::<Counter>(capacity: 0_u64);
+  let skipped = box_slots_new::<u32>(capacity: 0_u64);
+  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, skipped: move skipped);
+  restore_point(walk: &walk, point: &rebuild.entered);
+  let index = cvt.wrap::<u64, u32>(element);
+  let node = NodeId(index: index);
+  let built = propagate build_box(document: document, styles: new, atoms: atoms, walk: &walk, node: node, element: node.index, style: rebuild.style, kind: rebuild.kind);
+  let same_exit = same_point(first: &built.left, second: &rebuild.left);
+  if same_exit {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let root = if 0_u64 < traversal^.elements.inner.len {
+    give traversal^.elements.inner[0_u64].index;
+  } else {
+    give no_index;
+  }
+  let replaced = contexts_at(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64);
+  let (fresh_contexts, fresh_paragraphs) = count_tree(context: &built);
+  let kept_contexts = layout^.contexts -sat replaced;
+  let total_contexts = kept_contexts +sat fresh_contexts;
+  let fits = total_contexts < 4294967294_u64;
+  let within = total_contexts <= item_ceiling;
+  let recordable = band(fits, within);
+  if recordable {
+  } else {
+    return too_large::<unit>();
+  }
+  let reused = reuse_prepared(fresh: &built, old_root: &layout^.root, base: &base.inner[0_u64..base_count], from: serial, old_units: &layout^.text_units, paths: &layout^.paths, changed: changed, root: root);
+  mark_fresh(context: &built);
+  let placed = propagate place_rebuilt(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64, built: &built);
+  let (contexts, paragraphs) = count_tree(context: &layout^.root);
+  let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+  let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);
+  let reserve = imin(contexts, item_ceiling);
+  let paths = box_slots_new::<ContextPath>(capacity: reserve);
+  let recorded = propagate record_tree(context: &layout^.root, parent: no_index, child: 0_u32, paths: &paths, listing: &listing);
+  record_skipped(walk: &walk, listing: &listing);
+  let previous = layout^.text_units.inner.len;
+  let kept_skips = imin(previous, nodes);
+  for (k in 0_u64..kept_skips) {
+    if k < listing.inner.len {
+      let was_skipped = layout^.text_units.inner[k].serial == skipped_text;
+      let unread = listing.inner[k].serial == no_index;
+      let keep = band(was_skipped, unread);
+      if keep {
+        set listing.inner[k].serial = skipped_text;
+      }
+    }
+  }
+  set layout^.text_units = move listing;
+  set layout^.paths = move paths;
+  set layout^.contexts = contexts;
+  set layout^.paragraphs = paragraphs;
+  set layout^.dirty = True();
+  let counts = StructureCounts(contexts: fresh_contexts, paragraphs: fresh_paragraphs, reused: reused);
+  set layout^.last_structure = counts;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn structure_counts(layout: &Layout) -> (contexts: u64, paragraphs: u64, reused: u64) reads(layout) {
+  doc "What the last structure_changed did, as StructureCounts records it.";
+  let counts = layout^.last_structure;
+  return counts.contexts, counts.paragraphs, counts.reused;
+}

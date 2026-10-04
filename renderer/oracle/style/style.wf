@@ -2,6 +2,7 @@ alias Args = std::text::Args;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Color = pkg::css::color::Color;
 alias ColorRef = pkg::css::values::ColorRef;
+alias Clock = std::time::Clock;
 alias ComputedStyle = pkg::style::ComputedStyle;
 alias DirectoryRead = std::fs::DirectoryRead;
 alias Document = pkg::dom::Document;
@@ -65,9 +66,9 @@ const before_name: Array<u8, 8> = "::before";
 
 const after_name: Array<u8, 7> = "::after";
 
-const usage_text: Array<u8, 83> = "usage: style_oracle dump|match|inherited|reset|all REPS PAGE UA [SUFFIX=SHEET ...]\n";
+const usage_text: Array<u8, 143> = "usage: style_oracle dump|match|inherited|reset|all REPS PAGE UA [SUFFIX=SHEET ...]\n       style_oracle delta SCRIPT PAGE UA [SUFFIX=SHEET ...]\n";
 
-const mode_words: Array<u8, 30> = "dump match inherited reset all";
+const mode_words: Array<u8, 36> = "dump match inherited reset all delta";
 
 const unreadable_text: Array<u8, 27> = "style_oracle: cannot read: ";
 
@@ -113,10 +114,10 @@ const decoration_words: Array<u8, 37> = "underline overline line-through blink";
 
 fn run(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Destructures the inputs, drives one invocation and closes the working directory.";
-  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, ..) = move inputs;
+  let Inputs(args: args, cwd: cwd_directory, stdout: out, stderr: err, handles: files, stdin: unused_stdin, clock: clock, ..) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
-  let code = drive(args: &args, cwd: &cwd, out: &out, err: &err, files: &files);
+  let code = drive(args: &args, cwd: &cwd, clock: &clock, out: &out, err: &err, files: &files);
   close_directory(factory: &files, directory: move cwd);
   return exit_status(code: code);
 }
@@ -277,7 +278,7 @@ fn read_mapped(files: &HandleFactory, cwd: &DirectoryRead, args: &Args, position
   return move found;
 }
 
-fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(out), writes(err), writes(files) waits {
+fn drive(args: &Args, cwd: &DirectoryRead, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(args), reads(cwd), writes(clock), writes(out), writes(err), writes(files) waits {
   doc "Reads the invocation, builds the document and the rule store, and runs the mode.";
   let count = args_count(args: args);
   let enough = count >= 5_u64;
@@ -295,25 +296,31 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
     report(err: err, files: files, text: &usage_text[0_u64..usage_text.len]);
     return 2_u8;
   }
-  let reps = match argument_bytes(args: args, position: 2_u64) {
-    Some(value: bytes) => {
-      let size = bytes.inner.len;
-      let parsed = parse_decimal(text: &bytes.inner[0_u64..size], start: 0_u64, end: size);
-      let number = match parsed {
-        Some(value: n) => {
-          give n;
+  let delta = mode == 5_u64;
+  let reps = if delta {
+    give 0_u64;
+  } else {
+    let parsed_reps = match argument_bytes(args: args, position: 2_u64) {
+      Some(value: bytes) => {
+        let size = bytes.inner.len;
+        let parsed = parse_decimal(text: &bytes.inner[0_u64..size], start: 0_u64, end: size);
+        let number = match parsed {
+          Some(value: n) => {
+            give n;
+          }
+          None() => {
+            report(err: err, files: files, text: &usage_text[0_u64..usage_text.len]);
+            return 2_u8;
+          }
         }
-        None() => {
-          report(err: err, files: files, text: &usage_text[0_u64..usage_text.len]);
-          return 2_u8;
-        }
+        give number;
       }
-      give number;
+      None() => {
+        report(err: err, files: files, text: &usage_text[0_u64..usage_text.len]);
+        return 2_u8;
+      }
     }
-    None() => {
-      report(err: err, files: files, text: &usage_text[0_u64..usage_text.len]);
-      return 2_u8;
-    }
+    give parsed_reps;
   }
   let page = match read_argument_file(factory: files, cwd: cwd, args: args, position: 3_u64) {
     Ok(value: found) => {
@@ -383,6 +390,21 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
       return 2_u8;
     }
   }
+  let script = if delta {
+    let read = match read_argument_file(factory: files, cwd: cwd, args: args, position: 2_u64) {
+      Ok(value: found) => {
+        give move found;
+      }
+      Err(..) => {
+        report(err: err, files: files, text: &unreadable_text[0_u64..unreadable_text.len]);
+        return 2_u8;
+      }
+    }
+    give move read;
+  } else {
+    let empty = box_slots_new::<u8>(capacity: 0_u64);
+    give move empty;
+  }
   let sources = sheet_sources(document: &document, traversal: &traversal);
   let source_count = sources.inner.len;
   for (k in 0_u64..source_count) {
@@ -447,6 +469,16 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
       }
     }
   }
+  if delta {
+    let script_size = script.inner.len;
+    let notes = box_slots_new::<u8>(capacity: 256_u64);
+    let added = add_script_sheets(store: &store, script: &script.inner[0_u64..script_size], environment: environment, atoms: &atoms, notes: &notes);
+    if added {
+    } else {
+      let reported = flush(factory: files, output: err, buffer: &notes);
+      return 2_u8;
+    }
+  }
   match add_style_attributes(store: &store, document: &document, traversal: &traversal, atoms: &atoms) {
     Ok(..) => {
     }
@@ -462,6 +494,11 @@ fn drive(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStrea
       report_style(err: err, files: files, failure: failure);
       return 2_u8;
     }
+  }
+  if delta {
+    let script_size = script.inner.len;
+    let code = run_delta(store: &store, document: &document, atoms: &atoms, traversal: &traversal, environment: environment, script: &script.inner[0_u64..script_size], clock: clock, out: out, err: err, files: files);
+    return code;
   }
   if mode == 0_u64 {
     let styles = match compute_styles(store: &store, document: &document, atoms: &atoms, traversal: &traversal, environment: environment) {
