@@ -461,8 +461,51 @@ fn route_growth(capacity: u64, nodes: u64) -> grown: u64 pure {
   return route_growth(capacity: next, nodes: nodes);
 }
 
-fn copy_route_tables(old_texts: &[TextUnit], old_sources: &[SourcePath], texts: &[TextUnit], sources: &[SourcePath]) -> copied: Bool reads(old_texts), reads(old_sources), writes(texts), writes(sources) {
-  doc "Growth copies independent existing NodeId slots; newly allocated spare slots already hold canonical absent records from array construction.";
+struct RouteStoreCounts {
+  text_written: u64;
+  source_written: u64;
+  text_changed: u64;
+  source_changed: u64;
+}
+
+struct RouteLeafWrites {
+  text: u64;
+  source: u64;
+}
+
+fn empty_route_store_counts() -> counts: RouteStoreCounts pure {
+  doc "An empty destination interval performed no stores and changed no records.";
+  return RouteStoreCounts(text_written: 0_u64, source_written: 0_u64, text_changed: 0_u64, source_changed: 0_u64);
+}
+
+fn merge_route_store_results(first: Result<RouteStoreCounts, LayoutError>, second: Result<RouteStoreCounts, LayoutError>) -> result: Result<RouteStoreCounts, LayoutError> pure {
+  doc "Adds results of independently published disjoint destination intervals; a slot contributes to exactly one leaf.";
+  match move first {
+    Err(error: first_failure) => {
+      return Err<RouteStoreCounts, LayoutError>(error: first_failure);
+    }
+    Ok(value: first_counts) => {
+      match move second {
+        Err(error: second_failure) => {
+          return Err<RouteStoreCounts, LayoutError>(error: second_failure);
+        }
+        Ok(value: second_counts) => {
+          let RouteStoreCounts(text_written: first_text_written, source_written: first_source_written, text_changed: first_text_changed, source_changed: first_source_changed) = move first_counts;
+          let RouteStoreCounts(text_written: second_text_written, source_written: second_source_written, text_changed: second_text_changed, source_changed: second_source_changed) = move second_counts;
+          let text_written = first_text_written + second_text_written;
+          let source_written = first_source_written + second_source_written;
+          let text_changed = first_text_changed + second_text_changed;
+          let source_changed = first_source_changed + second_source_changed;
+          let counts = RouteStoreCounts(text_written: text_written, source_written: source_written, text_changed: text_changed, source_changed: source_changed);
+          return Ok<RouteStoreCounts, LayoutError>(value: counts);
+        }
+      }
+    }
+  }
+}
+
+fn copy_route_tables(old_texts: &[TextUnit], old_sources: &[SourcePath], texts: &[TextUnit], sources: &[SourcePath]) -> result: Result<u64, LayoutError> reads(old_texts), reads(old_sources), writes(texts), writes(sources) {
+  doc "Growth copies independent existing NodeId intervals. Each copy leaf returns two only after its two actual stores; spare initialization is not a copied slot.";
   let count = old_texts^.len;
   let same_old = count == old_sources^.len;
   let same_new = texts^.len == sources^.len;
@@ -471,128 +514,218 @@ fn copy_route_tables(old_texts: &[TextUnit], old_sources: &[SourcePath], texts: 
   let valid = band(shapes, enough);
   if valid {
   } else {
-    return False();
+    return inconsistent::<u64>();
   }
-  for (i in 0_u64..count) {
-    set texts^[i] = old_texts^[i];
-    set sources^[i] = old_sources^[i];
+  if count == 0_u64 {
+    return Ok<u64, LayoutError>(value: 0_u64);
   }
-  return True();
+  if count == 1_u64 {
+    set texts^[0_u64] = old_texts^[0_u64];
+    set sources^[0_u64] = old_sources^[0_u64];
+    return Ok<u64, LayoutError>(value: 2_u64);
+  }
+  let half = count / 2_u64;
+  let width = texts^.len;
+  let first_result = copy_route_tables(old_texts: &old_texts^[0_u64..half], old_sources: &old_sources^[0_u64..half], texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+  let second_result = copy_route_tables(old_texts: &old_texts^[half..count], old_sources: &old_sources^[half..count], texts: &texts^[half..width], sources: &sources^[half..width]);
+  let first_copied = propagate move first_result;
+  let second_copied = propagate move second_result;
+  let copied = first_copied + second_copied;
+  return Ok<u64, LayoutError>(value: copied);
 }
 
-fn retire_route_patch(patch: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> retired: Bool reads(patch), writes(texts), writes(sources) {
-  doc "Writes only the named sparse retirement leaves to canonical absent records through disjoint destination intervals.";
-  let width = texts^.len;
-  if width != sources^.len {
-    return False();
+fn retire_route_leaf(patch: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> result: Result<RouteLeafWrites, LayoutError> reads(patch), writes(texts), writes(sources) {
+  doc "Counts one tombstone store at its actual write; Empty performs none. The caller owns exactly one destination slot.";
+  if texts^.len != 1_u64 {
+    return inconsistent::<RouteLeafWrites>();
+  }
+  if sources^.len != 1_u64 {
+    return inconsistent::<RouteLeafWrites>();
   }
   match patch^ {
     Empty() => {
-      return True();
+      let counts = RouteLeafWrites(text: 0_u64, source: 0_u64);
+      return Ok<RouteLeafWrites, LayoutError>(value: counts);
     }
-    Leaf(value: stored) => {
-      if width != 1_u64 {
-        return False();
-      }
+    Leaf(value: held) => {
       let absent = NodeId(index: no_index);
-      let value = stored^;
+      let value = held^;
       match value {
         Text(..) => {
           let tombstone = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
           set texts^[0_u64] = tombstone;
+          let counts = RouteLeafWrites(text: 1_u64, source: 0_u64);
+          return Ok<RouteLeafWrites, LayoutError>(value: counts);
         }
         Source(..) => {
           let missing = False();
           let tombstone = SourcePath(present: missing, parent_source: absent, parent_local: no_index, child: no_index);
           set sources^[0_u64] = tombstone;
+          let counts = RouteLeafWrites(text: 0_u64, source: 1_u64);
+          return Ok<RouteLeafWrites, LayoutError>(value: counts);
         }
       }
-      return True();
     }
-    Fork(left: lower, right: upper) => {
-      let half = width / 2_u64;
-      if half == 0_u64 {
-        return False();
-      }
-      if half >= width {
-        return False();
-      }
-      let first = retire_route_patch(patch: &lower^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
-      let second = retire_route_patch(patch: &upper^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
-      return band(first, second);
+    Fork(..) => {
+      return inconsistent::<RouteLeafWrites>();
     }
   }
 }
 
-fn publish_replaced_routes(retired: &RoutePatch, next: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> published: Bool reads(retired), reads(next), writes(texts), writes(sources) {
-  doc "Publishes the union of old and next sparse intervals. Only an overlapping leaf orders its tombstone before its next record; sibling destinations have no retirement-to-publication barrier.";
+fn next_route_leaf(patch: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> result: Result<RouteLeafWrites, LayoutError> reads(patch), writes(texts), writes(sources) {
+  doc "Counts one next-record store at its actual write, even when that record equals the old value.";
+  if texts^.len != 1_u64 {
+    return inconsistent::<RouteLeafWrites>();
+  }
+  if sources^.len != 1_u64 {
+    return inconsistent::<RouteLeafWrites>();
+  }
+  match patch^ {
+    Empty() => {
+      let counts = RouteLeafWrites(text: 0_u64, source: 0_u64);
+      return Ok<RouteLeafWrites, LayoutError>(value: counts);
+    }
+    Leaf(value: held) => {
+      let value = held^;
+      match value {
+        Text(value: text_record) => {
+          set texts^[0_u64] = text_record;
+          let counts = RouteLeafWrites(text: 1_u64, source: 0_u64);
+          return Ok<RouteLeafWrites, LayoutError>(value: counts);
+        }
+        Source(value: source_record) => {
+          set sources^[0_u64] = source_record;
+          let counts = RouteLeafWrites(text: 0_u64, source: 1_u64);
+          return Ok<RouteLeafWrites, LayoutError>(value: counts);
+        }
+      }
+    }
+    Fork(..) => {
+      return inconsistent::<RouteLeafWrites>();
+    }
+  }
+}
+
+fn publish_replaced_leaf(retired: &RoutePatch, next: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> result: Result<RouteStoreCounts, LayoutError> reads(retired), reads(next), writes(texts), writes(sources) {
+  doc "Snapshots complete old records, counts actual tombstone and next stores, and compares final records once per table; equal retire-and-republish reports two writes and zero changed slots.";
+  if texts^.len != 1_u64 {
+    return inconsistent::<RouteStoreCounts>();
+  }
+  if sources^.len != 1_u64 {
+    return inconsistent::<RouteStoreCounts>();
+  }
+  let before_text = texts^[0_u64];
+  let before_source = sources^[0_u64];
+  let removed = propagate retire_route_leaf(patch: retired, texts: texts, sources: sources);
+  let added = propagate next_route_leaf(patch: next, texts: texts, sources: sources);
+  let RouteLeafWrites(text: removed_text, source: removed_source) = move removed;
+  let RouteLeafWrites(text: added_text, source: added_source) = move added;
+  let after_text = texts^[0_u64];
+  let after_source = sources^[0_u64];
+  let text_same = route_text_equal(first: before_text, second: after_text);
+  let source_same = route_source_equal(first: before_source, second: after_source);
+  let text_changed = if text_same {
+    give 0_u64;
+  } else {
+    give 1_u64;
+  }
+  let source_changed = if source_same {
+    give 0_u64;
+  } else {
+    give 1_u64;
+  }
+  let text_written = removed_text + added_text;
+  let source_written = removed_source + added_source;
+  let counts = RouteStoreCounts(text_written: text_written, source_written: source_written, text_changed: text_changed, source_changed: source_changed);
+  return Ok<RouteStoreCounts, LayoutError>(value: counts);
+}
+
+fn publish_replaced_routes(retired: &RoutePatch, next: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> result: Result<RouteStoreCounts, LayoutError> reads(retired), reads(next), writes(texts), writes(sources) {
+  doc "Publishes sparse old and next destination intervals with independently returned counts; only overlapping leaves order tombstones before next records.";
   let width = texts^.len;
   if width != sources^.len {
-    return False();
+    return inconsistent::<RouteStoreCounts>();
   }
   match retired^ {
     Empty() => {
-      return publish_route_patch(patch: next, texts: texts, sources: sources);
+      match next^ {
+        Empty() => {
+          let counts = empty_route_store_counts();
+          return Ok<RouteStoreCounts, LayoutError>(value: counts);
+        }
+        Leaf(..) => {
+          return publish_replaced_leaf(retired: retired, next: next, texts: texts, sources: sources);
+        }
+        Fork(left: next_lower, right: next_upper) => {
+          let half = width / 2_u64;
+          if half == 0_u64 {
+            return inconsistent::<RouteStoreCounts>();
+          }
+          if half >= width {
+            return inconsistent::<RouteStoreCounts>();
+          }
+          let first = publish_replaced_routes(retired: retired, next: &next_lower^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+          let second = publish_replaced_routes(retired: retired, next: &next_upper^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
+          return merge_route_store_results(first: move first, second: move second);
+        }
+      }
     }
     Leaf(..) => {
-      if width != 1_u64 {
-        return False();
-      }
       match next^ {
         Empty() => {
-          return retire_route_patch(patch: retired, texts: texts, sources: sources);
+          return publish_replaced_leaf(retired: retired, next: next, texts: texts, sources: sources);
         }
         Leaf(..) => {
-          let removed = retire_route_patch(patch: retired, texts: texts, sources: sources);
-          let added = publish_route_patch(patch: next, texts: texts, sources: sources);
-          return band(removed, added);
+          return publish_replaced_leaf(retired: retired, next: next, texts: texts, sources: sources);
         }
         Fork(..) => {
-          return False();
+          return inconsistent::<RouteStoreCounts>();
         }
       }
     }
-    Fork(left: lower, right: upper) => {
+    Fork(left: retired_lower, right: retired_upper) => {
       let half = width / 2_u64;
       if half == 0_u64 {
-        return False();
+        return inconsistent::<RouteStoreCounts>();
       }
       if half >= width {
-        return False();
+        return inconsistent::<RouteStoreCounts>();
       }
       match next^ {
         Empty() => {
-          return retire_route_patch(patch: retired, texts: texts, sources: sources);
+          let first = publish_replaced_routes(retired: &retired_lower^.inner, next: next, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+          let second = publish_replaced_routes(retired: &retired_upper^.inner, next: next, texts: &texts^[half..width], sources: &sources^[half..width]);
+          return merge_route_store_results(first: move first, second: move second);
         }
         Leaf(..) => {
-          return False();
+          return inconsistent::<RouteStoreCounts>();
         }
-        Fork(left: new_lower, right: new_upper) => {
-          let first = publish_replaced_routes(retired: &lower^.inner, next: &new_lower^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
-          let second = publish_replaced_routes(retired: &upper^.inner, next: &new_upper^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
-          return band(first, second);
+        Fork(left: next_lower, right: next_upper) => {
+          let first = publish_replaced_routes(retired: &retired_lower^.inner, next: &next_lower^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+          let second = publish_replaced_routes(retired: &retired_upper^.inner, next: &next_upper^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
+          return merge_route_store_results(first: move first, second: move second);
         }
       }
     }
   }
 }
 
-fn replace_source_routes(texts: &Box<Array<TextUnit>>, sources: &Box<Array<SourcePath>>, nodes: u64, retired_texts: &[TextFact], retired_sources: &[SourceFact], next_texts: &[TextFact], next_sources: &[SourceFact]) -> result: Result<unit, LayoutError> reads(retired_texts), reads(retired_sources), reads(next_texts), reads(next_sources), writes(texts), writes(sources) {
+fn replace_source_routes(texts: &Box<Array<TextUnit>>, sources: &Box<Array<SourcePath>>, nodes: u64, retired_texts: &[TextFact], retired_sources: &[SourceFact], next_texts: &[TextFact], next_sources: &[SourceFact]) -> result: Result<RouteUpdateCounts, LayoutError> reads(retired_texts), reads(retired_sources), reads(next_texts), reads(next_sources), writes(texts), writes(sources) {
   doc "Validates sparse old and next ownership facts before publication, then grows only beyond the allocation high-water capacity and writes the union of named destination intervals.";
   let capacity = texts^.inner.len;
   if capacity != sources^.inner.len {
-    return inconsistent::<unit>();
+    return inconsistent::<RouteUpdateCounts>();
   }
   let nodes_fit = nodes <= item_ceiling;
   let capacity_fits = capacity <= item_ceiling;
   let bounded = band(nodes_fit, capacity_fits);
   if bounded {
   } else {
-    return too_large::<unit>();
+    return too_large::<RouteUpdateCounts>();
   }
   let width = route_growth(capacity: capacity, nodes: nodes);
   if width < nodes {
-    return too_large::<unit>();
+    return too_large::<RouteUpdateCounts>();
   }
   let retired_text_result = retired_text_patch(facts: retired_texts, width: width, nodes: nodes);
   let retired_source_result = retired_source_patch(facts: retired_sources, width: width, nodes: nodes);
@@ -608,26 +741,25 @@ fn replace_source_routes(texts: &Box<Array<TextUnit>>, sources: &Box<Array<Sourc
   let valid = band(retired_valid, next_valid);
   if valid {
   } else {
-    return inconsistent::<unit>();
+    return inconsistent::<RouteUpdateCounts>();
   }
-  if width > capacity {
+  let copied_slots = if width > capacity {
     let absent = NodeId(index: no_index);
     let no_text = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
     let missing = False();
     let no_source = SourcePath(present: missing, parent_source: absent, parent_local: no_index, child: no_index);
     let grown_texts = box_array_filled::<TextUnit>(count: width, value: no_text);
     let grown_sources = box_array_filled::<SourcePath>(count: width, value: no_source);
-    let copied = copy_route_tables(old_texts: &texts^.inner[0_u64..capacity], old_sources: &sources^.inner[0_u64..capacity], texts: &grown_texts.inner[0_u64..width], sources: &grown_sources.inner[0_u64..width]);
-    if copied {
-    } else {
-      return inconsistent::<unit>();
-    }
+    let copied = propagate copy_route_tables(old_texts: &texts^.inner[0_u64..capacity], old_sources: &sources^.inner[0_u64..capacity], texts: &grown_texts.inner[0_u64..width], sources: &grown_sources.inner[0_u64..width]);
     set texts^ = move grown_texts;
     set sources^ = move grown_sources;
+    give copied;
+  } else {
+    give 0_u64;
   }
-  let published = publish_replaced_routes(retired: &retired, next: &next, texts: &texts^.inner[0_u64..width], sources: &sources^.inner[0_u64..width]);
-  if published {
-    return Ok<unit, LayoutError>(value: unit);
-  }
-  return inconsistent::<unit>();
+  let published = propagate publish_replaced_routes(retired: &retired, next: &next, texts: &texts^.inner[0_u64..width], sources: &sources^.inner[0_u64..width]);
+  let RouteStoreCounts(text_written: text_written, source_written: source_written, text_changed: text_changed, source_changed: source_changed) = move published;
+  let final_capacity = texts^.inner.len;
+  let counts = RouteUpdateCounts(text_routes_written: text_written, source_routes_written: source_written, text_routes_changed: text_changed, source_routes_changed: source_changed, old_capacity: capacity, capacity: final_capacity, copied_slots: copied_slots);
+  return Ok<RouteUpdateCounts, LayoutError>(value: counts);
 }
