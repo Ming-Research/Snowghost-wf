@@ -387,3 +387,6 @@ into `design/pipeline/layout.md` and `design/pipeline/style.md` with step 6,
 with Q67 to Q73 and Q83.
 
 2026-10-04: the owner approved Q87 as recommended.
+
+2026-10-04: the owner approved Q88 and the wording of the tree edits, and
+agreed to close X5 with the open items in docs/todo.md.
