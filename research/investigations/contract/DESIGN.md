@@ -117,3 +117,15 @@ shell; C6 a rasterizer and the reference's pixels.
 Video's producer and frame protocol, image decode size, the accessibility
 tree's place on the same transport, and whether colour animations move to
 the shell.
+
+## Owner rulings
+
+2026-10-04: after a comparison of each card's performance and feasibility,
+the owner wrote in Chinese that they agree to all, as recommended: Q74 (a
+chunk per paragraph), Q75 (a byte stream first with unchanged records,
+shared memory when Whitefoot has a host module for it) and Q76 (transactions
+copied into a scene the shell owns; revisit if C4 finds the copy above its
+criterion). The design-tree changes they need (the chunk grain in the
+incremental tree's paint boundary, the transport wording of
+`design/processes.md`) are made with their log entry in the work that
+builds the paint stage or the shell.
