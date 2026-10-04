@@ -11,7 +11,7 @@ Checking validates raw driver stdout before run.sh extracts comparable
 lines, so malformed, duplicate and incomplete records cannot disappear in
 a filter. Raw dumps and the separate style and child diagnostics are accepted only
 in their documented forms. Timing takes the best microseconds per edit over
-the runs and requires identical counts across runs. No timed edits is an
+the runs and requires identical geometry and child work counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
 """
 import re
@@ -26,6 +26,7 @@ STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraph
 STYLE_TIME = re.compile(r'style edit (\d+) delta_us \d+ picks_us \d+ full_us \d+$')
 CHILD_COUNTS = re.compile(r'child edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
 CHILD_TIME = re.compile(r'child edit (\d+) delta_us \d+ picks_us \d+ full_us \d+$')
+CHILD_WORK = re.compile(r'child work (\d+) sources_built (\d+) sources_retained (\d+) paragraphs_reused (\d+) text_routes_written (\d+) source_routes_written (\d+) text_routes_changed (\d+) source_routes_changed (\d+) old_route_capacity (\d+) route_capacity (\d+) route_slots_copied (\d+)$')
 CREATED = re.compile(r'created \d+$')
 
 
@@ -46,7 +47,7 @@ def script_operations(path):
 
 
 def read(path, operations, checking=False):
-    timed, other = {}, {}
+    timed, other, work = {}, {}, {}
     seen, auxiliary = set(), set()
     base_count = 0
     created_count = 0
@@ -70,6 +71,13 @@ def read(path, operations, checking=False):
             if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'X'):
                 raise ValueError('%s:%d: unexpected child edit' % (path, line_number))
             auxiliary.add(edit)
+            continue
+        child_work = CHILD_WORK.fullmatch(line)
+        if child_work:
+            edit = int(child_work.group(1))
+            if edit in work or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'X'):
+                raise ValueError('%s:%d: unexpected child work' % (path, line_number))
+            work[edit] = tuple(int(value) for value in child_work.groups()[1:])
             continue
         if CREATED.fullmatch(line):
             created_count += 1
@@ -105,9 +113,24 @@ def read(path, operations, checking=False):
         raise ValueError('%s: %d edits for %d operations, %d bases' % (path, len(seen), len(operations), base_count))
     if created_count != operations.count('B'):
         raise ValueError('%s: %d created records for %d insertions' % (path, created_count, operations.count('B')))
+    children = {edit for edit, kind in enumerate(operations, 1) if kind in ('B', 'X')}
+    if not children.issubset(auxiliary) or set(work) != children:
+        raise ValueError(path + ': missing child diagnostic or work record')
     if not checking and not timed:
         raise ValueError(path + ': no edits were timed')
-    return timed, other
+    return timed, other, work
+
+
+def compare_runs(runs):
+    first_timed, first_other, first_work = runs[0]
+    for timed, other, work in runs[1:]:
+        if set(timed) != set(first_timed) or other != first_other:
+            raise ValueError('the runs list different edits')
+        for edit, values in timed.items():
+            if values[1:] != first_timed[edit][1:]:
+                raise ValueError('edit %d: the runs disagree on the counts' % edit)
+        if work != first_work:
+            raise ValueError('the runs disagree on child work counts')
 
 
 def rank(values, fraction):
@@ -147,38 +170,69 @@ def check_reparse(script, edited, reparsed, count):
 
 
 def self_test():
-    """Exercise raw-record acceptance and each new child-parser refusal."""
+    """Exercise protocol acceptance, corruption rejection and cross-run work consistency."""
     base = 'base hash 0000000000000000 bytes 1\n'
     counts = ' prepared 1 contexts 2 paragraphs 3 held_entries 4 entries 5'
+    work_fields = [('sources_built', 1), ('sources_retained', 2), ('paragraphs_reused', 3),
+                   ('text_routes_written', 4), ('source_routes_written', 5),
+                   ('text_routes_changed', 6), ('source_routes_changed', 7),
+                   ('old_route_capacity', 8), ('route_capacity', 9), ('route_slots_copied', 10)]
+    work = ''.join(' %s %d' % pair for pair in work_fields)
     controls = []
     for checking in (True, False):
         auxiliary = counts if checking else ' delta_us 1 picks_us 2 full_us 3'
         first = 'edit 1 hash 0000000000000001 bytes 2 inc same' if checking else 'edit 1 us 4' + counts
         last = 'edit 2 hash 0000000000000000 bytes 1 inc same' if checking else 'edit 2 us 4' + counts
-        good = base + 'created 8\nchild edit 1' + auxiliary + '\n' + first + '\nchild edit 2' + auxiliary + '\n' + last + '\n'
-        controls.append((checking, good, True))
+        good = base + 'created 8\nchild edit 1' + auxiliary + '\nchild work 1' + work + '\n' + first + '\nchild edit 2' + auxiliary + '\nchild work 2' + work + '\n' + last + '\n'
+        controls.append((checking, good, True, ['B', 'X']))
         mutations = [('child edit 1', 'child edit 0'), ('child edit 1', 'child edit 3'),
                      ('child edit 1', 'style edit 1'), ('child edit 2', 'child edit 1'),
                      ('child edit 1', 'child edit 01 unexpected'),
                      (last, last.replace('edit 2', 'edit 1')), ('created 8\n', ''),
-                     (base, ''), (last + '\n', '')]
+                     (base, ''), (last + '\n', ''),
+                     ('child edit 1' + auxiliary + '\n', ''),
+                     ('child work 1' + work + '\n', ''),
+                     ('child work 1', 'child work 0'), ('child work 1', 'child work 3'),
+                     ('child work 2', 'child work 1'),
+                     ('child work 1' + work + '\n', 'child work 1' + work + '\nchild work 1' + work + '\n'),
+                     ('sources_built 1', 'sources_built nope'),
+                     (' route_slots_copied 10', '')]
         for status in ('DIFF', 'refused') if checking else ('inc refused', 'full'):
             mutations.append((first, first.replace('inc same', 'inc ' + status) if checking else 'edit 1 ' + status))
-        controls.extend((checking, good.replace(old, new, 1), False) for old, new in mutations)
+        controls.extend((checking, good.replace(old, new, 1), False, ['B', 'X']) for old, new in mutations)
+        nonchild = good.replace('child edit 2' + auxiliary + '\n', '')
+        controls.append((checking, nonchild, False, ['B', 'T']))
+        archive = base + first + '\n' + last + '\n'
+        controls.append((checking, archive, True, ['T', 'C']))
+        if not checking:
+            timing_good = good
     with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as output:
-        for checking, raw, expected in controls:
+        def parse(raw, checking=False, operations=None):
             output.seek(0)
             output.truncate()
             output.write(raw)
             output.flush()
+            return read(output.name, operations or ['B', 'X'], checking=checking)
+
+        for checking, raw, expected, operations in controls:
             try:
-                read(output.name, ['B', 'X'], checking=checking)
+                parse(raw, checking, operations)
                 accepted = True
             except ValueError:
                 accepted = False
             if accepted != expected:
                 raise ValueError('child parser control failed: ' + raw)
-    return len(controls)
+        baseline = parse(timing_good)
+        compare_runs([baseline, parse(timing_good.replace('edit 1 us 4', 'edit 1 us 5'))])
+        for field, value in work_fields:
+            changed = parse(timing_good.replace(' %s %d' % (field, value), ' %s %d' % (field, value + 1), 1))
+            try:
+                compare_runs([baseline, changed])
+            except ValueError:
+                pass
+            else:
+                raise ValueError('child work consistency control failed: ' + field)
+    return len(controls) + 1 + len(work_fields)
 
 
 def main():
@@ -202,16 +256,9 @@ def main():
     if not runs:
         print('no runs')
         return 1
-    first_timed, first_other = runs[0]
-    for timed, other in runs[1:]:
-        if set(timed) != set(first_timed) or other != first_other:
-            print('the runs list different edits')
-            return 1
-        for edit, values in timed.items():
-            if values[1:] != first_timed[edit][1:]:
-                print('edit %d: the runs disagree on the counts' % edit)
-                return 1
-    best = {edit: min(timed[edit][0] for timed, _ in runs) for edit in first_timed}
+    compare_runs(runs)
+    first_timed, first_other, first_work = runs[0]
+    best = {edit: min(timed[edit][0] for timed, _, _ in runs) for edit in first_timed}
     times = list(best.values())
     refused = sum(1 for kind in first_other.values() if kind == 'inc refused')
     full = sum(1 for kind in first_other.values() if kind == 'full')
