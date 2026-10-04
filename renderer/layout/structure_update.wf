@@ -727,24 +727,55 @@ fn completed_source_ids(marks: &SourceMarks, width: u64) -> result: Result<Box<A
   return inconsistent::<Box<Array<NodeId>>>();
 }
 
+enum FactTree {
+  doc "Owned source-local fact leaves awaiting one final publication flatten. Cached subtree sizes assign disjoint output ranges without appending into a shared list.";
+  Empty();
+  Leaf(facts: SourceFacts);
+  Fork(left: Box<FactTree>, right: Box<FactTree>, texts: u64, sources: u64);
+}
+
+struct FlatFacts {
+  texts: Box<Array<TextFact>>;
+  sources: Box<Array<SourceFact>>;
+}
+
 struct RetiredBodies {
   doc "Original source-local outputs revoked by one independent reconstruction. Counts exclude retained real child sources and derived placeholders left by ownership transfers.";
-  facts: SourceFacts;
+  facts: FactTree;
   contexts: u64;
   paragraphs: u64;
 }
 
-fn empty_source_facts() -> made: SourceFacts pure {
-  doc "An empty owned list of route facts.";
-  let texts = box_slots_new::<TextFact>(capacity: 0_u64);
-  let sources = box_slots_new::<SourceFact>(capacity: 0_u64);
-  return SourceFacts(texts: move texts, sources: move sources);
+fn empty_retired_bodies() -> made: RetiredBodies pure {
+  doc "An unchanged source produces neither retirements nor count adjustments, with no fact storage allocation.";
+  let facts = FactTree::Empty();
+  return RetiredBodies(facts: move facts, contexts: 0_u64, paragraphs: 0_u64);
 }
 
-fn empty_retired_bodies() -> made: RetiredBodies pure {
-  doc "An unchanged source produces neither retirements nor count adjustments.";
-  let facts = empty_source_facts();
-  return RetiredBodies(facts: move facts, contexts: 0_u64, paragraphs: 0_u64);
+fn source_fact_tree(facts: SourceFacts) -> made: FactTree pure {
+  doc "Retains a completed source's fact storage without copying it into an aggregate list.";
+  let no_texts = facts.texts.inner.len == 0_u64;
+  let no_sources = facts.sources.inner.len == 0_u64;
+  let empty = band(no_texts, no_sources);
+  if empty {
+    return FactTree::Empty();
+  }
+  return FactTree::Leaf(facts: move facts);
+}
+
+fn fact_tree_counts(tree: &FactTree) -> (texts: u64, sources: u64) reads(tree) {
+  doc "Reads a leaf's fixed lengths or a join's cached lengths in constant time.";
+  match tree^ {
+    Empty() => {
+      return 0_u64, 0_u64;
+    }
+    Leaf(facts: held) => {
+      return held^.texts.inner.len, held^.sources.inner.len;
+    }
+    Fork(texts: text_count, sources: source_count, ..) => {
+      return text_count^, source_count^;
+    }
+  }
 }
 
 fn copy_text_facts(input: &[TextFact], output: &[TextFact]) -> result: unit reads(input), writes(output) contract {
@@ -767,12 +798,22 @@ fn copy_source_facts(input: &[SourceFact], output: &[SourceFact]) -> result: uni
   }
 }
 
-fn join_source_facts(first: SourceFacts, second: SourceFacts) -> result: Result<SourceFacts, LayoutError> pure {
-  doc "Combines independent source outputs by assigning disjoint copy ranges. The lists retain facts, not ordering constraints on their later destination-keyed publication.";
-  let text_a = first.texts.inner.len;
-  let text_b = second.texts.inner.len;
-  let source_a = first.sources.inner.len;
-  let source_b = second.sources.inner.len;
+fn join_source_facts(first: FactTree, second: FactTree) -> result: Result<FactTree, LayoutError> pure {
+  doc "Joins independent owned outputs in constant work, caching lengths for a single final parallel flatten. No fact is copied at intermediate source or caller joins.";
+  let (text_a, source_a) = fact_tree_counts(tree: &first);
+  let (text_b, source_b) = fact_tree_counts(tree: &second);
+  let empty_a_text = text_a == 0_u64;
+  let empty_a_source = source_a == 0_u64;
+  let empty_a = band(empty_a_text, empty_a_source);
+  if empty_a {
+    return Ok<FactTree, LayoutError>(value: move second);
+  }
+  let empty_b_text = text_b == 0_u64;
+  let empty_b_source = source_b == 0_u64;
+  let empty_b = band(empty_b_text, empty_b_source);
+  if empty_b {
+    return Ok<FactTree, LayoutError>(value: move first);
+  }
   let texts = text_a +sat text_b;
   let sources = source_a +sat source_b;
   let text_limit = texts <= item_ceiling;
@@ -780,7 +821,63 @@ fn join_source_facts(first: SourceFacts, second: SourceFacts) -> result: Result<
   let bounded = band(text_limit, source_limit);
   if bounded {
   } else {
-    return too_large::<SourceFacts>();
+    return too_large::<FactTree>();
+  }
+  let lower = box_new::<FactTree>(value: move first);
+  let upper = box_new::<FactTree>(value: move second);
+  let made = FactTree::Fork(left: move lower, right: move upper, texts: texts, sources: sources);
+  return Ok<FactTree, LayoutError>(value: move made);
+}
+
+fn copy_fact_tree(tree: &FactTree, texts: &[TextFact], sources: &[SourceFact]) -> valid: Bool reads(tree), writes(texts), writes(sources) {
+  doc "Copies completed source outputs once, through independent destination intervals given by cached subtree counts. Source discovery order does not order the leaf copies.";
+  let text_total = texts^.len;
+  let source_total = sources^.len;
+  match tree^ {
+    Empty() => {
+      let no_texts = text_total == 0_u64;
+      let no_sources = source_total == 0_u64;
+      return band(no_texts, no_sources);
+    }
+    Leaf(facts: held) => {
+      let text_count = held^.texts.inner.len;
+      let source_count = held^.sources.inner.len;
+      let text_equal = text_count == text_total;
+      let source_equal = source_count == source_total;
+      let matched = band(text_equal, source_equal);
+      if matched {
+      } else {
+        return False();
+      }
+      copy_text_facts(input: &held^.texts.inner[0_u64..text_count], output: texts);
+      copy_source_facts(input: &held^.sources.inner[0_u64..source_count], output: sources);
+      return True();
+    }
+    Fork(left: lower, right: upper, ..) => {
+      let (text_count, source_count) = fact_tree_counts(tree: &lower^.inner);
+      let text_fits = text_count <= text_total;
+      let source_fits = source_count <= source_total;
+      let fits = band(text_fits, source_fits);
+      if fits {
+      } else {
+        return False();
+      }
+      let first = copy_fact_tree(tree: &lower^.inner, texts: &texts^[0_u64..text_count], sources: &sources^[0_u64..source_count]);
+      let second = copy_fact_tree(tree: &upper^.inner, texts: &texts^[text_count..text_total], sources: &sources^[source_count..source_total]);
+      return band(first, second);
+    }
+  }
+}
+
+fn flatten_source_facts(tree: &FactTree) -> result: Result<FlatFacts, LayoutError> reads(tree) {
+  doc "Allocates exact immutable publication arrays and flattens the owned result tree once. There is no runtime Array-to-Slots conversion or shared append dependency.";
+  let (texts, sources) = fact_tree_counts(tree: tree);
+  let text_limit = texts <= item_ceiling;
+  let source_limit = sources <= item_ceiling;
+  let bounded = band(text_limit, source_limit);
+  if bounded {
+  } else {
+    return too_large::<FlatFacts>();
   }
   let absent = NodeId(index: no_index);
   let no = False();
@@ -790,16 +887,13 @@ fn join_source_facts(first: SourceFacts, second: SourceFacts) -> result: Result<
   let source_fact = SourceFact(node: absent, value: source_path);
   let text_array = box_array_filled::<TextFact>(count: texts, value: text_fact);
   let source_array = box_array_filled::<SourceFact>(count: sources, value: source_fact);
-  copy_text_facts(input: &first.texts.inner[0_u64..text_a], output: &text_array.inner[0_u64..text_a]);
-  copy_text_facts(input: &second.texts.inner[0_u64..text_b], output: &text_array.inner[text_a..texts]);
-  copy_source_facts(input: &first.sources.inner[0_u64..source_a], output: &source_array.inner[0_u64..source_a]);
-  copy_source_facts(input: &second.sources.inner[0_u64..source_b], output: &source_array.inner[source_a..sources]);
-  let text_slots = slots_from_array(values: move text_array.inner);
-  let source_slots = slots_from_array(values: move source_array.inner);
-  let joined_texts = box_new(value: move text_slots);
-  let joined_sources = box_new(value: move source_slots);
-  let made = SourceFacts(texts: move joined_texts, sources: move joined_sources);
-  return Ok<SourceFacts, LayoutError>(value: move made);
+  let copied = copy_fact_tree(tree: tree, texts: &text_array.inner[0_u64..texts], sources: &source_array.inner[0_u64..sources]);
+  if copied {
+  } else {
+    return inconsistent::<FlatFacts>();
+  }
+  let made = FlatFacts(texts: move text_array, sources: move source_array);
+  return Ok<FlatFacts, LayoutError>(value: move made);
 }
 
 fn join_retired_bodies(first: RetiredBodies, second: RetiredBodies) -> result: Result<RetiredBodies, LayoutError> pure {
@@ -842,7 +936,8 @@ fn retire_unused_candidates(candidates: CandidatePatch, new_sources: &[NodeId], 
       if current_basis {
         return Ok<RetiredBodies, LayoutError>(value: move below);
       }
-      let own = RetiredBodies(facts: move saved_facts, contexts: saved_contexts, paragraphs: saved_paragraphs);
+      let tree = source_fact_tree(facts: move saved_facts);
+      let own = RetiredBodies(facts: move tree, contexts: saved_contexts, paragraphs: saved_paragraphs);
       return join_retired_bodies(first: move own, second: move below);
     }
     Fork(left: lower, right: upper) => {
@@ -868,7 +963,8 @@ fn retire_source_pool(pool: SourcePool, new_sources: &[NodeId], width: u64) -> r
       if current_basis {
         return Ok<RetiredBodies, LayoutError>(value: move children);
       }
-      let own = RetiredBodies(facts: move saved_facts, contexts: saved_contexts, paragraphs: saved_paragraphs);
+      let tree = source_fact_tree(facts: move saved_facts);
+      let own = RetiredBodies(facts: move tree, contexts: saved_contexts, paragraphs: saved_paragraphs);
       return join_retired_bodies(first: move own, second: move children);
     }
   }
@@ -1180,7 +1276,8 @@ fn collect_updated_bodies(context: &Context, completed: &SourceMarks, width: u64
       Some(..) => {
         let facts = propagate structural_source_facts(context: context);
         let counts = propagate candidate_source_counts(context: context);
-        let made = RetiredBodies(facts: move facts, contexts: counts.contexts, paragraphs: counts.paragraphs);
+        let tree = source_fact_tree(facts: move facts);
+        let made = RetiredBodies(facts: move tree, contexts: counts.contexts, paragraphs: counts.paragraphs);
         give move made;
       }
       None() => {
@@ -1231,11 +1328,13 @@ fn children_changed(layout: Layout, document: &Document, traversal: &Traversal, 
   } else {
     return too_large::<Layout>();
   }
-  let retired_text_count = retired_bodies.facts.texts.inner.len;
-  let retired_source_count = retired_bodies.facts.sources.inner.len;
-  let current_text_count = current.facts.texts.inner.len;
-  let current_source_count = current.facts.sources.inner.len;
-  let published = propagate replace_source_routes(texts: &texts, sources: &sources, nodes: nodes, retired_texts: &retired_bodies.facts.texts.inner[0_u64..retired_text_count], retired_sources: &retired_bodies.facts.sources.inner[0_u64..retired_source_count], next_texts: &current.facts.texts.inner[0_u64..current_text_count], next_sources: &current.facts.sources.inner[0_u64..current_source_count]);
+  let retired_facts = propagate flatten_source_facts(tree: &retired_bodies.facts);
+  let current_facts = propagate flatten_source_facts(tree: &current.facts);
+  let retired_text_count = retired_facts.texts.inner.len;
+  let retired_source_count = retired_facts.sources.inner.len;
+  let current_text_count = current_facts.texts.inner.len;
+  let current_source_count = current_facts.sources.inner.len;
+  let published = propagate replace_source_routes(texts: &texts, sources: &sources, nodes: nodes, retired_texts: &retired_facts.texts.inner[0_u64..retired_text_count], retired_sources: &retired_facts.sources.inner[0_u64..retired_source_count], next_texts: &current_facts.texts.inner[0_u64..current_text_count], next_sources: &current_facts.sources.inner[0_u64..current_source_count]);
   let dirty = replacement.dirty;
   let none = no_updates();
   let made = Layout(root: move replacement, viewport: kept_viewport, paragraphs: paragraphs, contexts: contexts, text_units: move texts, source_paths: move sources, dirty: dirty, last_update: none);
