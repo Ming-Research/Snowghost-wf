@@ -91,7 +91,7 @@ fn route_source_valid(node: NodeId, value: SourcePath, nodes: u64) -> valid: Boo
   if value.parent_source.index == no_index {
     let document = node.index == 0_u32;
     let parent = value.parent_local == no_index;
-    let child = value.child == no_index;
+    let child = value.child == 0_u32;
     let place = band(parent, child);
     return band(document, place);
   }
@@ -231,4 +231,403 @@ fn retired_source_patch(facts: &[SourceFact], width: u64, nodes: u64) -> result:
   let first = retired_source_patch(facts: &facts^[0_u64..half], width: width, nodes: nodes);
   let second = retired_source_patch(facts: &facts^[half..count], width: width, nodes: nodes);
   return merge_retired_results(first: move first, second: move second);
+}
+
+fn next_text_patch(facts: &[TextFact], width: u64, nodes: u64) -> result: Result<RoutePatch, LayoutError> reads(facts) {
+  doc "Builds next text outputs independently; the existing local merge rejects cross-source ownership and duplicate actual consumers.";
+  let count = facts^.len;
+  if count == 0_u64 {
+    let empty = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let fact = facts^[0_u64];
+    let valid = route_text_valid(node: fact.node, value: fact.value, nodes: nodes);
+    if valid {
+    } else {
+      return inconsistent::<RoutePatch>();
+    }
+    let key = cvt::<u32, u64>(fact.node.index);
+    let value = RouteValue::Text(value: fact.value);
+    return singleton_route(width: width, key: key, value: value);
+  }
+  let half = count / 2_u64;
+  let first = next_text_patch(facts: &facts^[0_u64..half], width: width, nodes: nodes);
+  let second = next_text_patch(facts: &facts^[half..count], width: width, nodes: nodes);
+  let local = True();
+  return merge_route_results(first: move first, second: move second, local: local);
+}
+
+fn next_source_patch(facts: &[SourceFact], width: u64, nodes: u64) -> result: Result<RoutePatch, LayoutError> reads(facts) {
+  doc "Builds next parent-owned source entries with duplicate rejection, including two equal entries.";
+  let count = facts^.len;
+  if count == 0_u64 {
+    let empty = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let fact = facts^[0_u64];
+    let valid = route_source_valid(node: fact.node, value: fact.value, nodes: nodes);
+    if valid {
+    } else {
+      return inconsistent::<RoutePatch>();
+    }
+    let key = cvt::<u32, u64>(fact.node.index);
+    let value = RouteValue::Source(value: fact.value);
+    return singleton_route(width: width, key: key, value: value);
+  }
+  let half = count / 2_u64;
+  let first = next_source_patch(facts: &facts^[0_u64..half], width: width, nodes: nodes);
+  let second = next_source_patch(facts: &facts^[half..count], width: width, nodes: nodes);
+  let local = False();
+  return merge_route_results(first: move first, second: move second, local: local);
+}
+
+fn route_current(texts: &[TextUnit], sources: &[SourcePath], key: u64) -> result: Result<Option<RouteValue>, LayoutError> reads(texts), reads(sources) {
+  doc "Reads one sparse transaction destination; spare slots must be canonical absent, and one NodeId cannot have both text and source ownership.";
+  if texts^.len != sources^.len {
+    return inconsistent::<Option<RouteValue>>();
+  }
+  if key >= texts^.len {
+    let absent = None<RouteValue>();
+    return Ok<Option<RouteValue>, LayoutError>(value: absent);
+  }
+  let text = texts^[key];
+  let source = sources^[key];
+  let have_text = text.source.index != no_index;
+  let have_source = source.present;
+  let both = band(have_text, have_source);
+  if both {
+    return inconsistent::<Option<RouteValue>>();
+  }
+  if have_text {
+    let value = RouteValue::Text(value: text);
+    let found = Some<RouteValue>(value: value);
+    return Ok<Option<RouteValue>, LayoutError>(value: found);
+  }
+  if have_source {
+    let value = RouteValue::Source(value: source);
+    let found = Some<RouteValue>(value: value);
+    return Ok<Option<RouteValue>, LayoutError>(value: found);
+  }
+  let local = text.local_context == no_index;
+  let piece = text.piece == 0_u32;
+  let count = text.count == 0_u32;
+  let paragraph = text.paragraph == no_index;
+  let text_owner = band(local, paragraph);
+  let text_span = band(piece, count);
+  let text_absent = band(text_owner, text_span);
+  let parent = source.parent_source.index == no_index;
+  let parent_local = source.parent_local == no_index;
+  let child = source.child == no_index;
+  let source_owner = band(parent, parent_local);
+  let source_absent = band(source_owner, child);
+  let canonical = band(text_absent, source_absent);
+  if canonical {
+    let absent = None<RouteValue>();
+    return Ok<Option<RouteValue>, LayoutError>(value: absent);
+  }
+  return inconsistent::<Option<RouteValue>>();
+}
+
+fn validate_retired_routes(patch: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath], width: u64, base: u64) -> valid: Bool reads(patch), reads(texts), reads(sources) {
+  doc "Validates only retirement leaves against exact current records before any publication; no capacity walk discovers ownership.";
+  match patch^ {
+    Empty() => {
+      return True();
+    }
+    Leaf(value: stored) => {
+      if width != 1_u64 {
+        return False();
+      }
+      let record = stored^;
+      match route_current(texts: texts, sources: sources, key: base) {
+        Err(..) => {
+          return False();
+        }
+        Ok(value: found) => {
+          match found {
+            None() => {
+              return False();
+            }
+            Some(value: current) => {
+              return route_value_equal(first: record, second: current);
+            }
+          }
+        }
+      }
+    }
+    Fork(left: lower, right: upper) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return False();
+      }
+      if half >= width {
+        return False();
+      }
+      let right_width = width - half;
+      let right_base = base +sat half;
+      let first = validate_retired_routes(patch: &lower^.inner, texts: texts, sources: sources, width: half, base: base);
+      let second = validate_retired_routes(patch: &upper^.inner, texts: texts, sources: sources, width: right_width, base: right_base);
+      return band(first, second);
+    }
+  }
+}
+
+fn route_destination_available(retired: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath], key: u64) -> valid: Bool reads(retired), reads(texts), reads(sources) {
+  doc "An occupied next destination is writable only when this interval retires its exact prior record.";
+  match route_current(texts: texts, sources: sources, key: key) {
+    Err(..) => {
+      return False();
+    }
+    Ok(value: found) => {
+      match found {
+        None() => {
+          return True();
+        }
+        Some(value: current) => {
+          match retired^ {
+            Leaf(value: held) => {
+              let record = held^;
+              return route_value_equal(first: current, second: record);
+            }
+            Empty() => {
+              return False();
+            }
+            Fork(..) => {
+              return False();
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn validate_next_routes(next: &RoutePatch, retired: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath], width: u64, base: u64) -> valid: Bool reads(next), reads(retired), reads(texts), reads(sources) {
+  doc "Checks occupied next slots against the aligned sparse retirement patch; independent sibling checks share only read-only inputs.";
+  match next^ {
+    Empty() => {
+      return True();
+    }
+    Leaf(..) => {
+      if width != 1_u64 {
+        return False();
+      }
+      return route_destination_available(retired: retired, texts: texts, sources: sources, key: base);
+    }
+    Fork(left: lower, right: upper) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return False();
+      }
+      if half >= width {
+        return False();
+      }
+      let right_width = width - half;
+      let right_base = base +sat half;
+      match retired^ {
+        Empty() => {
+          let first = validate_next_routes(next: &lower^.inner, retired: retired, texts: texts, sources: sources, width: half, base: base);
+          let second = validate_next_routes(next: &upper^.inner, retired: retired, texts: texts, sources: sources, width: right_width, base: right_base);
+          return band(first, second);
+        }
+        Leaf(..) => {
+          return False();
+        }
+        Fork(left: old_lower, right: old_upper) => {
+          let first = validate_next_routes(next: &lower^.inner, retired: &old_lower^.inner, texts: texts, sources: sources, width: half, base: base);
+          let second = validate_next_routes(next: &upper^.inner, retired: &old_upper^.inner, texts: texts, sources: sources, width: right_width, base: right_base);
+          return band(first, second);
+        }
+      }
+    }
+  }
+}
+
+fn route_growth(capacity: u64, nodes: u64) -> grown: u64 pure {
+  doc "A logarithmic geometric capacity calculation, called only with storage-bounded counts; no table data or allocation order is an input.";
+  if capacity >= nodes {
+    return capacity;
+  }
+  if capacity == 0_u64 {
+    return route_growth(capacity: 4_u64, nodes: nodes);
+  }
+  let doubled = capacity +sat capacity;
+  let next = imin(doubled, item_ceiling);
+  if next <= capacity {
+    return capacity;
+  }
+  return route_growth(capacity: next, nodes: nodes);
+}
+
+fn copy_route_tables(old_texts: &[TextUnit], old_sources: &[SourcePath], texts: &[TextUnit], sources: &[SourcePath]) -> copied: Bool reads(old_texts), reads(old_sources), writes(texts), writes(sources) {
+  doc "Growth copies independent existing NodeId slots; newly allocated spare slots already hold canonical absent records from array construction.";
+  let count = old_texts^.len;
+  let same_old = count == old_sources^.len;
+  let same_new = texts^.len == sources^.len;
+  let enough = count <= texts^.len;
+  let shapes = band(same_old, same_new);
+  let valid = band(shapes, enough);
+  if valid {
+  } else {
+    return False();
+  }
+  for (i in 0_u64..count) {
+    set texts^[i] = old_texts^[i];
+    set sources^[i] = old_sources^[i];
+  }
+  return True();
+}
+
+fn retire_route_patch(patch: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> retired: Bool reads(patch), writes(texts), writes(sources) {
+  doc "Writes only the named sparse retirement leaves to canonical absent records through disjoint destination intervals.";
+  let width = texts^.len;
+  if width != sources^.len {
+    return False();
+  }
+  match patch^ {
+    Empty() => {
+      return True();
+    }
+    Leaf(value: stored) => {
+      if width != 1_u64 {
+        return False();
+      }
+      let absent = NodeId(index: no_index);
+      let value = stored^;
+      match value {
+        Text(..) => {
+          let tombstone = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+          set texts^[0_u64] = tombstone;
+        }
+        Source(..) => {
+          let missing = False();
+          let tombstone = SourcePath(present: missing, parent_source: absent, parent_local: no_index, child: no_index);
+          set sources^[0_u64] = tombstone;
+        }
+      }
+      return True();
+    }
+    Fork(left: lower, right: upper) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return False();
+      }
+      if half >= width {
+        return False();
+      }
+      let first = retire_route_patch(patch: &lower^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+      let second = retire_route_patch(patch: &upper^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
+      return band(first, second);
+    }
+  }
+}
+
+fn publish_replaced_routes(retired: &RoutePatch, next: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> published: Bool reads(retired), reads(next), writes(texts), writes(sources) {
+  doc "Publishes the union of old and next sparse intervals. Only an overlapping leaf orders its tombstone before its next record; sibling destinations have no retirement-to-publication barrier.";
+  let width = texts^.len;
+  if width != sources^.len {
+    return False();
+  }
+  match retired^ {
+    Empty() => {
+      return publish_route_patch(patch: next, texts: texts, sources: sources);
+    }
+    Leaf(..) => {
+      if width != 1_u64 {
+        return False();
+      }
+      match next^ {
+        Empty() => {
+          return retire_route_patch(patch: retired, texts: texts, sources: sources);
+        }
+        Leaf(..) => {
+          let removed = retire_route_patch(patch: retired, texts: texts, sources: sources);
+          let added = publish_route_patch(patch: next, texts: texts, sources: sources);
+          return band(removed, added);
+        }
+        Fork(..) => {
+          return False();
+        }
+      }
+    }
+    Fork(left: lower, right: upper) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return False();
+      }
+      if half >= width {
+        return False();
+      }
+      match next^ {
+        Empty() => {
+          return retire_route_patch(patch: retired, texts: texts, sources: sources);
+        }
+        Leaf(..) => {
+          return False();
+        }
+        Fork(left: new_lower, right: new_upper) => {
+          let first = publish_replaced_routes(retired: &lower^.inner, next: &new_lower^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+          let second = publish_replaced_routes(retired: &upper^.inner, next: &new_upper^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
+          return band(first, second);
+        }
+      }
+    }
+  }
+}
+
+fn replace_source_routes(texts: &Box<Array<TextUnit>>, sources: &Box<Array<SourcePath>>, nodes: u64, retired_texts: &[TextFact], retired_sources: &[SourceFact], next_texts: &[TextFact], next_sources: &[SourceFact]) -> result: Result<unit, LayoutError> reads(retired_texts), reads(retired_sources), reads(next_texts), reads(next_sources), writes(texts), writes(sources) {
+  doc "Validates sparse old and next ownership facts before publication, then grows only beyond the allocation high-water capacity and writes the union of named destination intervals.";
+  let capacity = texts^.inner.len;
+  if capacity != sources^.inner.len {
+    return inconsistent::<unit>();
+  }
+  let nodes_fit = nodes <= item_ceiling;
+  let capacity_fits = capacity <= item_ceiling;
+  let bounded = band(nodes_fit, capacity_fits);
+  if bounded {
+  } else {
+    return too_large::<unit>();
+  }
+  let width = route_growth(capacity: capacity, nodes: nodes);
+  if width < nodes {
+    return too_large::<unit>();
+  }
+  let retired_text_result = retired_text_patch(facts: retired_texts, width: width, nodes: nodes);
+  let retired_source_result = retired_source_patch(facts: retired_sources, width: width, nodes: nodes);
+  let next_text_result = next_text_patch(facts: next_texts, width: width, nodes: nodes);
+  let next_source_result = next_source_patch(facts: next_sources, width: width, nodes: nodes);
+  let retired_result = merge_retired_results(first: move retired_text_result, second: move retired_source_result);
+  let local = False();
+  let next_result = merge_route_results(first: move next_text_result, second: move next_source_result, local: local);
+  let retired = propagate move retired_result;
+  let next = propagate move next_result;
+  let retired_valid = validate_retired_routes(patch: &retired, texts: &texts^.inner[0_u64..capacity], sources: &sources^.inner[0_u64..capacity], width: width, base: 0_u64);
+  let next_valid = validate_next_routes(next: &next, retired: &retired, texts: &texts^.inner[0_u64..capacity], sources: &sources^.inner[0_u64..capacity], width: width, base: 0_u64);
+  let valid = band(retired_valid, next_valid);
+  if valid {
+  } else {
+    return inconsistent::<unit>();
+  }
+  if width > capacity {
+    let absent = NodeId(index: no_index);
+    let no_text = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+    let missing = False();
+    let no_source = SourcePath(present: missing, parent_source: absent, parent_local: no_index, child: no_index);
+    let grown_texts = box_array_filled::<TextUnit>(count: width, value: no_text);
+    let grown_sources = box_array_filled::<SourcePath>(count: width, value: no_source);
+    let copied = copy_route_tables(old_texts: &texts^.inner[0_u64..capacity], old_sources: &sources^.inner[0_u64..capacity], texts: &grown_texts.inner[0_u64..width], sources: &grown_sources.inner[0_u64..width]);
+    if copied {
+    } else {
+      return inconsistent::<unit>();
+    }
+    set texts^ = move grown_texts;
+    set sources^ = move grown_sources;
+  }
+  let published = publish_replaced_routes(retired: &retired, next: &next, texts: &texts^.inner[0_u64..width], sources: &sources^.inner[0_u64..width]);
+  if published {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  return inconsistent::<unit>();
 }
