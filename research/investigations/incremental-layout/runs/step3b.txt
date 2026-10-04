@@ -1,0 +1,511 @@
+X5 step 3b: text edits updated in place. The primary agent's decisions on
+Q70's recommendation: (1) a flow context whose marked entry keeps its
+outputs is not re-stacked, and one whose entry's height changes by delta
+under unchanged margins and floats translates its later entries by delta;
+(2) a paragraph's fragments stay relative to its origin; (3) a flex or grid
+container updates its marked item in its kept space first and stops when
+nothing it reads changed; (4) the html5 contexts laid out again by a later
+pass are kept when their final space is unchanged; (5) the --par slowdown on
+updates is attributed and recorded. Criterion parts 1, 3 and 4 were run as
+in step 3 (runs/step3.txt). Every command ran from the repository root;
+each section is the command and its output as run.
+
+Revisions and environment
+  Snowghost branch x5/step3b from 436cca5. The drivers were built from
+  commit 892796f (c8e8b92 adds the edit mode's `inc dump`, 8f842ab the
+  layout code, 892796f keeps column flex containers out of the container
+  stop rule), under the host lock, from the worktree:
+    step 3b: seq md5 64713b8df1ede1ade9b2de2566a779ae (391 s),
+             par md5 9485a38dcca452f99c393f6867e2705d (406 s),
+             copied to build/layout_oracle_step3b_seq and _par (the seq one
+             is also build/layout_oracle_s3m)
+    falsifiers, each from a copy of 8f842ab's renderer/ with one change
+    (each was required to fail and did; 892796f only narrows when the
+    container stop rule applies, and was not rebuilt with them):
+      f1b md5 607ea122970f76d25b61dbf5959c9636 (396 s)
+      f2b md5 79d42a4f617d1d8ab7bfaebace755c92 (395 s)
+      f3b md5 3a4b0be6eefa6ade52053264286663d2 (398 s)
+      f4b md5 c5eeb2c53a2ce7de9dd9c28f2c089669 (400 s)
+    The diagnostic build and the callgrind profiles in section 4 are of
+    8f842ab (its seq driver md5 10fd749cf9638fd2a6d820ef23affc37) and
+    were not repeated on 892796f.
+  Main is origin/main at acd7a80, step 3 is 4a04892 (runs/step3.txt, its
+  drivers s3d). Compiler: /home/user/wf-pin at
+  3629be153b8fdb792ffe146d21dfc3251e4f887a, compiler/target/gate/whitefootc
+  (sha256 8cb7ee344f0b1273...). Host: 4 CPUs, Linux 6.18. Pages, sheets and
+  edit scripts as in runs/step3.txt.
+
+What changed (renderer/layout/update.wf unless named)
+  - update_flow: when the context's width, flow width, space and definite
+    height (or definite_free: no block or child of its flow takes a
+    percentage height) are those of its last layout and no marked child is
+    positioned, update_in_place runs instead of the pre-pass and the
+    stacking pass. It takes at most one marked child and one marked
+    paragraph, found by the counts and last index text_changed records
+    (marked_children, marked_child, marked_paragraphs, marked_paragraph)
+    instead of a scan. The child (an atomic inline, or an in-flow child no
+    earlier float reaches: beside) is updated in its kept space; the one
+    entry whose layout changed is the paragraph broken again in place at
+    its width with no exclusion (refused when a float placed before it
+    reaches below its top: Paragraph.beside), or the in-flow child (its
+    width, margins and baseline presence unchanged). Height unchanged:
+    nothing else moves. Height changed by delta: every block around it
+    must grow with it (blocks_grow: auto height, no max-height, length
+    vertical paddings, no min-height above its paddings and borders), a
+    line box lies in it (no margin collapsing
+    through), then translate_after moves every later paragraph, child and
+    block by delta (counted loops; paragraphs and blocks found by binary
+    search from the entry), translate_fragments moves or grows the
+    context's own list (split_fragments' rectangles, now allowed), and
+    finish_in_place sets the content height (content_raw + delta), the
+    height by used_height, the own fragment, and positions the
+    out-of-flow children again. The baseline follows its entry
+    (baseline_entry). Anything else falls back to the pre-pass path,
+    which keeps what the in-place attempt already did.
+  - Fragments (decision 2): paragraph fragments stay relative to the
+    paragraph (Paragraph.x, top); place_context adds the position;
+    copy_fragments is gone (renderer/layout/flow.wf). Its cost was not
+    timed apart: in step 3 it was one of the passes of the 104,321-entry
+    walk each html5 edit made (23.3 ms in all, runs/step3.txt), and step
+    3b's in-place path never runs it; place_boxes' output is checked by
+    the identity runs (the dumps are placed boxes) and by the full dumps
+    against main's (section 1).
+  - update_container (decision 3) for a marked flex or grid container in
+    its kept space with one marked in-flow item: recompute the item's
+    intrinsic sizes first when they were known before the edit
+    (intrinsic_held, against intrinsic_basis) and require held_min and
+    held_max; update the item in its kept space; stop when update_held's
+    `still` holds: same outputs (same_outputs), same content height
+    (content_raw) and definite_free. Otherwise the container's algorithm
+    runs again in update mode, keeping items whose space is unchanged.
+    A column flex container never stops (it lays an item out at its
+    natural width and again at its line's cross size when it stretches).
+    This is the decision with one addition: the decision compares
+    border-box size, baseline and margins in the kept space, but a grid
+    item stretched to its row, or a flex item stretched to its line, has
+    its height forced there, so that comparison cannot see a change of the
+    content height the rows pass or the line measures in a height-unknown
+    space; content_raw and definite_free make the stop sound for those
+    spaces, since grid and row flex containers lay an item out at one
+    width in every pass.
+  - Decision 4: of the 61 html5 contexts, 60 were absolutely positioned
+    children that position_out_with lays out again in the space their
+    insets leave (a diagnostic build of step 3's code, made in this step,
+    counted the re-laid children by kind; the 61st was not identified).
+    settle_child now keeps a positioned child the positioning pass lays
+    out again, resolving its margins, and position_out_with keeps it when
+    that space is the one it was last laid out in (equivalent_space). Each
+    html5 edit now lays out 2 contexts (the timing counts below).
+  - The steady test no longer refuses a context whose intrinsic sizes were
+    asked for in the update: update_in_place resolves its children's
+    margins again first (measured), as the pre-pass path's children pass
+    does after intrinsic_flow resolves them against no width.
+  - A table or replaced context on the path, laid out in full, has the
+    marks below it cleared (clear_tree_marks): ecma262's tables sit in
+    `emu-table figure {display:flex}`, whose update reaches the table
+    without its flow parent's reset_tree, and a mark left on a cell's
+    paragraph hid the next edit of that paragraph from the counts, so it
+    was not prepared again (found by ecma262 session-typing: 44 of 88
+    edits differed on an intermediate build, every second edit of the
+    typing run, and none after this change).
+
+1. Every incremental dump identical to the full rebuild (criterion part 4).
+$ sh research/investigations/incremental-layout/run.sh inc s3m PAGE word sentence session-typing session-scattered   (one process per page; s3m is the step 3b seq driver)
+apollo11 word (s3m): 60 edits, inc same 60, DIFF 0, refused 0
+apollo11 sentence (s3m): 60 edits, inc same 60, DIFF 0, refused 0
+apollo11 session-typing (s3m): 100 edits, inc same 100, DIFF 0, refused 0
+apollo11 session-scattered (s3m): 100 edits, inc same 100, DIFF 0, refused 0
+ecma262 word (s3m): 20 edits, inc same 20, DIFF 0, refused 0
+ecma262 sentence (s3m): 20 edits, inc same 20, DIFF 0, refused 0
+ecma262 session-typing (s3m): 100 edits, inc same 100, DIFF 0, refused 0
+ecma262 session-scattered (s3m): 100 edits, inc same 100, DIFF 0, refused 0
+html5 word (s3m): 60 edits, inc same 60, DIFF 0, refused 0
+html5 sentence (s3m): 60 edits, inc same 60, DIFF 0, refused 0
+html5 session-typing (s3m): 100 edits, inc same 100, DIFF 0, refused 0
+html5 session-scattered (s3m): 100 edits, inc same 100, DIFF 0, refused 0
+$ WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh inc step3b_par PAGE word sentence session-typing session-scattered   (one page at a time)
+apollo11 word (step3b_par): 60 edits, inc same 60, DIFF 0, refused 0
+apollo11 sentence (step3b_par): 60 edits, inc same 60, DIFF 0, refused 0
+apollo11 session-typing (step3b_par): 100 edits, inc same 100, DIFF 0, refused 0
+apollo11 session-scattered (step3b_par): 100 edits, inc same 100, DIFF 0, refused 0
+ecma262 word (step3b_par): 20 edits, inc same 20, DIFF 0, refused 0
+ecma262 sentence (step3b_par): 20 edits, inc same 20, DIFF 0, refused 0
+ecma262 session-typing (step3b_par): 100 edits, inc same 100, DIFF 0, refused 0
+ecma262 session-scattered (step3b_par): 100 edits, inc same 100, DIFF 0, refused 0
+html5 word (step3b_par): 60 edits, inc same 60, DIFF 0, refused 0
+html5 sentence (step3b_par): 60 edits, inc same 60, DIFF 0, refused 0
+html5 session-typing (step3b_par): 100 edits, inc same 100, DIFF 0, refused 0
+html5 session-scattered (step3b_par): 100 edits, inc same 100, DIFF 0, refused 0
+$ cmp build/x5/out/PAGE-KIND.s3m.txt build/x5/out/PAGE-KIND.step3b_par.txt   (run.sh same's comparison, for these two builds)
+html5 word: seq and par identical (61 lines)
+html5 sentence: seq and par identical (61 lines)
+html5 session-typing: seq and par identical (101 lines)
+html5 session-scattered: seq and par identical (101 lines)
+ecma262 word: seq and par identical (21 lines)
+ecma262 sentence: seq and par identical (21 lines)
+ecma262 session-typing: seq and par identical (101 lines)
+ecma262 session-scattered: seq and par identical (101 lines)
+apollo11 word: seq and par identical (61 lines)
+apollo11 sentence: seq and par identical (61 lines)
+apollo11 session-typing: seq and par identical (101 lines)
+apollo11 session-scattered: seq and par identical (101 lines)
+$ MAIN dump 1 PAGE.html UA SHEETS; build/layout_oracle_s3m dump 1 PAGE.html UA SHEETS; cmp   (MAIN the main driver of runs/step3.txt)
+ecma262: dump identical to main's (19024863 bytes)
+html5: dump identical to main's (12538869 bytes)
+apollo11: dump identical to main's (1248777 bytes)
+  The sessions keep one layout across their 100 edits. No edit of these
+  scripts was refused.
+  Small pages (build/x5/mini/, written for steps 3 and 3b; listed at the
+  end), with the step 3b seq driver:
+$ build/layout_oracle_s3m edit build/x5/mini/PAGE.edits build/x5/mini/PAGE.html renderer/style/ua.css | grep -a '^edit' | awk '{print $NF}' | sort | uniq -c
+  m   (runs/step3.txt's page and script):  18 same, 1 refused (the box-tree
+      change `T 7 0 x`, as in step 3)
+  m2  (grid, flex, sections, lists, relative and bottom-anchored boxes;
+      52 edits): 52 same
+  m4  (the delta path: nested bordered blocks, min-height, fixed height,
+      a positioned block with a bottom-anchored child, an inline-block,
+      a float and a cleared paragraph, a block formatting context, a list,
+      tall lines, an empty paragraph; 28 edits): 28 same
+  m5  (blocks interrupting inline boxes around, before and after the
+      edited paragraphs, and empty inline boxes; 11 edits): 11 same
+  m3.edits on m.html (one edit with a P line) also gives `inc same`.
+
+2. Falsifiers, each a separate build from a copy of 8f842ab with one change,
+   each run once and required to fail:
+   f1b, mark_path does not mark the contexts on the path (its
+     `set context^.dirty = True();` after the recursive call removed);
+   f2b, same_outputs leaves the height out (`let size = band(width,
+     height);` became `let size = width;`);
+   f3b, the delta path translates the later entries by the wrong amount
+     (translate_after given `change.delta +sat 1_i32`);
+   f4b, the delta path leaves the context's own fragment list in place
+     (the translate_fragments call removed).
+$ sh research/investigations/incremental-layout/run.sh inc fNb apollo11 sentence word
+apollo11 sentence (f1b): 60 edits, inc same 0, DIFF 60, refused 0
+apollo11 word (f1b): 60 edits, inc same 0, DIFF 60, refused 0
+apollo11 sentence (f2b): 60 edits, inc same 16, DIFF 44, refused 0
+apollo11 word (f2b): 60 edits, inc same 56, DIFF 4, refused 0
+apollo11 sentence (f3b): 60 edits, inc same 30, DIFF 30, refused 0
+apollo11 word (f3b): 60 edits, inc same 58, DIFF 2, refused 0
+apollo11 sentence (f4b): 60 edits, inc same 60, DIFF 0, refused 0
+apollo11 word (f4b): 60 edits, inc same 60, DIFF 0, refused 0
+$ sh research/investigations/incremental-layout/run.sh inc fNb html5 word sentence   (N = 3, 4)
+html5 word (f3b): 60 edits, inc same 56, DIFF 4, refused 0
+html5 sentence (f3b): 60 edits, inc same 30, DIFF 30, refused 0
+html5 word (f4b): 60 edits, inc same 60, DIFF 0, refused 0
+html5 sentence (f4b): 60 edits, inc same 60, DIFF 0, refused 0
+$ build/layout_oracle_fNb edit build/x5/mini/PAGE.edits build/x5/mini/PAGE.html renderer/style/ua.css   (counted as in 1)
+  f1b: m 10 DIFF, 8 same, 1 refused; m2 24 DIFF; m4 6 DIFF; m5 11 same
+  f2b: m2 4 DIFF; m, m4, m5 no DIFF
+  f3b: m2 8 DIFF; m4 16 DIFF; m5 10 DIFF; m no DIFF
+  f4b: m5 10 DIFF; m, m2, m4 no DIFF
+  Falsifiers 1, 2 and 3 fail on apollo11 (f1b and f2b as in step 3: 60
+  and 60, 44 and 4 edits). Falsifier 4 fails only on m5: no edit of the
+  three pages' scripts moved or grew a rectangle of a context's own list
+  on the delta path (else f4b would differ there), so translate_fragments
+  rests on m5 alone. f1b passes m5 because m5's
+  edited paragraphs sit in the root's own flow, where the path has no
+  context to mark.
+
+3. The --par ledger (the step 3b par build, `--par-ledger`). The 39
+   functions of pkg::layout with split loops in main keep their counts
+   (the per-function diff against main adds lines only); against step 3,
+   update_flow has 4 split loops instead of 8 (its scans became the
+   recorded marks), count_marked 1 instead of 2, and new split loops are
+   translate_after (3: paragraphs, children, blocks), translate_fragments,
+   update_in_place (the margins loop), clear_tree_marks and clear_subtree:
+$ grep -E '^PAR split +layout\.' LEDGER | awk '{print $3}' | sort | uniq -c   (diff of step 3's counts against step 3b's)
+<       2 layout.count_marked
+---
+>       1 layout.clear_subtree
+>       1 layout.clear_tree_marks
+>       1 layout.count_marked
+<       8 layout.update_flow
+---
+>       3 layout.translate_after
+>       1 layout.translate_fragments
+>       4 layout.update_flow
+>       1 layout.update_in_place
+  New loops denied in renderer/layout/update.wf, sequential by nature:
+  marked_children_state's scan when several children are marked (two
+  accumulators), blocks_grow's and grow_blocks' walks up the block
+  parents, and first_paragraph_after's and first_block_after's binary
+  searches.
+
+4. Timing (criterion parts 1 and 3), one session under the host lock with
+   nothing else running:
+$ WHITEFOOT_CHECK_TIMEOUT=7200 perl /home/user/wf-pin/.github/run-check.pl x5s3-timing5 sh SESSION
+   where SESSION runs, for each page and for word and sentence,
+     WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh time step3b_par PAGE KIND 3
+     sh research/investigations/incremental-layout/run.sh time step3b_seq PAGE KIND 3
+   (as in runs/step3.txt: each edit's time the least of three process
+   runs), then part 3. Times in microseconds. "<1ms" and "<1/100" count the
+   edits under 1 ms and under one hundredth of the page's full layout stage
+   (5.9 ms on html5 and ecma262, 0.44 ms on apollo11), from the same run
+   files (build/x5/time/).
+
+                      build  min  median   p90    max  <1ms   <1/100
+  apollo11 word       par-4  111   3248   3503   3621  28/60  28/60
+                      seq    102   4484   4697   4785  28/60  28/60
+  apollo11 sentence   par-4   94    344   3432   3629  40/60  32/60
+                      seq     65    267   4670   4835  40/60  38/60
+  html5 word          par-4   31     83    179    750  60/60  60/60
+                      seq     28     76    171   1059  59/60  60/60
+  html5 sentence      par-4   54    230    403    549  60/60  60/60
+                      seq     50    224    606    736  60/60  60/60
+  ecma262 word        par-4   35    110    416   1757  18/20  20/20
+                      seq     30    103    345   2090  18/20  20/20
+  ecma262 sentence    par-4   41   1288   1536   1601   4/20  20/20
+                      seq     35   1621   2121   2540   4/20  20/20
+   (min, median, p90 and max as inctime.py prints them; the counts are
+   update_counts', as in step 3: html5 2 contexts and 1 paragraph per
+   edit, 0 to 79,428 flow entries translated on word edits and 0 to
+   92,752 on sentence edits; apollo11 3 to 21 contexts, 0 to 87
+   paragraphs; ecma262 3 to 6 contexts, 0 or 1 paragraph.)
+
+  Part 1: html5 passes one hundredth of the stage on every edit and 1 ms
+  on every edit but the sequential build's first word edit (1059 us, the
+  first edit of each process run, translating 79,428 entries). ecma262
+  passes one hundredth of the stage on every edit, and 1 ms on 18 of 20
+  word edits and 4 of 20 sentence edits. apollo11 passes both bounds on
+  28 of 60 word edits and on 32 (par-4) or 38 (seq) of 60 sentence edits,
+  and fails the rest. In step 3 no edit passed on any page (medians
+  22.7 ms, 23.3 ms and 341 ms sequential on apollo11, html5 and ecma262).
+
+   Remaining cost by cause. The causes come from a diagnostic build (a
+   copy of 8f842ab whose update_flow records, for each run of its
+   pre-pass path, which steady condition failed (bits: 1 flow width, 2
+   definite height, 4 space, 8 width, 16 a positioned child marked, 32
+   the in-place update refused, 64 an unmarked context, 128 the marked
+   paragraph beside a float) and the flow entries it walked, and whose
+   driver prints them after the counts; not committed; of 8f842ab, whose
+   update differs from 892796f's only for column flex containers), joined
+   with the sequential times above edit by edit, and from callgrind
+   profiles of update on 8f842ab's seq driver:
+     apollo11 word      32 edits  4453 to 4785 us  the article's flow
+                        context (element 936, 1014 entries) re-stacked:
+                        19 pre-pass runs, bits 237 (128: the edited
+                        paragraph is beside the infobox or a floated
+                        thumbnail)
+                        28 edits  102 to 322 us  in place (26 with no
+                        pre-pass run; 2 with the root's 16 entries)
+     apollo11 sentence  16 edits  4528 to 4835 us  the same re-stack, bits
+                        237
+                         4 edits  4459 to 4582 us  the same re-stack, bits
+                        109 (no 128: the edit is in a child context of 3
+                        entries, which re-stacked, and the article refused
+                        in place for that child)
+                        40 edits  65 to 629 us  in place, or re-stacking
+                        only a small context or the references list
+                        (element 5156, 1190 entries, columned, which
+                        update_in_place refuses; 182 to 295 us)
+     ecma262 sentence   16 edits  1459 to 2540 us  body's flex algorithm
+                        run again (the edit changed the specification
+                        container's content height); the two pre-pass runs
+                        walk 2 to 7 entries
+                         4 edits  35 to 152 us  in place
+     ecma262 word        2 edits  1962 to 2090 us  as the 16 sentence edits
+                        18 edits  30 to 345 us  in place
+   - apollo11's re-stack: decision 1 requires that no float reaches the
+     changed entry, and the article floats its infobox and thumbnails
+     beside most paragraphs. The re-stack breaks the 83 paragraphs beside
+     floats again at full width and again beside the floats (the counts'
+     83 paragraphs), and lays out again at full width, then narrows again,
+     the small children a float narrowed (the 18 other pre-pass runs,
+     bits 1, 4, 8 and 64: another width and space than they were last
+     laid out in): docs/todo.md, both items. This is 4.5 to 4.8 ms against
+     the page's 71 to 82 ms sequential layout stage (37 to 44 ms at four
+     workers, in this session and step 3's), so these edits pass neither
+     bound.
+   - ecma262's flex rerun (decision 3's fallback): 15.1 million
+     instructions for the first sentence edit, of which flex_final 11.5
+     million and position_out_with 6.9 million (overlapping: lay_out_flex
+     calls both). The specification container is kept (its space is
+     unchanged), but 8 items or nested items that are not flow contexts
+     and whose space the new line size changed are laid out in full
+     (lay_out_context from lay_out_child), and 2 of body's 58 positioned
+     children are laid out again by position_out_with: 58,904 calls of
+     break_paragraph, by their number the table of contents in the
+     sidebar laid out twice. lay_out_child updates only flow contexts
+     incrementally when their space changed.
+   - The intrinsic sizes of the path's items, recomputed by
+     update_container when they were known before the edit (decision 3's
+     measurement): none on ecma262 (the specification container's are not
+     read: no call of intrinsic_sizes in the profiles of six word edits
+     and of one sentence edit), 46,934 instructions over two apollo11
+     edits (the grid items on the path), against 117 million for the
+     whole of those two updates.
+   - The containers' counts: update_held gathers the item's counts when
+     update_container stops; when a container's algorithm runs again its
+     items' counts are dropped (lay_out_child returns none), which is why
+     run.sh time's counts show 3 contexts for those edits.
+
+   The --par build (decision 5). The step 3 --par driver against the same
+   sources with the stacking pass's three small split loops (mark_lines,
+   float_bottom, lowest_bottom_above in renderer/layout/flow.wf) made
+   sequential (a `break` added to each, which the certifier refuses; md5
+   7b61cfe47e58c19ced00346e7b9fde7b), html5 word, one session under the
+   host lock:
+$ WF_WORKERS=W sh research/investigations/incremental-layout/run.sh time BUILD html5 word 3   (BUILD par = step 3's --par driver, ns = the variant)
+  par W=4: min 52393 median 55152 p90 56876 max 60022
+  par W=1: min 21130 median 22688 p90 23603 max 34355
+  ns  W=4: min 27271 median 28128 p90 28922 max 36652
+  ns  W=1: min 21352 median 22820 p90 23646 max 31750
+   Confirmed: those three loops' parallel dispatch, paid once per flow
+   entry of the 104,321-entry walk, cost about 27 ms of the 55 ms; the
+   rest of the gap to one worker (28.1 against 22.8 ms) was not
+   attributed. Recorded in docs/todo.md under Whitefoot requirements. With
+   step 3b no edit re-stacks html5's root flow, and the --par and
+   sequential builds take the same time (above).
+
+   Part 3, the full build within 5 percent of main's: part3.sh as in
+   runs/step3.txt, run as `part3.sh main s3d s3m` (s3d = step 3, s3m =
+   step 3b), RUNS 5, in the same session:
+  page     build  main    step3   step3b  (step 3, step 3b against main)
+  ecma262  par-4  0.4833  0.4933  0.4967  (+2.1%, +2.8%)
+  ecma262  seq    1.1567  1.1167  1.1033  (-3.5%, -4.6%)
+  html5    par-4  0.4967  0.4867  0.4800  (-2.0%, -3.4%)
+  html5    seq    1.1967  1.1900  1.2167  (-0.6%, +1.7%)
+  apollo11 par-4  0.0370  0.0410  0.0390  (+10.8%, +5.4%)
+  apollo11 seq    0.0710  0.0720  0.0700  (+1.4%, -1.4%)
+   (T(0) and T(REPS) as printed: ecma262 par-4 1.19 2.64, 1.20 2.68, 1.23
+   2.72; seq 2.51 5.98, 2.55 5.90, 2.56 5.87; html5 par-4 0.92 2.41, 0.93
+   2.39, 0.93 2.37; seq 1.93 5.52, 2.00 5.57, 1.97 5.62; apollo11 par-4
+   0.48 0.85, 0.48 0.89, 0.46 0.85; seq 1.07 1.78, 1.08 1.80, 1.09 1.79.)
+   At REPS 10 one hundredth of a second in T moves apollo11's per-run
+   figure by 0.001 s, about 2.7 percent at four workers, so the same
+   session ran apollo11 again with REPS 40 and RUNS 7:
+$ PAGES_LIST=apollo11 REPS=40 RUNS=7 part3.sh main s3d s3m
+  apollo11 par-4  0.0382  0.0382  0.0387  (0.0%, +1.3%)
+  apollo11 seq    0.0732  0.0737  0.0732  (+0.7%, 0.0%)
+   (T(0) T(40): main 0.45 1.98, step3 0.46 1.99, step3b 0.46 2.01 at
+   par-4; 1.09 4.02, 1.06 4.01, 1.08 4.01 sequential.) Part 3 holds:
+   every cell within 5 percent of main's, apollo11 by the longer run
+   (step 3's driver shows +10.8 percent at REPS 10 too). This host ran faster in this session
+   than in step 3's (main's ecma262 seq 1.1567 against 1.2633); an
+   earlier session on 8f842ab gave the same picture (every cell within
+   5 percent but apollo11 sequential at REPS 10, +7.3 percent, then +0.9
+   percent at REPS 40).
+
+5. Refusals and limits of this step
+   - update_in_place refuses: more than one marked child or paragraph; a
+     marked child that is a float, out of flow, or beside a float; a
+     marked paragraph beside a float (Paragraph.beside); a columned
+     context; an entry without lines, or of no height before the edit; a
+     height change where a block around the entry cannot grow with it
+     (a specified height, a max-height, a percentage vertical padding, a
+     min-height above its paddings and borders) or its margins changed. Each refusal falls back to the pre-pass
+     path, which re-stacks.
+   - update_container stops only for an in-flow item that is a flow
+     context or a container that itself stopped; a stretched flex or grid
+     item that is not a flow context is laid out again in full when the
+     container's algorithm runs again (ecma262's sentence edits, above).
+   - The counts of a container's items are not gathered when its algorithm
+     runs again (lay_out_child drops them), so run.sh time's counts
+     hide that work; the diagnostic build counted it.
+   - The delta path's translation of the context's own fragment list is
+     checked only by m5 (falsifier 4).
+   - When update_container recomputes a nested container's intrinsic
+     sizes, its algorithm writes an intrinsic-measuring space into the
+     items it measures, and a stop leaves the unmarked ones with
+     it; nothing reads a kept child's space before the next pre-pass or
+     container pass writes it again, but it is the request-order state
+     docs/todo.md's intrinsic-size item describes.
+
+The small pages (build/x5/mini/; node identifiers from the nodes mode)
+  m.html and m.edits, m3.edits: runs/step3.txt.
+  m2.html:
+    <!DOCTYPE html><html><head><style>
+    .g{display:grid;grid-template-columns:200px 1fr;grid-template-rows:min-content 1fr}
+    .fr{display:flex} .fr>div{flex-basis:40%} .pos{position:relative} .ab2{position:absolute;bottom:0;left:0;right:0}
+    section{margin:10px 0;padding:4px} li{margin:2px} .rel{position:relative;top:5px}
+    </style></head><body>
+    <section><p>Para one in a section that has enough words to wrap when we add more words to it here.</p>
+    <div><p>Nested para two.</p><p class="rel">Relatively positioned para three.</p></div></section>
+    <ul><li>Item one with text</li><li>Item two with text that may wrap if longer</li></ul>
+    <div class="pos"><p>Positioned container text.</p><div class="ab2">bottom anchored</div></div>
+    <div class="g"><div>grid a text</div><div>grid b text that is longer and wraps maybe</div><div>grid c</div><div>grid d</div></div>
+    <div class="fr"><div>flex one text that wraps when there is more text in it for sure</div><div>flex two</div></div>
+    <p>Final paragraph after everything.</p>
+    </body></html>
+  m2.edits: for each NODE OFFSET of 10 4, 14 6, 16 10, 20 4, 22 4, 26 10,
+    28 6, 32 4, 34 4, 36 4, 42 4, 44 4, 47 5, the four lines
+    `T NODE OFFSET  many more words added here to make this wrap onto an
+    extra line for the test of the delta path in update` (one line, the
+    text starting with a space), `D NODE OFFSET 105`, `T NODE OFFSET x`,
+    `D NODE OFFSET 1`.
+  m4.html:
+    <!DOCTYPE html><html><head><style>
+    body{width:300px} .b{border:2px solid;padding:3px;margin:6px 0} .mh{min-height:60px} .h{height:80px} .pct{height:50%}
+    .rel{position:relative} .ab{position:absolute;bottom:0;left:0;width:50px} .ib{display:inline-block;width:80px}
+    .fl{float:left;width:60px;height:30px} .bfc{overflow:hidden} .lh{line-height:30px} .cl{clear:both}
+    </style></head><body>
+    <p>Alpha paragraph that will grow and wrap to more lines when words are added.</p>
+    <div class="b"><div class="b"><p>Beta nested inside two bordered blocks with padding.</p></div><p>Gamma after the inner block.</p></div>
+    <div class="mh"><p>Delta in a min-height block.</p></div>
+    <div class="h"><p>Epsilon in a fixed height block.</p></div>
+    <div class="rel"><p>Zeta in a positioned block with an anchored child.</p><div class="ab">anchored</div></div>
+    <p>Eta holds <span class="ib">an inline block with words inside</span> after it.</p>
+    <div class="fl">float</div><p>Theta beside a float.</p><p class="cl">Iota cleared.</p>
+    <div class="bfc"><p>Kappa in a block formatting context.</p><p>Lambda second in it.</p></div>
+    <ol><li>Mu item one</li><li>Nu item two</li></ol>
+    <p class="lh">Xi with tall lines.</p>
+    <div><p></p><p>Omicron after an empty paragraph.</p></div>
+    <p>Pi last.</p>
+    </body></html>
+  m4.edits (W the 108-byte text `lots of extra words appended so that
+    this paragraph needs several more lines than before in the narrow
+    body `):
+    T 9 5 W
+    D 9 5 108
+    T 9 0 x
+    T 14 4 W
+    T 16 5 W
+    D 14 4 108
+    T 20 5 W
+    T 20 5 W
+    T 24 7 W
+    T 24 7 W
+    T 28 4 W
+    D 28 4 108
+    T 30 0 more anchored words here
+    T 33 3 W
+    T 35 2 W
+    D 35 2 108
+    T 35 0 q
+    T 41 5 W
+    T 43 4 W
+    T 47 5 W
+    T 49 6 W
+    T 53 2 W
+    T 55 2 x
+    T 58 2 W
+    T 63 7 W
+    T 66 2 W
+    D 66 2 108
+    D 20 5 108
+  m5.html:
+    <!DOCTYPE html><html><head><style>
+    body{width:300px} div{margin:4px 0}
+    </style></head><body>
+    <p><span></span></p>
+    <span class="a">inline start <div>Block alpha inside an inline box that blocks interrupt.</div><div><p>Beta paragraph inside the run of blocks with words.</p></div> inline end</span>
+    <p><span></span></p>
+    <p>Gamma paragraph that grows when words are added to it here.</p>
+    <p><span></span></p>
+    <span class="b">second start <div>Block delta in a second run.</div> second end</span>
+    <p>Epsilon last paragraph.</p>
+    <span class="c"><div>Zeta block opening a third run.</div>tail</span>
+    </body></html>
+  m5.edits (W as above):
+    T 24 5 W
+    D 24 5 108
+    T 17 4 W
+    D 17 4 108
+    T 14 5 W
+    T 36 3 W
+    T 12 0 W
+    D 12 0 108
+    T 32 2 W
+    T 40 1 W
+    T 41 0 W

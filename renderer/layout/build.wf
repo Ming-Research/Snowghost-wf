@@ -108,21 +108,17 @@ struct Open {
   emitted: u64;
 }
 
-struct Counter {
-  doc "One counter instance of the walk: its name's atom index, its value, and the depth of the element whose children and following siblings it is in scope for.";
-  name: u32;
-  value: i32;
-  level: u64;
-}
-
 struct Walk {
-  doc "The state the walk in tree order carries: each node's element index (unlisted for a node that is no element of the traversal), the counter instances in scope, the quote depth and the element depth.";
+  doc "The state the walk in tree order carries: each node's element index (unlisted for a node that is no element of the traversal), the counter instances in scope, the quote depth and the element depth, and the text nodes it met where they make no piece (skip_text).";
   order: Box<Array<u32>>;
   counters: Box<Slots<Counter>>;
   quote_depth: i32;
   depth: u64;
   list_item: u32;
+  skipped: Box<Slots<u32>>;
 }
+
+const skipped_text: u32 = 4294967294_u32;
 
 fn inconsistent<T: drop>() -> result: Result<T, LayoutError> pure {
   doc "Returns the Inconsistent refusal.";
@@ -174,7 +170,7 @@ fn push_or_fail<T: drop>(cell: &Box<Slots<T>>, value: T) -> result: Result<unit,
 }
 
 fn element_ref(element: u32) -> made: StyleRef pure {
-  doc "The style of the element at index element.";
+  doc "The style of the element whose NodeId index is element.";
   let no = False();
   return StyleRef(element: element, pseudo: no_pseudo, anonymous: no);
 }
@@ -187,6 +183,8 @@ fn anonymous_of(style: StyleRef) -> made: StyleRef pure {
 
 fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   doc "A context of kind and style that holds nothing and has not been laid out.";
+  let entered = empty_point();
+  let left = empty_point();
   let flow = box_slots_new::<Flow>(capacity: 0_u64);
   let pieces = box_slots_new::<Piece>(capacity: 0_u64);
   let blocks = box_slots_new::<Block>(capacity: 0_u64);
@@ -199,9 +197,11 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let fragments = box_slots_new::<Fragment>(capacity: 0_u64);
   let splits = box_slots_new::<Split>(capacity: 0_u64);
   let column_map = box_slots_new::<ColumnPiece>(capacity: 0_u64);
+  let naturals = box_slots_new::<i32>(capacity: 0_u64);
   let no = False();
   let space = Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
-  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32);
+  let never = Space(available: laid_never, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
+  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no, entered: move entered, left: move left);
 }
 
 fn new_open(style: StyleRef, first: u64) -> made: Open pure {
@@ -222,7 +222,8 @@ fn new_paragraph(style: StyleRef, first: u64, count: u64, reserve: u64) -> made:
   let lines = box_slots_new::<Line>(capacity: 0_u64);
   let fragments = box_slots_new::<Fragment>(capacity: 0_u64);
   let atomics = box_slots_new::<Atomic>(capacity: 0_u64);
-  return Paragraph(style: style, first: first, count: count, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, width: 0_i32, left: 0_i32, top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32);
+  let clean = False();
+  return Paragraph(style: style, first: first, count: count, text: move text, runs: move runs, run_styles: move run_styles, marks: move marks, shaped: move shaped, lines: move lines, fragments: move fragments, atomics: move atomics, width: 0_i32, left: 0_i32, top: 0_i32, height: 0_i32, min_content: 0_i32, max_content: 0_i32, dirty: clean, x: 0_i32, flow_at: no_index, block: no_index, beside: clean, broken_width: laid_never, broken_left: laid_never);
 }
 
 fn emit_begins(context: &Context, open: &Open) -> result: Result<unit, LayoutError> writes(context), writes(open) {
@@ -452,7 +453,8 @@ fn add_child_flow(context: &Context, child: Context, kind: u8) -> result: Result
 }
 
 fn pseudo_index(styles: &Styles, element: u32, kind: u8) -> pseudo: u32 reads(styles) {
-  doc "Returns the index in the style stage's pseudo-element list, sorted by element and kind, of element's ::before (kind pseudo_before) or ::after, or no_pseudo when it has none, by binary search.";
+  doc "Returns the index in the style stage's pseudo-element list, sorted by their elements' preorder positions and kind, of the ::before (kind pseudo_before) or ::after of the element whose NodeId index is element, or no_pseudo when it has none, by binary search on the element's position.";
+  let position = element_position(styles: styles, element: element);
   let count = styles^.pseudos.inner.len;
   let low = 0_u64;
   let high = count;
@@ -465,8 +467,9 @@ fn pseudo_index(styles: &Styles, element: u32, kind: u8) -> pseudo: u32 reads(st
     let middle = low + half;
     if middle < count {
       let listed_entry = styles^.pseudos.inner[middle];
-      let before_element = listed_entry.element < element;
-      let same_element = listed_entry.element == element;
+      let entry_position = cvt::<u32, u64>(listed_entry.element);
+      let before_element = entry_position < position;
+      let same_element = entry_position == position;
       let before_kind = listed_entry.kind < kind;
       let earlier_kind = band(same_element, before_kind);
       let earlier = bor(before_element, earlier_kind);
@@ -1083,13 +1086,21 @@ fn add_content(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
 }
 
 fn element_at(walk: &Walk, node: NodeId) -> element: u32 reads(walk) {
-  doc "Returns node's element index in the traversal, or unlisted.";
+  doc "Returns node's NodeId index, which a StyleRef names an element by, when node is an element of the traversal, or unlisted.";
   let at = cvt::<u32, u64>(node.index);
   if at < walk^.order.inner.len {
     let found = walk^.order.inner[at];
-    return found;
+    if found != unlisted {
+      return node.index;
+    }
   }
   return unlisted;
+}
+
+fn skip_text(walk: &Walk, node: NodeId) -> result: unit writes(walk) {
+  doc "Records that the walk met the text node where its data makes no piece: empty in a flow, or only white space where a table, a row group or a flex or grid container skips it. Data that would make a piece there changes the box tree, which text_changed refuses.";
+  let pushed = push_item::<u32>(cell: &walk^.skipped, value: node.index, ceiling: item_ceiling);
+  return unit;
 }
 
 fn local_name_of(document: &Document, node: NodeId) -> (name: u32, html: Bool, svg: Bool) reads(document) {
@@ -1565,6 +1576,8 @@ fn walk_children(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
           let owner = current_style(open: open);
           let piece = Piece::Bytes(start: span^.start, end: span^.end, style: owner, node: node.index);
           let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
+        } else {
+          skip_text(walk: walk, node: node);
         }
       }
       Element(..) => {
@@ -1667,7 +1680,8 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
     return Ok<unit, LayoutError>(value: unit);
   }
   let established = establishes(group: group);
-  let root = element == 0_u32;
+  let root_position = element_position(styles: styles, element: element);
+  let root = root_position == 0_u64;
   let columned = multicol(styles: styles, style: style);
   let separate_root = bor(root, columned);
   let own = bor(established, separate_root);
@@ -1695,7 +1709,7 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
     return too_large::<unit>();
   }
   let marker = outside_marker(styles: styles, atoms: atoms, style: style, display: group.display);
-  let block = Block(style: style, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, marker: marker);
+  let block = Block(style: style, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, marker: marker, parent: no_index, flow_at: no_index, inner_x: 0_i32, held_y: 0_i32);
   let kept = propagate push_or_fail::<Block>(cell: &context^.blocks, value: block);
   let at = cvt::<u64, u32>(index);
   let flow_open = context^.flow.inner.len;
@@ -1720,6 +1734,16 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
 }
 
 fn build_box(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8) -> result: Result<Context, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk) {
+  doc "Builds the context of kind that the element node establishes (build_box_body) and records in it the walk's state as it began and as it ended (entry and exit).";
+  let entered = walk_point(walk: walk);
+  let built = propagate build_box_body(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
+  let left = walk_point(walk: walk);
+  set built.entered = move entered;
+  set built.left = move left;
+  return Ok<Context, LayoutError>(value: move built);
+}
+
+fn build_box_body(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8) -> result: Result<Context, LayoutError> reads(document), reads(styles), reads(atoms), writes(walk) {
   doc "Builds the context of kind that the element node establishes: a flow context of its ::before, children and ::after, flex or grid items, a table, or a replaced box with no content.";
   let context = new_context(kind: kind, style: style);
   let (name, html, svg) = local_name_of(document: document, node: node);
@@ -1882,6 +1906,7 @@ fn build_item_children(document: &Document, styles: &Styles, atoms: &AtomTable, 
         if usable {
           let blank = is_blank(bytes: &document^.text.inner[start..end]);
           if blank {
+            skip_text(walk: walk, node: node);
           } else {
             let style = anonymous_of(style: container^.style);
             let child = new_context(kind: ctx_flow, style: style);
@@ -2163,6 +2188,8 @@ fn walk_run(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk
           let owner = current_style(open: open);
           let piece = Piece::Bytes(start: span^.start, end: span^.end, style: owner, node: node.index);
           let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
+        } else {
+          skip_text(walk: walk, node: node);
         }
       }
       Element(..) => {
@@ -2236,6 +2263,7 @@ fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, wa
         if usable {
           let blank = is_blank(bytes: &document^.text.inner[start..end]);
           if blank {
+            skip_text(walk: walk, node: child);
           } else {
             let content = new_context(kind: ctx_flow, style: row_style);
             let open = new_open(style: row_style, first: 0_u64);
@@ -2414,6 +2442,7 @@ fn add_group(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
           if usable {
             let blank = is_blank(bytes: &document^.text.inner[start..end]);
             if blank {
+              skip_text(walk: walk, node: child);
             } else {
               let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
               set cursor = rest;
@@ -2570,6 +2599,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
           if usable_text {
             let blank = is_blank(bytes: &document^.text.inner[start..end]);
             if blank {
+              skip_text(walk: walk, node: child);
             } else {
               let none = anonymous_of(style: table^.style);
               let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
@@ -2625,6 +2655,100 @@ fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(conte
   return contexts, paragraphs;
 }
 
+fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) -> result: unit reads(context), writes(listing) {
+  doc "Records, for each text node whose data a paragraph of context reads (a Bytes piece with a node), the context's serial, the piece and the paragraph in listing; consecutive pieces of one node in one paragraph extend its count.";
+  let paragraphs = context^.paragraphs.inner.len;
+  let total = context^.pieces.inner.len;
+  let known = listing^.inner.len;
+  for (p in 0_u64..paragraphs) {
+    let first = context^.paragraphs.inner[p].first;
+    let count = context^.paragraphs.inner[p].count;
+    let end_raw = first +sat count;
+    let end = imin(end_raw, total);
+    let small = p < 4294967295_u64;
+    if small {
+      let paragraph = cvt::<u64, u32>(p);
+      for (k in first..end) {
+        let piece = context^.pieces.inner[k];
+        match piece {
+          Bytes(node: source, ..) => {
+            let at = cvt::<u32, u64>(source);
+            let listed = source != no_index;
+            let inside = at < known;
+            let usable = band(listed, inside);
+            let narrow = k < 4294967295_u64;
+            let recorded = band(usable, narrow);
+            if recorded {
+              let piece_at = cvt::<u64, u32>(k);
+              let held = listing^.inner[at];
+              let same_context = held.serial == serial;
+              let same_paragraph = held.paragraph == paragraph;
+              let next_piece = held.piece +sat held.count;
+              let adjacent = next_piece == piece_at;
+              let same_place = band(same_context, same_paragraph);
+              let extends = band(same_place, adjacent);
+              if extends {
+                set listing^.inner[at].count = held.count +sat 1_u32;
+              } else {
+                set listing^.inner[at] = TextUnit(serial: serial, piece: piece_at, count: 1_u32, paragraph: paragraph);
+              }
+            }
+          }
+          Generated(..) => {
+          }
+          Scalar(..) => {
+          }
+          Begin(..) => {
+          }
+          End(..) => {
+          }
+          Object(..) => {
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn record_tree(context: &Context, parent: u32, child: u32, paths: &Box<Slots<ContextPath>>, listing: &Box<Array<TextUnit>>) -> result: Result<unit, LayoutError> reads(context), writes(paths), writes(listing) {
+  doc "Gives context the next serial of a preorder walk of the owned tree, its position in paths, recording its parent's serial and its index among its parent's children, records the text nodes its paragraphs read (record_units), then does the same for its children in order. TooLarge past no_index contexts.";
+  let next = paths^.inner.len;
+  let small = next < 4294967294_u64;
+  if small {
+  } else {
+    return too_large::<unit>();
+  }
+  let serial = cvt::<u64, u32>(next);
+  let place = ContextPath(parent: parent, child: child);
+  let pushed = propagate push_or_fail::<ContextPath>(cell: paths, value: place);
+  record_units(context: context, serial: serial, listing: listing);
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    let narrow = k < 4294967295_u64;
+    if narrow {
+      let index = cvt::<u64, u32>(k);
+      let recorded = propagate record_tree(context: &context^.children.inner[k], parent: serial, child: index, paths: paths, listing: listing);
+    }
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn record_skipped(walk: &Walk, listing: &Box<Array<TextUnit>>) -> result: unit reads(walk), writes(listing) {
+  doc "Gives each text node the walk met without making a piece of it, and that no paragraph reads, the serial skipped_text in listing.";
+  let count = walk^.skipped.inner.len;
+  let known = listing^.inner.len;
+  for (k in 0_u64..count) {
+    let at = cvt::<u32, u64>(walk^.skipped.inner[k]);
+    if at < known {
+      if listing^.inner[at].serial == no_index {
+        set listing^.inner[at].serial = skipped_text;
+      }
+    }
+  }
+  return unit;
+}
+
 fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) {
   doc "Maps each element's node to its preorder index and walks the document from its root into the initial containing block, a flow context whose root element is a child context of it, since the root element's margins do not collapse with its children's (CSS 2.2 8.3.1); every paragraph keeps its pieces and none is prepared.";
   let nodes = document^.nodes.inner.len;
@@ -2658,16 +2782,26 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
     }
   }
   let counters = box_slots_new::<Counter>(capacity: 0_u64);
-  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item);
-  let root_element = element_ref(element: 0_u32);
-  let style = anonymous_of(style: root_element);
+  let skipped = box_slots_new::<u32>(capacity: 0_u64);
+  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, skipped: move skipped);
+  let root_style = element_ref(element: root_element);
+  let style = anonymous_of(style: root_style);
   let initial = new_context(kind: ctx_flow, style: style);
   let open = new_open(style: style, first: 0_u64);
   let root = NodeId(index: 0_u32);
   let walked = propagate walk_children(document: document, styles: styles, atoms: atoms, walk: &walk, parent: root, context: &initial, open: &open);
   let ended = propagate end_paragraph(context: &initial, open: &open);
   let (contexts, paragraphs) = count_tree(context: &initial);
-  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts);
+  let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+  let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);
+  let reserve = imin(contexts, item_ceiling);
+  let paths = box_slots_new::<ContextPath>(capacity: reserve);
+  let recorded = propagate record_tree(context: &initial, parent: no_index, child: 0_u32, paths: &paths, listing: &listing);
+  record_skipped(walk: &walk, listing: &listing);
+  let clean = False();
+  let none = no_updates();
+  let unbuilt = StructureCounts(contexts: 0_u64, paragraphs: 0_u64, reused: 0_u64);
+  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, paths: move paths, dirty: clean, last_update: none, last_structure: unbuilt);
   return Ok<Layout, LayoutError>(value: move made);
 }
 

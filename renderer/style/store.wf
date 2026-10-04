@@ -83,7 +83,9 @@ fn rule_store_new() -> made: RuleStore pure {
   let custom_rules = box_slots_new::<u32>(capacity: 0_u64);
   let attributes = box_slots_new::<AttributeStyle>(capacity: 0_u64);
   let hints = box_slots_new::<AttributeStyle>(capacity: 0_u64);
-  return RuleStore(sheets: move sheets, rules: move rules, declared: move declared, customs: move customs, custom_rules: move custom_rules, attributes: move attributes, hints: move hints);
+  let attribute_at = box_array_filled::<u32>(count: 0_u64, value: no_slot);
+  let hint_at = box_array_filled::<u32>(count: 0_u64, value: no_slot);
+  return RuleStore(sheets: move sheets, rules: move rules, declared: move declared, customs: move customs, custom_rules: move custom_rules, attributes: move attributes, hints: move hints, attribute_at: move attribute_at, hint_at: move hint_at);
 }
 
 fn rule_count(store: &RuleStore) -> count: u64 reads(store) {
@@ -792,7 +794,16 @@ fn add_style_element(store: &RuleStore, document: &Document, node: NodeId, envir
 }
 
 fn add_style_attributes(store: &RuleStore, document: &Document, traversal: &Traversal, atoms: &AtomTable) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(store), writes(atoms) {
-  doc "Parses each element's style attribute as a declaration list and records it for that element, in preorder.";
+  doc "Parses each element's style attribute as a declaration list and records it for that element, in preorder, with the record's position at the element's NodeId index in attribute_at.";
+  let nodes = document^.nodes.inner.len;
+  let indexed = nodes <= node_ceiling;
+  let room = if indexed {
+    give nodes;
+  } else {
+    give 0_u64;
+  }
+  let fresh = box_array_filled::<u32>(count: room, value: no_slot);
+  set store^.attribute_at = move fresh;
   let count = traversal^.elements.inner.len;
   for (at in 0_u64..count) {
     let node = traversal^.elements.inner[at];
@@ -820,9 +831,13 @@ fn add_style_attributes(store: &RuleStore, document: &Document, traversal: &Trav
                     let added = propagate add_declarations(store: store, list: &list, items: &items, sheet: sheet, origin: origin_author, atoms: atoms);
                     let kept = Sheet(values: move list);
                     let placed = propagate push::<Sheet>(cell: &store^.sheets, value: move kept, ceiling: rule_ceiling);
-                    let element = narrow_index(value: at);
-                    let record = AttributeStyle(element: element, first: added.first, end: added.end, custom_first: added.custom_first, custom_end: added.custom_end);
+                    let slot = narrow_index(value: store^.attributes.inner.len);
+                    let record = AttributeStyle(node: node.index, first: added.first, end: added.end, custom_first: added.custom_first, custom_end: added.custom_end);
                     let recorded = propagate push::<AttributeStyle>(cell: &store^.attributes, value: record, ceiling: 4294967295_u64);
+                    let at_node = cvt::<u32, u64>(node.index);
+                    if at_node < store^.attribute_at.inner.len {
+                      set store^.attribute_at.inner[at_node] = slot;
+                    }
                   }
                   Err(..) => {
                     return too_large::<unit>();

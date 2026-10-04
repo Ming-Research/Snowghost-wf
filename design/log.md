@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-04 Keep layout across edits by marks pushed from each edit
+
+Nodes: pipeline, pipeline/layout, pipeline/style
+
+Owner-approved: 2026-10-04, the owner had agreed in Chinese to Q67 to Q73 as recommended; during the resumed work on mbbill/Snowghost#30 the owner chose Q83's option A, then wrote in Chinese that Q84 to Q86 were approved as recommended, that Q87 was approved, and, shown the card Q88 and the tree edits, that Q88 was approved and the close of X5 could proceed.
+
+Summary: The layout tree records that a kept layout names elements by NodeId through an order map each style run rebuilds; that an edit reaches it as marks pushed toward the root (a text node's unit, a style delta of layout-relevant values, or one context built again), with updates recursing only into marked subtrees; the keys and cutoffs that decide what is redone, including whether a background is visible; offsets moved by one delta; and the structural update that builds again the nearest context from the walk's recorded state and refuses when the walk would leave it changed. The style tree records per-run interning with the delta mapping both runs' tables by value, and style attribute and hint records found by NodeId. The pipeline's memoization decision now states what the compiler proves (the places a function reads, not their versions) and that kept stages are checked against a full build byte for byte. The grounds, checks and measurements are in research/investigations/incremental-layout/DESIGN.md and its runs.
+
 ## 2026-10-03 Keep platform policy out of the renderer: facts in, policy out
 
 Nodes: processes, pipeline

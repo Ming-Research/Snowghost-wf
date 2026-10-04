@@ -1,0 +1,1733 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias TextRun = pkg::layout::text::TextRun;
+alias TextSpan = pkg::dom::TextSpan;
+alias shaped_empty = pkg::layout::text::shaped_empty;
+
+fn text_span_of(document: &Document, node: NodeId) -> span: Option<TextSpan> reads(document) {
+  doc "The data span of the Text node within the document's text, or None for any other node or a span outside the text.";
+  let at = cvt::<u32, u64>(node.index);
+  if at < document^.nodes.inner.len {
+  } else {
+    return None<TextSpan>();
+  }
+  let data = &document^.nodes.inner[at].data;
+  match data^ {
+    Text(data: found) => {
+      let held = found^;
+      let start = cvt::<u32, u64>(held.start);
+      let end = cvt::<u32, u64>(held.end);
+      let ordered = start <= end;
+      let inside = end <= document^.text.inner.len;
+      let usable = band(ordered, inside);
+      if usable {
+        return Some<TextSpan>(value: held);
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Element(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return None<TextSpan>();
+}
+
+fn span_blank(document: &Document, start: u32, end: u32) -> blank: Bool reads(document) {
+  doc "Tells whether the bytes start to end of the document's text hold only white space (is_blank); an empty or unusable span is blank.";
+  let low = cvt::<u32, u64>(start);
+  let high = cvt::<u32, u64>(end);
+  let ordered = low <= high;
+  let inside = high <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    let made = is_blank(bytes: &document^.text.inner[low..high]);
+    return made;
+  }
+  return True();
+}
+
+fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, data: TextSpan) -> result: Result<unit, LayoutError> reads(document), writes(context) {
+  doc "Gives the pieces unit names in context the text node's new data, and marks their paragraph and context; Inconsistent when the pieces do not read that node, or when the new data is empty or differs from the old in being only white space, which would change the box tree.";
+  let first = cvt::<u32, u64>(text_unit.piece);
+  let count = cvt::<u32, u64>(text_unit.count);
+  let end = first +sat count;
+  let paragraph = cvt::<u32, u64>(text_unit.paragraph);
+  let pieces = context^.pieces.inner.len;
+  let held = end <= pieces;
+  let present = paragraph < context^.paragraphs.inner.len;
+  let single = count == 1_u64;
+  let both = band(held, present);
+  let usable = band(both, single);
+  if usable {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let new_blank = span_blank(document: document, start: data.start, end: data.end);
+  let empty = data.start >= data.end;
+  if empty {
+    return inconsistent::<unit>();
+  }
+  if first < context^.pieces.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let piece = context^.pieces.inner[first];
+  match piece {
+    Bytes(start: from, end: to, style: owner, node: source) => {
+      let wrong = source == no_index;
+      if wrong {
+        return inconsistent::<unit>();
+      }
+      let old_blank = span_blank(document: document, start: from, end: to);
+      let same = eeq(old_blank, new_blank);
+      let changed = bnot(same);
+      if changed {
+        return inconsistent::<unit>();
+      }
+      set context^.pieces.inner[first] = Piece::Bytes(start: data.start, end: data.end, style: owner, node: source);
+    }
+    Generated(..) => {
+      return inconsistent::<unit>();
+    }
+    Scalar(..) => {
+      return inconsistent::<unit>();
+    }
+    Begin(..) => {
+      return inconsistent::<unit>();
+    }
+    End(..) => {
+      return inconsistent::<unit>();
+    }
+    Object(..) => {
+      return inconsistent::<unit>();
+    }
+  }
+  if paragraph < context^.paragraphs.inner.len {
+    let was = context^.paragraphs.inner[paragraph].dirty;
+    if was {
+    } else {
+      set context^.marked_paragraphs = context^.marked_paragraphs +sat 1_u32;
+      set context^.marked_paragraph = text_unit.paragraph;
+    }
+    set context^.paragraphs.inner[paragraph].dirty = True();
+  }
+  set context^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn mark_path(context: &Context, document: &Document, steps: &[u32], depth: u64, text_unit: TextUnit, data: TextSpan) -> result: Result<unit, LayoutError> reads(document), reads(steps), writes(context) {
+  doc "Descends from context by the child indices in steps from depth on, which lead to the context holding unit, patches its pieces (patch_pieces) and, once that succeeds, marks every context on the way back up.";
+  let count = steps^.len;
+  if depth >= count {
+    let patched = propagate patch_pieces(context: context, document: document, text_unit: text_unit, data: data);
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let child = cvt::<u32, u64>(steps^[depth]);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let next = depth +sat 1_u64;
+  let was = context^.children.inner[child].dirty;
+  let marked = propagate mark_path(context: &context^.children.inner[child], document: document, steps: steps, depth: next, text_unit: text_unit, data: data);
+  if was {
+  } else {
+    set context^.marked_children = context^.marked_children +sat 1_u32;
+    set context^.marked_child = steps^[depth];
+  }
+  set context^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn path_steps(layout: &Layout, serial: u32) -> result: Result<Box<Slots<u32>>, LayoutError> reads(layout) {
+  doc "The child indices that lead from the initial containing block to the context with serial, read from paths by following parents up and reversing; Inconsistent when paths does not lead there.";
+  let count = layout^.paths.inner.len;
+  let upward = box_slots_new::<u32>(capacity: 16_u64);
+  let at = cvt::<u32, u64>(serial);
+  for (step in 0_u64..count) {
+    if at < count {
+    } else {
+      return inconsistent::<Box<Slots<u32>>>();
+    }
+    let place = layout^.paths.inner[at];
+    if place.parent == no_index {
+      let length = upward.inner.len;
+      let reserve = imin(length, 4096_u64);
+      let steps = box_slots_new::<u32>(capacity: reserve);
+      for (back in 0_u64..length) {
+        let top = length - 1_u64;
+        let k = top - back;
+        let index = upward.inner[k];
+        let pushed = push_item::<u32>(cell: &steps, value: index, ceiling: item_ceiling);
+      }
+      return Ok<Box<Slots<u32>>, LayoutError>(value: move steps);
+    }
+    let pushed = propagate push_or_fail::<u32>(cell: &upward, value: place.child);
+    set at = cvt::<u32, u64>(place.parent);
+  }
+  return inconsistent::<Box<Slots<u32>>>();
+}
+
+fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: Result<unit, LayoutError> reads(document), writes(layout) {
+  doc "Finds where the Text node's data enters the layout (text_units), refuses a node the layout was not built from and data that would change the box tree, and otherwise patches the pieces that read it and marks its paragraph and the contexts from the initial containing block down to the one holding it.";
+  let index = cvt::<u32, u64>(node.index);
+  if index < layout^.text_units.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let data = match text_span_of(document: document, node: node) {
+    Some(value: found) => {
+      give found;
+    }
+    None() => {
+      return inconsistent::<unit>();
+    }
+  }
+  let text_unit = layout^.text_units.inner[index];
+  if text_unit.serial == skipped_text {
+    let empty = data.start >= data.end;
+    if empty {
+      return Ok<unit, LayoutError>(value: unit);
+    }
+    return inconsistent::<unit>();
+  }
+  if text_unit.serial == no_index {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let steps = propagate path_steps(layout: layout, serial: text_unit.serial);
+  let depth = steps.inner.len;
+  let marked = propagate mark_path(context: &layout^.root, document: document, steps: &steps.inner[0_u64..depth], depth: 0_u64, text_unit: text_unit, data: data);
+  set layout^.dirty = True();
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn reset_paragraph(paragraph: &Paragraph) -> result: unit writes(paragraph) {
+  doc "Empties what preparation fills (text, runs, run styles, marks and the shaped text), so that prepare_paragraph can fill it again.";
+  let text = box_slots_new::<u32>(capacity: 0_u64);
+  let runs = box_slots_new::<TextRun>(capacity: 0_u64);
+  let run_styles = box_slots_new::<StyleRef>(capacity: 0_u64);
+  let marks = box_slots_new::<Mark>(capacity: 0_u64);
+  let shaped = shaped_empty();
+  set paragraph^.text = move text;
+  set paragraph^.runs = move runs;
+  set paragraph^.run_styles = move run_styles;
+  set paragraph^.marks = move marks;
+  set paragraph^.shaped = move shaped;
+  return unit;
+}
+
+fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Forgets the marked context's intrinsic sizes, which its content no longer gives, recording whether they were known and what they were (intrinsic_held, held_min, held_max), and prepares again each of its marked paragraphs, then does the same in each marked child context: the one text_changed recorded when it marked one, or each one in a counted loop whose iterations test their own element's mark when it marked several; False when shaping refuses a paragraph. The marks stay for the layout pass.";
+  let total = context^.pieces.inner.len;
+  let stored = document^.text.inner.len;
+  let made = styles^.generated_text.inner.len;
+  let ok = True();
+  set context^.intrinsic_held = context^.intrinsic_known;
+  set context^.held_min = context^.min_content;
+  set context^.held_max = context^.max_content;
+  set context^.intrinsic_known = False();
+  let (one_paragraph, p) = single_marked_paragraph(context: context);
+  if one_paragraph {
+    if p < context^.paragraphs.inner.len {
+      reset_paragraph(paragraph: &context^.paragraphs.inner[p]);
+      let done = prepare_paragraph(pieces: &context^.pieces.inner[0_u64..total], bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[p]);
+      set ok = band(ok, done);
+    }
+  } else if context^.marked_paragraphs > 0_u32 {
+    let count = context^.paragraphs.inner.len;
+    for (i in 0_u64..count) {
+      if context^.paragraphs.inner[i].dirty {
+        reset_paragraph(paragraph: &context^.paragraphs.inner[i]);
+        let done = prepare_paragraph(pieces: &context^.pieces.inner[0_u64..total], bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i]);
+        set ok = band(ok, done);
+      }
+    }
+  }
+  let (one_child, c) = single_marked_child(context: context);
+  if one_child {
+    if c < context^.children.inner.len {
+      let done = prepare_marked(context: &context^.children.inner[c], document: document, styles: styles, fonts: fonts, picks: picks);
+      set ok = band(ok, done);
+    }
+  } else if context^.marked_children > 0_u32 {
+    let children = context^.children.inner.len;
+    for (k in 0_u64..children) {
+      if context^.children.inner[k].dirty {
+        let done = prepare_marked(context: &context^.children.inner[k], document: document, styles: styles, fonts: fonts, picks: picks);
+        set ok = band(ok, done);
+      }
+    }
+  }
+  return ok;
+}
+
+fn count_marked(context: &Context) -> marked: u64 reads(context) {
+  doc "The number of marked paragraphs in the marked context and the marked contexts below it, which update prepares again: the context's own count as text_changed recorded it, and the marked children's, the one recorded or each marked one when there are several.";
+  let own = cvt::<u32, u64>(context^.marked_paragraphs);
+  let below = 0_u64;
+  let (one_child, c) = single_marked_child(context: context);
+  if one_child {
+    if c < context^.children.inner.len {
+      set below = count_marked(context: &context^.children.inner[c]);
+    }
+  } else if context^.marked_children > 0_u32 {
+    let children = context^.children.inner.len;
+    for (k in 0_u64..children) {
+      if context^.children.inner[k].dirty {
+        let inner = count_marked(context: &context^.children.inner[k]);
+        set below = below +wrap inner;
+      }
+    }
+  }
+  let made = own +wrap below;
+  return made;
+}
+
+fn fresh_space() -> made: Space pure {
+  doc "The space of a context no parent has laid out yet, as new_context gives it.";
+  let no = False();
+  return Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
+}
+
+fn clear_tree_marks(context: &Context) -> result: unit writes(context) {
+  doc "Clears the marks of every context below context and of their paragraphs, and their counts of marked ones, after a layout in full that did not go through their updates.";
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    clear_subtree(context: &context^.children.inner[k]);
+  }
+  return unit;
+}
+
+fn clear_subtree(context: &Context) -> result: unit writes(context) {
+  doc "Clears the mark of context and of its paragraphs and its counts of marked ones, then does the same below it (clear_tree_marks).";
+  set context^.dirty = False();
+  set context^.restyled = False();
+  set context^.marked_paragraphs = 0_u32;
+  set context^.marked_children = 0_u32;
+  let count = context^.paragraphs.inner.len;
+  for (i in 0_u64..count) {
+    set context^.paragraphs.inner[i].dirty = False();
+  }
+  clear_tree_marks(context: context);
+  return unit;
+}
+
+fn reset_tree(context: &Context) -> result: unit writes(context) {
+  doc "Returns the context and every context below it to the state build_boxes leaves for lay_out to start from: no intrinsic sizes known, the fresh space, and no marks on it or its paragraphs and no marked ones counted.";
+  set context^.intrinsic_known = False();
+  set context^.space = fresh_space();
+  set context^.dirty = False();
+  set context^.restyled = False();
+  set context^.marked_paragraphs = 0_u32;
+  set context^.marked_children = 0_u32;
+  let count = context^.paragraphs.inner.len;
+  for (i in 0_u64..count) {
+    set context^.paragraphs.inner[i].dirty = False();
+  }
+  let children = context^.children.inner.len;
+  for (k in 0_u64..children) {
+    reset_tree(context: &context^.children.inner[k]);
+  }
+  return unit;
+}
+
+struct Before {
+  doc "What a child context held before its parent's update laid anything out again: the space it was laid out in and the outputs its parent reads, its border-box size, baseline and margins.";
+  space: Space;
+  width: i32;
+  height: i32;
+  baseline: i32;
+  has_baseline: Bool;
+  margin_top: i32;
+  margin_right: i32;
+  margin_bottom: i32;
+  margin_left: i32;
+}
+
+fn no_updates() -> made: UpdateCounts pure {
+  doc "The counts of an update that did nothing.";
+  return UpdateCounts(prepared: 0_u64, contexts: 0_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
+}
+
+fn update_counts(layout: &Layout) -> (prepared: u64, contexts: u64, paragraphs: u64, held_entries: u64, entries: u64) reads(layout) {
+  doc "The counts the last update recorded.";
+  let counts = layout^.last_update;
+  return counts.prepared, counts.contexts, counts.paragraphs, counts.held_entries, counts.entries;
+}
+
+fn before_of(context: &Context) -> before: Before reads(context) {
+  doc "The space of context's last finished layout and the outputs it holds now.";
+  return Before(space: context^.laid, width: context^.width, height: context^.height, baseline: context^.baseline, has_baseline: context^.has_baseline, margin_top: context^.margin_top, margin_right: context^.margin_right, margin_bottom: context^.margin_bottom, margin_left: context^.margin_left);
+}
+
+fn same_space(first: Space, second: Space) -> same: Bool pure {
+  doc "Tells whether two spaces are equal field by field.";
+  let available = first.available == second.available;
+  let basis_width = first.basis_width == second.basis_width;
+  let basis_height = first.basis_height == second.basis_height;
+  let forced_width = first.forced_width == second.forced_width;
+  let forced_height = first.forced_height == second.forced_height;
+  let shrink = eeq(first.shrink, second.shrink);
+  let bases = band(basis_width, basis_height);
+  let forced = band(forced_width, forced_height);
+  let sizes = band(bases, forced);
+  let room = band(available, shrink);
+  let made = band(sizes, room);
+  return made;
+}
+
+fn same_outputs(before: Before, context: &Context) -> same: Bool reads(context) {
+  doc "Tells whether context's border-box size, baseline and margins are what before recorded, field by field: when they are, its parent's stacking pass reads nothing new from it.";
+  let width = before.width == context^.width;
+  let height = before.height == context^.height;
+  let baseline = before.baseline == context^.baseline;
+  let has_baseline = eeq(before.has_baseline, context^.has_baseline);
+  let top = before.margin_top == context^.margin_top;
+  let right = before.margin_right == context^.margin_right;
+  let bottom = before.margin_bottom == context^.margin_bottom;
+  let left = before.margin_left == context^.margin_left;
+  let size = band(width, height);
+  let base = band(baseline, has_baseline);
+  let block_margins = band(top, bottom);
+  let inline_margins = band(left, right);
+  let margins = band(block_margins, inline_margins);
+  let shape = band(size, base);
+  let made = band(shape, margins);
+  return made;
+}
+
+fn clear_paragraph_marks(context: &Context) -> result: unit writes(context) {
+  doc "Clears the mark of every paragraph of the context, one per iteration of a counted loop.";
+  let count = context^.paragraphs.inner.len;
+  for (i in 0_u64..count) {
+    set context^.paragraphs.inner[i].dirty = False();
+  }
+  return unit;
+}
+
+fn first_float_paragraph(context: &Context) -> (first: u64, floats: Bool) reads(context) {
+  doc "The index of the first paragraph that follows a float in the context's flow, or the paragraph count when no float precedes one, and whether the flow holds a float: the stacking pass may break a paragraph from there on again beside floats, so its lines are not the full-width ones, and may narrow a child context beside a float.";
+  let count = context^.flow.inner.len;
+  let seen = 0_u64;
+  for (k in 0_u64..count) {
+    let item = context^.flow.inner[k];
+    match item {
+      Float(..) => {
+        return seen, True();
+      }
+      Text(..) => {
+        set seen = seen +sat 1_u64;
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Child(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return context^.paragraphs.inner.len, False();
+}
+
+fn full_width_lines(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> full: Bool reads(paragraph), reads(styles), reads(fonts), reads(picks) {
+  doc "Tells whether the paragraph's lines are the ones break_all gives it at its width and left edge, with no float beside them: break_lines with no exclusion gives every line the room its width leaves past a negative left edge, less the first line's indent, and each line a least top one strut below the last; a line the stacking pass narrowed beside a float or moved below one differs in one of them. Lines that differ in neither are the full-width ones, since breaking reads exclusions only through them.";
+  let count = paragraph^.lines.inner.len;
+  let text = paragraph^.text.inner.len;
+  if text == 0_u64 {
+    return True();
+  }
+  let width = paragraph^.width;
+  let origin_x = paragraph^.left;
+  let style = paragraph^.style;
+  let group = text_of(styles: styles, style: style);
+  let indent = resolve_lp(value: group.text_indent, basis: width);
+  let strut = box_metrics(styles: styles, fonts: fonts, picks: picks, style: style);
+  let strut_height = strut.ascent +sat strut.descent;
+  let shifted_left = 0_i32 -sat origin_x;
+  let line_left = imax(shifted_left, 0_i32);
+  let room = width -sat line_left;
+  let first_room = room -sat indent;
+  let top = 0_i32;
+  for (k in 0_u64..count) {
+    let line = paragraph^.lines.inner[k];
+    let expected = if k == 0_u64 {
+      give first_room;
+    } else {
+      give room;
+    }
+    if line.room != expected {
+      return False();
+    }
+    if line.least_top != top {
+      return False();
+    }
+    set top = top +sat strut_height;
+  }
+  return True();
+}
+
+fn reads_changed(paragraph: &Paragraph, changed: &[Bool]) -> found: Bool reads(paragraph), reads(changed) {
+  doc "Tells whether the paragraph holds an atomic inline whose child context's outputs changed.";
+  let marks = paragraph^.marks.inner.len;
+  let known = changed^.len;
+  for (m in 0_u64..marks) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Atomic(context: child, ..) => {
+        let at = cvt::<u32, u64>(child);
+        if at < known {
+          if changed^[at] {
+            return True();
+          }
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return False();
+}
+
+fn positioned(styles: &Styles, context: &Context) -> out: Bool reads(styles), reads(context) {
+  doc "Tells whether context is absolutely or fixed positioned, which its parent's positioning pass may lay out again in another space.";
+  let group = box_of(styles: styles, style: context^.style);
+  let absolute = group.position == position_absolute;
+  let fixed = group.position == position_fixed;
+  let made = bor(absolute, fixed);
+  return made;
+}
+
+fn update_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Brings a marked child context up to date in the space its parent wrote (update_held), dropping whether it is unchanged in every space.";
+  let (counts, still) = update_held(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  return counts;
+}
+
+fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> (counts: UpdateCounts, still: Bool) reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Brings a marked child context up to date in the space its parent wrote, as lay_out_child would lay it out: a flow context by update_flow; a flex or grid container by update_container when that finds its result unchanged, else by its own algorithm while it is marked, so that lay_out_child keeps or updates its items (counted as one context; its items' counts are not gathered); a table or replaced context in full, its subtree returned to the fresh state by reset_marked_children first when its parent is a flow context, and the marks below it cleared after (clear_tree_marks), since its layout in full does not go through their updates and a mark left would hide the next edit's from text_changed's counts. Then it records the space as laid and resolves its margins. still tells whether the child lays out as before in every space its parent's algorithm may give it: a flow context whose outputs (same_outputs) and content height (content_raw) came out as before and whose content does not read a definite height (definite_free), or a container update_container stopped at.";
+  if child^.kind == ctx_flow {
+    let old_raw = child^.content_raw;
+    let counts = update_flow(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+    set child^.laid = child^.space;
+    resolve_margins(child: child, styles: styles);
+    let same = same_outputs(before: before, context: child);
+    let same_raw = old_raw == child^.content_raw;
+    let same_content = band(same, same_raw);
+    let still = band(same_content, child^.definite_free);
+    return counts, still;
+  }
+  let flex = child^.kind == ctx_flex;
+  let grid = child^.kind == ctx_grid;
+  let container = bor(flex, grid);
+  let no = False();
+  if container {
+    let (stopped, item_counts) = update_container(container: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    if stopped {
+      set child^.dirty = False();
+      set child^.restyled = False();
+      set child^.marked_paragraphs = 0_u32;
+      set child^.marked_children = 0_u32;
+      resolve_margins(child: child, styles: styles);
+      let one = one_context_count();
+      let total = add_counts(first: item_counts, second: one);
+      let same = same_outputs(before: before, context: child);
+      return total, same;
+    }
+  }
+  lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set child^.dirty = False();
+  set child^.restyled = False();
+  set child^.marked_paragraphs = 0_u32;
+  set child^.marked_children = 0_u32;
+  resolve_margins(child: child, styles: styles);
+  if container {
+    let one = one_context_count();
+    return one, no;
+  }
+  clear_tree_marks(context: child);
+  let (contexts, paragraphs) = count_tree(context: child);
+  return UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64), no;
+}
+
+fn one_context_count() -> made: UpdateCounts pure {
+  doc "The counts of one context laid out again.";
+  return UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
+}
+
+fn update_container(container: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (stopped: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(container) {
+  doc "Decision 3 of X5's step 3b: a marked flex or grid container laid out in the space it was last laid out in (equivalent_space), with exactly one marked item, in flow, updates that item first in the space it was last laid out in; when the item's intrinsic sizes were known before the edit (intrinsic_held), they are computed again first against the percentage basis they were computed against (intrinsic_basis), as the container's algorithm would ask for them, and must come out as before (held_min, held_max). The container's result is then unchanged, and the update stops at it, when the item lays out as before in every space the algorithm may give it (update_held's still): its outputs and content height as before, its content not reading a definite height; the algorithm reads nothing else of an item. That holds for a grid container and a row flex container, which lay an item out at one width in every pass; a column flex container may lay an item out at its natural width and again at its line's cross size when it stretches, so it never stops here. False when any of that does not hold; the item, when already updated, is then kept or updated again by the container's algorithm, which the caller runs.";
+  let none = no_updates();
+  if container^.restyled {
+    return False(), none;
+  }
+  let kept_space = equivalent_space(styles: styles, style: container^.style, first: container^.laid, second: container^.space);
+  if kept_space {
+  } else {
+    return False(), none;
+  }
+  if container^.kind == ctx_flex {
+    let group = container_of(styles: styles, style: container^.style);
+    let column = group.flex_direction >= 2_u8;
+    if column {
+      return False(), none;
+    }
+  }
+  let (one, c) = single_marked_child(context: container);
+  if one {
+  } else {
+    return False(), none;
+  }
+  if c < container^.children.inner.len {
+  } else {
+    return False(), none;
+  }
+  let out = positioned(styles: styles, context: &container^.children.inner[c]);
+  if out {
+    return False(), none;
+  }
+  let held = before_of(context: &container^.children.inner[c]);
+  if container^.children.inner[c].intrinsic_held {
+    let laid = container^.children.inner[c].laid;
+    let basis = container^.children.inner[c].intrinsic_basis;
+    set container^.children.inner[c].space = Space(available: laid.available, basis_width: basis, basis_height: laid.basis_height, forced_width: laid.forced_width, forced_height: laid.forced_height, shrink: laid.shrink);
+    let (least, most) = intrinsic_sizes(context: &container^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    if c < container^.children.inner.len {
+    } else {
+      return False(), none;
+    }
+    let same_least = least == container^.children.inner[c].held_min;
+    let same_most = most == container^.children.inner[c].held_max;
+    let same_sizes = band(same_least, same_most);
+    if same_sizes {
+    } else {
+      return False(), none;
+    }
+  }
+  set container^.children.inner[c].space = held.space;
+  let (counts, still) = update_held(child: &container^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
+  return still, counts;
+}
+
+fn reset_marked_child(child: &Context) -> result: unit writes(child) {
+  doc "Returns a marked child context to the state a full layout of the edited document finds it in when its parent starts: no intrinsic sizes known and the fresh space; a table or replaced context, which its update lays out in full, with its whole subtree (reset_tree), its own mark kept.";
+  if child^.dirty {
+    let kind = child^.kind;
+    let flowing = kind == ctx_flow;
+    let flex = kind == ctx_flex;
+    let grid = kind == ctx_grid;
+    let container = bor(flex, grid);
+    let followed = bor(flowing, container);
+    if followed {
+      set child^.intrinsic_known = False();
+      set child^.space = fresh_space();
+    } else {
+      reset_tree(context: child);
+      set child^.dirty = True();
+    }
+  }
+  return unit;
+}
+
+fn reset_marked_children(context: &Context) -> result: unit writes(context) {
+  doc "Resets each marked child context (reset_marked_child): the one text_changed recorded when it marked one, or each child in a counted loop when it marked several.";
+  let (one_child, c) = single_marked_child(context: context);
+  if one_child {
+    if c < context^.children.inner.len {
+      reset_marked_child(child: &context^.children.inner[c]);
+    }
+  } else if context^.marked_children > 0_u32 {
+    let children = context^.children.inner.len;
+    for (k in 0_u64..children) {
+      reset_marked_child(child: &context^.children.inner[k]);
+    }
+  }
+  return unit;
+}
+
+fn marked_children_state(context: &Context, styles: &Styles) -> (asked: Bool, out: Bool) reads(context), reads(styles) {
+  doc "Whether a marked child context of the context has its intrinsic sizes known (someone asked for them in this update, since reset_marked_children forgot them) and whether a marked child is positioned: the one child text_changed recorded when it marked one, or each marked child when it marked several.";
+  let (one_child, c) = single_marked_child(context: context);
+  if one_child {
+    if c < context^.children.inner.len {
+      let known = context^.children.inner[c].intrinsic_known;
+      let out = positioned(styles: styles, context: &context^.children.inner[c]);
+      return known, out;
+    }
+    return False(), False();
+  }
+  let asked = False();
+  let out_marked = False();
+  if context^.marked_children > 0_u32 {
+    let listed = context^.children.inner.len;
+    for (k in 0_u64..listed) {
+      if context^.children.inner[k].dirty {
+        let known = context^.children.inner[k].intrinsic_known;
+        let out = positioned(styles: styles, context: &context^.children.inner[k]);
+        set asked = bor(asked, known);
+        set out_marked = bor(out_marked, out);
+      }
+    }
+  }
+  return asked, out_marked;
+}
+
+fn add_counts(first: UpdateCounts, second: UpdateCounts) -> made: UpdateCounts pure {
+  doc "The sum of two updates' counts.";
+  let prepared = first.prepared +sat second.prepared;
+  let contexts = first.contexts +sat second.contexts;
+  let paragraphs = first.paragraphs +sat second.paragraphs;
+  let held_entries = first.held_entries +sat second.held_entries;
+  let entries = first.entries +sat second.entries;
+  return UpdateCounts(prepared: prepared, contexts: contexts, paragraphs: paragraphs, held_entries: held_entries, entries: entries);
+}
+
+fn sum_counts(results: &Box<Array<UpdateCounts>>) -> counts: UpdateCounts reads(results) {
+  doc "The sum of the counts the children's updates returned.";
+  let count = results^.inner.len;
+  let contexts = 0_u64;
+  let paragraphs = 0_u64;
+  let held_entries = 0_u64;
+  let entries = 0_u64;
+  for (k in 0_u64..count) {
+    let got = results^.inner[k];
+    set contexts = contexts +sat got.contexts;
+    set paragraphs = paragraphs +sat got.paragraphs;
+    set held_entries = held_entries +sat got.held_entries;
+    set entries = entries +sat got.entries;
+  }
+  return UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: held_entries, entries: entries);
+}
+
+fn any_set(flags: &Box<Array<Bool>>) -> found: Bool reads(flags) {
+  doc "Tells whether any flag holds.";
+  let count = flags^.inner.len;
+  let found = False();
+  for (k in 0_u64..count) {
+    set found = bor(found, flags^.inner[k]);
+  }
+  return found;
+}
+
+fn fresh_before() -> made: Before pure {
+  doc "The Before of a context no parent has laid out, which every child's own replaces.";
+  let space = fresh_space();
+  let no = False();
+  return Before(space: space, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32);
+}
+
+fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked: Bool, marked_parent: Bool, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result_unit: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(result) {
+  doc "One iteration of update_flow's children pass after the pre-pass: a marked child is updated; an unmarked child whose space came out as before records is kept, its margins resolved again (the parent's intrinsic sizes may have resolved them against no width); a positioned child that position_out_with lays out again in the space its insets leave keeps its layout for now, with its margins resolved in this space as a layout in it would leave them, and position_out_with keeps it again when that space is the one it was laid out in; any other is laid out again with lay_out_child as its parent's update does (a flow context updated from its last layout, any other kind in full). It forgets the child's intrinsic sizes first only where a full layout of the edited document would compute them against another basis: when the parent is marked (its content changed, so the edited document's layout reaches the child afresh), nobody asked for them in this update (so the first request is the child's own layout) and they were computed against another percentage basis than its new space's; a parent laid out again without a mark, as lay_out_child lays it out in full, keeps them. Records the counts.";
+  if child^.dirty {
+    let got = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+    set result^ = got;
+    return unit;
+  }
+  let same = equivalent_space(styles: styles, style: child^.style, first: before.space, second: child^.space);
+  if same {
+    resolve_margins(child: child, styles: styles);
+    return unit;
+  }
+  let out = positioned(styles: styles, context: child);
+  let again = laid_out_by_position(styles: styles, style: child^.style);
+  let deferred = band(out, again);
+  if deferred {
+    resolve_margins(child: child, styles: styles);
+    return unit;
+  }
+  let rebased = child^.intrinsic_basis != child^.space.basis_width;
+  let fresh_parent = band(marked_parent, unasked);
+  let forget = band(fresh_parent, rebased);
+  if forget {
+    set child^.intrinsic_known = False();
+  }
+  if child^.kind == ctx_flow {
+    let got = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+    set result^ = got;
+    return unit;
+  }
+  let whole = False();
+  lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
+  let (contexts, paragraphs) = count_tree(context: child);
+  set result^ = UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
+  return unit;
+}
+
+fn compare_child(child: &Context, changed: &Bool, before: Before) -> result_unit: unit reads(child), writes(changed) {
+  doc "Records whether the child's outputs differ from those before records.";
+  let same = same_outputs(before: before, context: child);
+  set changed^ = bnot(same);
+  return unit;
+}
+
+struct Change {
+  doc "The one entry of a flow context whose layout an update changed, when update_in_place can follow it: a paragraph (paragraph its index) or an in-flow child context (child its index), its flow entry, the block it sits in, the height it gained (delta, negative when it lost height), what its baseline gained when the context reads its baseline from it, whether a line box lies inside it, and its top and its bottom before the change in the context's coordinates.";
+  paragraph: u64;
+  child: u64;
+  flow_at: u32;
+  block: u32;
+  delta: i32;
+  baseline_delta: i32;
+  lines: Bool;
+  top: i32;
+  bottom: i32;
+}
+
+fn entry_kind(context: &Context, flow_at: u32) -> (kind: u8, index: u64) reads(context) {
+  doc "What flow entry flow_at of the context is: 0 a paragraph, 1 an in-flow child context, 2 a float, 3 an out-of-flow child, 4 a block's open or close or no entry; and the paragraph's or child's index.";
+  let at = cvt::<u32, u64>(flow_at);
+  if at < context^.flow.inner.len {
+  } else {
+    return 4_u8, 0_u64;
+  }
+  let item = context^.flow.inner[at];
+  match item {
+    Text(paragraph: p) => {
+      return 0_u8, cvt::<u32, u64>(p);
+    }
+    Child(context: c) => {
+      return 1_u8, cvt::<u32, u64>(c);
+    }
+    Float(context: c) => {
+      return 2_u8, cvt::<u32, u64>(c);
+    }
+    Out(context: c) => {
+      return 3_u8, cvt::<u32, u64>(c);
+    }
+    Open(..) => {
+      return 4_u8, 0_u64;
+    }
+    Close(..) => {
+      return 4_u8, 0_u64;
+    }
+  }
+}
+
+fn movable_child(context: &Context, child: &Context) -> movable: Bool reads(context), reads(child) {
+  doc "Tells whether a marked child can be updated in the space it was laid out in without its parent's passes: an atomic inline, or an in-flow child context no float placed before it reaches; a float or an out-of-flow child cannot.";
+  let (kind, index) = entry_kind(context: context, flow_at: child^.flow_at);
+  if kind == 0_u8 {
+    return True();
+  }
+  if kind == 1_u8 {
+    let made = bnot(child^.beside);
+    return made;
+  }
+  return False();
+}
+
+fn last_line_baseline(paragraph: &Paragraph) -> baseline: i32 reads(paragraph) {
+  doc "The baseline of the paragraph's last line from its top, 0 when it has no line.";
+  let count = paragraph^.lines.inner.len;
+  if count == 0_u64 {
+    return 0_i32;
+  }
+  let last = count - 1_u64;
+  let line = paragraph^.lines.inner[last];
+  let made = line.top +sat line.baseline;
+  return made;
+}
+
+fn vertical_padding_fixed(styles: &Styles, style: StyleRef) -> fixed: Bool reads(styles) {
+  doc "Tells whether style's top and bottom paddings are lengths, so that they do not depend on the containing block's width.";
+  let narrow = padding_edges(styles: styles, style: style, basis: 0_i32);
+  let wide = padding_edges(styles: styles, style: style, basis: 1048576_i32);
+  let top = narrow.top == wide.top;
+  let bottom = narrow.bottom == wide.bottom;
+  let made = band(top, bottom);
+  return made;
+}
+
+fn block_grows(context: &Context, styles: &Styles, block: u64, delta: i32, basis_height: i32, lines: Bool) -> grows: Bool reads(context), reads(styles) {
+  doc "Tells whether the stacking pass makes block's height grow by exactly delta when the content inside it does: an auto height, no max-height, a min-height no taller than its paddings and borders, paddings that do not depend on a width, a height above its paddings and borders before and not below them after, and, for a list item with an outside marker, a line box inside it, so that the marker makes no line.";
+  if block < context^.blocks.inner.len {
+  } else {
+    return False();
+  }
+  let style = context^.blocks.inner[block].style;
+  let marker = context^.blocks.inner[block].marker;
+  let unlined = bnot(lines);
+  let marker_lined = band(marker, unlined);
+  if marker_lined {
+    return False();
+  }
+  let fixed = vertical_padding_fixed(styles: styles, style: style);
+  if fixed {
+  } else {
+    return False();
+  }
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: 0_i32);
+  let frame_border = vertical(edges: border);
+  let frame_padding = vertical(edges: padding);
+  let frame = frame_border +sat frame_padding;
+  let specified = specified_height(styles: styles, style: style, basis: basis_height, frame: frame);
+  if specified >= 0_i32 {
+    return False();
+  }
+  let (minimum, maximum) = height_limits(styles: styles, style: style, basis: basis_height, frame: frame);
+  if maximum >= 0_i32 {
+    return False();
+  }
+  if minimum > frame {
+    return False();
+  }
+  let height = context^.blocks.inner[block].height;
+  if height <= frame {
+    return False();
+  }
+  let grown = height +sat delta;
+  let made = grown >= frame;
+  return made;
+}
+
+fn blocks_grow(context: &Context, styles: &Styles, first: u32, delta: i32, basis_height: i32, lines: Bool) -> grow: Bool reads(context), reads(styles) {
+  doc "Tells whether every block around a changed entry, from the innermost one first through each one's parent, grows by delta with it (block_grows).";
+  let count = context^.blocks.inner.len;
+  let at = first;
+  for (step in 0_u64..count) {
+    if at == no_index {
+      return True();
+    }
+    let index = cvt::<u32, u64>(at);
+    let grows = block_grows(context: context, styles: styles, block: index, delta: delta, basis_height: basis_height, lines: lines);
+    if grows {
+    } else {
+      return False();
+    }
+    if index < context^.blocks.inner.len {
+      set at = context^.blocks.inner[index].parent;
+    } else {
+      return False();
+    }
+  }
+  return False();
+}
+
+fn grow_blocks(context: &Context, first: u32, delta: i32) -> result: unit writes(context) {
+  doc "Adds delta to the height of every block around a changed entry, from the innermost one through each one's parent.";
+  let count = context^.blocks.inner.len;
+  let at = first;
+  for (step in 0_u64..count) {
+    if at == no_index {
+      return unit;
+    }
+    let index = cvt::<u32, u64>(at);
+    if index < context^.blocks.inner.len {
+      let height = context^.blocks.inner[index].height;
+      set context^.blocks.inner[index].height = height +sat delta;
+      set at = context^.blocks.inner[index].parent;
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
+fn first_paragraph_after(context: &Context, flow_at: u32) -> first: u64 reads(context) {
+  doc "The index of the first paragraph whose flow entry follows flow_at, by binary search over the paragraphs, whose entries the pre-pass records in flow order.";
+  let low = 0_u64;
+  let high = context^.paragraphs.inner.len;
+  for (step in 0_u64..64_u64) {
+    if low >= high {
+      return low;
+    }
+    let span = high - low;
+    let half = span / 2_u64;
+    let middle = low + half;
+    if middle < context^.paragraphs.inner.len {
+      if context^.paragraphs.inner[middle].flow_at > flow_at {
+        set high = middle;
+      } else {
+        set low = middle +sat 1_u64;
+      }
+    } else {
+      return low;
+    }
+  }
+  return low;
+}
+
+fn first_block_after(context: &Context, flow_at: u32) -> first: u64 reads(context) {
+  doc "The index of the first block whose open entry follows flow_at, by binary search over the blocks, which open in flow order.";
+  let low = 0_u64;
+  let high = context^.blocks.inner.len;
+  for (step in 0_u64..64_u64) {
+    if low >= high {
+      return low;
+    }
+    let span = high - low;
+    let half = span / 2_u64;
+    let middle = low + half;
+    if middle < context^.blocks.inner.len {
+      if context^.blocks.inner[middle].flow_at > flow_at {
+        set high = middle;
+      } else {
+        set low = middle +sat 1_u64;
+      }
+    } else {
+      return low;
+    }
+  }
+  return low;
+}
+
+fn shift_paragraph(paragraph: &Paragraph, delta: i32) -> result: unit writes(paragraph) {
+  doc "Moves a placed paragraph (one with lines) down by delta.";
+  let lines = paragraph^.lines.inner.len;
+  if lines > 0_u64 {
+    set paragraph^.top = paragraph^.top +sat delta;
+  }
+  return unit;
+}
+
+fn shift_child(child: &Context, flow_at: u32, delta: i32) -> result: unit writes(child) {
+  doc "Moves a child context whose flow entry (its paragraph's for an atomic inline) follows flow_at down by delta.";
+  if child^.flow_at > flow_at {
+    if child^.flow_at != no_index {
+      set child^.y = child^.y +sat delta;
+    }
+  }
+  return unit;
+}
+
+fn shift_block(block: &Block, delta: i32) -> result: unit writes(block) {
+  doc "Moves a block down by delta.";
+  set block^.y = block^.y +sat delta;
+  return unit;
+}
+
+fn translate_after(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
+  doc "The delta path's translation (Q70): moves every placed paragraph, child context and block whose flow entry follows flow_at down by delta, one counted loop each over the paragraphs and blocks after it and over every child.";
+  let first_paragraph = first_paragraph_after(context: context, flow_at: flow_at);
+  let paragraphs = context^.paragraphs.inner.len;
+  for (i in first_paragraph..paragraphs) {
+    shift_paragraph(paragraph: &context^.paragraphs.inner[i], delta: delta);
+  }
+  let children = context^.children.inner.len;
+  for (i in 0_u64..children) {
+    shift_child(child: &context^.children.inner[i], flow_at: flow_at, delta: delta);
+  }
+  let first_block = first_block_after(context: context, flow_at: flow_at);
+  let blocks = context^.blocks.inner.len;
+  for (i in first_block..blocks) {
+    shift_block(block: &context^.blocks.inner[i], delta: delta);
+  }
+  return unit;
+}
+
+fn translate_fragment(fragment: &Fragment, top: i32, bottom: i32, delta: i32) -> result: unit writes(fragment) {
+  doc "Moves a fragment of the context's own list that lies at or below the changed entry's old bottom down by delta, and grows by delta one that starts at or above its old top and reaches below it (the rectangle of an inline box that blocks interrupt, around the entry); one above the entry stays.";
+  let y = fragment^.y;
+  if y >= bottom {
+    set fragment^.y = y +sat delta;
+    return unit;
+  }
+  let reach = y +sat fragment^.height;
+  let above = y <= top;
+  let across = reach > top;
+  let around = band(above, across);
+  if around {
+    set fragment^.height = fragment^.height +sat delta;
+  }
+  return unit;
+}
+
+fn translate_fragments(context: &Context, top: i32, bottom: i32, delta: i32) -> result: unit writes(context) {
+  doc "The delta path's translation of the fragments in the context's own list after its own box's (split_fragments': the rectangles of inline boxes that blocks interrupt and the empty ones of paragraphs without lines), one per iteration of a counted loop (translate_fragment): none lies inside the changed entry, which has lines, so each lies above it, around it or below it.";
+  let count = context^.fragments.inner.len;
+  let owned = owns_fragment(style: context^.style);
+  let own_count = if owned {
+    give imin(count, 1_u64);
+  } else {
+    give 0_u64;
+  }
+  for (f in own_count..count) {
+    translate_fragment(fragment: &context^.fragments.inner[f], top: top, bottom: bottom, delta: delta);
+  }
+  return unit;
+}
+
+fn finish_in_place(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, delta: i32) -> moved: Bool reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The end of an in-place update: the content height and the flow's end grow by delta, the context's height follows from it in its current space (used_height, which a forced or percentage height may fix), its own fragment takes that height, and its out-of-flow children are positioned again (position_out_children) when content moved or the height changed. Tells whether anything moved.";
+  let raw = context^.content_raw +sat delta;
+  set context^.content_raw = raw;
+  set context^.flow_end = context^.flow_end +sat delta;
+  let content = imax(raw, 0_i32);
+  let old_height = context^.height;
+  let height = used_height(context: context, styles: styles, content: content);
+  set context^.height = height;
+  let owned = owns_fragment(style: context^.style);
+  if owned {
+    if 0_u64 < context^.fragments.inner.len {
+      set context^.fragments.inner[0_u64].height = height;
+      set context^.fragments.inner[0_u64].width = context^.width;
+    }
+  }
+  let shifted = delta != 0_i32;
+  let resized = height != old_height;
+  let moved = bor(shifted, resized);
+  if moved {
+    if context^.has_out {
+      position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    }
+  }
+  return moved;
+}
+
+fn single_marked_child(context: &Context) -> (one: Bool, index: u64) reads(context) {
+  doc "Whether exactly one child context of the context is marked, as text_changed counted them, and its index.";
+  if context^.marked_children == 1_u32 {
+    let at = cvt::<u32, u64>(context^.marked_child);
+    if at < context^.children.inner.len {
+      if context^.children.inner[at].dirty {
+        return True(), at;
+      }
+    }
+  }
+  return False(), 0_u64;
+}
+
+fn single_marked_paragraph(context: &Context) -> (one: Bool, index: u64) reads(context) {
+  doc "Whether exactly one paragraph of the context is marked, as text_changed counted them, and its index.";
+  if context^.marked_paragraphs == 1_u32 {
+    let at = cvt::<u32, u64>(context^.marked_paragraph);
+    if at < context^.paragraphs.inner.len {
+      if context^.paragraphs.inner[at].dirty {
+        return True(), at;
+      }
+    }
+  }
+  return False(), 0_u64;
+}
+
+fn clear_marks(context: &Context) -> result: unit writes(context) {
+  doc "Clears the marks of the context's paragraphs, the one text_changed recorded when it marked one, every one when it marked several, and the counts of marked paragraphs and children (each child clears its own mark as it is updated).";
+  let (one, at) = single_marked_paragraph(context: context);
+  if one {
+    if at < context^.paragraphs.inner.len {
+      set context^.paragraphs.inner[at].dirty = False();
+    }
+  } else if context^.marked_paragraphs > 0_u32 {
+    clear_paragraph_marks(context: context);
+  }
+  set context^.marked_paragraphs = 0_u32;
+  set context^.marked_children = 0_u32;
+  return unit;
+}
+
+fn break_in_place(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks, at: u64) -> (lines_before: u64, lines_after: u64, delta: i32, baseline_delta: i32) reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Breaks paragraph at again at its width and left edge, with no float beside it, and returns its line counts before and after and what its height and its last line's baseline gained.";
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return 0_u64, 0_u64, 0_i32, 0_i32;
+  }
+  let old_height = context^.paragraphs.inner[at].height;
+  let old_lines = context^.paragraphs.inner[at].lines.inner.len;
+  let old_base = last_line_baseline(paragraph: &context^.paragraphs.inner[at]);
+  let held = context^.children.inner.len;
+  let empty = box_slots_new::<Exclusion>(capacity: 0_u64);
+  break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..held], styles: styles, fonts: fonts, picks: picks, exclusions: &empty.inner[0_u64..0_u64], origin_y: 0_i32);
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return 0_u64, 0_u64, 0_i32, 0_i32;
+  }
+  let new_lines = context^.paragraphs.inner[at].lines.inner.len;
+  let new_height = context^.paragraphs.inner[at].height;
+  let new_base = last_line_baseline(paragraph: &context^.paragraphs.inner[at]);
+  let delta = new_height -sat old_height;
+  let base_delta = new_base -sat old_base;
+  return old_lines, new_lines, delta, base_delta;
+}
+
+fn update_in_place(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, measured: Bool) -> (handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Updates a marked flow context whose geometry and space are those of its previous layout without its pre-pass or stacking pass (decision 1 of X5's step 3b), when text_changed marked at most one of its child contexts and at most one of its paragraphs. When its intrinsic sizes were computed in this update (measured), which resolves its children's inline margins against no width (intrinsic_flow), every child's margins are resolved again first, as the pre-pass path's children pass does. Then the marked child, an atomic inline or an in-flow child no earlier float reaches, is updated in the space it was laid out in; the one entry whose layout then changed (the marked paragraph, broken again, the paragraph holding the child when it is an atomic inline whose outputs changed, or the in-flow child when its outputs changed) keeps its place, and when its height changed by delta and no float placed before it reaches below its top, every block around it grows by delta with it (blocks_grow), the margins it leaves below are unchanged and a line box lies in it as before, every later entry moves down by delta (translate_after); then finish_in_place gives the context its content height, height, own fragment and out-of-flow children, and its baseline follows the entry it is read from. The fragments of the context's own list move or grow with it (translate_fragments). False when any of that does not hold, when the entry had no height, or when the context has columns; whatever it already updated (the child, the marked paragraph broken again, its mark then cleared, the paragraph holding a changed atomic inline, broken again for it) its caller's passes keep, since breaking again in them would give the same lines, and the counts it returns are the child's and the paragraph's.";
+  let none = no_updates();
+  if frame.columned {
+    return False(), none;
+  }
+  let children_marked = context^.marked_children;
+  let paragraphs_marked = context^.marked_paragraphs;
+  let few_children = children_marked <= 1_u32;
+  let few_paragraphs = paragraphs_marked <= 1_u32;
+  let few = band(few_children, few_paragraphs);
+  if few {
+  } else {
+    return False(), none;
+  }
+  if measured {
+    let listed = context^.children.inner.len;
+    for (k in 0_u64..listed) {
+      resolve_margins(child: &context^.children.inner[k], styles: styles);
+    }
+  }
+  let (has_child, c) = single_marked_child(context: context);
+  let child_wanted = children_marked == 1_u32;
+  let child_lost = bnot(has_child);
+  let child_missing = band(child_wanted, child_lost);
+  if child_missing {
+    return False(), none;
+  }
+  let (has_paragraph, p) = single_marked_paragraph(context: context);
+  let paragraph_wanted = paragraphs_marked == 1_u32;
+  let paragraph_lost = bnot(has_paragraph);
+  let paragraph_missing = band(paragraph_wanted, paragraph_lost);
+  if paragraph_missing {
+    return False(), none;
+  }
+  let no_entry = 18446744073709551615_u64;
+  let counts = none;
+  let one_broken = UpdateCounts(prepared: 0_u64, contexts: 0_u64, paragraphs: 1_u64, held_entries: 0_u64, entries: 0_u64);
+  let one_context = UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
+  let child_kind = 4_u8;
+  let child_holder = no_entry;
+  let child_changed = False();
+  let held = fresh_before();
+  if has_child {
+    if c < context^.children.inner.len {
+    } else {
+      return False(), none;
+    }
+    let movable = movable_child(context: context, child: &context^.children.inner[c]);
+    if movable {
+    } else {
+      return False(), none;
+    }
+    let (kind, holder) = entry_kind(context: context, flow_at: context^.children.inner[c].flow_at);
+    set child_kind = kind;
+    set child_holder = holder;
+    set held = before_of(context: &context^.children.inner[c]);
+    set context^.children.inner[c].space = held.space;
+    set counts = update_child(child: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
+    if c < context^.children.inner.len {
+      let same = same_outputs(before: held, context: &context^.children.inner[c]);
+      set child_changed = bnot(same);
+    }
+  }
+  let atomic_changed = if child_changed {
+    give child_kind == 0_u8;
+  } else {
+    give False();
+  }
+  let flow_changed = if child_changed {
+    give child_kind == 1_u8;
+  } else {
+    give False();
+  }
+  let entry_paragraph = if has_paragraph {
+    give p;
+  } else if atomic_changed {
+    give child_holder;
+  } else {
+    give no_entry;
+  }
+  let two_paragraphs = if has_paragraph {
+    if atomic_changed {
+      give child_holder != p;
+    } else {
+      give False();
+    }
+  } else {
+    give False();
+  }
+  let has_entry_paragraph = entry_paragraph != no_entry;
+  let paragraph_and_child = band(has_entry_paragraph, flow_changed);
+  let several = bor(two_paragraphs, paragraph_and_child);
+  if several {
+    if atomic_changed {
+      let holder_lines = break_in_place(context: context, styles: styles, fonts: fonts, picks: picks, at: child_holder);
+      set counts = add_counts(first: counts, second: one_broken);
+    }
+    return False(), counts;
+  }
+  let nothing_changed = bnot(has_entry_paragraph);
+  let flow_quiet = bnot(flow_changed);
+  let quiet = band(nothing_changed, flow_quiet);
+  if quiet {
+    let still = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: 0_i32);
+    let quiet_counts = add_counts(first: counts, second: one_context);
+    return True(), quiet_counts;
+  }
+  let yes = True();
+  let change = if has_entry_paragraph {
+    let at = entry_paragraph;
+    if at < context^.paragraphs.inner.len {
+    } else {
+      return False(), counts;
+    }
+    if context^.paragraphs.inner[at].beside {
+      if atomic_changed {
+        let holder_lines = break_in_place(context: context, styles: styles, fonts: fonts, picks: picks, at: child_holder);
+        set counts = add_counts(first: counts, second: one_broken);
+      }
+      return False(), counts;
+    }
+    let (old_lines, new_lines, delta, base_delta) = break_in_place(context: context, styles: styles, fonts: fonts, picks: picks, at: at);
+    set counts = add_counts(first: counts, second: one_broken);
+    if has_paragraph {
+      if p < context^.paragraphs.inner.len {
+        set context^.paragraphs.inner[p].dirty = False();
+        set context^.marked_paragraphs = 0_u32;
+      }
+    }
+    let had = old_lines > 0_u64;
+    let has = new_lines > 0_u64;
+    let both = band(had, has);
+    if both {
+    } else {
+      return False(), counts;
+    }
+    if at < context^.paragraphs.inner.len {
+    } else {
+      return False(), counts;
+    }
+    let paragraph_top = context^.paragraphs.inner[at].top;
+    let new_height = context^.paragraphs.inner[at].height;
+    let old_height = new_height -sat delta;
+    if old_height > 0_i32 {
+    } else {
+      return False(), counts;
+    }
+    let paragraph_bottom = paragraph_top +sat old_height;
+    give Change(paragraph: at, child: no_entry, flow_at: context^.paragraphs.inner[at].flow_at, block: context^.paragraphs.inner[at].block, delta: delta, baseline_delta: base_delta, lines: yes, top: paragraph_top, bottom: paragraph_bottom);
+  } else {
+    if c < context^.children.inner.len {
+    } else {
+      return False(), counts;
+    }
+    let child_width = context^.children.inner[c].width;
+    let same_width = held.width == child_width;
+    let same_top = held.margin_top == context^.children.inner[c].margin_top;
+    let same_bottom = held.margin_bottom == context^.children.inner[c].margin_bottom;
+    let same_left = held.margin_left == context^.children.inner[c].margin_left;
+    let same_right = held.margin_right == context^.children.inner[c].margin_right;
+    let same_based = eeq(held.has_baseline, context^.children.inner[c].has_baseline);
+    let vertical_margins = band(same_top, same_bottom);
+    let horizontal_margins = band(same_left, same_right);
+    let margins = band(vertical_margins, horizontal_margins);
+    let shape = band(same_width, same_based);
+    let kept = band(margins, shape);
+    if kept {
+    } else {
+      return False(), counts;
+    }
+    let delta = context^.children.inner[c].height -sat held.height;
+    let base_delta = context^.children.inner[c].baseline -sat held.baseline;
+    let lined = context^.children.inner[c].has_baseline;
+    if held.height > 0_i32 {
+    } else {
+      return False(), counts;
+    }
+    let child_top = context^.children.inner[c].y;
+    let child_bottom = child_top +sat held.height;
+    give Change(paragraph: no_entry, child: c, flow_at: context^.children.inner[c].flow_at, block: context^.children.inner[c].block, delta: delta, baseline_delta: base_delta, lines: lined, top: child_top, bottom: child_bottom);
+  }
+  let moved = change.delta != 0_i32;
+  if moved {
+    let growing = blocks_grow(context: context, styles: styles, first: change.block, delta: change.delta, basis_height: frame.definite, lines: change.lines);
+    if growing {
+    } else {
+      return False(), counts;
+    }
+  }
+  if change.paragraph != no_entry {
+    place_atomics(context: context, at: change.paragraph);
+  }
+  let walked = if moved {
+    translate_after(context: context, flow_at: change.flow_at, delta: change.delta);
+    translate_fragments(context: context, top: change.top, bottom: change.bottom, delta: change.delta);
+    let changed_at = cvt::<u32, u64>(change.flow_at);
+    shift_naturals(context: context, after: changed_at, delta: change.delta);
+    grow_blocks(context: context, first: change.block, delta: change.delta);
+    let total = context^.flow.inner.len;
+    let at = cvt::<u32, u64>(change.flow_at);
+    let after = at +sat 1_u64;
+    give total -sat after;
+  } else {
+    give 0_u64;
+  }
+  let source = context^.baseline_entry;
+  if source == change.flow_at {
+    set context^.baseline = context^.baseline +sat change.baseline_delta;
+  } else if source != no_index {
+    if source > change.flow_at {
+      set context^.baseline = context^.baseline +sat change.delta;
+    }
+  }
+  let settled = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
+  let total_contexts = counts.contexts +sat 1_u64;
+  let total_paragraphs = counts.paragraphs;
+  let total_held = counts.held_entries +sat walked;
+  let total_entries = counts.entries +sat walked;
+  let made = UpdateCounts(prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
+  return True(), made;
+}
+
+fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Brings the marked flow context up to date, before holding its space and outputs from its previous layout, with lay_out_flow's passes: its width; then, when its geometry and space are those of its previous layout and no marked child is positioned, update_in_place updates it without the pre-pass or the stacking pass where it can. Otherwise the pre-pass runs again, each marked child is updated, each unmarked child whose space came out unchanged is kept (its margins resolved again) and every other one laid out again, each paragraph is broken again when it is marked, its flow width changed, it follows a float and holds lines the stacking pass narrowed or moved beside one (full_width_lines), or it holds an atomic inline whose outputs changed, and finish_flow stacks the flow and writes the fragments again. Each loop over the children or the paragraphs is a counted loop whose iteration writes only its own element and its own entry of a local array.";
+  reset_marked_children(context: context);
+  let was_known = context^.intrinsic_known;
+  let width = used_width(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set context^.width = width;
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: width);
+  let previous = flow_frame(styles: styles, style: context^.style, space: before.space, width: before.width);
+  let same_flow = frame.flow_width == previous.flow_width;
+  let same_definite = frame.definite == previous.definite;
+  let same_height = bor(same_definite, context^.definite_free);
+  let same_frame = band(same_flow, same_height);
+  let now_space = context^.space;
+  let then_space = before.space;
+  let same_room = now_space.available == then_space.available;
+  let same_basis = now_space.basis_width == then_space.basis_width;
+  let same_forced = now_space.forced_width == then_space.forced_width;
+  let same_shrink = eeq(now_space.shrink, then_space.shrink);
+  let same_across = band(same_room, same_basis);
+  let same_kind = band(same_forced, same_shrink);
+  let same_place = band(same_across, same_kind);
+  let same_width = width == before.width;
+  let was_unknown = bnot(was_known);
+  let newly_known = band(was_unknown, context^.intrinsic_known);
+  let own_marked_known = band(context^.dirty, context^.intrinsic_known);
+  let own_asked = bor(newly_known, own_marked_known);
+  let (children_asked, out_marked) = marked_children_state(context: context, styles: styles);
+  let marked_paragraphs = context^.marked_paragraphs > 0_u32;
+  let asked = bor(own_asked, children_asked);
+  let kept_frame = band(same_frame, same_place);
+  let kept_geometry = band(kept_frame, same_width);
+  let unasked = bnot(asked);
+  let in_flow = bnot(out_marked);
+  let unchanged_style = bnot(context^.restyled);
+  let steady_geometry = band(kept_geometry, in_flow);
+  let steady = band(steady_geometry, unchanged_style);
+  let nothing = no_updates();
+  let early = nothing;
+  if steady {
+    let (from, p, inline_child) = restack_entry(context: context);
+    let unscaled = bnot(frame.columned);
+    let found = from != 18446744073709551615_u64;
+    let restackable = band(found, unscaled);
+    let old_top = if p < context^.paragraphs.inner.len {
+      give context^.paragraphs.inner[p].top;
+    } else {
+      give 0_i32;
+    }
+    let old_height = paragraph_height(context: context, at: p);
+    let old_lines = if p < context^.paragraphs.inner.len {
+      give context^.paragraphs.inner[p].lines.inner.len > 0_u64;
+    } else {
+      give False();
+    }
+    let (handled, local) = update_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, measured: own_asked);
+    if handled {
+      clear_marks(context: context);
+      set context^.dirty = False();
+      set context^.restyled = False();
+      return local;
+    }
+    set early = local;
+    let waiting = if inline_child < context^.children.inner.len {
+      give context^.children.inner[inline_child].dirty;
+    } else {
+      give False();
+    }
+    let ready = bnot(waiting);
+    let restacking = band(restackable, ready);
+    if restacking {
+      let restacked = restack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, from: from, at: p, old_top: old_top, old_height: old_height, old_lines: old_lines, unasked: unasked);
+      clear_marks(context: context);
+      set context^.dirty = False();
+      set context^.restyled = False();
+      let total = add_counts(first: restacked, second: early);
+      return total;
+    }
+  }
+  let children = context^.children.inner.len;
+  let bounded = imin(children, item_ceiling);
+  let unknown_before = fresh_before();
+  let befores = box_array_filled::<Before>(count: bounded, value: unknown_before);
+  for (k in 0_u64..bounded) {
+    if k < context^.children.inner.len {
+      set befores.inner[k] = before_of(context: &context^.children.inner[k]);
+    }
+  }
+  let results = box_array_filled::<UpdateCounts>(count: bounded, value: nothing);
+  let unchanged = False();
+  let changed = box_array_filled::<Bool>(count: bounded, value: unchanged);
+  let (float_from, floats) = first_float_paragraph(context: context);
+  let cleared = context^.fragments.inner.len;
+  for (step in 0_u64..cleared) {
+    let length = context^.fragments.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &context^.fragments.inner);
+  }
+  clear_column_map(context: context);
+  prepare_spaces(context: context, styles: styles, content_width: frame.flow_width, content_height: frame.definite);
+  let present = context^.children.inner.len;
+  let marked_parent = context^.dirty;
+  let fits_results = present <= results.inner.len;
+  let fits_befores = present <= befores.inner.len;
+  let fits_pair = band(fits_results, fits_befores);
+  if fits_pair {
+    for (i in 0_u64..present) {
+      settle_child(child: &context^.children.inner[i], result: &results.inner[i], before: befores.inner[i], unasked: unasked, marked_parent: marked_parent, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    }
+  }
+  let compared = context^.children.inner.len;
+  let compare_fits = compared <= changed.inner.len;
+  let compare_befores = compared <= befores.inner.len;
+  let comparable = band(compare_fits, compare_befores);
+  if comparable {
+    for (i in 0_u64..compared) {
+      compare_child(child: &context^.children.inner[i], changed: &changed.inner[i], before: befores.inner[i]);
+    }
+  }
+  let changed_any = any_set(flags: &changed);
+  let none = box_slots_new::<Exclusion>(capacity: 0_u64);
+  let moved = bnot(same_flow);
+  let held_count = context^.children.inner.len;
+  let breaking = context^.paragraphs.inner.len;
+  let changed_len = changed.inner.len;
+  let broken = 0_u64;
+  for (i in 0_u64..breaking) {
+    let marked = context^.paragraphs.inner[i].dirty;
+    let beside = i >= float_from;
+    let holds_changed = if changed_any {
+      give reads_changed(paragraph: &context^.paragraphs.inner[i], changed: &changed.inner[0_u64..changed_len]);
+    } else {
+      give False();
+    }
+    let narrowed = if beside {
+      let full = full_width_lines(paragraph: &context^.paragraphs.inner[i], styles: styles, fonts: fonts, picks: picks);
+      give bnot(full);
+    } else {
+      give False();
+    }
+    let same_paragraph_width = context^.paragraphs.inner[i].width == context^.paragraphs.inner[i].broken_width;
+    let same_left = context^.paragraphs.inner[i].left == context^.paragraphs.inner[i].broken_left;
+    let same_input = band(same_paragraph_width, same_left);
+    let input_changed = bnot(same_input);
+    let geometry_changed = bor(moved, input_changed);
+    let first = bor(marked, geometry_changed);
+    let second = bor(narrowed, holds_changed);
+    let again = bor(first, second);
+    if again {
+      break_paragraph(paragraph: &context^.paragraphs.inner[i], children: &context^.children.inner[0_u64..held_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none.inner[0_u64..0_u64], origin_y: 0_i32);
+      set broken = broken +wrap 1_u64;
+    }
+  }
+  clear_marks(context: context);
+  finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
+  set context^.dirty = False();
+  set context^.restyled = False();
+  let summed = sum_counts(results: &results);
+  let below = add_counts(first: summed, second: early);
+  let walked = context^.flow.inner.len;
+  let held_here = if marked_paragraphs {
+    give walked;
+  } else {
+    give 0_u64;
+  }
+  let total_contexts = below.contexts +sat 1_u64;
+  let total_paragraphs = below.paragraphs +sat broken;
+  let total_held = below.held_entries +sat held_here;
+  let total_entries = below.entries +sat walked;
+  return UpdateCounts(prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
+}
+
+fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) {
+  doc "Returns at once when nothing is marked; otherwise prepares the marked paragraphs again (prepare_marked), lays the initial containing block out again in the viewport as lay_out does, through update_flow, records the counts and clears the layout's mark.";
+  if layout^.dirty {
+  } else {
+    set layout^.last_update = no_updates();
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let prepared = count_marked(context: &layout^.root);
+  let prepared_ok = prepare_marked(context: &layout^.root, document: document, styles: styles, fonts: fonts, picks: picks);
+  let before = before_of(context: &layout^.root);
+  let viewport = layout^.viewport;
+  let width = units(px: viewport.width);
+  let height = units(px: viewport.height);
+  let no = False();
+  set layout^.root.space = Space(available: width, basis_width: width, basis_height: height, forced_width: width, forced_height: height, shrink: no);
+  let counts = update_flow(context: &layout^.root, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  set layout^.root.x = 0_i32;
+  set layout^.root.y = 0_i32;
+  set layout^.last_update = UpdateCounts(prepared: prepared, contexts: counts.contexts, paragraphs: counts.paragraphs, held_entries: counts.held_entries, entries: counts.entries);
+  set layout^.dirty = False();
+  if prepared_ok {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let failure = LayoutError::Text();
+  return Err<unit, LayoutError>(error: failure);
+}
+
+fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, from: u64, at: u64, old_top: i32, old_height: i32, old_lines: Bool, unasked: Bool) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "X5 step 3c's re-stack from the edited entry, for a flow context whose geometry and space are unchanged and whose one mark restack_entry turns into flow entry from (and paragraph at, or none), which update_in_place refused (a float beside it, a block that cannot grow with it, or margins it changes): the paragraph is broken again at full width, as the pre-pass path breaks a marked paragraph or one holding a changed atomic inline, and stack_flow replays the entries before it from their placed positions (no pre-pass, no breaking and no child layout there) and stacks it and what follows again, from the previous pass's state of the paragraph (old_top, old_height, old_lines), until restack_settles lets it stop. When it stopped after entry k, every later paragraph, child and block moves by its delta (translate_after), so do each later block-in-inline's line and each later entry's natural position, and the content height and the flow's end move by delta; the baseline is the previous one moved by delta when it came from after k. Then, as finish_flow does, the height, the baseline, the own fragment and the block-in-inline rectangles (split_fragments) and the out-of-flow children (position_out_children).";
+  let held = context^.children.inner.len;
+  let none = box_slots_new::<Exclusion>(capacity: 0_u64);
+  if at < context^.paragraphs.inner.len {
+    break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..held], styles: styles, fonts: fonts, picks: picks, exclusions: &none.inner[0_u64..0_u64], origin_y: 0_i32);
+  }
+  let old_entry = context^.baseline_entry;
+  let old_baseline = context^.baseline;
+  let old_based = context^.has_baseline;
+  let old_raw = context^.content_raw;
+  let old_end = context^.flow_end;
+  let yes = True();
+  let plan = Restack(partial: yes, from: from, unasked: unasked, old_top: old_top, old_height: old_height, old_lines: old_lines, old_flow_end: old_end);
+  let cleared = context^.fragments.inner.len;
+  for (step in 0_u64..cleared) {
+    let length = context^.fragments.inner.len;
+    if length == 0_u64 {
+      break;
+    }
+    let dropped = take_back(window: &context^.fragments.inner);
+  }
+  let stacked = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite, plan: plan);
+  let baseline = stacked.baseline;
+  let has_baseline = stacked.has_baseline;
+  let content = if stacked.stopped {
+    let delta = stacked.delta;
+    let stop = flow_index(at: stacked.stop_at);
+    if delta != 0_i32 {
+      translate_after(context: context, flow_at: stop, delta: delta);
+      shift_split_lines(context: context, flow_at: stop, delta: delta);
+      shift_naturals(context: context, after: stacked.stop_at, delta: delta);
+    }
+    let raw = old_raw +sat delta;
+    set context^.content_raw = raw;
+    set context^.flow_end = old_end +sat delta;
+    let later = if old_entry == no_index {
+      give False();
+    } else {
+      give old_entry > stop;
+    }
+    if later {
+      set baseline = old_baseline +sat delta;
+      set has_baseline = old_based;
+      set context^.baseline_entry = old_entry;
+    }
+    give imax(raw, 0_i32);
+  } else {
+    give stacked.height;
+  }
+  let used = used_height(context: context, styles: styles, content: content);
+  set context^.height = used;
+  let group = box_of(styles: styles, style: context^.style);
+  let shown_x = group.overflow_x == overflow_visible;
+  let clipped_x = group.overflow_x == overflow_clip;
+  let shown_y = group.overflow_y == overflow_visible;
+  let clipped_y = group.overflow_y == overflow_clip;
+  let visible_x = bor(shown_x, clipped_x);
+  let visible_y = bor(shown_y, clipped_y);
+  let visible = band(visible_x, visible_y);
+  set context^.baseline = baseline;
+  set context^.has_baseline = band(has_baseline, visible);
+  if context^.has_out {
+    position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  }
+  add_own_fragment(context: context);
+  split_fragments(context: context, styles: styles, content_left: frame.content_left);
+  let total = context^.flow.inner.len;
+  let walked = if stacked.stopped {
+    let after = stacked.stop_at +sat 1_u64;
+    give total -sat after;
+  } else {
+    give 0_u64;
+  }
+  let entries = stacked.restacked +sat walked;
+  return UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 1_u64, held_entries: stacked.restacked, entries: entries);
+}
+
+fn shift_split_lines(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
+  doc "Moves the line recorded for each block-in-inline whose block opens after flow_at by delta.";
+  let count = context^.splits.inner.len;
+  for (k in 0_u64..count) {
+    shift_split_line(split: &context^.splits.inner[k], flow_at: flow_at, delta: delta);
+  }
+  return unit;
+}
+
+fn shift_split_line(split: &Split, flow_at: u32, delta: i32) -> result: unit writes(split) {
+  doc "Moves one block-in-inline's recorded line by delta when its block opens after flow_at and it has one.";
+  if split^.open > flow_at {
+    if split^.line != no_line {
+      set split^.line = split^.line +sat delta;
+    }
+  }
+  return unit;
+}
+
+fn shift_naturals(context: &Context, after: u64, delta: i32) -> result: unit writes(context) {
+  doc "Moves the natural position of every flow entry after after by delta, leaving the largest i32 of an entry no float moves as it is.";
+  let count = context^.naturals.inner.len;
+  let first = after +sat 1_u64;
+  for (k in first..count) {
+    shift_natural(natural: &context^.naturals.inner[k], delta: delta);
+  }
+  return unit;
+}
+
+fn shift_natural(natural: &i32, delta: i32) -> result: unit writes(natural) {
+  doc "Moves one natural position by delta unless it is the largest i32.";
+  if natural^ != 2147483647_i32 {
+    set natural^ = natural^ +sat delta;
+  }
+  return unit;
+}
+
+fn restack_entry(context: &Context) -> (from: u64, paragraph: u64, inline_child: u64) reads(context) {
+  doc "The flow entry a re-stack starts from for the context's one mark (restack_flow), the paragraph it breaks again and the atomic inline it waits for (the largest u64 for none): a marked paragraph's own entry; for one marked child and no marked paragraph, an in-flow child's or a float's entry (stack_flow settles it there), or, for an atomic inline, the entry of the paragraph holding it, which update_in_place must have updated first; the largest u64 for anything else (several marks, an out-of-flow child). It reads the marks text_changed recorded, not the children's own, which update_in_place may already have cleared.";
+  let none = 18446744073709551615_u64;
+  let no_child = context^.marked_children == 0_u32;
+  let (one_paragraph, p) = single_marked_paragraph(context: context);
+  let paragraph_only = band(no_child, one_paragraph);
+  if paragraph_only {
+    if p < context^.paragraphs.inner.len {
+      let at = cvt::<u32, u64>(context^.paragraphs.inner[p].flow_at);
+      return at, p, none;
+    }
+    return none, none, none;
+  }
+  let no_paragraph = context^.marked_paragraphs == 0_u32;
+  let one_child = context^.marked_children == 1_u32;
+  let child_only = band(no_paragraph, one_child);
+  if child_only {
+  } else {
+    return none, none, none;
+  }
+  let c = cvt::<u32, u64>(context^.marked_child);
+  if c < context^.children.inner.len {
+  } else {
+    return none, none, none;
+  }
+  let flow_at = context^.children.inner[c].flow_at;
+  let (kind, index) = entry_kind(context: context, flow_at: flow_at);
+  let at = cvt::<u32, u64>(flow_at);
+  if kind == 1_u8 {
+    return at, none, none;
+  }
+  if kind == 2_u8 {
+    return at, none, none;
+  }
+  if kind == 0_u8 {
+    return at, index, c;
+  }
+  return none, none, none;
+}
