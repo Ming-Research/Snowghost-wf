@@ -7,9 +7,11 @@ alias Document = pkg::dom::Document;
 alias DomError = pkg::dom::DomError;
 alias Environment = pkg::css::values::Environment;
 alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
 alias FontPicks = pkg::layout::text::FontPicks;
 alias FontSet = pkg::layout::text::FontSet;
 alias Layout = pkg::layout::Layout;
+alias layout_counts = pkg::layout::layout_counts;
 alias Styles = pkg::style::Styles;
 alias HandleFactory = std::io::HandleFactory;
 alias Namespace = pkg::dom::Namespace;
@@ -947,6 +949,31 @@ fn same_bytes(first: &Box<Slots<u8>>, second: &Box<Slots<u8>>) -> same: Bool rea
   return True();
 }
 
+fn stamp(clock: &Clock, witness: &Layout) -> result: Instant reads(witness), writes(clock) {
+  doc "Reads the clock after every earlier statement that writes witness: the read of witness makes this call conflict with them, so no overlapping lowering [PAR-1] can take the reading before the work it ends has finished.";
+  let (contexts, paragraphs) = layout_counts(layout: witness);
+  let made = now(clock: clock);
+  return made;
+}
+
+fn delta_after(started: Instant, old: &Styles, new: &Styles) -> changed: Box<Array<Bool>> reads(old), reads(new) {
+  doc "layout_changes, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let changed = layout_changes(old: old, new: new);
+  return move changed;
+}
+
+fn picks_after(started: Instant, fonts: &FontSet, styles: &Styles, atoms: &AtomTable) -> picks: Option<FontPicks> reads(fonts), reads(styles), reads(atoms) {
+  doc "pick_all, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let picks = pick_all(fonts: fonts, styles: styles, atoms: atoms);
+  return move picks;
+}
+
+fn incremental_after(started: Instant, page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -> applied: Bool reads(page), reads(fonts), writes(kept) {
+  doc "apply_incremental, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let applied = apply_incremental(page: page, fonts: fonts, kept: kept, node: node);
+  return applied;
+}
+
 fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -> applied: Bool reads(page), reads(fonts), writes(kept) {
   doc "Records the change of the Text node's data in the kept layout with text_changed and brings it up to date with update, in the kept styles and font picks; False when either refuses.";
   match text_changed(layout: &kept^.layout, document: &page^.document, node: node) {
@@ -999,9 +1026,9 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
   let class_change = AttributeChange(node: node, name: class_atom);
   let attributes = array_filled::<AttributeChange, 1>(value: class_change);
   let started = now(clock: clock);
-  let changed = layout_changes(old: &kept^.styles, new: &styles);
+  let changed = delta_after(started: started, old: &kept^.styles, new: &styles);
   let after_delta = now(clock: clock);
-  let picks = match pick_all(fonts: fonts, styles: &styles, atoms: &page^.atoms) {
+  let picks = match picks_after(started: after_delta, fonts: fonts, styles: &styles, atoms: &page^.atoms) {
     Some(value: found) => {
       give move found;
     }
@@ -1037,7 +1064,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
       return Ok<StyleUpdate, u8>(value: refused);
     }
   }
-  let finished = now(clock: clock);
+  let finished = stamp(clock: clock, witness: &kept^.layout);
   let elapsed = nanoseconds_from(earlier: started, later: finished);
   let micros = elapsed / 1000_u64;
   if timing {
@@ -1046,7 +1073,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
     let delta_us = delta_ns / 1000_u64;
     let picks_us = picks_ns / 1000_u64;
     let full_started = now(clock: clock);
-    let full_picks = match pick_all(fonts: fonts, styles: &styles, atoms: &page^.atoms) {
+    let full_picks = match picks_after(started: full_started, fonts: fonts, styles: &styles, atoms: &page^.atoms) {
       Some(value: found) => {
         give move found;
       }
@@ -1063,7 +1090,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
       }
     }
     lay_out(layout: &full_layout, document: &page^.document, styles: &styles, fonts: fonts, picks: &full_picks);
-    let full_finished = now(clock: clock);
+    let full_finished = stamp(clock: clock, witness: &full_layout);
     let full_ns = nanoseconds_from(earlier: full_started, later: full_finished);
     let full_us = full_ns / 1000_u64;
     put_text(buffer: report, text: &style_edit_label[0_u64..style_edit_label.len]);
@@ -1182,8 +1209,8 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
           Some(value: node) => {
             if timing {
               let started = now(clock: clock);
-              let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
-              let finished = now(clock: clock);
+              let done = incremental_after(started: started, page: page, fonts: fonts, kept: &kept, node: node);
+              let finished = stamp(clock: clock, witness: &kept.layout);
               let elapsed = nanoseconds_from(earlier: started, later: finished);
               put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
               put_decimal(buffer: &report, value: edits);
