@@ -232,6 +232,14 @@ example apart from the renderer code that exposed it
   is the split loops' dispatch on small trees, it is the Whitefoot item on
   split loops with few iterations above. Reopen with the item before it.
 
+- **X5's far-read counter was not built.** Step 6 planned to count, per
+  unit, the reads of another element's style, to price Q69's refused
+  alternative of recorded reads per unit. Q69 chose keys of the
+  layout-relevant groups, and every X5 edit on three pages matched a full
+  build, so the count decides nothing now. Change: count calls of
+  `computed_of` whose element is outside the reading unit. Reopen if an
+  edit kind shows a missed dependency or recorded reads are reconsidered.
+
 - **A changed background predicate prepares and breaks its paragraph
   again.** `layout_changes` reports an element whose background turns
   transparent or visible (Q84 in

@@ -213,6 +213,15 @@ comparator, which compares one build on one process's inputs; the gap is a
 Whitefoot scheduling effect to be fixed in Whitefoot, not hidden by the
 denominator or worked around in the renderer's call structure.
 
+**Q88, what the compiler proves of a kept stage (pipeline).** The pipeline
+tree says each stage is memoized by its inputs with a key the compiler
+proves complete. The incremental research tree (5.1) found the proof holds
+for the places a function reads, not for their versions, and covers the DOM
+arena only as a whole; X5 kept layout by marks pushed from each edit and
+checked every result against a full build byte for byte. Recommended: the
+pipeline decision says so, with memoization by a compiler-proved key as the
+refused alternative, until Whitefoot records versions (X11).
+
 ## Measurement
 
 - **Edit scripts.** `scripts/edits.py`, with X1's seed and rules
