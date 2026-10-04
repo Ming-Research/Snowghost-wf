@@ -3,6 +3,7 @@
 usage: python3 stylecheck.py empty PAGE
        python3 stylecheck.py ref PAGE KIND [--count N] [--verbose]
        python3 stylecheck.py case HTMLFILE CLASS,CLASS,... [--verbose]
+       python3 stylecheck.py q77 [backgroundcheck.py options]
 
 Run from the repository root with build/style_oracle (built from the entry
 style_oracle) and build/layout_oracle (for the `nodes` listing the edit
@@ -18,16 +19,32 @@ ref     generates PAGE-KIND.edits with edits.py (KIND colour, fontsize or
         driver's flagged elements with a brute-force comparison of the style
         dump before and after it. An element is changed by the reference when
         any column of its row differs except color, border-*-color and
-        background-color (the colours pkg::layout does not read), when its
-        row is missing or new, or when a ::before or ::after row of it
+        background-color, when its row is missing or new, or when a ::before or ::after row of it
         differs, appears or disappears. The reference reads only the dump
         (computed values as the driver serializes them), not layout_changes.
-        case    runs the edits of make_case_script on a small page (a path ending in
+case    runs the edits of make_case_script on a small page (a path ending in
         .html, such as lists-case.html) and compares as ref does.
         Exit status 1 when any edit disagrees. A line is printed for a disagreeing
         edit (with --verbose for every edit) and a summary last; the summary
         also counts the rows whose colour columns alone changed, which shows
         that a colour edit changes the dump.
+
+The ref/case comparison keeps its existing excluded columns. Text and border
+colours are paint-only. Background presence is a layout dependency, but this dump
+reference cannot observe it: the serializer resolves currentColor to text colour
+and rounds alpha, losing both inputs of currentColor OR raw alpha > 0. Excluding
+background-color here does not establish that its edits need no layout work.
+The historical "rows changed in colour only" count means changes in excluded
+dump columns, not proof that those rows have no layout dependency.
+
+q77 runs backgroundcheck.py's fixed declared element/before/after fixtures,
+checking flags, retained layout counts, inc same and complete seq/par output.
+It supplies independent background-predicate coverage alongside ref/case;
+resolved dump colours never determine its expected flags. See that caller's
+--help for the four binary overrides and a new output directory. Existing
+output is rejected. The CSS fixture cannot isolate current=True/raw-alpha=0
+against omission of only the current flag, since its stored placeholder has
+positive alpha; that internal combination remains outside this coverage.
 
 The dump prints a pseudo-element only when its content is not none and
 serializes floats rounded, so the reference can differ from layout_changes
@@ -45,8 +62,10 @@ OUT = 'build/x5'
 STYLE = os.environ.get('STYLE_ORACLE', 'build/style_oracle')
 LAYOUT = 'build/layout_oracle'
 
-NOT_LAYOUT = {b'color', b'border-top-color', b'border-right-color', b'border-bottom-color',
-              b'border-left-color', b'background-color'}
+# Background is excluded because its raw predicate is unobservable here.
+# Keep the same reference columns; Q77 is checked by the separate declared oracle.
+DUMP_EXCLUDED_COLUMNS = {b'color', b'border-top-color', b'border-right-color',
+                         b'border-bottom-color', b'border-left-color', b'background-color'}
 
 
 def sheets_of(page):
@@ -190,7 +209,7 @@ def reference(page, kind, count, verbose, classes=None):
             number, dump = block[1], block[2]
             if columns is None:
                 names = dump[0].rstrip(b'\n').split(b'\t')
-                columns = [i for i, n in enumerate(names) if n not in NOT_LAYOUT]
+                columns = [i for i, n in enumerate(names) if n not in DUMP_EXCLUDED_COLUMNS]
             rows = layout_rows(dump[1:], columns)
             if previous is not None:
                 keys = set(previous) | set(rows)
@@ -233,6 +252,8 @@ def reference(page, kind, count, verbose, classes=None):
 
 def main():
     args = sys.argv[1:]
+    if args and args[0] == 'q77':
+        raise SystemExit(subprocess.call([sys.executable, os.path.join(HERE, 'backgroundcheck.py')] + args[1:]))
     count = None
     verbose = '--verbose' in args
     if verbose:

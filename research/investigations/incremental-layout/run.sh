@@ -33,6 +33,12 @@
 #                                   on a layout kept across edits) is the
 #                                   same as the rebuilt one; differences,
 #                                   refusals and incomplete runs fail
+#   run.sh q77 [OPTIONS]            runs the fixed background-predicate oracle
+#                                   through scripts/stylecheck.py q77; OPTIONS
+#                                   override four binaries and a fresh output
+#                                   directory (backgroundcheck.py --help);
+#                                   retains complete raw evidence and fails on
+#                                   any flags/work/dump/seq-par disagreement
 #   run.sh time BUILD PAGE KIND [RUNS]
 #                                   times text_changed + update per edit
 #                                   with the driver's incremental mode, RUNS
@@ -44,6 +50,16 @@
 #                                   RUN_CHECK names the lock script (by
 #                                   default the pinned checkout's
 #                                   .github/run-check.pl)
+#   run.sh style-update OPTIONS... checks style edit identity and measures
+#                                   three runs with baseline/candidate seq
+#                                   and four-worker drivers; source revisions
+#                                   and build-time provenance are required.
+#                                   See DESIGN.md, Maintained style-update
+#                                   measurement. --self-test is lightweight.
+#   run.sh value-falsify ...        prepares/verifies Q78 diagnostic copies;
+#                                   --controls runs stub checks, --execute
+#                                   takes the host lock to build/run the
+#                                   five falsifiers (no timing evidence)
 #
 # PAGE is ecma262, html5 or apollo11, fetched to build/research/concurrency by
 # research/investigations/concurrency/run.sh and run with the sheets of
@@ -52,8 +68,8 @@
 #   cd renderer && whitefootc --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq
 #   cd renderer && whitefootc --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par
 # under the host-wide lock (.github/run-check.pl of the pinned checkout). The
-# other runs here check results and are not timed, so only time takes the
-# lock.
+# ordinary result checks are not timed; time, style-update and value-falsify --execute
+# take the lock (the latter builds diagnostic binaries).
 # POSIX sh plus python3.
 
 set -eu
@@ -246,6 +262,28 @@ dumps() {
 	return "$dumps_status"
 }
 
+style_update() {
+	for option in "$@"; do
+		if [ "$option" = --self-test ] || [ "$option" = --help ]; then
+			python3 "$here/scripts/styleupdate.py" "$@"
+			return "$?"
+		fi
+	done
+	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+		exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-style-update sh "$here/run.sh" style-update "$@"
+	fi
+	python3 "$here/scripts/styleupdate.py" "$@"
+}
+
+value_falsify() {
+	for argument in "$@"; do
+		if [ "$argument" = --execute ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+			exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-value-falsify sh "$here/run.sh" value-falsify "$@"
+		fi
+	done
+	python3 "$here/scripts/value_probe.py" "$@"
+}
+
 cmd=$1
 shift
 case $cmd in
@@ -258,8 +296,11 @@ reparse) reparse "$@" ;;
 dumps) dumps "$@" ;;
 inc) inc "$@" ;;
 time) time_edits "$@" ;;
+q77) python3 "$here/scripts/stylecheck.py" q77 "$@" ;;
+style-update) style_update "$@" ;;
+value-falsify) value_falsify "$@" ;;
 *)
-	echo "usage: run.sh self-test|prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
+	echo "usage: run.sh self-test|prepare|edit|roundtrip|same|reparse|dumps|inc|time|q77|style-update|value-falsify ..." >&2
 	exit 2
 	;;
 esac

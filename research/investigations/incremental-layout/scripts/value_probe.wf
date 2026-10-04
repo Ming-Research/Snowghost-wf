@@ -1,0 +1,890 @@
+alias ContentItem = pkg::css::values::ContentItem;
+alias ContentList = pkg::css::values::ContentList;
+alias Family = pkg::css::values::Family;
+alias FontGroup = pkg::css::values::FontGroup;
+alias SizeGroup = pkg::css::values::SizeGroup;
+alias TrackList = pkg::css::values::TrackList;
+
+fn probe_size(styles: &Styles, element: u32) -> found: Option<SizeGroup> reads(styles) {
+  doc "Reads a size table entry by the original element position, without the comparator.";
+  let at = cvt::<u32, u64>(element);
+  if at < styles^.elements.inner.len {
+    let id = cvt::<u32, u64>(styles^.elements.inner[at].size);
+    if id < styles^.sizes.inner.len {
+      let value = styles^.sizes.inner[id];
+      return Some<SizeGroup>(value: value);
+    }
+  }
+  return None<SizeGroup>();
+}
+
+fn probe_font(styles: &Styles, element: u32) -> found: Option<FontGroup> reads(styles) {
+  doc "Reads a font table entry without comparing it.";
+  let at = cvt::<u32, u64>(element);
+  if at < styles^.elements.inner.len {
+    let id = cvt::<u32, u64>(styles^.elements.inner[at].font);
+    if id < styles^.fonts.inner.len {
+      let value = styles^.fonts.inner[id];
+      return Some<FontGroup>(value: value);
+    }
+  }
+  return None<FontGroup>();
+}
+
+fn probe_tracks(styles: &Styles, element: u32) -> found: Option<TrackList> reads(styles) {
+  doc "Reads the element's explicit column list without the delta helpers.";
+  let at = cvt::<u32, u64>(element);
+  if at < styles^.elements.inner.len {
+    let group = cvt::<u32, u64>(styles^.elements.inner[at].container);
+    if group < styles^.containers.inner.len {
+      let id = cvt::<u32, u64>(styles^.containers.inner[group].template_columns);
+      if id < styles^.track_lists.inner.len {
+        let value = styles^.track_lists.inner[id];
+        return Some<TrackList>(value: value);
+      }
+    }
+  }
+  return None<TrackList>();
+}
+
+fn probe_content(styles: &Styles, element: u32) -> found: Option<ContentList> reads(styles) {
+  doc "Reads the element's before pseudo content list without the delta helpers.";
+  let count = styles^.pseudos.inner.len;
+  for (at in 0_u64..count) {
+    let pseudo = styles^.pseudos.inner[at];
+    let own = pseudo.element == element;
+    let before = pseudo.kind == 0_u8;
+    let matches = band(own, before);
+    if matches {
+      let group = cvt::<u32, u64>(pseudo.style.content);
+      if group < styles^.contents.inner.len {
+        let id = cvt::<u32, u64>(styles^.contents.inner[group].content);
+        if id < styles^.content_lists.inner.len {
+          let value = styles^.content_lists.inner[id];
+          return Some<ContentList>(value: value);
+        }
+      }
+      return None<ContentList>();
+    }
+  }
+  return None<ContentList>();
+}
+
+fn probe_width(value: SizeGroup, expected: f32) -> same: Bool pure {
+  doc "Checks the literal length and the absence of a percentage component.";
+  let length = value.width.kind == 0_u8;
+  let px = feq(value.width.value.px, expected);
+  let percent = feq(value.width.value.percent, 0.0_f32);
+  let no_percent = bnot(value.width.value.has_percent);
+  let a = band(length, px);
+  let b = band(percent, no_percent);
+  return band(a, b);
+}
+
+fn probe_track(styles: &Styles, at: u32, expected: f32) -> same: Bool reads(styles) {
+  doc "Checks both raw track breadths against a fixed pixel length and one leading line name.";
+  let index = cvt::<u32, u64>(at);
+  if index < styles^.tracks.inner.len {
+    let value = styles^.tracks.inner[index];
+    let min_length = value.min.kind == 0_u8;
+    let max_length = value.max.kind == 0_u8;
+    let kinds = band(min_length, max_length);
+    let min_px = feq(value.min.value.px, expected);
+    let max_px = feq(value.max.value.px, expected);
+    let min_percent_zero = feq(value.min.value.percent, 0.0_f32);
+    let max_percent_zero = feq(value.max.value.percent, 0.0_f32);
+    let min_flex_zero = feq(value.min.flex, 0.0_f32);
+    let max_flex_zero = feq(value.max.flex, 0.0_f32);
+    let percents = band(min_percent_zero, max_percent_zero);
+    let flexes = band(min_flex_zero, max_flex_zero);
+    let zero_components = band(percents, flexes);
+    let no_min_percent = bnot(value.min.value.has_percent);
+    let no_max_percent = bnot(value.max.value.has_percent);
+    let not_fit = bnot(value.fit_content);
+    let names = value.names_before.end -sat value.names_before.first;
+    let one_name = names == 1_u32;
+    let end = cvt::<u32, u64>(value.names_before.end);
+    let named = end <= styles^.line_names.inner.len;
+    let a = band(min_px, max_px);
+    let b = band(no_min_percent, no_max_percent);
+    let c = band(not_fit, one_name);
+    let d = band(a, b);
+    let e = band(c, named);
+    let raw = band(d, e);
+    let explicit_length = band(raw, kinds);
+    return band(explicit_length, zero_components);
+  }
+  return False();
+}
+
+fn probe_same_name(old: &Styles, new: &Styles, old_track: u32, new_track: u32) -> same: Bool reads(old), reads(new) {
+  doc "Compares the single raw name atom at two tracks' leading name ranges.";
+  let a = cvt::<u32, u64>(old_track);
+  let b = cvt::<u32, u64>(new_track);
+  let ai = a < old^.tracks.inner.len;
+  let bi = b < new^.tracks.inner.len;
+  let inside = band(ai, bi);
+  if inside {
+    let old_name = cvt::<u32, u64>(old^.tracks.inner[a].names_before.first);
+    let new_name = cvt::<u32, u64>(new^.tracks.inner[b].names_before.first);
+    let old_known = old_name < old^.line_names.inner.len;
+    let new_known = new_name < new^.line_names.inner.len;
+    let known = band(old_known, new_known);
+    if known {
+      return old^.line_names.inner[old_name].index == new^.line_names.inner[new_name].index;
+    }
+  }
+  return False();
+}
+
+fn probe_names_moved(old: &Styles, new: &Styles, old_track: u32, new_track: u32) -> moved: Bool reads(old), reads(new) {
+  doc "Requires the raw one-name range endpoints to move for this track.";
+  let a = cvt::<u32, u64>(old_track);
+  let b = cvt::<u32, u64>(new_track);
+  let ai = a < old^.tracks.inner.len;
+  let bi = b < new^.tracks.inner.len;
+  let inside = band(ai, bi);
+  if inside {
+    let first_moved = old^.tracks.inner[a].names_before.first != new^.tracks.inner[b].names_before.first;
+    let end_moved = old^.tracks.inner[a].names_before.end != new^.tracks.inner[b].names_before.end;
+    return band(first_moved, end_moved);
+  }
+  return False();
+}
+
+fn probe_family(styles: &Styles, at: u32) -> found: Option<Family> reads(styles) {
+  doc "Reads one raw family entry.";
+  let index = cvt::<u32, u64>(at);
+  if index < styles^.families.inner.len {
+    let value = styles^.families.inner[index];
+    return Some<Family>(value: value);
+  }
+  return None<Family>();
+}
+
+fn probe_item(styles: &Styles, at: u32) -> found: Option<ContentItem> reads(styles) {
+  doc "Reads one raw generated content item.";
+  let index = cvt::<u32, u64>(at);
+  if index < styles^.content_items.inner.len {
+    let value = styles^.content_items.inner[index];
+    return Some<ContentItem>(value: value);
+  }
+  return None<ContentItem>();
+}
+
+fn probe_string(styles: &Styles, item: ContentItem, expected: &[u8]) -> same: Bool reads(styles), reads(expected) {
+  doc "Checks a string's raw bytes against independently written literal bytes.";
+  if item.kind != 0_u8 {
+    return False();
+  }
+  let start = cvt::<u32, u64>(item.text_start);
+  let end = cvt::<u32, u64>(item.text_end);
+  if start > end {
+    return False();
+  }
+  if end > styles^.generated_text.inner.len {
+    return False();
+  }
+  let size = end - start;
+  if size != expected^.len {
+    return False();
+  }
+  for (offset in 0_u64..size) {
+    let at = start +sat offset;
+    if at < styles^.generated_text.inner.len {
+      if offset < expected^.len {
+        if styles^.generated_text.inner[at] != expected^[offset] {
+          return False();
+        }
+      } else {
+        return False();
+      }
+    } else {
+      return False();
+    }
+  }
+  return True();
+}
+
+const probe_a: Array<u8, 1> = "a";
+
+const probe_long: Array<u8, 4> = "long";
+
+const probe_uv: Array<u8, 2> = "uv";
+
+const probe_uw: Array<u8, 2> = "uw";
+
+fn probe_exact_float() -> failure: u32 pure {
+  doc "The expected adjacent-float inequality and signed-zero equality come from literal IEEE binary32 words.";
+  let one = reinterpret::<u32, f32>(1065353216_u32);
+  let adjacent = reinterpret::<u32, f32>(1065353217_u32);
+  let negative_zero = reinterpret::<u32, f32>(2147483648_u32);
+  let equal_adjacent = delta_float_value(first: one, second: adjacent);
+  if equal_adjacent {
+    return 901_u32;
+  }
+  let equal_zero = delta_float_value(first: 0.0_f32, second: negative_zero);
+  if equal_zero {
+  } else {
+    return 902_u32;
+  }
+  return 0_u32;
+}
+
+fn x5_value_probe(old: &Styles, new: &Styles, scenario: u32, first_element: u32, second_element: u32) -> failure: u32 reads(old), reads(new) {
+  doc "Checks literal raw value and relocation premises before consulting layout_changes; zero means every premise and every hand-written expected flag held.";
+  let float_failure = probe_exact_float();
+  if float_failure != 0_u32 {
+    return float_failure;
+  }
+  let a = cvt::<u32, u64>(first_element);
+  let b = cvt::<u32, u64>(second_element);
+  let count = old^.elements.inner.len;
+  if count != new^.elements.inner.len {
+    return 1_u32;
+  }
+  if a >= count {
+    return 2_u32;
+  }
+  if b >= count {
+    return 3_u32;
+  }
+  if a == b {
+    return 4_u32;
+  }
+  if scenario == 1_u32 {
+    let oa = match probe_size(styles: old, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 101_u32;
+      }
+    }
+    let na = match probe_size(styles: new, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 101_u32;
+      }
+    }
+    let ob = match probe_size(styles: old, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 101_u32;
+      }
+    }
+    let nb = match probe_size(styles: new, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 101_u32;
+      }
+    }
+    if old^.elements.inner[a].size != new^.elements.inner[a].size {
+      return 102_u32;
+    }
+    if old^.elements.inner[b].size == new^.elements.inner[b].size {
+      return 103_u32;
+    }
+    let probe_check_1 = probe_width(value: ob, expected: 17.0_f32);
+    if probe_check_1 {
+    } else {
+      return 104_u32;
+    }
+    let probe_check_2 = probe_width(value: nb, expected: 17.0_f32);
+    if probe_check_2 {
+    } else {
+      return 105_u32;
+    }
+    let forward = probe_width(value: oa, expected: 17.0_f32);
+    let backward = probe_width(value: na, expected: 17.0_f32);
+    if forward {
+      let probe_check_3 = probe_width(value: na, expected: 19.0_f32);
+      if probe_check_3 {
+      } else {
+        return 106_u32;
+      }
+    } else if backward {
+      let probe_check_4 = probe_width(value: oa, expected: 19.0_f32);
+      if probe_check_4 {
+      } else {
+        return 107_u32;
+      }
+    } else {
+      return 108_u32;
+    }
+  } else if scenario <= 3_u32 {
+    if scenario < 2_u32 {
+      return 200_u32;
+    }
+    let oa = match probe_tracks(styles: old, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 201_u32;
+      }
+    }
+    let na = match probe_tracks(styles: new, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 201_u32;
+      }
+    }
+    let ob = match probe_tracks(styles: old, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 201_u32;
+      }
+    }
+    let nb = match probe_tracks(styles: new, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 201_u32;
+      }
+    }
+    let oa_count = oa.end -sat oa.first;
+    let na_count = na.end -sat na.first;
+    let ob_count = ob.end -sat ob.first;
+    let nb_count = nb.end -sat nb.first;
+    if ob_count != 2_u32 {
+      return 202_u32;
+    }
+    if nb_count != 2_u32 {
+      return 202_u32;
+    }
+    let probe_check_5 = probe_track(styles: old, at: oa.first, expected: 11.0_f32);
+    if probe_check_5 {
+    } else {
+      return 203_u32;
+    }
+    let probe_check_6 = probe_track(styles: new, at: na.first, expected: 11.0_f32);
+    if probe_check_6 {
+    } else {
+      return 203_u32;
+    }
+    let probe_check_7 = probe_same_name(old: old, new: new, old_track: oa.first, new_track: na.first);
+    if probe_check_7 {
+    } else {
+      return 204_u32;
+    }
+    let ob_last = ob.first +sat 1_u32;
+    let nb_last = nb.first +sat 1_u32;
+    let probe_check_8 = probe_track(styles: old, at: ob.first, expected: 17.0_f32);
+    if probe_check_8 {
+    } else {
+      return 205_u32;
+    }
+    let probe_check_9 = probe_track(styles: new, at: nb.first, expected: 17.0_f32);
+    if probe_check_9 {
+    } else {
+      return 205_u32;
+    }
+    let probe_check_10 = probe_same_name(old: old, new: new, old_track: ob.first, new_track: nb.first);
+    if probe_check_10 {
+    } else {
+      return 206_u32;
+    }
+    let probe_check_11 = probe_same_name(old: old, new: new, old_track: ob_last, new_track: nb_last);
+    if probe_check_11 {
+    } else {
+      return 207_u32;
+    }
+    if scenario == 2_u32 {
+      let first_names_moved = probe_names_moved(old: old, new: new, old_track: ob.first, new_track: nb.first);
+      let last_names_moved = probe_names_moved(old: old, new: new, old_track: ob_last, new_track: nb_last);
+      let names_moved = band(first_names_moved, last_names_moved);
+      if names_moved {
+      } else {
+        return 223_u32;
+      }
+      if ob.first == nb.first {
+        return 208_u32;
+      }
+      if ob.end == nb.end {
+        return 224_u32;
+      }
+      let old_b_first = cvt::<u32, u64>(ob.first);
+      let new_b_first = cvt::<u32, u64>(nb.first);
+      if old_b_first >= old^.tracks.inner.len {
+        return 209_u32;
+      }
+      if new_b_first >= new^.tracks.inner.len {
+        return 210_u32;
+      }
+      if old^.tracks.inner[old_b_first].names_before.first == new^.tracks.inner[new_b_first].names_before.first {
+        return 211_u32;
+      }
+      let probe_check_12 = probe_track(styles: old, at: ob_last, expected: 19.0_f32);
+      if probe_check_12 {
+      } else {
+        return 212_u32;
+      }
+      let probe_check_13 = probe_track(styles: new, at: nb_last, expected: 19.0_f32);
+      if probe_check_13 {
+      } else {
+        return 212_u32;
+      }
+      if oa_count == 1_u32 {
+        if na_count != 2_u32 {
+          return 213_u32;
+        }
+        let extra = na.first +sat 1_u32;
+        let probe_check_14 = probe_track(styles: new, at: extra, expected: 13.0_f32);
+        if probe_check_14 {
+        } else {
+          return 214_u32;
+        }
+      } else if na_count == 1_u32 {
+        if oa_count != 2_u32 {
+          return 215_u32;
+        }
+        let extra = oa.first +sat 1_u32;
+        let probe_check_15 = probe_track(styles: old, at: extra, expected: 13.0_f32);
+        if probe_check_15 {
+        } else {
+          return 216_u32;
+        }
+      } else {
+        return 217_u32;
+      }
+    } else {
+      if oa_count != 1_u32 {
+        return 218_u32;
+      }
+      if na_count != 1_u32 {
+        return 219_u32;
+      }
+      let forward = probe_track(styles: old, at: ob_last, expected: 19.0_f32);
+      let backward = probe_track(styles: new, at: nb_last, expected: 19.0_f32);
+      if forward {
+        let probe_check_16 = probe_track(styles: new, at: nb_last, expected: 23.0_f32);
+        if probe_check_16 {
+        } else {
+          return 220_u32;
+        }
+      } else if backward {
+        let probe_check_17 = probe_track(styles: old, at: ob_last, expected: 23.0_f32);
+        if probe_check_17 {
+        } else {
+          return 221_u32;
+        }
+      } else {
+        return 222_u32;
+      }
+    }
+  } else if scenario <= 5_u32 {
+    let oa = match probe_font(styles: old, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 301_u32;
+      }
+    }
+    let na = match probe_font(styles: new, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 301_u32;
+      }
+    }
+    let ob = match probe_font(styles: old, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 301_u32;
+      }
+    }
+    let nb = match probe_font(styles: new, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 301_u32;
+      }
+    }
+    let oa_count = oa.families_end -sat oa.families_start;
+    let na_count = na.families_end -sat na.families_start;
+    let ob_count = ob.families_end -sat ob.families_start;
+    let nb_count = nb.families_end -sat nb.families_start;
+    if ob_count != 2_u32 {
+      return 302_u32;
+    }
+    if nb_count != 2_u32 {
+      return 303_u32;
+    }
+    let oa_first = match probe_family(styles: old, at: oa.families_start) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 304_u32;
+      }
+    }
+    if oa_first.generic {
+      return 305_u32;
+    }
+    let na_first = match probe_family(styles: new, at: na.families_start) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 304_u32;
+      }
+    }
+    if na_first.generic {
+      return 305_u32;
+    }
+    let ob_first = match probe_family(styles: old, at: ob.families_start) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 304_u32;
+      }
+    }
+    if ob_first.generic {
+      return 305_u32;
+    }
+    let nb_first = match probe_family(styles: new, at: nb.families_start) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 304_u32;
+      }
+    }
+    if nb_first.generic {
+      return 305_u32;
+    }
+    if oa_first.name.index != na_first.name.index {
+      return 306_u32;
+    }
+    if ob_first.name.index != nb_first.name.index {
+      return 307_u32;
+    }
+    let old_last = ob.families_start +sat 1_u32;
+    let new_last = nb.families_start +sat 1_u32;
+    let ob_last = match probe_family(styles: old, at: old_last) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 308_u32;
+      }
+    }
+    let nb_last = match probe_family(styles: new, at: new_last) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 309_u32;
+      }
+    }
+    if ob_first.name.index == ob_last.name.index {
+      return 326_u32;
+    }
+    if nb_first.name.index == nb_last.name.index {
+      return 327_u32;
+    }
+    if ob_last.generic {
+      return 310_u32;
+    }
+    if nb_last.generic {
+      return 311_u32;
+    }
+    if scenario == 4_u32 {
+      if ob.families_start == nb.families_start {
+        return 312_u32;
+      }
+      if ob.families_end == nb.families_end {
+        return 328_u32;
+      }
+      if ob_last.name.index != nb_last.name.index {
+        return 313_u32;
+      }
+      if oa_count == 1_u32 {
+        if na_count != 2_u32 {
+          return 314_u32;
+        }
+        let last = na.families_start +sat 1_u32;
+        let extra = match probe_family(styles: new, at: last) {
+          Some(value: found) => {
+            give found;
+          }
+          None() => {
+            return 315_u32;
+          }
+        }
+        if extra.generic {
+          return 316_u32;
+        }
+        if extra.name.index == na_first.name.index {
+          return 317_u32;
+        }
+      } else if na_count == 1_u32 {
+        if oa_count != 2_u32 {
+          return 318_u32;
+        }
+        let last = oa.families_start +sat 1_u32;
+        let extra = match probe_family(styles: old, at: last) {
+          Some(value: found) => {
+            give found;
+          }
+          None() => {
+            return 319_u32;
+          }
+        }
+        if extra.generic {
+          return 320_u32;
+        }
+        if extra.name.index == oa_first.name.index {
+          return 321_u32;
+        }
+      } else {
+        return 322_u32;
+      }
+    } else {
+      if oa_count != 1_u32 {
+        return 323_u32;
+      }
+      if na_count != 1_u32 {
+        return 324_u32;
+      }
+      if ob_last.name.index == nb_last.name.index {
+        return 325_u32;
+      }
+    }
+  } else if scenario <= 7_u32 {
+    let oa = match probe_content(styles: old, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 401_u32;
+      }
+    }
+    let na = match probe_content(styles: new, element: first_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 401_u32;
+      }
+    }
+    let ob = match probe_content(styles: old, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 401_u32;
+      }
+    }
+    let nb = match probe_content(styles: new, element: second_element) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 401_u32;
+      }
+    }
+    let oa_count = oa.end -sat oa.first;
+    let na_count = na.end -sat na.first;
+    let ob_count = ob.end -sat ob.first;
+    let nb_count = nb.end -sat nb.first;
+    if ob_count != 1_u32 {
+      return 402_u32;
+    }
+    if nb_count != 1_u32 {
+      return 403_u32;
+    }
+    let oa_first = match probe_item(styles: old, at: oa.first) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 404_u32;
+      }
+    }
+    let na_first = match probe_item(styles: new, at: na.first) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 404_u32;
+      }
+    }
+    let ob_first = match probe_item(styles: old, at: ob.first) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 404_u32;
+      }
+    }
+    let nb_first = match probe_item(styles: new, at: nb.first) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        return 404_u32;
+      }
+    }
+    if scenario == 6_u32 {
+      if ob.first == nb.first {
+        return 405_u32;
+      }
+      if ob.end == nb.end {
+        return 427_u32;
+      }
+      if ob_first.text_start == nb_first.text_start {
+        return 406_u32;
+      }
+      if ob_first.text_end == nb_first.text_end {
+        return 428_u32;
+      }
+      let probe_check_18 = probe_string(styles: old, item: ob_first, expected: &probe_uv[0_u64..2_u64]);
+      if probe_check_18 {
+      } else {
+        return 407_u32;
+      }
+      let probe_check_19 = probe_string(styles: new, item: nb_first, expected: &probe_uv[0_u64..2_u64]);
+      if probe_check_19 {
+      } else {
+        return 408_u32;
+      }
+      if oa_count == 1_u32 {
+        if na_count != 2_u32 {
+          return 409_u32;
+        }
+        let probe_check_20 = probe_string(styles: old, item: oa_first, expected: &probe_a[0_u64..1_u64]);
+        if probe_check_20 {
+        } else {
+          return 410_u32;
+        }
+        let probe_check_21 = probe_string(styles: new, item: na_first, expected: &probe_long[0_u64..4_u64]);
+        if probe_check_21 {
+        } else {
+          return 411_u32;
+        }
+        let last = na.first +sat 1_u32;
+        let counter = match probe_item(styles: new, at: last) {
+          Some(value: found) => {
+            give found;
+          }
+          None() => {
+            return 412_u32;
+          }
+        }
+        if counter.kind != 1_u8 {
+          return 413_u32;
+        }
+      } else if na_count == 1_u32 {
+        if oa_count != 2_u32 {
+          return 414_u32;
+        }
+        let probe_check_22 = probe_string(styles: new, item: na_first, expected: &probe_a[0_u64..1_u64]);
+        if probe_check_22 {
+        } else {
+          return 415_u32;
+        }
+        let probe_check_23 = probe_string(styles: old, item: oa_first, expected: &probe_long[0_u64..4_u64]);
+        if probe_check_23 {
+        } else {
+          return 416_u32;
+        }
+        let last = oa.first +sat 1_u32;
+        let counter = match probe_item(styles: old, at: last) {
+          Some(value: found) => {
+            give found;
+          }
+          None() => {
+            return 417_u32;
+          }
+        }
+        if counter.kind != 1_u8 {
+          return 418_u32;
+        }
+      } else {
+        return 419_u32;
+      }
+    } else {
+      if oa_count != 1_u32 {
+        return 420_u32;
+      }
+      if na_count != 1_u32 {
+        return 421_u32;
+      }
+      let probe_check_24 = probe_string(styles: old, item: oa_first, expected: &probe_a[0_u64..1_u64]);
+      if probe_check_24 {
+      } else {
+        return 422_u32;
+      }
+      let probe_check_25 = probe_string(styles: new, item: na_first, expected: &probe_a[0_u64..1_u64]);
+      if probe_check_25 {
+      } else {
+        return 423_u32;
+      }
+      let forward = probe_string(styles: old, item: ob_first, expected: &probe_uv[0_u64..2_u64]);
+      let backward = probe_string(styles: new, item: nb_first, expected: &probe_uv[0_u64..2_u64]);
+      if forward {
+        let probe_check_26 = probe_string(styles: new, item: nb_first, expected: &probe_uw[0_u64..2_u64]);
+        if probe_check_26 {
+        } else {
+          return 424_u32;
+        }
+      } else if backward {
+        let probe_check_27 = probe_string(styles: old, item: ob_first, expected: &probe_uw[0_u64..2_u64]);
+        if probe_check_27 {
+        } else {
+          return 425_u32;
+        }
+      } else {
+        return 426_u32;
+      }
+    }
+  } else {
+    return 5_u32;
+  }
+  let flags = layout_changes(old: old, new: new);
+  if flags.inner.len != count {
+    return 801_u32;
+  }
+  let flags_a = scenario == 1_u32;
+  let flags_tracks = scenario == 2_u32;
+  let flags_families = scenario == 4_u32;
+  let flags_content = scenario == 6_u32;
+  let first_pair = bor(flags_a, flags_tracks);
+  let second_pair = bor(flags_families, flags_content);
+  let expects_a = bor(first_pair, second_pair);
+  let expected_element = if expects_a {
+    give a;
+  } else {
+    give b;
+  }
+  for (at in 0_u64..count) {
+    let expected = at == expected_element;
+    let agrees = eeq(flags.inner[at], expected);
+    if agrees {
+    } else {
+      let position = cvt.wrap::<u64, u32>(at);
+      let failure = position +sat 1000_u32;
+      return failure;
+    }
+  }
+  return 0_u32;
+}

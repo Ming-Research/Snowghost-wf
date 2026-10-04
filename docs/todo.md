@@ -126,6 +126,20 @@ example apart from the renderer code that exposed it
   X5 child-list reconstruction (`research/investigations/incremental-layout/DESIGN.md`,
   Q82); the language draft and deliberate compiler adoption remain unapproved.
 
+- **Generated loop recursion can exempt a cheap source call from call grain.**
+  Minimal example: an independent outer map calls two short-list comparators;
+  each comparator contains a certified reduction loop. Lowering introduces a
+  recursive splitter, so the comparator reaches recursion in the call-grain
+  graph even when its source has no recursion. Impact: X5's independent style
+  comparison has a four-worker colour delta median of 216.860 ms on ECMA-262,
+  versus 119.920 ms sequential; the separately measured minimal workload
+  motivates checking this source of overhead but does not attribute all that
+  renderer cost ([step 4b](../research/investigations/incremental-layout/runs/step4b.txt)).
+  Change to investigate in Whitefoot: classify source recursion through a
+  split loop's chunk without the generated splitter edge, preserving source
+  recursion, permissions, splitting and recursive runtime allowance. Reopen
+  after same-source renderer A/B with explicit worker counts and unchanged
+  correctness/criterion-2 checks. Snowghost's compiler pin is unchanged.
 
 ## Snowghost
 
