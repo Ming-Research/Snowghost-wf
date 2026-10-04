@@ -1,6 +1,7 @@
 alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Attribute = pkg::dom::Attribute;
+alias AttributeChange = pkg::layout::AttributeChange;
 alias AttributeNamespace = pkg::dom::AttributeNamespace;
 alias Document = pkg::dom::Document;
 alias DomError = pkg::dom::DomError;
@@ -921,8 +922,8 @@ fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -
   }
 }
 
-fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
-  doc "Recomputes the styles outside the incremental interval, then times the style delta, new font picks, retained marking and update. On success replaces the kept styles and picks. Timing reports a separate style edit line with delta_us, picks_us and full_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A layout refusal leaves the kept styles and picks unchanged and is reported as a refusal by the caller; a style, font or full-comparator failure names its pipeline stage.";
+fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+  doc "Recomputes the styles outside the incremental interval, forms the edited node's class attribute fact outside the interval, then times the style delta, new font picks, retained marking and update. On success replaces the kept styles and picks. Timing reports a separate style edit line with delta_us, picks_us and full_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A layout refusal leaves the kept styles and picks unchanged and is reported as a refusal by the caller; a style, font or full-comparator failure names its pipeline stage.";
   let styles = match compute_styles(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
     Ok(value: found) => {
       give move found;
@@ -931,6 +932,10 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, environme
       return Err<StyleUpdate, u8>(error: 5_u8);
     }
   }
+  let class_id = class_index(atoms: &page^.atoms);
+  let class_atom = Atom(index: class_id);
+  let class_change = AttributeChange(node: node, name: class_atom);
+  let attributes: Array<AttributeChange, 1> =[class_change];
   let started = now(clock: clock);
   let changed = layout_changes(old: &kept^.styles, new: &styles);
   let after_delta = now(clock: clock);
@@ -944,7 +949,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, environme
   }
   let after_picks = now(clock: clock);
   let changed_count = changed.inner.len;
-  match styles_changed(layout: &kept^.layout, old: &kept^.styles, new: &styles, changed: &changed.inner[0_u64..changed_count]) {
+  match styles_changed(layout: &kept^.layout, old: &kept^.styles, new: &styles, traversal: &page^.traversal, changed: &changed.inner[0_u64..changed_count], attributes: &attributes[0_u64..1_u64]) {
     Ok(..) => {
     }
     Err(..) => {
@@ -1126,7 +1131,24 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
             let class_removed = kind == 75_u8;
             let styled = bor(class_added, class_removed);
             if styled {
-              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
+              let (node_found, node_value, unused_next) = read_number(line: &script^[start..end], start: 2_u64);
+              let node = match node_id_of(value: node_value) {
+                Some(value: found) => {
+                  give found;
+                }
+                None() => {
+                  put_failure(report: &report, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+                  let reported = flush(factory: files, output: err, buffer: &report);
+                  return 2_u8;
+                }
+              }
+              if node_found {
+              } else {
+                put_failure(report: &report, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+                let reported = flush(factory: files, output: err, buffer: &report);
+                return 2_u8;
+              }
+              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
                 Ok(value: done) => {
                   give done;
                 }
