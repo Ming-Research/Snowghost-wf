@@ -301,6 +301,108 @@ Checks, required before claiming this step complete:
   the full style computation from both. Report style-delta and font-picking
   costs explicitly; do not describe the still-full style stage as incremental.
 
+### Maintained style-update measurement
+
+`run.sh style-update` calls `scripts/styleupdate.py` to reproduce step 4b's
+real-page identity checks and three-run timings. It lives beside the edit
+generator and timing validator because it compares the two implementations
+and their full-layout comparators; `inctime.py` measures one driver. Retire
+or replace this entry when X5's maintained end-to-end harness covers these
+comparisons. All generated inputs, manifests and raw results belong under
+ignored `build/x5/`, and are disposable after their run is recorded here.
+
+The following method is fixed before using the entry. For every C/K edit,
+require a successful process, a complete ordered edit ID sequence, `inc same`
+in identity mode, and exactly one style auxiliary line. Identity reports its
+five work counts; timing reports delta, font-picking and full-layout times.
+Missing, duplicate, malformed, refused, DIFF or fallback outputs fail. Colour
+edits must report all five counts (`prepared`, `contexts`, `paragraphs`,
+`held_entries`, `entries`) as zero in every identity and timing observation.
+Each
+implementation's hashes and counts must agree between sequential and four
+workers; timing counts must agree across runs and with identity. Compare
+baseline/candidate hashes, keeping their counts separate.
+
+Each script gets one identity process and three timing processes for each
+of baseline/candidate and sequential/four-worker builds. Styling itself is
+still a full recomputation outside both timing intervals. `update_us` covers
+delta, picks, marks and retained layout update; `full_us` covers fresh picks,
+layout construction and layout on the same new styles. Placement is outside
+both. For each root-font-size edit, criterion 2 is
+`min(update_us) / min(full_us) <= 1.2`, taking the two minima independently
+from those three complete runs. Preserve both selected run IDs, every paired
+ratio and each pair's threshold flag; a slow observation is never removed.
+Four workers is primary and sequential is a separate result. Missing or
+invalid evidence makes the performance conclusion untested. A valid run can
+report a performance failure with exit 0: the exit status checks execution
+and correctness, while `results.json` and `report.txt` state criterion 2's
+pass/fail/untested conclusion. This entry alone does not certify X5 criteria
+3 or 4 or structural edits.
+
+The default pages are the original pinned ecma262 and html5 inputs, with
+their generated scripts in `build/x5/scripts/`. The entry verifies the
+workload hashes. Add Apollo only with `--pages ecma262 html5 apollo11`, an
+explicit `--apollo-data-dir` and `--apollo-manifest`: this names a separate
+supplementary capture with exactly three HTML/modules-CSS/site-CSS files,
+their paths, byte counts and SHA256 values. It never substitutes for the
+unavailable original Apollo capture. The ECMA scripts contain 20 C/K edits
+and html5/Apollo scripts 60, with each C immediately followed by its K inverse.
+
+Run under the existing host lock, or let the shell entry acquire it:
+
+```sh
+sh research/investigations/incremental-layout/run.sh style-update \
+  --baseline-source BASELINE_REVISION --candidate-source CANDIDATE_REVISION \
+  --build-manifest build/x5/style-builds.json \
+  --output build/x5/style-update-run1
+```
+
+The four executable defaults are `build/layout_oracle_style_seq/par` and
+`build/layout_oracle_independent_seq/par`; explicit `--baseline-seq`,
+`--baseline-par`, `--candidate-seq` and `--candidate-par` override them.
+`--root`, `--pages`, `--kinds`, `--phases` and `--scripts-dir` select inputs;
+each invocation requires a new output directory and retains complete argv,
+worker count, return code, source/driver/input/font hashes and stdout/stderr.
+No old result is reused. Every process and case checkpoints `results.json`.
+
+`--build-manifest` is a build-time association record, captured by the
+builder with the successful build, never inferred later from a binary hash
+or the measurement checkout's HEAD. Its JSON has `schema: 1` and `builds`
+with exactly `baseline-seq`, `baseline-par`, `candidate-seq`, `candidate-par`.
+Each record contains:
+
+- `source_revision`: the full commit; `source_files`: a path-to-SHA256 map of
+  every regular tracked `renderer/` `.wf`, `.wfm` and `.wfg` source at build
+  time, including `renderer/modules.wfg`;
+- `binary`: its path below the measurement root; `binary_sha256`;
+- `compiler`: `revision` (the source revision's Whitefoot pin), `path` and
+  `sha256` of the actual compiler used;
+- `build`: the full `argv`, `cwd`, successful `returncode: 0`,
+  `output_sha256` captured from the produced executable, and `stdout`
+  and `stderr` records, each with retained `path` below the measurement root
+  and `sha256`.
+
+The build argv must use that compiler, `renderer/modules.wfg`, the
+`layout_oracle` entry, an explicit `-o` output and the correct `--par` mode.
+All four builds use the same pinned compiler binary. The produced-output
+hash must match the retained driver's hash, including
+when the driver was subsequently copied to the measurement root.
+
+The entry resolves each requested source commit, hashes its complete source
+snapshot directly from verified git blobs, checks every manifest entry and
+the binary/compiler/build-log hashes, and reports all baseline/candidate
+source differences. These checks verify the recorded association and its
+snapshot; they cannot prove that an arbitrary binary was compiled from that
+source without a truthful build-time record. Missing historical association
+evidence requires a new recorded build. Synthetic self-tests exercise this
+metadata protocol and do not certify compiler provenance or rendering.
+
+`run.sh style-update --self-test` uses only synthetic files and subprocess
+stubs. It accepts a complete normal matrix, exposes a valid performance
+failure, and rejects eleven output failure categories, source/build-record
+mismatches and failed subprocesses. It retains its raw evidence under
+`build/x5/style-update-selftest-*` and does not require the host lock.
+
 ## Risks
 
 - A certified loop is denied when it reads an unwritten scalar of a shared

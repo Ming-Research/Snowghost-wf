@@ -42,6 +42,12 @@
 #                                   RUN_CHECK names the lock script (by
 #                                   default the pinned checkout's
 #                                   .github/run-check.pl)
+#   run.sh style-update OPTIONS... checks style edit identity and measures
+#                                   three runs with baseline/candidate seq
+#                                   and four-worker drivers; source revisions
+#                                   and build-time provenance are required.
+#                                   See DESIGN.md, Maintained style-update
+#                                   measurement. --self-test is lightweight.
 #
 # PAGE is ecma262, html5 or apollo11, fetched to build/research/concurrency by
 # research/investigations/concurrency/run.sh and run with the sheets of
@@ -244,6 +250,19 @@ dumps() {
 	return "$dumps_status"
 }
 
+style_update() {
+	for option in "$@"; do
+		if [ "$option" = --self-test ] || [ "$option" = --help ]; then
+			python3 "$here/scripts/styleupdate.py" "$@"
+			return "$?"
+		fi
+	done
+	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+		exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-style-update sh "$here/run.sh" style-update "$@"
+	fi
+	python3 "$here/scripts/styleupdate.py" "$@"
+}
+
 cmd=$1
 shift
 case $cmd in
@@ -255,8 +274,9 @@ reparse) reparse "$@" ;;
 dumps) dumps "$@" ;;
 inc) inc "$@" ;;
 time) time_edits "$@" ;;
+style-update) style_update "$@" ;;
 *)
-	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
+	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time|style-update ..." >&2
 	exit 2
 	;;
 esac
