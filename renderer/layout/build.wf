@@ -116,13 +116,12 @@ struct Counter {
 }
 
 struct Walk {
-  doc "The state the walk in tree order carries: each node's element index (unlisted for a node that is no element of the traversal), the counter instances in scope, the quote depth and the element depth, and the text nodes it met where they make no piece (skip_text).";
+  doc "The state the walk in tree order carries: each node's element index (unlisted for a node that is no element of the traversal), the counter instances in scope, the quote depth and the element depth.";
   order: Box<Array<u32>>;
   counters: Box<Slots<Counter>>;
   quote_depth: i32;
   depth: u64;
   list_item: u32;
-  skipped: Box<Slots<u32>>;
 }
 
 const skipped_text: u32 = 4294967294_u32;
@@ -194,6 +193,8 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let pieces = box_slots_new::<Piece>(capacity: 0_u64);
   let generated_text = box_slots_new::<u8>(capacity: 0_u64);
   let source = ContextSource::Derived();
+  let local_paths = box_slots_new::<LocalPath>(capacity: 0_u64);
+  let skipped_nodes = box_slots_new::<NodeId>(capacity: 0_u64);
   let blocks = box_slots_new::<Block>(capacity: 0_u64);
   let paragraphs = box_slots_new::<Paragraph>(capacity: 0_u64);
   let children = box_slots_new::<Context>(capacity: 0_u64);
@@ -208,7 +209,7 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let no = False();
   let space = Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
   let never = Space(available: laid_never, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
-  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, generated_text: move generated_text, source: move source, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no);
+  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, pieces: move pieces, generated_text: move generated_text, source: move source, local_paths: move local_paths, skipped_nodes: move skipped_nodes, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no);
 }
 
 fn new_open(style: StyleRef, first: u64) -> made: Open pure {
@@ -1119,10 +1120,10 @@ fn element_at(walk: &Walk, node: NodeId) -> element: u32 reads(walk) {
   return unlisted;
 }
 
-fn skip_text(walk: &Walk, node: NodeId) -> result: unit writes(walk) {
-  doc "Records that the walk met the text node where its data makes no piece: empty in a flow, or only white space where a table, a row group or a flex or grid container skips it. Data that would make a piece there changes the box tree, which text_changed refuses.";
-  let pushed = push_item::<u32>(cell: &walk^.skipped, value: node.index, ceiling: item_ceiling);
-  return unit;
+fn skip_text(context: &Context, node: NodeId) -> result: Result<unit, LayoutError> writes(context) {
+  doc "Records on the owning context a visited text node whose data makes no piece. Failing to retain this fact refuses construction rather than silently losing later edit invalidation.";
+  let pushed = propagate push_or_fail::<NodeId>(cell: &context^.skipped_nodes, value: node);
+  return Ok<unit, LayoutError>(value: unit);
 }
 
 fn local_name_of(document: &Document, node: NodeId) -> (name: u32, html: Bool, svg: Bool) reads(document) {
@@ -1600,7 +1601,7 @@ fn walk_children(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
           let piece = Piece::Bytes(start: span^.start, end: span^.end, style: owner, node: node.index);
           let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
         } else {
-          skip_text(walk: walk, node: node);
+          let skipped = propagate skip_text(context: context, node: node);
         }
       }
       Element(..) => {
@@ -1755,6 +1756,55 @@ fn place_element(document: &Document, styles: &Styles, atoms: &AtomTable, walk: 
   return Ok<unit, LayoutError>(value: unit);
 }
 
+fn context_source_node(context: &Context) -> node: NodeId reads(context) {
+  doc "The stable identity of a complete source body; derived contexts have no independent source.";
+  let source = &context^.source;
+  match source^ {
+    ElementBody(node: origin, ..) => {
+      return origin^;
+    }
+    DocumentBody(node: origin, ..) => {
+      return origin^;
+    }
+    Derived() => {
+      return NodeId(index: no_index);
+    }
+  }
+}
+
+fn collect_local_paths(context: &Context, parent: u32, child: u32, paths: &Box<Slots<LocalPath>>) -> result: Result<unit, LayoutError> reads(context), writes(paths) {
+  doc "Numbers this context and its derived descendants within one source body. The next ordinal follows the previously emitted local subtree; complete child sources terminate this numbering and keep their own paths.";
+  let next = paths^.inner.len;
+  if next < 4294967294_u64 {
+  } else {
+    return too_large::<unit>();
+  }
+  let local = cvt::<u64, u32>(next);
+  let place = LocalPath(parent: parent, child: child);
+  let pushed = propagate push_or_fail::<LocalPath>(cell: paths, value: place);
+  let count = context^.children.inner.len;
+  for (i in 0_u64..count) {
+    let source = context_source_node(context: &context^.children.inner[i]);
+    if source.index == no_index {
+      if i < 4294967295_u64 {
+        let index = cvt::<u64, u32>(i);
+        let collected = propagate collect_local_paths(context: &context^.children.inner[i], parent: local, child: index, paths: paths);
+      } else {
+        return too_large::<unit>();
+      }
+    }
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn finish_source_paths(context: &Context) -> result: Result<unit, LayoutError> writes(context) {
+  doc "Builds only this source body's derived-context routes; no global numbering or descendant source scan is needed.";
+  let paths = box_slots_new::<LocalPath>(capacity: 1_u64);
+  let collected = propagate collect_local_paths(context: context, parent: no_index, child: 0_u32, paths: &paths);
+  set context^.local_paths = move paths;
+  return Ok<unit, LayoutError>(value: unit);
+}
+
 fn capture_build_state(walk: &Walk) -> result: Result<BuildState, LayoutError> reads(walk) {
   doc "Copies the complete ordered counter stack and the two semantic depths at a context boundary. Each output counter depends only on the corresponding input counter; no shared append orders the copies.";
   let count = walk^.counters.inner.len;
@@ -1780,6 +1830,7 @@ fn build_box(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
   let end = propagate capture_build_state(walk: walk);
   let source = ContextSource::ElementBody(node: node, recipe: recipe, begin: move begin, end: move end);
   set context.source = move source;
+  let routed = propagate finish_source_paths(context: &context);
   return Ok<Context, LayoutError>(value: move context);
 }
 
@@ -1947,7 +1998,7 @@ fn build_item_children(document: &Document, styles: &Styles, atoms: &AtomTable, 
         if usable {
           let blank = is_blank(bytes: &document^.text.inner[start..end]);
           if blank {
-            skip_text(walk: walk, node: node);
+            let skipped = propagate skip_text(context: container, node: node);
           } else {
             let style = anonymous_of(style: container^.style);
             let child = new_context(kind: ctx_flow, style: style);
@@ -2230,7 +2281,7 @@ fn walk_run(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Walk
           let piece = Piece::Bytes(start: span^.start, end: span^.end, style: owner, node: node.index);
           let added = propagate add_piece(context: context, open: open, piece: piece, size: size);
         } else {
-          skip_text(walk: walk, node: node);
+          let skipped = propagate skip_text(context: context, node: node);
         }
       }
       Element(..) => {
@@ -2304,7 +2355,7 @@ fn add_anonymous_row(document: &Document, styles: &Styles, atoms: &AtomTable, wa
         if usable {
           let blank = is_blank(bytes: &document^.text.inner[start..end]);
           if blank {
-            skip_text(walk: walk, node: child);
+            let skipped = propagate skip_text(context: table, node: child);
           } else {
             let content = new_context(kind: ctx_flow, style: row_style);
             let open = new_open(style: row_style, first: 0_u64);
@@ -2483,7 +2534,7 @@ fn add_group(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wal
           if usable {
             let blank = is_blank(bytes: &document^.text.inner[start..end]);
             if blank {
-              skip_text(walk: walk, node: child);
+              let skipped = propagate skip_text(context: table, node: child);
             } else {
               let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
               set cursor = rest;
@@ -2639,7 +2690,7 @@ fn build_table(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &W
           if usable_text {
             let blank = is_blank(bytes: &document^.text.inner[start..end]);
             if blank {
-              skip_text(walk: walk, node: child);
+              let skipped = propagate skip_text(context: table, node: child);
             } else {
               let none = anonymous_of(style: table^.style);
               let rest = propagate add_anonymous_row(document: document, styles: styles, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
@@ -2819,8 +2870,7 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
     }
   }
   let counters = box_slots_new::<Counter>(capacity: 0_u64);
-  let skipped = box_slots_new::<u32>(capacity: 0_u64);
-  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, skipped: move skipped);
+  let walk = Walk(order: move order, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item);
   let root_node = if 0_u64 < traversal^.elements.inner.len {
     give traversal^.elements.inner[0_u64];
   } else {
@@ -2838,6 +2888,7 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   let source = ContextSource::DocumentBody(node: root, begin: move begin, end: move end);
   set initial.source = move source;
   let ended = propagate end_paragraph(context: &initial, open: &open);
+  let routed = propagate finish_source_paths(context: &initial);
   let (contexts, paragraphs) = count_tree(context: &initial);
   let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
   let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);

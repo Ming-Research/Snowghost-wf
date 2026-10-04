@@ -148,31 +148,136 @@ fn mark_path(context: &Context, document: &Document, steps: &[u32], depth: u64, 
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn path_steps(layout: &Layout, serial: u32) -> result: Result<Box<Slots<u32>>, LayoutError> reads(layout) {
-  doc "The child indices that lead from the initial containing block to the context with serial, read from paths by following parents up and reversing; Inconsistent when paths does not lead there.";
-  let count = layout^.paths.inner.len;
+struct SourceHop {
+  doc "One stable source boundary collected from target to document; parent_local and child locate it from its already located parent source.";
+  source: NodeId;
+  parent_local: u32;
+  child: u32;
+}
+
+fn local_steps(context: &Context, local: u32) -> result: Result<Box<Slots<u32>>, LayoutError> reads(context) {
+  doc "Follows a source-local parent chain backward, returning child indices from target toward source zero. The table length bounds corrupt or cyclic chains.";
+  let count = context^.local_paths.inner.len;
   let upward = box_slots_new::<u32>(capacity: 16_u64);
-  let at = cvt::<u32, u64>(serial);
+  let at = cvt::<u32, u64>(local);
   for (step in 0_u64..count) {
-    if at < count {
+    if at < context^.local_paths.inner.len {
     } else {
       return inconsistent::<Box<Slots<u32>>>();
     }
-    let place = layout^.paths.inner[at];
+    let place = context^.local_paths.inner[at];
     if place.parent == no_index {
-      let length = upward.inner.len;
-      let reserve = imin(length, 4096_u64);
-      let steps = box_slots_new::<u32>(capacity: reserve);
-      for (back in 0_u64..length) {
-        let top = length - 1_u64;
-        let k = top - back;
-        let index = upward.inner[k];
-        let pushed = push_item::<u32>(cell: &steps, value: index, ceiling: item_ceiling);
+      if at == 0_u64 {
+        return Ok<Box<Slots<u32>>, LayoutError>(value: move upward);
       }
-      return Ok<Box<Slots<u32>>, LayoutError>(value: move steps);
+      return inconsistent::<Box<Slots<u32>>>();
     }
     let pushed = propagate push_or_fail::<u32>(cell: &upward, value: place.child);
     set at = cvt::<u32, u64>(place.parent);
+  }
+  return inconsistent::<Box<Slots<u32>>>();
+}
+
+fn descend_local_steps(context: &Context, upward: &[u32], local_left: u64, hops: &[SourceHop], sources_left: u64, target_local: u32, steps: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(context), reads(upward), reads(hops), writes(steps) {
+  doc "Descends one already located source's local path, then its next source child. The held context reference advances at every edge instead of searching from the document again.";
+  if local_left > 0_u64 {
+    let next = local_left - 1_u64;
+    if next < upward^.len {
+    } else {
+      return inconsistent::<unit>();
+    }
+    let child_index = upward^[next];
+    let child = cvt::<u32, u64>(child_index);
+    if child < context^.children.inner.len {
+    } else {
+      return inconsistent::<unit>();
+    }
+    let source = context_source_node(context: &context^.children.inner[child]);
+    if source.index != no_index {
+      return inconsistent::<unit>();
+    }
+    let pushed = propagate push_or_fail::<u32>(cell: steps, value: child_index);
+    return descend_local_steps(context: &context^.children.inner[child], upward: upward, local_left: next, hops: hops, sources_left: sources_left, target_local: target_local, steps: steps);
+  }
+  if sources_left == 0_u64 {
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let next = sources_left - 1_u64;
+  if next < hops^.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let hop = hops^[next];
+  let child = cvt::<u32, u64>(hop.child);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let source = context_source_node(context: &context^.children.inner[child]);
+  if source.index != hop.source.index {
+    return inconsistent::<unit>();
+  }
+  let pushed = propagate push_or_fail::<u32>(cell: steps, value: hop.child);
+  return resolve_source_steps(context: &context^.children.inner[child], hops: hops, sources_left: next, target_local: target_local, steps: steps);
+}
+
+fn resolve_source_steps(context: &Context, hops: &[SourceHop], sources_left: u64, target_local: u32, steps: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(context), reads(hops), writes(steps) {
+  doc "Reads local paths only from the currently located source. Source hops are in reverse order; each local edge is looked up once backward and followed once forward.";
+  let local = if sources_left > 0_u64 {
+    let next = sources_left - 1_u64;
+    if next < hops^.len {
+      give hops^[next].parent_local;
+    } else {
+      return inconsistent::<unit>();
+    }
+  } else {
+    give target_local;
+  }
+  let upward = propagate local_steps(context: context, local: local);
+  let count = upward.inner.len;
+  return descend_local_steps(context: context, upward: &upward.inner[0_u64..count], local_left: count, hops: hops, sources_left: sources_left, target_local: target_local, steps: steps);
+}
+
+fn path_steps(layout: &Layout, source: NodeId, local: u32) -> result: Result<Box<Slots<u32>>, LayoutError> reads(layout) {
+  doc "Collects stable source-parent hops backward, then descends from the document through each source-local path and source boundary. NodeId ordering is irrelevant; every edge is visited a constant number of times, and table lengths bound invalid cycles.";
+  let root_source = &layout^.root.source;
+  let root_node = match root_source^ {
+    DocumentBody(node: origin, ..) => {
+      give origin^;
+    }
+    ElementBody(..) => {
+      return inconsistent::<Box<Slots<u32>>>();
+    }
+    Derived() => {
+      return inconsistent::<Box<Slots<u32>>>();
+    }
+  }
+  let count = layout^.source_paths.inner.len;
+  let upward = box_slots_new::<SourceHop>(capacity: 16_u64);
+  let node = source;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(node.index);
+    if at < layout^.source_paths.inner.len {
+    } else {
+      return inconsistent::<Box<Slots<u32>>>();
+    }
+    let place = layout^.source_paths.inner[at];
+    if place.present {
+    } else {
+      return inconsistent::<Box<Slots<u32>>>();
+    }
+    if place.parent_source.index == no_index {
+      if node.index != root_node.index {
+        return inconsistent::<Box<Slots<u32>>>();
+      }
+      let steps = box_slots_new::<u32>(capacity: 16_u64);
+      let length = upward.inner.len;
+      let resolved = propagate resolve_source_steps(context: &layout^.root, hops: &upward.inner[0_u64..length], sources_left: length, target_local: local, steps: &steps);
+      return Ok<Box<Slots<u32>>, LayoutError>(value: move steps);
+    }
+    let hop = SourceHop(source: node, parent_local: place.parent_local, child: place.child);
+    let pushed = propagate push_or_fail::<SourceHop>(cell: &upward, value: hop);
+    set node = place.parent_source;
   }
   return inconsistent::<Box<Slots<u32>>>();
 }
@@ -193,17 +298,17 @@ fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: R
     }
   }
   let text_unit = layout^.text_units.inner[index];
-  if text_unit.serial == skipped_text {
+  if text_unit.local_context == skipped_text {
     let empty = data.start >= data.end;
     if empty {
       return Ok<unit, LayoutError>(value: unit);
     }
     return inconsistent::<unit>();
   }
-  if text_unit.serial == no_index {
+  if text_unit.source.index == no_index {
     return Ok<unit, LayoutError>(value: unit);
   }
-  let steps = propagate path_steps(layout: layout, serial: text_unit.serial);
+  let steps = propagate path_steps(layout: layout, source: text_unit.source, local: text_unit.local_context);
   let depth = steps.inner.len;
   let marked = propagate mark_path(context: &layout^.root, document: document, steps: &steps.inner[0_u64..depth], depth: 0_u64, text_unit: text_unit, data: data);
   set layout^.dirty = True();
