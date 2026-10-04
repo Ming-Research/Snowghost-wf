@@ -2745,98 +2745,439 @@ fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(conte
   return contexts, paragraphs;
 }
 
-fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) -> result: unit reads(context), writes(listing) {
-  doc "Records, for each text node whose data a paragraph of context reads (a Bytes piece with a node), the context's serial, the piece and the paragraph in listing; consecutive pieces of one node in one paragraph extend its count.";
+struct TextFact {
+  doc "One source-local output record to publish at a text NodeId.";
+  node: NodeId;
+  value: TextUnit;
+}
+
+struct SourceFact {
+  doc "A parent source's output route for one complete child source.";
+  node: NodeId;
+  value: SourcePath;
+}
+
+struct SourceFacts {
+  doc "Owned temporary outputs of one source body. Collection cannot reach the dense publication tables or another source's patch.";
+  texts: Box<Slots<TextFact>>;
+  sources: Box<Slots<SourceFact>>;
+}
+
+fn append_text_fact(facts: &SourceFacts, node: NodeId, value: TextUnit) -> result: Result<unit, LayoutError> writes(facts) {
+  doc "Coalesces consecutive pieces from the same text node and paragraph before appending a new source-local fact.";
+  let count = facts^.texts.inner.len;
+  if count > 0_u64 {
+    let last = count - 1_u64;
+    let held = facts^.texts.inner[last];
+    let same_node = held.node.index == node.index;
+    let same_source = held.value.source.index == value.source.index;
+    let same_context = held.value.local_context == value.local_context;
+    let same_paragraph = held.value.paragraph == value.paragraph;
+    let next_piece = held.value.piece +sat held.value.count;
+    let adjacent = next_piece == value.piece;
+    let same_owner = band(same_node, same_source);
+    let same_place = band(same_context, same_paragraph);
+    let same_unit = band(same_owner, same_place);
+    let extends = band(same_unit, adjacent);
+    if extends {
+      set facts^.texts.inner[last].value.count = held.value.count +sat value.count;
+      return Ok<unit, LayoutError>(value: unit);
+    }
+  }
+  let fact = TextFact(node: node, value: value);
+  return push_or_fail::<TextFact>(cell: &facts^.texts, value: fact);
+}
+
+fn collect_text_facts(context: &Context, source: NodeId, local: u32, facts: &SourceFacts) -> result: Result<unit, LayoutError> reads(context), writes(facts) {
+  doc "Collects only this context's actual text consumers and visited nodes without pieces into an owned source patch; no global table is read or written.";
   let paragraphs = context^.paragraphs.inner.len;
   let total = context^.pieces.inner.len;
-  let known = listing^.inner.len;
   for (p in 0_u64..paragraphs) {
+    if p < 4294967295_u64 {
+    } else {
+      return too_large::<unit>();
+    }
+    let paragraph = cvt::<u64, u32>(p);
     let first = context^.paragraphs.inner[p].first;
     let count = context^.paragraphs.inner[p].count;
-    let end_raw = first +sat count;
-    let end = imin(end_raw, total);
-    let small = p < 4294967295_u64;
-    if small {
-      let paragraph = cvt::<u64, u32>(p);
-      for (k in first..end) {
-        let piece = context^.pieces.inner[k];
-        match piece {
-          Bytes(node: source, ..) => {
-            let at = cvt::<u32, u64>(source);
-            let listed = source != no_index;
-            let inside = at < known;
-            let usable = band(listed, inside);
-            let narrow = k < 4294967295_u64;
-            let recorded = band(usable, narrow);
-            if recorded {
-              let piece_at = cvt::<u64, u32>(k);
-              let held = listing^.inner[at];
-              let same_context = held.serial == serial;
-              let same_paragraph = held.paragraph == paragraph;
-              let next_piece = held.piece +sat held.count;
-              let adjacent = next_piece == piece_at;
-              let same_place = band(same_context, same_paragraph);
-              let extends = band(same_place, adjacent);
-              if extends {
-                set listing^.inner[at].count = held.count +sat 1_u32;
-              } else {
-                set listing^.inner[at] = TextUnit(serial: serial, piece: piece_at, count: 1_u32, paragraph: paragraph);
+    let end = first +sat count;
+    if end <= total {
+    } else {
+      return inconsistent::<unit>();
+    }
+    for (k in first..end) {
+      let piece = context^.pieces.inner[k];
+      match piece {
+        Bytes(node: origin, ..) => {
+          if origin != no_index {
+            if k < 4294967295_u64 {
+            } else {
+              return too_large::<unit>();
+            }
+            let index = cvt::<u64, u32>(k);
+            let node = NodeId(index: origin);
+            let value = TextUnit(source: source, local_context: local, piece: index, count: 1_u32, paragraph: paragraph);
+            let appended = propagate append_text_fact(facts: facts, node: node, value: value);
+          }
+        }
+        Generated(..) => {
+        }
+        Scalar(..) => {
+        }
+        Begin(..) => {
+        }
+        End(..) => {
+        }
+        Object(..) => {
+        }
+      }
+    }
+  }
+  let skipped = context^.skipped_nodes.inner.len;
+  for (i in 0_u64..skipped) {
+    let node = context^.skipped_nodes.inner[i];
+    let value = TextUnit(source: source, local_context: skipped_text, piece: 0_u32, count: 0_u32, paragraph: no_index);
+    let fact = TextFact(node: node, value: value);
+    let appended = propagate push_or_fail::<TextFact>(cell: &facts^.texts, value: fact);
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn collect_local_facts(context: &Context, source: NodeId, local: u32, facts: &SourceFacts) -> result: Result<u64, LayoutError> reads(context), writes(facts) {
+  doc "Collects one source's texts and immediate child-source routes in its local numbering order. Real child source contents are independent patches and are not visited here.";
+  let collected = propagate collect_text_facts(context: context, source: source, local: local, facts: facts);
+  let wide = cvt::<u32, u64>(local);
+  let next = wide +sat 1_u64;
+  let children = context^.children.inner.len;
+  for (i in 0_u64..children) {
+    if i < 4294967295_u64 {
+    } else {
+      return too_large::<u64>();
+    }
+    let child = cvt::<u64, u32>(i);
+    let origin = context_source_node(context: &context^.children.inner[i]);
+    if origin.index == no_index {
+      if next < 4294967294_u64 {
+      } else {
+        return too_large::<u64>();
+      }
+      let child_local = cvt::<u64, u32>(next);
+      let after = propagate collect_local_facts(context: &context^.children.inner[i], source: source, local: child_local, facts: facts);
+      set next = after;
+    } else {
+      let present = True();
+      let value = SourcePath(present: present, parent_source: source, parent_local: local, child: child);
+      let fact = SourceFact(node: origin, value: value);
+      let appended = propagate push_or_fail::<SourceFact>(cell: &facts^.sources, value: fact);
+    }
+  }
+  return Ok<u64, LayoutError>(value: next);
+}
+
+fn collect_source_facts(context: &Context) -> result: Result<SourceFacts, LayoutError> reads(context) {
+  doc "Produces the owned route patch of one complete body for later disjoint publication. No source-global allocation order or dense-table borrow reaches the collector.";
+  let source = context_source_node(context: context);
+  if source.index == no_index {
+    return inconsistent::<SourceFacts>();
+  }
+  let texts = box_slots_new::<TextFact>(capacity: 0_u64);
+  let sources = box_slots_new::<SourceFact>(capacity: 0_u64);
+  let facts = SourceFacts(texts: move texts, sources: move sources);
+  let local_count = propagate collect_local_facts(context: context, source: source, local: 0_u32, facts: &facts);
+  if local_count != context^.local_paths.inner.len {
+    return inconsistent::<SourceFacts>();
+  }
+  return Ok<SourceFacts, LayoutError>(value: move facts);
+}
+
+enum RouteValue {
+  Text(value: TextUnit);
+  Source(value: SourcePath);
+}
+
+enum RoutePatch {
+  Empty();
+  Leaf(value: RouteValue);
+  Fork(left: Box<RoutePatch>, right: Box<RoutePatch>);
+}
+
+fn singleton_route(width: u64, key: u64, value: RouteValue) -> result: Result<RoutePatch, LayoutError> pure {
+  doc "Builds only the destination's interval path. The key is relative to the owned interval, with no shared allocator or publication-table reference.";
+  if key >= width {
+    return inconsistent::<RoutePatch>();
+  }
+  if width == 1_u64 {
+    let made = RoutePatch::Leaf(value: value);
+    return Ok<RoutePatch, LayoutError>(value: move made);
+  }
+  let half = width / 2_u64;
+  if half == 0_u64 {
+    return inconsistent::<RoutePatch>();
+  }
+  if half >= width {
+    return inconsistent::<RoutePatch>();
+  }
+  if key < half {
+    let left = propagate singleton_route(width: half, key: key, value: value);
+    let left_box = box_new::<RoutePatch>(value: move left);
+    let empty = RoutePatch::Empty();
+    let right_box = box_new::<RoutePatch>(value: move empty);
+    let branch = RoutePatch::Fork(left: move left_box, right: move right_box);
+    return Ok<RoutePatch, LayoutError>(value: move branch);
+  }
+  let right_width = width - half;
+  let right_key = key - half;
+  let right = propagate singleton_route(width: right_width, key: right_key, value: value);
+  let empty = RoutePatch::Empty();
+  let left_box = box_new::<RoutePatch>(value: move empty);
+  let right_box = box_new::<RoutePatch>(value: move right);
+  let branch = RoutePatch::Fork(left: move left_box, right: move right_box);
+  return Ok<RoutePatch, LayoutError>(value: move branch);
+}
+
+fn merge_local_route_values(first: RouteValue, second: RouteValue) -> result: Result<RouteValue, LayoutError> pure {
+  doc "Within one source, a real text consumer supersedes a skipped-node fact. All other duplicate destinations refuse, including two real consumers or two source entries.";
+  match first {
+    Text(value: a) => {
+      match second {
+        Text(value: b) => {
+          if a.source.index != b.source.index {
+            return inconsistent::<RouteValue>();
+          }
+          let first_skipped = a.local_context == skipped_text;
+          let second_skipped = b.local_context == skipped_text;
+          if first_skipped {
+            return Ok<RouteValue, LayoutError>(value: second);
+          }
+          if second_skipped {
+            return Ok<RouteValue, LayoutError>(value: first);
+          }
+          return inconsistent::<RouteValue>();
+        }
+        Source(..) => {
+          return inconsistent::<RouteValue>();
+        }
+      }
+    }
+    Source(..) => {
+      return inconsistent::<RouteValue>();
+    }
+  }
+}
+
+fn merge_route_results(first: Result<RoutePatch, LayoutError>, second: Result<RoutePatch, LayoutError>, local: Bool) -> result: Result<RoutePatch, LayoutError> pure {
+  doc "Joins already computed independent patch results; construction of either input does not depend on success of the other.";
+  match move first {
+    Err(error: failure) => {
+      return Err<RoutePatch, LayoutError>(error: failure);
+    }
+    Ok(value: left) => {
+      match move second {
+        Err(error: failure) => {
+          return Err<RoutePatch, LayoutError>(error: failure);
+        }
+        Ok(value: right) => {
+          return merge_route_patches(first: move left, second: move right, local: local);
+        }
+      }
+    }
+  }
+}
+
+fn merge_route_patches(first: RoutePatch, second: RoutePatch, local: Bool) -> result: Result<RoutePatch, LayoutError> pure {
+  doc "Consumes owned patches of the same interval. Left and right overlap resolution is independent; cross-source duplicate destinations are rejected rather than selecting a writer.";
+  match move first {
+    Empty() => {
+      return Ok<RoutePatch, LayoutError>(value: move second);
+    }
+    Leaf(value: a) => {
+      match move second {
+        Empty() => {
+          let made = RoutePatch::Leaf(value: a);
+          return Ok<RoutePatch, LayoutError>(value: move made);
+        }
+        Leaf(value: b) => {
+          if local {
+            let value = propagate merge_local_route_values(first: a, second: b);
+            let made = RoutePatch::Leaf(value: value);
+            return Ok<RoutePatch, LayoutError>(value: move made);
+          }
+          return inconsistent::<RoutePatch>();
+        }
+        Fork(..) => {
+          return inconsistent::<RoutePatch>();
+        }
+      }
+    }
+    Fork(left: first_left, right: first_right) => {
+      match move second {
+        Empty() => {
+          let branch = RoutePatch::Fork(left: move first_left, right: move first_right);
+          return Ok<RoutePatch, LayoutError>(value: move branch);
+        }
+        Leaf(..) => {
+          return inconsistent::<RoutePatch>();
+        }
+        Fork(left: second_left, right: second_right) => {
+          let left_result = merge_route_patches(first: move first_left.inner, second: move second_left.inner, local: local);
+          let right_result = merge_route_patches(first: move first_right.inner, second: move second_right.inner, local: local);
+          match move left_result {
+            Err(error: failure) => {
+              return Err<RoutePatch, LayoutError>(error: failure);
+            }
+            Ok(value: left) => {
+              match move right_result {
+                Err(error: failure) => {
+                  return Err<RoutePatch, LayoutError>(error: failure);
+                }
+                Ok(value: right) => {
+                  let left_box = box_new::<RoutePatch>(value: move left);
+                  let right_box = box_new::<RoutePatch>(value: move right);
+                  let branch = RoutePatch::Fork(left: move left_box, right: move right_box);
+                  return Ok<RoutePatch, LayoutError>(value: move branch);
+                }
               }
             }
-          }
-          Generated(..) => {
-          }
-          Scalar(..) => {
-          }
-          Begin(..) => {
-          }
-          End(..) => {
-          }
-          Object(..) => {
           }
         }
       }
     }
   }
-  return unit;
 }
 
-fn record_tree(context: &Context, parent: u32, child: u32, paths: &Box<Slots<ContextPath>>, listing: &Box<Array<TextUnit>>) -> result: Result<unit, LayoutError> reads(context), writes(paths), writes(listing) {
-  doc "Gives context the next serial of a preorder walk of the owned tree, its position in paths, recording its parent's serial and its index among its parent's children, records the text nodes its paragraphs read (record_units), then does the same for its children in order. TooLarge past no_index contexts.";
-  let next = paths^.inner.len;
-  let small = next < 4294967294_u64;
-  if small {
-  } else {
-    return too_large::<unit>();
+fn text_facts_patch(facts: &[TextFact], width: u64) -> result: Result<RoutePatch, LayoutError> reads(facts) {
+  doc "Constructs a balanced merge of one source's final text facts. Only this local merge may resolve skipped facts against real text consumers.";
+  let count = facts^.len;
+  if count == 0_u64 {
+    let made = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move made);
   }
-  let serial = cvt::<u64, u32>(next);
-  let place = ContextPath(parent: parent, child: child);
-  let pushed = propagate push_or_fail::<ContextPath>(cell: paths, value: place);
-  record_units(context: context, serial: serial, listing: listing);
-  let children = context^.children.inner.len;
-  for (k in 0_u64..children) {
-    let narrow = k < 4294967295_u64;
-    if narrow {
-      let index = cvt::<u64, u32>(k);
-      let recorded = propagate record_tree(context: &context^.children.inner[k], parent: serial, child: index, paths: paths, listing: listing);
+  if count == 1_u64 {
+    let fact = facts^[0_u64];
+    let key = cvt::<u32, u64>(fact.node.index);
+    let value = RouteValue::Text(value: fact.value);
+    return singleton_route(width: width, key: key, value: value);
+  }
+  let half = count / 2_u64;
+  let first = text_facts_patch(facts: &facts^[0_u64..half], width: width);
+  let second = text_facts_patch(facts: &facts^[half..count], width: width);
+  let local = True();
+  return merge_route_results(first: move first, second: move second, local: local);
+}
+
+fn source_facts_patch(facts: &[SourceFact], width: u64) -> result: Result<RoutePatch, LayoutError> reads(facts) {
+  doc "Constructs independent interval paths for one parent's child-source entries and merges them with duplicate detection.";
+  let count = facts^.len;
+  if count == 0_u64 {
+    let made = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move made);
+  }
+  if count == 1_u64 {
+    let fact = facts^[0_u64];
+    let key = cvt::<u32, u64>(fact.node.index);
+    let value = RouteValue::Source(value: fact.value);
+    return singleton_route(width: width, key: key, value: value);
+  }
+  let half = count / 2_u64;
+  let first = source_facts_patch(facts: &facts^[0_u64..half], width: width);
+  let second = source_facts_patch(facts: &facts^[half..count], width: width);
+  let local = False();
+  return merge_route_results(first: move first, second: move second, local: local);
+}
+
+fn context_route_patch(context: &Context, width: u64) -> result: Result<RoutePatch, LayoutError> reads(context) {
+  doc "Collects exactly one source's owned output facts before interval publication. Derived contexts have no patch of their own; the document source alone supplies its root entry.";
+  let origin = context_source_node(context: context);
+  if origin.index == no_index {
+    let made = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move made);
+  }
+  let facts = propagate collect_source_facts(context: context);
+  let source = &context^.source;
+  match source^ {
+    DocumentBody(..) => {
+      let present = True();
+      let absent = NodeId(index: no_index);
+      let value = SourcePath(present: present, parent_source: absent, parent_local: no_index, child: 0_u32);
+      let fact = SourceFact(node: origin, value: value);
+      let appended = propagate push_or_fail::<SourceFact>(cell: &facts.sources, value: fact);
+    }
+    ElementBody(..) => {
+    }
+    Derived() => {
     }
   }
-  return Ok<unit, LayoutError>(value: unit);
+  let texts = facts.texts.inner.len;
+  let sources = facts.sources.inner.len;
+  let text_result = text_facts_patch(facts: &facts.texts.inner[0_u64..texts], width: width);
+  let source_result = source_facts_patch(facts: &facts.sources.inner[0_u64..sources], width: width);
+  let local = False();
+  return merge_route_results(first: move text_result, second: move source_result, local: local);
 }
 
-fn record_skipped(walk: &Walk, listing: &Box<Array<TextUnit>>) -> result: unit reads(walk), writes(listing) {
-  doc "Gives each text node the walk met without making a piece of it, and that no paragraph reads, the serial skipped_text in listing.";
-  let count = walk^.skipped.inner.len;
-  let known = listing^.inner.len;
-  for (k in 0_u64..count) {
-    let at = cvt::<u32, u64>(walk^.skipped.inner[k]);
-    if at < known {
-      if listing^.inner[at].serial == no_index {
-        set listing^.inner[at].serial = skipped_text;
+fn children_route_patch(children: &[Context], width: u64) -> result: Result<RoutePatch, LayoutError> reads(children) {
+  doc "Collects child subtrees independently and joins their owned patches with a balanced reduction. No child writes a shared dense destination table.";
+  let count = children^.len;
+  if count == 0_u64 {
+    let made = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move made);
+  }
+  if count == 1_u64 {
+    return tree_route_patch(context: &children^[0_u64], width: width);
+  }
+  let half = count / 2_u64;
+  let first = children_route_patch(children: &children^[0_u64..half], width: width);
+  let second = children_route_patch(children: &children^[half..count], width: width);
+  let local = False();
+  return merge_route_results(first: move first, second: move second, local: local);
+}
+
+fn tree_route_patch(context: &Context, width: u64) -> result: Result<RoutePatch, LayoutError> reads(context) {
+  doc "Full construction assembles independent source patches once. A structural update can instead collect only rebuilt source bodies; no global renumbering is encoded in these patches.";
+  let count = context^.children.inner.len;
+  let own = context_route_patch(context: context, width: width);
+  let below = children_route_patch(children: &context^.children.inner[0_u64..count], width: width);
+  let local = False();
+  return merge_route_results(first: move own, second: move below, local: local);
+}
+
+fn publish_route_patch(patch: &RoutePatch, texts: &[TextUnit], sources: &[SourcePath]) -> valid: Bool reads(patch), writes(texts), writes(sources) {
+  doc "Publishes whole records through disjoint destination intervals. Only populated branches are visited; both destination tables are split at the same NodeId boundary.";
+  let width = texts^.len;
+  if width != sources^.len {
+    return False();
+  }
+  match patch^ {
+    Empty() => {
+      return True();
+    }
+    Leaf(value: value) => {
+      if width != 1_u64 {
+        return False();
       }
+      match value^ {
+        Text(value: record) => {
+          set texts^[0_u64] = record^;
+        }
+        Source(value: record) => {
+          set sources^[0_u64] = record^;
+        }
+      }
+      return True();
+    }
+    Fork(left: left, right: right) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return False();
+      }
+      if half >= width {
+        return False();
+      }
+      let first = publish_route_patch(patch: &left^.inner, texts: &texts^[0_u64..half], sources: &sources^[0_u64..half]);
+      let second = publish_route_patch(patch: &right^.inner, texts: &texts^[half..width], sources: &sources^[half..width]);
+      return band(first, second);
     }
   }
-  return unit;
 }
 
 fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atoms: &AtomTable, viewport: Viewport) -> result: Result<Layout, LayoutError> reads(document), reads(traversal), reads(styles), reads(atoms) {
@@ -2890,15 +3231,21 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   let ended = propagate end_paragraph(context: &initial, open: &open);
   let routed = propagate finish_source_paths(context: &initial);
   let (contexts, paragraphs) = count_tree(context: &initial);
-  let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
+  let absent = NodeId(index: no_index);
+  let unreached = TextUnit(source: absent, local_context: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
   let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);
-  let reserve = imin(contexts, item_ceiling);
-  let paths = box_slots_new::<ContextPath>(capacity: reserve);
-  let recorded = propagate record_tree(context: &initial, parent: no_index, child: 0_u32, paths: &paths, listing: &listing);
-  record_skipped(walk: &walk, listing: &listing);
+  let missing = False();
+  let no_source = SourcePath(present: missing, parent_source: absent, parent_local: no_index, child: no_index);
+  let paths = box_array_filled::<SourcePath>(count: nodes, value: no_source);
+  let patch = propagate tree_route_patch(context: &initial, width: nodes);
+  let published = publish_route_patch(patch: &patch, texts: &listing.inner[0_u64..nodes], sources: &paths.inner[0_u64..nodes]);
+  if published {
+  } else {
+    return inconsistent::<Layout>();
+  }
   let clean = False();
   let none = no_updates();
-  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, paths: move paths, dirty: clean, last_update: none);
+  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, source_paths: move paths, dirty: clean, last_update: none);
   return Ok<Layout, LayoutError>(value: move made);
 }
 
