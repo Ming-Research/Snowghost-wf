@@ -395,3 +395,269 @@ fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, atom
   swap(first: &walk^.pool, second: &child_pool);
   return Ok<Context, LayoutError>(value: move context);
 }
+
+enum SourceMarks {
+  doc "An immutable sparse NodeId set. A leaf distinguishes a body whose own inputs changed from an ancestor visited only to integrate independently rebuilt children.";
+  Empty();
+  Leaf(direct: Bool);
+  Fork(left: Box<SourceMarks>, right: Box<SourceMarks>);
+}
+
+fn source_mark_single(width: u64, key: u64, direct: Bool) -> result: Result<SourceMarks, LayoutError> pure {
+  doc "Produces the destination interval path of one source mark without a shared scatter or allocation counter.";
+  if key >= width {
+    return inconsistent::<SourceMarks>();
+  }
+  if width == 1_u64 {
+    let made = SourceMarks::Leaf(direct: direct);
+    return Ok<SourceMarks, LayoutError>(value: move made);
+  }
+  let half = width / 2_u64;
+  if key < half {
+    let below = propagate source_mark_single(width: half, key: key, direct: direct);
+    let lower = box_new(value: move below);
+    let empty = SourceMarks::Empty();
+    let upper = box_new(value: move empty);
+    let made = SourceMarks::Fork(left: move lower, right: move upper);
+    return Ok<SourceMarks, LayoutError>(value: move made);
+  }
+  let rest = width - half;
+  let offset = key - half;
+  let above = propagate source_mark_single(width: rest, key: offset, direct: direct);
+  let upper = box_new(value: move above);
+  let empty = SourceMarks::Empty();
+  let lower = box_new(value: move empty);
+  let made = SourceMarks::Fork(left: move lower, right: move upper);
+  return Ok<SourceMarks, LayoutError>(value: move made);
+}
+
+fn merge_source_marks(first: SourceMarks, second: SourceMarks) -> result: Result<SourceMarks, LayoutError> pure {
+  doc "Unions independent invalidation results. Overlapping destinations combine their direct-input flags; their discovery order has no meaning.";
+  match move first {
+    Empty() => {
+      return Ok<SourceMarks, LayoutError>(value: move second);
+    }
+    Leaf(direct: a) => {
+      match move second {
+        Empty() => {
+          let made = SourceMarks::Leaf(direct: a);
+          return Ok<SourceMarks, LayoutError>(value: move made);
+        }
+        Leaf(direct: b) => {
+          let direct = bor(a, b);
+          let made = SourceMarks::Leaf(direct: direct);
+          return Ok<SourceMarks, LayoutError>(value: move made);
+        }
+        Fork(..) => {
+          return inconsistent::<SourceMarks>();
+        }
+      }
+    }
+    Fork(left: a_left, right: a_right) => {
+      match move second {
+        Empty() => {
+          let made = SourceMarks::Fork(left: move a_left, right: move a_right);
+          return Ok<SourceMarks, LayoutError>(value: move made);
+        }
+        Leaf(..) => {
+          return inconsistent::<SourceMarks>();
+        }
+        Fork(left: b_left, right: b_right) => {
+          let low = merge_source_marks(first: move a_left.inner, second: move b_left.inner);
+          let high = merge_source_marks(first: move a_right.inner, second: move b_right.inner);
+          let lower = propagate low;
+          let upper = propagate high;
+          let lower_box = box_new(value: move lower);
+          let upper_box = box_new(value: move upper);
+          let made = SourceMarks::Fork(left: move lower_box, right: move upper_box);
+          return Ok<SourceMarks, LayoutError>(value: move made);
+        }
+      }
+    }
+  }
+}
+
+fn source_mark_at(marks: &SourceMarks, width: u64, key: u64) -> marked: Option<Bool> reads(marks) {
+  doc "Returns None for an untouched source, Some(False) for an integration ancestor and Some(True) for a directly changed body.";
+  if key >= width {
+    return None<Bool>();
+  }
+  match marks^ {
+    Empty() => {
+      return None<Bool>();
+    }
+    Leaf(direct: own) => {
+      if width == 1_u64 {
+        return Some<Bool>(value: own^);
+      }
+      return None<Bool>();
+    }
+    Fork(left: lower, right: upper) => {
+      let half = width / 2_u64;
+      if key < half {
+        return source_mark_at(marks: &lower^.inner, width: half, key: key);
+      }
+      let rest = width - half;
+      let offset = key - half;
+      return source_mark_at(marks: &upper^.inner, width: rest, key: offset);
+    }
+  }
+}
+
+fn mark_source_ancestors(paths: &[SourcePath], node: NodeId, width: u64, remaining: u64, direct: Bool) -> result: Result<SourceMarks, LayoutError> reads(paths) {
+  doc "Includes the source and its old ownership ancestors so integration can reach it. This chain follows real ownership dependencies and never assumes that a parent's NodeId is smaller.";
+  if remaining == 0_u64 {
+    return inconsistent::<SourceMarks>();
+  }
+  let at = cvt::<u32, u64>(node.index);
+  if at < paths^.len {
+  } else {
+    return inconsistent::<SourceMarks>();
+  }
+  let route = paths^[at];
+  if route.present {
+  } else {
+    return inconsistent::<SourceMarks>();
+  }
+  let own = propagate source_mark_single(width: width, key: at, direct: direct);
+  if route.parent_source.index == no_index {
+    return Ok<SourceMarks, LayoutError>(value: move own);
+  }
+  let next = remaining - 1_u64;
+  let indirect = False();
+  let above = propagate mark_source_ancestors(paths: paths, node: route.parent_source, width: width, remaining: next, direct: indirect);
+  return merge_source_marks(first: move own, second: move above);
+}
+
+fn enclosing_old_source(document: &Document, paths: &[SourcePath], node: NodeId) -> result: Result<NodeId, LayoutError> reads(document), reads(paths) {
+  doc "Finds the nearest old complete source containing a currently attached DOM node, including the node itself. The DOM ancestry is a true containment dependency; node allocation order is irrelevant.";
+  let cursor = node;
+  let nodes = document^.nodes.inner.len;
+  for (step in 0_u64..nodes) {
+    let at = cvt::<u32, u64>(cursor.index);
+    if at < paths^.len {
+      if paths^[at].present {
+        return Ok<NodeId, LayoutError>(value: cursor);
+      }
+    }
+    if at < document^.nodes.inner.len {
+    } else {
+      return inconsistent::<NodeId>();
+    }
+    match document^.nodes.inner[at].links.parent {
+      Some(value: parent) => {
+        set cursor = parent;
+      }
+      None() => {
+        return inconsistent::<NodeId>();
+      }
+    }
+  }
+  return inconsistent::<NodeId>();
+}
+
+fn changed_source_marks(document: &Document, styles: &Styles, paths: &[SourcePath], changed: &[Bool], base: u64, width: u64) -> result: Result<SourceMarks, LayoutError> reads(document), reads(styles), reads(paths), reads(changed) {
+  doc "Maps independent style deltas to their consuming source bodies. An existing source root also marks its caller, which owns root counters, box classification and the choice of table-cell or ordinary recipe.";
+  let count = changed^.len;
+  if count == 0_u64 {
+    let empty = SourceMarks::Empty();
+    return Ok<SourceMarks, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let active = changed^[0_u64];
+    if active {
+    } else {
+      let empty = SourceMarks::Empty();
+      return Ok<SourceMarks, LayoutError>(value: move empty);
+    }
+    if base < styles^.order.inner.len {
+    } else {
+      return inconsistent::<SourceMarks>();
+    }
+    if styles^.order.inner[base] == no_index {
+      let empty = SourceMarks::Empty();
+      return Ok<SourceMarks, LayoutError>(value: move empty);
+    }
+    if base < 4294967295_u64 {
+    } else {
+      return too_large::<SourceMarks>();
+    }
+    let index = cvt::<u64, u32>(base);
+    let node = NodeId(index: index);
+    let source = propagate enclosing_old_source(document: document, paths: paths, node: node);
+    let direct = True();
+    let limit = paths^.len;
+    let own = propagate mark_source_ancestors(paths: paths, node: source, width: width, remaining: limit, direct: direct);
+    if source.index == node.index {
+      let at = cvt::<u32, u64>(source.index);
+      if at < paths^.len {
+      } else {
+        return inconsistent::<SourceMarks>();
+      }
+      let parent = paths^[at].parent_source;
+      if parent.index != no_index {
+        let caller = propagate mark_source_ancestors(paths: paths, node: parent, width: width, remaining: limit, direct: direct);
+        return merge_source_marks(first: move own, second: move caller);
+      }
+    }
+    return Ok<SourceMarks, LayoutError>(value: move own);
+  }
+  let half = count / 2_u64;
+  let next_base = base +sat half;
+  let lower_result = changed_source_marks(document: document, styles: styles, paths: paths, changed: &changed^[0_u64..half], base: base, width: width);
+  let upper_result = changed_source_marks(document: document, styles: styles, paths: paths, changed: &changed^[half..count], base: next_base, width: width);
+  let lower = propagate lower_result;
+  let upper = propagate upper_result;
+  return merge_source_marks(first: move lower, second: move upper);
+}
+
+fn source_can_rebuild_at_checkpoint(context: &Context, old: &Styles, new: &Styles) -> valid: Bool reads(context), reads(old), reads(new) {
+  doc "A saved body recipe is usable only while its root construction inputs are unchanged. Otherwise its marked caller must apply current root counter effects and choose the current recipe; speculative reconstruction never guesses from the old box kind.";
+  let source = &context^.source;
+  match source^ {
+    DocumentBody(..) => {
+      return True();
+    }
+    ElementBody(node: origin, ..) => {
+      let at = element_at(styles: new, node: origin^);
+      if at == unlisted {
+        return False();
+      }
+      return retained_style(old: old, new: new, style: context^.style);
+    }
+    Derived() => {
+      return False();
+    }
+  }
+}
+
+fn walk_from_source(context: &Context, atoms: &AtomTable, width: u64) -> result: Result<Walk, LayoutError> reads(context), reads(atoms) {
+  doc "Constructs an independent builder from this body's saved input. Each speculative source receives its own counter stack and child pool; no mutable global walk serializes independent sources.";
+  let word_n = list_item_word.len;
+  let list_atom = atom_find(table: atoms, name: &list_item_word[0_u64..word_n]);
+  let list_item = match list_atom {
+    Some(value: atom) => {
+      give atom.index;
+    }
+    None() => {
+      give unlisted;
+    }
+  }
+  let counters = box_slots_new::<Counter>(capacity: 0_u64);
+  let pool = empty_source_pool(width: width);
+  let incremental = True();
+  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool);
+  let source = &context^.source;
+  match source^ {
+    ElementBody(begin: before, ..) => {
+      let restored = propagate restore_build_state(walk: &walk, state: before);
+    }
+    DocumentBody(begin: before, ..) => {
+      let restored = propagate restore_build_state(walk: &walk, state: before);
+    }
+    Derived() => {
+      return inconsistent::<Walk>();
+    }
+  }
+  return Ok<Walk, LayoutError>(value: move walk);
+}
