@@ -1,0 +1,242 @@
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+
+struct CandidateCounts {
+  contexts: u64;
+  paragraphs: u64;
+}
+
+fn candidate_new_basis(new_sources: &[NodeId], node: NodeId) -> found: Bool reads(new_sources) {
+  doc "Binary-searches the caller's sorted immutable source identities; each body establishes its own Styles basis without consulting a parent or mutable index.";
+  let low = 0_u64;
+  let high = new_sources^.len;
+  loop {
+    if low >= high {
+      return False();
+    }
+    let span = high - low;
+    let half = span / 2_u64;
+    let middle = low + half;
+    if middle < new_sources^.len {
+    } else {
+      return False();
+    }
+    let held = new_sources^[middle];
+    if held.index == node.index {
+      return True();
+    }
+    if held.index < node.index {
+      set low = middle +sat 1_u64;
+    } else {
+      set high = middle;
+    }
+  }
+}
+
+fn candidate_paragraphs_at(context: &Context, upward: &[u32], left: u64) -> result: Result<u64, LayoutError> reads(context), reads(upward) {
+  doc "Reads one source-local member through its immutable reverse path. A real child source on that path is invalid; stripped child placeholders are never named by the retained membership table.";
+  if left == 0_u64 {
+    let count = context^.paragraphs.inner.len;
+    return Ok<u64, LayoutError>(value: count);
+  }
+  let next = left - 1_u64;
+  if next < upward^.len {
+  } else {
+    return inconsistent::<u64>();
+  }
+  let child = cvt::<u32, u64>(upward^[next]);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<u64>();
+  }
+  let source = context_source_node(context: &context^.children.inner[child]);
+  if source.index != no_index {
+    return inconsistent::<u64>();
+  }
+  return candidate_paragraphs_at(context: &context^.children.inner[child], upward: upward, left: next);
+}
+
+fn candidate_count_range(context: &Context, first: u64, end: u64) -> result: Result<u64, LayoutError> reads(context) {
+  doc "Counts independent membership ordinals in balanced halves, then adds their paragraph counts. Only the sum depends on both reads; no shared accumulator orders the members.";
+  if first >= end {
+    return Ok<u64, LayoutError>(value: 0_u64);
+  }
+  let count = end - first;
+  if count == 1_u64 {
+    if first < 4294967295_u64 {
+    } else {
+      return too_large::<u64>();
+    }
+    let local = cvt::<u64, u32>(first);
+    let upward = propagate local_steps(context: context, local: local);
+    let length = upward.inner.len;
+    return candidate_paragraphs_at(context: context, upward: &upward.inner[0_u64..length], left: length);
+  }
+  let half = count / 2_u64;
+  let middle = first + half;
+  let left_result = candidate_count_range(context: context, first: first, end: middle);
+  let right_result = candidate_count_range(context: context, first: middle, end: end);
+  let left = propagate left_result;
+  let right = propagate right_result;
+  let room = 18446744073709551615_u64 - right;
+  if left > room {
+    return too_large::<u64>();
+  }
+  let total = left + right;
+  return Ok<u64, LayoutError>(value: total);
+}
+
+fn candidate_source_counts(context: &Context) -> result: Result<CandidateCounts, LayoutError> reads(context) {
+  doc "Counts exactly self and the derived contexts named by local_paths. The retained membership authority excludes real source children and empty placeholders even after their ownership is moved.";
+  let source = context_source_node(context: context);
+  if source.index == no_index {
+    return inconsistent::<CandidateCounts>();
+  }
+  let contexts = context^.local_paths.inner.len;
+  if contexts == 0_u64 {
+    return inconsistent::<CandidateCounts>();
+  }
+  let paragraphs = propagate candidate_count_range(context: context, first: 0_u64, end: contexts);
+  let made = CandidateCounts(contexts: contexts, paragraphs: paragraphs);
+  return Ok<CandidateCounts, LayoutError>(value: made);
+}
+
+fn candidate_singleton(width: u64, key: u64, candidate: Candidate) -> result: Result<CandidatePatch, LayoutError> pure {
+  doc "Consumes a source into its NodeId interval path. The caller's positive width contains every key; no DOM order or shared allocator is inferred from that index.";
+  if key >= width {
+    return inconsistent::<CandidatePatch>();
+  }
+  if width == 1_u64 {
+    let leaf = CandidatePatch::Leaf(candidate: move candidate);
+    return Ok<CandidatePatch, LayoutError>(value: move leaf);
+  }
+  let half = width / 2_u64;
+  if half == 0_u64 {
+    return inconsistent::<CandidatePatch>();
+  }
+  if half >= width {
+    return inconsistent::<CandidatePatch>();
+  }
+  if key < half {
+    let left = propagate candidate_singleton(width: half, key: key, candidate: move candidate);
+    let left_box = box_new::<CandidatePatch>(value: move left);
+    let empty = CandidatePatch::Empty();
+    let right_box = box_new::<CandidatePatch>(value: move empty);
+    let branch = CandidatePatch::Fork(left: move left_box, right: move right_box);
+    return Ok<CandidatePatch, LayoutError>(value: move branch);
+  }
+  let right_width = width - half;
+  let right_key = key - half;
+  let right = propagate candidate_singleton(width: right_width, key: right_key, candidate: move candidate);
+  let empty = CandidatePatch::Empty();
+  let left_box = box_new::<CandidatePatch>(value: move empty);
+  let right_box = box_new::<CandidatePatch>(value: move right);
+  let branch = CandidatePatch::Fork(left: move left_box, right: move right_box);
+  return Ok<CandidatePatch, LayoutError>(value: move branch);
+}
+
+fn candidate_merge_results(first: Result<CandidatePatch, LayoutError>, second: Result<CandidatePatch, LayoutError>) -> result: Result<CandidatePatch, LayoutError> pure {
+  doc "Joins independently produced owned patches after both computations have run; only the merge depends on their success.";
+  let left = propagate first;
+  let right = propagate second;
+  return merge_candidate_patches(first: move left, second: move right);
+}
+
+fn merge_candidate_patches(first: CandidatePatch, second: CandidatePatch) -> result: Result<CandidatePatch, LayoutError> pure {
+  doc "Consumes owned patches of one interval. Left and right merges are independent; repeated source ownership is Inconsistent instead of choosing a writer.";
+  match move first {
+    Empty() => {
+      return Ok<CandidatePatch, LayoutError>(value: move second);
+    }
+    Leaf(candidate: a) => {
+      match move second {
+        Empty() => {
+          let made = CandidatePatch::Leaf(candidate: move a);
+          return Ok<CandidatePatch, LayoutError>(value: move made);
+        }
+        Leaf(candidate: b) => {
+          return inconsistent::<CandidatePatch>();
+        }
+        Fork(..) => {
+          return inconsistent::<CandidatePatch>();
+        }
+      }
+    }
+    Fork(left: first_left, right: first_right) => {
+      match move second {
+        Empty() => {
+          let branch = CandidatePatch::Fork(left: move first_left, right: move first_right);
+          return Ok<CandidatePatch, LayoutError>(value: move branch);
+        }
+        Leaf(..) => {
+          return inconsistent::<CandidatePatch>();
+        }
+        Fork(left: second_left, right: second_right) => {
+          let left_result = merge_candidate_patches(first: move first_left.inner, second: move second_left.inner);
+          let right_result = merge_candidate_patches(first: move first_right.inner, second: move second_right.inner);
+          match move left_result {
+            Err(error: failure) => {
+              return Err<CandidatePatch, LayoutError>(error: failure);
+            }
+            Ok(value: left) => {
+              match move right_result {
+                Err(error: failure) => {
+                  return Err<CandidatePatch, LayoutError>(error: failure);
+                }
+                Ok(value: right) => {
+                  let left_box = box_new::<CandidatePatch>(value: move left);
+                  let right_box = box_new::<CandidatePatch>(value: move right);
+                  let branch = CandidatePatch::Fork(left: move left_box, right: move right_box);
+                  return Ok<CandidatePatch, LayoutError>(value: move branch);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn candidate_collect_children(children: &[Context], new_sources: &[NodeId], width: u64) -> result: Result<CandidatePatch, LayoutError> reads(new_sources), writes(children) {
+  doc "Extracts independent child ranges before merging their owned results. A real source is captured whole; only Derived children recurse, so no descendant source body is traversed just to move its ancestor.";
+  let count = children^.len;
+  if count == 0_u64 {
+    let empty = CandidatePatch::Empty();
+    return Ok<CandidatePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let node = context_source_node(context: &children^[0_u64]);
+    if node.index == no_index {
+      return collect_source_candidates(previous: &children^[0_u64], new_sources: new_sources, width: width);
+    }
+    let key = cvt::<u32, u64>(node.index);
+    if key >= width {
+      return inconsistent::<CandidatePatch>();
+    }
+    let facts_result = collect_source_facts(context: &children^[0_u64]);
+    let counts_result = candidate_source_counts(context: &children^[0_u64]);
+    let facts = propagate facts_result;
+    let counts = propagate counts_result;
+    let styles_new = candidate_new_basis(new_sources: new_sources, node: node);
+    let style = children^[0_u64].style;
+    let context = new_context(kind: ctx_flow, style: style);
+    swap(first: &children^[0_u64], second: &context);
+    let complete = True();
+    let candidate = Candidate(context: move context, complete: complete, styles_new: styles_new, facts: move facts, contexts: counts.contexts, paragraphs: counts.paragraphs);
+    return candidate_singleton(width: width, key: key, candidate: move candidate);
+  }
+  let half = count / 2_u64;
+  let left = candidate_collect_children(children: &children^[0_u64..half], new_sources: new_sources, width: width);
+  let right = candidate_collect_children(children: &children^[half..count], new_sources: new_sources, width: width);
+  return candidate_merge_results(first: move left, second: move right);
+}
+
+fn collect_source_candidates(previous: &Context, new_sources: &[NodeId], width: u64) -> result: Result<CandidatePatch, LayoutError> reads(new_sources), writes(previous) {
+  doc "Visits this body's self-and-derived child ranges, captures each real child's facts and counts before any descendants are stripped, then transfers that child into the owned patch. local_paths is never changed; this implementation file retires with the source-pool design.";
+  if width == 0_u64 {
+    return inconsistent::<CandidatePatch>();
+  }
+  let count = previous^.children.inner.len;
+  return candidate_collect_children(children: &previous^.children.inner[0_u64..count], new_sources: new_sources, width: width);
+}
