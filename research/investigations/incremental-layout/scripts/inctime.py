@@ -5,11 +5,10 @@ usage: python3 inctime.py SCRIPT RUN...
        python3 inctime.py --reparse SCRIPT EDIT_OUTPUT REPARSE_OUTPUT COUNT
 
 The script defines the exact, nonempty edit sequence. Each run must report
-one base and every edit once in order: T/D/C/K must succeed incrementally;
-B/X use the full path, hash-only in checking mode and `full` in timing mode.
+one base and every edit once in order: T/D/C/K/B/X must succeed incrementally.
 Checking validates raw driver stdout before run.sh extracts comparable
 lines, so malformed, duplicate and incomplete records cannot disappear in
-a filter. Raw dumps and the separate style diagnostics are accepted only
+a filter. Raw dumps and the separate style and child diagnostics are accepted only
 in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
@@ -23,6 +22,8 @@ HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|ref
 BASE = re.compile(r'base hash [0-9a-f]{16} bytes \d+$')
 STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
 STYLE_TIME = re.compile(r'style edit (\d+) delta_us \d+ picks_us \d+ full_us \d+$')
+CHILD_COUNTS = re.compile(r'child edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
+CHILD_TIME = re.compile(r'child edit (\d+) delta_us \d+ picks_us \d+ full_us \d+$')
 CREATED = re.compile(r'created \d+$')
 
 
@@ -61,6 +62,13 @@ def read(path, operations, checking=False):
                 raise ValueError('%s:%d: unexpected style edit' % (path, line_number))
             auxiliary.add(edit)
             continue
+        child = (CHILD_COUNTS if checking else CHILD_TIME).fullmatch(line)
+        if child:
+            edit = int(child.group(1))
+            if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'X'):
+                raise ValueError('%s:%d: unexpected child edit' % (path, line_number))
+            auxiliary.add(edit)
+            continue
         if CREATED.fullmatch(line):
             created_count += 1
             continue
@@ -75,7 +83,7 @@ def read(path, operations, checking=False):
         if base_count != 1 or edit in seen or edit != len(seen) + 1 or edit > len(operations):
             raise ValueError('%s:%d: duplicate, missing or unordered edit ID %d' % (path, line_number, edit))
         seen.add(edit)
-        incremental = operations[edit - 1] in ('T', 'D', 'C', 'K')
+        incremental = operations[edit - 1] in ('T', 'D', 'C', 'K', 'B', 'X')
         if checking:
             status = match.group(2)
             if incremental and status != 'same':
