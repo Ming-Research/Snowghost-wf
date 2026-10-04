@@ -194,6 +194,27 @@ example apart from the renderer code that exposed it
   so a translation leaves them; or reopen Q70's summary tree. Reopen with
   the next update performance work on ecma262.
 
+- **A fully marked update is less parallel than a full layout.** A root
+  font-size edit on html5 marks all 60,868 paragraphs and 13,843 contexts;
+  update takes 351 ms at four workers against 249 ms for build_layout and
+  lay_out on the same styles, and 1.37 times the full stage (2.43 on
+  apollo11), failing X5's criterion 2, while sequentially the two are
+  equal (`research/investigations/incremental-layout/runs/step4b.txt`).
+  Impact: criterion 2 at four workers. Change: attribute the difference by
+  part (prepare_marked against prepare_text, update_flow's general path
+  against lay_out_context) on one edit, then either make the marked walk's
+  loops as parallel as the full ones or let a context whose every child and
+  paragraph is marked take lay_out_context. Reopen now, before step 6.
+
+- **A style update that changes no layout costs 5 to 9 times more at four
+  workers.** Colour edits do no layout work but take 27.6 ms at four
+  workers against 3.8 ms sequentially on html5 (45 against 6 ms on
+  ecma262): styles_changed's validation of every element and its marking
+  walk over every context (`runs/step4b.txt`). Impact: the latency of every
+  style edit at four workers. Change: measure that walk alone; if the cost
+  is the split loops' dispatch on small trees, it is the Whitefoot item on
+  split loops with few iterations above. Reopen with the item before it.
+
 - **A changed background predicate prepares and breaks its paragraph
   again.** `layout_changes` reports an element whose background turns
   transparent or visible (Q84 in
