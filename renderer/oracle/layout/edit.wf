@@ -142,6 +142,12 @@ struct ChildUpdate {
   micros: u64;
 }
 
+struct ChildScript {
+  doc "Owned state and the caller's dispatch status after handling a child edit.";
+  built: Built;
+  status: u8;
+}
+
 fn fnv1a(bytes: &[u8]) -> hash: u64 reads(bytes) {
   doc "The 64-bit FNV-1a hash of bytes.";
   let state = fnv_basis;
@@ -1211,6 +1217,50 @@ fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(la
   return unit;
 }
 
+fn run_child_edit(page: &Page, fonts: &FontSet, kept: Built, change: ChildChange, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, dump: &Box<Slots<u8>>, dumps: &Box<Slots<u64>>, number: u64) -> result: Result<ChildScript, u8> reads(fonts), reads(dumps), writes(page), writes(clock), writes(report), writes(dump) {
+  doc "Owns the child dispatch outside the script loop's text and style branches. A refusal reports the already restored full layout with inc refused, without rebuilding it again; status 1 means the output is handled, and status 3 requests the caller's independent byte comparison.";
+  let changed = propagate apply_child_incremental(page: page, fonts: fonts, kept: move kept, change: change, environment: environment, viewport: viewport, timing: timing, clock: clock, report: report, number: number);
+  let ChildUpdate(built: replacement, applied: accepted, micros: elapsed_us) = move changed;
+  let status = 1_u8;
+  if timing {
+    put_text(buffer: report, text: &edit_label[0_u64..edit_label.len]);
+    put_decimal(buffer: report, value: number);
+    if accepted {
+      put_text(buffer: report, text: &us_label[0_u64..us_label.len]);
+      put_decimal(buffer: report, value: elapsed_us);
+      put_counts(buffer: report, layout: &replacement.layout);
+    } else {
+      put_text(buffer: report, text: &inc_refused[0_u64..inc_refused.len]);
+    }
+    put_byte(buffer: report, value: 10_u8);
+  } else if accepted {
+    set status = 3_u8;
+  } else {
+    let stage = dump_layout(page: page, styles: &replacement.styles, layout: &replacement.layout, buffer: dump);
+    if stage != 0_u8 {
+      return Err<ChildScript, u8>(error: stage);
+    }
+    let silent = False();
+    let hashed = report_dump(buffer: report, dump: dump, label: &edit_label[0_u64..edit_label.len], number: number, print: silent);
+    let size = report^.inner.len;
+    if size > 0_u64 {
+      let trimmed = size - 1_u64;
+      truncate(buffer: report, length: trimmed);
+    }
+    put_text(buffer: report, text: &inc_refused[0_u64..inc_refused.len]);
+    put_byte(buffer: report, value: 10_u8);
+    let print = requested(dumps: dumps, number: number);
+    if print {
+      let printed = dump_layout(page: page, styles: &replacement.styles, layout: &replacement.layout, buffer: report);
+      if printed != 0_u8 {
+        return Err<ChildScript, u8>(error: printed);
+      }
+    }
+  }
+  let done = ChildScript(built: move replacement, status: status);
+  return Ok<ChildScript, u8>(value: move done);
+}
+
 fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
   doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits capture stable child identities, recompute traversal and styles, and consume the retained layout through children_changed before update. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes compute_styles and includes the delta, font picks, marking and update. Separate style and child edit lines report delta_us, picks_us and the full layout comparator full_us. Other edits rebuild and report full. Checking style and child edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
@@ -1288,126 +1338,105 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
           return 2_u8;
         }
         let textual = text_edit_node(line: &script^[start..end]);
-        let incremental = match textual {
-          Some(value: node) => {
-            if timing {
-              let started = now(clock: clock);
-              let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
-              let finished = now(clock: clock);
-              let elapsed = nanoseconds_from(earlier: started, later: finished);
-              put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
-              put_decimal(buffer: &report, value: edits);
-              if done {
-                let micros = elapsed / 1000_u64;
-                put_text(buffer: &report, text: &us_label[0_u64..us_label.len]);
-                put_decimal(buffer: &report, value: micros);
-                put_counts(buffer: &report, layout: &kept.layout);
-                put_byte(buffer: &report, value: 10_u8);
-                let flushed = flush(factory: files, output: out, buffer: &report);
-                give 1_u8;
-              } else {
-                put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
-                put_byte(buffer: &report, value: 10_u8);
-                give 2_u8;
+        let incremental = match child_change {
+          Some(value: change) => {
+            let child_result = match run_child_edit(page: page, fonts: fonts, kept: move kept, change: change, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, dump: &dump, dumps: &dumps, number: edits) {
+              Ok(value: found) => {
+                give move found;
               }
-            } else {
-              let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
-              if done {
-                give 3_u8;
-              } else {
-                give 2_u8;
+              Err(error: stage) => {
+                let code = stage_failure(err: err, files: files, stage: stage);
+                return code;
               }
             }
+            let ChildScript(built: replacement, status: outcome) = move child_result;
+            set kept = move replacement;
+            give outcome;
           }
           None() => {
-            let class_added = kind == 67_u8;
-            let class_removed = kind == 75_u8;
-            let styled = bor(class_added, class_removed);
-            if styled {
-              let (node_found, node_value, unused_next) = read_number(line: &script^[start..end], start: 2_u64);
-              let node = match node_id_of(value: node_value) {
-                Some(value: found) => {
-                  give found;
-                }
-                None() => {
-                  put_failure(report: &report, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
-                  let reported = flush(factory: files, output: err, buffer: &report);
-                  return 2_u8;
-                }
-              }
-              if node_found {
-              } else {
-                put_failure(report: &report, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
-                let reported = flush(factory: files, output: err, buffer: &report);
-                return 2_u8;
-              }
-              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
-                Ok(value: done) => {
-                  give done;
-                }
-                Err(error: stage) => {
-                  put_failure(report: &report, number: number, reason: &render_reason[0_u64..render_reason.len]);
-                  let reported = flush(factory: files, output: err, buffer: &report);
-                  let code = stage_failure(err: err, files: files, stage: stage);
-                  return code;
-                }
-              }
-              if timing {
-                put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
-                put_decimal(buffer: &report, value: edits);
-                if changed.applied {
-                  put_text(buffer: &report, text: &us_label[0_u64..us_label.len]);
-                  put_decimal(buffer: &report, value: changed.micros);
-                  put_counts(buffer: &report, layout: &kept.layout);
-                  put_byte(buffer: &report, value: 10_u8);
-                  let flushed = flush(factory: files, output: out, buffer: &report);
-                  give 1_u8;
-                } else {
-                  put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
-                  put_byte(buffer: &report, value: 10_u8);
-                  give 2_u8;
-                }
-              } else if changed.applied {
-                give 3_u8;
-              } else {
-                give 2_u8;
-              }
-            } else {
-              match child_change {
-                Some(value: change) => {
-                  let changed = match apply_child_incremental(page: page, fonts: fonts, kept: move kept, change: change, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
-                    Ok(value: done) => {
-                      give move done;
-                    }
-                    Err(error: stage) => {
-                      let code = stage_failure(err: err, files: files, stage: stage);
-                      return code;
-                    }
+            let outcome = match textual {
+              Some(value: node) => {
+                if timing {
+                  let started = now(clock: clock);
+                  let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
+                  let finished = now(clock: clock);
+                  let elapsed = nanoseconds_from(earlier: started, later: finished);
+                  put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
+                  put_decimal(buffer: &report, value: edits);
+                  if done {
+                    let micros = elapsed / 1000_u64;
+                    put_text(buffer: &report, text: &us_label[0_u64..us_label.len]);
+                    put_decimal(buffer: &report, value: micros);
+                    put_counts(buffer: &report, layout: &kept.layout);
+                    put_byte(buffer: &report, value: 10_u8);
+                    give 1_u8;
+                  } else {
+                    put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
+                    put_byte(buffer: &report, value: 10_u8);
+                    give 2_u8;
                   }
-                  let ChildUpdate(built: replacement, applied: accepted, micros: elapsed_us) = move changed;
-                  set kept = move replacement;
-                  if timing {
-                    put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
-                    put_decimal(buffer: &report, value: edits);
-                    if accepted {
-                      put_text(buffer: &report, text: &us_label[0_u64..us_label.len]);
-                      put_decimal(buffer: &report, value: elapsed_us);
-                      put_counts(buffer: &report, layout: &kept.layout);
-                      put_byte(buffer: &report, value: 10_u8);
-                      let flushed = flush(factory: files, output: out, buffer: &report);
-                      give 1_u8;
-                    } else {
-                      put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
-                      put_byte(buffer: &report, value: 10_u8);
-                      give 2_u8;
-                    }
-                  } else if accepted {
+                } else {
+                  let done = apply_incremental(page: page, fonts: fonts, kept: &kept, node: node);
+                  if done {
                     give 3_u8;
                   } else {
                     give 2_u8;
                   }
                 }
-                None() => {
+              }
+              None() => {
+                let class_added = kind == 67_u8;
+                let class_removed = kind == 75_u8;
+                let styled = bor(class_added, class_removed);
+                if styled {
+                  let (node_found, node_value, unused_next) = read_number(line: &script^[start..end], start: 2_u64);
+                  let node = match node_id_of(value: node_value) {
+                    Some(value: found) => {
+                      give found;
+                    }
+                    None() => {
+                      put_failure(report: &report, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+                      let reported = flush(factory: files, output: err, buffer: &report);
+                      return 2_u8;
+                    }
+                  }
+                  if node_found {
+                  } else {
+                    put_failure(report: &report, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+                    let reported = flush(factory: files, output: err, buffer: &report);
+                    return 2_u8;
+                  }
+                  let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
+                    Ok(value: done) => {
+                      give done;
+                    }
+                    Err(error: stage) => {
+                      put_failure(report: &report, number: number, reason: &render_reason[0_u64..render_reason.len]);
+                      let reported = flush(factory: files, output: err, buffer: &report);
+                      let code = stage_failure(err: err, files: files, stage: stage);
+                      return code;
+                    }
+                  }
+                  if timing {
+                    put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
+                    put_decimal(buffer: &report, value: edits);
+                    if changed.applied {
+                      put_text(buffer: &report, text: &us_label[0_u64..us_label.len]);
+                      put_decimal(buffer: &report, value: changed.micros);
+                      put_counts(buffer: &report, layout: &kept.layout);
+                      put_byte(buffer: &report, value: 10_u8);
+                        give 1_u8;
+                    } else {
+                      put_text(buffer: &report, text: &inc_refused[0_u64..inc_refused.len]);
+                      put_byte(buffer: &report, value: 10_u8);
+                      give 2_u8;
+                    }
+                  } else if changed.applied {
+                    give 3_u8;
+                  } else {
+                    give 2_u8;
+                  }
+                } else {
                   if timing {
                     put_text(buffer: &report, text: &edit_label[0_u64..edit_label.len]);
                     put_decimal(buffer: &report, value: edits);
@@ -1418,9 +1447,15 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
                 }
               }
             }
+            give outcome;
           }
         }
         if incremental == 1_u8 {
+          let flushed = flush(factory: files, output: out, buffer: &report);
+          if flushed {
+          } else {
+            return 2_u8;
+          }
         } else {
           let rebuilt = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport) {
             Ok(value: found) => {
