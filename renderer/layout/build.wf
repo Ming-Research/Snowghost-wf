@@ -123,6 +123,7 @@ struct Walk {
   list_item: u32;
   incremental: Bool;
   pool: SourcePool;
+  completed: SourceMarks;
 }
 
 const skipped_text: u32 = 4294967294_u32;
@@ -1804,7 +1805,7 @@ fn add_pseudo(document: &Document, styles: &Styles, atoms: &AtomTable, walk: &Wa
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn walk_children(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, parent: NodeId, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
+fn walk_children(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, parent: NodeId, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(context), writes(open) {
   doc "Adds the children of parent, in order, to the flow context and its open paragraph. The walk follows next siblings and takes at most one step per node; Inconsistent when a link names no node.";
   let nodes = document^.nodes.inner.len;
   let index = cvt::<u32, u64>(parent.index);
@@ -1843,7 +1844,7 @@ fn walk_children(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
         }
       }
       Element(..) => {
-        let added = propagate walk_element(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, context: context, open: open);
+        let added = propagate walk_element(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, context: context, open: open);
       }
       DocumentRoot(..) => {
       }
@@ -1858,7 +1859,7 @@ fn walk_children(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
   return inconsistent::<unit>();
 }
 
-fn walk_element(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
+fn walk_element(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(context), writes(open) {
   doc "Adds the element node and its subtree to the flow context by its computed display, float and position: nothing for display none; its children for display contents; an inline box; an atomic inline, floated or positioned child context; an in-flow child context for a block-level box that establishes one; otherwise a block box of the context, bracketing its content.";
   let element = element_at(styles: styles, node: node);
   if element == unlisted {
@@ -1873,13 +1874,13 @@ fn walk_element(document: &Document, old: &Styles, styles: &Styles, atoms: &Atom
   let item = group.display == display_list_item;
   let listed_reset = propagate reset_list(document: document, walk: walk, node: node);
   let counted = propagate apply_counters(styles: styles, walk: walk, style: style, list_item: item);
-  let added = propagate place_element(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, group: group, context: context, open: open);
+  let added = propagate place_element(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, group: group, context: context, open: open);
   leave_scope(walk: walk);
   set walk^.depth = walk^.depth -sat 1_u64;
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn place_element(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, group: BoxGroup, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
+fn place_element(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, group: BoxGroup, context: &Context, open: &Open) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(context), writes(open) {
   doc "The body of walk_element once counters are applied.";
   let (name, html, svg) = local_name_of(document: document, node: node);
   let owner_style = current_style(open: open);
@@ -1899,7 +1900,7 @@ fn place_element(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
   }
   if group.display == display_contents {
     let before = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_before, context: context, open: open);
-    let inside = propagate walk_children(document: document, old: old, styles: styles, atoms: atoms, walk: walk, parent: node, context: context, open: open);
+    let inside = propagate walk_children(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, parent: node, context: context, open: open);
     let after = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, context: context, open: open);
     return Ok<unit, LayoutError>(value: unit);
   }
@@ -1914,12 +1915,12 @@ fn place_element(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
   let floated = group.float != float_none;
   let kind = inner_kind(display: group.display, replaced: replaced);
   if out {
-    let child = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
+    let child = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
     let placed = propagate add_child_flow(context: context, child: move child, kind: 2_u8);
     return Ok<unit, LayoutError>(value: unit);
   }
   if floated {
-    let child = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
+    let child = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
     let placed = propagate add_child_flow(context: context, child: move child, kind: 1_u8);
     return Ok<unit, LayoutError>(value: unit);
   }
@@ -1932,12 +1933,12 @@ fn place_element(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
     if simple {
       let begun = propagate begin_inline(context: context, open: open, style: style);
       let before = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_before, context: context, open: open);
-      let inside = propagate walk_children(document: document, old: old, styles: styles, atoms: atoms, walk: walk, parent: node, context: context, open: open);
+      let inside = propagate walk_children(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, parent: node, context: context, open: open);
       let after = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, context: context, open: open);
       let ended = propagate end_inline(context: context, open: open);
       return Ok<unit, LayoutError>(value: unit);
     }
-    let child = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
+    let child = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
     let placed = propagate add_object(context: context, open: open, child: move child);
     return Ok<unit, LayoutError>(value: unit);
   }
@@ -1952,7 +1953,7 @@ fn place_element(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
   if independent {
     let closed = propagate end_paragraph(context: context, open: open);
     let flow_at = context^.flow.inner.len;
-    let child = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
+    let child = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
     let placed = propagate add_child_flow(context: context, child: move child, kind: 0_u8);
     let around = open^.inlines.inner.len;
     if around > 0_u64 {
@@ -1982,7 +1983,7 @@ fn place_element(document: &Document, old: &Styles, styles: &Styles, atoms: &Ato
   set open^.style = style;
   let marked = propagate add_inside_marker(styles: styles, atoms: atoms, walk: walk, style: style, context: context, open: open);
   let before = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_before, context: context, open: open);
-  let inside = propagate walk_children(document: document, old: old, styles: styles, atoms: atoms, walk: walk, parent: node, context: context, open: open);
+  let inside = propagate walk_children(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, parent: node, context: context, open: open);
   let after = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, context: context, open: open);
   let ended = propagate end_paragraph(context: context, open: open);
   set open^.style = outer;
@@ -2061,13 +2062,13 @@ fn capture_build_state(walk: &Walk) -> result: Result<BuildState, LayoutError> r
   return Ok<BuildState, LayoutError>(value: move state);
 }
 
-fn build_box(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8, recipe: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk) {
+fn build_box(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8, recipe: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk) {
   doc "Records the complete context body's input and output states around every successful construction path. Capture begins after any caller-applied root counter effects and ends before any caller scope exit; captions retain their existing path without either operation.";
   if walk^.incremental {
-    return build_incremental_child(document: document, old: old, new: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe);
+    return build_incremental_child(document: document, old: old, new: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe);
   }
   let begin = propagate capture_build_state(walk: walk);
-  let context = propagate build_box_body(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
+  let context = propagate build_box_body(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
   let end = propagate capture_build_state(walk: walk);
   let source = ContextSource::ElementBody(node: node, recipe: recipe, begin: move begin, end: move end);
   set context.source = move source;
@@ -2075,7 +2076,7 @@ fn build_box(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTab
   return Ok<Context, LayoutError>(value: move context);
 }
 
-fn build_box_body(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk) {
+fn build_box_body(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk) {
   doc "Builds the context of kind that the element node establishes: a flow context of its ::before, children and ::after, flex or grid items, a table, or a replaced box with no content.";
   let context = new_context(kind: kind, style: style);
   let (name, html, svg) = local_name_of(document: document, node: node);
@@ -2119,17 +2120,17 @@ fn build_box_body(document: &Document, old: &Styles, styles: &Styles, atoms: &At
   let grid = kind == ctx_grid;
   let container = bor(flex, grid);
   if container {
-    let built = propagate build_items(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, container: &context);
+    let built = propagate build_items(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, container: &context);
     return Ok<Context, LayoutError>(value: move context);
   }
   if kind == ctx_table {
-    let built = propagate build_table(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, table: &context);
+    let built = propagate build_table(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, table: &context);
     return Ok<Context, LayoutError>(value: move context);
   }
   let open = new_open(style: style, first: 0_u64);
   let marked = propagate add_inside_marker(styles: styles, atoms: atoms, walk: walk, style: style, context: &context, open: &open);
   let before = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_before, context: &context, open: &open);
-  let inside = propagate walk_children(document: document, old: old, styles: styles, atoms: atoms, walk: walk, parent: node, context: &context, open: &open);
+  let inside = propagate walk_children(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, parent: node, context: &context, open: &open);
   let after = propagate add_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, context: &context, open: &open);
   let ended = propagate end_paragraph(context: &context, open: &open);
   return Ok<Context, LayoutError>(value: move context);
@@ -2196,15 +2197,15 @@ fn add_item_pseudo(document: &Document, styles: &Styles, atoms: &AtomTable, walk
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn build_items(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, container: &Context) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(container) {
+fn build_items(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, container: &Context) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(container) {
   doc "Adds the flex or grid items of the container element node to container in document order: its ::before and ::after, each element child (the style stage has blockified it) as a child context, the children of a display contents child in its place, each text node holding more than white space as an anonymous item, and each absolutely positioned child as an out-of-flow child.";
   let before = propagate add_item_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_before, container: container);
-  let inside = propagate build_item_children(document: document, old: old, styles: styles, atoms: atoms, walk: walk, parent: node, container: container);
+  let inside = propagate build_item_children(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, parent: node, container: container);
   let after = propagate add_item_pseudo(document: document, styles: styles, atoms: atoms, walk: walk, node: node, element: element, kind: pseudo_after, container: container);
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn build_item_children(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, parent: NodeId, container: &Context) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(container) {
+fn build_item_children(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, parent: NodeId, container: &Context) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(container) {
   doc "Adds the children of parent as items of container, as build_items describes.";
   let nodes = document^.nodes.inner.len;
   let index = cvt::<u32, u64>(parent.index);
@@ -2262,7 +2263,7 @@ fn build_item_children(document: &Document, old: &Styles, styles: &Styles, atoms
             set walk^.depth = walk^.depth +sat 1_u64;
             let not_item = False();
             let counted = propagate apply_counters(styles: styles, walk: walk, style: style, list_item: not_item);
-            let built = propagate build_items(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, container: container);
+            let built = propagate build_items(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, container: container);
             leave_scope(walk: walk);
             set walk^.depth = walk^.depth -sat 1_u64;
           } else {
@@ -2276,7 +2277,7 @@ fn build_item_children(document: &Document, old: &Styles, styles: &Styles, atoms
             let image_shown = natural != natural_alt_box;
             let replaced = band(listed, image_shown);
             let kind = inner_kind(display: group.display, replaced: replaced);
-            let child = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
+            let child = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind, recipe: recipe_element);
             let out_absolute = group.position == position_absolute;
             let out_fixed = group.position == position_fixed;
             let out = bor(out_absolute, out_fixed);
@@ -2492,7 +2493,7 @@ fn is_table_child(display: u8) -> part: Bool pure {
   return made;
 }
 
-fn walk_run(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, first: NodeId, context: &Context, open: &Open) -> result: Result<Option<NodeId>, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(context), writes(open) {
+fn walk_run(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, first: NodeId, context: &Context, open: &Open) -> result: Result<Option<NodeId>, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(context), writes(open) {
   doc "Adds the siblings from first on to the flow context and its open paragraph, as walk_children does the children of a parent, up to the first sibling that is a table part or a table cell, which is returned; None when the siblings end.";
   let nodes = document^.nodes.inner.len;
   let cursor = Some<NodeId>(value: first);
@@ -2537,7 +2538,7 @@ fn walk_run(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTabl
             let found_at = Some<NodeId>(value: node);
             return Ok<Option<NodeId>, LayoutError>(value: found_at);
           }
-          let added = propagate walk_element(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: node, context: context, open: open);
+          let added = propagate walk_element(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: node, context: context, open: open);
         }
       }
       DocumentRoot(..) => {
@@ -2554,7 +2555,7 @@ fn walk_run(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTabl
   return inconsistent::<Option<NodeId>>();
 }
 
-fn add_anonymous_row(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, first: NodeId, group: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<Option<NodeId>, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(table), writes(busy) {
+fn add_anonymous_row(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, first: NodeId, group: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<Option<NodeId>, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(table), writes(busy) {
   doc "Adds the anonymous table-row (CSS 2.2 17.2.1) around the siblings from first on that are not proper children of a table or row group: each cell element among them is a cell of the row, and each run of other content (text with more than white space, inline and block boxes) is the content of an anonymous cell. Returns the first sibling that is a proper child, None when the siblings end.";
   let row_index = table^.rows.inner.len;
   if row_index < 4294967295_u64 {
@@ -2600,7 +2601,7 @@ fn add_anonymous_row(document: &Document, old: &Styles, styles: &Styles, atoms: 
           } else {
             let content = new_context(kind: ctx_flow, style: row_style);
             let open = new_open(style: row_style, first: 0_u64);
-            let rest = propagate walk_run(document: document, old: old, styles: styles, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
+            let rest = propagate walk_run(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
             let ended = propagate end_paragraph(context: &content, open: &open);
             let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: 1_u32, column_span: 1_u32);
             set column = next;
@@ -2630,7 +2631,7 @@ fn add_anonymous_row(document: &Document, old: &Styles, styles: &Styles, atoms: 
             set walk^.depth = walk^.depth +sat 1_u64;
             let not_item = False();
             let counted = propagate apply_counters(styles: styles, walk: walk, style: style, list_item: not_item);
-            let content = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: child, element: element, style: style, kind: ctx_flow, recipe: recipe_cell);
+            let content = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: child, element: element, style: style, kind: ctx_flow, recipe: recipe_cell);
             leave_scope(walk: walk);
             set walk^.depth = walk^.depth -sat 1_u64;
             let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: row_span, column_span: column_span);
@@ -2638,7 +2639,7 @@ fn add_anonymous_row(document: &Document, old: &Styles, styles: &Styles, atoms: 
           } else {
             let content = new_context(kind: ctx_flow, style: row_style);
             let open = new_open(style: row_style, first: 0_u64);
-            let rest = propagate walk_run(document: document, old: old, styles: styles, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
+            let rest = propagate walk_run(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, first: child, context: &content, open: &open);
             let ended = propagate end_paragraph(context: &content, open: &open);
             let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: 1_u32, column_span: 1_u32);
             set column = next;
@@ -2660,7 +2661,7 @@ fn add_anonymous_row(document: &Document, old: &Styles, styles: &Styles, atoms: 
   return inconsistent::<Option<NodeId>>();
 }
 
-fn add_row(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, group: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(table), writes(busy) {
+fn add_row(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, group: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(table), writes(busy) {
   doc "Adds the row node and its cells: each cell takes the first column, from the left, that no cell of an earlier row spans into, and occupies its colspan columns for its rowspan rows; busy holds, for each column, the first row it is free again.";
   let row_index = table^.rows.inner.len;
   if row_index < 4294967295_u64 {
@@ -2708,7 +2709,7 @@ fn add_row(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable
         set walk^.depth = walk^.depth +sat 1_u64;
         let not_item = False();
         let counted = propagate apply_counters(styles: styles, walk: walk, style: cell_style, list_item: not_item);
-        let content = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: child, element: element, style: cell_style, kind: ctx_flow, recipe: recipe_cell);
+        let content = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: child, element: element, style: cell_style, kind: ctx_flow, recipe: recipe_cell);
         leave_scope(walk: walk);
         set walk^.depth = walk^.depth -sat 1_u64;
         let next = propagate place_cell(table: table, busy: busy, row: row, column: column, content: move content, row_span: row_span, column_span: column_span);
@@ -2719,7 +2720,7 @@ fn add_row(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn add_group(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(table), writes(busy) {
+fn add_group(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, style: StyleRef, group_kind: u8, table: &Context, busy: &Box<Slots<u32>>) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(table), writes(busy) {
   doc "Adds the rows of the row group node.";
   let nodes = document^.nodes.inner.len;
   let index = cvt::<u32, u64>(node.index);
@@ -2751,7 +2752,7 @@ fn add_group(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTab
         set walk^.depth = walk^.depth +sat 1_u64;
         let not_item = False();
         let counted = propagate apply_counters(styles: styles, walk: walk, style: row_style, list_item: not_item);
-        let added = propagate add_row(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: child, style: row_style, group: style, group_kind: group_kind, table: table, busy: busy);
+        let added = propagate add_row(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: child, style: row_style, group: style, group_kind: group_kind, table: table, busy: busy);
         leave_scope(walk: walk);
         set walk^.depth = walk^.depth -sat 1_u64;
       } else if row_group.display == display_none {
@@ -2759,7 +2760,7 @@ fn add_group(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTab
         let part = is_table_child(display: row_group.display);
         if part {
         } else {
-          let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
+          let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
           set cursor = rest;
         }
       }
@@ -2777,7 +2778,7 @@ fn add_group(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTab
             if blank {
               let skipped = propagate skip_text(context: table, node: child);
             } else {
-              let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
+              let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, first: child, group: style, group_kind: group_kind, table: table, busy: busy);
               set cursor = rest;
             }
           }
@@ -2798,7 +2799,7 @@ fn add_group(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTab
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, table: &Context) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(atoms), writes(walk), writes(table) {
+fn build_table(document: &Document, old: &Styles, styles: &Styles, new_sources: &[NodeId], atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, table: &Context) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(styles), reads(new_sources), reads(atoms), writes(walk), writes(table) {
   doc "Builds a table's structure: captions as child contexts listed in captions; columns from col and colgroup; rows from the first header group, then the body groups and bare rows in order (further header and footer groups count as body groups), then the first footer group; each cell a child context listed in cells. Cells and other content that are children of the table or of a row group, not of a row, are in an anonymous row, other content in an anonymous cell of it (CSS 2.2 17.2.1).";
   let nodes = document^.nodes.inner.len;
   let index = cvt::<u32, u64>(node.index);
@@ -2848,7 +2849,7 @@ fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomT
     let header_node = NodeId(index: header);
     let header_style = element_ref(element: header_node);
     set walk^.depth = walk^.depth +sat 1_u64;
-    let added = propagate add_group(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: header_node, style: header_style, group_kind: kind_header, table: table, busy: &busy);
+    let added = propagate add_group(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: header_node, style: header_style, group_kind: kind_header, table: table, busy: &busy);
     set walk^.depth = walk^.depth -sat 1_u64;
   }
   let cursor = first_child;
@@ -2880,7 +2881,7 @@ fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomT
       let display = group.display;
       if display == display_caption {
         set walk^.depth = walk^.depth +sat 1_u64;
-        let caption = propagate build_box(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: child, element: child_element, style: child_style, kind: ctx_flow, recipe: recipe_caption);
+        let caption = propagate build_box(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: child, element: child_element, style: child_style, kind: ctx_flow, recipe: recipe_caption);
         set walk^.depth = walk^.depth -sat 1_u64;
         let caption_index = table^.children.inner.len;
         if caption_index < 4294967295_u64 {
@@ -2900,7 +2901,7 @@ fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomT
       } else if display == display_row {
         let group_style = anonymous_of(style: table^.style);
         set walk^.depth = walk^.depth +sat 1_u64;
-        let added = propagate add_row(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: child, style: child_style, group: group_style, group_kind: kind_body, table: table, busy: &busy);
+        let added = propagate add_row(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: child, style: child_style, group: group_style, group_kind: kind_body, table: table, busy: &busy);
         set walk^.depth = walk^.depth -sat 1_u64;
       } else {
         let body = display == display_row_group;
@@ -2910,12 +2911,12 @@ fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomT
         let any_group = bor(body, extra);
         if any_group {
           set walk^.depth = walk^.depth +sat 1_u64;
-          let added = propagate add_group(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: child, style: child_style, group_kind: kind_body, table: table, busy: &busy);
+          let added = propagate add_group(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: child, style: child_style, group_kind: kind_body, table: table, busy: &busy);
           set walk^.depth = walk^.depth -sat 1_u64;
         } else if display == display_none {
         } else {
           let none = anonymous_of(style: table^.style);
-          let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
+          let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
           set cursor = rest;
         }
       }
@@ -2934,7 +2935,7 @@ fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomT
               let skipped = propagate skip_text(context: table, node: child);
             } else {
               let none = anonymous_of(style: table^.style);
-              let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
+              let rest = propagate add_anonymous_row(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, first: child, group: none, group_kind: kind_body, table: table, busy: &busy);
               set cursor = rest;
             }
           }
@@ -2956,7 +2957,7 @@ fn build_table(document: &Document, old: &Styles, styles: &Styles, atoms: &AtomT
     let footer_node = NodeId(index: footer);
     let footer_style = element_ref(element: footer_node);
     set walk^.depth = walk^.depth +sat 1_u64;
-    let added = propagate add_group(document: document, old: old, styles: styles, atoms: atoms, walk: walk, node: footer_node, style: footer_style, group_kind: kind_footer, table: table, busy: &busy);
+    let added = propagate add_group(document: document, old: old, styles: styles, new_sources: new_sources, atoms: atoms, walk: walk, node: footer_node, style: footer_style, group_kind: kind_footer, table: table, busy: &busy);
     set walk^.depth = walk^.depth -sat 1_u64;
   }
   let used = busy.inner.len;
@@ -2984,12 +2985,6 @@ fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(conte
     set paragraphs = paragraphs +sat inner_paragraphs;
   }
   return contexts, paragraphs;
-}
-
-struct SourceFacts {
-  doc "Owned temporary outputs of one source body. Collection cannot reach the dense publication tables or another source's patch.";
-  texts: Box<Slots<TextFact>>;
-  sources: Box<Slots<SourceFact>>;
 }
 
 fn append_text_fact(facts: &SourceFacts, node: NodeId, value: TextUnit) -> result: Result<unit, LayoutError> writes(facts) {
@@ -3438,7 +3433,10 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   let counters = box_slots_new::<Counter>(capacity: 0_u64);
   let pool = empty_source_pool(width: nodes);
   let incremental = False();
-  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool);
+  let completed = SourceMarks::Empty();
+  let missing_source = NodeId(index: no_index);
+  let no_sources = array_filled::<NodeId>(count: 0_u64, value: missing_source);
+  let walk = Walk(counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, incremental: incremental, pool: move pool, completed: move completed);
   let root_node = if 0_u64 < traversal^.elements.inner.len {
     give traversal^.elements.inner[0_u64];
   } else {
@@ -3451,7 +3449,7 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   let open = new_open(style: style, first: 0_u64);
   let root = NodeId(index: 0_u32);
   let begin = propagate capture_build_state(walk: &walk);
-  let walked = propagate walk_children(document: document, old: styles, styles: styles, atoms: atoms, walk: &walk, parent: root, context: &initial, open: &open);
+  let walked = propagate walk_children(document: document, old: styles, styles: styles, new_sources: &no_sources[0_u64..0_u64], atoms: atoms, walk: &walk, parent: root, context: &initial, open: &open);
   let end = propagate capture_build_state(walk: &walk);
   let source = ContextSource::DocumentBody(node: root, begin: move begin, end: move end);
   set initial.source = move source;
