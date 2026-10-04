@@ -9,7 +9,8 @@ For the first COUNT forward T and B edits of SCRIPT that suit it, writes the pag
 with the same insertion made in its source to OUTDIR/reparse-I.html (I being
 the edit's number, counting the script's edits from 1), runs
 `DRIVER dump 1 FILE UA SUFFIX=SHEET ...` on it and prints `reparse I hash H
-bytes N` in the format of `layout_oracle edit`. An edit suits the source when
+bytes N` in the format of `layout_oracle edit`, or `reparse I skipped` for a
+forward edit that does not suit the source. An edit suits the source when
 the data of its Text node, which NODES lists, occurs exactly once in the
 source byte for byte, so the parser's character references and newline
 rules did not touch it; the insertion is then made at the same byte offset
@@ -56,6 +57,7 @@ def main():
             if source.count(data) != 1:
                 print('edit %d: text node %d occurs %d times in the source, skipped' %
                       (number, node, source.count(data)), file=sys.stderr)
+                print('reparse %d skipped' % number)
                 continue
             at = source.index(data) + offset
             edited = source[:at] + unescape(text) + source[at:]
@@ -65,10 +67,13 @@ def main():
             if data is None or source.count(data) != 1:
                 print('edit %d: element %s has no Text first child found once in the source, skipped' %
                       (number, before.decode()), file=sys.stderr)
+                print('reparse %d skipped' % number)
                 continue
             # The start tag of the p element is the last `<p` before its text.
             at = source.rfind(b'<p', 0, source.index(data))
             if at < 0 or source[at + 2:at + 3] not in (b' ', b'>'):
+                print('edit %d: no plain <p start tag before its text, skipped' % number, file=sys.stderr)
+                print('reparse %d skipped' % number)
                 continue
             edited = source[:at] + b'<p>' + unescape(text) + b'</p>' + source[at:]
         else:

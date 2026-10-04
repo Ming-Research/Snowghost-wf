@@ -129,28 +129,34 @@ def check_reparse(script, edited, reparsed, count):
     operations = script_operations(script)
     read(edited, operations, checking=True)
     count = int(count)
-    forward = [i for i, kind in enumerate(operations, 1) if kind in ('T', 'B')][:count]
-    if count <= 0 or len(forward) != count:
+    forward = [i for i, kind in enumerate(operations, 1) if kind in ('T', 'B')]
+    if count <= 0 or len(forward) < count:
         raise ValueError('reparse count must name available forward edits')
     hashes = {}
     for raw in open(edited):
         match = re.fullmatch(r'edit (\d+) hash ([0-9a-f]{16}) bytes (\d+)(?: inc same)?\n?', raw)
         if match:
             hashes[int(match.group(1))] = match.groups()[1:]
-    found = []
+    position = 0
+    compared = 0
     failed = False
     for raw in open(reparsed):
+        skipped = re.fullmatch(r'reparse (\d+) skipped\n?', raw)
         match = re.fullmatch(r'reparse (\d+) hash ([0-9a-f]{16}) bytes (\d+)\n?', raw)
-        if not match:
+        if not skipped and not match:
             raise ValueError('unreadable reparse result: ' + raw.rstrip('\n'))
-        edit = int(match.group(1))
-        if len(found) >= count or edit != forward[len(found)]:
+        edit = int((skipped or match).group(1))
+        if compared >= count or position >= len(forward) or edit != forward[position]:
             raise ValueError('duplicate, missing or unexpected reparse edit ID')
-        found.append(edit)
+        position += 1
+        if skipped:
+            print('reparse edit %d: skipped' % edit)
+            continue
+        compared += 1
         same = hashes[edit] == match.groups()[1:]
         print('reparse edit %d: %s' % (edit, 'same' if same else 'DIFFERS'))
         failed |= not same
-    if found != forward:
+    if compared != count:
         raise ValueError('incomplete reparse output')
     return 1 if failed else 0
 
@@ -174,9 +180,12 @@ def main():
         print('no runs')
         return 1
     first_timed, first_other, first_styled, first_built = runs[0]
-    for timed, other, _, _ in runs[1:]:
+    for timed, other, _, built in runs[1:]:
         if set(timed) != set(first_timed) or other != first_other:
             print('the runs list different edits')
+            return 1
+        if built != first_built:
+            print('the runs disagree on the structure counts')
             return 1
         for edit, values in timed.items():
             if values[1:] != first_timed[edit][1:]:
