@@ -1,0 +1,234 @@
+alias NodeId = pkg::dom::NodeId;
+
+fn route_text_equal(first: TextUnit, second: TextUnit) -> same: Bool pure {
+  doc "Compares every field of a text route, including skipped-node ownership.";
+  let source = first.source.index == second.source.index;
+  let local = first.local_context == second.local_context;
+  let piece = first.piece == second.piece;
+  let count = first.count == second.count;
+  let paragraph = first.paragraph == second.paragraph;
+  let owner = band(source, local);
+  let span = band(piece, count);
+  let place = band(span, paragraph);
+  return band(owner, place);
+}
+
+fn route_source_equal(first: SourcePath, second: SourcePath) -> same: Bool pure {
+  doc "Compares every field of a source entry rather than only its destination.";
+  let present = eeq(first.present, second.present);
+  let parent = first.parent_source.index == second.parent_source.index;
+  let local = first.parent_local == second.parent_local;
+  let child = first.child == second.child;
+  let owner = band(present, parent);
+  let place = band(local, child);
+  return band(owner, place);
+}
+
+fn route_value_equal(first: RouteValue, second: RouteValue) -> same: Bool pure {
+  doc "Equal retirement facts coalesce only when their kind and complete record agree.";
+  match first {
+    Text(value: a) => {
+      match second {
+        Text(value: b) => {
+          return route_text_equal(first: a, second: b);
+        }
+        Source(..) => {
+          return False();
+        }
+      }
+    }
+    Source(value: a) => {
+      match second {
+        Source(value: b) => {
+          return route_source_equal(first: a, second: b);
+        }
+        Text(..) => {
+          return False();
+        }
+      }
+    }
+  }
+}
+
+fn route_text_valid(node: NodeId, value: TextUnit, nodes: u64) -> valid: Bool pure {
+  doc "Checks a sparse text fact's destination, source identity and actual or canonical skipped representation.";
+  let key = cvt::<u32, u64>(node.index);
+  let source = cvt::<u32, u64>(value.source.index);
+  let destination = key < nodes;
+  let owner = source < nodes;
+  let owned = band(destination, owner);
+  if owned {
+  } else {
+    return False();
+  }
+  if value.local_context == skipped_text {
+    let piece = value.piece == 0_u32;
+    let count = value.count == 0_u32;
+    let paragraph = value.paragraph == no_index;
+    let span = band(piece, count);
+    return band(span, paragraph);
+  }
+  let local = value.local_context != no_index;
+  let piece = value.piece != no_index;
+  let count = value.count > 0_u32;
+  let paragraph = value.paragraph != no_index;
+  let owner_place = band(local, paragraph);
+  let span = band(piece, count);
+  return band(owner_place, span);
+}
+
+fn route_source_valid(node: NodeId, value: SourcePath, nodes: u64) -> valid: Bool pure {
+  doc "Checks a source entry's complete representation, including the unique document-root route and direct self-parent rejection.";
+  let key = cvt::<u32, u64>(node.index);
+  if key < nodes {
+  } else {
+    return False();
+  }
+  if value.present {
+  } else {
+    return False();
+  }
+  if value.parent_source.index == no_index {
+    let document = node.index == 0_u32;
+    let parent = value.parent_local == no_index;
+    let child = value.child == no_index;
+    let place = band(parent, child);
+    return band(document, place);
+  }
+  let parent = cvt::<u32, u64>(value.parent_source.index);
+  let owner = parent < nodes;
+  let distinct = value.parent_source.index != node.index;
+  let local = value.parent_local != no_index;
+  let child = value.child != no_index;
+  let parent_place = band(owner, distinct);
+  let position = band(local, child);
+  return band(parent_place, position);
+}
+
+fn merge_retired_results(first: Result<RoutePatch, LayoutError>, second: Result<RoutePatch, LayoutError>) -> result: Result<RoutePatch, LayoutError> pure {
+  doc "Joins independently constructed retirement intervals without ordering either construction behind the other's success.";
+  match move first {
+    Err(error: failure) => {
+      return Err<RoutePatch, LayoutError>(error: failure);
+    }
+    Ok(value: a) => {
+      match move second {
+        Err(error: failure) => {
+          return Err<RoutePatch, LayoutError>(error: failure);
+        }
+        Ok(value: b) => {
+          return merge_retired_patches(first: move a, second: move b);
+        }
+      }
+    }
+  }
+}
+
+fn merge_retired_patches(first: RoutePatch, second: RoutePatch) -> result: Result<RoutePatch, LayoutError> pure {
+  doc "Balanced sparse retirement merge coalesces exactly equal old records; conflicting kinds, owners or payloads refuse.";
+  match move first {
+    Empty() => {
+      return Ok<RoutePatch, LayoutError>(value: move second);
+    }
+    Leaf(value: a) => {
+      match move second {
+        Empty() => {
+          let made = RoutePatch::Leaf(value: a);
+          return Ok<RoutePatch, LayoutError>(value: move made);
+        }
+        Leaf(value: b) => {
+          let same = route_value_equal(first: a, second: b);
+          if same {
+            let made = RoutePatch::Leaf(value: a);
+            return Ok<RoutePatch, LayoutError>(value: move made);
+          }
+          return inconsistent::<RoutePatch>();
+        }
+        Fork(..) => {
+          return inconsistent::<RoutePatch>();
+        }
+      }
+    }
+    Fork(left: a, right: b) => {
+      match move second {
+        Empty() => {
+          let made = RoutePatch::Fork(left: move a, right: move b);
+          return Ok<RoutePatch, LayoutError>(value: move made);
+        }
+        Leaf(..) => {
+          return inconsistent::<RoutePatch>();
+        }
+        Fork(left: c, right: d) => {
+          let first_result = merge_retired_patches(first: move a.inner, second: move c.inner);
+          let second_result = merge_retired_patches(first: move b.inner, second: move d.inner);
+          match move first_result {
+            Err(error: failure) => {
+              return Err<RoutePatch, LayoutError>(error: failure);
+            }
+            Ok(value: left) => {
+              match move second_result {
+                Err(error: failure) => {
+                  return Err<RoutePatch, LayoutError>(error: failure);
+                }
+                Ok(value: right) => {
+                  let lower = box_new::<RoutePatch>(value: move left);
+                  let upper = box_new::<RoutePatch>(value: move right);
+                  let made = RoutePatch::Fork(left: move lower, right: move upper);
+                  return Ok<RoutePatch, LayoutError>(value: move made);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn retired_text_patch(facts: &[TextFact], width: u64, nodes: u64) -> result: Result<RoutePatch, LayoutError> reads(facts) {
+  doc "Each old text fact owns one destination interval path; balanced joins detect conflicting retirement duplicates.";
+  let count = facts^.len;
+  if count == 0_u64 {
+    let empty = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let fact = facts^[0_u64];
+    let valid = route_text_valid(node: fact.node, value: fact.value, nodes: nodes);
+    if valid {
+    } else {
+      return inconsistent::<RoutePatch>();
+    }
+    let key = cvt::<u32, u64>(fact.node.index);
+    let value = RouteValue::Text(value: fact.value);
+    return singleton_route(width: width, key: key, value: value);
+  }
+  let half = count / 2_u64;
+  let first = retired_text_patch(facts: &facts^[0_u64..half], width: width, nodes: nodes);
+  let second = retired_text_patch(facts: &facts^[half..count], width: width, nodes: nodes);
+  return merge_retired_results(first: move first, second: move second);
+}
+
+fn retired_source_patch(facts: &[SourceFact], width: u64, nodes: u64) -> result: Result<RoutePatch, LayoutError> reads(facts) {
+  doc "Each old source-entry fact owns one destination interval path; balanced joins coalesce only exact retired records.";
+  let count = facts^.len;
+  if count == 0_u64 {
+    let empty = RoutePatch::Empty();
+    return Ok<RoutePatch, LayoutError>(value: move empty);
+  }
+  if count == 1_u64 {
+    let fact = facts^[0_u64];
+    let valid = route_source_valid(node: fact.node, value: fact.value, nodes: nodes);
+    if valid {
+    } else {
+      return inconsistent::<RoutePatch>();
+    }
+    let key = cvt::<u32, u64>(fact.node.index);
+    let value = RouteValue::Source(value: fact.value);
+    return singleton_route(width: width, key: key, value: value);
+  }
+  let half = count / 2_u64;
+  let first = retired_source_patch(facts: &facts^[0_u64..half], width: width, nodes: nodes);
+  let second = retired_source_patch(facts: &facts^[half..count], width: width, nodes: nodes);
+  return merge_retired_results(first: move first, second: move second);
+}
