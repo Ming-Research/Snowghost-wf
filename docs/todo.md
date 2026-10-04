@@ -152,46 +152,47 @@ example apart from the renderer code that exposed it
 - **An incremental re-stack lays out again every child a float narrowed.**
   `narrow_beside` lays an in-flow child out again in the room floats leave
   and writes that room into its space; when the update re-stacks the
-  parent, the pre-pass gives the child its full-width space again, which
-  differs from the narrowed one it was last laid out in, so the child is
-  updated at full width and narrowed again even when no edit reaches it.
-  (Absolutely positioned children, which `position_out_with` lays out
-  again in a forced space, are kept since X5 step 3b.) Impact: part of the
-  re-stack cost of an edit beside a float on apollo11
-  (`research/investigations/incremental-layout/runs/step3b.txt`). Change:
+  parent from an entry before the child, the re-stack gives the child its
+  full-width space again, which differs from the narrowed one it was last
+  laid out in, so the child is updated at full width (its pre-pass, its
+  children and its paragraphs again) and narrowed again even when no edit
+  reaches it. (Absolutely positioned children, which `position_out_with`
+  lays out again in a forced space, are kept since X5 step 3b; entries
+  before the edited one are replayed without layout since step 3c.)
+  Impact: since X5 step 3c the cause of the apollo11 sentence edits 31
+  and 32, 0.8 ms each sequentially against the page's 0.44 ms bound
+  (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
   record the pre-pass space and the width the child needed beside the
   narrowed layout, and keep the child when the pre-pass space and the room
   are unchanged. Reopen with X5's next step on edits beside floats.
 
-- **An edit to a paragraph beside a float re-stacks its whole flow
-  context.** X5 step 3b's in-place update requires that no float placed
-  before the changed entry reaches below its top, because the paragraph's
-  lines were broken around the floats' exclusions, which only the stacking
-  pass holds; otherwise the update runs the pre-pass and the stacking pass
-  of the context again, breaking every paragraph beside a float twice
-  (once at full width, once beside the floats). On apollo11, whose article
-  floats an infobox and thumbnails beside most paragraphs, this re-stack
-  is the whole cost of 32 of 60 word edits and 20 of 60 sentence edits,
-  4.5 to 4.8 ms each sequentially, against 71 to 82 ms for the page's
-  full layout stage (37 to 44 ms at four workers)
-  (`research/investigations/incremental-layout/runs/step3b.txt`). Change:
-  rebuild the exclusions of the floats that reach the paragraph from their
-  placed rectangles, break it again beside them in place, and translate
-  the later entries when its height changes and no later float's placement
-  depends on it. Reopen with X5's next step.
+- **An update breaks a paragraph at full width before breaking it beside
+  floats.** The stacking pass decides whether floats narrow a paragraph
+  from its full-width height, so the update's paths break a marked
+  paragraph, and X5 step 3c's re-stack every later paragraph a float had
+  narrowed, at full width first and again beside the floats. Impact: in
+  the re-stack of apollo11 sentence edit 45 the full-width break of the
+  edited paragraph is 1.0 of 6.9 million instructions (the paragraph's
+  text preparation, 4.3 million, is the largest part)
+  (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
+  keep each paragraph's full-width height from its last full-width break
+  and break a later paragraph once, beside the floats, when that height
+  shows they narrow it. Reopen when apollo11's edits beside floats are
+  measured again against its bound.
 
-- **`split_fragments` is quadratic in the blocks that interrupt inline
-  boxes.** Its inner loop over the later splits stops only at a split of
-  the same owner that cannot join, so a context with many interrupted
-  inline boxes of different owners scans all later splits for each, and
-  `sibling_above` walks back over the flow for each run
-  (`renderer/layout/flow.wf`). On ecma262, re-stacking the specification
-  body's flow context, `finish_flow` spends 77 percent of its instructions
-  there (585 of 761 million in a callgrind profile of two such re-stacks
-  in X5 step 3b). Impact: a large share of
-  ecma262's full build and of any re-stack of that context. Change: group
-  the splits by owner once and find each run's predecessor from the
-  stacking pass. Reopen with the next layout performance work.
+- **The update's translation walks every child of a large context.**
+  `translate_after` (`renderer/layout/update.wf`) tests the flow entry of
+  every child context, not only those after the changed entry, and
+  `shift_naturals` moves each later entry's natural position in a further
+  pass; both run on every height change of an in-place update. Impact:
+  on ecma262's specification container they are 0.9 and 0.9 million
+  instructions of the 2.8 million of sentence edit 3, one of the three
+  ecma262 sentence edits above 1 ms
+  (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
+  find the first later child by binary search where children are in flow
+  order, and keep the naturals relative to their entry's placed position
+  so a translation leaves them; or reopen Q70's summary tree. Reopen with
+  the next update performance work on ecma262.
 
 - **`Paragraph.min_content` and `max_content` are never written.** Every
   paragraph keeps the zeros `new_paragraph` gives them; intrinsic sizes
