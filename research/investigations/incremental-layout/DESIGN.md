@@ -56,8 +56,9 @@ and the dump stay untimed, as in `run.sh time`.
 
 ## Decisions
 
-Each is open for the owner and taken on its recommendation meanwhile. The
-cards are in the PR's handoff; here are the choices and their grounds.
+Q67 through Q73 are approved as recorded under Owner rulings. Q77 and Q78
+remain open recommendations; their implementation and validation do not
+constitute owner approval. Here are the choices and their grounds.
 
 **Q67, identity across edits.** `StyleRef.element` and `Fragment.owner`
 are preorder positions in `Styles.elements` (`renderer/layout/module.wfm`),
