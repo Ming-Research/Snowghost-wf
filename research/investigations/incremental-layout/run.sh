@@ -1,6 +1,8 @@
 #!/bin/sh
 # The harness of experiment X5 (DESIGN.md in this directory).
 #
+#   run.sh self-test                runs lightweight raw-output protocol
+#                                   controls only; it does not run the renderer
 #   run.sh prepare PAGE...          writes, under build/x5/, each page's node
 #                                   listing, its dump and the edit scripts
 #                                   scripts/edits.py generates from them
@@ -244,12 +246,10 @@ dumps() {
 	return "$dumps_status"
 }
 
-# Validate the strict child-record parser before the harness trusts its output.
-python3 "$here/scripts/inctime.py" --self-test >/dev/null
-
 cmd=$1
 shift
 case $cmd in
+self-test) python3 "$here/scripts/inctime.py" --self-test ;;
 prepare) prepare "$@" ;;
 edit) edit "$@" ;;
 roundtrip) roundtrip "$@" ;;
@@ -259,7 +259,7 @@ dumps) dumps "$@" ;;
 inc) inc "$@" ;;
 time) time_edits "$@" ;;
 *)
-	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
+	echo "usage: run.sh self-test|prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
 	exit 2
 	;;
 esac
