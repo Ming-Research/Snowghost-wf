@@ -113,17 +113,6 @@ example apart from the renderer code that exposed it
   already does for calls. Reopen when the runtime offers a loop grain; the
   layout code needs no change.
 
-- **A function's parallel speed depends on its call site.** At four
-  workers, preparing html5's tree (prepare_text) takes about 100 ms more
-  when called directly after build_boxes than when both run inside
-  build_layout, on the same input, 343-346 ms against 230-250 ms in all;
-  sequentially the two are equal. Turning call grain off slows everything
-  tenfold and leaves the ratio (`research/investigations/incremental-layout/runs/step4b.txt`,
-  section 5). Impact: X5's criterion 2 at four workers (Q87). Change: none
-  in Snowghost; reduce to a standalone program (a tree built, then a
-  recursive counted-loop pass over it, called from one function and from
-  two) and take it to Whitefoot. Reopen with that reduction.
-
 ## Snowghost
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
@@ -205,23 +194,16 @@ example apart from the renderer code that exposed it
   so a translation leaves them; or reopen Q70's summary tree. Reopen with
   the next update performance work on ecma262.
 
-- **A fully marked update is less parallel than a full layout.** A root
-  font-size edit on html5 marks all 60,868 paragraphs and 13,843 contexts;
-  update takes 351 ms at four workers against 249 ms for build_layout and
-  lay_out on the same styles, and 1.37 times the full stage (2.43 on
-  apollo11), failing X5's criterion 2, while sequentially the two are
-  equal (`research/investigations/incremental-layout/runs/step4b.txt`).
-  Impact: criterion 2 at four workers. Change: attribute the difference by
-  part (prepare_marked against prepare_text, update_flow's general path
-  against lay_out_context) on one edit, then either make the marked walk's
-  loops as parallel as the full ones or let a context whose every child and
-  paragraph is marked take lay_out_context. Attribution (`runs/step4b.txt`,
-  section 5): the update's preparation and layout cost what the full
-  path's cost when called on their own; prepare_text is about 100 ms faster
-  at four workers only when called inside build_layout, so the gap is a
-  Whitefoot scheduling effect of the call site. Reopen with a minimal
-  Whitefoot example of call-site-dependent parallel efficiency, and with
-  the owner's choice of criterion 2's denominator.
+- **A root font-size update on apollo11 misses criterion 2 at four
+  workers.** The update takes 46 ms against about 30 ms for the full layout
+  (median ratio 1.55, 1 of 60 edits within 1.2), while sequentially it is
+  0.97, and on html5 and ecma262 it passes at four workers
+  (`research/investigations/incremental-layout/runs/step4b.txt`). Impact:
+  X5's criterion 2 on the smallest page. Change: time the update's parts on
+  one edit with clock readings ordered after the work (the delta, the
+  marking walk, preparation, layout); if the fixed per-update walks dominate
+  a 30 ms page, scale them with the marked work. Reopen with the incremental
+  style stage, which replaces the delta.
 
 - **A style update that changes no layout costs 5 to 9 times more at four
   workers.** Colour edits do no layout work but take 27.6 ms at four

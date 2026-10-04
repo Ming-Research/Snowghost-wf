@@ -205,13 +205,13 @@ which renames nothing but adds a routing layer to every update.
 **Q87, criterion 2's denominator.** Step 4b measured the update against a
 full layout run in the same process right after it (fresh picks,
 build_layout, lay_out on the same styles), while the Criterion section
-defined the full stage by `run.sh time`'s stage parts. On html5 at four
-workers the two are 240 and 357 to 390 ms, mostly because prepare_text runs
-about 100 ms faster when called inside build_layout than when called on its
-own (`runs/step4b.txt`, section 5). Recommended and approved: the same-process
-comparator, which compares one build on one process's inputs; the gap is a
-Whitefoot scheduling effect to be fixed in Whitefoot, not hidden by the
-denominator or worked around in the renderer's call structure.
+defined the full stage by `run.sh time`'s stage parts. Recommended and
+approved: the same-process comparator, which compares one build on one
+process's inputs. The gap first seen between the two (240 against 357 to
+390 ms on html5 at four workers) was the comparator's closing clock
+reading overlapping lay_out under the parallel lowering; with readings
+ordered after the work the comparator takes 361 ms (`runs/step4b.txt`,
+section 5).
 
 **Q88, what the compiler proves of a kept stage (pipeline).** The pipeline
 tree says each stage is memoized by its inputs with a key the compiler
