@@ -65,9 +65,7 @@ fn source_exit_same(first: &Context, second: &Context) -> same: Bool reads(first
           return band(identity, state);
         }
         _ => {
-
           return False();
-
         }
       }
     }
@@ -79,16 +77,12 @@ fn source_exit_same(first: &Context, second: &Context) -> same: Bool reads(first
           return band(identity, state);
         }
         _ => {
-
           return False();
-
         }
       }
     }
     Derived() => {
-
       return False();
-
     }
   }
 }
@@ -123,15 +117,8 @@ fn take_source_child_at(context: &Context, upward: &[u32], left: u64, child: u32
   return Ok<Context, LayoutError>(value: move moved);
 }
 
-fn take_source_child(context: &Context, paths: &[SourcePath], node: NodeId) -> result: Result<Option<Context>, LayoutError> reads(paths), writes(context) {
-  doc "Looks up a child through immutable old routes, without searching other source bodies or sharing a mutable ownership map. A node outside this source's pool has no reusable child here; a second claim of a consumed slot is inconsistent.";
-  let at = cvt::<u32, u64>(node.index);
-  if at < paths^.len {
-  } else {
-    let none = None<Context>();
-    return Ok<Option<Context>, LayoutError>(value: move none);
-  }
-  let route = paths^[at];
+fn take_source_child(context: &Context, route: SourcePath, node: NodeId) -> result: Result<Option<Context>, LayoutError> writes(context) {
+  doc "Takes a child from its source-private pool using a route captured before any ownership moves. A second claim cannot match the source identity in the consumed slot.";
   let owner = context_source_node(context: context);
   let owned = route.parent_source.index == owner.index;
   let present = band(route.present, owned);
@@ -151,26 +138,18 @@ fn finish_generated_source(context: &Context, styles: &Styles) -> status: u8 rea
   doc "Finalizes raw generated spans in one rebuilt source and its derived contexts. Retained complete child sources already own their bytes and are not read through the current Styles arena again.";
   let own = match finish_generated(context: context, styles: styles) {
     Ok(..) => {
-
       give 0_u8;
-
     }
     Err(error: failure) => {
       let code = match failure {
         Inconsistent() => {
-
           give 1_u8;
-
         }
         TooLarge() => {
-
           give 2_u8;
-
         }
         Text() => {
-
           give 3_u8;
-
         }
       }
       give code;
@@ -188,4 +167,231 @@ fn finish_generated_source(context: &Context, styles: &Styles) -> status: u8 rea
     set copied = imax(copied, code);
   }
   return copied;
+}
+
+struct SourcePool {
+  doc "One builder's privately owned previous body and its immutable local routes, captured before moving children. Independent source builders never share this pool or a mutable lookup table.";
+  previous: Option<Context>;
+  routes: RoutePatch;
+  width: u64;
+}
+
+fn empty_source_pool(width: u64) -> made: SourcePool pure {
+  doc "A builder with no previous source body, used for initial construction and newly attached sources.";
+  let previous = None<Context>();
+  let routes = RoutePatch::Empty();
+  return SourcePool(previous: move previous, routes: move routes, width: width);
+}
+
+fn make_source_pool(context: Context, width: u64) -> result: Result<SourcePool, LayoutError> pure {
+  doc "Captures this body's lookup routes before any child is claimed. Only this source and its derived contexts are collected; complete child bodies remain separate owners.";
+  let routes = propagate context_route_patch(context: &context, width: width);
+  let previous = Some<Context>(value: move context);
+  let made = SourcePool(previous: move previous, routes: move routes, width: width);
+  return Ok<SourcePool, LayoutError>(value: move made);
+}
+
+fn route_source_at(patch: &RoutePatch, width: u64, key: u64) -> result: Option<SourcePath> reads(patch) {
+  doc "Reads one source entry from an immutable source-local interval patch; generated text and omitted nodes have no source entry.";
+  if key >= width {
+    return None<SourcePath>();
+  }
+  match patch^ {
+    Empty() => {
+      return None<SourcePath>();
+    }
+    Leaf(value: stored) => {
+      if width != 1_u64 {
+        return None<SourcePath>();
+      }
+      match stored^ {
+        Source(value: route) => {
+          return Some<SourcePath>(value: route^);
+        }
+        Text(..) => {
+          return None<SourcePath>();
+        }
+      }
+    }
+    Fork(left: lower, right: upper) => {
+      let half = width / 2_u64;
+      if half == 0_u64 {
+        return None<SourcePath>();
+      }
+      if key < half {
+        return route_source_at(patch: &lower^.inner, width: half, key: key);
+      }
+      let rest = width - half;
+      let offset = key - half;
+      return route_source_at(patch: &upper^.inner, width: rest, key: offset);
+    }
+  }
+}
+
+fn pool_take_source(pool: &SourcePool, node: NodeId) -> result: Result<Option<Context>, LayoutError> writes(pool) {
+  doc "Looks up one requested child before borrowing its owned previous body. The route is Copy; only the source-private body is mutated by the transfer.";
+  let at = cvt::<u32, u64>(node.index);
+  let found = route_source_at(patch: &pool^.routes, width: pool^.width, key: at);
+  match found {
+    None() => {
+      let absent = None<Context>();
+      return Ok<Option<Context>, LayoutError>(value: move absent);
+    }
+    Some(value: route) => {
+      let previous = &pool^.previous;
+      match previous^ {
+        Some(value: context) => {
+          return take_source_child(context: context, route: route, node: node);
+        }
+        None() => {
+          return inconsistent::<Option<Context>>();
+        }
+      }
+    }
+  }
+}
+
+fn source_entry_matches(context: &Context, state: &BuildState, node: NodeId, recipe: u8, kind: u8, style: StyleRef) -> same: Bool reads(context), reads(state) {
+  doc "Validates the current caller's recipe, identity and entry checkpoint before retaining an owned child. A table cell becoming ordinary flow must be reconstructed by its current caller even if both contexts have the same kind.";
+  if context^.kind != kind {
+    return False();
+  }
+  if context^.style.element.index != style.element.index {
+    return False();
+  }
+  if context^.style.pseudo != style.pseudo {
+    return False();
+  }
+  let anonymous = eeq(context^.style.anonymous, style.anonymous);
+  if anonymous {
+  } else {
+    return False();
+  }
+  let source = &context^.source;
+  match source^ {
+    ElementBody(node: origin, recipe: construction, begin: before, ..) => {
+      if origin^.index != node.index {
+        return False();
+      }
+      if construction^ != recipe {
+        return False();
+      }
+      return same_build_state(first: before, second: state);
+    }
+    _ => {
+      return False();
+    }
+  }
+}
+
+fn restore_source_exit(walk: &Walk, context: &Context) -> result: Result<unit, LayoutError> reads(context), writes(walk) {
+  doc "A reused body's caller receives its complete saved exit before applying the caller's existing scope-exit operations.";
+  let source = &context^.source;
+  match source^ {
+    ElementBody(end: after, ..) => {
+      return restore_build_state(walk: walk, state: after);
+    }
+    DocumentBody(end: after, ..) => {
+      return restore_build_state(walk: walk, state: after);
+    }
+    Derived() => {
+      return inconsistent::<unit>();
+    }
+  }
+}
+
+fn refresh_structure_marks(context: &Context) -> result: unit writes(context) {
+  doc "Recounts independent paragraph and child marks after ownership transfers; no shared counter orders those consumers.";
+  let paragraphs = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  let paragraph_count = paragraph_mark_count(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs]);
+  let paragraph_index = paragraph_mark_index(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs]);
+  let child_count = child_mark_count(children: &context^.children.inner[0_u64..children]);
+  let child_index = child_mark_index(children: &context^.children.inner[0_u64..children]);
+  set context^.marked_paragraphs = paragraph_count;
+  set context^.marked_paragraph = paragraph_index;
+  set context^.marked_children = child_count;
+  set context^.marked_child = child_index;
+}
+
+fn mark_new_source(context: &Context) -> result: unit writes(context) {
+  doc "Marks the fresh source's local paragraphs for preparation and all local geometry for layout. Complete child sources keep their existing preparation marks, including reused clean bodies.";
+  let count = context^.paragraphs.inner.len;
+  for (i in 0_u64..count) {
+    set context^.paragraphs.inner[i].dirty = True();
+  }
+  let children = context^.children.inner.len;
+  for (i in 0_u64..children) {
+    let source = context_source_node(context: &context^.children.inner[i]);
+    if source.index == no_index {
+      mark_new_source(context: &context^.children.inner[i]);
+    }
+  }
+  refresh_structure_marks(context: context);
+  set context^.dirty = True();
+  set context^.restyled = True();
+}
+
+fn finish_incremental_body(context: &Context, pool: &SourcePool, document: &Document, old: &Styles, new: &Styles) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), writes(context), writes(pool) {
+  doc "Finalizes a replacement's own generated storage before exact preparation-key matching. A previous speculative replacement has never been laid out and already uses new Styles; an original donor came from the caller's last laid-out layout and uses old Styles.";
+  let routed = propagate finish_source_paths(context: context);
+  let generated = finish_generated_source(context: context, styles: new);
+  if generated == 2_u8 {
+    return too_large::<unit>();
+  }
+  if generated != 0_u8 {
+    return inconsistent::<unit>();
+  }
+  mark_new_source(context: context);
+  let previous = &pool^.previous;
+  match previous^ {
+    Some(value: donor) => {
+      let fresh = donor^.laid.available == laid_never;
+      if fresh {
+        let reused = propagate reuse_source_paragraphs(previous: donor, replacement: context, document: document, old: new, new: new);
+      } else {
+        let reused = propagate reuse_source_paragraphs(previous: donor, replacement: context, document: document, old: old, new: new);
+      }
+    }
+    None() => {
+    }
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn build_incremental_child(document: &Document, old: &Styles, new: &Styles, atoms: &AtomTable, walk: &Walk, node: NodeId, element: u32, style: StyleRef, kind: u8, recipe: u8) -> result: Result<Context, LayoutError> reads(document), reads(old), reads(new), reads(atoms), writes(walk) {
+  doc "Uses the current caller's construction recipe and actual counter/quote entry. Matching retained bodies restore their exit without walking their DOM; other bodies rebuild with a private child pool, then transfer only exact prepared paragraphs.";
+  let begin = propagate capture_build_state(walk: walk);
+  let previous = propagate pool_take_source(pool: &walk^.pool, node: node);
+  let width = walk^.pool.width;
+  let child_pool = match move previous {
+    Some(value: prior) => {
+      let entry_matches = source_entry_matches(context: &prior, state: &begin, node: node, recipe: recipe, kind: kind, style: style);
+      let fresh = prior.laid.available == laid_never;
+      let construction = if fresh {
+        give True();
+      } else {
+        give retained_style(old: old, new: new, style: style);
+      }
+      let retained = band(entry_matches, construction);
+      if retained {
+        let restored = propagate restore_source_exit(walk: walk, context: &prior);
+        return Ok<Context, LayoutError>(value: move prior);
+      }
+      let pool = propagate make_source_pool(context: move prior, width: width);
+      give move pool;
+    }
+    None() => {
+      let pool = empty_source_pool(width: width);
+      give move pool;
+    }
+  }
+  swap(first: &walk^.pool, second: &child_pool);
+  let context = propagate build_box_body(document: document, old: old, styles: new, atoms: atoms, walk: walk, node: node, element: element, style: style, kind: kind);
+  let end = propagate capture_build_state(walk: walk);
+  let source = ContextSource::ElementBody(node: node, recipe: recipe, begin: move begin, end: move end);
+  set context.source = move source;
+  let finished = propagate finish_incremental_body(context: &context, pool: &walk^.pool, document: document, old: old, new: new);
+  swap(first: &walk^.pool, second: &child_pool);
+  return Ok<Context, LayoutError>(value: move context);
 }
