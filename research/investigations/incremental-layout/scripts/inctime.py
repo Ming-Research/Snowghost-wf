@@ -24,7 +24,7 @@ OTHER = re.compile(r'edit (\d+) (inc refused|full)$')
 HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|refused))?$')
 BASE = re.compile(r'base hash [0-9a-f]{16} bytes \d+$')
 STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
-STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)$')
+STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)(?: style_us (\d+))?$')
 STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) reused (\d+)$')
 CREATED = re.compile(r'created \d+$')
 INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'X')
@@ -66,7 +66,7 @@ def read(path, operations, checking=False):
                 raise ValueError('%s:%d: unexpected style edit' % (path, line_number))
             auxiliary.add(edit)
             if not checking:
-                styled[edit] = [int(value) for value in style.groups()[1:]]
+                styled[edit] = [int(value) for value in style.groups()[1:] if value is not None]
             continue
         structure = STRUCTURE.fullmatch(line)
         if structure:
@@ -221,6 +221,13 @@ def main():
                  sum(1 for r in ratios if r <= 1.2), len(ratios)))
         print('delta_us median %d max %d; picks_us median %d max %d'
               % (rank(deltas, 0.5), max(deltas), rank(picks, 0.5), max(picks)))
+        if all(len(first_styled[edit]) == 4 for edit in first_styled):
+            # The style stage, run in full before the update, and the edit's
+            # whole cost from the edited document to laid-out boxes.
+            styles = [min(styled[edit][3] for _, _, styled, _ in runs) for edit in sorted(first_styled)]
+            whole = [best[edit] + styles[k] for k, edit in enumerate(sorted(first_styled))]
+            print('style_us median %d max %d; style+update us median %d max %d'
+                  % (rank(styles, 0.5), max(styles), rank(whole, 0.5), max(whole)))
     if first_built:
         names = ['built contexts', 'built paragraphs', 'reused paragraphs']
         for k, name in enumerate(names):
