@@ -1,4 +1,5 @@
 alias Styles = pkg::style::Styles;
+alias atom_class = pkg::base::static_atoms::atom_class;
 
 fn same_content_items(old: &Styles, new: &Styles, first: u32, second: u32) -> same: Bool reads(old), reads(new) {
   doc "Compares content lists by their items and retained generated-text offsets, never by a run's interned identifier.";
@@ -358,10 +359,118 @@ fn mark_style_context(context: &Context, changed: &[Bool]) -> result: unit reads
   return unit;
 }
 
-fn styles_changed(layout: &Layout, old: &Styles, new: &Styles, changed: &[Bool]) -> result: Result<unit, LayoutError> reads(old), reads(new), reads(changed), writes(layout) {
+fn supported_attribute(traversal: &Traversal, attribute: AttributeChange) -> valid: Bool reads(traversal) {
+  doc "Accepts a class change on a listed element. The search is a reduction over independent node identities; an unknown node or another attribute requires box-tree handling.";
+  if attribute.name.index != atom_class {
+    return False();
+  }
+  let count = traversal^.elements.inner.len;
+  let found = False();
+  for (i in 0_u64..count) {
+    let listed_node = traversal^.elements.inner[i];
+    let same = listed_node.index == attribute.node.index;
+    set found = bor(found, same);
+  }
+  return found;
+}
+
+fn content_reads_attribute(styles: &Styles, style: StyleRef, name: Atom) -> reads_name: Bool reads(styles) {
+  doc "Whether a generated pseudo-element's content reads the named originating-element attribute. An absent content list or display none produces no attribute piece.";
+  let box_group = box_of(styles: styles, style: style);
+  if box_group.display == display_none {
+    return False();
+  }
+  let content = content_of(styles: styles, style: style);
+  if content.content <= 1_u32 {
+    return False();
+  }
+  let at = cvt::<u32, u64>(content.content);
+  if at < styles^.content_lists.inner.len {
+  } else {
+    return True();
+  }
+  let list = styles^.content_lists.inner[at];
+  let first = cvt::<u32, u64>(list.first);
+  let end = cvt::<u32, u64>(list.end);
+  let reads_name = False();
+  for (i in first..end) {
+    if i < styles^.content_items.inner.len {
+      let item = styles^.content_items.inner[i];
+      let attribute = item.kind == item_attr;
+      let named = item.name.index == name.index;
+      let matches = band(attribute, named);
+      set reads_name = bor(reads_name, matches);
+    } else {
+      set reads_name = True();
+    }
+  }
+  return reads_name;
+}
+
+fn retained_pseudo_attributes(styles: &Styles, traversal: &Traversal, attributes: &[AttributeChange], at: u64) -> retained: Bool reads(styles), reads(traversal), reads(attributes) {
+  doc "Maps a pseudo-element's preorder owner to its stable originating node, then checks only facts for that node and the attribute its content reads.";
+  if at < styles^.pseudos.inner.len {
+  } else {
+    return False();
+  }
+  let pseudo = styles^.pseudos.inner[at];
+  let element = cvt::<u32, u64>(pseudo.element);
+  if element < traversal^.elements.inner.len {
+  } else {
+    return False();
+  }
+  let node = traversal^.elements.inner[element];
+  let index = cvt.wrap::<u64, u32>(at);
+  let style = pseudo_ref(element: pseudo.element, pseudo: index);
+  let total = attributes^.len;
+  let kept = True();
+  for (i in 0_u64..total) {
+    let attribute = attributes^[i];
+    if attribute.node.index == node.index {
+      let reads_name = content_reads_attribute(styles: styles, style: style, name: attribute.name);
+      let unchanged = bnot(reads_name);
+      set kept = band(kept, unchanged);
+    }
+  }
+  return kept;
+}
+
+fn retained_attributes(old: &Styles, new: &Styles, traversal: &Traversal, attributes: &[AttributeChange]) -> retained: Bool reads(old), reads(new), reads(traversal), reads(attributes) {
+  doc "Validates changed-attribute facts and refuses any generated-content consumer of the changed attribute before marks are written. Other elements' attr(class) and the target's attr(title) remain independent of a class edit.";
+  let count = attributes^.len;
+  let kept = True();
+  for (i in 0_u64..count) {
+    let valid = supported_attribute(traversal: traversal, attribute: attributes^[i]);
+    set kept = band(kept, valid);
+  }
+  if count == 0_u64 {
+    return kept;
+  }
+  let old_count = old^.pseudos.inner.len;
+  for (i in 0_u64..old_count) {
+    let valid = retained_pseudo_attributes(styles: old, traversal: traversal, attributes: attributes, at: i);
+    set kept = band(kept, valid);
+  }
+  let new_count = new^.pseudos.inner.len;
+  for (i in 0_u64..new_count) {
+    let valid = retained_pseudo_attributes(styles: new, traversal: traversal, attributes: attributes, at: i);
+    set kept = band(kept, valid);
+  }
+  return kept;
+}
+
+fn styles_changed(layout: &Layout, old: &Styles, new: &Styles, traversal: &Traversal, changed: &[Bool], attributes: &[AttributeChange]) -> result: Result<unit, LayoutError> reads(old), reads(new), reads(traversal), reads(changed), reads(attributes), writes(layout) {
   doc "Validates retained construction inputs before writing any mark, then marks the actual layout consumers of a nonempty style delta.";
   let length = changed^.len;
   if length != old^.elements.inner.len {
+    return inconsistent::<unit>();
+  }
+  if length != traversal^.elements.inner.len {
+    return inconsistent::<unit>();
+  }
+  let same_attributes = retained_attributes(old: old, new: new, traversal: traversal, attributes: attributes);
+  if same_attributes {
+  } else {
     return inconsistent::<unit>();
   }
   let retained = retained_styles(old: old, new: new);
