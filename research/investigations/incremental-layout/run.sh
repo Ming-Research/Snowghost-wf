@@ -41,6 +41,10 @@
 #                                   RUN_CHECK names the lock script (by
 #                                   default the pinned checkout's
 #                                   .github/run-check.pl)
+#   run.sh value-falsify ...        prepares/verifies Q78 diagnostic copies;
+#                                   --controls runs stub checks, --execute
+#                                   takes the host lock to build/run the
+#                                   five falsifiers (no timing evidence)
 #
 # PAGE is ecma262, html5 or apollo11, fetched to build/research/concurrency by
 # research/investigations/concurrency/run.sh and run with the sheets of
@@ -49,8 +53,8 @@
 #   cd renderer && whitefootc --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq
 #   cd renderer && whitefootc --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par
 # under the host-wide lock (.github/run-check.pl of the pinned checkout). The
-# other runs here check results and are not timed, so only time takes the
-# lock.
+# ordinary result checks are not timed; time and value-falsify --execute
+# take the lock (the latter builds diagnostic binaries).
 # POSIX sh plus python3.
 
 set -eu
@@ -197,6 +201,15 @@ dumps() {
 	done
 }
 
+value_falsify() {
+	for argument in "$@"; do
+		if [ "$argument" = --execute ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+			exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-value-falsify sh "$here/run.sh" value-falsify "$@"
+		fi
+	done
+	python3 "$here/scripts/value_probe.py" "$@"
+}
+
 cmd=$1
 shift
 case $cmd in
@@ -208,8 +221,9 @@ reparse) reparse "$@" ;;
 dumps) dumps "$@" ;;
 inc) inc "$@" ;;
 time) time_edits "$@" ;;
+value-falsify) value_falsify "$@" ;;
 *)
-	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
+	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time|value-falsify ..." >&2
 	exit 2
 	;;
 esac
