@@ -141,6 +141,22 @@ document and to a re-parse of the edited source; and the sequential build
 identical to `--par`. Falsifiers, each run once and required to fail: one
 tick bump deleted (X11), one key field omitted.
 
+**Q77, background presence in layout keys (open).** Layout's
+`culled_box` reads whether a background is currentColor or has positive
+alpha to choose the inline box's fragments (`renderer/layout/inline.wf`).
+Recommended: compare that predicate for elements and generated pseudo-elements
+in the style delta, while continuing to ignore exact colours. A paragraph's
+predicate depends only on its own style table entry, so comparisons of
+unrelated elements remain independent. Ignoring the entire background group
+misses this actual dependency. Comparing full colours has the same dependency
+chain but recomputes paragraphs when the observed predicate has not changed.
+Before claiming this fix: a transparent-to-visible background changes the
+flag and the retained dump agrees with the full build; changing one visible
+colour to another leaves the flag false, as does an ordinary text-colour
+edit; removing the predicate comparison makes the transparency case fail.
+This qualifies Q69's exclusion of backgrounds by the value layout actually
+reads. The owner has not ruled on this qualification.
+
 ## Measurement
 
 - **Edit scripts.** `scripts/edits.py`, with X1's seed and rules
