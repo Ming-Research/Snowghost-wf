@@ -31,6 +31,12 @@
 #                                   on a layout kept across edits) is the
 #                                   same as the rebuilt one; differences,
 #                                   refusals and incomplete runs fail
+#   run.sh q77 [OPTIONS]            runs the fixed background-predicate oracle
+#                                   through scripts/stylecheck.py q77; OPTIONS
+#                                   override four binaries and a fresh output
+#                                   directory (backgroundcheck.py --help);
+#                                   retains complete raw evidence and fails on
+#                                   any flags/work/dump/seq-par disagreement
 #   run.sh time BUILD PAGE KIND [RUNS]
 #                                   times text_changed + update per edit
 #                                   with the driver's incremental mode, RUNS
@@ -255,8 +261,9 @@ reparse) reparse "$@" ;;
 dumps) dumps "$@" ;;
 inc) inc "$@" ;;
 time) time_edits "$@" ;;
+q77) python3 "$here/scripts/stylecheck.py" q77 "$@" ;;
 *)
-	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time ..." >&2
+	echo "usage: run.sh prepare|edit|roundtrip|same|reparse|dumps|inc|time|q77 ..." >&2
 	exit 2
 	;;
 esac
