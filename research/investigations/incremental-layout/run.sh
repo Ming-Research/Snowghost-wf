@@ -41,7 +41,11 @@
 #                                   passes through to the --par build;
 #                                   RUN_CHECK names the lock script (by
 #                                   default the pinned checkout's
-#                                   .github/run-check.pl)
+#                                   .github/run-check.pl); ALONE=1 uses the driver's edittime
+#                                   mode, which times the same edits
+#                                   without the full layout comparator
+#                                   between them, as Chromium's E1 runs
+#                                   edit after edit
 #
 # PAGE is ecma262, html5 or apollo11, fetched to build/research/concurrency by
 # research/investigations/concurrency/run.sh and run with the sheets of
@@ -205,9 +209,11 @@ time_edits() {
 	files=
 	i=1
 	while [ "$i" -le "$runs" ]; do
-		out=$work/time/$page-$kind.$build.w${WF_WORKERS:-none}.r$i.txt
+		out=$work/time/$page-$kind.$build.w${WF_WORKERS:-none}${ALONE:+.alone}.r$i.txt
+		mode=incremental
+		if [ -n "${ALONE:-}" ]; then mode=edittime; fi
 		# shellcheck disable=SC2046
-		if "$(driver "$build")" incremental "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") >"$out"; then
+		if "$(driver "$build")" $mode "$work/scripts/$page-$kind.edits" "$data/$page.html" "$ua" $(sheets_of "$page") >"$out"; then
 			:
 		else
 			time_status=$?
