@@ -537,8 +537,10 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
   let grid = child^.kind == ctx_grid;
   let container = bor(flex, grid);
   let no = False();
+  let item_counts = no_updates();
   if container {
-    let (stopped, item_counts) = update_container(container: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let (stopped, updated) = update_container(container: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    set item_counts = updated;
     if stopped {
       set child^.dirty = False();
       set child^.restyled = False();
@@ -561,7 +563,8 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
   resolve_margins(child: child, styles: styles);
   if container {
     let one = one_context_count();
-    return one, no;
+    let total = add_counts(first: item_counts, second: one);
+    return total, no;
   }
   clear_tree_marks(context: child);
   let (contexts, paragraphs) = count_tree(context: child);
@@ -765,7 +768,7 @@ fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked:
     return unit;
   }
   let whole = False();
-  lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
+  let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
   let (contexts, paragraphs) = count_tree(context: child);
   set result^ = UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
   return unit;
@@ -1066,8 +1069,8 @@ fn translate_fragments(context: &Context, top: i32, bottom: i32, delta: i32) -> 
   return unit;
 }
 
-fn finish_in_place(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, delta: i32) -> moved: Bool reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The end of an in-place update: the content height and the flow's end grow by delta, the context's height follows from it in its current space (used_height, which a forced or percentage height may fix), its own fragment takes that height, and its out-of-flow children are positioned again (position_out_children) when content moved or the height changed. Tells whether anything moved.";
+fn finish_in_place(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, delta: i32) -> (moved: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The end of an in-place update: the content height and the flow's end grow by delta, the context's height follows from it in its current space (used_height, which a forced or percentage height may fix), its own fragment takes that height, and its out-of-flow children are positioned again (position_out_children) when content moved or the height changed. Tells whether anything moved, with what the positioned children's layouts counted.";
   let raw = context^.content_raw +sat delta;
   set context^.content_raw = raw;
   set context^.flow_end = context^.flow_end +sat delta;
@@ -1085,12 +1088,14 @@ fn finish_in_place(context: &Context, styles: &Styles, document: &Document, font
   let shifted = delta != 0_i32;
   let resized = height != old_height;
   let moved = bor(shifted, resized);
+  let counted = no_updates();
   if moved {
     if context^.has_out {
-      position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+      let got = position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+      set counted = got;
     }
   }
-  return moved;
+  return moved, counted;
 }
 
 fn single_marked_child(context: &Context) -> (one: Bool, index: u64) reads(context) {
@@ -1262,8 +1267,9 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
   let flow_quiet = bnot(flow_changed);
   let quiet = band(nothing_changed, flow_quiet);
   if quiet {
-    let still = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: 0_i32);
-    let quiet_counts = add_counts(first: counts, second: one_context);
+    let (still, positioned_counts) = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: 0_i32);
+    let with_positioned = add_counts(first: counts, second: positioned_counts);
+    let quiet_counts = add_counts(first: with_positioned, second: one_context);
     return True(), quiet_counts;
   }
   let yes = True();
@@ -1372,11 +1378,12 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
       set context^.baseline = context^.baseline +sat change.delta;
     }
   }
-  let settled = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
-  let total_contexts = counts.contexts +sat 1_u64;
-  let total_paragraphs = counts.paragraphs;
-  let total_held = counts.held_entries +sat walked;
-  let total_entries = counts.entries +sat walked;
+  let (settled, positioned_counts) = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
+  let with_positioned = add_counts(first: counts, second: positioned_counts);
+  let total_contexts = with_positioned.contexts +sat 1_u64;
+  let total_paragraphs = with_positioned.paragraphs;
+  let total_held = with_positioned.held_entries +sat walked;
+  let total_entries = with_positioned.entries +sat walked;
   let made = UpdateCounts(prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
   return True(), made;
 }
@@ -1552,12 +1559,13 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
     }
   }
   clear_marks(context: context);
-  finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
+  let finished = finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   set context^.dirty = False();
   set context^.restyled = False();
   set context^.restyled_blocks = 0_u32;
   let summed = sum_counts(results: &results);
-  let below = add_counts(first: summed, second: early);
+  let with_finished = add_counts(first: summed, second: finished);
+  let below = add_counts(first: with_finished, second: early);
   let walked = context^.flow.inner.len;
   let held_here = if marked_paragraphs {
     give walked;
@@ -1652,8 +1660,12 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   let visible = band(visible_x, visible_y);
   set context^.baseline = baseline;
   set context^.has_baseline = band(has_baseline, visible);
-  if context^.has_out {
-    position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let positioned_counts = if context^.has_out {
+    let got = position_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    give got;
+  } else {
+    let nothing = no_updates();
+    give nothing;
   }
   let no_splits = context^.splits.inner.len == 0_u64;
   let keep_fragments = band(no_splits, stacked.fragments_same);
@@ -1688,7 +1700,10 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
     give 0_u64;
   }
   let entries = stacked.restacked +sat walked;
-  return UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 1_u64, held_entries: stacked.restacked, entries: entries);
+  let own = UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 1_u64, held_entries: stacked.restacked, entries: entries);
+  let with_stacked = add_counts(first: own, second: stacked.below);
+  let summed = add_counts(first: with_stacked, second: positioned_counts);
+  return summed;
 }
 
 fn shift_split_lines(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
@@ -1926,13 +1941,10 @@ fn block_keeps_width(context: &Context, styles: &Styles, b: u64) -> kept: Bool r
 }
 
 fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, unasked: Bool) -> (handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Re-stacks the nearest block containing the context's changed blocks, when no child context is marked and every marked paragraph lies inside it. Independent width checks first establish whether the old pre-pass inputs hold; otherwise a subtree of blocks and text without child contexts or atomic inlines recomputes its widths locally. Stacking must pass the block's Close before convergence, so no changed descendant or closing margin is skipped. Refusals leave the full update path available.";
+  doc "Re-stacks the nearest block containing the context's changed blocks, when every marked paragraph and every marked child context lies inside it. Independent width checks first establish whether the old pre-pass inputs hold; otherwise a subtree of blocks and text without child contexts or atomic inlines recomputes its widths locally. A marked child's space depends only on its containing block's width (prepare_spaces), so when the widths hold its space is the one it was laid out in: a marked atomic inline is updated in that space before the re-stack, which breaks its paragraph again, and a marked in-flow child or float is settled by the re-stack at its entry, which reads its style there as a full pass would. Stacking must pass the block's Close before convergence, so no changed descendant or closing margin is skipped. Refusals leave the full update path available.";
   let refused = no_updates();
   let none = 18446744073709551615_u64;
   if frame.columned {
-    return False(), refused;
-  }
-  if context^.marked_children > 0_u32 {
     return False(), refused;
   }
   let b = cvt::<u32, u64>(context^.restyled_block);
@@ -1948,6 +1960,8 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
     return False(), refused;
   }
   let inside = 0_u32;
+  let children_inside = 0_u32;
+  let child_relative = False();
   let depth = 0_u64;
   let closed = False();
   let until = from;
@@ -1975,13 +1989,51 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
           if context^.paragraphs.inner[at].dirty {
             set inside = inside +sat 1_u32;
           }
+          let marks = context^.paragraphs.inner[at].marks.inner.len;
+          for (m in 0_u64..marks) {
+            let mark = context^.paragraphs.inner[at].marks.inner[m];
+            match mark {
+              Atomic(context: child, ..) => {
+                let child_at = cvt::<u32, u64>(child);
+                if child_at < context^.children.inner.len {
+                  if context^.children.inner[child_at].dirty {
+                    set children_inside = children_inside +sat 1_u32;
+                    let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+                    set child_relative = bor(child_relative, relative);
+                  }
+                }
+              }
+              Open(..) => {
+              }
+              Close(..) => {
+              }
+              Node(..) => {
+              }
+            }
+          }
         }
       }
-      Child(..) => {
+      Child(context: c) => {
         set block_only = False();
+        let child_at = cvt::<u32, u64>(c);
+        if child_at < context^.children.inner.len {
+          if context^.children.inner[child_at].dirty {
+            set children_inside = children_inside +sat 1_u32;
+            let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+            set child_relative = bor(child_relative, relative);
+          }
+        }
       }
-      Float(..) => {
+      Float(context: c) => {
         set block_only = False();
+        let child_at = cvt::<u32, u64>(c);
+        if child_at < context^.children.inner.len {
+          if context^.children.inner[child_at].dirty {
+            set children_inside = children_inside +sat 1_u32;
+            let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+            set child_relative = bor(child_relative, relative);
+          }
+        }
       }
       Out(..) => {
         set block_only = False();
@@ -1989,7 +2041,9 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
     }
   }
   let all_inside = inside == context^.marked_paragraphs;
-  let usable = band(closed, all_inside);
+  let all_children_inside = children_inside == context^.marked_children;
+  let all_marks_inside = band(all_inside, all_children_inside);
+  let usable = band(closed, all_marks_inside);
   if usable {
   } else {
     return False(), refused;
@@ -2020,12 +2074,75 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
       return False(), refused;
     }
   }
-  if relative_height {
+  let any_relative = bor(relative_height, child_relative);
+  if any_relative {
     set context^.definite_free = False();
+  }
+  let atomic_counts = if children_inside > 0_u32 {
+    let updated = update_atomics_in(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, from: from, until: until);
+    give updated;
+  } else {
+    let nothing = no_updates();
+    give nothing;
   }
   let no = False();
   let counts = restack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, from: from, until: until, empty_stable: empty_stable, at: none, old_top: 0_i32, old_height: 0_i32, old_lines: no, unasked: unasked);
-  return True(), counts;
+  let total = add_counts(first: counts, second: atomic_counts);
+  return True(), total;
+}
+
+fn update_atomics_in(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, from: u64, until: u64) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Updates each marked atomic inline child held by a paragraph of the flow entries from..until, in the space it was last laid out in (its paragraph's width is unchanged, so prepare_spaces would write that space again), as update_in_place updates one; the re-stack then breaks the paragraph again. Returns the children's counts.";
+  let counted = no_updates();
+  let end = until +sat 1_u64;
+  for (k in from..end) {
+    if k < context^.flow.inner.len {
+    } else {
+      break;
+    }
+    let item = context^.flow.inner[k];
+    match item {
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          let marks = context^.paragraphs.inner[at].marks.inner.len;
+          for (m in 0_u64..marks) {
+            let mark = context^.paragraphs.inner[at].marks.inner[m];
+            match mark {
+              Atomic(context: child, ..) => {
+                let child_at = cvt::<u32, u64>(child);
+                if child_at < context^.children.inner.len {
+                  if context^.children.inner[child_at].dirty {
+                    let held = before_of(context: &context^.children.inner[child_at]);
+                    set context^.children.inner[child_at].space = held.space;
+                    let got = update_child(child: &context^.children.inner[child_at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
+                    set counted = add_counts(first: counted, second: got);
+                  }
+                }
+              }
+              Open(..) => {
+              }
+              Close(..) => {
+              }
+              Node(..) => {
+              }
+            }
+          }
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return counted;
 }
 
 fn restack_entry(context: &Context) -> (from: u64, paragraph: u64, inline_child: u64) reads(context) {

@@ -358,8 +358,9 @@ fn prepare_spaces(context: &Context, styles: &Styles, content_width: i32, conten
   return unit;
 }
 
-fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
-  doc "Lays out one child context in the space its parent wrote, then resolves its margins against its containing block's width. When its parent is being updated (updating, pkg::layout's update), a child marked for update is updated (update_child), an unmarked one whose space is the one it was last laid out in keeps that layout, and an unmarked flow context in another space is updated in it from its last layout; any other child is laid out in full.";
+fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, updating: Bool) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Lays out one child context in the space its parent wrote, then resolves its margins against its containing block's width. When its parent is being updated (updating, pkg::layout's update), a child marked for update is updated (update_child), an unmarked one whose space is the one it was last laid out in keeps that layout, and an unmarked flow context in another space is updated in it from its last layout; any other child is laid out in full. Returns what the update did below the child: the update's own counts, a kept child's none, and a child laid out in full during an update its whole tree (count_tree); a full layout counts nothing.";
+  let nothing = no_updates();
   if updating {
     let marked = child^.dirty;
     let same = equivalent_space(styles: styles, style: child^.style, first: child^.laid, second: child^.space);
@@ -368,18 +369,22 @@ fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &
     let kept = band(same, unmarked);
     if kept {
       resolve_margins(child: child, styles: styles);
-      return unit;
+      return nothing;
     }
     let incremental = bor(marked, flowing);
     if incremental {
       let held = before_of(context: child);
       let counted = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: held);
-      return unit;
+      return counted;
     }
   }
   lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   resolve_margins(child: child, styles: styles);
-  return unit;
+  if updating {
+    let (contexts, paragraphs) = count_tree(context: child);
+    return UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
+  }
+  return nothing;
 }
 
 fn resolve_margins(child: &Context, styles: &Styles) -> result: unit reads(styles), writes(child) {
@@ -398,7 +403,7 @@ fn lay_out_children(context: &Context, styles: &Styles, document: &Document, fon
   let count = context^.children.inner.len;
   let whole = False();
   for (i in 0_u64..count) {
-    lay_out_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
+    let counted = lay_out_child(child: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
   }
   return unit;
 }
@@ -546,27 +551,28 @@ fn resolve_open(context: &Context, frames: &Box<Slots<Frame>>, y: i32) -> result
   return unit;
 }
 
-fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, child: u64, room: i32, needed: i32) -> narrowed: Bool reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Lays out again, room wide, an in-flow child context of auto width that does not fit, needed wide, in the room floats leave beside it, as the reference narrows a box that establishes a formatting context beside floats (CSS 2.2 9.5); a table or replaced box keeps its width. Tells whether it did.";
+fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, child: u64, room: i32, needed: i32) -> (narrowed: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Lays out again, room wide, an in-flow child context of auto width that does not fit, needed wide, in the room floats leave beside it, as the reference narrows a box that establishes a formatting context beside floats (CSS 2.2 9.5); a table or replaced box keeps its width. Tells whether it did, with what the child's layout counted (lay_out_child).";
+  let nothing = no_updates();
   if room >= needed {
-    return False();
+    return False(), nothing;
   }
   if child < context^.children.inner.len {
   } else {
-    return False();
+    return False(), nothing;
   }
   let kind = context^.children.inner[child].kind;
   let table = kind == ctx_table;
   let replaced = kind == ctx_replaced;
   let fixed_kind = bor(table, replaced);
   if fixed_kind {
-    return False();
+    return False(), nothing;
   }
   let style = context^.children.inner[child].style;
   let basis = context^.children.inner[child].space.basis_width;
   let specified = specified_width(styles: styles, style: style, basis: basis, frame: 0_i32);
   if specified >= 0_i32 {
-    return False();
+    return False(), nothing;
   }
   let room_left = imax(room, 0_i32);
   let updating = context^.dirty;
@@ -581,10 +587,12 @@ fn narrow_beside(context: &Context, styles: &Styles, document: &Document, fonts:
   } else {
     set context^.children.inner[child].intrinsic_known = False();
   }
+  let counted = nothing;
   if child < context^.children.inner.len {
-    lay_out_child(child: &context^.children.inner[child], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+    let got = lay_out_child(child: &context^.children.inner[child], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+    set counted = got;
   }
-  return True();
+  return True(), counted;
 }
 
 const no_line: i32 = -2147483647_i32;
@@ -1353,6 +1361,7 @@ struct StackResult {
   delta: i32;
   restacked: u64;
   fragments_same: Bool;
+  below: UpdateCounts;
 }
 
 fn full_stack() -> plan: Restack pure {
@@ -1701,6 +1710,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let stop_at = 0_u64;
   let stop_delta = 0_i32;
   let restacked = 0_u64;
+  let below = no_updates();
   let fragments_same = plan.empty_stable;
   let none = box_slots_new::<Exclusion>(capacity: 0_u64);
   let flow_count = context^.flow.inner.len;
@@ -2081,6 +2091,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
             let tally = box_array_filled::<UpdateCounts>(count: 1_u64, value: ignored);
             let yes = True();
             settle_child(child: &context^.children.inner[at], result: &tally.inner[0_u64], before: held, unasked: plan.unasked, marked_parent: yes, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+            set below = add_counts(first: below, second: tally.inner[0_u64]);
           }
         }
         if replay {
@@ -2134,7 +2145,8 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
               let right_limit = imin(right_edge, containing_right);
               let room = right_limit -sat left_limit;
               let needed = child_width +sat margin_left;
-              let narrowed = narrow_beside(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, child: at, room: room, needed: needed);
+              let (narrowed, narrow_counts) = narrow_beside(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, child: at, room: room, needed: needed);
+              set below = add_counts(first: below, second: narrow_counts);
               if narrowed {
                 if at < context^.children.inner.len {
                   set child_height = context^.children.inner[at].height;
@@ -2227,6 +2239,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
               let tally = box_array_filled::<UpdateCounts>(count: 1_u64, value: ignored);
               let parent_marked = True();
               settle_child(child: &context^.children.inner[at], result: &tally.inner[0_u64], before: held, unasked: plan.unasked, marked_parent: parent_marked, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+              set below = add_counts(first: below, second: tally.inner[0_u64]);
             }
           }
           place_float(context: context, stack: &stack, child: at, side_left: side_left, containing_left: left, containing_width: width, content_left: content_left, content_top: content_top);
@@ -2267,7 +2280,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
     }
   }
   if stopped {
-    return StackResult(height: 0_i32, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same);
+    return StackResult(height: 0_i32, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same, below: below);
   }
   let end_term = pending_margin(stack: &stack);
   let end = stack.cursor +sat end_term;
@@ -2276,7 +2289,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   set context^.content_raw = height;
   set context^.flow_end = end;
   let positive = imax(height, 0_i32);
-  return StackResult(height: positive, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same);
+  return StackResult(height: positive, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same, below: below);
 }
 
 fn positioned_block(context: &Context, styles: &Styles, open_blocks: &[u32]) -> (found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles), reads(open_blocks) {
@@ -2359,16 +2372,17 @@ fn laid_out_by_position(styles: &Styles, style: StyleRef) -> again: Bool reads(s
   return made;
 }
 
-fn position_out(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Positions the context's absolutely and fixed positioned children against its border box and the borders of its style.";
+fn position_out(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Positions the context's absolutely and fixed positioned children against its border box and the borders of its style, returning what their layouts counted.";
   let border = border_edges(styles: styles, style: context^.style);
-  position_out_with(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border);
-  return unit;
+  let counted = position_out_with(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border);
+  return counted;
 }
 
-fn position_out_with(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn position_out_with(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Positions the context's absolutely and fixed positioned children (CSS 2.2 10.3.7 and 10.6.4): against the padding box of the innermost positioned block of the context around it, else the context's padding box inside the borders border, or the viewport for a fixed box, by left or right and top or bottom, keeping the static position on an axis where both are auto; a box whose opposite insets are both set and whose size is auto is laid out again at the size they leave, and one with a percentage width or height against the padding box. While the context is being updated, its children's layouts follow lay_out_child's rules for that.";
   let open_blocks = box_slots_new::<u32>(capacity: 8_u64);
+  let counted = no_updates();
   let flow_count = context^.flow.inner.len;
   for (k in 0_u64..flow_count) {
     if k >= context^.flow.inner.len {
@@ -2380,7 +2394,8 @@ fn position_out_with(context: &Context, styles: &Styles, document: &Document, fo
         let at = cvt::<u32, u64>(c);
         let depth = open_blocks.inner.len;
         let (anchor_found, anchor_left, anchor_top, anchor_width, anchor_height) = positioned_block(context: context, styles: styles, open_blocks: &open_blocks.inner[0_u64..depth]);
-        position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: anchor_found, anchor_left: anchor_left, anchor_top: anchor_top, anchor_width: anchor_width, anchor_height: anchor_height);
+        let got = position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: anchor_found, anchor_left: anchor_left, anchor_top: anchor_top, anchor_width: anchor_width, anchor_height: anchor_height);
+        set counted = add_counts(first: counted, second: got);
       }
       Open(block: b) => {
         let pushed = push_item::<u32>(cell: &open_blocks, value: b, ceiling: item_ceiling);
@@ -2399,7 +2414,7 @@ fn position_out_with(context: &Context, styles: &Styles, document: &Document, fo
       }
     }
   }
-  return unit;
+  return counted;
 }
 
 struct FlowFrame {
@@ -2461,8 +2476,8 @@ fn clear_column_map(context: &Context) -> result: unit writes(context) {
   return unit;
 }
 
-fn finish_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The passes of a flow context after its children are laid out and its paragraphs broken: the stacking pass, its columns, its height and baseline, its positioned children, then its own fragments, those of the inline boxes blocks interrupt and of the paragraphs without lines; its blocks' and paragraphs' fragments stay with them, and place_boxes reads them there.";
+fn finish_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "The passes of a flow context after its children are laid out and its paragraphs broken: the stacking pass, its columns, its height and baseline, its positioned children, then its own fragments, those of the inline boxes blocks interrupt and of the paragraphs without lines; its blocks' and paragraphs' fragments stay with them, and place_boxes reads them there. Returns what the stacking pass and the positioned children counted during an update.";
   let style = context^.style;
   let plan = full_stack();
   let stacked = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite, plan: plan);
@@ -2486,17 +2501,19 @@ fn finish_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   let visible = band(visible_x, visible_y);
   set context^.baseline = baseline;
   set context^.has_baseline = band(has_baseline, visible);
-  position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let positioned_counts = position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
   split_fragments(context: context, styles: styles, content_left: frame.content_left);
-  return unit;
+  let counted = add_counts(first: stacked.below, second: positioned_counts);
+  return counted;
 }
 
-fn position_child(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges, at: u64, anchor_found: Bool, anchor_left: i32, anchor_top: i32, anchor_width: i32, anchor_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Positions the absolutely or fixed positioned child at of the context, as position_out_with describes, its containing block the padding box the anchor gives when anchor_found (the innermost positioned block around it), else the context's padding box inside border, or the viewport for a fixed box.";
+fn position_child(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges, at: u64, anchor_found: Bool, anchor_left: i32, anchor_top: i32, anchor_width: i32, anchor_height: i32) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Positions the absolutely or fixed positioned child at of the context, as position_out_with describes, its containing block the padding box the anchor gives when anchor_found (the innermost positioned block around it), else the context's padding box inside border, or the viewport for a fixed box. Returns what the child's layout counted (lay_out_child).";
+  let counted = no_updates();
   if at < context^.children.inner.len {
   } else {
-    return unit;
+    return counted;
   }
   let box_width_term = horizontal(edges: border);
   let box_width = context^.width -sat box_width_term;
@@ -2597,7 +2614,8 @@ fn position_child(context: &Context, styles: &Styles, document: &Document, fonts
     } else {
       set context^.children.inner[at].intrinsic_known = False();
     }
-    lay_out_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+    let got = lay_out_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+    set counted = got;
   }
   let width = context^.children.inner[at].width;
   let height = context^.children.inner[at].height;
@@ -2627,7 +2645,7 @@ fn position_child(context: &Context, styles: &Styles, document: &Document, fonts
   let placed_vertically = bor(top_set, bottom_set);
   let anchored = band(placed, placed_vertically);
   set context^.children.inner[at].viewport_origin = band(fixed, anchored);
-  return unit;
+  return counted;
 }
 
 fn chain_anchor(context: &Context, styles: &Styles, block: u32) -> (found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles) {
@@ -2662,9 +2680,10 @@ fn chain_anchor(context: &Context, styles: &Styles, block: u32) -> (found: Bool,
   return no, 0_i32, 0_i32, 0_i32, 0_i32;
 }
 
-fn position_out_children(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "position_out for a flow context whose pre-pass recorded each child's flow entry and block: positions each out-of-flow child found among the children, its anchor from chain_anchor, with no walk of the flow.";
+fn position_out_children(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "position_out for a flow context whose pre-pass recorded each child's flow entry and block: positions each out-of-flow child found among the children, its anchor from chain_anchor, with no walk of the flow, and returns what their layouts counted.";
   let border = border_edges(styles: styles, style: context^.style);
+  let counted = no_updates();
   let count = context^.children.inner.len;
   for (at in 0_u64..count) {
     if at < context^.children.inner.len {
@@ -2675,11 +2694,12 @@ fn position_out_children(context: &Context, styles: &Styles, document: &Document
       let out = band(out_kind, this_child);
       if out {
         let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
-        position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
+        let got = position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
+        set counted = add_counts(first: counted, second: got);
       }
     }
   }
-  return unit;
+  return counted;
 }
 
 fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
@@ -2691,7 +2711,7 @@ fn lay_out_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   prepare_spaces(context: context, styles: styles, content_width: frame.flow_width, content_height: frame.definite);
   lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   break_all(context: context, styles: styles, fonts: fonts, picks: picks);
-  finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
+  let counted = finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   return unit;
 }
 
