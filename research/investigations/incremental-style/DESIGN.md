@@ -239,3 +239,14 @@ same host and Chromium build:
   font-size edits visit the edited element and its children. Root
   font-size edits and edits that add or remove a pseudo-element still
   rebuild every node; the levels run sequentially so far.
+- **Matching** (`runs/matching.txt`). After step 3, a class edit's restyle
+  was mostly selector matching. Rule index items now name one alternative
+  each, and a 256-bit Bloom filter of the element's and its ancestors'
+  features rejects rules before any selector walk. The matched rules are
+  unchanged: the dumps are byte-identical, and the identity checks and WPT's
+  selector cases pass. A warm restyle of a colour class toggle fell from 61
+  to 20 us. The full sequential style stage fell from 1.18 to 0.39 s on
+  apollo11, 4.07 to 1.54 s on html5 and 4.32 to 2.95 s on ecma262. E1
+  colour edits still trail Chromium (58, 83 and 59 us against 25, 35 and
+  30). Their restyle runs with a cold cache after the harness's full-layout
+  comparison and costs about three times the warm restyle.

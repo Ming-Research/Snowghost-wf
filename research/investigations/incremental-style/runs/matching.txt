@@ -1,0 +1,112 @@
+Matching cost of a restyle and of the full style stage
+======================================================
+
+Question: what dominates a class edit's restyle after step 4, and how much of
+it can rule selection remove without changing a matched rule?
+
+Criterion, written before measuring: the following changes are kept only if
+the full style dumps of the three pages are byte-identical to the base, the
+incremental style and layout identity checks pass, and a deliberately broken
+variant fails those dumps. Each change is kept only if it lowers the median
+restyle of apollo11's toggle script.
+
+Environment: Apple M1 Pro, macOS 26.6.2, Whitefoot c3d26643c, sequential
+build unless marked par. Builds used `--cache --fragments function`. The
+machine was shared with other agents' compiler builds (load average 6-10).
+The full-stage figures are pairs of runs, and differences under 5 percent
+are noise.
+
+Base: 84c1bf1 (build/m1/prefilter_style_seq).
+Result: f9c5bfe (build/m1/style_seq).
+
+Workloads
+---------
+- toggle: build/m1/scripts/apollo11-toggle.edits, 60000 C/K toggles of class
+  x5c on node 1138 against `.x5c{color:#123456}`. Mode restyletime gives the
+  restyle_us median. Every edit follows the previous one directly, so the
+  cache is warm.
+- full: `style_oracle all 3` on each page, wall seconds.
+- E1: research/investigations/incremental-layout/run.sh time BUILD PAGE KIND 1,
+  "style+update us" median. Each edit follows a full-layout comparison, so
+  the restyle runs with a cold cache.
+
+Profile of the base toggle (sample, top of stack)
+-------------------------------------------------
+- Matching was 55 percent of active samples: instr_matches, match_complex,
+  backtrack and class_records.
+- gather_reaches was 7-10 percent. It is a linear scan of every class reach.
+- memset inside match_complex zeroed its 64-frame backtracking stack once
+  per tested alternative.
+
+Changes and measurements (toggle median restyle_us)
+---------------------------------------------------
+base                                                   61
++ 256-bit filter of ancestors' id/class/type features  32
+  falsifier: ancestors' class words left out ->
+  apollo11 dump differs in 10985 lines
++ subject compound tested before the stack is made     30
+  variant: 1024-bit filter with subject and every
+  feature of each compound                             33 (rejected: slower)
+  variant: 256-bit with the same features              30 (no gain, kept)
++ rule index items per alternative                     20
+  falsifier: only each rule's first alternative
+  indexed -> dumps differ in 8542 / 116893 / 89360
+  lines (apollo11 / html5 / ecma262)
++ class reaches in bucket order, binary search         20 (gather_reaches
+                                                           left the profile)
+The filter after per-alternative indexing:
+  without the filter (element_filter empty, filter_admits
+  not consulted)                                       33 vs 21
+  full apollo11 0.57 vs 0.39 s, html5 2.32 vs 1.55 s, ecma262 equal.
+
+Experiments: match-only stage, apollo11, `match 11`, base 2.4 s:
+  rule test returns before matching           0.50 s  (candidate selection
+                                                       and filter are cheap)
+  match_complex returns after the subject     1.27 s  (ancestor walks were
+                                                       about 45 percent)
+
+Full style stage (all 3; seconds; base -> result; two runs each agreed)
+-----------------------------------------------------------------------
+apollo11 seq 1.18 -> 0.39    par-4 0.37 -> 0.17 (one noisy pair 0.68/0.50)
+html5    seq 4.07 -> 1.54    par-4 1.34 -> 0.69
+ecma262  seq 4.32 -> 2.95    par-4 2.12 -> 1.87
+
+Incremental layout E1, style+update median us (base layout driver
+build/layout_oracle_pre = the base; Chromium from E1)
+-----------------------------------------------------------------
+                 base   result   Chromium
+apollo11 colour    88       58         25
+html5 scolour     107       83         35
+ecma262 scolour    59       59         30
+apollo11 sfontsize 255     218        470
+html5 sfontsize    884     870       3200
+ecma262 sfontsize 1850    1857        435
+
+Cold restyle breakdown (style oracle incremental mode, which runs a full
+style between edits; apollo11 colour script, median restyle_us; result build)
+---------------------------------------------------------------------------
+Truncated variants are timing probes only. Their output is wrong.
+  return before rematch                       1
+  return after rematch                       22   (rematch ~21 cold, 6 warm)
+  set level: + inherit, then return          26   (inherit ~4 cold, 1 warm)
+  set level: + reset, then return            35   (reset ~9 cold, 1 warm)
+  complete                                   60   (intern, compare and the
+                                                   children's levels ~25
+                                                   cold, 11 warm)
+The E1 colour gap to Chromium is cache misses in a cold restyle. The warm
+restyle of the same edits takes 19 us.
+
+Identity
+--------
+- Style dumps of apollo11, html5 and ecma262 are byte-identical to the base.
+- Incremental style check: every script reports 0 differ:
+  - apollo11: classes, body, custom, scolour, pseudo;
+  - html5 and ecma262: classes, sclasses, body, custom, scolour, scustom.
+- Incremental layout check: every script reports inc same for every edit,
+  with DIFF 0 and refused 0:
+  - apollo11: colour, fontsize, rootfont, body, custom, word, sentence, block;
+  - html5: scolour, sfontsize, srootfont, sbody, scustom, word, sentence,
+    block;
+  - ecma262: scolour, sfontsize, srootfont, sbody, scustom.
+- WPT dom/nodes selectors (css_selectors_oracle): 356 cases, 356 passed,
+  4 excluded.
