@@ -1,0 +1,112 @@
+Layout re-stack locality investigation
+=====================================
+
+Task started 2026-10-05 08:25 UTC; wall-time limit two hours.
+Base: 268a414c82972f48e4f3dd3aa0ca83248b49dc81.
+Pinned Whitefoot: c3d26643c89d6d705b584b06c63d1eefb09f0516.
+
+Question and criterion (written before measuring)
+------------------------------------------------
+Does the prefix replay in stack_flow dominate a sparse font-size edit,
+despite the update count reporting only the entries after plan.from?
+Compare the unmodified sequential driver with a timing-only variant that
+isolates prefix replay, then with the implementation, using the supplied
+host lock, compiler, memory guard, inputs and edit scripts. A variant that
+omits required computation diagnoses cost only and is never a valid result.
+Reject the diagnosis if removing the prefix work does not remove most of
+the approximately 10 ms cost; measure fragment/tail costs separately where
+necessary. Reject an implementation if identity differs or refusals grow,
+or another edit kind becomes slower. The target is median marking through
+layout below 435 us for ecma262 and 3200 us for html5, preserving apollo11.
+
+Dependencies and candidates
+---------------------------
+Stacking has a true ordered dependency through collapsed margins, floats,
+open frames and cursor. Replaying an unchanged prefix recomputes already
+known state and adds no new information. Retaining complete state at sparse
+flow positions would bound that replay without adding an order between
+contexts or paragraphs. Reconstructing state from ancestor blocks and a
+preceding settled entry may avoid retained snapshots if all inputs can be
+recovered exactly. A summary tree could shorten more of the stacking chain
+but changes every position reader and exceeds this investigation unless
+the simpler candidates prove inadequate. Fragment preservation must retain
+the exact full-build geometry and ordering, including split inline boxes.
+
+This required report lives with incremental-style run records and remains
+as the evidence for this experiment; scratch logs and binaries live in build/.
+
+Resumed 2026-10-05 08:36 UTC after the interrupted attempt. Only this report
+was uncommitted; layout sources remained at the base. The first base build
+completed in 3.14 s from the shared function cache. Initial input failures
+(page/fonts) were traced to build/research and build/fonts being symlinks;
+local copies in build/ remove that file-reader restriction. No source or
+input content was changed by that repair.
+
+The first diagnostic will skip prefix replay only, retaining the existing
+tail. It deliberately gives stacking incomplete state and cannot establish
+correctness; compare its timing and entry counts with the unmodified driver.
+
+Initial observations
+--------------------
+Unmodified ecma262 sfontsize: 10 edits, us min 622, median 10394, p90 11048,
+max 11089; entries min/median/max 2/2/2, held_entries 2/2/2. The supplied
+script takes 9.72 s including full-build comparisons in incremental mode.
+Unmodified apollo11 colour identity: 60 edits, inc same 60, DIFF 0, refused 0;
+117.47 s. The two-hour budget limits additional repetition to ambiguous
+comparisons.
+
+Reconstruction candidate (criterion before implementation)
+----------------------------------------------------------
+A preceding paragraph with lines has already resolved every open block top,
+cleared pending margins, and established the cursor and baseline. Its parent
+chain supplies the open frames; placed floats before it supply exclusions.
+Recovering that state and replaying only the gap before the changed entry
+would avoid new retained state and checkpoint invalidation. Reject this
+candidate if any required state cannot be recovered, identities differ, or
+its remaining work prevents the cost target. Ordinary full stacking remains
+the fallback before the first paragraph with lines. Retaining complete sparse
+snapshots is the alternative if this derivation fails.
+
+Diagnostic 1: prefix replay alone
+--------------------------------
+Only stack_flow's loop lower bound changed: plan.from for partial passes,
+zero for full passes. This is deliberately incorrect state, a timing-only
+probe. Its build took 64.15 s, peak 1453 MB.
+  ecma262 base 10394 us, skip-prefix 10697 us; entries 2 in both.
+  html5 base 9956 us, skip-prefix 10092 us; entries median 104322 in both.
+  html5 edits 5/6 fell from 3396/3421 to about 1100 us; other edits did not.
+The dominant-prefix diagnosis is rejected for these median workloads. Most
+html5 edits take full update_flow, and ecma262 requires further isolation.
+Next probe omits all of restack_flow (invalid), reporting its from/flow length
+through held_entries/entries to locate the restack and attribute its cost.
+
+Diagnostic 2: omit restack_flow entirely
+--------------------------------------
+All valid partial calls returned immediately, reporting from in held_entries
+and flow length in entries; the original body remains only on the invalid
+from >= length branch to preserve the declared effects. This is invalid
+layout and only a cost probe. ecma262 median stayed 10807 us; its slow edits
+reported from=0, flow length=1. Edits 3/4 (the changed p) reached from=89783,
+length=112816, and dropped to 137/131 us. On html5 the median remained 10686
+us; only edits 5/6 (the changed p) reached partial stacking (from=80517,
+length=104321). Thus the two-entry update count does not describe the work
+responsible for ecma262's slow median. The next measurement samples baseline
+call stacks to locate that work before selecting an implementation.
+
+The skip-prefix identity probe failed as expected on ecma262 edits 3/4.
+It is not a falsifier for a finished implementation.
+
+Selected implementation experiment
+----------------------------------
+The one-block cutoff excludes nested changed blocks, even when every block
+keeps its horizontal geometry. Record their common ancestor through the
+existing parent links, validate widths throughout that block, and restack
+through its closing entry before permitting convergence. This adds only
+ancestor dependencies to marking and the affected block's validation; it
+removes the unnecessary dependency on the rest of the context's pre-pass.
+Compare identical font-size scripts against base and require byte identity.
+If the affected range cannot preserve horizontal geometry or includes marked
+child contexts, retain the existing full path. A preceding placed paragraph
+can subsequently bound replay. No snapshot storage is added.
+
+Results pending.
