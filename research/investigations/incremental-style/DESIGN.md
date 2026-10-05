@@ -149,7 +149,9 @@ NodeId, like the text units.
 once per run for `:nth-*`. Recommended: positions recomputed for the
 children of a parent whose children changed, since an insertion or removal
 changes them for that parent alone; the table is already indexed by
-NodeId.
+NodeId. Deferred with Q90 to M2 (`research/investigations/structure-edits`):
+class edits move no element and change no position, and only an insertion
+or removal needs either.
 
 ## Criterion
 
@@ -250,3 +252,16 @@ same host and Chromium build:
   colour edits still trail Chromium (58, 83 and 59 us against 25, 35 and
   30). Their restyle runs with a cold cache after the harness's full-layout
   comparison and costs about three times the warm restyle.
+- **Root font size and shaping** (`runs/rootfont.txt`). A root font-size
+  edit restyles the elements that read the root's size and rebuilds without
+  matching only past a sixty-fourth of the elements. The marking reaches
+  only the paragraphs that read a changed element. A re-prepared paragraph
+  rescales unchanged segments instead of shaping them.
+- **Step 5** (`runs/step5.txt`). At 8b8612f, in the edittime mode (no
+  full-layout comparator between timed edits, as in Chromium's runs),
+  Snowghost leads Chromium sequentially on 15 of 18 page and kind pairs.
+  It trails on ecma262's font size (1.8 to 2.1 times) and on block edits,
+  which are M2's. At four workers it also trails on two colour edits by a
+  few microseconds, the runtime's fixed cost. Every identity check passes
+  seq and par. The full build is faster than main's on every page.
+
