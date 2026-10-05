@@ -179,17 +179,6 @@ example apart from the renderer code that exposed it
   next ecma262 incremental layout target
   ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
 
-- **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
-  html5 and ecma262.** The sequential style stage takes 0.98 s on apollo11's
-  11,845 elements, almost all in matching (`experiments/x12/efficiency.txt`
-  and `experiments/x1-x3-x16/results/timing.json` under
-  `research/investigations/incremental/`). Not investigated; Wikipedia's
-  sheets are large, so the rule index may leave many candidates per
-  element. Impact: apollo11's style stage is 0.28 s at four workers, the
-  largest share of its full build. Change: count candidate rules per
-  element and profile matching. Reopen with the next style work.
-
-
 - **A context's cached intrinsic sizes depend on when they are first
   asked for.** `intrinsic_sizes` (`renderer/layout/box.wf`) resolves a
   percentage padding against `space.basis_width` when first asked and keeps
