@@ -32,3 +32,110 @@ timing-only variant must isolate it. An implementation is rejected if
 any identity check reports DIFF or refused, if ecma262's median does not
 fall, or if html5, apollo11 or another edit kind becomes slower in a
 same-source paired comparison.
+
+Environment and drivers
+-----------------------
+Base driver: the f9c5bfe renderer source archived with git archive and
+built unchanged (build/layout_oracle_base, SHA-256
+6ac09473be1a8871eed93f1907ba2d73984f4ba1213bb35c9caf5f2fe1c1be0f).
+The harness is research/investigations/incremental-layout/run.sh with
+local copies of build/research, build/fonts, build/x5/scripts and
+build/x5/apollo-supplement (PAGES=build/x5/apollo-supplement for
+apollo11). The worktree has no whitefoot/ checkout, so the time runs name
+the primary checkout's .github/run-check.pl (RUN_CHECK) and retry while
+the host lock is busy; other agents' compiles, cargo tests and timing
+runs held the lock for most of this task (one build waited 1160 s for a
+3 s compile), and the identity suites ran concurrently with the first
+timing runs, so single-run timings below carry that noise.
+
+Attribution
+-----------
+1. The timing lines already separate the interval: delta_us (marking)
+   is 3-7 us and picks_us 0-11 us on every ecma262 sfontsize edit, so
+   the whole cost is pkg::layout's update.
+2. A sample(1) of a 300-edit script (build/prof7.sample.txt, 45,521
+   samples) shows only leaf frames under wf__main_body: the binary keeps
+   no frame pointers, so a call tree cannot be recovered; the leaf
+   totals (finish_lines, shape_paragraph, margin_edges, padding_edges,
+   stack_flow, prepare_spaces) are dominated by the full-build
+   comparator the timing mode runs after every edit and attribute
+   nothing to the update.
+3. Count propagation (committed): lay_out_child returns its update's
+   counts; stack_flow gathers the tallies of the children it settles,
+   narrows or positions; finish_flow, finish_in_place, position_out and
+   position_out_children return them; update_held keeps a container
+   item's counts when the container is laid out again (the branch that
+   discarded them before). Per edit on ecma262 sfontsize, base counts
+   against propagated counts (same source otherwise, driver
+   build/layout_oracle_counts):
+
+     edit element          base us  entries(base)  counts us  held  entries
+     1,2  li (58 desc.)     1487,1593   2         1561,1607    46   35540
+     3,4  p (6 desc.)       1113,1071   2         1177,1148    14   23036
+     5,6  tr (table)         636, 590   2          607, 587 61908   61908
+     7,8  emu-alg          10462,10352  2        10287,10177 112819 112819
+     9,10 emu-production   10840,10788  2        10841,10635 112821 112821
+
+   held_entries is the re-stacked count and entries adds the suffix
+   the convergence moved. So edits 1-4 re-stack 14-46 entries and move
+   23-35 thousand; the tr edits re-stack the table's whole suffix
+   (61,908 entries, never converging) in 0.6 ms; and edits 7-10 take
+   the full pre-pass path of #spec-container (112,819 flow entries),
+   which is the 10 ms. The base reported 2 entries for all of them
+   because #spec-container sits in body, a flex container, and
+   update_held discarded the item's counts when update_container did
+   not stop (the item's height changed).
+4. A diagnostic driver (not committed) that encodes the full path's
+   marks in held_entries shows edits 9-10 reach the full path with the
+   context marked restyled: the edited emu-production holds emu-t
+   inline-blocks (display: inline-block), whose own contexts are owned
+   by changed elements, and mark_use marked the flow parent restyled
+   for them. Edits 7-8 (emu-alg) reach it with restyled false,
+   restyled_blocks 2, a valid restyled_block, 0 marked children and 2
+   marked paragraphs: restack_block was tried and refused; which
+   refusal (a marked paragraph outside the common block, a changed
+   block width without a block-and-text-only subtree, or the block's
+   close not found) is not isolated in this task.
+5. A timing-only probe (build/layout_oracle_probe2, keeps the stale
+   fragment list instead of split_fragments_with_empty; invalid output,
+   never a result) on the first candidate: edits 3-4 fall from about
+   1,120 to 300 us and edits 9-10 from about 1,170 to 385 us, edit 2
+   from 1,570 to 790 us. The regeneration of the context's inline-box
+   fragments after every re-stack (split_keys sort, split_closings over
+   all 112k entries, the per-split loop and the kept-fragment copy with
+   its binary searches) is therefore about 0.8 ms of each ecma262 edit
+   that re-stacks, the largest remaining part.
+
+Changes and dependency argument
+-------------------------------
+A. Count propagation, as above: no layout change; it removes the
+   dependency of the report on which path a count took.
+B. restack_block admits marked child contexts inside the re-stacked
+   block. A child's space depends only on its containing block's width
+   (prepare_spaces), which the width checks establish unchanged, so a
+   marked atomic inline is updated in its last space before the
+   re-stack (update_atomics_in, as update_in_place updates one) and its
+   paragraph is broken again by the re-stack, while a marked in-flow
+   child or float is settled by the re-stack at its entry. The only
+   order kept is the stacking order the flow already has; nothing is
+   added across siblings.
+C. A flow context is no longer marked restyled for a child's own style
+   change (mark_use's restyle_parent): a flow context reads a child's
+   style only where it places the child, at the child's flow entry,
+   which restack_block, restack_entry and update_in_place reach through
+   the marked child; flex, grid and table containers keep the mark,
+   since their algorithms place an item by its style outside any entry.
+   The previous rule forced the full pre-pass of the whole context for
+   any edit touching an inline-block, which depends on every entry.
+D. (second candidate, see below) After a re-stack that converged with
+   every later entry moved by one delta and the line presence
+   unchanged, the context's fragment list is kept and translated
+   (translate_fragments, the delta path's existing translation) instead
+   of made again, when no block-in-inline opens or closes in the
+   re-stacked range, no lineless paragraph in the range opens an inline
+   box, the entry at the start and every block open around it kept
+   their tops (held_y), and the stop entry is a paragraph with lines.
+   Each split run then lies above, around or below the range, so its
+   rectangle is unchanged, grows by delta or moves by delta, which is
+   exactly what a regeneration would compute. The checks cost O(splits
+   + range) instead of O(splits log splits + flow entries).

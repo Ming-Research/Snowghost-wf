@@ -152,26 +152,32 @@ example apart from the renderer code that exposed it
   cease to increase, and all identity checks must still pass
   ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
 
-- **Incremental layout's entry counts omit some child work.** In
-  `lay_out_child` the `update_child` count is discarded; an unsuccessful
-  parent cutoff also discards its child counts. The restack investigation
-  reports ecma262 edits near 10 ms with two reported entries, and omitting
-  `restack_flow` leaves their cost. Change: propagate the existing counts
-  through both paths, without adding a global counter. Reopen before using
-  entries to attribute another layout performance result; verify a nested
-  edit reports the child work as well as the ancestor work
-  ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
+- **An ecma262 font-size edit on emu-alg still prepares the whole flow
+  context.** With child counts propagated, ecma262 sfontsize edits 7-8
+  (an emu-alg with ol/li blocks) take #spec-container's full pre-pass
+  path (112,819 entries, about 10 ms) although the context is not
+  restyled, has two restyled blocks with a valid common block and no
+  marked child: `restack_block` refuses, and which check refuses (a
+  marked paragraph outside the common block, a changed block width in
+  a subtree that is not block-and-text-only, or no close found) is not
+  isolated. Change: report the refusal in a diagnostic run, then widen
+  that check. Reopen with the next ecma262 incremental layout target
+  ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
 
-- **Some sparse font edits still prepare a large flow context.** The restack
-  investigation remains above ecma262's 435 us target. `note_use` in
-  `renderer/layout/build.wf` marks an element's second block use as
-  structural, while the new local width path excludes child contexts and
-  atomics. The individual contribution of those restrictions is not yet
-  isolated. Change: measure which restriction selects full preparation,
-  then represent the affected range or settle only the child spaces that
-  changed. Reopen for the next ecma262 incremental layout target; require
-  byte identity and same-source timing against the retained implementation
-  ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
+- **A re-stack makes the context's inline-box fragments again.** After
+  every re-stack of a context with block-in-inline splits,
+  `restack_flow` runs `split_fragments_with_empty`: a sort of the
+  splits, a flag per flow entry, the per-split loop and a copy of the
+  kept empty fragments with a binary search each. On #spec-container
+  that is about 0.8 ms of each 1.1-1.5 ms sfontsize edit (timing-only
+  probe). A converged re-stack now keeps and translates the list when
+  no split opens or closes in the re-stacked range and no lineless
+  paragraph there opens an inline box; a range holding such a split or
+  paragraph still regenerates everything. Change: keep the sorted keys
+  and closing flags, which depend only on the flow's structure, and
+  regenerate only the runs that intersect the range. Reopen with the
+  next ecma262 incremental layout target
+  ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
 
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
   html5 and ecma262.** The sequential style stage takes 0.98 s on apollo11's

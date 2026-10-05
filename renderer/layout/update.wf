@@ -1668,7 +1668,10 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
     give nothing;
   }
   let no_splits = context^.splits.inner.len == 0_u64;
-  let keep_fragments = band(no_splits, stacked.fragments_same);
+  let unchanged_fragments = band(no_splits, stacked.fragments_same);
+  let converged = band(stacked.stopped, stacked.fragments_same);
+  let (translatable, range_top, range_bottom) = translatable_fragments(context: context, converged: converged, from: from, stop: stacked.stop_at);
+  let keep_fragments = bor(unchanged_fragments, translatable);
   if keep_fragments {
     let owned = owns_fragment(style: context^.style);
     if owned {
@@ -1676,6 +1679,12 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
         set context^.fragments.inner[0_u64].height = used;
         set context^.fragments.inner[0_u64].width = context^.width;
       }
+    }
+    let moved_by = stacked.delta != 0_i32;
+    let shifting = band(translatable, moved_by);
+    if shifting {
+      let old_bottom = range_bottom -sat stacked.delta;
+      translate_fragments(context: context, top: range_top, bottom: old_bottom, delta: stacked.delta);
     }
   } else {
     let previous_fragments = box_slots_new::<Fragment>(capacity: 0_u64);
@@ -1704,6 +1713,165 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   let with_stacked = add_counts(first: own, second: stacked.below);
   let summed = add_counts(first: with_stacked, second: positioned_counts);
   return summed;
+}
+
+fn range_start(context: &Context, from: u64) -> (found: Bool, top: i32, chain: u32) reads(context) {
+  doc "The top of the entry a re-stack started from, when it is a paragraph, a child context, a float or a block whose top did not move (held_y), and the block around it; found is False for a Close or an out-of-flow entry.";
+  let no = False();
+  if from < context^.flow.inner.len {
+  } else {
+    return no, 0_i32, no_index;
+  }
+  let first = context^.flow.inner[from];
+  match first {
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        return True(), context^.paragraphs.inner[at].top, context^.paragraphs.inner[at].block;
+      }
+      return no, 0_i32, no_index;
+    }
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        let same = context^.blocks.inner[at].held_y == context^.blocks.inner[at].y;
+        return same, context^.blocks.inner[at].y, context^.blocks.inner[at].parent;
+      }
+      return no, 0_i32, no_index;
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        return True(), context^.children.inner[at].y, context^.children.inner[at].block;
+      }
+      return no, 0_i32, no_index;
+    }
+    Float(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        return True(), context^.children.inner[at].y, context^.children.inner[at].block;
+      }
+      return no, 0_i32, no_index;
+    }
+    Close(..) => {
+      return no, 0_i32, no_index;
+    }
+    Out(..) => {
+      return no, 0_i32, no_index;
+    }
+  }
+}
+
+fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u64) -> (ok: Bool, top: i32, bottom: i32) reads(context) {
+  doc "Whether, after a re-stack of the flow entries from..stop that converged with every later entry moved by one delta, the context's own fragment list (split_fragments') can be kept and translated instead of being made again: no block-in-inline opens or closes in the range, so every split run lies above it, around it or below it; no paragraph without lines in the range opens an inline box, so no empty fragment lies inside it; the entry at from and every block open around it kept their tops (held_y), so a run around the range grows by delta only at its bottom; and the entry at stop is a paragraph with lines. Returns the range's top, which did not move, and the new bottom of the entry at stop (its old bottom is that less delta).";
+  let no = False();
+  if converged {
+  } else {
+    return no, 0_i32, 0_i32;
+  }
+  if stop < context^.flow.inner.len {
+  } else {
+    return no, 0_i32, 0_i32;
+  }
+  let (found, top, chain) = range_start(context: context, from: from);
+  if found {
+  } else {
+    return no, 0_i32, 0_i32;
+  }
+  let ancestor = chain;
+  let depth = context^.blocks.inner.len;
+  for (step in 0_u64..depth) {
+    if ancestor == no_index {
+      break;
+    }
+    let at = cvt::<u32, u64>(ancestor);
+    if at < context^.blocks.inner.len {
+      if context^.blocks.inner[at].held_y != context^.blocks.inner[at].y {
+        return no, 0_i32, 0_i32;
+      }
+      set ancestor = context^.blocks.inner[at].parent;
+    } else {
+      return no, 0_i32, 0_i32;
+    }
+  }
+  let low = flow_index(at: from);
+  let high = flow_index(at: stop);
+  let splits = context^.splits.inner.len;
+  for (k in 0_u64..splits) {
+    let split = context^.splits.inner[k];
+    let opens_after = split.open >= low;
+    let opens_before = split.open <= high;
+    let opens_inside = band(opens_after, opens_before);
+    let closes_after = split.close >= low;
+    let closes_before = split.close <= high;
+    let closes_inside = band(closes_after, closes_before);
+    let inside = bor(opens_inside, closes_inside);
+    if inside {
+      return no, 0_i32, 0_i32;
+    }
+  }
+  let end = stop +sat 1_u64;
+  for (k in from..end) {
+    if k < context^.flow.inner.len {
+    } else {
+      break;
+    }
+    let item = context^.flow.inner[k];
+    match item {
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          let lines = context^.paragraphs.inner[at].lines.inner.len;
+          let marks = context^.paragraphs.inner[at].marks.inner.len;
+          let empty = lines == 0_u64;
+          let opens = marks > 0_u64;
+          let fragments_inside = band(empty, opens);
+          if fragments_inside {
+            return no, 0_i32, 0_i32;
+          }
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  let last = context^.flow.inner[stop];
+  match last {
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        let lines = context^.paragraphs.inner[at].lines.inner.len;
+        if lines > 0_u64 {
+          let bottom = context^.paragraphs.inner[at].top +sat context^.paragraphs.inner[at].height;
+          return True(), top, bottom;
+        }
+      }
+      return no, 0_i32, 0_i32;
+    }
+    Open(..) => {
+      return no, 0_i32, 0_i32;
+    }
+    Close(..) => {
+      return no, 0_i32, 0_i32;
+    }
+    Child(..) => {
+      return no, 0_i32, 0_i32;
+    }
+    Float(..) => {
+      return no, 0_i32, 0_i32;
+    }
+    Out(..) => {
+      return no, 0_i32, 0_i32;
+    }
+  }
 }
 
 fn shift_split_lines(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
