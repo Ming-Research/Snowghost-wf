@@ -127,6 +127,27 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Incremental layout's entry counts omit some child work.** In
+  `lay_out_child` the `update_child` count is discarded; an unsuccessful
+  parent cutoff also discards its child counts. The restack investigation
+  reports ecma262 edits near 10 ms with two reported entries, and omitting
+  `restack_flow` leaves their cost. Change: propagate the existing counts
+  through both paths, without adding a global counter. Reopen before using
+  entries to attribute another layout performance result; verify a nested
+  edit reports the child work as well as the ancestor work
+  ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
+
+- **Some sparse font edits still prepare a large flow context.** The restack
+  investigation remains above ecma262's 435 us target. `note_use` in
+  `renderer/layout/build.wf` marks an element's second block use as
+  structural, while the new local width path excludes child contexts and
+  atomics. The individual contribution of those restrictions is not yet
+  isolated. Change: measure which restriction selects full preparation,
+  then represent the affected range or settle only the child spaces that
+  changed. Reopen for the next ecma262 incremental layout target; require
+  byte identity and same-source timing against the retained implementation
+  ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
+
 - **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
   html5 and ecma262.** The sequential style stage takes 0.98 s on apollo11's
   11,845 elements, almost all in matching (`experiments/x12/efficiency.txt`

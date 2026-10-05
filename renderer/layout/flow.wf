@@ -900,7 +900,15 @@ fn entry_margin(context: &Context, styles: &Styles, flow: u32, basis: i32, below
 }
 
 fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> result: unit reads(styles), writes(context) {
-  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts. The splits sorted by owner (split_keys) give each split the next one of the same owner and answer whether an owner is interrupted, and a flag per flow entry (split_closings) whether a block closing there interrupts an inline box, so the pass costs O(S log S + F) for S splits and F flow entries.";
+  doc "Builds all split and empty-inline fragments in a full pass.";
+  let none = slots_new::<Fragment, 0>();
+  let no = False();
+  split_fragments_with_empty(context: context, styles: styles, content_left: content_left, kept: &none[0_u64..0_u64], preserve_empty: no);
+  return unit;
+}
+
+fn split_fragments_with_empty(context: &Context, styles: &Styles, content_left: i32, kept: &[Fragment], preserve_empty: Bool) -> result: unit reads(styles), reads(kept), writes(context) {
+  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts. The splits sorted by owner (split_keys) give each split the next one of the same owner and answer whether an owner is interrupted, and a flag per flow entry (split_closings) whether a block closing there interrupts an inline box, so a full pass costs O(S log S + F) for S splits and F flow entries. When preserve_empty holds, kept contains the previous context fragments without its own box; fragments whose owners are not split owners are the unchanged empty-inline tail and are copied instead of scanning the flow.";
   let count = context^.splits.inner.len;
   let bounded = imin(count, item_ceiling);
   let keys = split_keys(context: context);
@@ -987,11 +995,22 @@ fn split_fragments(context: &Context, styles: &Styles, content_left: i32) -> res
       }
     }
   }
-  let entries = context^.flow.inner.len;
-  for (k in 0_u64..entries) {
-    let empty = lineless(context: context, flow: k);
-    if empty {
-      empty_inline_fragments(context: context, keys: &keys, flow: k);
+  if preserve_empty {
+    let count_kept = kept^.len;
+    for (f in 0_u64..count_kept) {
+      let fragment = kept^[f];
+      let interrupted = split_owner(keys: &keys, owner: fragment.owner);
+      if bnot(interrupted) {
+        let pushed = push_item::<Fragment>(cell: &context^.fragments, value: fragment, ceiling: item_ceiling);
+      }
+    }
+  } else {
+    let entries = context^.flow.inner.len;
+    for (k in 0_u64..entries) {
+      let empty = lineless(context: context, flow: k);
+      if empty {
+        empty_inline_fragments(context: context, keys: &keys, flow: k);
+      }
     }
   }
   return unit;
@@ -1312,9 +1331,11 @@ fn place_atomics(context: &Context, at: u64) -> result: unit writes(context) {
 }
 
 struct Restack {
-  doc "What a stacking pass does (stack_flow): a full pass when partial is False; else pkg::layout's update's re-stack from flow entry from (the edited paragraph's), which replays the entries before it from their placed positions and lines, stacks it and the entries after it again, and stops after a paragraph where the stacking state is the previous pass's moved by one delta (restack_settles), from the previous pass's state of the edited paragraph (old_top in the context's border box, old_height, old_lines), its flow end (old_flow_end) and whether intrinsic sizes were asked for in the update (unasked, for settle_child).";
+  doc "A full stacking pass when partial is False; otherwise a re-stack from from that may converge only at or after until. It resumes after an unchanged paragraph with lines when that state is recoverable, then replays the gap to from. old_top, old_height and old_lines describe an edited paragraph before it was broken again; old_flow_end is the previous flow end. unasked controls child intrinsic-size reuse. empty_stable permits keeping empty-inline fragments when the affected paragraphs keep whether they have lines.";
   partial: Bool;
   from: u64;
+  until: u64;
+  empty_stable: Bool;
   unasked: Bool;
   old_top: i32;
   old_height: i32;
@@ -1323,7 +1344,7 @@ struct Restack {
 }
 
 struct StackResult {
-  doc "What a stacking pass returns: the content height (which contains the floats) and the last line's baseline, and for a re-stack whether it stopped after flow entry stop_at with every later entry to move by delta (the open blocks already given their final position and grown by delta), and how many entries it stacked again.";
+  doc "What a stacking pass returns: the content height (which contains the floats) and the last line's baseline, and for a re-stack whether it stopped after flow entry stop_at with every later entry to move by delta (the open blocks already given their final position and grown by delta), how many entries it stacked again, and whether empty-inline fragments may be kept (every affected paragraph kept whether it has lines, and its empty fragment inputs stayed unchanged).";
   height: i32;
   baseline: i32;
   has_baseline: Bool;
@@ -1331,12 +1352,13 @@ struct StackResult {
   stop_at: u64;
   delta: i32;
   restacked: u64;
+  fragments_same: Bool;
 }
 
 fn full_stack() -> plan: Restack pure {
   doc "The plan of a full stacking pass.";
   let no = False();
-  return Restack(partial: no, from: 0_u64, unasked: no, old_top: 0_i32, old_height: 0_i32, old_lines: no, old_flow_end: 0_i32);
+  return Restack(partial: no, from: 0_u64, until: 0_u64, empty_stable: no, unasked: no, old_top: 0_i32, old_height: 0_i32, old_lines: no, old_flow_end: 0_i32);
 }
 
 fn old_float_bottom(child: &Context, content_top: i32, dy: i32) -> bottom: i32 reads(child) {
@@ -1403,7 +1425,10 @@ fn restack_settles(context: &Context, styles: &Styles, frames: &Box<Slots<Frame>
   let moved_alike = band(floats.uniform, followed);
   let uniform = bor(none_moved, moved_alike);
   if uniform {
-    if delta == 0_i32 {
+    let no_floats = floats.before_reach == -2147483647_i32;
+    let unmoved = delta == 0_i32;
+    let independent = bor(no_floats, unmoved);
+    if independent {
       let same = frames_grow(context: context, styles: styles, frames: frames, plan: plan, content_top: content_top, delta: delta, basis_height: basis_height);
       return same;
     }
@@ -1501,8 +1526,165 @@ fn later_floors(context: &Context, plan: Restack) -> floors: Box<Array<i32>> rea
   return move floors;
 }
 
+fn block_relative_offset(context: &Context, styles: &Styles, block: u32) -> (dx: i32, dy: i32) reads(context), reads(styles) {
+  doc "The accumulated relative offset of a placed block, with the same parent-before-child additions as stacking.";
+  let at = cvt::<u32, u64>(block);
+  if at < context^.blocks.inner.len {
+    let held = context^.blocks.inner[at];
+    let (outer_x, outer_y) = block_relative_offset(context: context, styles: styles, block: held.parent);
+    let (own_x, own_y) = relative_offset(styles: styles, style: held.style, basis_width: held.avail_width, basis_height: unknown);
+    let dx = outer_x +sat own_x;
+    let dy = outer_y +sat own_y;
+    return dx, dy;
+  }
+  return 0_i32, 0_i32;
+}
+
+fn interior_position(value: i32) -> interior: Bool pure {
+  doc "Whether a coordinate can be inverted without mistaking a saturation endpoint for an exact result.";
+  let above = value > -2147483648_i32;
+  let below = value < 2147483647_i32;
+  return band(above, below);
+}
+
+fn previous_stacked_paragraph(context: &Context, from: u64) -> paragraph: u64 reads(context) {
+  doc "The last unchanged paragraph with lines before from, found by paragraph order. Its natural position, height and parent chain describe the state immediately after it. The paragraph count denotes none.";
+  let count = context^.paragraphs.inner.len;
+  if from == 0_u64 {
+    return count;
+  }
+  let before = from - 1_u64;
+  let before_index = flow_index(at: before);
+  let end = first_paragraph_after(context: context, flow_at: before_index);
+  for (step in 0_u64..end) {
+    let back = end - step;
+    let at = back - 1_u64;
+    if at < context^.paragraphs.inner.len {
+      if context^.paragraphs.inner[at].lines.inner.len > 0_u64 {
+        return at;
+      }
+    }
+  }
+  return count;
+}
+
+fn resume_float_state(context: &Context, styles: &Styles, stack: &Stack, from: u64, content_left: i32, content_top: i32) -> usable: Bool reads(context), reads(styles), writes(stack) {
+  doc "Recovers the exclusions of floats preceding the restart boundary from their placed margin boxes. A saturated coordinate refuses recovery. Floats retain their flow order in the existing exclusion list; later placement reads that list and its maximum top and bottom.";
+  let children = context^.children.inner.len;
+  for (c in 0_u64..children) {
+    let child = &context^.children.inner[c];
+    let flow = cvt::<u32, u64>(child^.flow_at);
+    if flow < from {
+      let (kind, index) = entry_kind(context: context, flow_at: child^.flow_at);
+      if kind == 2_u8 {
+        let (dx, dy) = block_relative_offset(context: context, styles: styles, block: child^.block);
+        let x_shifted = child^.x -sat dx;
+        let y_shifted = child^.y -sat dy;
+        let x_box = x_shifted -sat content_left;
+        let y_box = y_shifted -sat content_top;
+        let x = x_box -sat child^.margin_left;
+        let y = y_box -sat child^.margin_top;
+        let good_x = interior_position(value: child^.x);
+        let good_y = interior_position(value: child^.y);
+        let good_x_shifted = interior_position(value: x_shifted);
+        let good_y_shifted = interior_position(value: y_shifted);
+        let good_x_box = interior_position(value: x_box);
+        let good_y_box = interior_position(value: y_box);
+        let good_left = interior_position(value: x);
+        let good_top = interior_position(value: y);
+        let placed = band(good_x, good_y);
+        let shifted = band(good_x_shifted, good_y_shifted);
+        let boxes = band(good_x_box, good_y_box);
+        let margins = band(good_left, good_top);
+        let outer = band(placed, shifted);
+        let inner = band(boxes, margins);
+        let good = band(outer, inner);
+        if good {
+        } else {
+          return False();
+        }
+        let box_width = child^.width +sat child^.margin_left;
+        let outer_width = box_width +sat child^.margin_right;
+        let box_height = child^.height +sat child^.margin_top;
+        let outer_height = box_height +sat child^.margin_bottom;
+        let group = box_of(styles: styles, style: child^.style);
+        let left = group.float == float_left;
+        let edge = if left {
+          give x +sat outer_width;
+        } else {
+          give x;
+        }
+        let bottom = y +sat outer_height;
+        let exclusion = Exclusion(left: left, top: y, bottom: bottom, edge: edge);
+        let pushed = push_item::<Exclusion>(cell: &stack^.floats, value: exclusion, ceiling: item_ceiling);
+        set stack^.float_floor = imax(stack^.float_floor, y);
+        set stack^.reach = imax(stack^.reach, bottom);
+      }
+    }
+  }
+  return True();
+}
+
+fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Frame>>, block: u32, content_top: i32) -> usable: Bool reads(styles), writes(context.blocks.inner), writes(frames) {
+  doc "Recovers the open ancestor frames after a paragraph with lines. Such a paragraph resolved every ancestor top and marked every ancestor as containing lines. Checks all inverse positions before returning the blocks to stacking coordinates.";
+  let parents = box_slots_new::<u32>(capacity: 8_u64);
+  let count = context^.blocks.inner.len;
+  let parent = block;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(parent);
+    if at < context^.blocks.inner.len {
+      let pushed = push_item::<u32>(cell: &parents, value: parent, ceiling: item_ceiling);
+      set parent = context^.blocks.inner[at].parent;
+    } else {
+      break;
+    }
+  }
+  let depth = parents.inner.len;
+  let yes = True();
+  let dx = 0_i32;
+  let dy = 0_i32;
+  for (step in 0_u64..depth) {
+    let back = depth - step;
+    let i = back - 1_u64;
+    let b = parents.inner[i];
+    let at = cvt::<u32, u64>(b);
+    if at < context^.blocks.inner.len {
+      let held = context^.blocks.inner[at];
+      let border = border_edges(styles: styles, style: held.style);
+      let padding = padding_edges(styles: styles, style: held.style, basis: held.avail_width);
+      let top_frame = border.top +sat padding.top;
+      let (own_x, own_y) = relative_offset(styles: styles, style: held.style, basis_width: held.avail_width, basis_height: unknown);
+      set dx = dx +sat own_x;
+      set dy = dy +sat own_y;
+      let shifted = held.y -sat content_top;
+      let y = shifted -sat dy;
+      let good_placed = interior_position(value: held.y);
+      let good_shifted = interior_position(value: shifted);
+      let good_y = interior_position(value: y);
+      let first_good = band(good_placed, good_shifted);
+      let good = band(first_good, good_y);
+      if good {
+      } else {
+        return False();
+      }
+      let saved = Frame(block: b, left: held.avail_left, width: held.avail_width, top_frame: top_frame, known: yes, dx: dx, dy: dy, lines: yes);
+      let pushed = push_item::<Frame>(cell: frames, value: saved, ceiling: item_ceiling);
+    }
+  }
+  let made = frames^.inner.len;
+  for (f in 0_u64..made) {
+    let saved = frames^.inner[f];
+    let at = cvt::<u32, u64>(saved.block);
+    if at < context^.blocks.inner.len {
+      let shifted = context^.blocks.inner[at].y -sat content_top;
+      set context^.blocks.inner[at].y = shifted -sat saved.dy;
+    }
+  }
+  return True();
+}
+
 fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, content_left: i32, content_top: i32, content_width: i32, basis_height: i32, plan: Restack) -> result: StackResult reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions, and returns the content height, which contains the floats, and the last line's baseline; it records the flow's end before the floats (flow_end) and each entry's natural position (naturals). A re-stack (plan, Restack) replays the entries before plan.from: a paragraph keeps its lines and a child its position, read back from where the previous pass placed it, and neither is placed again, while blocks, floats and out-of-flow children go through the same steps as before (they write what they wrote); from plan.from on it stacks as a full pass would after update's pre-pass path, breaking a paragraph again at full width first when the previous pass narrowed its lines or the paragraph is marked (after reading its previous height) and settling a child in the space the pre-pass gives it (settle_child), and after each paragraph with lines it asks restack_settles whether to stop there.";
+  doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions, and returns the content height, which contains the floats, and the last line's baseline; it records the flow's end before the floats (flow_end) and each entry's natural position (naturals). A re-stack (plan, Restack) recovers the state after the preceding paragraph with lines from its natural position, ancestor frames and placed floats, falling back to the start when no such paragraph exists or an inverted coordinate is saturated. It replays only the remaining entries before plan.from: a paragraph keeps its lines and a child its position, read back from where the previous pass placed it, and neither is placed again, while blocks, floats and out-of-flow children go through the same steps as before (they write what they wrote); from plan.from on it stacks as a full pass would after update's pre-pass path, breaking a paragraph again at full width first when the previous pass narrowed its lines or the paragraph is marked (after reading its previous height) and settling a child in the space the pre-pass gives it (settle_child), and after each paragraph with lines at or after plan.until it asks restack_settles whether to stop there. Suffix floors are built only when a float and a changed stacking state require them.";
   let empty_floats = box_slots_new::<Exclusion>(capacity: 0_u64);
   let stack = Stack(cursor: 0_i32, positive: 0_i32, negative: 0_i32, floats: move empty_floats, float_floor: -2147483647_i32, reach: -2147483647_i32);
   set context^.baseline_entry = no_index;
@@ -1522,11 +1704,57 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let stop_at = 0_u64;
   let stop_delta = 0_i32;
   let restacked = 0_u64;
+  let fragments_same = plan.empty_stable;
   let none = box_slots_new::<Exclusion>(capacity: 0_u64);
   let flow_count = context^.flow.inner.len;
-  let floors = later_floors(context: context, plan: plan);
+  let floors = box_array_filled::<i32>(count: 0_u64, value: 0_i32);
   prepare_naturals(context: context, count: flow_count);
-  for (k in 0_u64..flow_count) {
+  let restart = 0_u64;
+  if plan.partial {
+    let p = previous_stacked_paragraph(context: context, from: plan.from);
+    if p < context^.paragraphs.inner.len {
+      let position = context^.paragraphs.inner[p].flow_at;
+      let flow = cvt::<u32, u64>(position);
+      if flow < context^.naturals.inner.len {
+        let natural = context^.naturals.inner[flow];
+        let after = flow +sat 1_u64;
+        let floats_ready = resume_float_state(context: context, styles: styles, stack: &stack, from: after, content_left: content_left, content_top: content_top);
+        let frames_ready = if floats_ready {
+          let block = context^.paragraphs.inner[p].block;
+          give resume_open_frames(context: context, styles: styles, frames: &frames, block: block, content_top: content_top);
+        } else {
+          give False();
+        }
+        if frames_ready {
+          let height = paragraph_height(context: context, at: p);
+          let (line_base, based) = last_baseline(context: context, at: p);
+          set stack.cursor = natural +sat height;
+          set left = context^.paragraphs.inner[p].left;
+          set width = context^.paragraphs.inner[p].width;
+          let from_top = natural +sat line_base;
+          set baseline = content_top +sat from_top;
+          set has_baseline = based;
+          set context^.baseline_entry = position;
+          set restart = after;
+          let splits = context^.splits.inner.len;
+          for (i in 0_u64..splits) {
+            if context^.splits.inner[i].open > position {
+              break;
+            }
+            set next_split = i +sat 1_u64;
+          }
+        } else {
+          let fresh_floats = box_slots_new::<Exclusion>(capacity: 0_u64);
+          set stack.floats = move fresh_floats;
+          set stack.float_floor = -2147483647_i32;
+          set stack.reach = -2147483647_i32;
+          let fresh_frames = box_slots_new::<Frame>(capacity: 8_u64);
+          set frames = move fresh_frames;
+        }
+      }
+    }
+  }
+  for (k in restart..flow_count) {
     if k >= context^.flow.inner.len {
       break;
     }
@@ -1740,7 +1968,11 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
             let full = full_width_lines(paragraph: &context^.paragraphs.inner[at], styles: styles, fonts: fonts, picks: picks);
             let marked = context^.paragraphs.inner[at].dirty;
             let unmarked = bnot(marked);
-            let kept_lines = band(full, unmarked);
+            let same_width = context^.paragraphs.inner[at].width == context^.paragraphs.inner[at].broken_width;
+            let same_left = context^.paragraphs.inner[at].left == context^.paragraphs.inner[at].broken_left;
+            let same_input = band(same_width, same_left);
+            let clean_full = band(full, unmarked);
+            let kept_lines = band(clean_full, same_input);
             if kept_lines {
             } else {
               let held = context^.children.inner.len;
@@ -1752,6 +1984,11 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
           give context^.paragraphs.inner[at].lines.inner.len;
         } else {
           give 0_u64;
+        }
+        if restacking {
+          let has_lines = lines > 0_u64;
+          let unchanged_lines = eeq(had_lines, has_lines);
+          set fragments_same = band(fragments_same, unchanged_lines);
         }
         if lines > 0_u64 {
           let waiting = pending_margin(stack: &stack);
@@ -1794,10 +2031,26 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
             place_paragraph(context: context, at: at, content_left: content_left, dx: dx, top: top);
           }
           if restacking {
-            if had_lines {
+            let past_changes = k >= plan.until;
+            let can_settle = band(had_lines, past_changes);
+            if can_settle {
               let old_raw = old_top -sat content_top;
               let old_y = old_raw -sat dy;
               let old_cursor = old_y +sat old_height;
+              let delta = stack.cursor -sat old_cursor;
+              let moved = delta != 0_i32;
+              let different_shift = float_shift != delta;
+              let nonuniform = bnot(floats_uniform);
+              let different_floats = bor(different_shift, nonuniform);
+              let changed_floats = band(any_float, different_floats);
+              let need_floor = bor(moved, changed_floats);
+              if need_floor {
+                if stack.floats.inner.len > 0_u64 {
+                  if floors.inner.len == 0_u64 {
+                    set floors = later_floors(context: context, plan: plan);
+                  }
+                }
+              }
               let floor_at = k -sat plan.from;
               let floor = if floor_at < floors.inner.len {
                 give floors.inner[floor_at];
@@ -1807,7 +2060,6 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
               let shifted = FloatShift(before_reach: before_reach, reach: stack.reach, old_reach: old_reach, any: any_float, uniform: floats_uniform, shift: float_shift);
               let settles = restack_settles(context: context, styles: styles, frames: &frames, plan: plan, content_top: content_top, floats: shifted, cursor: stack.cursor, old_cursor: old_cursor, floor: floor, basis_height: basis_height);
               if settles {
-                let delta = stack.cursor -sat old_cursor;
                 settle_open(context: context, frames: &frames, plan: plan, content_left: content_left, content_top: content_top, delta: delta);
                 set stopped = True();
                 set stop_at = k;
@@ -2018,7 +2270,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
     }
   }
   if stopped {
-    return StackResult(height: 0_i32, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked);
+    return StackResult(height: 0_i32, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same);
   }
   let end_term = pending_margin(stack: &stack);
   let end = stack.cursor +sat end_term;
@@ -2027,7 +2279,7 @@ fn stack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &F
   set context^.content_raw = height;
   set context^.flow_end = end;
   let positive = imax(height, 0_i32);
-  return StackResult(height: positive, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked);
+  return StackResult(height: positive, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same);
 }
 
 fn positioned_block(context: &Context, styles: &Styles, open_blocks: &[u32]) -> (found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles), reads(open_blocks) {
