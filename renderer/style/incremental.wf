@@ -6,6 +6,10 @@ alias BoxGroup = pkg::css::values::BoxGroup;
 alias ContainerGroup = pkg::css::values::ContainerGroup;
 alias ContentGroup = pkg::css::values::ContentGroup;
 alias Document = pkg::dom::Document;
+alias ComponentList = pkg::css::syntax::ComponentList;
+alias Declared = pkg::css::values::Declared;
+alias stored_spacing = pkg::css::values::stored_spacing;
+alias stored_tracks = pkg::css::values::stored_tracks;
 alias Environment = pkg::css::values::Environment;
 alias FontGroup = pkg::css::values::FontGroup;
 alias ItemGroup = pkg::css::values::ItemGroup;
@@ -29,6 +33,8 @@ const in_set: u8 = 2_u8;
 const queued: u8 = 1_u8;
 
 const queued_set: u8 = 3_u8;
+
+const root_restyle_share: u64 = 16_u64;
 
 const no_pseudo: u32 = 4294967295_u32;
 
@@ -788,8 +794,245 @@ fn pseudo_reads_attribute(state: &StyleState, element: u64, name: Atom) -> reads
   return False();
 }
 
-fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, level: &Box<Slots<u64>>, next: &Box<Slots<u64>>, touched: &Box<Slots<u64>>, changed: &Box<Slots<u32>>) -> result: Result<LevelOutcome, StyleError> reads(store), reads(document), reads(traversal), reads(level), writes(state), writes(atoms), writes(next), writes(touched), writes(changed) {
-  doc "Computes the elements of one tree level again, then their pseudo-elements: the inherited values from their parents' (inherit_element), the values that are not inherited, and their identifiers in the kept tables; records each element whose style or a pseudo-element's changed in what layout reads (layout_same), notes a change of what box construction reads (construction_same), and queues the children of each element in the set or whose inherited values changed. root_moved when the root's font size changed, which every rem length reads, and the caller rebuilds instead.";
+fn range_reads_rem(values: &ComponentList, start: u32, end: u32) -> found: Bool reads(values) {
+  doc "Whether the components of values from start to end hold a dimension whose unit is rem, ASCII case-insensitively; a range outside the list holds none.";
+  let first = cvt::<u32, u64>(start);
+  let last = cvt::<u32, u64>(end);
+  let count = values^.components.inner.len;
+  let text = values^.text.inner.len;
+  if first <= last {
+  } else {
+    return False();
+  }
+  if last <= count {
+  } else {
+    return False();
+  }
+  for (at in first..last) {
+    let component = values^.components.inner[at];
+    match component {
+      Dimension(number: amount, unit_name: unit_span) => {
+        let low = cvt::<u32, u64>(unit_span.start);
+        let high = cvt::<u32, u64>(unit_span.end);
+        if low <= high {
+          if high <= text {
+            let length = high - low;
+            if length == 3_u64 {
+              let a = iand(values^.text.inner[low], 223_u8);
+              let second = low + 1_u64;
+              let third = low + 2_u64;
+              let b = iand(values^.text.inner[second], 223_u8);
+              let c = iand(values^.text.inner[third], 223_u8);
+              let r = a == 82_u8;
+              let e = b == 69_u8;
+              let m = c == 77_u8;
+              let re = band(r, e);
+              let rem = band(re, m);
+              if rem {
+                return True();
+              }
+            }
+          }
+        }
+      }
+      Ident(..) => {
+      }
+      Function(..) => {
+      }
+      AtKeyword(..) => {
+      }
+      Hash(..) => {
+      }
+      QuotedString(..) => {
+      }
+      Url(..) => {
+      }
+      Delim(..) => {
+      }
+      Number(..) => {
+      }
+      Percentage(..) => {
+      }
+      UnicodeRange(..) => {
+      }
+      IncludeMatch() => {
+      }
+      DashMatch() => {
+      }
+      PrefixMatch() => {
+      }
+      SuffixMatch() => {
+      }
+      SubstringMatch() => {
+      }
+      Column() => {
+      }
+      Whitespace() => {
+      }
+      Cdo() => {
+      }
+      Cdc() => {
+      }
+      Colon() => {
+      }
+      Semicolon() => {
+      }
+      Comma() => {
+      }
+      ParenthesisBlock(..) => {
+      }
+      BracketBlock(..) => {
+      }
+      BraceBlock(..) => {
+      }
+      Error(..) => {
+      }
+    }
+  }
+  return False();
+}
+
+fn customs_read_rem(store: &RuleStore) -> found: Bool reads(store) {
+  doc "Whether some custom property declaration's value holds a rem dimension, which a var() reference can carry into any value.";
+  let count = store^.customs.inner.len;
+  let sheets = store^.sheets.inner.len;
+  for (k in 0_u64..count) {
+    let custom = store^.customs.inner[k];
+    let sheet = cvt::<u32, u64>(custom.sheet);
+    if sheet < sheets {
+      let held = range_reads_rem(values: &store^.sheets.inner[sheet].values, start: custom.start, end: custom.end);
+      if held {
+        return True();
+      }
+    } else {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn reads_root_font(store: &RuleStore, declared: Declared, customs_rem: Bool) -> reads_root: Bool reads(store) {
+  doc "Whether a winning declaration's value can read the root font size: a length with a rem part, a value with var() whose own text holds a rem dimension or when customs_rem says a custom property's value does, and a stored track list or border spacing, which hold lengths; the other stored lists (areas, lines, content, counters, quotes) hold none.";
+  match declared {
+    Length(value: lengths) => {
+      let none = feq(lengths.rem, 0.0_f32);
+      let some = bnot(none);
+      return some;
+    }
+    Pending(sheet: source, start: from, end: until, shorthand: expanded) => {
+      if customs_rem {
+        return True();
+      }
+      let at = cvt::<u32, u64>(source);
+      if at < store^.sheets.inner.len {
+        let held = range_reads_rem(values: &store^.sheets.inner[at].values, start: from, end: until);
+        return held;
+      }
+      return True();
+    }
+    Stored(kind: stored_kind, index: stored_at) => {
+      let tracks = stored_kind == stored_tracks;
+      let spacing = stored_kind == stored_spacing;
+      let lengths = bor(tracks, spacing);
+      return lengths;
+    }
+    Keyword(..) => {
+      return False();
+    }
+    Number(..) => {
+      return False();
+    }
+    Integer(..) => {
+      return False();
+    }
+    ColorValue(..) => {
+      return False();
+    }
+    CurrentColor() => {
+      return False();
+    }
+    Families(..) => {
+      return False();
+    }
+    ListStyle(..) => {
+      return False();
+    }
+    Wide(..) => {
+      return False();
+    }
+    Ratio(..) => {
+      return False();
+    }
+  }
+}
+
+fn root_font_readers(state: &StyleState, store: &RuleStore, readers: &Box<Slots<u64>>) -> result: Result<unit, StyleError> reads(state), reads(store), writes(readers) {
+  doc "Appends the preorder position of every element that, or one of whose pseudo-elements, has a winning declaration that can read the root font size (reads_root_font): the declarations are judged once each, then each node's row is read only in the longhands that some such declaration sets; each row is read on its own, so the scan orders nothing but the appends.";
+  let nodes = state^.cascade.nodes.inner.len;
+  let element_count = state^.cascade.element_count;
+  let winners = state^.cascade.winners.inner.len;
+  let declarations = store^.declared.declarations.inner.len;
+  let customs_rem = customs_read_rem(store: store);
+  let unread = False();
+  let reading = box_array_filled::<Bool>(count: declarations, value: unread);
+  let columns = array_filled::<Bool, 97>(value: unread);
+  for (d in 0_u64..declarations) {
+    let found = reads_root_font(store: store, declared: store^.declared.declarations.inner[d].value, customs_rem: customs_rem);
+    if found {
+      set reading.inner[d] = True();
+      let longhand = cvt::<u8, u64>(store^.declared.declarations.inner[d].longhand);
+      if longhand < 97_u64 {
+        set columns[longhand] = True();
+      }
+    }
+  }
+  let used = box_slots_new::<u64>(capacity: 0_u64);
+  for (w in 0_u64..97_u64) {
+    if columns[w] {
+      let pushed = propagate push::<u64>(cell: &used, value: w, ceiling: 128_u64);
+    }
+  }
+  let width = used.inner.len;
+  if width == 0_u64 {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  for (n in 0_u64..nodes) {
+    let start = winner_words *sat n;
+    let reads_root = False();
+    for (c in 0_u64..width) {
+      let w = start +sat used.inner[c];
+      if w < winners {
+        let one_based = cvt::<u32, u64>(state^.cascade.winners.inner[w]);
+        if one_based != 0_u64 {
+          let d = one_based - 1_u64;
+          if d < reading.inner.len {
+            if reading.inner[d] {
+              set reads_root = True();
+              break;
+            }
+          }
+        }
+      }
+    }
+    if reads_root {
+      let element = if n < element_count {
+        give n;
+      } else {
+        let pseudo_at = n - element_count;
+        if pseudo_at < state^.inherited.pseudo_parents.inner.len {
+          give cvt::<u32, u64>(state^.inherited.pseudo_parents.inner[pseudo_at]);
+        } else {
+          give n;
+        }
+      }
+      let pushed = propagate push::<u64>(cell: readers, value: element, ceiling: 4294967296_u64);
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, level: &Box<Slots<u64>>, next: &Box<Slots<u64>>, touched: &Box<Slots<u64>>, changed: &Box<Slots<u32>>, root_free: Bool) -> result: Result<LevelOutcome, StyleError> reads(store), reads(document), reads(traversal), reads(level), writes(state), writes(atoms), writes(next), writes(touched), writes(changed) {
+  doc "Computes the elements of one tree level again, then their pseudo-elements: the inherited values from their parents' (inherit_element), the values that are not inherited, and their identifiers in the kept tables; records each element whose style or a pseudo-element's changed in what layout reads (layout_same), notes a change of what box construction reads (construction_same), and queues the children of each element in the set or whose inherited values changed. root_moved when the root's font size changed, which every rem length reads, unless root_free says the caller has queued the elements that read it.";
   let count = level^.inner.len;
   let element_count = state^.cascade.element_count;
   let bounded = count <= 4294967296_u64;
@@ -832,7 +1075,8 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
     }
     let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: at, keep_set: keep_set);
     let root_same = feq(state^.inherited.root_font_size, old_root);
-    if root_same {
+    let root_kept = bor(root_same, root_free);
+    if root_kept {
     } else {
       let moved = True();
       let steady = False();
@@ -971,7 +1215,7 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
 }
 
 fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, wanted: &RestyleSet) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), reads(wanted), writes(state), writes(atoms) {
-  doc "Indexes the edited element's class words again (class_attribute_changed), rematches the set, then computes again, one tree level at a time from the set's shallowest element, the set's elements and the children of every element in the set or whose inherited values or style changed, with their pseudo-elements; the levels are sequential, each parent before its children. A full set, a change in which pseudo-elements an element of the set has (checked only when a reaching rule ends in ::before or ::after, wanted.pseudos), or a change of the root's font size rebuilds instead (rebuild_all).";
+  doc "Indexes the edited element's class words again (class_attribute_changed), rematches the set, then computes again, one tree level at a time from the set's shallowest element, the set's elements and the children of every element in the set or whose inherited values or style changed, with their pseudo-elements; the levels are sequential, each parent before its children. A full set, a change in which pseudo-elements an element of the set has (checked only when a reaching rule ends in ::before or ::after, wanted.pseudos), rebuilds instead (rebuild_all). A change of the root's font size restarts the levels with the elements whose winning declarations can read it (root_font_readers) queued at their depths, and rebuilds without matching when those, or the elements the levels then visit, pass one root_restyle_share of the elements, adding the changes the levels had already found, since they wrote those styles.";
   class_attribute_changed(positions: &state^.cascade.positions, document: document, node: wanted^.edited);
   if wanted^.full {
     let kept_cascade = False();
@@ -1050,37 +1294,101 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
   let changed = box_slots_new::<u32>(capacity: 0_u64);
   let touched = box_slots_new::<u64>(capacity: 0_u64);
   let next = box_slots_new::<u64>(capacity: 0_u64);
+  let readers = box_slots_new::<u64>(capacity: 0_u64);
   let visited = 0_u64;
   let rebuild = False();
   let structural = False();
+  let root_free = False();
+  let limit = element_count / root_restyle_share;
   let levels = element_count +sat 1_u64;
-  for (step in 0_u64..levels) {
-    let depth = shallowest +sat step;
-    let level = box_slots_new::<u64>(capacity: 0_u64);
-    swap(first: &level, second: &next);
-    for (k in 0_u64..listed) {
-      let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
-      if at < element_count {
-        let own = cvt::<u32, u64>(traversal^.depths.inner[at]);
-        if own == depth {
-          let pushed = propagate push::<u64>(cell: &level, value: at, ceiling: 4294967296_u64);
+  for (pass in 0_u64..2_u64) {
+    let deepest_now = deepest;
+    for (step in 0_u64..levels) {
+      let depth = shallowest +sat step;
+      let level = box_slots_new::<u64>(capacity: 0_u64);
+      swap(first: &level, second: &next);
+      for (k in 0_u64..listed) {
+        let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
+        if at < element_count {
+          let own = cvt::<u32, u64>(traversal^.depths.inner[at]);
+          if own == depth {
+            let pushed = propagate push::<u64>(cell: &level, value: at, ceiling: 4294967296_u64);
+          }
         }
       }
+      let reading = readers.inner.len;
+      for (r in 0_u64..reading) {
+        let at = readers.inner[r];
+        if at < element_count {
+          let own = cvt::<u32, u64>(traversal^.depths.inner[at]);
+          if own == depth {
+            if at < state^.marks.inner.len {
+              if state^.marks.inner[at] == 0_u8 {
+                set state^.marks.inner[at] = queued;
+                let noted = propagate push::<u64>(cell: &touched, value: at, ceiling: 4294967296_u64);
+                let pushed = propagate push::<u64>(cell: &level, value: at, ceiling: 4294967296_u64);
+              }
+            }
+          }
+        }
+      }
+      let size = level.inner.len;
+      let past = depth > deepest_now;
+      let empty = size == 0_u64;
+      let done = band(past, empty);
+      if done {
+        break;
+      }
+      set visited = visited +sat size;
+      if root_free {
+        if visited > limit {
+          set rebuild = True();
+          break;
+        }
+      }
+      let outcome = propagate restyle_level(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, level: &level, next: &next, touched: &touched, changed: &changed, root_free: root_free);
+      set structural = bor(structural, outcome.structural);
+      if outcome.root_moved {
+        set rebuild = True();
+        break;
+      }
     }
-    let size = level.inner.len;
-    let past = depth > deepest;
-    let empty = size == 0_u64;
-    let done = band(past, empty);
-    if done {
+    let first_pass = pass == 0_u64;
+    let retry = band(rebuild, first_pass);
+    if retry {
+    } else {
       break;
     }
-    set visited = visited +sat size;
-    let outcome = propagate restyle_level(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, level: &level, next: &next, touched: &touched, changed: &changed);
-    set structural = bor(structural, outcome.structural);
-    if outcome.root_moved {
-      set rebuild = True();
+    let touched_first = touched.inner.len;
+    for (k in 0_u64..touched_first) {
+      let at = touched.inner[k];
+      if at < state^.marks.inner.len {
+        set state^.marks.inner[at] = 0_u8;
+      }
+    }
+    let empty_touched = box_slots_new::<u64>(capacity: 0_u64);
+    swap(first: &touched, second: &empty_touched);
+    let empty_next = box_slots_new::<u64>(capacity: 0_u64);
+    swap(first: &next, second: &empty_next);
+    let empty_changed = box_slots_new::<u32>(capacity: 0_u64);
+    swap(first: &changed, second: &empty_changed);
+    let scanned = propagate root_font_readers(state: state, store: store, readers: &readers);
+    let many = readers.inner.len > limit;
+    if many {
       break;
     }
+    let found_readers = readers.inner.len;
+    for (r in 0_u64..found_readers) {
+      let at = readers.inner[r];
+      if at < traversal^.depths.inner.len {
+        let own = cvt::<u32, u64>(traversal^.depths.inner[at]);
+        set deepest = imax(deepest, own);
+      }
+    }
+    set visited = 0_u64;
+    set structural = False();
+    set rebuild = False();
+    set root_free = True();
   }
   let touched_count = touched.inner.len;
   for (k in 0_u64..touched_count) {
@@ -1098,6 +1406,11 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
   if rebuild {
     let kept_cascade = True();
     let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, matched: kept_cascade);
+    let earlier = changed.inner.len;
+    for (k in 0_u64..earlier) {
+      let pushed = propagate push::<u32>(cell: &rebuilt.changed, value: changed.inner[k], ceiling: 4294967296_u64);
+    }
+    set rebuilt.structural = bor(rebuilt.structural, structural);
     return Ok<Restyled, StyleError>(value: move rebuilt);
   }
   let copied = propagate copy_families(styles: &state^.styles, inherited: &state^.inherited);
