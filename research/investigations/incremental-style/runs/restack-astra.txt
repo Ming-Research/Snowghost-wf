@@ -1,0 +1,418 @@
+Layout re-stack locality investigation
+=====================================
+
+Task started 2026-10-05 08:25 UTC; wall-time limit two hours.
+Base: 268a414c82972f48e4f3dd3aa0ca83248b49dc81.
+Pinned Whitefoot: c3d26643c89d6d705b584b06c63d1eefb09f0516.
+
+Outcome: acceptance FAILED. Font-size medians fell from 10394/9956/235 us
+to 1511/851/229 us (ecma262/html5/apollo11), but ecma262 remains above
+435 us. Paired runs also confirm Apollo colour/body/custom regressions of
+3-4 us and ecma262 scustom regressions of 2-3 us. This branch retains a
+correctness-checked research prototype, not a completed performance fix.
+All 692 mandatory identity edits passed; the 16 focused edits and 10 direct
+Apollo sfontsize edits also passed. make check passed, the deliberate
+wrong-cursor build failed identity, and the independent review found no
+remaining source finding. Q1/Q2 remain open; nothing is pushed or merged.
+
+Question and criterion (written before measuring)
+------------------------------------------------
+Does the prefix replay in stack_flow dominate a sparse font-size edit,
+despite the update count reporting only the entries after plan.from?
+Compare the unmodified sequential driver with a timing-only variant that
+isolates prefix replay, then with the implementation, using the supplied
+host lock, compiler, memory guard, inputs and edit scripts. A variant that
+omits required computation diagnoses cost only and is never a valid result.
+Reject the diagnosis if removing the prefix work does not remove most of
+the approximately 10 ms cost; measure fragment/tail costs separately where
+necessary. Reject an implementation if identity differs or refusals grow,
+or another edit kind becomes slower. The target is median marking through
+layout below 435 us for ecma262 and 3200 us for html5, preserving apollo11.
+
+Dependencies and candidates
+---------------------------
+Stacking has a true ordered dependency through collapsed margins, floats,
+open frames and cursor. Replaying an unchanged prefix recomputes already
+known state and adds no new information. Retaining complete state at sparse
+flow positions would bound that replay without adding an order between
+contexts or paragraphs. Reconstructing state from ancestor blocks and a
+preceding settled entry may avoid retained snapshots if all inputs can be
+recovered exactly. A summary tree could shorten more of the stacking chain
+but changes every position reader and exceeds this investigation unless
+the simpler candidates prove inadequate. Fragment preservation must retain
+the exact full-build geometry and ordering, including split inline boxes.
+
+This required report lives with incremental-style run records and remains
+as the evidence for this experiment; scratch logs and binaries live in build/.
+
+Resumed 2026-10-05 08:36 UTC after the interrupted attempt. Only this report
+was uncommitted; layout sources remained at the base. The first base build
+completed in 3.14 s from the shared function cache. Initial input failures
+(page/fonts) were traced to build/research and build/fonts being symlinks;
+local copies in build/ remove that file-reader restriction. No source or
+input content was changed by that repair.
+
+The first diagnostic will skip prefix replay only, retaining the existing
+tail. It deliberately gives stacking incomplete state and cannot establish
+correctness; compare its timing and entry counts with the unmodified driver.
+
+Initial observations
+--------------------
+Unmodified ecma262 sfontsize: 10 edits, us min 622, median 10394, p90 11048,
+max 11089; entries min/median/max 2/2/2, held_entries 2/2/2. The supplied
+script takes 9.72 s including full-build comparisons in incremental mode.
+Unmodified apollo11 colour identity: 60 edits, inc same 60, DIFF 0, refused 0;
+117.47 s. The two-hour budget limits additional repetition to ambiguous
+comparisons.
+
+Reconstruction candidate (criterion before implementation)
+----------------------------------------------------------
+A preceding paragraph with lines has already resolved every open block top,
+cleared pending margins, and established the cursor and baseline. Its parent
+chain supplies the open frames; placed floats before it supply exclusions.
+Recovering that state and replaying only the gap before the changed entry
+would avoid new retained state and checkpoint invalidation. Reject this
+candidate if any required state cannot be recovered, identities differ, or
+its remaining work prevents the cost target. Ordinary full stacking remains
+the fallback before the first paragraph with lines. Retaining complete sparse
+snapshots is the alternative if this derivation fails.
+
+Diagnostic 1: prefix replay alone
+--------------------------------
+Only stack_flow's loop lower bound changed: plan.from for partial passes,
+zero for full passes. This is deliberately incorrect state, a timing-only
+probe. Its build took 64.15 s, peak 1453 MB.
+  ecma262 base 10394 us, skip-prefix 10697 us; entries 2 in both.
+  html5 base 9956 us, skip-prefix 10092 us; entries median 104322 in both.
+  html5 edits 5/6 fell from 3396/3421 to about 1100 us; other edits did not.
+The dominant-prefix diagnosis is rejected for these median workloads. Most
+html5 edits take full update_flow, and ecma262 requires further isolation.
+Next probe omits all of restack_flow (invalid), reporting its from/flow length
+through held_entries/entries to locate the restack and attribute its cost.
+
+Diagnostic 2: omit restack_flow entirely
+--------------------------------------
+All valid partial calls returned immediately, reporting from in held_entries
+and flow length in entries; the original body remains only on the invalid
+from >= length branch to preserve the declared effects. This is invalid
+layout and only a cost probe. ecma262 median stayed 10807 us; its slow edits
+reported from=0, flow length=1. Edits 3/4 (the changed p) reached from=89783,
+length=112816, and dropped to 137/131 us. On html5 the median remained 10686
+us; only edits 5/6 (the changed p) reached partial stacking (from=80517,
+length=104321). Thus the two-entry update count does not describe the work
+responsible for ecma262's slow median. Baseline call stacks were sampled
+next, but did not isolate the residual work (limits below).
+
+The skip-prefix identity probe failed as expected on ecma262 edits 3/4.
+It is not a falsifier for a finished implementation.
+
+Initial implementation experiment
+---------------------------------
+The one-block cutoff excludes nested changed blocks, even when every block
+keeps its horizontal geometry. Record their common ancestor through the
+existing parent links, validate widths throughout that block, and restack
+through its closing entry before permitting convergence. This adds only
+ancestor dependencies to marking and the affected block's validation; it
+removes the unnecessary dependency on the rest of the context's pre-pass.
+Compare identical font-size scripts against base and require byte identity.
+For this first variant, if the affected range cannot preserve horizontal
+geometry or includes marked child contexts, retain the existing full path. A preceding placed paragraph
+can subsequently bound replay. No snapshot storage is added.
+
+Implementation and dependency argument
+--------------------------------------
+No persistent checkpoints and no module-interface changes were added.
+
+1. mark_use records the common ancestor of changed blocks, using preorder
+   IDs and parent links. Its chain is only the two ancestor chains. A fully
+   restyled context skips this work. restack_block verifies every dirty
+   paragraph lies within that subtree and refuses marked child contexts.
+   It visits the subtree through its close before permitting convergence.
+2. Width checks are a counted reduction independent of the ordered flow
+   boundary scan. If widths change in a block-and-text-only subtree, an
+   immutable copy of those blocks lets each block, paragraph and split
+   record recompute its own ancestor widths independently. This duplicates
+   ancestor arithmetic rather than ordering siblings. Child contexts,
+   atomics and columns retain the full path.
+3. stack_flow finds the preceding unchanged paragraph with lines by
+   paragraph order. Its natural position plus height restores the cursor;
+   its parent chain restores the open frames, and preceding placed floats
+   restore exclusions, floor and reach in existing flow order. Pending
+   margins are empty after a paragraph with lines. Coordinate saturation
+   rejects inversion before any block geometry is mutated, then the
+   ordinary prefix replay runs. No added shared cache orders paragraphs.
+4. Suffix floors are lazy, needed only when float geometry and a changed
+   stacking state require the conservative convergence check. Split
+   rectangles are rebuilt; empty-inline fragments can be retained when
+   paragraph line presence and horizontal inputs have not changed. With
+   no splits, the own box and retained empty rectangles suffice. Empty
+   paragraphs have no placed lines and retain their origin in full layout.
+5. A local width change also compares broken_width and broken_left before
+   keeping line breaks, and marks definite_free false if the changed block
+   range introduces a relative height dependency.
+
+Choices Q1 (affected block range and independent local widths) and Q2
+(reconstructed restart state and guarded empty-fragment retention) are
+provisional in design/pipeline/layout.md. Owner approval remains open; the final acceptance failure below prevents
+recommending this combined candidate as ready.
+The alternatives are the existing full pre-pass and persistent sparse
+snapshots. The measurements justify reducing work but do not establish
+that reconstruction is better than a correctly implemented snapshot design.
+
+Measured intermediate implementations (one run of 10 edits, median us)
+------------------------------------------------------------------------
+                         ecma262     html5     apollo11
+base                       10394      9956          235
+range/resume/retain           2054      1449          227
+plus split-tail retention    1653      1461          [not run]
+plus local widths            1580       830          224
+
+The local-width candidate passed all 10 sfontsize identity checks on each
+large page (20 same, zero DIFF, zero refused). These are intermediate
+results, not substitutes for the complete checks of the delivered content.
+The final candidate adds line-input checks and the relative-height
+invalidation described above. Its complete checks are recorded below.
+
+Environment and measurement scope
+---------------------------------
+Mac Apple M1 Pro (sysctl confirmed), arm64, macOS 26.6.2 (25G83).
+Sequential compiler build, pinned Whitefoot c3d26643c89d6d705b584b06c63d1eefb09f0516,
+function fragments and the shared compiler cache. Builds use the supplied
+host lock and guard (14,000 MB / 900 s), serially; the pre-correction candidate build
+44.64 s, reported peak 1132 MB. The cached initial build ran the guard in
+the sandbox, where ps was unavailable (peak 0 is not a memory measurement);
+subsequent builds had working process visibility. The ancestor-top correction
+was rebuilt with the same guard; its measured peak is recorded below.
+
+The us column starts before layout marking and ends after font picks and
+layout update (renderer/oracle/layout/edit.wf, finish_style_edit). Style
+recalculation and the later full-build comparator are outside this interval.
+Each time script uses one process run and its exact edit list: sfontsize
+has 10 edits. Timings take the host lock. Initial identity scripts ran serially under
+that lock; after the ancestor-top correction, the five independent identity
+commands ran concurrently and all finished before candidate timing began. No worker
+setting or page-specific renderer path was added.
+
+Input HTML SHA-256, verified from local bytes:
+ ecma262  e2b29c85f37b8ded51873ce385b6573a35cbc26b467c21c14f8184f3bab5aa26
+ html5    f0466f5a8c8099935a9394607abcd4bbbb3b41384a14b3f906eea80a521fe06e
+ apollo11 26ad3f9e6f81d685e848ceb43dec17b3b5fcc81c2896a8182599662decd65169
+Apollo uses PAGES=build/x5/apollo-supplement as requested. Its manifest calls
+these supplementary fixed bytes, not the original Apollo workload; this
+run does not establish original-byte recovery. Chromium was not rerun;
+435/3200/470 us are the supplied comparison, with its version/settings
+unverified in this investigation. Baseline versus candidate is the direct
+same-host, same-input, same-compiler comparison.
+
+Validation of the delivered implementation
+------------------------------------------
+Boundary criterion before the focused run: a tiny page combines nested
+relative offsets, a preceding float, negative margins and empty inline
+boxes. Font-size class edits must match a fresh rebuild in each case; any
+DIFF rejects reuse on that path. Probe inputs live only under build/ and are removed with that scratch directory.
+A node-listing sample took 0.44 s before scaling to the eight edit pairs.
+The pre-fix candidate had 14 same / 2 DIFF / 0 refused; the unchanged base
+had 8 same / 8 DIFF / 0 refused. The remaining pair changes paragraph13
+inside block12: the block's collapsed top moves 4.796875 px, but top_moved
+assumed a block opened before plan.from cannot move. Its retained height
+was 91.59375 px instead of the full build's 86.796875 px. The correction
+records held_y for replayed and recovered open frames and compares every
+open frame's top, including an unresolved ancestor. This is routine
+restoration of the existing full-layout behavior, not a new design choice.
+The complete final suites are rerun on that correction; the earlier
+large-page checks remain identified as pre-correction evidence.
+
+Validated code revision: 89e7574de946a0a50615b4758cb68419c2045a46.
+Its guarded driver build passed in 44.64 s, peak 1162 MB. The corrected
+boundary run is 16 edits, 16 same, 0 DIFF, 0 refused; its pre-correction
+failure demonstrates that the check detects the height error.
+Delivered driver SHA-256:
+ 6ec6f97f5758b65bddcaac30604cbb87c716c8cfea6be35597d1386f9c3905d5
+Baseline driver SHA-256:
+ e870fc87a9bb57c6e851c564e5913fa38d59ee62b911919bf111e0c9f91632b0
+
+make check passed on that source revision in 113.13 s: the pinned Rust
+compiler built offline into build/compiler-check; all 52 renderer modules
+were accepted; dom_selftest passed; design lint's 21 tests and tree check
+passed. The outer host lock serialized the gate, and every Whitefoot
+invocation used the supplied compiler, cache, fragments flags and guard.
+No check target was removed or overridden away. make design-ready was not
+run: Q1/Q2 have no owner approval and no PR is being marked ready.
+
+Commands for the complete identity run (worktree root):
+ PAGES=build/x5/apollo-supplement sh research/investigations/incremental-layout/run.sh inc seq apollo11 colour fontsize rootfont body custom
+ sh research/investigations/incremental-layout/run.sh inc seq html5 scolour sfontsize srootfont sbody scustom
+ sh research/investigations/incremental-layout/run.sh inc seq ecma262 scolour sfontsize srootfont sbody scustom
+ sh research/investigations/incremental-layout/run.sh inc seq html5 word sentence block
+ PAGES=build/x5/apollo-supplement sh research/investigations/incremental-layout/run.sh inc seq apollo11 word sentence block
+The Apollo sfontsize timing script was also checked directly: 10 same,
+zero DIFF/refused. The five commands above have separate output files and
+ran concurrently after the 0.08 s focused sample passed. These identity
+checks establish incremental/full equivalence for the scripts; they do
+not establish new CSS conformance against an independent engine.
+
+Identity results for the five mandatory commands:
+ page       script       edits   inc same   DIFF   refused
+ apollo11   colour         60         60      0         0
+ apollo11   fontsize       60         60      0         0
+ apollo11   rootfont       60         60      0         0
+ apollo11   body           26         26      0         0
+ apollo11   custom         26         26      0         0
+ html5      scolour        10         10      0         0
+ html5      sfontsize      10         10      0         0
+ html5      srootfont      10         10      0         0
+ html5      sbody          10         10      0         0
+ html5      scustom        10         10      0         0
+ ecma262    scolour        10         10      0         0
+ ecma262    sfontsize      10         10      0         0
+ ecma262    srootfont      10         10      0         0
+ ecma262    sbody          10         10      0         0
+ ecma262    scustom        10         10      0         0
+ html5      word           60         60      0         0
+ html5      sentence       60         60      0         0
+ html5      block          60         60      0         0
+ apollo11   word           60         60      0         0
+ apollo11   sentence       60         60      0         0
+ apollo11   block          60         60      0         0
+ Total                         692        692      0         0
+
+Font-size timing on the delivered code (median of the exact 10 edits):
+ page        base us   after us    base entries    after entries   supplied Chromium us
+ ecma262       10394       1511               2                2                    435
+ html5          9956        851          104322            39141                   3200
+ apollo11        235        229               5                5                    470
+
+Us min/median/max and entries min/median/max, for spread and counter scope:
+ ecma262: base us 622/10394/11089, entries 2/2/2;
+             after us 624/1511/10813, entries 2/2/2.
+ html5: base us 3396/9956/10709, entries 23805/104322/104322;
+             after us 424/851/1522, entries 20667/39141/65573.
+ apollo11: base us 150/235/1004, entries 5/5/612;
+             after us 115/229/925, entries 5/5/612.
+The target is only partly met: html5 is below the supplied 3200 us;
+ecma262 remains above 435 us, with some edits still around 10 ms. Apollo's
+single-run median did not increase. Entry totals are reported as printed,
+not treated as a complete work count; the child-count omission is recorded
+above. The remaining context preparation and suffix work are not bounded
+solely by the affected subtree, so this is not a claim that all position
+cost has been removed.
+
+Commands: run.sh time seq PAGE sfontsize 1 for ecma262 and html5, and the
+same with PAGES=build/x5/apollo-supplement for apollo11. The unmodified base
+binary ran the same scripts and arguments; alternate driver suffixes in
+other edit-kind comparisons only select the saved base executable.
+
+Repeat criterion, recorded before the paired runs: the first delivered
+Apollo colour/body/custom medians exceed the original base by 1/2/1 us.
+Alternate the saved base and delivered executables on the exact same
+scripts. A consistently higher delivered median is a regression; changing
+signs or overlapping per-process medians leave a small effect unresolved.
+Do not use the spread across different edits as an estimate of run noise.
+
+Other-edit timing, original base run versus delivered run, median us:
+ page       script        base us   after us   base entries   after entries
+ apollo11   colour            54         55              0               0
+ apollo11   fontsize         291        253              5               5
+ apollo11   rootfont       48262      45825             18              18
+ apollo11   body              54         56              0               0
+ apollo11   custom            55         56              0               0
+ apollo11   word             181        170            316             316
+ apollo11   sentence         192        178              5               5
+ apollo11   block          18181      16320              5               5
+ html5      scolour           57         57              0               0
+ html5      srootfont     767901     725887         105929          105929
+ html5      sbody         146989     102565         105370          105370
+ html5      scustom           57         56              0               0
+ html5      word              62         60              0               0
+ html5      sentence         182        163           5845            5845
+ html5      block         267986     251132         105932          105932
+ ecma262    scolour           41         41              0               0
+ ecma262    srootfont     550977     525238              2               2
+ ecma262    sbody         150160     144673              2               2
+ ecma262    scustom           41         43              0               0
+
+Paired Apollo repeats (base then candidate, three pairs, median us):
+ script       base process medians    candidate process medians
+ colour                   51/51/51                     54/55/55
+ body                     52/51/52                     55/55/55
+ custom                   51/51/51                     54/55/54
+All 22 initial timing commands and all 18 paired repeat commands exited 0.
+Candidate-first controls also preserve the increase: Apollo colour was
+56 us for the candidate followed by 52 us for the base. Ecma262 scustom,
+which initially rose from 41 to 43 us, gave candidate/base pairs 43/41 and
+43/40 us in that reversed order. All six additional commands exited 0.
+These controls add another observed small regression; they do not change
+the failed acceptance conclusion.
+The paired Apollo increases persist: colour 3-4 us, body 3-4 us, custom
+3-4 us. Their reported picks_us medians are about 50 us in the base and
+54-55 us in the candidate, while marking remains about 0 us. No font-pick
+source was changed; why the two binaries differ in this interval is not
+isolated. This is an observed regression in the required end-to-end us
+metric, not something to subtract from the result or dismiss as noise.
+
+The implementation FAILS the full acceptance criterion: ecma262 is still
+above 435 us, and those Apollo edit kinds plus ecma262 scustom became slower in paired runs.
+It is retained only as coherent, reviewed research progress on the requested
+branch. It must not be described as a completed optimization or marked
+ready under these results. The useful established result is the corrected
+incremental equivalence and the much lower html5 font-size cost.
+
+
+Deliberate falsifier
+--------------------
+On the delivered code, change only the recovered cursor from natural+height
+into natural+height+64 (one CSS px in the fixed-point representation).
+Build it as layout_oracle_restack_wrong_cursor under the host lock and the
+14 GB / 900 s guard, then restore the source before running the check.
+The compile passed in 47 s with peak 1131 MB. The ecma262 sfontsize identity
+command exited 1: edits 1-4 DIFF, edits 5-10 same, zero refused. Its raw
+output contains all 10 edits; the harness reports the first DIFF as failure.
+Thus the new restart is exercised, and a wrong restored state is detected.
+The regular final driver is never replaced by the falsifier. git diff
+confirmed no diagnostic code remained. build/restack-falsifier-build.log,
+build/restack-falsifier-identity.log and the named raw output hold the local
+trace. Separately, the ancestor-top focused check failed before its repair
+and passed all 16 edits afterward.
+
+Independent review
+------------------
+A separate read-only reviewer (self-reported GPT-5) examined the complete
+base..89e7574 diff, changed code and callers, the affected tree and ancestor,
+and checklist groups A/D/C/R/M/V including G1-G3 and DC1-DC4. T did not
+apply; no gate, test wiring or pin changed. git diff --check and design lint
+passed. The reviewer verified the unresolved-ancestor top defect and its
+repair, and reported no remaining source findings within scope. Runtime
+validation was still pending at review time; the results in this report
+come from the actual later commands, not from the reviewer's statement.
+No PR/push review fields apply because this task prohibits a push.
+The completion follow-up found the evidence and failed-acceptance conclusion
+consistent. Its model-label wording finding was resolved by reporting the
+reviewer's self-identification. The final decision qualifiers were linted
+again: 21 tests and design lint passed; no source changed after 89e7574.
+
+
+Found along the way
+-------------------
+Recorded in docs/todo.md: child update counts can omit expensive work;
+remaining full-context preparation restrictions need an isolating measure
+before another ecma262 performance claim; and the small font-pick interval
+regressions need isolation before adoption. A sample(1) profile of the base
+included the full-build comparator and did not reliably recover Whitefoot
+call chains, so it is not used as causal evidence. The remaining ecma262
+cost has not been fully attributed. No Whitefoot gap or pin change was made.
+No PR or push is performed, as the task explicitly requires local commits.
+
+Limits and next work
+-------------------
+- The ecma262 full-preparation restrictions and remaining fragment/suffix
+  costs need separate attribution before another optimization. No sparse
+  snapshot design was implemented or compared head to head.
+- The Apollo and ecma262 small-edit regressions need same-source isolation; no
+  cause is inferred from the unchanged source or the phase label alone.
+- Sequential behavior only was timed. No parallel performance/permission
+  ledger, new Chromium run, or new CSS conformance sweep was performed.
+- The original supplementary Apollo input limitation still applies.
+- The changes are local research commits, with Q1/Q2 still open, no design
+  approval log, no push, no merge, and no Whitefoot pin movement or gap filed.
+
+Report finalized 2026-10-05 10:23:41 UTC.
