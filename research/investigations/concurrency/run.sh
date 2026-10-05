@@ -293,8 +293,8 @@ build() {
 		exit 2
 	fi
 	mkdir -p build
-	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --par --graph modules.wfg --entry proto_style -o ../build/proto_style)
-	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --graph modules.wfg --entry proto_style -o ../build/proto_style_seq)
+	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --fragments function --par --graph modules.wfg --entry proto_style -o ../build/proto_style)
+	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --fragments function --graph modules.wfg --entry proto_style -o ../build/proto_style_seq)
 }
 
 build_layout() {
@@ -303,8 +303,8 @@ build_layout() {
 		exit 2
 	fi
 	mkdir -p build
-	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --par --graph modules.wfg --entry proto_layout -o ../build/proto_layout)
-	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --graph modules.wfg --entry proto_layout -o ../build/proto_layout_seq)
+	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --fragments function --par --graph modules.wfg --entry proto_layout -o ../build/proto_layout)
+	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --fragments function --graph modules.wfg --entry proto_layout -o ../build/proto_layout_seq)
 }
 
 # Names the compiler by its path, relative to the checkout when it lies

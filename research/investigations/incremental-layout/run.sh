@@ -47,8 +47,8 @@
 # research/investigations/concurrency/run.sh and run with the sheets of
 # research/investigations/layout/run.sh; the fonts are in build/fonts. The
 # drivers are built by
-#   cd renderer && whitefootc --cache ../build/whitefoot-cache --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq
-#   cd renderer && whitefootc --cache ../build/whitefoot-cache --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par
+#   cd renderer && whitefootc --cache ../build/whitefoot-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq
+#   cd renderer && whitefootc --cache ../build/whitefoot-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par
 # under the host-wide lock (.github/run-check.pl of the pinned checkout). The
 # other runs here check results and are not timed, so only time takes the
 # lock.
