@@ -113,7 +113,7 @@ incremental() {
 					if ($i == "visited") visited += $(i + 1)
 					if ($i == "differ" && $(i + 1) > 0) differ++
 				}
-				if ($NF == "rebuilt") rebuilt++
+				for (i = 3; i <= NF; i++) if ($i == "rebuilt") rebuilt++
 			}
 			END { printf "%s: %d edits, %d differ, %d rebuilt, %d elements visited\n", name, edits, differ, rebuilt, visited; exit (differ > 0 || edits == 0) }
 		' "$out" || status=1

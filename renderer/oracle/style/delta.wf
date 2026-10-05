@@ -3,6 +3,7 @@ alias AtomTable = pkg::base::atom::AtomTable;
 alias Attribute = pkg::dom::Attribute;
 alias AttributeNamespace = pkg::dom::AttributeNamespace;
 alias Clock = std::time::Clock;
+alias Instant = std::time::Instant;
 alias Document = pkg::dom::Document;
 alias Environment = pkg::css::values::Environment;
 alias HandleFactory = std::io::HandleFactory;
@@ -50,6 +51,10 @@ const visited_label: Array<u8, 9> = " visited ";
 const differ_label: Array<u8, 8> = " differ ";
 
 const rebuilt_label: Array<u8, 8> = " rebuilt";
+
+const set_us_label: Array<u8, 8> = " set_us ";
+
+const restyle_us_label: Array<u8, 12> = " restyle_us ";
 
 const set_label: Array<u8, 5> = " set ";
 
@@ -837,8 +842,8 @@ fn differing(first: &Styles, second: &Styles, document: &Document, atoms: &AtomT
   return differ, first_at;
 }
 
-fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, script: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(traversal), reads(script), writes(document), writes(atoms), writes(out), writes(err), writes(files) waits {
-  doc "Checks pkg::style::restyle against a full style run. Keeps a StyleState of the document; for each C or K line, in order: the restyle set class_restyle gives, then the edit, then restyle, then compute_styles of the edited document, compared with the kept styles value by value (differing). Reports `restyle I set S visited V changed C differ D`, with ` rebuilt` when restyle rebuilt every node and ` full` in place of the set for a full set, and ` first P` when D is not 0. S lines were added before; N lines change nothing; any other line is refused. Returns 0, or 2 after naming the failure on err.";
+fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, script: &[u8], check: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(traversal), reads(script), writes(document), writes(atoms), writes(clock), writes(out), writes(err), writes(files) waits {
+  doc "Checks pkg::style::restyle against a full style run. Keeps a StyleState of the document; for each C or K line, in order: the restyle set class_restyle gives, then the edit, then restyle, then compute_styles of the edited document, compared with the kept styles value by value (differing). Reports `restyle I set S visited V changed C differ D`, with ` rebuilt` when restyle rebuilt every node and ` full` in place of the set for a full set, and ` first P` when D is not 0, then ` set_us A restyle_us B`, the microseconds class_restyle and restyle took, each read after the work it ends (stamps). Without check (mode restyletime) the full run and the comparison are skipped and D is 0, so that a profile of many edits holds the restyle alone. S lines were added before; N lines change nothing; any other line is refused. Returns 0, or 2 after naming the failure on err.";
   let notes = box_slots_new::<u8>(capacity: 4096_u64);
   let class_atom = class_index(atoms: atoms);
   let state = match style_state(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
@@ -905,15 +910,6 @@ fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, tr
           let reported = flush(factory: files, output: err, buffer: &notes);
           return 2_u8;
         }
-        let wanted = match class_restyle(store: store, document: document, atoms: atoms, traversal: traversal, node: node, class: &line^[after_node..size]) {
-          Ok(value: found) => {
-            give move found;
-          }
-          Err(error: failure) => {
-            report_style(err: err, files: files, failure: failure);
-            return 2_u8;
-          }
-        }
         let applied = apply_class_edit(document: document, class_atom: class_atom, line: line);
         if applied {
         } else {
@@ -921,7 +917,8 @@ fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, tr
           let reported = flush(factory: files, output: err, buffer: &notes);
           return 2_u8;
         }
-        let done = match restyle_state(state: &state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, wanted: &wanted) {
+        let set_started = now(clock: clock);
+        let wanted = match set_after(started: set_started, store: store, document: document, atoms: atoms, traversal: traversal, node: node, class: &line^[after_node..size]) {
           Ok(value: found) => {
             give move found;
           }
@@ -930,7 +927,8 @@ fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, tr
             return 2_u8;
           }
         }
-        let fresh = match compute_styles(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
+        let set_finished = stamp_set(clock: clock, witness: &wanted);
+        let done = match restyle_after(started: set_finished, state: &state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, wanted: &wanted) {
           Ok(value: found) => {
             give move found;
           }
@@ -939,7 +937,25 @@ fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, tr
             return 2_u8;
           }
         }
-        let (differ, first_at) = differing(first: &state.styles, second: &fresh, document: document, atoms: atoms, traversal: traversal);
+        let restyle_finished = stamp_state(clock: clock, witness: &state);
+        let set_ns = nanoseconds_from(earlier: set_started, later: set_finished);
+        let restyle_ns = nanoseconds_from(earlier: set_finished, later: restyle_finished);
+        let differ = 0_u64;
+        let first_at = 0_u64;
+        if check {
+          let fresh = match compute_styles(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
+            Ok(value: found) => {
+              give move found;
+            }
+            Err(error: failure) => {
+              report_style(err: err, files: files, failure: failure);
+              return 2_u8;
+            }
+          }
+          let (differ_count, differ_at) = differing(first: &state.styles, second: &fresh, document: document, atoms: atoms, traversal: traversal);
+          set differ = differ_count;
+          set first_at = differ_at;
+        }
         put_text(buffer: &notes, text: &restyle_label[0_u64..restyle_label.len]);
         put_decimal(buffer: &notes, value: edits);
         if wanted.full {
@@ -961,10 +977,42 @@ fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, tr
         if done.full {
           put_text(buffer: &notes, text: &rebuilt_label[0_u64..rebuilt_label.len]);
         }
+        let set_us = set_ns / 1000_u64;
+        let restyle_us = restyle_ns / 1000_u64;
+        put_text(buffer: &notes, text: &set_us_label[0_u64..set_us_label.len]);
+        put_decimal(buffer: &notes, value: set_us);
+        put_text(buffer: &notes, text: &restyle_us_label[0_u64..restyle_us_label.len]);
+        put_decimal(buffer: &notes, value: restyle_us);
         put_byte(buffer: &notes, value: 10_u8);
         let flushed = flush(factory: files, output: out, buffer: &notes);
       }
     }
   }
   return 0_u8;
+}
+
+fn set_after(started: Instant, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, node: NodeId, class: &[u8]) -> result: Result<RestyleSet, StyleError> reads(store), reads(document), reads(atoms), reads(traversal), reads(class) {
+  doc "class_restyle, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let made = class_restyle(store: store, document: document, atoms: atoms, traversal: traversal, node: node, class: class);
+  return move made;
+}
+
+fn restyle_after(started: Instant, state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, wanted: &RestyleSet) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), reads(wanted), writes(state), writes(atoms) {
+  doc "restyle, called with the reading that starts its interval as an argument.";
+  let made = restyle_state(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, wanted: wanted);
+  return move made;
+}
+
+fn stamp_set(clock: &Clock, witness: &RestyleSet) -> result: Instant reads(witness), writes(clock) {
+  doc "Reads the clock after every earlier statement that writes witness.";
+  let held = witness^.elements.inner.len;
+  let made = now(clock: clock);
+  return made;
+}
+
+fn stamp_state(clock: &Clock, witness: &StyleState) -> result: Instant reads(witness), writes(clock) {
+  doc "Reads the clock after every earlier statement that writes witness.";
+  let held = witness^.styles.elements.inner.len;
+  let made = now(clock: clock);
+  return made;
 }
