@@ -529,6 +529,43 @@ fn same_border_layout(first: BorderGroup, second: BorderGroup) -> same: Bool pur
   return all_same;
 }
 
+fn runs_same(styles: &Styles, first: ComputedStyle, second: ComputedStyle) -> same: Bool reads(styles) {
+  doc "Whether two computed styles of the kept tables agree in what an element's own text and inline boxes read in layout beyond its box: the font, table and content groups and the text group without its colour.";
+  let font = first.font == second.font;
+  let table = first.table == second.table;
+  let content = first.content == second.content;
+  let a = band(font, table);
+  let groups = band(a, content);
+  if groups {
+  } else {
+    return False();
+  }
+  if first.text == second.text {
+    return True();
+  }
+  let x = cvt::<u32, u64>(first.text);
+  let y = cvt::<u32, u64>(second.text);
+  if x < styles^.texts.inner.len {
+    if y < styles^.texts.inner.len {
+      let text_same = same_text_layout(first: styles^.texts.inner[x], second: styles^.texts.inner[y]);
+      return text_same;
+    }
+  }
+  return False();
+}
+
+fn changed_entry(position: u64, boxes_only: Bool) -> made: u32 pure {
+  doc "The entry of Restyled.changed for the element at position, with changed_boxes_only added when boxes_only holds and the position leaves that bit free.";
+  let narrowed = cvt.wrap::<u64, u32>(position);
+  let fits = position < 2147483648_u64;
+  let flagged = band(boxes_only, fits);
+  if flagged {
+    let made = ior(narrowed, changed_boxes_only);
+    return made;
+  }
+  return narrowed;
+}
+
 fn layout_same(styles: &Styles, first: ComputedStyle, second: ComputedStyle) -> same: Bool reads(styles) {
   doc "Whether two computed styles of the kept tables agree in everything layout reads, as layout_changes compares two runs: the box, size, spacing, font, container, item, table and content groups, the text and border groups without their colours, and whether the background is present; the custom-property set is not read.";
   let a = first.box == second.box;
@@ -766,6 +803,7 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
   let set_changed = box_array_filled::<Bool>(count: count, value: unchanged);
   let style_changed = box_array_filled::<Bool>(count: count, value: unchanged);
   let layout_changed = box_array_filled::<Bool>(count: count, value: unchanged);
+  let runs_changed = box_array_filled::<Bool>(count: count, value: unchanged);
   let structural = False();
   let batch = box_slots_new::<u64>(capacity: 0_u64);
   let owners = box_slots_new::<u64>(capacity: 0_u64);
@@ -879,6 +917,16 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
           if read_same {
           } else if owner < layout_changed.inner.len {
             set layout_changed.inner[owner] = True();
+            let own_node = j < elements_in_batch;
+            let own_runs = if own_node {
+              give runs_same(styles: &state^.styles, first: before, second: made);
+            } else {
+              give False();
+            }
+            if own_runs {
+            } else if owner < runs_changed.inner.len {
+              set runs_changed.inner[owner] = True();
+            }
           }
           let built_same = construction_same(styles: &state^.styles, first: before, second: made);
           if built_same {
@@ -897,8 +945,9 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
   for (k in 0_u64..count) {
     let at = level^.inner[k];
     if layout_changed.inner[k] {
-      let narrowed = cvt.wrap::<u64, u32>(at);
-      let pushed = propagate push::<u32>(cell: changed, value: narrowed, ceiling: 4294967296_u64);
+      let boxes_only = bnot(runs_changed.inner[k]);
+      let listed = changed_entry(position: at, boxes_only: boxes_only);
+      let pushed = propagate push::<u32>(cell: changed, value: listed, ceiling: 4294967296_u64);
     }
     let in_restyle = if at < state^.marks.inner.len {
       give state^.marks.inner[at] == in_set;
@@ -1133,6 +1182,7 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
   let unchanged = False();
   let structural = False();
   let flagged = box_array_filled::<Bool>(count: new_elements, value: unchanged);
+  let runs_flagged = box_array_filled::<Bool>(count: new_elements, value: unchanged);
   for (k in 0_u64..node_count) {
     let made = computed.inner[k];
     if k < new_elements {
@@ -1144,6 +1194,11 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
         if read_same {
         } else {
           set flagged.inner[k] = True();
+          let own_runs = runs_same(styles: &state^.styles, first: before.inner[k], second: made);
+          if own_runs {
+          } else if k < runs_flagged.inner.len {
+            set runs_flagged.inner[k] = True();
+          }
         }
         let built_same = construction_same(styles: &state^.styles, first: before.inner[k], second: made);
         if built_same {
@@ -1198,6 +1253,9 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
           if same {
           } else if element < flagged.inner.len {
             set flagged.inner[element] = True();
+            if element < runs_flagged.inner.len {
+              set runs_flagged.inner[element] = True();
+            }
           }
         }
       }
@@ -1208,6 +1266,9 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
       let element = a_rank / 4_u64;
       if element < flagged.inner.len {
         set flagged.inner[element] = True();
+        if element < runs_flagged.inner.len {
+          set runs_flagged.inner[element] = True();
+        }
       }
       set a = a +sat 1_u64;
     } else {
@@ -1215,14 +1276,23 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
       let element = b_rank / 4_u64;
       if element < flagged.inner.len {
         set flagged.inner[element] = True();
+        if element < runs_flagged.inner.len {
+          set runs_flagged.inner[element] = True();
+        }
       }
       set b = b +sat 1_u64;
     }
   }
   for (k in 0_u64..new_elements) {
     if flagged.inner[k] {
-      let narrowed = cvt.wrap::<u64, u32>(k);
-      let pushed = propagate push::<u32>(cell: &changed, value: narrowed, ceiling: 4294967296_u64);
+      let runs_moved = if k < runs_flagged.inner.len {
+        give runs_flagged.inner[k];
+      } else {
+        give True();
+      }
+      let boxes_only = bnot(runs_moved);
+      let listed = changed_entry(position: k, boxes_only: boxes_only);
+      let pushed = propagate push::<u32>(cell: &changed, value: listed, ceiling: 4294967296_u64);
     }
   }
   let copied = propagate copy_families(styles: &state^.styles, inherited: &state^.inherited);
