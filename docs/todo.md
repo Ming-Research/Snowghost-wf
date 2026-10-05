@@ -157,15 +157,21 @@ example apart from the renderer code that exposed it
   or with the parallel incremental timing that M1's criterion 2 asks for
   (par-1 and par-4 with the set's size).
 
-- **Kept style state only grows.** `class_attribute_changed` appends an
-  element's class records on every class edit and leaves the old ones
-  unread; the kept value tables, custom-property sets and generated text
-  only append. M1's Q89 recommended an occasional compaction (an epoch that
-  renumbers every table and every holder of an identifier), which does not
-  exist. Impact: memory grows with a session's edits; a table reaching its
-  ceiling refuses and the edit rebuilds. Change: compact when a table
-  doubles since the last full build. Reopen when an editing session's
-  measured memory grows past the full build's by half.
+- **Kept style state only grows (a condition of Q89).** The owner approved
+  Q89, value tables kept across edits, with this item required.
+  - What grows: `class_attribute_changed` appends an element's class records
+    on every class edit and leaves the old ones unread. The kept value
+    tables, custom-property sets and generated text only append, so every
+    distinct value a session meets stays.
+  - Impact: memory grows with a session's edits, not with the page. A table
+    that reaches its ceiling refuses, and the edit falls back to a full
+    rebuild.
+  - Change: the compaction Q89 recommended. It is an epoch that renumbers
+    every table and every holder of an identifier: the styles, layout's keys
+    and the class-record heads. It runs when a table has doubled since the
+    last full build. Measure first how a long editing session grows.
+  - Reopen before the shell runs editing sessions, or when an editing
+    session's measured memory grows past the full build's by half.
 
 - **No incremental regression runs in the gate.** `make check` builds and
   checks modules; the identity checks of incremental style and layout
