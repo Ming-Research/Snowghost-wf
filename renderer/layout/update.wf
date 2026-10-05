@@ -311,6 +311,7 @@ fn clear_subtree(context: &Context) -> result: unit writes(context) {
   doc "Clears the mark of context and of its paragraphs and its counts of marked ones, then does the same below it (clear_tree_marks).";
   set context^.dirty = False();
   set context^.restyled = False();
+  set context^.restyled_blocks = 0_u32;
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   let count = context^.paragraphs.inner.len;
@@ -327,6 +328,7 @@ fn reset_tree(context: &Context) -> result: unit writes(context) {
   set context^.space = fresh_space();
   set context^.dirty = False();
   set context^.restyled = False();
+  set context^.restyled_blocks = 0_u32;
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   let count = context^.paragraphs.inner.len;
@@ -540,6 +542,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
     if stopped {
       set child^.dirty = False();
       set child^.restyled = False();
+      set child^.restyled_blocks = 0_u32;
       set child^.marked_paragraphs = 0_u32;
       set child^.marked_children = 0_u32;
       resolve_margins(child: child, styles: styles);
@@ -552,6 +555,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
   lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   set child^.dirty = False();
   set child^.restyled = False();
+  set child^.restyled_blocks = 0_u32;
   set child^.marked_paragraphs = 0_u32;
   set child^.marked_children = 0_u32;
   resolve_margins(child: child, styles: styles);
@@ -1412,9 +1416,23 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   let in_flow = bnot(out_marked);
   let unchanged_style = bnot(context^.restyled);
   let steady_geometry = band(kept_geometry, in_flow);
-  let steady = band(steady_geometry, unchanged_style);
+  let steady_style = band(steady_geometry, unchanged_style);
+  let no_blocks = context^.restyled_blocks == 0_u32;
+  let one_block = context^.restyled_blocks == 1_u32;
+  let steady = band(steady_style, no_blocks);
   let nothing = no_updates();
   let early = nothing;
+  let block_steady = band(steady_style, one_block);
+  if block_steady {
+    let (handled, counts) = restack_block(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, unasked: unasked);
+    if handled {
+      clear_marks(context: context);
+      set context^.dirty = False();
+      set context^.restyled = False();
+      set context^.restyled_blocks = 0_u32;
+      return counts;
+    }
+  }
   if steady {
     let (from, p, inline_child) = restack_entry(context: context);
     let unscaled = bnot(frame.columned);
@@ -1436,6 +1454,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
       clear_marks(context: context);
       set context^.dirty = False();
       set context^.restyled = False();
+      set context^.restyled_blocks = 0_u32;
       return local;
     }
     set early = local;
@@ -1451,6 +1470,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
       clear_marks(context: context);
       set context^.dirty = False();
       set context^.restyled = False();
+      set context^.restyled_blocks = 0_u32;
       let total = add_counts(first: restacked, second: early);
       return total;
     }
@@ -1535,6 +1555,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   finish_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   set context^.dirty = False();
   set context^.restyled = False();
+  set context^.restyled_blocks = 0_u32;
   let summed = sum_counts(results: &results);
   let below = add_counts(first: summed, second: early);
   let walked = context^.flow.inner.len;
@@ -1690,6 +1711,93 @@ fn shift_natural(natural: &i32, delta: i32) -> result: unit writes(natural) {
     set natural^ = natural^ +sat delta;
   }
   return unit;
+}
+
+fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, unasked: Bool) -> (handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "A flow context whose geometry and space are unchanged and whose only style change is one block's (restyled_block): when the block's new style keeps its width, its left offset and its content box in the space the pre-pass gave it, and every marked paragraph and no child lies in the block or nothing is marked outside it, nothing outside the block reads a different width, so the flow is stacked again from the block's Open entry (restack_flow), its marked paragraphs broken again at full width there; refused (handled False, nothing written) otherwise, and update_flow takes its full path.";
+  let refused = no_updates();
+  let none = 18446744073709551615_u64;
+  if frame.columned {
+    return False(), refused;
+  }
+  if context^.marked_children > 0_u32 {
+    return False(), refused;
+  }
+  let b = cvt::<u32, u64>(context^.restyled_block);
+  if b < context^.blocks.inner.len {
+  } else {
+    return False(), refused;
+  }
+  let block = context^.blocks.inner[b];
+  let (box_width, offset, margin_left, margin_right) = block_width(styles: styles, style: block.style, available: block.avail_width);
+  let x = block.avail_left +sat offset;
+  let border = border_edges(styles: styles, style: block.style);
+  let padding = padding_edges(styles: styles, style: block.style, basis: block.avail_width);
+  let inner_left = x +sat border.left;
+  let content_left = inner_left +sat padding.left;
+  let frame_border = horizontal(edges: border);
+  let frame_padding = horizontal(edges: padding);
+  let frame_edges = frame_border +sat frame_padding;
+  let inner = box_width -sat frame_edges;
+  let content_width = imax(inner, 0_i32);
+  let same_width = box_width == block.width;
+  let same_x = x == block.inner_x;
+  let same_left = content_left == block.content_left;
+  let same_inner = content_width == block.content_width;
+  let outer = band(same_width, same_x);
+  let content = band(same_left, same_inner);
+  let kept = band(outer, content);
+  if kept {
+  } else {
+    return False(), refused;
+  }
+  let from = cvt::<u32, u64>(block.flow_at);
+  let entries = context^.flow.inner.len;
+  if from < entries {
+  } else {
+    return False(), refused;
+  }
+  let inside = 0_u32;
+  let depth = 0_u64;
+  let closed = False();
+  for (k in from..entries) {
+    let item = context^.flow.inner[k];
+    match item {
+      Open(..) => {
+        set depth = depth +sat 1_u64;
+      }
+      Close(..) => {
+        set depth = depth -sat 1_u64;
+        if depth == 0_u64 {
+          set closed = True();
+          break;
+        }
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          if context^.paragraphs.inner[at].dirty {
+            set inside = inside +sat 1_u32;
+          }
+        }
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  let all_inside = inside == context^.marked_paragraphs;
+  let usable = band(closed, all_inside);
+  if usable {
+  } else {
+    return False(), refused;
+  }
+  let no = False();
+  let counts = restack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame, from: from, at: none, old_top: 0_i32, old_height: 0_i32, old_lines: no, unasked: unasked);
+  return True(), counts;
 }
 
 fn restack_entry(context: &Context) -> (from: u64, paragraph: u64, inline_child: u64) reads(context) {
