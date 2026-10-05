@@ -109,8 +109,8 @@ reps_of() {
 
 build() {
 	mkdir -p "$out"
-	(cd renderer && "$compiler" --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par) >"$out/ledger.txt"
-	(cd renderer && "$compiler" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle)
+	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par) >"$out/ledger.txt"
+	(cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle)
 }
 
 # The least matched counts of block-level boxes, inline-level boxes and text

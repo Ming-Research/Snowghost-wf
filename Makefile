@@ -36,6 +36,12 @@ compiler:
 
 WHITEFOOTC := $(WHITEFOOT)/compiler/target/gate/whitefootc
 BUILD := $(ROOT)/build
+# Every renderer build and check reuses the compiler's cache of module
+# verdicts, function proofs and compiled code (whitefootc --cache), so an
+# edit is checked and compiled again only where it reaches; CACHE= with an
+# empty value builds without it.
+CACHE := $(BUILD)/whitefoot-cache
+WFC = $(WHITEFOOTC)$(if $(CACHE), --cache $(CACHE))
 ORACLE := $(BUILD)/oracle
 
 # Checks every renderer module against its interface; a module whose
@@ -45,7 +51,7 @@ ORACLE := $(BUILD)/oracle
 RENDERER_MODULES = $(shell sed -n 's/^\(pkg[a-z_:]*\):.*/\1/p' $(ROOT)/renderer/modules.wfg)
 renderer: compiler
 	@cd $(ROOT)/renderer && for module in $(RENDERER_MODULES); do \
-		$(WHITEFOOTC) --graph modules.wfg --check-module $$module || exit 1; done
+		$(WFC) --graph modules.wfg --check-module $$module || exit 1; done
 
 # Regenerates pkg::base::static_atoms from its name list with the
 # static_atoms tool; the record is replaced only when the tool succeeds.
@@ -60,7 +66,7 @@ dom-selftest: $(BUILD)/dom_selftest
 
 $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 	@mkdir -p $(BUILD)
-	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --entry $(notdir $@) -o $@
+	@cd $(ROOT)/renderer && $(WFC) --graph modules.wfg --entry $(notdir $@) -o $@
 
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
@@ -79,7 +85,7 @@ oracle-data: $(BUILD)/png-reference
 	@sh $(ROOT)/tests/oracle-data.sh $(ORACLE) $(BUILD)/png-reference
 
 $(BUILD)/%_oracle: compiler FORCE
-	@cd $(ROOT)/renderer && $(WHITEFOOTC) --graph modules.wfg --entry $*_oracle -o $@
+	@cd $(ROOT)/renderer && $(WFC) --graph modules.wfg --entry $*_oracle -o $@
 
 oracle-line-break: $(BUILD)/line_break_oracle
 	@cd $(ROOT) && $< build/oracle/ucd/LineBreakTest.txt
