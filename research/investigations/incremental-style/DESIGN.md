@@ -168,6 +168,12 @@ same host and Chromium build:
    sequentially on all three pages; a root font-size edit at or below
    Chromium's at four workers; reported at seq, par-1 and par-4 with the
    restyle set's size.
+   The owner raised this target on 2026-10-05, after the step-4 sample
+   (runs/step4.txt) and before step 5's measurement: before paint and the
+   shell, every E1 kind (word, sentence, colour, fontsize, rootfont, block)
+   costs less than Chromium's on all three pages, seq and par-4 reported
+   apart; the 2-times bound above stays as M1's floor, and block edits are
+   M2's.
 3. **Locality.** A colour edit visits, in style and layout together, no
    element or context outside its restyle set and their ancestors (counted
    by the oracle); toggling a class that no rule names restyles nothing.
