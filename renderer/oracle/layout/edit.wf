@@ -39,6 +39,15 @@ alias nanoseconds_from = std::time::nanoseconds_from;
 alias build_layout = pkg::layout::build_layout;
 alias build_traversal = pkg::style::build_traversal;
 alias compute_styles = pkg::style::compute_styles;
+alias Restyled = pkg::style::Restyled;
+alias StyleState = pkg::style::StyleState;
+alias class_restyle = pkg::style::class_restyle;
+alias pseudo_reads_attribute = pkg::style::pseudo_reads_attribute;
+alias restyle = pkg::style::restyle;
+alias style_state = pkg::style::style_state;
+alias styles_restyled = pkg::layout::styles_restyled;
+alias LayoutError = pkg::layout::LayoutError;
+alias Traversal = pkg::style::Traversal;
 alias lay_out = pkg::layout::lay_out;
 alias layout_changes = pkg::style::layout_changes;
 alias styles_changed = pkg::layout::styles_changed;
@@ -135,8 +144,8 @@ struct StyleUpdate {
 }
 
 struct Built {
-  doc "One run of the pipeline after the traversal: the styles, the font picks and the laid-out layout.";
-  styles: Styles;
+  doc "One run of the pipeline after the traversal: the kept style state, whose styles the layout reads, the font picks and the laid-out layout.";
+  state: StyleState;
   picks: FontPicks;
   layout: Layout;
 }
@@ -875,7 +884,7 @@ fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: 
       return Err<Built, u8>(error: 4_u8);
     }
   }
-  let styles = match compute_styles(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
+  let state = match style_state(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
     Ok(value: found) => {
       give move found;
     }
@@ -883,7 +892,7 @@ fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: 
       return Err<Built, u8>(error: 5_u8);
     }
   }
-  let picks = match pick_all(fonts: fonts, styles: &styles, atoms: &page^.atoms) {
+  let picks = match pick_all(fonts: fonts, styles: &state.styles, atoms: &page^.atoms) {
     Some(value: found) => {
       give move found;
     }
@@ -891,7 +900,7 @@ fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: 
       return Err<Built, u8>(error: 1_u8);
     }
   }
-  let layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: &styles, atoms: &page^.atoms, fonts: fonts, picks: &picks, viewport: viewport) {
+  let layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: &state.styles, atoms: &page^.atoms, fonts: fonts, picks: &picks, viewport: viewport) {
     Ok(value: found) => {
       give move found;
     }
@@ -899,8 +908,8 @@ fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: 
       return Err<Built, u8>(error: 2_u8);
     }
   }
-  lay_out(layout: &layout, document: &page^.document, styles: &styles, fonts: fonts, picks: &picks);
-  let built = Built(styles: move styles, picks: move picks, layout: move layout);
+  lay_out(layout: &layout, document: &page^.document, styles: &state.styles, fonts: fonts, picks: &picks);
+  let built = Built(state: move state, picks: move picks, layout: move layout);
   return Ok<Built, u8>(value: move built);
 }
 
@@ -965,24 +974,24 @@ fn stamp_styles(clock: &Clock, witness: &Styles) -> result: Instant reads(witnes
   return made;
 }
 
-fn styles_after(started: Instant, page: &Page, structural: Bool, environment: Environment) -> result: Result<Styles, u8> writes(page) {
-  doc "Builds the traversal again for a structural edit, then runs the style stage on the live document, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken. Fails with stage 4 (the traversal) or 5 (the styles).";
+fn styles_after(started: Instant, page: &Page, structural: Bool, environment: Environment) -> result: Result<StyleState, u8> writes(page) {
+  doc "Builds the traversal again for a structural edit, then runs the style stage on the live document into a new kept state, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken. Fails with stage 4 (the traversal) or 5 (the styles).";
   if structural {
     match build_traversal(document: &page^.document) {
       Ok(value: found) => {
         set page^.traversal = move found;
       }
       Err(..) => {
-        return Err<Styles, u8>(error: 4_u8);
+        return Err<StyleState, u8>(error: 4_u8);
       }
     }
   }
-  match compute_styles(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
+  match style_state(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
     Ok(value: found) => {
-      return Ok<Styles, u8>(value: move found);
+      return Ok<StyleState, u8>(value: move found);
     }
     Err(..) => {
-      return Err<Styles, u8>(error: 5_u8);
+      return Err<StyleState, u8>(error: 5_u8);
     }
   }
 }
@@ -1014,7 +1023,7 @@ fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -
       return False();
     }
   }
-  match update(layout: &kept^.layout, document: &page^.document, styles: &kept^.styles, fonts: fonts, picks: &kept^.picks) {
+  match update(layout: &kept^.layout, document: &page^.document, styles: &kept^.state.styles, fonts: fonts, picks: &kept^.picks) {
     Ok(..) => {
       return True();
     }
@@ -1024,18 +1033,18 @@ fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -
   }
 }
 
-fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, structure: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
-  doc "Recomputes the styles outside the incremental interval (after the traversal, for a B or X edit, whose parent structure names), forms the edited node's class attribute fact outside the interval, then times the style delta, new font picks, retained marking (styles_changed, or structure_changed for a B or X edit) and update. On success replaces the kept styles and picks. Timing reports a separate style edit line with delta_us, picks_us and full_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A layout refusal leaves the kept styles and picks unchanged and is reported as a refusal by the caller; a style, font or full-comparator failure names its pipeline stage.";
-  let structural = match structure {
-    Some(..) => {
-      give True();
+fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, token: &[u8], structure: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(token), reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+  doc "For a C or K edit, the class token on node: times the style stage's restyle (class_restyle and restyle on the kept state), refuses an edit that changes what box construction reads (Restyled.structural, or a generated content reading the class attribute), then times the marking (styles_restyled), new font picks and update. For a B or X edit, whose parent structure names, builds the traversal and a new style state and marks with layout_changes and structure_changed (apply_structure_edit). Timing reports a separate style edit line with delta_us (the marking, or the delta and marking), picks_us, full_us and style_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A refusal is reported by the caller, which resynchronizes to a full build; a style, font or full-comparator failure names its pipeline stage.";
+  match structure {
+    Some(value: parent) => {
+      let done = propagate apply_structure_edit(page: page, fonts: fonts, kept: kept, parent: parent, environment: environment, viewport: viewport, timing: timing, clock: clock, report: report, number: number);
+      return Ok<StyleUpdate, u8>(value: done);
     }
     None() => {
-      give False();
     }
   }
   let style_started = now(clock: clock);
-  let styles = match styles_after(started: style_started, page: page, structural: structural, environment: environment) {
+  let done = match restyle_after(started: style_started, page: page, kept: kept, node: node, token: token, environment: environment) {
     Ok(value: found) => {
       give move found;
     }
@@ -1043,33 +1052,27 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
       return Err<StyleUpdate, u8>(error: stage);
     }
   }
-  let style_finished = stamp_styles(clock: clock, witness: &styles);
+  let style_finished = stamp_styles(clock: clock, witness: &kept^.state.styles);
   let style_ns = nanoseconds_from(earlier: style_started, later: style_finished);
   let class_id = class_index(atoms: &page^.atoms);
   let class_atom = Atom(index: class_id);
-  let class_change = AttributeChange(node: node, name: class_atom);
-  let attributes = array_filled::<AttributeChange, 1>(value: class_change);
+  let at = cvt::<u32, u64>(node.index);
+  let reads_class = if at < page^.traversal.order.inner.len {
+    let position = cvt::<u32, u64>(page^.traversal.order.inner[at]);
+    give pseudo_reads_attribute(state: &kept^.state, element: position, name: class_atom);
+  } else {
+    give True();
+  }
+  let refused_style = bor(done.structural, reads_class);
+  if refused_style {
+    let no = False();
+    let refused = StyleUpdate(applied: no, micros: 0_u64);
+    return Ok<StyleUpdate, u8>(value: refused);
+  }
   let started = now(clock: clock);
-  let changed = delta_after(started: started, old: &kept^.styles, new: &styles);
-  let after_delta = now(clock: clock);
-  let picks = match picks_after(started: after_delta, fonts: fonts, styles: &styles, atoms: &page^.atoms) {
-    Some(value: found) => {
-      give move found;
-    }
-    None() => {
-      return Err<StyleUpdate, u8>(error: 1_u8);
-    }
-  }
-  let after_picks = now(clock: clock);
-  let changed_count = changed.inner.len;
-  let marked = match structure {
-    Some(value: parent) => {
-      give structure_changed(layout: &kept^.layout, document: &page^.document, old: &kept^.styles, new: &styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &changed.inner[0_u64..changed_count], parent: parent);
-    }
-    None() => {
-      give styles_changed(layout: &kept^.layout, old: &kept^.styles, new: &styles, traversal: &page^.traversal, changed: &changed.inner[0_u64..changed_count], attributes: &attributes[0_u64..1_u64]);
-    }
-  }
+  let count = done.changed.inner.len;
+  let marked = marks_after(started: started, layout: &kept^.layout, traversal: &page^.traversal, changed: &done.changed.inner[0_u64..count]);
+  let after_delta = stamp(clock: clock, witness: &kept^.layout);
   match marked {
     Ok(..) => {
     }
@@ -1079,7 +1082,67 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
       return Ok<StyleUpdate, u8>(value: refused);
     }
   }
-  match update(layout: &kept^.layout, document: &page^.document, styles: &styles, fonts: fonts, picks: &picks) {
+  let finished_update = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns);
+  return Ok<StyleUpdate, u8>(value: finished_update);
+}
+
+fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: NodeId, environment: Environment, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+  doc "A B or X edit: builds the traversal and a new style state outside the incremental interval, then times layout_changes against the kept styles and structure_changed for the context parent's children are in, replaces the kept state, and finishes as finish_style_edit does, adding a structure edit line.";
+  let style_started = now(clock: clock);
+  let yes = True();
+  let fresh = match styles_after(started: style_started, page: page, structural: yes, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: stage) => {
+      return Err<StyleUpdate, u8>(error: stage);
+    }
+  }
+  let style_finished = stamp_styles(clock: clock, witness: &fresh.styles);
+  let style_ns = nanoseconds_from(earlier: style_started, later: style_finished);
+  let started = now(clock: clock);
+  let changed = delta_after(started: started, old: &kept^.state.styles, new: &fresh.styles);
+  let changed_count = changed.inner.len;
+  let marked = structure_changed(layout: &kept^.layout, document: &page^.document, old: &kept^.state.styles, new: &fresh.styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &changed.inner[0_u64..changed_count], parent: parent);
+  let after_delta = stamp(clock: clock, witness: &kept^.layout);
+  match marked {
+    Ok(..) => {
+    }
+    Err(..) => {
+      let no = False();
+      let refused = StyleUpdate(applied: no, micros: 0_u64);
+      return Ok<StyleUpdate, u8>(value: refused);
+    }
+  }
+  set kept^.state = move fresh;
+  let finished_update = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns);
+  if finished_update.applied {
+    let (built_contexts, built_paragraphs, reused) = structure_counts(layout: &kept^.layout);
+    put_text(buffer: report, text: &structure_edit_label[0_u64..structure_edit_label.len]);
+    put_decimal(buffer: report, value: number);
+    put_text(buffer: report, text: &contexts_label[0_u64..contexts_label.len]);
+    put_decimal(buffer: report, value: built_contexts);
+    put_text(buffer: report, text: &paragraphs_label[0_u64..paragraphs_label.len]);
+    put_decimal(buffer: report, value: built_paragraphs);
+    put_text(buffer: report, text: &reused_label[0_u64..reused_label.len]);
+    put_decimal(buffer: report, value: reused);
+    put_byte(buffer: report, value: 10_u8);
+  }
+  return Ok<StyleUpdate, u8>(value: finished_update);
+}
+
+fn finish_style_edit(page: &Page, fonts: &FontSet, kept: &Built, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64, started: Instant, after_delta: Instant, style_ns: u64) -> result: Result<StyleUpdate, u8> reads(page), reads(fonts), writes(kept), writes(clock), writes(report) {
+  doc "The part of a style edit after the marking: new font picks from the kept styles and update, timed from started; then the style edit line, with the timings and the full layout comparator when timing, or the update counts. Replaces the kept picks; an update refusal returns not applied.";
+  let picks = match picks_after(started: after_delta, fonts: fonts, styles: &kept^.state.styles, atoms: &page^.atoms) {
+    Some(value: found) => {
+      give move found;
+    }
+    None() => {
+      return Err<StyleUpdate, u8>(error: 1_u8);
+    }
+  }
+  let after_picks = now(clock: clock);
+  match update(layout: &kept^.layout, document: &page^.document, styles: &kept^.state.styles, fonts: fonts, picks: &picks) {
     Ok(..) => {
     }
     Err(..) => {
@@ -1097,7 +1160,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
     let delta_us = delta_ns / 1000_u64;
     let picks_us = picks_ns / 1000_u64;
     let full_started = now(clock: clock);
-    let full_picks = match picks_after(started: full_started, fonts: fonts, styles: &styles, atoms: &page^.atoms) {
+    let full_picks = match picks_after(started: full_started, fonts: fonts, styles: &kept^.state.styles, atoms: &page^.atoms) {
       Some(value: found) => {
         give move found;
       }
@@ -1105,7 +1168,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
         return Err<StyleUpdate, u8>(error: 1_u8);
       }
     }
-    let full_layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: &styles, atoms: &page^.atoms, fonts: fonts, picks: &full_picks, viewport: viewport) {
+    let full_layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: &kept^.state.styles, atoms: &page^.atoms, fonts: fonts, picks: &full_picks, viewport: viewport) {
       Ok(value: found) => {
         give move found;
       }
@@ -1113,7 +1176,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
         return Err<StyleUpdate, u8>(error: 2_u8);
       }
     }
-    lay_out(layout: &full_layout, document: &page^.document, styles: &styles, fonts: fonts, picks: &full_picks);
+    lay_out(layout: &full_layout, document: &page^.document, styles: &kept^.state.styles, fonts: fonts, picks: &full_picks);
     let full_finished = stamp(clock: clock, witness: &full_layout);
     let full_ns = nanoseconds_from(earlier: full_started, later: full_finished);
     let full_us = full_ns / 1000_u64;
@@ -1134,23 +1197,36 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
     put_counts(buffer: report, layout: &kept^.layout);
   }
   put_byte(buffer: report, value: 10_u8);
-  if structural {
-    let (built_contexts, built_paragraphs, reused) = structure_counts(layout: &kept^.layout);
-    put_text(buffer: report, text: &structure_edit_label[0_u64..structure_edit_label.len]);
-    put_decimal(buffer: report, value: number);
-    put_text(buffer: report, text: &contexts_label[0_u64..contexts_label.len]);
-    put_decimal(buffer: report, value: built_contexts);
-    put_text(buffer: report, text: &paragraphs_label[0_u64..paragraphs_label.len]);
-    put_decimal(buffer: report, value: built_paragraphs);
-    put_text(buffer: report, text: &reused_label[0_u64..reused_label.len]);
-    put_decimal(buffer: report, value: reused);
-    put_byte(buffer: report, value: 10_u8);
-  }
-  set kept^.styles = move styles;
   set kept^.picks = move picks;
   let yes = True();
   let done = StyleUpdate(applied: yes, micros: micros);
   return Ok<StyleUpdate, u8>(value: done);
+}
+
+fn restyle_after(started: Instant, page: &Page, kept: &Built, node: NodeId, token: &[u8], environment: Environment) -> result: Result<Restyled, u8> reads(token), writes(page), writes(kept) {
+  doc "class_restyle for the class token on node, then restyle on the kept state, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken. Fails with stage 5.";
+  let wanted = match class_restyle(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, node: node, class: token) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return Err<Restyled, u8>(error: 5_u8);
+    }
+  }
+  match restyle(state: &kept^.state, store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment, wanted: &wanted) {
+    Ok(value: done) => {
+      return Ok<Restyled, u8>(value: move done);
+    }
+    Err(..) => {
+      return Err<Restyled, u8>(error: 5_u8);
+    }
+  }
+}
+
+fn marks_after(started: Instant, layout: &Layout, traversal: &Traversal, changed: &[u32]) -> result: Result<unit, LayoutError> reads(traversal), reads(changed), writes(layout) {
+  doc "styles_restyled, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let marked = styles_restyled(layout: layout, traversal: traversal, changed: changed);
+  return marked;
 }
 
 fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(layout), writes(buffer) {
@@ -1190,7 +1266,7 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
       return code;
     }
   }
-  let dumped = dump_layout(page: page, styles: &kept.styles, layout: &kept.layout, buffer: &dump);
+  let dumped = dump_layout(page: page, styles: &kept.state.styles, layout: &kept.layout, buffer: &dump);
   if dumped == 0_u8 {
   } else {
     let code = stage_failure(err: err, files: files, stage: dumped);
@@ -1294,7 +1370,9 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
                 let reported = flush(factory: files, output: err, buffer: &report);
                 return 2_u8;
               }
-              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, structure: structure, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
+              let token_lo = start +sat unused_next;
+              let token_from = imin(token_lo, end);
+              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, token: &script^[token_from..end], structure: structure, environment: environment, viewport: viewport, timing: timing, clock: clock, report: &report, number: edits) {
                 Ok(value: done) => {
                   give done;
                 }
@@ -1353,14 +1431,14 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
             let flushed = flush(factory: files, output: out, buffer: &report);
             set kept = move rebuilt;
           } else {
-            let full_stage = dump_layout(page: page, styles: &rebuilt.styles, layout: &rebuilt.layout, buffer: &dump);
+            let full_stage = dump_layout(page: page, styles: &rebuilt.state.styles, layout: &rebuilt.layout, buffer: &dump);
             if full_stage == 0_u8 {
             } else {
               let code = stage_failure(err: err, files: files, stage: full_stage);
               return code;
             }
             let same = if incremental == 3_u8 {
-              let kept_stage = dump_layout(page: page, styles: &kept.styles, layout: &kept.layout, buffer: &other);
+              let kept_stage = dump_layout(page: page, styles: &kept.state.styles, layout: &kept.layout, buffer: &other);
               let identical = same_bytes(first: &dump, second: &other);
               truncate(buffer: &other, length: 0_u64);
               let kept_dumped = kept_stage == 0_u8;
@@ -1393,13 +1471,13 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
               put_byte(buffer: &report, value: 10_u8);
             }
             if print {
-              let printed = dump_layout(page: page, styles: &rebuilt.styles, layout: &rebuilt.layout, buffer: &report);
+              let printed = dump_layout(page: page, styles: &rebuilt.state.styles, layout: &rebuilt.layout, buffer: &report);
               let differs = incremental == 3_u8;
               let unequal = bnot(same);
               let both = band(differs, unequal);
               if both {
                 put_text(buffer: &report, text: &inc_dump_label[0_u64..inc_dump_label.len]);
-                let printed_kept = dump_layout(page: page, styles: &kept.styles, layout: &kept.layout, buffer: &report);
+                let printed_kept = dump_layout(page: page, styles: &kept.state.styles, layout: &kept.layout, buffer: &report);
               }
             }
             let flushed = flush(factory: files, output: out, buffer: &report);
