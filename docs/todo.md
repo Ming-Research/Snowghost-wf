@@ -127,6 +127,16 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **The restack prototype increases some edits' font-pick interval.** Paired
+  sequential Apollo runs report colour/body/custom medians 3-4 us above
+  the base, concentrated in `picks_us`, although font-pick source did not
+  change; reversed-order ecma262 custom-property runs also regress 2-3 us. The combined candidate therefore fails its nonregression
+  criterion. Change: isolate the executable or retained-state difference
+  with the same source and workload before attributing or fixing it.
+  Reopen before adopting the restack prototype; the paired median must
+  cease to increase, and all identity checks must still pass
+  ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
+
 - **Incremental layout's entry counts omit some child work.** In
   `lay_out_child` the `update_child` count is discarded; an unsuccessful
   parent cutoff also discards its child counts. The restack investigation
