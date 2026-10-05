@@ -46,6 +46,7 @@ alias pseudo_reads_attribute = pkg::style::pseudo_reads_attribute;
 alias restyle = pkg::style::restyle;
 alias style_state = pkg::style::style_state;
 alias styles_restyled = pkg::layout::styles_restyled;
+alias extend_picks = pkg::layout::text::extend_picks;
 alias LayoutError = pkg::layout::LayoutError;
 alias Traversal = pkg::style::Traversal;
 alias lay_out = pkg::layout::lay_out;
@@ -1069,6 +1070,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
     let refused = StyleUpdate(applied: no, micros: 0_u64);
     return Ok<StyleUpdate, u8>(value: refused);
   }
+  let yes_extend = True();
   let started = now(clock: clock);
   let count = done.changed.inner.len;
   let marked = marks_after(started: started, layout: &kept^.layout, traversal: &page^.traversal, changed: &done.changed.inner[0_u64..count]);
@@ -1082,7 +1084,7 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
       return Ok<StyleUpdate, u8>(value: refused);
     }
   }
-  let finished_update = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns);
+  let finished_update = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns, extend: yes_extend);
   return Ok<StyleUpdate, u8>(value: finished_update);
 }
 
@@ -1115,7 +1117,8 @@ fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: Node
     }
   }
   set kept^.state = move fresh;
-  let finished_update = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns);
+  let no_extend = False();
+  let finished_update = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns, extend: no_extend);
   if finished_update.applied {
     let (built_contexts, built_paragraphs, reused) = structure_counts(layout: &kept^.layout);
     put_text(buffer: report, text: &structure_edit_label[0_u64..structure_edit_label.len]);
@@ -1131,18 +1134,27 @@ fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: Node
   return Ok<StyleUpdate, u8>(value: finished_update);
 }
 
-fn finish_style_edit(page: &Page, fonts: &FontSet, kept: &Built, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64, started: Instant, after_delta: Instant, style_ns: u64) -> result: Result<StyleUpdate, u8> reads(page), reads(fonts), writes(kept), writes(clock), writes(report) {
-  doc "The part of a style edit after the marking: new font picks from the kept styles and update, timed from started; then the style edit line, with the timings and the full layout comparator when timing, or the update counts. Replaces the kept picks; an update refusal returns not applied.";
-  let picks = match picks_after(started: after_delta, fonts: fonts, styles: &kept^.state.styles, atoms: &page^.atoms) {
-    Some(value: found) => {
-      give move found;
-    }
-    None() => {
+fn finish_style_edit(page: &Page, fonts: &FontSet, kept: &Built, viewport: Viewport, timing: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64, started: Instant, after_delta: Instant, style_ns: u64, extend: Bool) -> result: Result<StyleUpdate, u8> reads(page), reads(fonts), writes(kept), writes(clock), writes(report) {
+  doc "The part of a style edit after the marking: the font picks of the kept styles, extended with the font groups the kept tables gained when extend holds (extend_picks) and made again otherwise, and update, timed from started; then the style edit line, with the timings and the full layout comparator when timing, or the update counts. Replaces the kept picks; an update refusal returns not applied.";
+  if extend {
+    let extended = extend_after(started: after_delta, fonts: fonts, picks: &kept^.picks, styles: &kept^.state.styles, atoms: &page^.atoms);
+    if extended {
+    } else {
       return Err<StyleUpdate, u8>(error: 1_u8);
     }
+  } else {
+    let fresh_picks = match picks_after(started: after_delta, fonts: fonts, styles: &kept^.state.styles, atoms: &page^.atoms) {
+      Some(value: found) => {
+        give move found;
+      }
+      None() => {
+        return Err<StyleUpdate, u8>(error: 1_u8);
+      }
+    }
+    set kept^.picks = move fresh_picks;
   }
-  let after_picks = now(clock: clock);
-  match update(layout: &kept^.layout, document: &page^.document, styles: &kept^.state.styles, fonts: fonts, picks: &picks) {
+  let after_picks = stamp_picks(clock: clock, witness: &kept^.picks);
+  match update(layout: &kept^.layout, document: &page^.document, styles: &kept^.state.styles, fonts: fonts, picks: &kept^.picks) {
     Ok(..) => {
     }
     Err(..) => {
@@ -1197,10 +1209,30 @@ fn finish_style_edit(page: &Page, fonts: &FontSet, kept: &Built, viewport: Viewp
     put_counts(buffer: report, layout: &kept^.layout);
   }
   put_byte(buffer: report, value: 10_u8);
-  set kept^.picks = move picks;
   let yes = True();
   let done = StyleUpdate(applied: yes, micros: micros);
   return Ok<StyleUpdate, u8>(value: done);
+}
+
+fn extend_after(started: Instant, fonts: &FontSet, picks: &FontPicks, styles: &Styles, atoms: &AtomTable) -> extended: Bool reads(fonts), reads(styles), reads(atoms), writes(picks) {
+  doc "extend_picks with the styles' font groups and families, called with the reading that starts its interval as an argument, so that the work cannot begin before the reading is taken.";
+  let groups = styles^.fonts.inner.len;
+  let families = styles^.families.inner.len;
+  match extend_picks(fonts: fonts, picks: picks, groups: &styles^.fonts.inner[0_u64..groups], families: &styles^.families.inner[0_u64..families], atoms: atoms) {
+    Ok(..) => {
+      return True();
+    }
+    Err(..) => {
+      return False();
+    }
+  }
+}
+
+fn stamp_picks(clock: &Clock, witness: &FontPicks) -> result: Instant reads(witness), writes(clock) {
+  doc "Reads the clock after every earlier statement that writes witness, as stamp does for a layout.";
+  let held = witness^.choices.inner.len;
+  let made = now(clock: clock);
+  return made;
 }
 
 fn restyle_after(started: Instant, page: &Page, kept: &Built, node: NodeId, token: &[u8], environment: Environment) -> result: Result<Restyled, u8> reads(token), writes(page), writes(kept) {
