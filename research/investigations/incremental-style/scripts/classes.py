@@ -12,7 +12,12 @@ PAGE-classes.edits  40 toggles (C then K) of a class word that the page's
 PAGE-body.edits     a sheet whose rules name class x5b only in compounds
                     left of a descendant, child or sibling combinator,
                     toggled three times on body and once on ten random
-                    elements.
+                    elements;
+PAGE-custom.edits   a sheet whose class x5v sets a custom property that
+                    every p's colour reads through var(), toggled three
+                    times on body and once on ten random elements, so the
+                    change reaches the paragraphs only through the
+                    inherited custom-property set.
 
 The choices are seeded by the page name, so the scripts are reproducible.
 """
@@ -38,7 +43,7 @@ def main():
     for sheet in sheets:
         css.append(open(sheet, encoding='utf-8', errors='replace').read())
     text = re.sub(r'/\*.*?\*/', '', '\n'.join(css), flags=re.S)
-    words = sorted(set(re.findall(r'\.(-?[A-Za-z_][\w-]*)', text)) - {'x5b'})
+    words = sorted(set(re.findall(r'\.(-?[A-Za-z_][\w-]*)', text)) - {'x5b', 'x5v'})
     if body is None or not words:
         sys.exit('classes.py: %s has no body element or no class word' % page)
     rng = random.Random('restyle-' + page)
@@ -54,6 +59,13 @@ def main():
     for element in rng.sample(elements, 10):
         lines += ['C %d x5b' % element, 'K %d x5b' % element]
     with open('%s/%s-body.edits' % (out, page), 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    lines = ['S .x5v{--x5v:#123456}p{color:var(--x5v,#010203)}']
+    for _ in range(3):
+        lines += ['C %d x5v' % body, 'K %d x5v' % body]
+    for element in rng.sample(elements, 10):
+        lines += ['C %d x5v' % element, 'K %d x5v' % element]
+    with open('%s/%s-custom.edits' % (out, page), 'w') as f:
         f.write('\n'.join(lines) + '\n')
     print('%s: %d elements, %d class words, body %d' % (page, len(elements), len(words), body))
 

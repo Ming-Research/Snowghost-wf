@@ -41,12 +41,6 @@ const words_ceiling: u64 = 65536_u64;
 
 const attribute_specificity: u64 = 1073741823_u64;
 
-struct RuleIndex {
-  starts: Box<Array<u64>>;
-  entries: Box<Array<u32>>;
-  anything: Box<Slots<u32>>;
-}
-
 fn key_bucket(key: SubjectKey) -> bucket: u64 pure {
   doc "The bucket of a subject key: ids in the first key_buckets, classes in the next, types in the last, each by its hash's low bits; any_bucket for Anything and no_bucket for Nothing.";
   match key {
@@ -621,7 +615,17 @@ fn match_all(winners: &[u32], bits: &[u64], words: u64, nodes: &[NodeId], kinds:
 }
 
 fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> result: Result<Cascade, StyleError> reads(store), reads(document), reads(atoms), reads(traversal) {
-  doc "Builds the element and pseudo-element rule indexes and the sibling positions, finds which elements have a ::before or ::after some rule matches, numbers those pseudo-elements after the elements in document order, ::before before ::after, and runs the first part's loop over all of them.";
+  doc "Builds the element and pseudo-element rule indexes and matches with them (match_with).";
+  let no = False();
+  let yes = True();
+  let index = propagate build_rule_index(store: store, atoms: atoms, pseudo: no);
+  let pseudo_index = propagate build_rule_index(store: store, atoms: atoms, pseudo: yes);
+  let cascade = propagate match_with(store: store, document: document, atoms: atoms, traversal: traversal, index: &index, pseudo_index: &pseudo_index);
+  return Ok<Cascade, StyleError>(value: move cascade);
+}
+
+fn match_with(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, index: &RuleIndex, pseudo_index: &RuleIndex) -> result: Result<Cascade, StyleError> reads(store), reads(document), reads(atoms), reads(traversal), reads(index), reads(pseudo_index) {
+  doc "With the store's element and pseudo-element rule indexes, builds the sibling positions, finds which elements have a ::before or ::after some rule matches, numbers those pseudo-elements after the elements in document order, ::before before ::after, and runs the first part's loop over all of them.";
   let count = traversal^.elements.inner.len;
   let rules = store^.rules.inner.len;
   let customs = store^.custom_rules.inner.len;
@@ -638,14 +642,10 @@ fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, tra
     return Err<Cascade, StyleError>(error: failure);
   }
   let words = customs;
-  let no = False();
-  let yes = True();
-  let index = propagate build_rule_index(store: store, atoms: atoms, pseudo: no);
-  let pseudo_index = propagate build_rule_index(store: store, atoms: atoms, pseudo: yes);
   let positions = sibling_positions(document: document);
   let flags = box_array_filled::<u8>(count: count, value: 0_u8);
   let elements = &traversal^.elements.inner[0_u64..count];
-  let flagged = pseudo_flags(flags: &flags.inner[0_u64..count], elements: elements, pseudo_index: &pseudo_index, store: store, document: document, atoms: atoms, positions: &positions);
+  let flagged = pseudo_flags(flags: &flags.inner[0_u64..count], elements: elements, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: &positions);
   if flagged {
   } else {
     let failure = StyleError::Inconsistent();
@@ -715,7 +715,7 @@ fn match_elements(store: &RuleStore, document: &Document, atoms: &AtomTable, tra
   let winners = box_array_filled::<u32>(count: total_winners, value: 0_u32);
   let bit_count = bits.inner.len;
   let winner_count = winners.inner.len;
-  let fits = match_all(winners: &winners.inner[0_u64..winner_count], bits: &bits.inner[0_u64..bit_count], words: words, nodes: &nodes.inner[0_u64..node_count], kinds: &kinds.inner[0_u64..node_count], element_count: count, index: &index, pseudo_index: &pseudo_index, store: store, document: document, atoms: atoms, positions: &positions);
+  let fits = match_all(winners: &winners.inner[0_u64..winner_count], bits: &bits.inner[0_u64..bit_count], words: words, nodes: &nodes.inner[0_u64..node_count], kinds: &kinds.inner[0_u64..node_count], element_count: count, index: index, pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: &positions);
   if fits {
   } else {
     let failure = StyleError::Inconsistent();

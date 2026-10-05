@@ -1,0 +1,878 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias BackgroundGroup = pkg::css::values::BackgroundGroup;
+alias BorderGroup = pkg::css::values::BorderGroup;
+alias BoxGroup = pkg::css::values::BoxGroup;
+alias ContainerGroup = pkg::css::values::ContainerGroup;
+alias ContentGroup = pkg::css::values::ContentGroup;
+alias Document = pkg::dom::Document;
+alias Environment = pkg::css::values::Environment;
+alias FontGroup = pkg::css::values::FontGroup;
+alias ItemGroup = pkg::css::values::ItemGroup;
+alias NodeId = pkg::dom::NodeId;
+alias SizeGroup = pkg::css::values::SizeGroup;
+alias SpacingGroup = pkg::css::values::SpacingGroup;
+alias TableGroup = pkg::css::values::TableGroup;
+alias TextGroup = pkg::css::values::TextGroup;
+alias pseudo_element_after = pkg::css::selectors::pseudo_element_after;
+alias pseudo_element_before = pkg::css::selectors::pseudo_element_before;
+alias pseudo_element_none = pkg::css::selectors::pseudo_element_none;
+
+const in_set: u8 = 2_u8;
+
+const queued: u8 = 1_u8;
+
+const no_pseudo: u32 = 4294967295_u32;
+
+fn style_state(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<StyleState, StyleError> reads(store), reads(document), reads(traversal), writes(atoms) {
+  doc "Runs the four steps as compute_styles does, keeping the rule indexes, the three parts' results and, per element, which pseudo-elements it has and the number of its first.";
+  let no = False();
+  let yes = True();
+  let index = propagate build_rule_index(store: store, atoms: atoms, pseudo: no);
+  let pseudo_index = propagate build_rule_index(store: store, atoms: atoms, pseudo: yes);
+  let cascade = propagate match_with(store: store, document: document, atoms: atoms, traversal: traversal, index: &index, pseudo_index: &pseudo_index);
+  let inherited = propagate inherited_pass(store: store, cascade: &cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
+  let resets = propagate reset_pass(store: store, cascade: &cascade, inherited: &inherited, atoms: atoms, traversal: traversal, environment: environment);
+  let styles = propagate intern_styles(inherited: &inherited, resets: &resets, traversal: traversal);
+  let element_count = cascade.element_count;
+  let node_count = cascade.nodes.inner.len;
+  let bounded_elements = element_count <= 4294967296_u64;
+  let bounded_nodes = node_count <= 4294967296_u64;
+  if bounded_elements {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<StyleState, StyleError>(error: failure);
+  }
+  if bounded_nodes {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<StyleState, StyleError>(error: failure);
+  }
+  let flag_bits = box_array_filled::<u8>(count: element_count, value: 0_u8);
+  let first_numbers = box_array_filled::<u32>(count: element_count, value: no_pseudo);
+  map_pseudos(cascade: &cascade, flags: &flag_bits, first: &first_numbers);
+  let marks = box_array_filled::<u8>(count: node_count, value: 0_u8);
+  let made = StyleState(cascade: move cascade, inherited: move inherited, resets: move resets, styles: move styles, index: move index, pseudo_index: move pseudo_index, pseudo_flags: move flag_bits, pseudo_first: move first_numbers, marks: move marks);
+  return Ok<StyleState, StyleError>(value: move made);
+}
+
+fn map_pseudos(cascade: &Cascade, flags: &Box<Array<u8>>, first: &Box<Array<u32>>) -> result: unit reads(cascade), writes(flags), writes(first) {
+  doc "Records, for each element, bit 1 when it has a ::before and bit 2 when it has an ::after among the cascade's styled nodes, and the number of its first pseudo-element; flags and first start cleared.";
+  let element_count = cascade^.element_count;
+  let node_count = cascade^.nodes.inner.len;
+  for (p in element_count..node_count) {
+    let parent_in = p < cascade^.parents.inner.len;
+    let kind_in = p < cascade^.kinds.inner.len;
+    if parent_in {
+      if kind_in {
+        let element = cvt::<u32, u64>(cascade^.parents.inner[p]);
+        let kind = cascade^.kinds.inner[p];
+        let bit = if kind == pseudo_element_after {
+          give 2_u8;
+        } else {
+          give 1_u8;
+        }
+        if element < flags^.inner.len {
+          set flags^.inner[element] = ior(flags^.inner[element], bit);
+        }
+        if element < first^.inner.len {
+          if first^.inner[element] == no_pseudo {
+            set first^.inner[element] = cvt.wrap::<u64, u32>(p);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn pseudo_bits(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, element: NodeId) -> bits: u8 reads(state), reads(store), reads(document), reads(atoms) {
+  doc "Which pseudo-elements some rule with a longhand declaration now matches on element, as map_pseudos records them.";
+  let keys = array_filled::<u64, 97>(value: 0_u64);
+  let out = array_filled::<u32, 97>(value: 0_u32);
+  let scratch = array_filled::<u64, 1>(value: 0_u64);
+  let before = has_pseudo(keys: &keys[0_u64..97_u64], out: &out[0_u64..97_u64], bits: &scratch[0_u64..0_u64], pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: pseudo_element_before);
+  let keys_after = array_filled::<u64, 97>(value: 0_u64);
+  let out_after = array_filled::<u32, 97>(value: 0_u32);
+  let scratch_after = array_filled::<u64, 1>(value: 0_u64);
+  let after = has_pseudo(keys: &keys_after[0_u64..97_u64], out: &out_after[0_u64..97_u64], bits: &scratch_after[0_u64..0_u64], pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: pseudo_element_after);
+  let low = if before {
+    give 1_u8;
+  } else {
+    give 0_u8;
+  }
+  let high = if after {
+    give 2_u8;
+  } else {
+    give 0_u8;
+  }
+  let bits = ior(low, high);
+  return bits;
+}
+
+fn rematch_node(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, node: u64) -> fits: Bool reads(store), reads(document), reads(atoms), writes(state) {
+  doc "Clears and selects again the winners and custom-rule keys of the styled node node, as match_all's iteration for it does.";
+  let nodes = state^.cascade.nodes.inner.len;
+  let listed = node < nodes;
+  let kind_listed = node < state^.cascade.kinds.inner.len;
+  if listed {
+  } else {
+    return False();
+  }
+  if kind_listed {
+  } else {
+    return False();
+  }
+  let element = state^.cascade.nodes.inner[node];
+  let kind = state^.cascade.kinds.inner[node];
+  let words = state^.cascade.custom_count;
+  let winner_start = winner_words *sat node;
+  let winner_end = winner_start +sat winner_words;
+  let bit_start = words *sat node;
+  let bit_end = bit_start +sat words;
+  let winners_total = state^.cascade.winners.inner.len;
+  let bits_total = state^.cascade.custom_keys.inner.len;
+  if winner_start <= winner_end {
+    if winner_end <= winners_total {
+      if bit_start <= bit_end {
+        if bit_end <= bits_total {
+          for (w in winner_start..winner_end) {
+            set state^.cascade.winners.inner[w] = 0_u32;
+          }
+          for (b in bit_start..bit_end) {
+            set state^.cascade.custom_keys.inner[b] = 0_u64;
+          }
+          let keys = array_filled::<u64, 97>(value: 0_u64);
+          let fits = match_element(keys: &keys[0_u64..97_u64], out: &state^.cascade.winners.inner[winner_start..winner_end], bits: &state^.cascade.custom_keys.inner[bit_start..bit_end], index: &state^.index, pseudo_index: &state^.pseudo_index, store: store, document: document, atoms: atoms, positions: &state^.cascade.positions, element: element, kind: kind);
+          return fits;
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn pseudo_nodes(state: &StyleState, element: u64, nodes: &Box<Slots<u64>>) -> result: Result<unit, StyleError> reads(state), writes(nodes) {
+  doc "Appends the numbers of element's pseudo-elements, ::before first.";
+  let flags_in = element < state^.pseudo_flags.inner.len;
+  let first_in = element < state^.pseudo_first.inner.len;
+  if flags_in {
+  } else {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  if first_in {
+  } else {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  let bits = state^.pseudo_flags.inner[element];
+  let first = cvt::<u32, u64>(state^.pseudo_first.inner[element]);
+  let before = iand(bits, 1_u8);
+  let after = iand(bits, 2_u8);
+  let next = first;
+  if before != 0_u8 {
+    let pushed = propagate push::<u64>(cell: nodes, value: first, ceiling: 4294967296_u64);
+    set next = first +sat 1_u64;
+  }
+  if after != 0_u8 {
+    let pushed = propagate push::<u64>(cell: nodes, value: next, ceiling: 4294967296_u64);
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn same_inherited(first: NodeInherited, second: NodeInherited) -> same: Bool pure {
+  doc "Whether two nodes' inherited values are equal, field by field.";
+  let same_font = same_font_group(first: first.font, second: second.font);
+  let same_text = same_text_group(first: first.text, second: second.text);
+  let same_visibility = first.visibility == second.visibility;
+  let same_keyword = first.keyword == second.keyword;
+  let same_scale = feq(first.scale, second.scale);
+  let same_ex = feq(first.ex, second.ex);
+  let same_ch = feq(first.ch, second.ch);
+  let same_lh = feq(first.lh, second.lh);
+  let same_collapse = first.table.border_collapse == second.table.border_collapse;
+  let same_horizontal = feq(first.table.spacing_horizontal, second.table.spacing_horizontal);
+  let same_vertical = feq(first.table.spacing_vertical, second.table.spacing_vertical);
+  let same_layout = first.table.table_layout == second.table.table_layout;
+  let same_caption = first.table.caption_side == second.table.caption_side;
+  let same_quotes = first.quotes == second.quotes;
+  let same_marker = first.marker == second.marker;
+  let a = band(same_font, same_text);
+  let b = band(same_visibility, same_keyword);
+  let c = band(same_scale, same_ex);
+  let d = band(same_ch, same_lh);
+  let e = band(same_collapse, same_horizontal);
+  let f = band(same_vertical, same_layout);
+  let g = band(same_caption, same_quotes);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let gm = band(g, same_marker);
+  let abcd = band(ab, cd);
+  let efgm = band(ef, gm);
+  let all_same = band(abcd, efgm);
+  return all_same;
+}
+
+fn same_computed(first: ComputedStyle, second: ComputedStyle) -> same: Bool pure {
+  doc "Whether two computed styles name the same identifiers in every group.";
+  let a = first.box == second.box;
+  let b = first.size == second.size;
+  let c = first.spacing == second.spacing;
+  let d = first.border == second.border;
+  let e = first.font == second.font;
+  let f = first.text == second.text;
+  let g = first.background == second.background;
+  let h = first.custom == second.custom;
+  let i = first.container == second.container;
+  let j = first.item == second.item;
+  let k = first.table == second.table;
+  let l = first.content == second.content;
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let gh = band(g, h);
+  let ij = band(i, j);
+  let kl = band(k, l);
+  let abcd = band(ab, cd);
+  let efgh = band(ef, gh);
+  let ijkl = band(ij, kl);
+  let upper = band(abcd, efgh);
+  let same = band(upper, ijkl);
+  return same;
+}
+
+fn style_at(styles: &Styles, element_count: u64, node: u64) -> style: Option<ComputedStyle> reads(styles) {
+  doc "The computed style of the styled node node: an element's, or a pseudo-element's by its number after the elements.";
+  if node < element_count {
+    if node < styles^.elements.inner.len {
+      let found = styles^.elements.inner[node];
+      return Some<ComputedStyle>(value: found);
+    }
+    return None<ComputedStyle>();
+  }
+  let pseudo = node - element_count;
+  if pseudo < styles^.pseudos.inner.len {
+    let found = styles^.pseudos.inner[pseudo].style;
+    return Some<ComputedStyle>(value: found);
+  }
+  return None<ComputedStyle>();
+}
+
+fn place_style(styles: &Styles, element_count: u64, node: u64, style: ComputedStyle) -> result: unit writes(styles) {
+  doc "Writes the computed style of the styled node node.";
+  if node < element_count {
+    if node < styles^.elements.inner.len {
+      set styles^.elements.inner[node] = style;
+    }
+    return unit;
+  }
+  let pseudo = node - element_count;
+  if pseudo < styles^.pseudos.inner.len {
+    set styles^.pseudos.inner[pseudo].style = style;
+  }
+  return unit;
+}
+
+fn reset_node(state: &StyleState, store: &RuleStore, atoms: &AtomTable, node: u64) -> result: unit reads(store), reads(atoms), writes(state) {
+  doc "Computes the styled node node's values that are not inherited again, as the third part's two loops do, and writes them to its slots.";
+  let environment = state^.inherited.environment;
+  let own = Environment(width: environment.width, height: environment.height, root_font_size: state^.inherited.root_font_size, serif: environment.serif, sans: environment.sans, mono: environment.mono);
+  let first = reset_element(store: store, cascade: &state^.cascade, inherited: &state^.inherited, atoms: atoms, environment: own, element: node);
+  let second = reset_second(store: store, cascade: &state^.cascade, inherited: &state^.inherited, atoms: atoms, environment: own, element: node);
+  if node < state^.resets.boxes.inner.len {
+    set state^.resets.boxes.inner[node] = first.box_group;
+  }
+  if node < state^.resets.sizes.inner.len {
+    set state^.resets.sizes.inner[node] = first.size;
+  }
+  if node < state^.resets.spacings.inner.len {
+    set state^.resets.spacings.inner[node] = first.spacing;
+  }
+  if node < state^.resets.borders.inner.len {
+    set state^.resets.borders.inner[node] = first.border;
+  }
+  if node < state^.resets.backgrounds.inner.len {
+    set state^.resets.backgrounds.inner[node] = first.background;
+  }
+  if node < state^.resets.vertical_aligns.inner.len {
+    set state^.resets.vertical_aligns.inner[node] = first.vertical_align;
+  }
+  if node < state^.resets.decorations.inner.len {
+    set state^.resets.decorations.inner[node] = first.decoration;
+  }
+  if node < state^.resets.containers.inner.len {
+    set state^.resets.containers.inner[node] = second.container;
+  }
+  if node < state^.resets.track_nodes.inner.len {
+    set state^.resets.track_nodes.inner[node] = second.track_nodes;
+  }
+  if node < state^.resets.items.inner.len {
+    set state^.resets.items.inner[node] = second.item;
+  }
+  if node < state^.resets.table_layouts.inner.len {
+    set state^.resets.table_layouts.inner[node] = second.table_layout;
+  }
+  if node < state^.resets.contents.inner.len {
+    set state^.resets.contents.inner[node] = second.content;
+  }
+  return unit;
+}
+
+fn intern_nodes(styles: &Styles, inherited: &Inherited, resets: &Resets, nodes: &[u64], out: &[ComputedStyle]) -> result: Result<unit, StyleError> reads(inherited), reads(resets), reads(nodes), writes(styles), writes(out) {
+  doc "Gathers the groups of the listed styled nodes, completing text, table and content groups as intern_styles does, one slot per node written by its own iteration, and interns them into the tables styles keeps (intern_values).";
+  let count = nodes^.len;
+  let total = inherited^.fonts.inner.len;
+  let small = count <= 1073741824_u64;
+  let same_out = out^.len == count;
+  if small {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<unit, StyleError>(error: failure);
+  }
+  if same_out {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  if count == 0_u64 {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  let l1 = inherited^.texts.inner.len == total;
+  let l2 = inherited^.sets.inner.len == total;
+  let l3 = inherited^.tables.inner.len == total;
+  let l4 = inherited^.quotes.inner.len == total;
+  let l5 = inherited^.list_positions.inner.len == total;
+  let l6 = resets^.boxes.inner.len == total;
+  let l7 = resets^.sizes.inner.len == total;
+  let l8 = resets^.spacings.inner.len == total;
+  let l9 = resets^.borders.inner.len == total;
+  let l10 = resets^.backgrounds.inner.len == total;
+  let l11 = resets^.vertical_aligns.inner.len == total;
+  let l12 = resets^.decorations.inner.len == total;
+  let l13 = resets^.containers.inner.len == total;
+  let l14 = resets^.track_nodes.inner.len == total;
+  let l15 = resets^.items.inner.len == total;
+  let l16 = resets^.table_layouts.inner.len == total;
+  let l17 = resets^.contents.inner.len == total;
+  let a = band(l1, l2);
+  let b = band(l3, l4);
+  let c = band(l5, l6);
+  let d = band(l7, l8);
+  let e = band(l9, l10);
+  let f = band(l11, l12);
+  let g = band(l13, l14);
+  let h = band(l15, l16);
+  let ab = band(a, b);
+  let cd = band(c, d);
+  let ef = band(e, f);
+  let gh = band(g, h);
+  let abcd = band(ab, cd);
+  let efgh = band(ef, gh);
+  let upper = band(abcd, efgh);
+  let listed = band(upper, l17);
+  if listed {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  let first = nodes^[0_u64];
+  if first < total {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<unit, StyleError>(error: failure);
+  }
+  let boxes = box_array_filled::<BoxGroup>(count: count, value: resets^.boxes.inner[first]);
+  let sizes = box_array_filled::<SizeGroup>(count: count, value: resets^.sizes.inner[first]);
+  let spacings = box_array_filled::<SpacingGroup>(count: count, value: resets^.spacings.inner[first]);
+  let borders = box_array_filled::<BorderGroup>(count: count, value: resets^.borders.inner[first]);
+  let fonts = box_array_filled::<FontGroup>(count: count, value: inherited^.fonts.inner[first]);
+  let texts = box_array_filled::<TextGroup>(count: count, value: inherited^.texts.inner[first]);
+  let backgrounds = box_array_filled::<BackgroundGroup>(count: count, value: resets^.backgrounds.inner[first]);
+  let containers = box_array_filled::<ContainerGroup>(count: count, value: resets^.containers.inner[first]);
+  let track_nodes = box_array_filled::<TrackNodes>(count: count, value: resets^.track_nodes.inner[first]);
+  let items = box_array_filled::<ItemGroup>(count: count, value: resets^.items.inner[first]);
+  let tables = box_array_filled::<TableGroup>(count: count, value: inherited^.tables.inner[first]);
+  let contents = box_array_filled::<ContentGroup>(count: count, value: resets^.contents.inner[first]);
+  let sets = box_array_filled::<u32>(count: count, value: 0_u32);
+  for (k in 0_u64..count) {
+    let at = nodes^[k];
+    if at < total {
+      set boxes.inner[k] = resets^.boxes.inner[at];
+      set sizes.inner[k] = resets^.sizes.inner[at];
+      set spacings.inner[k] = resets^.spacings.inner[at];
+      set borders.inner[k] = resets^.borders.inner[at];
+      set fonts.inner[k] = inherited^.fonts.inner[at];
+      let text = inherited^.texts.inner[at];
+      set texts.inner[k] = TextGroup(color: text.color, text_align: text.text_align, text_indent: text.text_indent, text_transform: text.text_transform, white_space: text.white_space, letter_spacing: text.letter_spacing, word_spacing: text.word_spacing, vertical_align: resets^.vertical_aligns.inner[at], decoration_line: resets^.decorations.inner[at], list_style_type: text.list_style_type, overflow_wrap: text.overflow_wrap, word_break: text.word_break);
+      set backgrounds.inner[k] = resets^.backgrounds.inner[at];
+      set containers.inner[k] = resets^.containers.inner[at];
+      set track_nodes.inner[k] = resets^.track_nodes.inner[at];
+      set items.inner[k] = resets^.items.inner[at];
+      let table = inherited^.tables.inner[at];
+      set tables.inner[k] = TableGroup(border_collapse: table.border_collapse, spacing_horizontal: table.spacing_horizontal, spacing_vertical: table.spacing_vertical, table_layout: resets^.table_layouts.inner[at], caption_side: table.caption_side);
+      let content = resets^.contents.inner[at];
+      set contents.inner[k] = ContentGroup(content: content.content, counter_reset: content.counter_reset, counter_increment: content.counter_increment, counter_set: content.counter_set, quotes: inherited^.quotes.inner[at], list_style_position: inherited^.list_positions.inner[at]);
+      set sets.inner[k] = inherited^.sets.inner[at];
+    }
+  }
+  let interned = propagate intern_values(styles: styles, inherited: inherited, boxes: &boxes.inner[0_u64..count], sizes: &sizes.inner[0_u64..count], spacings: &spacings.inner[0_u64..count], borders: &borders.inner[0_u64..count], fonts: &fonts.inner[0_u64..count], texts: &texts.inner[0_u64..count], backgrounds: &backgrounds.inner[0_u64..count], containers: &containers.inner[0_u64..count], track_nodes: &track_nodes.inner[0_u64..count], items: &items.inner[0_u64..count], tables: &tables.inner[0_u64..count], contents: &contents.inner[0_u64..count], sets: &sets.inner[0_u64..count], out: out);
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn element_children(state: &StyleState, document: &Document, traversal: &Traversal, element: u64, next: &Box<Slots<u64>>, touched: &Box<Slots<u64>>) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(state), writes(next), writes(touched) {
+  doc "Queues every element child of the element at preorder index element that is not queued or in the set, through the document's child links, marking it queued.";
+  let known = element < traversal^.elements.inner.len;
+  if known {
+  } else {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  let node = traversal^.elements.inner[element];
+  let at = cvt::<u32, u64>(node.index);
+  let present = at < document^.nodes.inner.len;
+  if present {
+  } else {
+    return Ok<unit, StyleError>(value: unit);
+  }
+  let child = document^.nodes.inner[at].links.first_child;
+  let limit = document^.nodes.inner.len;
+  for (step in 0_u64..limit) {
+    match child {
+      Some(value: found) => {
+        let index = cvt::<u32, u64>(found.index);
+        if index < traversal^.order.inner.len {
+          let position = cvt::<u32, u64>(traversal^.order.inner[index]);
+          if position < state^.marks.inner.len {
+            if state^.marks.inner[position] == 0_u8 {
+              set state^.marks.inner[position] = queued;
+              let pushed = propagate push::<u64>(cell: next, value: position, ceiling: 4294967296_u64);
+              let noted = propagate push::<u64>(cell: touched, value: position, ceiling: 4294967296_u64);
+            }
+          }
+        }
+        if index < document^.nodes.inner.len {
+          set child = document^.nodes.inner[index].links.next_sibling;
+        } else {
+          break;
+        }
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, level: &Box<Slots<u64>>, next: &Box<Slots<u64>>, touched: &Box<Slots<u64>>, changed: &Box<Slots<u32>>) -> result: Result<Bool, StyleError> reads(store), reads(document), reads(traversal), reads(level), writes(state), writes(atoms), writes(next), writes(touched), writes(changed) {
+  doc "Computes the elements of one tree level again, then their pseudo-elements: the inherited values from their parents' (inherit_element), the values that are not inherited, and their identifiers in the kept tables; records each element whose style or a pseudo-element's changed, and queues the children of each element in the set or whose inherited values changed. True when the root's font size changed, which every rem length reads, and the caller rebuilds instead.";
+  let count = level^.inner.len;
+  let element_count = state^.cascade.element_count;
+  let bounded = count <= 4294967296_u64;
+  if bounded {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Bool, StyleError>(error: failure);
+  }
+  let unchanged = False();
+  let inherited_changed = box_array_filled::<Bool>(count: count, value: unchanged);
+  let style_changed = box_array_filled::<Bool>(count: count, value: unchanged);
+  let batch = box_slots_new::<u64>(capacity: 0_u64);
+  let owners = box_slots_new::<u64>(capacity: 0_u64);
+  for (k in 0_u64..count) {
+    let at = level^.inner[k];
+    let old = match stored_node(state: &state^.inherited, at: at) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        let failure = StyleError::Inconsistent();
+        return Err<Bool, StyleError>(error: failure);
+      }
+    }
+    if at < state^.inherited.sets.inner.len {
+    } else {
+      let failure = StyleError::Inconsistent();
+      return Err<Bool, StyleError>(error: failure);
+    }
+    let old_set = state^.inherited.sets.inner[at];
+    let old_root = state^.inherited.root_font_size;
+    let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: at);
+    let root_same = feq(state^.inherited.root_font_size, old_root);
+    if root_same {
+    } else {
+      let moved = True();
+      return Ok<Bool, StyleError>(value: moved);
+    }
+    let new = match stored_node(state: &state^.inherited, at: at) {
+      Some(value: found) => {
+        give found;
+      }
+      None() => {
+        let failure = StyleError::Inconsistent();
+        return Err<Bool, StyleError>(error: failure);
+      }
+    }
+    if at < state^.inherited.sets.inner.len {
+    } else {
+      let failure = StyleError::Inconsistent();
+      return Err<Bool, StyleError>(error: failure);
+    }
+    let new_set = state^.inherited.sets.inner[at];
+    let same_values = same_inherited(first: old, second: new);
+    let same_id = old_set == new_set;
+    let old_wide = cvt::<u32, u64>(old_set);
+    let new_wide = cvt::<u32, u64>(new_set);
+    let same_entries = same_sets(inherited: &state^.inherited, first_set: old_wide, second_set: new_wide);
+    let same_custom = bor(same_id, same_entries);
+    let kept = band(same_values, same_custom);
+    set inherited_changed.inner[k] = bnot(kept);
+    let pushed = propagate push::<u64>(cell: &batch, value: at, ceiling: 4294967296_u64);
+    let owned = propagate push::<u64>(cell: &owners, value: k, ceiling: 4294967296_u64);
+  }
+  let elements_in_batch = batch.inner.len;
+  for (k in 0_u64..count) {
+    let at = level^.inner[k];
+    let pseudos = box_slots_new::<u64>(capacity: 0_u64);
+    let listed = propagate pseudo_nodes(state: state, element: at, nodes: &pseudos);
+    let found = pseudos.inner.len;
+    for (j in 0_u64..found) {
+      let pseudo = pseudos.inner[j];
+      let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: pseudo);
+      let pushed = propagate push::<u64>(cell: &batch, value: pseudo, ceiling: 4294967296_u64);
+      let owned = propagate push::<u64>(cell: &owners, value: k, ceiling: 4294967296_u64);
+    }
+  }
+  let size = batch.inner.len;
+  for (j in 0_u64..size) {
+    reset_node(state: state, store: store, atoms: atoms, node: batch.inner[j]);
+  }
+  let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32, container: 0_u32, item: 0_u32, table: 0_u32, content: 0_u32);
+  let bounded_batch = size <= 4294967296_u64;
+  if bounded_batch {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Bool, StyleError>(error: failure);
+  }
+  let computed = box_array_filled::<ComputedStyle>(count: size, value: blank);
+  let interned = propagate intern_nodes(styles: &state^.styles, inherited: &state^.inherited, resets: &state^.resets, nodes: &batch.inner[0_u64..size], out: &computed.inner[0_u64..size]);
+  for (j in 0_u64..size) {
+    let node = batch.inner[j];
+    let made = computed.inner[j];
+    let differs = match style_at(styles: &state^.styles, element_count: element_count, node: node) {
+      Some(value: before) => {
+        let same = same_computed(first: before, second: made);
+        give bnot(same);
+      }
+      None() => {
+        give True();
+      }
+    }
+    place_style(styles: &state^.styles, element_count: element_count, node: node, style: made);
+    if differs {
+      if j < owners.inner.len {
+        let owner = owners.inner[j];
+        if owner < style_changed.inner.len {
+          set style_changed.inner[owner] = True();
+        }
+      }
+    }
+  }
+  for (k in 0_u64..count) {
+    let at = level^.inner[k];
+    if style_changed.inner[k] {
+      let narrowed = cvt.wrap::<u64, u32>(at);
+      let pushed = propagate push::<u32>(cell: changed, value: narrowed, ceiling: 4294967296_u64);
+    }
+    let in_restyle = if at < state^.marks.inner.len {
+      give state^.marks.inner[at] == in_set;
+    } else {
+      give False();
+    }
+    let own_changed = if k < elements_in_batch {
+      give style_changed.inner[k];
+    } else {
+      give False();
+    }
+    let reaches_down = bor(in_restyle, inherited_changed.inner[k]);
+    let spreads = bor(reaches_down, own_changed);
+    if spreads {
+      let queued_children = propagate element_children(state: state, document: document, traversal: traversal, element: at, next: next, touched: touched);
+    }
+  }
+  let settled = False();
+  return Ok<Bool, StyleError>(value: settled);
+}
+
+fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, wanted: &RestyleSet) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), reads(wanted), writes(state), writes(atoms) {
+  doc "Rematches the set, then computes again, one tree level at a time from the set's shallowest element, the set's elements and the children of every element in the set or whose inherited values or style changed, with their pseudo-elements; the levels are sequential, each parent before its children. A full set, a change in which pseudo-elements an element of the set has, or a change of the root's font size rebuilds instead (rebuild_all).";
+  if wanted^.full {
+    let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment);
+    return Ok<Restyled, StyleError>(value: move rebuilt);
+  }
+  let element_count = state^.cascade.element_count;
+  let listed = wanted^.elements.inner.len;
+  let elements_known = traversal^.elements.inner.len == element_count;
+  let depths_known = traversal^.depths.inner.len == element_count;
+  let flags_known = state^.pseudo_flags.inner.len == element_count;
+  let known_a = band(elements_known, depths_known);
+  let known = band(known_a, flags_known);
+  if known {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Restyled, StyleError>(error: failure);
+  }
+  for (k in 0_u64..listed) {
+    let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
+    if at < element_count {
+    } else {
+      let failure = StyleError::Inconsistent();
+      return Err<Restyled, StyleError>(error: failure);
+    }
+    let bits = pseudo_bits(state: state, store: store, document: document, atoms: atoms, element: traversal^.elements.inner[at]);
+    if bits != state^.pseudo_flags.inner[at] {
+      let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment);
+      return Ok<Restyled, StyleError>(value: move rebuilt);
+    }
+  }
+  let fits = True();
+  let shallowest = 18446744073709551615_u64;
+  let deepest = 0_u64;
+  for (k in 0_u64..listed) {
+    let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
+    let own = rematch_node(state: state, store: store, document: document, atoms: atoms, node: at);
+    set fits = band(fits, own);
+    let pseudos = box_slots_new::<u64>(capacity: 0_u64);
+    let found = propagate pseudo_nodes(state: state, element: at, nodes: &pseudos);
+    let count = pseudos.inner.len;
+    for (j in 0_u64..count) {
+      let pseudo_fits = rematch_node(state: state, store: store, document: document, atoms: atoms, node: pseudos.inner[j]);
+      set fits = band(fits, pseudo_fits);
+    }
+    if at < state^.marks.inner.len {
+      set state^.marks.inner[at] = in_set;
+    }
+    let depth = if at < traversal^.depths.inner.len {
+      give cvt::<u32, u64>(traversal^.depths.inner[at]);
+    } else {
+      give 0_u64;
+    }
+    set shallowest = imin(shallowest, depth);
+    set deepest = imax(deepest, depth);
+  }
+  if fits {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Restyled, StyleError>(error: failure);
+  }
+  let changed = box_slots_new::<u32>(capacity: 0_u64);
+  let touched = box_slots_new::<u64>(capacity: 0_u64);
+  let next = box_slots_new::<u64>(capacity: 0_u64);
+  let visited = 0_u64;
+  let rebuild = False();
+  let levels = element_count +sat 1_u64;
+  for (step in 0_u64..levels) {
+    let depth = shallowest +sat step;
+    let level = box_slots_new::<u64>(capacity: 0_u64);
+    swap(first: &level, second: &next);
+    for (k in 0_u64..listed) {
+      let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
+      if at < element_count {
+        let own = cvt::<u32, u64>(traversal^.depths.inner[at]);
+        if own == depth {
+          let pushed = propagate push::<u64>(cell: &level, value: at, ceiling: 4294967296_u64);
+        }
+      }
+    }
+    let size = level.inner.len;
+    let past = depth > deepest;
+    let empty = size == 0_u64;
+    let done = band(past, empty);
+    if done {
+      break;
+    }
+    set visited = visited +sat size;
+    let root_moved = propagate restyle_level(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, level: &level, next: &next, touched: &touched, changed: &changed);
+    if root_moved {
+      set rebuild = True();
+      break;
+    }
+  }
+  let touched_count = touched.inner.len;
+  for (k in 0_u64..touched_count) {
+    let at = touched.inner[k];
+    if at < state^.marks.inner.len {
+      set state^.marks.inner[at] = 0_u8;
+    }
+  }
+  for (k in 0_u64..listed) {
+    let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
+    if at < state^.marks.inner.len {
+      set state^.marks.inner[at] = 0_u8;
+    }
+  }
+  if rebuild {
+    let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment);
+    return Ok<Restyled, StyleError>(value: move rebuilt);
+  }
+  let copied = propagate copy_families(styles: &state^.styles, inherited: &state^.inherited);
+  let partial = False();
+  let made = Restyled(full: partial, visited: visited, changed: move changed);
+  return Ok<Restyled, StyleError>(value: move made);
+}
+
+fn rank_in(pseudos: &Box<Slots<PseudoStyle>>, at: u64) -> rank: u64 reads(pseudos) {
+  doc "Orders a pseudo-element style by its element and kind; the largest u64 past the list.";
+  if at < pseudos^.inner.len {
+    let held = pseudos^.inner[at];
+    let element = cvt::<u32, u64>(held.element);
+    let kind = cvt::<u8, u64>(held.kind);
+    let doubled = element *sat 4_u64;
+    let rank = doubled +sat kind;
+    return rank;
+  }
+  return 18446744073709551615_u64;
+}
+
+fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), writes(state), writes(atoms) {
+  doc "Runs the three parts again over every styled node with the kept rule indexes and interns every node into the kept tables, so identifiers stay comparable; changed lists every element whose style, a pseudo-element's style, or whose set of pseudo-elements differs from before.";
+  let element_count = state^.cascade.element_count;
+  let old_count = state^.styles.elements.inner.len;
+  let bounded_old = old_count <= 4294967296_u64;
+  if bounded_old {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Restyled, StyleError>(error: failure);
+  }
+  let blank = ComputedStyle(box: 0_u32, size: 0_u32, spacing: 0_u32, border: 0_u32, font: 0_u32, text: 0_u32, background: 0_u32, custom: 0_u32, container: 0_u32, item: 0_u32, table: 0_u32, content: 0_u32);
+  let before = box_array_filled::<ComputedStyle>(count: old_count, value: blank);
+  for (k in 0_u64..old_count) {
+    set before.inner[k] = state^.styles.elements.inner[k];
+  }
+  let old_pseudos = box_slots_new::<PseudoStyle>(capacity: 0_u64);
+  swap(first: &old_pseudos, second: &state^.styles.pseudos);
+  let cascade = propagate match_with(store: store, document: document, atoms: atoms, traversal: traversal, index: &state^.index, pseudo_index: &state^.pseudo_index);
+  let inherited = propagate inherited_pass(store: store, cascade: &cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
+  let resets = propagate reset_pass(store: store, cascade: &cascade, inherited: &inherited, atoms: atoms, traversal: traversal, environment: environment);
+  set state^.cascade = move cascade;
+  set state^.inherited = move inherited;
+  set state^.resets = move resets;
+  let new_elements = state^.cascade.element_count;
+  let node_count = state^.cascade.nodes.inner.len;
+  let fits_elements = new_elements <= 4294967296_u64;
+  let fits_nodes = node_count <= 4294967296_u64;
+  let same_elements = new_elements == element_count;
+  if fits_elements {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Restyled, StyleError>(error: failure);
+  }
+  if fits_nodes {
+  } else {
+    let failure = StyleError::TooLarge();
+    return Err<Restyled, StyleError>(error: failure);
+  }
+  if same_elements {
+  } else {
+    let failure = StyleError::Inconsistent();
+    return Err<Restyled, StyleError>(error: failure);
+  }
+  let flags = box_array_filled::<u8>(count: new_elements, value: 0_u8);
+  let first = box_array_filled::<u32>(count: new_elements, value: no_pseudo);
+  map_pseudos(cascade: &state^.cascade, flags: &flags, first: &first);
+  set state^.pseudo_flags = move flags;
+  set state^.pseudo_first = move first;
+  let marks = box_array_filled::<u8>(count: node_count, value: 0_u8);
+  set state^.marks = move marks;
+  let all = box_array_filled::<u64>(count: node_count, value: 0_u64);
+  for (k in 0_u64..node_count) {
+    set all.inner[k] = k;
+  }
+  let computed = box_array_filled::<ComputedStyle>(count: node_count, value: blank);
+  let interned = propagate intern_nodes(styles: &state^.styles, inherited: &state^.inherited, resets: &state^.resets, nodes: &all.inner[0_u64..node_count], out: &computed.inner[0_u64..node_count]);
+  let changed = box_slots_new::<u32>(capacity: 0_u64);
+  let unchanged = False();
+  let flagged = box_array_filled::<Bool>(count: new_elements, value: unchanged);
+  for (k in 0_u64..node_count) {
+    let made = computed.inner[k];
+    if k < new_elements {
+      if k < state^.styles.elements.inner.len {
+        set state^.styles.elements.inner[k] = made;
+      }
+      if k < before.inner.len {
+        let same = same_computed(first: before.inner[k], second: made);
+        if same {
+        } else {
+          set flagged.inner[k] = True();
+        }
+      }
+    } else {
+      let pseudo_at = k - new_elements;
+      let listed = pseudo_at < state^.inherited.pseudo_parents.inner.len;
+      let kind_listed = pseudo_at < state^.inherited.pseudo_kinds.inner.len;
+      if listed {
+        if kind_listed {
+          let origin = state^.inherited.pseudo_parents.inner[pseudo_at];
+          let kind = state^.inherited.pseudo_kinds.inner[pseudo_at];
+          let generated_kind = if kind == pseudo_element_after {
+            give pseudo_after;
+          } else {
+            give pseudo_before;
+          }
+          let pseudo = PseudoStyle(element: origin, kind: generated_kind, style: made);
+          let placed = propagate push::<PseudoStyle>(cell: &state^.styles.pseudos, value: pseudo, ceiling: 4294967295_u64);
+        }
+      }
+    }
+  }
+  let old_n = old_pseudos.inner.len;
+  let new_n = state^.styles.pseudos.inner.len;
+  let a = 0_u64;
+  let b = 0_u64;
+  let steps = old_n +sat new_n;
+  for (step in 0_u64..steps) {
+    let a_left = a < old_n;
+    let b_left = b < new_n;
+    let any = bor(a_left, b_left);
+    if any {
+    } else {
+      break;
+    }
+    let a_rank = rank_in(pseudos: &old_pseudos, at: a);
+    let b_rank = rank_in(pseudos: &state^.styles.pseudos, at: b);
+    if a_rank == b_rank {
+      let element = a_rank / 4_u64;
+      if a_left {
+        if b_left {
+          let same = same_computed(first: old_pseudos.inner[a].style, second: state^.styles.pseudos.inner[b].style);
+          if same {
+          } else if element < flagged.inner.len {
+            set flagged.inner[element] = True();
+          }
+        }
+      }
+      set a = a +sat 1_u64;
+      set b = b +sat 1_u64;
+    } else if a_rank < b_rank {
+      let element = a_rank / 4_u64;
+      if element < flagged.inner.len {
+        set flagged.inner[element] = True();
+      }
+      set a = a +sat 1_u64;
+    } else {
+      let element = b_rank / 4_u64;
+      if element < flagged.inner.len {
+        set flagged.inner[element] = True();
+      }
+      set b = b +sat 1_u64;
+    }
+  }
+  for (k in 0_u64..new_elements) {
+    if flagged.inner[k] {
+      let narrowed = cvt.wrap::<u64, u32>(k);
+      let pushed = propagate push::<u32>(cell: &changed, value: narrowed, ceiling: 4294967296_u64);
+    }
+  }
+  let copied = propagate copy_families(styles: &state^.styles, inherited: &state^.inherited);
+  let everything = True();
+  let made = Restyled(full: everything, visited: node_count, changed: move changed);
+  return Ok<Restyled, StyleError>(value: move made);
+}

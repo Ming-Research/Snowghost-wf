@@ -225,3 +225,11 @@ same host and Chromium build:
   toggle against descendant and sibling rules), and a version that keeps
   only the edited element misses elements on all three pages. Colour and
   font-size edits restyle the edited element alone.
+- **Step 3** (`runs/step3.txt`). A kept style state restyled level by
+  level from the restyle set equals a full style run after each of 816
+  edits on the three pages, including a custom-property change reaching
+  every paragraph through var(); disabling the reverse index, or the
+  custom-set half of the inherited cutoff, makes edits differ. Colour and
+  font-size edits visit the edited element and its children. Root
+  font-size edits and edits that add or remove a pseudo-element still
+  rebuild every node; the levels run sequentially so far.

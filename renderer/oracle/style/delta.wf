@@ -14,6 +14,11 @@ alias Styles = pkg::style::Styles;
 alias TextSpan = pkg::dom::TextSpan;
 alias Traversal = pkg::style::Traversal;
 alias add_sheet = pkg::style::add_sheet;
+alias ComputedStyle = pkg::style::ComputedStyle;
+alias Restyled = pkg::style::Restyled;
+alias StyleState = pkg::style::StyleState;
+alias restyle_state = pkg::style::restyle;
+alias style_state = pkg::style::style_state;
 alias Cascade = pkg::style::Cascade;
 alias RestyleSet = pkg::style::RestyleSet;
 alias class_restyle = pkg::style::class_restyle;
@@ -39,6 +44,12 @@ const class_name: Array<u8, 5> = "class";
 const edit_label: Array<u8, 5> = "edit ";
 
 const restyle_label: Array<u8, 8> = "restyle ";
+
+const visited_label: Array<u8, 9> = " visited ";
+
+const differ_label: Array<u8, 8> = " differ ";
+
+const rebuilt_label: Array<u8, 8> = " rebuilt";
 
 const set_label: Array<u8, 5> = " set ";
 
@@ -734,6 +745,224 @@ fn run_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, traver
         put_byte(buffer: &notes, value: 10_u8);
         let flushed = flush(factory: files, output: out, buffer: &notes);
         set old = move new;
+      }
+    }
+  }
+  return 0_u8;
+}
+
+fn style_line(styles: &Styles, atoms: &AtomTable, document: &Document, node: NodeId, style: ComputedStyle) -> line: Box<Slots<u8>> reads(styles), reads(atoms), reads(document) {
+  doc "The values the dump writes for one element or pseudo-element with style, without its index and name.";
+  let buffer = box_slots_new::<u8>(capacity: 512_u64);
+  put_element(buffer: &buffer, styles: styles, atoms: atoms, style: style);
+  put_second(buffer: &buffer, styles: styles, atoms: atoms, document: document, element: node, style: style);
+  return move buffer;
+}
+
+fn same_line(first: &Box<Slots<u8>>, second: &Box<Slots<u8>>) -> same: Bool reads(first), reads(second) {
+  doc "Whether two buffers hold the same bytes.";
+  let length = first^.inner.len;
+  if length != second^.inner.len {
+    return False();
+  }
+  for (k in 0_u64..length) {
+    if k < second^.inner.len {
+      if first^.inner[k] != second^.inner[k] {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn differing(first: &Styles, second: &Styles, document: &Document, atoms: &AtomTable, traversal: &Traversal) -> (count: u64, at: u64) reads(first), reads(second), reads(document), reads(atoms), reads(traversal) {
+  doc "The number of elements and pseudo-elements whose dump values differ between two results for the same document, compared as the dump writes them (each line rendered from its own tables, so identifiers need not agree), and the index of the first: an element's preorder index, or the element count plus a pseudo-element's number. Pseudo-element lists of different lengths count as one difference at the shorter length.";
+  let count = traversal^.elements.inner.len;
+  let differ = 0_u64;
+  let first_at = 0_u64;
+  for (k in 0_u64..count) {
+    let in_first = k < first^.elements.inner.len;
+    let in_second = k < second^.elements.inner.len;
+    if in_first {
+      if in_second {
+        let node = traversal^.elements.inner[k];
+        let a = style_line(styles: first, atoms: atoms, document: document, node: node, style: first^.elements.inner[k]);
+        let b = style_line(styles: second, atoms: atoms, document: document, node: node, style: second^.elements.inner[k]);
+        let same = same_line(first: &a, second: &b);
+        if same {
+        } else {
+          if differ == 0_u64 {
+            set first_at = k;
+          }
+          set differ = differ +sat 1_u64;
+        }
+      }
+    }
+  }
+  let a_pseudos = first^.pseudos.inner.len;
+  let b_pseudos = second^.pseudos.inner.len;
+  let shorter = imin(a_pseudos, b_pseudos);
+  for (p in 0_u64..shorter) {
+    if p < second^.pseudos.inner.len {
+      let a_entry = first^.pseudos.inner[p];
+      let b_entry = second^.pseudos.inner[p];
+      let origin = cvt::<u32, u64>(a_entry.element);
+      let same_origin = a_entry.element == b_entry.element;
+      let same_kind = a_entry.kind == b_entry.kind;
+      let same_place = band(same_origin, same_kind);
+      let lines_same = if origin < count {
+        let node = traversal^.elements.inner[origin];
+        let a = style_line(styles: first, atoms: atoms, document: document, node: node, style: a_entry.style);
+        let b = style_line(styles: second, atoms: atoms, document: document, node: node, style: b_entry.style);
+        give same_line(first: &a, second: &b);
+      } else {
+        give False();
+      }
+      let same = band(same_place, lines_same);
+      if same {
+      } else {
+        if differ == 0_u64 {
+          set first_at = count +sat p;
+        }
+        set differ = differ +sat 1_u64;
+      }
+    }
+  }
+  if a_pseudos != b_pseudos {
+    if differ == 0_u64 {
+      set first_at = count +sat shorter;
+    }
+    set differ = differ +sat 1_u64;
+  }
+  return differ, first_at;
+}
+
+fn run_incremental(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, script: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(traversal), reads(script), writes(document), writes(atoms), writes(out), writes(err), writes(files) waits {
+  doc "Checks pkg::style::restyle against a full style run. Keeps a StyleState of the document; for each C or K line, in order: the restyle set class_restyle gives, then the edit, then restyle, then compute_styles of the edited document, compared with the kept styles value by value (differing). Reports `restyle I set S visited V changed C differ D`, with ` rebuilt` when restyle rebuilt every node and ` full` in place of the set for a full set, and ` first P` when D is not 0. S lines were added before; N lines change nothing; any other line is refused. Returns 0, or 2 after naming the failure on err.";
+  let notes = box_slots_new::<u8>(capacity: 4096_u64);
+  let class_atom = class_index(atoms: atoms);
+  let state = match style_state(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, failure: failure);
+      return 2_u8;
+    }
+  }
+  let length = script^.len;
+  let at = 0_u64;
+  let number = 0_u64;
+  let edits = 0_u64;
+  for (step in 0_u64..length) {
+    if at >= length {
+      break;
+    }
+    let end = line_end(text: script, start: at);
+    let start = at;
+    set at = end +sat 1_u64;
+    set number = number +sat 1_u64;
+    if end > length {
+      return 2_u8;
+    }
+    if start < end {
+      let kind = script^[start];
+      let is_s = kind == 83_u8;
+      let is_p = kind == 80_u8;
+      let is_n = kind == 78_u8;
+      let is_c = kind == 67_u8;
+      let is_k = kind == 75_u8;
+      let passive = bor(is_s, is_p);
+      let quiet = bor(passive, is_n);
+      let class_edit = bor(is_c, is_k);
+      let known = bor(quiet, class_edit);
+      if known {
+      } else {
+        put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+        let reported = flush(factory: files, output: err, buffer: &notes);
+        return 2_u8;
+      }
+      if class_edit {
+        set edits = edits +sat 1_u64;
+        let line = &script^[start..end];
+        let (node_found, node_value, after_node) = read_number(line: line, start: 2_u64);
+        let size = line^.len;
+        let token_ok = after_node < size;
+        let parsed = band(node_found, token_ok);
+        let node = match node_id_of(value: node_value) {
+          Some(value: found) => {
+            give found;
+          }
+          None() => {
+            put_failure(notes: &notes, number: number, reason: &syntax_reason[0_u64..syntax_reason.len]);
+            let reported = flush(factory: files, output: err, buffer: &notes);
+            return 2_u8;
+          }
+        }
+        if parsed {
+        } else {
+          put_failure(notes: &notes, number: number, reason: &syntax_reason[0_u64..syntax_reason.len]);
+          let reported = flush(factory: files, output: err, buffer: &notes);
+          return 2_u8;
+        }
+        let wanted = match class_restyle(store: store, document: document, atoms: atoms, traversal: traversal, node: node, class: &line^[after_node..size]) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let applied = apply_class_edit(document: document, class_atom: class_atom, line: line);
+        if applied {
+        } else {
+          put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+          let reported = flush(factory: files, output: err, buffer: &notes);
+          return 2_u8;
+        }
+        let done = match restyle_state(state: &state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, wanted: &wanted) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let fresh = match compute_styles(store: store, document: document, atoms: atoms, traversal: traversal, environment: environment) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let (differ, first_at) = differing(first: &state.styles, second: &fresh, document: document, atoms: atoms, traversal: traversal);
+        put_text(buffer: &notes, text: &restyle_label[0_u64..restyle_label.len]);
+        put_decimal(buffer: &notes, value: edits);
+        if wanted.full {
+          put_text(buffer: &notes, text: &full_label[0_u64..full_label.len]);
+        } else {
+          put_text(buffer: &notes, text: &set_label[0_u64..set_label.len]);
+          put_decimal(buffer: &notes, value: wanted.elements.inner.len);
+        }
+        put_text(buffer: &notes, text: &visited_label[0_u64..visited_label.len]);
+        put_decimal(buffer: &notes, value: done.visited);
+        put_text(buffer: &notes, text: &changed_label[0_u64..changed_label.len]);
+        put_decimal(buffer: &notes, value: done.changed.inner.len);
+        put_text(buffer: &notes, text: &differ_label[0_u64..differ_label.len]);
+        put_decimal(buffer: &notes, value: differ);
+        if differ > 0_u64 {
+          put_text(buffer: &notes, text: &first_label[0_u64..first_label.len]);
+          put_decimal(buffer: &notes, value: first_at);
+        }
+        if done.full {
+          put_text(buffer: &notes, text: &rebuilt_label[0_u64..rebuilt_label.len]);
+        }
+        put_byte(buffer: &notes, value: 10_u8);
+        let flushed = flush(factory: files, output: out, buffer: &notes);
       }
     }
   }
