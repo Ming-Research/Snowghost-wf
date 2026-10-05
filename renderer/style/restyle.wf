@@ -57,8 +57,105 @@ fn is_anything(key: SubjectKey) -> anything: Bool pure {
   }
 }
 
+const reach_low_mask: u64 = 1023_u64;
+
+const reach_bucket_count: u64 = 1025_u64;
+
+fn reach_bucket(reach: ClassReach) -> bucket: u64 pure {
+  doc "The bucket order_reaches files a reach under: 0 for a reach that holds for every class, else one more than its hash's low ten bits.";
+  if reach.every {
+    return 0_u64;
+  }
+  let low = iand(reach.hash, reach_low_mask);
+  let bucket = low + 1_u64;
+  return bucket;
+}
+
+fn order_reaches(store: &RuleStore) -> result: unit writes(store) {
+  doc "Reorders the store's reaches by reach_bucket, a stable counting sort, so gather_reaches finds a class's reaches by binary search.";
+  let count = store^.reaches.inner.len;
+  if count < 2_u64 {
+    return unit;
+  }
+  let slots = reach_bucket_count + 1_u64;
+  let starts = box_array_filled::<u64>(count: slots, value: 0_u64);
+  for (r in 0_u64..count) {
+    let bucket = reach_bucket(reach: store^.reaches.inner[r]);
+    let next = bucket +sat 1_u64;
+    if next < starts.inner.len {
+      set starts.inner[next] = starts.inner[next] +wrap 1_u64;
+    }
+  }
+  for (b in 0_u64..reach_bucket_count) {
+    let next = b + 1_u64;
+    if next < starts.inner.len {
+      set starts.inner[next] = starts.inner[next] +wrap starts.inner[b];
+    }
+  }
+  let first = store^.reaches.inner[0_u64];
+  let ordered = box_array_filled::<ClassReach>(count: count, value: first);
+  for (r in 0_u64..count) {
+    let reach = store^.reaches.inner[r];
+    let bucket = reach_bucket(reach: reach);
+    if bucket < starts.inner.len {
+      let slot = starts.inner[bucket];
+      if slot < count {
+        set ordered.inner[slot] = reach;
+        set starts.inner[bucket] = slot + 1_u64;
+      }
+    }
+  }
+  for (r in 0_u64..count) {
+    if r < store^.reaches.inner.len {
+      set store^.reaches.inner[r] = ordered.inner[r];
+    }
+  }
+  return unit;
+}
+
+fn take_reach(gathered: &Reached, reach: ClassReach) -> result: Result<unit, StyleError> writes(gathered) {
+  doc "Adds one reach to gathered.";
+  if reach.generated {
+    set gathered^.pseudos = True();
+  }
+  let all_bit = iand(reach.reach, reach_all);
+  if all_bit != 0_u8 {
+    set gathered^.full = True();
+  }
+  let self_bit = iand(reach.reach, reach_self);
+  if self_bit != 0_u8 {
+    set gathered^.self_reached = True();
+  }
+  let any_key = is_anything(key: reach.subject);
+  let down_bit = iand(reach.reach, reach_descendants);
+  if down_bit != 0_u8 {
+    if any_key {
+      set gathered^.down_any = True();
+    } else {
+      let pushed = propagate push::<SubjectKey>(cell: &gathered^.down, value: reach.subject, ceiling: key_ceiling);
+    }
+  }
+  let across_bit = iand(reach.reach, reach_siblings);
+  if across_bit != 0_u8 {
+    if any_key {
+      set gathered^.across_any = True();
+    } else {
+      let pushed = propagate push::<SubjectKey>(cell: &gathered^.across, value: reach.subject, ceiling: key_ceiling);
+    }
+  }
+  let beyond_bit = iand(reach.reach, reach_sibling_descendants);
+  if beyond_bit != 0_u8 {
+    if any_key {
+      set gathered^.beyond_any = True();
+    } else {
+      let pushed = propagate push::<SubjectKey>(cell: &gathered^.beyond, value: reach.subject, ceiling: key_ceiling);
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
 fn gather_reaches(store: &RuleStore, hash: u64) -> result: Result<Reached, StyleError> reads(store) {
-  doc "Collects the reaches of the store whose class hash is hash or that hold for every class.";
+  doc "Collects the reaches of the store whose class hash is hash or that hold for every class: the leading run of bucket 0, and the run of hash's bucket, found by binary search in the order order_reaches left.";
   let no = False();
   let down = box_slots_new::<SubjectKey>(capacity: 0_u64);
   let across = box_slots_new::<SubjectKey>(capacity: 0_u64);
@@ -68,45 +165,42 @@ fn gather_reaches(store: &RuleStore, hash: u64) -> result: Result<Reached, Style
   let count = store^.reaches.inner.len;
   for (r in 0_u64..count) {
     let reach = store^.reaches.inner[r];
-    let named = reach.hash == hash;
-    let applies = bor(named, reach.every);
-    if applies {
-      if reach.generated {
-        set gathered.pseudos = True();
+    if reach.every {
+      let taken = propagate take_reach(gathered: &gathered, reach: reach);
+    } else {
+      break;
+    }
+  }
+  let low = iand(hash, reach_low_mask);
+  let wanted = low + 1_u64;
+  let from = 0_u64;
+  let to = count;
+  for (step in 0_u64..64_u64) {
+    if from >= to {
+      break;
+    }
+    let width = to - from;
+    let half = width / 2_u64;
+    let middle = from + half;
+    if middle < count {
+      let bucket = reach_bucket(reach: store^.reaches.inner[middle]);
+      if bucket < wanted {
+        set from = middle + 1_u64;
+      } else {
+        set to = middle;
       }
-      let all_bit = iand(reach.reach, reach_all);
-      if all_bit != 0_u8 {
-        set gathered.full = True();
-      }
-      let self_bit = iand(reach.reach, reach_self);
-      if self_bit != 0_u8 {
-        set gathered.self_reached = True();
-      }
-      let any_key = is_anything(key: reach.subject);
-      let down_bit = iand(reach.reach, reach_descendants);
-      if down_bit != 0_u8 {
-        if any_key {
-          set gathered.down_any = True();
-        } else {
-          let pushed = propagate push::<SubjectKey>(cell: &gathered.down, value: reach.subject, ceiling: key_ceiling);
-        }
-      }
-      let across_bit = iand(reach.reach, reach_siblings);
-      if across_bit != 0_u8 {
-        if any_key {
-          set gathered.across_any = True();
-        } else {
-          let pushed = propagate push::<SubjectKey>(cell: &gathered.across, value: reach.subject, ceiling: key_ceiling);
-        }
-      }
-      let beyond_bit = iand(reach.reach, reach_sibling_descendants);
-      if beyond_bit != 0_u8 {
-        if any_key {
-          set gathered.beyond_any = True();
-        } else {
-          let pushed = propagate push::<SubjectKey>(cell: &gathered.beyond, value: reach.subject, ceiling: key_ceiling);
-        }
-      }
+    } else {
+      break;
+    }
+  }
+  for (r in from..count) {
+    let reach = store^.reaches.inner[r];
+    let bucket = reach_bucket(reach: reach);
+    if bucket != wanted {
+      break;
+    }
+    if reach.hash == hash {
+      let taken = propagate take_reach(gathered: &gathered, reach: reach);
     }
   }
   return Ok<Reached, StyleError>(value: move gathered);

@@ -3,6 +3,9 @@ alias Document = pkg::dom::Document;
 alias MatchContext = pkg::css::selectors::MatchContext;
 alias NodeId = pkg::dom::NodeId;
 alias Positions = pkg::css::selectors::Positions;
+alias FeatureFilter = pkg::css::selectors::FeatureFilter;
+alias element_filter = pkg::css::selectors::element_filter;
+alias filter_admits = pkg::css::selectors::filter_admits;
 alias SelectorList = pkg::css::selectors::SelectorList;
 alias Specificity = pkg::css::selectors::Specificity;
 alias SubjectKey = pkg::css::selectors::SubjectKey;
@@ -17,6 +20,7 @@ alias sibling_positions = pkg::css::selectors::sibling_positions;
 alias subject_key = pkg::css::selectors::subject_key;
 alias pseudo_subject_key = pkg::css::selectors::pseudo_subject_key;
 alias pseudo_matching_specificity = pkg::css::selectors::pseudo_matching_specificity;
+alias alternative_specificity = pkg::css::selectors::alternative_specificity;
 alias pseudo_element_none = pkg::css::selectors::pseudo_element_none;
 alias pseudo_element_before = pkg::css::selectors::pseudo_element_before;
 alias pseudo_element_after = pkg::css::selectors::pseudo_element_after;
@@ -32,6 +36,10 @@ const no_bucket: u64 = 3072_u64;
 const any_bucket: u64 = 3073_u64;
 
 const pair_scale: u64 = 4194304_u64;
+
+const alternative_bits: u32 = 10_u32;
+
+const whole_rule: u64 = 1023_u64;
 
 const winner_words: u64 = 97_u64;
 
@@ -75,21 +83,8 @@ fn alternative_key(list: &SelectorList, atoms: &AtomTable, alternative: u64, pse
   return key;
 }
 
-fn rule_is_wide(list: &SelectorList, atoms: &AtomTable, pseudo: Bool) -> wide: Bool reads(list), reads(atoms) {
-  doc "Tells whether some alternative of list keys Anything, so the rule is tested against every element.";
-  let alternatives = alternative_count(list: list);
-  for (a in 0_u64..alternatives) {
-    let key = alternative_key(list: list, atoms: atoms, alternative: a, pseudo: pseudo);
-    let bucket = key_bucket(key: key);
-    if bucket == any_bucket {
-      return True();
-    }
-  }
-  return False();
-}
-
 fn build_rule_index(store: &RuleStore, atoms: &AtomTable, pseudo: Bool) -> result: Result<RuleIndex, StyleError> reads(store), reads(atoms) {
-  doc "Builds a rule index: every rule with an alternative that keys Anything in the anything list, and every other rule under the bucket of each alternative's key, bucket by bucket in rule order. The element index keys alternatives by subject_key; the pseudo-element index, when pseudo holds, by pseudo_subject_key, so it holds only rules with an alternative ending in ::before or ::after.";
+  doc "Builds a rule index of items, each a rule's number shifted by alternative_bits with one of its alternatives' index in the low bits: an alternative keyed Anything in the anything list, every other one under the bucket of its key, bucket by bucket in rule order, and a rule of whole_rule alternatives or more once in the anything list as the item with whole_rule in the low bits, which tests all of them. The element index keys alternatives by subject_key; the pseudo-element index, when pseudo holds, by pseudo_subject_key, so it holds only rules with an alternative ending in ::before or ::after.";
   let rules = store^.rules.inner.len;
   let few = rules <= pair_scale;
   if few {
@@ -101,22 +96,28 @@ fn build_rule_index(store: &RuleStore, atoms: &AtomTable, pseudo: Bool) -> resul
   let pairs = box_slots_new::<u64>(capacity: 0_u64);
   let anything = box_slots_new::<u32>(capacity: 0_u64);
   for (rule in 0_u64..rules) {
-    let wide = rule_is_wide(list: &store^.rules.inner[rule].selectors, atoms: atoms, pseudo: pseudo);
-    let number = cvt::<u64, u32>(rule);
-    if wide {
-      let step_1 = propagate push::<u32>(cell: &anything, value: number, ceiling: 4194304_u64);
+    let alternatives = alternative_count(list: &store^.rules.inner[rule].selectors);
+    let shifted = ishl.wrap(rule, alternative_bits);
+    let many = alternatives >= whole_rule;
+    if many {
+      let whole = ior(shifted, whole_rule);
+      let number = cvt.wrap::<u64, u32>(whole);
+      let step_1 = propagate push::<u32>(cell: &anything, value: number, ceiling: 4294967296_u64);
     } else {
-      let alternatives = alternative_count(list: &store^.rules.inner[rule].selectors);
       for (a in 0_u64..alternatives) {
         let key = alternative_key(list: &store^.rules.inner[rule].selectors, atoms: atoms, alternative: a, pseudo: pseudo);
         let bucket = key_bucket(key: key);
+        let item = ior(shifted, a);
         let keyed = bucket < bucket_total;
         if keyed {
-          let scaled = bucket * pair_scale;
-          let pair = scaled + rule;
+          let scaled = ishl.wrap(bucket, 32_u32);
+          let pair = ior(scaled, item);
           let step_2 = propagate push::<u64>(cell: &pairs, value: pair, ceiling: 4294967296_u64);
           let next = bucket + 1_u64;
           set starts.inner[next] = starts.inner[next] +wrap 1_u64;
+        } else if bucket == any_bucket {
+          let number = cvt.wrap::<u64, u32>(item);
+          let step_3 = propagate push::<u32>(cell: &anything, value: number, ceiling: 4294967296_u64);
         }
       }
     }
@@ -139,14 +140,14 @@ fn build_rule_index(store: &RuleStore, atoms: &AtomTable, pseudo: Bool) -> resul
   }
   for (at in 0_u64..total) {
     let pair = pairs.inner[at];
-    let bucket = pair / pair_scale;
-    let rule = pair % pair_scale;
+    let bucket = ishr(pair, 32_u32);
+    let item = iand(pair, 4294967295_u64);
     let listed = bucket < bucket_total;
     if listed {
       let slot = cursor.inner[bucket];
       let inside = slot < total;
       if inside {
-        set entries.inner[slot] = cvt::<u64, u32>(rule);
+        set entries.inner[slot] = cvt.wrap::<u64, u32>(item);
         set cursor.inner[bucket] = slot + 1_u64;
       }
     }
@@ -155,7 +156,7 @@ fn build_rule_index(store: &RuleStore, atoms: &AtomTable, pseudo: Bool) -> resul
   return Ok<RuleIndex, StyleError>(value: move made);
 }
 
-fn test_bucket(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn test_bucket(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, bucket: u64) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Tests every rule listed under bucket against element.";
   let slots = index^.starts.inner.len;
   let listed = bucket < bucket_total;
@@ -181,8 +182,8 @@ fn test_bucket(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store
   }
   let fits = True();
   for (at in from..to) {
-    let rule = cvt::<u32, u64>(index^.entries.inner[at]);
-    let one = test_rule(keys: keys, out: out, bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, rule: rule);
+    let item = cvt::<u32, u64>(index^.entries.inner[at]);
+    let one = test_rule(keys: keys, out: out, bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, item: item);
     set fits = band(fits, one);
   }
   return fits;
@@ -216,7 +217,7 @@ fn is_class_space(byte: u8) -> space: Bool pure {
   return space;
 }
 
-fn test_classes(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn test_classes(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, span: TextSpan) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Tests the rules under the class bucket of every whitespace-separated word of the class attribute value span holds.";
   let start = cvt::<u32, u64>(span.start);
   let end = cvt::<u32, u64>(span.end);
@@ -239,7 +240,7 @@ fn test_classes(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, stor
         let hash = name_hash(bytes: &document^.text.inner[word_start..at]);
         let low = iand(hash, bucket_mask);
         let bucket = key_buckets + low;
-        let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, bucket: bucket);
+        let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, bucket: bucket);
         set fits = band(fits, one);
       }
       set in_word = False();
@@ -255,20 +256,20 @@ fn test_classes(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, stor
       let hash = name_hash(bytes: &document^.text.inner[word_start..end]);
       let low = iand(hash, bucket_mask);
       let bucket = key_buckets + low;
-      let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, bucket: bucket);
+      let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, bucket: bucket);
       set fits = band(fits, one);
     }
   }
   return fits;
 }
 
-fn match_indexed(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
-  doc "Offers test_rule the anything list and the rules under the buckets of element's local name, its first id attribute value and the words of its first class attribute value, found as the matchers find them.";
+fn match_indexed(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter) -> fits: Bool reads(index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+  doc "Offers test_rule the anything list and the rules under the buckets of element's local name, its first id attribute value and the words of its first class attribute value, found as the matchers find them; filter is the element_filter of element.";
   let fits = True();
   let wide = index^.anything.inner.len;
   for (k in 0_u64..wide) {
-    let rule = cvt::<u32, u64>(index^.anything.inner[k]);
-    let one = test_rule(keys: keys, out: out, bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, rule: rule);
+    let item = cvt::<u32, u64>(index^.anything.inner[k]);
+    let one = test_rule(keys: keys, out: out, bits: bits, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, item: item);
     set fits = band(fits, one);
   }
   let at = cvt::<u32, u64>(element.index);
@@ -296,7 +297,7 @@ fn match_indexed(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, sto
           let low = iand(hash, bucket_mask);
           let base = key_buckets + key_buckets;
           let bucket = base + low;
-          let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, bucket: bucket);
+          let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, bucket: bucket);
           set fits = band(fits, one);
         }
       }
@@ -327,7 +328,7 @@ fn match_indexed(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, sto
             set seen_id = True();
             let hash = text_hash(document: document, span: attribute.value);
             let bucket = iand(hash, bucket_mask);
-            let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, bucket: bucket);
+            let one = test_bucket(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, bucket: bucket);
             set fits = band(fits, one);
           }
           let is_class = attribute.name.index == atom_class;
@@ -335,7 +336,7 @@ fn match_indexed(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, sto
           let first_class = band(is_class, fresh_class);
           if first_class {
             set seen_class = True();
-            let one = test_classes(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, span: attribute.value);
+            let one = test_classes(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, filter: filter, span: attribute.value);
             set fits = band(fits, one);
           }
         }
@@ -438,17 +439,24 @@ fn offer(keys: &[u64], out: &[u32], store: &RuleStore, first: u32, end: u32, ori
   return unit;
 }
 
-fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, rule: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
-  doc "Matches rule against element and, when it matches, offers its declarations and, for a rule that sets custom properties, writes its packed specificity plus one to its slot of bits, which is zero where no such rule matched. False when its slot lies outside bits.";
+fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, filter: FeatureFilter, item: u64) -> fits: Bool reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+  doc "Matches the rule and alternative item names against element, unless filter, the element_filter of element, lacks a bit of the rule's selector_mask, and, when it matches, offers its declarations and, for a rule that sets custom properties, writes its packed specificity plus one to its slot of bits when that is more than the slot holds, which is zero where no such rule matched, so each slot ends with the greatest over the rule's matching alternatives. False when its slot lies outside bits.";
+  let rule = ishr(item, alternative_bits);
+  let alternative = iand(item, whole_rule);
   let rules = store^.rules.inner.len;
   let known = rule < rules;
   if known {
   } else {
     return True();
   }
+  let admits = filter_admits(filter: filter, mask: store^.rules.inner[rule].features);
+  if admits {
+  } else {
+    return True();
+  }
   let none = None<NodeId>();
   let context = MatchContext(target: none, scope: none);
-  let matched = rule_packed(store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, rule: rule);
+  let matched = rule_packed(store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: pseudo, rule: rule, alternative: alternative);
   match matched {
     Some(value: packed) => {
       let first = store^.rules.inner[rule].first;
@@ -461,7 +469,8 @@ fn test_rule(keys: &[u64], out: &[u32], bits: &[u64], store: &RuleStore, documen
         let inside = wide < bits^.len;
         if inside {
           let key = packed +sat 1_u64;
-          set bits^[wide] = key;
+          let kept = bits^[wide];
+          set bits^[wide] = imax(kept, key);
         } else {
           return False();
         }
@@ -510,20 +519,21 @@ fn offer_record(keys: &[u64], out: &[u32], store: &RuleStore, records: &Box<Slot
 
 fn match_element(keys: &[u64], out: &[u32], bits: &[u64], index: &RuleIndex, pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8) -> fits: Bool reads(index), reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "Selects one styled node's winners. An element takes the rules the element index offers, its presentational hints in the user-agent layer above every user-agent selector, and its style attribute; a pseudo-element of kind pseudo_element_before or pseudo_element_after takes the rules the pseudo-element index offers for its originating element.";
+  let filter = element_filter(document: document, atoms: atoms, positions: positions, element: element);
   if kind != pseudo_element_none {
-    let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind);
+    let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind, filter: filter);
     return fits;
   }
-  let fits = match_indexed(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind);
+  let fits = match_indexed(keys: keys, out: out, bits: bits, index: index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind, filter: filter);
   let node = cvt::<u32, u64>(element.index);
   offer_record(keys: keys, out: out, store: store, records: &store^.hints, index: &store^.hint_at, node: node, origin: origin_user_agent, packed: hint_specificity);
   offer_record(keys: keys, out: out, store: store, records: &store^.attributes, index: &store^.attribute_at, node: node, origin: origin_author, packed: attribute_specificity);
   return fits;
 }
 
-fn has_pseudo(keys: &[u64], out: &[u32], bits: &[u64], pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8) -> matched: Bool reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
+fn has_pseudo(keys: &[u64], out: &[u32], bits: &[u64], pseudo_index: &RuleIndex, store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, kind: u8, filter: FeatureFilter) -> matched: Bool reads(pseudo_index), reads(store), reads(document), reads(atoms), reads(positions), writes(keys), writes(out), writes(bits) {
   doc "True when some rule of the pseudo-element index with a longhand declaration matches element's pseudo-element of kind; keys and out are scratch the matcher fills, and bits is empty, so no custom-property rule is recorded.";
-  let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind);
+  let fits = match_indexed(keys: keys, out: out, bits: bits, index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, pseudo: kind, filter: filter);
   let count = out^.len;
   for (k in 0_u64..count) {
     if out^[k] != 0_u32 {
@@ -549,14 +559,15 @@ fn pseudo_flags(flags: &[u8], elements: &[NodeId], pseudo_index: &RuleIndex, sto
   }
   for (i in 0_u64..count) {
     let element = elements^[i];
+    let filter = element_filter(document: document, atoms: atoms, positions: positions, element: element);
     let keys = array_filled::<u64, 97>(value: 0_u64);
     let out = array_filled::<u32, 97>(value: 0_u32);
     let scratch = array_filled::<u64, 1>(value: 0_u64);
-    let before = has_pseudo(keys: &keys[0_u64..97_u64], out: &out[0_u64..97_u64], bits: &scratch[0_u64..0_u64], pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, kind: pseudo_element_before);
+    let before = has_pseudo(keys: &keys[0_u64..97_u64], out: &out[0_u64..97_u64], bits: &scratch[0_u64..0_u64], pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, kind: pseudo_element_before, filter: filter);
     let keys_after = array_filled::<u64, 97>(value: 0_u64);
     let out_after = array_filled::<u32, 97>(value: 0_u32);
     let scratch_after = array_filled::<u64, 1>(value: 0_u64);
-    let after = has_pseudo(keys: &keys_after[0_u64..97_u64], out: &out_after[0_u64..97_u64], bits: &scratch_after[0_u64..0_u64], pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, kind: pseudo_element_after);
+    let after = has_pseudo(keys: &keys_after[0_u64..97_u64], out: &out_after[0_u64..97_u64], bits: &scratch_after[0_u64..0_u64], pseudo_index: pseudo_index, store: store, document: document, atoms: atoms, positions: positions, element: element, kind: pseudo_element_after, filter: filter);
     let low = if before {
       give 1_u8;
     } else {
@@ -725,8 +736,8 @@ fn match_with(store: &RuleStore, document: &Document, atoms: &AtomTable, travers
   return Ok<Cascade, StyleError>(value: move made);
 }
 
-fn rule_packed(store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, rule: u64) -> packed: Option<u64> reads(store), reads(document), reads(atoms), reads(positions) {
-  doc "The packed specificity with which rule matches element, or its pseudo-element pseudo when that is not pseudo_element_none, or None: a pseudo-element is matched by pseudo_matching_specificity; a rule whose alternatives share one specificity is matched by selector_matches_positioned, which stops at the first matching alternative, and reads the specificity computed when it was added; any other rule takes the greatest of its matching alternatives from matching_specificity.";
+fn rule_packed(store: &RuleStore, document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId, pseudo: u8, rule: u64, alternative: u64) -> packed: Option<u64> reads(store), reads(document), reads(atoms), reads(positions) {
+  doc "The packed specificity with which rule matches element, or its pseudo-element pseudo when that is not pseudo_element_none, or None. An alternative other than whole_rule is matched alone by alternative_specificity; for the whole rule, a pseudo-element is matched by pseudo_matching_specificity; a rule whose alternatives share one specificity is matched by selector_matches_positioned, which stops at the first matching alternative, and reads the specificity computed when it was added; any other rule takes the greatest of its matching alternatives from matching_specificity.";
   let rules = store^.rules.inner.len;
   let known = rule < rules;
   if known {
@@ -735,6 +746,17 @@ fn rule_packed(store: &RuleStore, document: &Document, atoms: &AtomTable, positi
   }
   let none = None<NodeId>();
   let context = MatchContext(target: none, scope: none);
+  if alternative != whole_rule {
+    match alternative_specificity(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context, positions: positions, pseudo: pseudo, alternative: alternative) {
+      Some(value: specificity) => {
+        let packed = pack_specificity(specificity: specificity);
+        return Some<u64>(value: packed);
+      }
+      None() => {
+        return None<u64>();
+      }
+    }
+  }
   if pseudo != pseudo_element_none {
     match pseudo_matching_specificity(list: &store^.rules.inner[rule].selectors, document: document, atoms: atoms, element: element, context: context, positions: positions, pseudo: pseudo) {
       Some(value: specificity) => {

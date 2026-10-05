@@ -1,0 +1,377 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+alias atom_id = pkg::base::static_atoms::atom_id;
+
+const tag_id: u64 = 1_u64;
+
+const tag_class: u64 = 2_u64;
+
+const tag_type: u64 = 3_u64;
+
+const as_ancestor: u64 = 0_u64;
+
+const as_subject: u64 = 3_u64;
+
+const tag_scale: u64 = 11400714819323198485_u64;
+
+fn empty_filter() -> made: FeatureFilter pure {
+  doc "A filter with no bit set.";
+  return FeatureFilter(w0: 0_u64, w1: 0_u64, w2: 0_u64, w3: 0_u64);
+}
+
+fn tagged(hash: u64, tag: u64) -> key: u64 pure {
+  doc "A feature key: a name's name_hash mixed with its tag, which names an id, a class or a local name, each of the subject or of an ancestor.";
+  let salt = tag *wrap tag_scale;
+  let key = ixor(hash, salt);
+  return key;
+}
+
+fn set_bit(filter: FeatureFilter, bit: u64) -> made: FeatureFilter pure {
+  doc "The filter with bit, below 256, set.";
+  let made = filter;
+  let word = ishr(bit, 6_u32);
+  let low = iand(bit, 63_u64);
+  let narrow = cvt.wrap::<u64, u32>(low);
+  let mask = ishl.wrap(1_u64, narrow);
+  if word == 0_u64 {
+    set made.w0 = ior(made.w0, mask);
+  } else if word == 1_u64 {
+    set made.w1 = ior(made.w1, mask);
+  } else if word == 2_u64 {
+    set made.w2 = ior(made.w2, mask);
+  } else {
+    set made.w3 = ior(made.w3, mask);
+  }
+  return made;
+}
+
+fn add_key(filter: FeatureFilter, key: u64) -> made: FeatureFilter pure {
+  doc "The filter with key's two bits set: its low eight bits and its next eight.";
+  let first = iand(key, 255_u64);
+  let shifted = ishr(key, 8_u32);
+  let second = iand(shifted, 255_u64);
+  let once = set_bit(filter: filter, bit: first);
+  let made = set_bit(filter: once, bit: second);
+  return made;
+}
+
+fn filter_admits(filter: FeatureFilter, mask: FeatureFilter) -> admits: Bool pure {
+  doc "Whether filter holds every bit of mask.";
+  let a = iand(filter.w0, mask.w0);
+  let b = iand(filter.w1, mask.w1);
+  let c = iand(filter.w2, mask.w2);
+  let d = iand(filter.w3, mask.w3);
+  let first = a == mask.w0;
+  let second = b == mask.w1;
+  let third = c == mask.w2;
+  let fourth = d == mask.w3;
+  let low = band(first, second);
+  let high = band(third, fourth);
+  let admits = band(low, high);
+  return admits;
+}
+
+fn compound_mask(list: &SelectorList, atoms: &AtomTable, compound: Compound, mask: FeatureFilter, role: u64) -> made: FeatureFilter reads(list), reads(atoms) {
+  doc "mask with the key of every id, class and type selector of compound added as a feature of role: an element the compound matches has each of them.";
+  let made = mask;
+  let id_tag = tag_id +wrap role;
+  let class_tag = tag_class +wrap role;
+  let type_tag = tag_type +wrap role;
+  let first = cvt::<u32, u64>(compound.simple_start);
+  let end = cvt::<u32, u64>(compound.simple_end);
+  for (k in first..end) {
+    if k < list^.instr_order.inner.len {
+      let at = cvt::<u32, u64>(list^.instr_order.inner[k]);
+      if at < list^.instrs.inner.len {
+        let instr = list^.instrs.inner[at];
+        match instr {
+          Id(exact: ex, lower: lo) => {
+            let hash = atom_hash(atoms: atoms, atom: lo);
+            let key = tagged(hash: hash, tag: id_tag);
+            set made = add_key(filter: made, key: key);
+          }
+          Class(exact: ex, lower: lo) => {
+            let hash = atom_hash(atoms: atoms, atom: lo);
+            let key = tagged(hash: hash, tag: class_tag);
+            set made = add_key(filter: made, key: key);
+          }
+          Type(ns: constraint, exact: ex, lower: lo) => {
+            let hash = atom_hash(atoms: atoms, atom: lo);
+            let key = tagged(hash: hash, tag: type_tag);
+            set made = add_key(filter: made, key: key);
+          }
+          Universal(..) => {
+          }
+          AttrPresence(..) => {
+          }
+          AttrMatch(..) => {
+          }
+          Root() => {
+          }
+          Empty() => {
+          }
+          FirstChild() => {
+          }
+          LastChild() => {
+          }
+          OnlyChild() => {
+          }
+          FirstOfType() => {
+          }
+          LastOfType() => {
+          }
+          OnlyOfType() => {
+          }
+          NthChild(..) => {
+          }
+          NthLastChild(..) => {
+          }
+          NthOfType(..) => {
+          }
+          NthLastOfType(..) => {
+          }
+          Not(..) => {
+          }
+          Is(..) => {
+          }
+          Where(..) => {
+          }
+          Link() => {
+          }
+          AnyLink() => {
+          }
+          Visited() => {
+          }
+          Checked() => {
+          }
+          Enabled() => {
+          }
+          Disabled() => {
+          }
+          Lang(..) => {
+          }
+          Target() => {
+          }
+          Scope() => {
+          }
+          Defined() => {
+          }
+          Hover() => {
+          }
+          Active() => {
+          }
+          Focus() => {
+          }
+          FocusWithin() => {
+          }
+          FocusVisible() => {
+          }
+        }
+      }
+    }
+  }
+  return made;
+}
+
+fn alternative_mask(list: &SelectorList, atoms: &AtomTable, alt: AltEntry) -> mask: FeatureFilter reads(list), reads(atoms) {
+  doc "The features of alt's rightmost compound as subject features, and of each compound that a descendant or child combinator somewhere to its right makes match an ancestor of the subject (siblings share their parent, so a compound left of one is an ancestor too) as ancestor features.";
+  let mask = empty_filter();
+  let first = cvt::<u32, u64>(alt.compound_start);
+  let end = cvt::<u32, u64>(alt.compound_end);
+  if first < end {
+  } else {
+    return mask;
+  }
+  let span = end - first;
+  let seen = False();
+  for (step in 0_u64..span) {
+    let back = step + 1_u64;
+    let position = end - back;
+    let order_ok = position < list^.compound_order.inner.len;
+    if order_ok {
+      let at = cvt::<u32, u64>(list^.compound_order.inner[position]);
+      if at < list^.compounds.inner.len {
+        let compound = list^.compounds.inner[at];
+        if step == 0_u64 {
+          set mask = compound_mask(list: list, atoms: atoms, compound: compound, mask: mask, role: as_subject);
+        } else if seen {
+          set mask = compound_mask(list: list, atoms: atoms, compound: compound, mask: mask, role: as_ancestor);
+        }
+        match compound.combinator {
+          Start() => {
+          }
+          Descendant() => {
+            set seen = True();
+          }
+          Child() => {
+            set seen = True();
+          }
+          NextSibling() => {
+          }
+          SubsequentSibling() => {
+          }
+        }
+      }
+    }
+  }
+  return mask;
+}
+
+fn selector_mask(list: &SelectorList, atoms: &AtomTable) -> mask: FeatureFilter reads(list), reads(atoms) {
+  doc "The bits common to the masks of every top-level alternative, since an element matching any one has that one's features; empty for a list without alternatives or with a malformed one.";
+  let empty = empty_filter();
+  let count = alternative_count(list: list);
+  if count == 0_u64 {
+    return empty;
+  }
+  let mask = FeatureFilter(w0: 18446744073709551615_u64, w1: 18446744073709551615_u64, w2: 18446744073709551615_u64, w3: 18446744073709551615_u64);
+  for (k in 0_u64..count) {
+    match alternative_entry(list: list, alternative: k) {
+      Some(value: alt) => {
+        let one = alternative_mask(list: list, atoms: atoms, alt: alt);
+        set mask.w0 = iand(mask.w0, one.w0);
+        set mask.w1 = iand(mask.w1, one.w1);
+        set mask.w2 = iand(mask.w2, one.w2);
+        set mask.w3 = iand(mask.w3, one.w3);
+      }
+      None() => {
+        return empty;
+      }
+    }
+  }
+  return mask;
+}
+
+fn element_features(filter: FeatureFilter, document: &Document, atoms: &AtomTable, positions: &[u64], node: NodeId, role: u64) -> made: FeatureFilter reads(document), reads(atoms), reads(positions) {
+  doc "The filter with the local name, every id and the class words of the element node added as features of role (as_subject or as_ancestor); a node that is no element adds nothing.";
+  let made = filter;
+  let id_tag = tag_id +wrap role;
+  let class_tag = tag_class +wrap role;
+  let type_tag = tag_type +wrap role;
+  let at = cvt::<u32, u64>(node.index);
+  if at < document^.nodes.inner.len {
+  } else {
+    return made;
+  }
+  let data = &document^.nodes.inner[at].data;
+  match data^ {
+    Element(namespace: space, local_name: name, attributes: attrs, template_contents: contents) => {
+      let (start, end) = atom_bounds(atoms: atoms, atom: name^);
+      let type_hash = name_hash(bytes: &atoms^.text.inner[start..end]);
+      let type_key = tagged(hash: type_hash, tag: type_tag);
+      set made = add_key(filter: made, key: type_key);
+      let listed = attrs^.inner.len;
+      for (k in 0_u64..listed) {
+        let attribute = attrs^.inner[k];
+        let plain = match attribute.namespace {
+          NoNamespace() => {
+            give True();
+          }
+          XLink() => {
+            give False();
+          }
+          Xml() => {
+            give False();
+          }
+          XmlNs() => {
+            give False();
+          }
+        }
+        let is_id = attribute.name.index == atom_id;
+        let take = band(plain, is_id);
+        if take {
+          let value_start = cvt::<u32, u64>(attribute.value.start);
+          let value_end = cvt::<u32, u64>(attribute.value.end);
+          if value_start <= value_end {
+            if value_end <= document^.text.inner.len {
+              let id_hash = name_hash(bytes: &document^.text.inner[value_start..value_end]);
+              let id_key = tagged(hash: id_hash, tag: id_tag);
+              set made = add_key(filter: made, key: id_key);
+            }
+          }
+        }
+      }
+      let (indexed, first, records) = class_records(positions: positions, document: document, node: node);
+      if indexed {
+        let length = positions^.len;
+        for (r in 0_u64..records) {
+          let twice = r *sat 2_u64;
+          let hash_at = first +sat twice;
+          if hash_at < length {
+            let class_key = tagged(hash: positions^[hash_at], tag: class_tag);
+            set made = add_key(filter: made, key: class_key);
+          }
+        }
+      } else {
+        match class_value(document: document, node: at) {
+          Some(value: span) => {
+            let value_start = cvt::<u32, u64>(span.start);
+            let value_end = cvt::<u32, u64>(span.end);
+            if value_start <= value_end {
+              if value_end <= document^.text.inner.len {
+                let hay = &document^.text.inner[value_start..value_end];
+                let length = hay^.len;
+                let pos = 0_u64;
+                for (step in 0_u64..length) {
+                  if pos >= length {
+                    break;
+                  }
+                  let word_start = skip_ws_bytes(hay: hay, at: pos, limit: length);
+                  if word_start >= length {
+                    break;
+                  }
+                  let word_end = word_end_bytes(hay: hay, at: word_start, limit: length);
+                  if word_start <= word_end {
+                    if word_end <= hay^.len {
+                      let word_hash = name_hash(bytes: &hay^[word_start..word_end]);
+                      let class_key = tagged(hash: word_hash, tag: class_tag);
+                      set made = add_key(filter: made, key: class_key);
+                    }
+                  }
+                  set pos = word_end;
+                }
+              }
+            }
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return made;
+}
+
+fn element_filter(document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId) -> filter: FeatureFilter reads(document), reads(atoms), reads(positions) {
+  doc "The features of element as subject features and of every ancestor, walking parent links as match_complex walks them, as ancestor features.";
+  let length = positions^.table.inner.len;
+  let table = &positions^.table.inner[0_u64..length];
+  let blank = empty_filter();
+  let made = element_features(filter: blank, document: document, atoms: atoms, positions: table, node: element, role: as_subject);
+  let count = document^.nodes.inner.len;
+  let parent = parent_of(document: document, node: element);
+  for (step in 0_u64..count) {
+    match parent {
+      Some(value: node) => {
+        set made = element_features(filter: made, document: document, atoms: atoms, positions: table, node: node, role: as_ancestor);
+        set parent = parent_of(document: document, node: node);
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  return made;
+}

@@ -871,17 +871,37 @@ fn backtrack(document: &Document, stack: &Slots<Frame, 64>, failure: u8) -> resu
 }
 
 fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, positions: &[u64], comp_start: u32, comp_end: u32, target: NodeId, context: MatchContext) -> result: Bool reads(list), reads(document), reads(atoms), reads(positions) {
-  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector. Compounds are stored in source (left-to-right, ancestor-to-descendant) order, so the walk starts at index comp_end - 1 (the rightmost, target-anchored compound) and decrements; each compound's own combinator field names the combinator connecting it to its predecessor in source order, which is exactly the step to take when moving from it toward comp_start. An explicit stack, sized to max_compounds_per_selector, holds one frame per unresolved descendant or subsequent-sibling combinator. A mismatched compound fails with result_restart_later_sibling, and a combinator with no candidate left fails with result_restart_descendant (the two sibling combinators) or result_not_matched_globally (child and descendant); crossed_child folds a child combinator crossed since the last frame into that result, since child has no frame of its own and its own failure is always result_restart_descendant, while a next-sibling combinator, also frameless, passes its inner result through unchanged. backtrack then resolves the (possibly folded) result against the stack: retrying the top frame, popping a subsequent-sibling frame that a result_restart_descendant does not retry, and stopping the walk on result_not_matched_globally. A candidate further along an axis sees a subset of the ancestors, or preceding siblings, of a nearer one, so a result_not_matched_globally at the nearer one is final and no compound is ever retested against elements an earlier failure already ruled out.";
+  doc "True when some walk of ancestors and siblings, following the compounds of [comp_start, comp_end) right to left from target, satisfies the whole complex selector. Compounds are stored in source (left-to-right, ancestor-to-descendant) order, so the walk starts at index comp_end - 1 (the rightmost, target-anchored compound) and decrements; each compound's own combinator field names the combinator connecting it to its predecessor in source order, which is exactly the step to take when moving from it toward comp_start. The rightmost compound is tested against target before the stack is made, so a target it rejects, and a selector of one compound, cost no stack; the walk then starts from that result. An explicit stack, sized to max_compounds_per_selector, holds one frame per unresolved descendant or subsequent-sibling combinator. A mismatched compound fails with result_restart_later_sibling, and a combinator with no candidate left fails with result_restart_descendant (the two sibling combinators) or result_not_matched_globally (child and descendant); crossed_child folds a child combinator crossed since the last frame into that result, since child has no frame of its own and its own failure is always result_restart_descendant, while a next-sibling combinator, also frameless, passes its inner result through unchanged. backtrack then resolves the (possibly folded) result against the stack: retrying the top frame, popping a subsequent-sibling frame that a result_restart_descendant does not retry, and stopping the walk on result_not_matched_globally. A candidate further along an axis sees a subset of the ancestors, or preceding siblings, of a nearer one, so a result_not_matched_globally at the nearer one is final and no compound is ever retested against elements an earlier failure already ruled out.";
   let has_any = comp_start < comp_end;
   if has_any {
   } else {
     return False();
   }
-  let stack = slots_new::<Frame, 64>();
   let last = comp_end -wrap 1_u32;
+  let last_wide = cvt::<u32, u64>(last);
+  if last_wide < list^.compound_order.inner.len {
+  } else {
+    return False();
+  }
+  let subject_at = cvt::<u32, u64>(list^.compound_order.inner[last_wide]);
+  if subject_at < list^.compounds.inner.len {
+  } else {
+    return False();
+  }
+  let subject = list^.compounds.inner[subject_at];
+  let subject_ok = compound_matches(list: list, document: document, atoms: atoms, positions: positions, compound: subject, node: target, context: context);
+  if subject_ok {
+  } else {
+    return False();
+  }
+  if last == comp_start {
+    return True();
+  }
+  let stack = slots_new::<Frame, 64>();
   let i = last;
   let current = target;
   let crossed_child = False();
+  let tested = True();
   loop @search {
     let i_wide = cvt::<u32, u64>(i);
     let i_order_ok = i_wide < list^.compound_order.inner.len;
@@ -897,7 +917,12 @@ fn match_complex(list: &SelectorList, document: &Document, atoms: &AtomTable, po
       return False();
     }
     let compound = list^.compounds.inner[actual_i_wide];
-    let ok = compound_matches(list: list, document: document, atoms: atoms, positions: positions, compound: compound, node: current, context: context);
+    let ok = tested;
+    if tested {
+      set tested = False();
+    } else {
+      set ok = compound_matches(list: list, document: document, atoms: atoms, positions: positions, compound: compound, node: current, context: context);
+    }
     if ok {
       let at_start = i == comp_start;
       if at_start {
