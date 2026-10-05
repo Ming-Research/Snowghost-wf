@@ -1,0 +1,318 @@
+Sparse font-size edit on ecma262: attribution and re-stack cost
+================================================================
+
+Task started 2026-10-05 12:24:17 UTC; wall-time limit two hours.
+Base: f9c5bfe (research/incremental-style). Branch research/fontsize-fable.
+Pinned Whitefoot: c3d26643c89d6d705b584b06c63d1eefb09f0516.
+Machine: Apple M1 Pro, macOS 26.6.2, sequential driver builds with the
+shared function cache, every compile under the host lock and the
+15.5 GB / 900 s guard.
+
+Question and criterion (written before measuring)
+------------------------------------------------
+Where do the roughly 1.5 ms (median) of a sfontsize edit on ecma262 go,
+given that the reported update counts (contexts 3, entries 2) describe
+almost no work? The supplied timing lines already split the interval
+into delta_us (marking), picks_us and the remainder (update); the sample
+of a long-running script gives flat stacks (no frame pointers), so the
+attribution instrument is the update's own counts, propagated through
+the paths that discard them today (lay_out_child, stack_flow's tallies,
+the container path of update_held, positioned children).
+
+Comparison: the base driver built from the unchanged f9c5bfe source
+against a driver that only propagates counts (no layout change), on the
+same ten sfontsize edits; then against the implementation. Byte identity
+of every incremental dump with a full rebuild is required for every
+script listed in the task. Timing is the median of the ten edits' us.
+
+Rejection: the count-propagation diagnosis is rejected if the propagated
+counts of the slow edits (7-10, about 10 ms each) stay near those of the
+fast edits; then the cost is in a pass the counts do not describe and a
+timing-only variant must isolate it. An implementation is rejected if
+any identity check reports DIFF or refused, if ecma262's median does not
+fall, or if html5, apollo11 or another edit kind becomes slower in a
+same-source paired comparison.
+
+Environment and drivers
+-----------------------
+Base driver: the f9c5bfe renderer source archived with git archive and
+built unchanged (build/layout_oracle_base, SHA-256
+6ac09473be1a8871eed93f1907ba2d73984f4ba1213bb35c9caf5f2fe1c1be0f).
+The harness is research/investigations/incremental-layout/run.sh with
+local copies of build/research, build/fonts, build/x5/scripts and
+build/x5/apollo-supplement (PAGES=build/x5/apollo-supplement for
+apollo11). The worktree has no whitefoot/ checkout, so the time runs name
+the primary checkout's .github/run-check.pl (RUN_CHECK) and retry while
+the host lock is busy; other agents' compiles, cargo tests and timing
+runs held the lock for most of this task (one build waited 1160 s for a
+3 s compile), and the identity suites ran concurrently with the first
+timing runs, so single-run timings below carry that noise.
+
+Attribution
+-----------
+1. The timing lines already separate the interval: delta_us (marking)
+   is 3-7 us and picks_us 0-11 us on every ecma262 sfontsize edit, so
+   the whole cost is pkg::layout's update.
+2. A sample(1) of a 300-edit script (build/prof7.sample.txt, 45,521
+   samples) shows only leaf frames under wf__main_body: the binary keeps
+   no frame pointers, so a call tree cannot be recovered; the leaf
+   totals (finish_lines, shape_paragraph, margin_edges, padding_edges,
+   stack_flow, prepare_spaces) are dominated by the full-build
+   comparator the timing mode runs after every edit and attribute
+   nothing to the update.
+3. Count propagation (committed): lay_out_child returns its update's
+   counts; stack_flow gathers the tallies of the children it settles,
+   narrows or positions; finish_flow, finish_in_place, position_out and
+   position_out_children return them; update_held keeps a container
+   item's counts when the container is laid out again (the branch that
+   discarded them before). Per edit on ecma262 sfontsize, base counts
+   against propagated counts (same source otherwise, driver
+   build/layout_oracle_counts):
+
+     edit element          base us  entries(base)  counts us  held  entries
+     1,2  li (58 desc.)     1487,1593   2         1561,1607    46   35540
+     3,4  p (6 desc.)       1113,1071   2         1177,1148    14   23036
+     5,6  tr (table)         636, 590   2          607, 587 61908   61908
+     7,8  emu-alg          10462,10352  2        10287,10177 112819 112819
+     9,10 emu-production   10840,10788  2        10841,10635 112821 112821
+
+   held_entries is the re-stacked count and entries adds the suffix
+   the convergence moved. So edits 1-4 re-stack 14-46 entries and move
+   23-35 thousand; the tr edits re-stack the table's whole suffix
+   (61,908 entries, never converging) in 0.6 ms; and edits 7-10 take
+   the full pre-pass path of #spec-container (112,819 flow entries),
+   which is the 10 ms. The base reported 2 entries for all of them
+   because #spec-container sits in body, a flex container, and
+   update_held discarded the item's counts when update_container did
+   not stop (the item's height changed).
+4. A diagnostic driver (not committed) that encodes the full path's
+   marks in held_entries shows edits 9-10 reach the full path with the
+   context marked restyled: the edited emu-production holds emu-t
+   inline-blocks (display: inline-block), whose own contexts are owned
+   by changed elements, and mark_use marked the flow parent restyled
+   for them. Edits 7-8 (emu-alg) reach it with restyled false,
+   restyled_blocks 2, a valid restyled_block, 0 marked children and 2
+   marked paragraphs: restack_block was tried and refused; which
+   refusal (a marked paragraph outside the common block, a changed
+   block width without a block-and-text-only subtree, or the block's
+   close not found) is not isolated in this task.
+5. A timing-only probe (build/layout_oracle_probe2, keeps the stale
+   fragment list instead of split_fragments_with_empty; invalid output,
+   never a result) on the first candidate: edits 3-4 fall from about
+   1,120 to 300 us and edits 9-10 from about 1,170 to 385 us, edit 2
+   from 1,570 to 790 us. The regeneration of the context's inline-box
+   fragments after every re-stack (split_keys sort, split_closings over
+   all 112k entries, the per-split loop and the kept-fragment copy with
+   its binary searches) is therefore about 0.8 ms of each ecma262 edit
+   that re-stacks, the largest remaining part.
+
+Changes and dependency argument
+-------------------------------
+A. Count propagation, as above: no layout change; it removes the
+   dependency of the report on which path a count took.
+B. restack_block admits marked child contexts inside the re-stacked
+   block. A child's space depends only on its containing block's width
+   (prepare_spaces), which the width checks establish unchanged, so a
+   marked atomic inline is updated in its last space before the
+   re-stack (update_atomics_in, as update_in_place updates one) and its
+   paragraph is broken again by the re-stack, while a marked in-flow
+   child or float is settled by the re-stack at its entry. The only
+   order kept is the stacking order the flow already has; nothing is
+   added across siblings.
+C. A flow context is no longer marked restyled for a child's own style
+   change (mark_use's restyle_parent): a flow context reads a child's
+   style only where it places the child, at the child's flow entry,
+   which restack_block, restack_entry and update_in_place reach through
+   the marked child; flex, grid and table containers keep the mark,
+   since their algorithms place an item by its style outside any entry.
+   The previous rule forced the full pre-pass of the whole context for
+   any edit touching an inline-block, which depends on every entry.
+D. (second candidate, see below) After a re-stack that converged with
+   every later entry moved by one delta and the line presence
+   unchanged, the context's fragment list is kept and translated
+   (translate_fragments, the delta path's existing translation) instead
+   of made again, when no block-in-inline opens or closes in the
+   re-stacked range, no lineless paragraph in the range opens an inline
+   box, the entry at the start and every block open around it kept
+   their tops (held_y), and the stop entry is a paragraph with lines.
+   Each split run then lies above, around or below the range, so its
+   rectangle is unchanged, grows by delta or moves by delta, which is
+   exactly what a regeneration would compute. The checks cost O(splits
+   + range) instead of O(splits log splits + flow entries).
+
+Candidates and drivers
+----------------------
+cand  (commit 675338b): A + B + C. SHA-256
+      2103efed5c8568e8c7df731080bd739de786baaad3b28734edb35d1360cd7a8b,
+      guarded build 38 s, peak 990 MB.
+cand2 (commit 85a0b17): A + B + C + D, the delivered code.
+counts: A alone, for attribution; diag and probe2: diagnostic variants
+      described above, never results. The falsifier driver is cand2
+      with the fragment translation moved by one CSS px too much.
+
+Identity results (every mandatory script, incremental dump against a
+full rebuild, byte for byte)
+----------------------------------------------------------------------
+cand (675338b):
+ page      script     edits  inc same  DIFF  refused
+ apollo11  colour      60      60       0     0
+ apollo11  fontsize    60      60       0     0
+ apollo11  rootfont    60      60       0     0
+ apollo11  body        26      26       0     0
+ apollo11  custom      26      26       0     0
+ apollo11  word        60      60       0     0
+ apollo11  sentence    60      60       0     0
+ apollo11  block       60      60       0     0
+ html5     scolour     10      10       0     0
+ html5     sfontsize   10      10       0     0
+ html5     srootfont   10      10       0     0
+ html5     sbody       10      10       0     0
+ html5     scustom     10      10       0     0
+ html5     word        60      60       0     0
+ html5     sentence    60      60       0     0
+ html5     block       60      60       0     0
+ ecma262   scolour     10      10       0     0
+ ecma262   sfontsize   10      10       0     0
+ ecma262   srootfont   10      10       0     0
+ ecma262   sbody       10      10       0     0
+ ecma262   scustom     10      10       0     0
+ Total                692     692       0     0   (three commands, exit 0)
+cand2 (85a0b17): the same 21 scripts; see the table at the end of this
+report for the html5 block result, which was the last to finish.
+
+Timing (harness time runs, one process run each, median us of the
+script's edits; entries as printed, the base's counts being the old
+incomplete ones)
+----------------------------------------------------------------------
+                      base us   cand us   cand2 us   Chromium (supplied)
+ ecma262 sfontsize      1487      1206      1113        435
+ html5   sfontsize       747       727       754       3200
+ apollo11 sfontsize      153       159       196 (*)    470
+ (*) single runs with the identity suites running concurrently; the
+     paired repeats below are the comparison that counts.
+
+ecma262 sfontsize per edit, us (base / cand / cand2):
+ 1,2  li               1487,1593 / 1537,1586 /  749, 752   (D translates)
+ 3,4  p                1113,1071 / 1170,1121 / 1118,1113   (D bails: a
+                                                            split in range)
+ 5,6  tr                636, 590 /  601, 621 /  605, 602   (table laid
+                                                            out in full)
+ 7,8  emu-alg         10462,10352 / 10595,10787 / 10528,10882 (full path,
+                                                            cause open)
+ 9,10 emu-production  10840,10788 / 1264,1206 / 1279,1202  (B+C: re-stack;
+                                                            D bails: the
+                                                            production is
+                                                            a block in an
+                                                            inline grammar)
+Sorted cand2: 602 605 749 752 1113 1118 1202 1279 10528 10882; the
+median is the mean of 1113 and 1118. The target of 435 us is NOT met:
+it needs six edits below 435, and only the fragments probe (invalid)
+shows what edits 3-4 and 9-10 would cost without the regeneration
+(about 300-390 us), which D does not reach for them because a
+block-in-inline split opens or closes in their re-stacked range.
+
+Other edit kinds, base / cand2 median us (one run each, from
+build/timebatch.log in the worktree):
+ ecma262 scolour        1 / 1        html5 scolour      1 / 1
+ apollo11 colour        1 / 1        html5 word        49 / 49
+ apollo11 word        136 / 136
+
+Paired repeats (base and cand2 alternating, one process run each,
+after the identity suites had finished; median us):
+ apollo11 sfontsize   base 186, 175, 210   cand2 195, 192, 191
+ ecma262  sfontsize   base 1477, 1576      cand2 1088, 1099
+ html5    sfontsize   base 754             cand2 747
+The apollo11 medians overlap (the base's three runs span 175-210 and
+cand2's 191-195), so no apollo11 regression is established, but the
+per-edit lines show the path change: edits 1-4, 7 and 8 report
+contexts 7, paragraphs 3 and 1,321 re-stacked entries on cand2 against
+contexts 3, paragraphs 1 and 5 on the base (the old counts omit the
+nested work), and their single-run times are 0-21 us higher. With C a
+flow parent whose inline-block child changed is no longer restyled, so
+its update re-stacks from the child's entry (restack_entry) instead of
+running the full pre-pass of that small context; where the re-stack
+does not converge it replays to the end of the context and regenerates
+the fragments, which can cost more than the full pass on a small
+context. This must be isolated with repeated paired runs before C is
+adopted; the brief's "no other edit slower" condition is not shown to
+hold for apollo11 sfontsize beyond the overlap above.
+
+Other edit kinds, base / cand2 median us (one run each): ecma262
+scolour 1 / 1, apollo11 colour 1 / 1, html5 word 49 / 49, apollo11
+word 136 / 136 (full lines in build/timebatch.log of the worktree).
+
+Falsifier
+---------
+The falsifier driver is cand2 with one change: the kept fragment list
+is translated by delta + 64 (one CSS px in the fixed-point
+representation) instead of delta (build/layout_oracle_falsifier,
+SHA-256 03dba7957a887edb9433038b97604415f7e77d549327506a1f74bc9eec91ae96,
+guarded build 40 s, peak 983 MB; the source copy lives only in the
+scratchpad and the delivered driver is never replaced). The ecma262
+sfontsize identity command exits 1: edits 1 and 2 DIFF, edits 3-10
+same, 0 refused. Those are exactly the two edits on which cand2 takes
+the translation (D); the others regenerate the list as before. So the
+new path is exercised, and a wrong translation is detected by the
+check. The delivered driver (cand2, SHA-256
+9237a96e86398e7fccbcf3ace4ffaabb1206699d0a74a0dd04784850bcc45a9f,
+guarded build 39 s, peak 990 MB) passes the same command.
+
+Identity results for cand2 (85a0b17), the delivered code, every
+mandatory script: the same 21 scripts as for cand above, 692 edits,
+692 inc same, 0 DIFF, 0 refused; the three commands exited 0
+(build/identity-cand2-{ecma262,html5,apollo11}.log in the worktree).
+
+Checks
+------
+make design-lint: ok (21 tests, tree check) on the delivered tree.
+make check was not run: the worktree has no whitefoot/ submodule
+checkout and the host lock was held by other sessions for most of the
+task; every Whitefoot compile used the pinned gate compiler, the shared
+cache, function fragments, the host lock and the 15.5 GB / 900 s guard
+(peaks 983-1198 MB). No gate, test or check was removed or weakened. No
+page, script or edit selects a special path. No whitefoot/ pin moved;
+no Whitefoot gap filed.
+
+Left undone or uncertain
+------------------------
+- The target is not met: ecma262 sfontsize median 1,088-1,113 us on
+  cand2 against 435 us. Two causes remain, both recorded in
+  docs/todo.md: emu-alg edits (7-8) still take the full pre-pass path
+  for a refusal in restack_block that this task did not isolate (10.5
+  ms each), and the fragment regeneration (about 0.8 ms) still runs
+  when a block-in-inline opens or closes in the re-stacked range,
+  which is the case for edits 3-4 and 9-10 on ecma262 (emu-production
+  is a block inside an inline emu-grammar). Fixing the regeneration in
+  general needs the split keys and closing flags kept across updates
+  (they depend only on the flow's structure) and per-run recomputation
+  of the runs intersecting the range.
+- Edits 5-6 (tr) lay the table out in full (600 us); the brief's
+  median needs them below 435 us as well.
+- apollo11 sfontsize: no regression is established (overlapping
+  medians), but single-run per-edit times rose 0-21 us on the edits
+  whose path C changed; repeat paired runs before adopting C.
+- Timings are single process runs under the host lock, with the first
+  ones concurrent with identity suites; the paired repeats are the
+  comparison to trust.
+- The update_held doc string still says a container's item counts are
+  not gathered; they are now (A). Routine wording fix, not made after
+  validation to keep the validated revision.
+- Decisions B, C and D are provisional in design/pipeline/layout.md
+  with the earlier Q1/Q2; no owner approval, no log entry, no PR, no
+  push, as the task requires local commits only.
+
+Found along the way
+-------------------
+- The base reported 2 entries for every ecma262 edit because
+  update_held discarded a container item's counts (fixed, A) and
+  stack_flow dropped its settle_child tallies (fixed, A); the
+  docs/todo.md item on omitted child counts is removed.
+- The time harness exits 75 without retrying when the host lock is
+  busy (run.sh time execs run-check.pl once); a retry wrapper in the
+  scratchpad was used. Not changed in the repository.
+- sample(1) cannot attribute Whitefoot code: no frame pointers.
+
+Branch research/fontsize-fable. Delivered code: 85a0b17 (on 675338b);
+design tree: 75a22ab; this report is committed on top of them, and the
+branch head is the final commit named in the hand-back.
+Report finalized 2026-10-05 13:40 UTC.
