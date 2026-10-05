@@ -142,6 +142,63 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **The incremental restyle runs its loops sequentially.** `restyle`,
+  `restyle_level`, `root_font_readers` and `class_restyle`
+  (`renderer/style`) are plain loops that push into shared lists (the
+  level's batch, the next level, the touched list). The level cascade of a
+  full build proves the same per-node work parallel, and nothing but the
+  appends orders one restyled node after another. Impact: no par-4 gain on
+  restyles of many elements (body and custom-property edits, the root
+  font-size levels); par-4 E1 colour edits are slower than seq because of
+  the runtime's fixed cost, not this. Change: write each level's
+  computation as the full cascade's counted loop over the level's distinct
+  positions and gather the appends after it. Reopen when an incremental
+  edit's restyle set grows past a few hundred elements on a measured page,
+  or with the parallel incremental timing that M1's criterion 2 asks for
+  (par-1 and par-4 with the set's size).
+
+- **Kept style state only grows.** `class_attribute_changed` appends an
+  element's class records on every class edit and leaves the old ones
+  unread; the kept value tables, custom-property sets and generated text
+  only append. M1's Q89 recommended an occasional compaction (an epoch that
+  renumbers every table and every holder of an identifier), which does not
+  exist. Impact: memory grows with a session's edits; a table reaching its
+  ceiling refuses and the edit rebuilds. Change: compact when a table
+  doubles since the last full build. Reopen when an editing session's
+  measured memory grows past the full build's by half.
+
+- **No incremental regression runs in the gate.** `make check` builds and
+  checks modules; the identity checks of incremental style and layout
+  (`research/investigations/incremental-style/run.sh incremental`,
+  `incremental-layout/run.sh inc`) need the fetched pages under build/ and
+  run by hand, and the restack boundary page the restack investigation built
+  was not kept. A matcher defect (a sibling combinator's left compound
+  required as an ancestor by the feature filter) passed every page check
+  because the pages hold no matching selector of that shape. Change: keep
+  focused case pages and edit scripts in the repository (as
+  `incremental-layout/scripts/style-case.*` are) for the shapes found, and a
+  gate target that runs them against a full rebuild. Reopen when the next
+  incremental defect is found by review rather than a check.
+
+- **The Chromium style oracle cannot run on the development Mac.**
+  `tests/css/style_oracle.mjs` needs the Playwright module, which is not
+  installed there; only the Chromium binary is. `tests/css/style-cases.html`
+  gained the sibling-combinator selector cases the feature-filter defect
+  showed, unchecked against Chromium so far. Change: install Playwright, or
+  drive Chromium over the DevTools protocol as
+  `research/investigations/engine-comparison/chromium.mjs` does. Reopen
+  before the next style change claims Chromium agreement.
+
+- **Matching still costs more per element on apollo11.** After the
+  per-alternative index and the feature filter, the sequential style stage
+  takes 0.39 s for three runs of apollo11's 11,845 elements, about 11 us per
+  element, against about 4 on html5 (1.54 s, about 120,000 styled nodes)
+  and 10 on ecma262 (2.95 s, about 96,000); the gap to html5 that the old
+  item reported (83 against 13 to 16 us) narrowed but remains. Candidate
+  rules per element were not counted.
+  Change: count candidates and admitted rules per element and profile the
+  admitted ones. Reopen with the next style performance work.
+
 - **The restack prototype increases some edits' font-pick interval.** Paired
   sequential Apollo runs report colour/body/custom medians 3-4 us above
   the base, concentrated in `picks_us`, although font-pick source did not
