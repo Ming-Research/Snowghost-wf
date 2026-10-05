@@ -925,7 +925,8 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
   doc "Indexes the edited element's class words again (class_attribute_changed), rematches the set, then computes again, one tree level at a time from the set's shallowest element, the set's elements and the children of every element in the set or whose inherited values or style changed, with their pseudo-elements; the levels are sequential, each parent before its children. A full set, a change in which pseudo-elements an element of the set has (checked only when a reaching rule ends in ::before or ::after, wanted.pseudos), or a change of the root's font size rebuilds instead (rebuild_all).";
   class_attribute_changed(positions: &state^.cascade.positions, document: document, node: wanted^.edited);
   if wanted^.full {
-    let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment);
+    let kept_cascade = False();
+    let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, matched: kept_cascade);
     return Ok<Restyled, StyleError>(value: move rebuilt);
   }
   let element_count = state^.cascade.element_count;
@@ -962,7 +963,8 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
     }
     let bits = pseudo_bits(state: state, store: store, document: document, atoms: atoms, element: traversal^.elements.inner[at]);
     if bits != state^.pseudo_flags.inner[at] {
-      let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment);
+      let kept_cascade = False();
+      let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, matched: kept_cascade);
       return Ok<Restyled, StyleError>(value: move rebuilt);
     }
   }
@@ -1045,7 +1047,8 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
     }
   }
   if rebuild {
-    let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment);
+    let kept_cascade = True();
+    let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, matched: kept_cascade);
     return Ok<Restyled, StyleError>(value: move rebuilt);
   }
   let copied = propagate copy_families(styles: &state^.styles, inherited: &state^.inherited);
@@ -1067,8 +1070,8 @@ fn rank_in(pseudos: &Box<Slots<PseudoStyle>>, at: u64) -> rank: u64 reads(pseudo
   return 18446744073709551615_u64;
 }
 
-fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), writes(state), writes(atoms) {
-  doc "Runs the three parts again over every styled node with the kept rule indexes and interns every node into the kept tables, so identifiers stay comparable; changed lists every element whose style or a pseudo-element's style differs from before in what layout reads, or whose set of pseudo-elements differs, and structural says whether box construction reads a difference.";
+fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, matched: Bool) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), writes(state), writes(atoms) {
+  doc "Runs the three parts again over every styled node with the kept rule indexes, or only the last two when matched says the kept cascade already holds every element's winners, as after a root font-size change, where restyle rematched the restyle set, which holds every element whose matched rules changed, and interns every node into the kept tables, so identifiers stay comparable; changed lists every element whose style or a pseudo-element's style differs from before in what layout reads, or whose set of pseudo-elements differs, and structural says whether box construction reads a difference.";
   let element_count = state^.cascade.element_count;
   let old_count = state^.styles.elements.inner.len;
   let bounded_old = old_count <= 4294967296_u64;
@@ -1084,10 +1087,13 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
   }
   let old_pseudos = box_slots_new::<PseudoStyle>(capacity: 0_u64);
   swap(first: &old_pseudos, second: &state^.styles.pseudos);
-  let cascade = propagate match_with(store: store, document: document, atoms: atoms, traversal: traversal, index: &state^.index, pseudo_index: &state^.pseudo_index);
-  let inherited = propagate inherited_pass(store: store, cascade: &cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
-  let resets = propagate reset_pass(store: store, cascade: &cascade, inherited: &inherited, atoms: atoms, traversal: traversal, environment: environment);
-  set state^.cascade = move cascade;
+  if matched {
+  } else {
+    let cascade = propagate match_with(store: store, document: document, atoms: atoms, traversal: traversal, index: &state^.index, pseudo_index: &state^.pseudo_index);
+    set state^.cascade = move cascade;
+  }
+  let inherited = propagate inherited_pass(store: store, cascade: &state^.cascade, document: document, atoms: atoms, traversal: traversal, environment: environment);
+  let resets = propagate reset_pass(store: store, cascade: &state^.cascade, inherited: &inherited, atoms: atoms, traversal: traversal, environment: environment);
   set state^.inherited = move inherited;
   set state^.resets = move resets;
   let new_elements = state^.cascade.element_count;
