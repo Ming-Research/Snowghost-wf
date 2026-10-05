@@ -27,6 +27,8 @@ const in_set: u8 = 2_u8;
 
 const queued: u8 = 1_u8;
 
+const queued_set: u8 = 3_u8;
+
 const no_pseudo: u32 = 4294967295_u32;
 
 fn style_state(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment) -> result: Result<StyleState, StyleError> reads(store), reads(document), reads(traversal), writes(atoms) {
@@ -424,8 +426,8 @@ fn intern_nodes(styles: &Styles, inherited: &Inherited, resets: &Resets, nodes: 
   return Ok<unit, StyleError>(value: unit);
 }
 
-fn element_children(state: &StyleState, document: &Document, traversal: &Traversal, element: u64, next: &Box<Slots<u64>>, touched: &Box<Slots<u64>>) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(state), writes(next), writes(touched) {
-  doc "Queues every element child of the element at preorder index element that is not queued or in the set, through the document's child links, marking it queued.";
+fn element_children(state: &StyleState, document: &Document, traversal: &Traversal, element: u64, set_changed: Bool, next: &Box<Slots<u64>>, touched: &Box<Slots<u64>>) -> result: Result<unit, StyleError> reads(document), reads(traversal), writes(state), writes(next), writes(touched) {
+  doc "Queues every element child of the element at preorder index element that is not queued or in the set, through the document's child links, marking it queued, or queued_set when the element's custom-property set changed.";
   let known = element < traversal^.elements.inner.len;
   if known {
   } else {
@@ -448,7 +450,12 @@ fn element_children(state: &StyleState, document: &Document, traversal: &Travers
           let position = cvt::<u32, u64>(traversal^.order.inner[index]);
           if position < state^.marks.inner.len {
             if state^.marks.inner[position] == 0_u8 {
-              set state^.marks.inner[position] = queued;
+              let mark = if set_changed {
+                give queued_set;
+              } else {
+                give queued;
+              }
+              set state^.marks.inner[position] = mark;
               let pushed = propagate push::<u64>(cell: next, value: position, ceiling: 4294967296_u64);
               let noted = propagate push::<u64>(cell: touched, value: position, ceiling: 4294967296_u64);
             }
@@ -754,6 +761,7 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
   }
   let unchanged = False();
   let inherited_changed = box_array_filled::<Bool>(count: count, value: unchanged);
+  let set_changed = box_array_filled::<Bool>(count: count, value: unchanged);
   let style_changed = box_array_filled::<Bool>(count: count, value: unchanged);
   let layout_changed = box_array_filled::<Bool>(count: count, value: unchanged);
   let structural = False();
@@ -777,7 +785,12 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
     }
     let old_set = state^.inherited.sets.inner[at];
     let old_root = state^.inherited.root_font_size;
-    let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: at);
+    let keep_set = if at < state^.marks.inner.len {
+      give state^.marks.inner[at] == queued;
+    } else {
+      give False();
+    }
+    let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: at, keep_set: keep_set);
     let root_same = feq(state^.inherited.root_font_size, old_root);
     if root_same {
     } else {
@@ -805,10 +818,15 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
     let same_id = old_set == new_set;
     let old_wide = cvt::<u32, u64>(old_set);
     let new_wide = cvt::<u32, u64>(new_set);
-    let same_entries = same_sets(inherited: &state^.inherited, first_set: old_wide, second_set: new_wide);
+    let same_entries = if same_id {
+      give True();
+    } else {
+      give same_sets(inherited: &state^.inherited, first_set: old_wide, second_set: new_wide);
+    }
     let same_custom = bor(same_id, same_entries);
     let kept = band(same_values, same_custom);
     set inherited_changed.inner[k] = bnot(kept);
+    set set_changed.inner[k] = bnot(same_custom);
     let pushed = propagate push::<u64>(cell: &batch, value: at, ceiling: 4294967296_u64);
     let owned = propagate push::<u64>(cell: &owners, value: k, ceiling: 4294967296_u64);
   }
@@ -820,7 +838,8 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
     let found = pseudos.inner.len;
     for (j in 0_u64..found) {
       let pseudo = pseudos.inner[j];
-      let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: pseudo);
+      let rebuilt_set = False();
+      let done = propagate inherit_element(state: &state^.inherited, store: store, cascade: &state^.cascade, document: document, atoms: atoms, environment: environment, position: pseudo, keep_set: rebuilt_set);
       let pushed = propagate push::<u64>(cell: &batch, value: pseudo, ceiling: 4294967296_u64);
       let owned = propagate push::<u64>(cell: &owners, value: k, ceiling: 4294967296_u64);
     }
@@ -892,7 +911,7 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
     let reaches_down = bor(in_restyle, inherited_changed.inner[k]);
     let spreads = bor(reaches_down, own_changed);
     if spreads {
-      let queued_children = propagate element_children(state: state, document: document, traversal: traversal, element: at, next: next, touched: touched);
+      let queued_children = propagate element_children(state: state, document: document, traversal: traversal, element: at, set_changed: set_changed.inner[k], next: next, touched: touched);
     }
   }
   let settled = False();
