@@ -1,3 +1,4 @@
+alias structure_restyle = pkg::style::structure_restyle;
 alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Attribute = pkg::dom::Attribute;
@@ -41,6 +42,7 @@ alias build_traversal = pkg::style::build_traversal;
 alias compute_styles = pkg::style::compute_styles;
 alias Restyled = pkg::style::Restyled;
 alias StyleState = pkg::style::StyleState;
+alias StyleError = pkg::style::StyleError;
 alias class_restyle = pkg::style::class_restyle;
 alias pseudo_reads_attribute = pkg::style::pseudo_reads_attribute;
 alias restyle = pkg::style::restyle;
@@ -79,6 +81,8 @@ const edit_label: Array<u8, 5> = "edit ";
 const hash_label: Array<u8, 6> = " hash ";
 
 const bytes_label: Array<u8, 7> = " bytes ";
+
+const structure_fallback_label: Array<u8, 19> = "structure fallback ";
 
 const created_label: Array<u8, 8> = "created ";
 
@@ -875,16 +879,17 @@ fn report_dump(buffer: &Box<Slots<u8>>, dump: &Box<Slots<u8>>, label: &[u8], num
   return hashed;
 }
 
-fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport) -> result: Result<Built, u8> reads(fonts), writes(page) {
+fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, preserve: Bool) -> result: Result<Built, u8> reads(fonts), writes(page) {
   doc "Runs the pipeline on the live document of page up to the laid-out layout: its traversal, the styles, the font matching, the layout's build and lay_out. The refusal is the stage rebuild_dump numbers: 4 the traversal, 5 the styles, 1 the font matching, 2 the layout.";
-  match build_traversal(document: &page^.document) {
+  let previous = match build_traversal(document: &page^.document) {
     Ok(value: found) => {
-      set page^.traversal = move found;
+      give move found;
     }
     Err(..) => {
       return Err<Built, u8>(error: 4_u8);
     }
   }
+  swap(first: &page^.traversal, second: &previous);
   let state = match style_state(store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment) {
     Ok(value: found) => {
       give move found;
@@ -910,6 +915,9 @@ fn build_page(page: &Page, fonts: &FontSet, environment: Environment, viewport: 
     }
   }
   lay_out(layout: &layout, document: &page^.document, styles: &state.styles, fonts: fonts, picks: &picks);
+  if preserve {
+    swap(first: &page^.traversal, second: &previous);
+  }
   let built = Built(state: move state, picks: move picks, layout: move layout);
   return Ok<Built, u8>(value: move built);
 }
@@ -1034,11 +1042,11 @@ fn apply_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId) -
   }
 }
 
-fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, token: &[u8], structure: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(token), reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
-  doc "For a C or K edit, the class token on node: times the style stage's restyle (class_restyle and restyle on the kept state), refuses an edit that changes what box construction reads (Restyled.structural, or a generated content reading the class attribute), then times the marking (styles_restyled), new font picks and update. For a B or X edit, whose parent structure names, builds the traversal and a new style state and marks with layout_changes and structure_changed (apply_structure_edit). Timing reports a separate style edit line with delta_us (the marking, or the delta and marking), picks_us, full_us and style_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A refusal is reported by the caller, which resynchronizes to a full build; a style, font or full-comparator failure names its pipeline stage.";
+fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: NodeId, token: &[u8], structure: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(token), reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+  doc "For a C or K edit, the class token on node: times the style stage's restyle (class_restyle and restyle on the kept state), refuses an edit that changes what box construction reads (Restyled.structural, or a generated content reading the class attribute), then times the marking (styles_restyled), new font picks and update. For a B or X edit, whose parent structure names, keeps stable style slots and marks the structural restyle delta with structure_changed (apply_structure_edit). Timing reports a separate style edit line with delta_us (the marking, or the delta and marking), picks_us, full_us and style_us; full_us uses fresh font picks, build_layout and lay_out on the same new styles, without styles or placement. Checking reports the retained update counts on a separate style edit line. A refusal is reported by the caller, which resynchronizes to a full build; a style, font or full-comparator failure names its pipeline stage.";
   match structure {
     Some(value: parent) => {
-      let done = propagate apply_structure_edit(page: page, fonts: fonts, kept: kept, parent: parent, environment: environment, viewport: viewport, timing: timing, compare: compare, clock: clock, report: report, number: number);
+      let done = propagate apply_structure_edit(page: page, fonts: fonts, kept: kept, parent: parent, inserted: inserted, removed: removed, environment: environment, viewport: viewport, timing: timing, compare: compare, clock: clock, report: report, number: number);
       return Ok<StyleUpdate, u8>(value: done);
     }
     None() => {
@@ -1088,7 +1096,120 @@ fn apply_style_incremental(page: &Page, fonts: &FontSet, kept: &Built, node: Nod
   return Ok<StyleUpdate, u8>(value: finished_update);
 }
 
-fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: NodeId, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+fn structure_after(started: Instant, page: &Page, kept: &Built, environment: Environment, parent: NodeId, inserted: Option<NodeId>, removed: Option<NodeId>) -> result: Result<Restyled, StyleError> writes(page), writes(kept) {
+  doc "The structural style update, anchored after the clock reading by its argument, as restyle_after anchors a class update.";
+  let done = propagate structure_restyle(state: &kept^.state, store: &page^.store, document: &page^.document, atoms: &page^.atoms, traversal: &page^.traversal, environment: environment, parent: parent, inserted: inserted, removed: removed);
+  return Ok<Restyled, StyleError>(value: move done);
+}
+
+fn structure_flags(started: Instant, page: &Page, done: &Restyled, removed: Option<NodeId>) -> result: Result<Box<Array<Bool>>, u8> reads(page), reads(done) {
+  doc "Translates changed stable slots to the temporary NodeId flags and marks every detached subtree node. This O(nodes) allocation belongs to layout's structural delta and is removed by M2 step 4.";
+  let nodes = page^.document.nodes.inner.len;
+  if nodes > 4294967296_u64 {
+    return Err<Box<Array<Bool>>, u8>(error: 5_u8);
+  }
+  let no = False();
+  let changed = box_array_filled::<Bool>(count: nodes, value: no);
+  let listed = done^.changed.inner.len;
+  for (k in 0_u64..listed) {
+    let raw = iand(done^.changed.inner[k], 2147483647_u32);
+    let slot = cvt::<u32, u64>(raw);
+    if slot < page^.traversal.elements.inner.len {
+      let at = cvt::<u32, u64>(page^.traversal.elements.inner[slot].index);
+      if at < nodes {
+        set changed.inner[at] = True();
+      }
+    }
+  }
+  match removed {
+    Some(value: root) => {
+      let stack = box_slots_new::<NodeId>(capacity: 64_u64);
+      let pushed = push_node(stack: &stack, node: root);
+      for (step in 0_u64..nodes) {
+        if stack.inner.len == 0_u64 {
+          break;
+        }
+        let node = take_back(window: &stack.inner);
+        let at = cvt::<u32, u64>(node.index);
+        if at < nodes {
+          set changed.inner[at] = True();
+          if node.index != root.index {
+            match page^.document.nodes.inner[at].links.next_sibling {
+              Some(value: next) => {
+                let pushed_next = push_node(stack: &stack, node: next^);
+              }
+              None() => {
+              }
+            }
+          }
+          match page^.document.nodes.inner[at].links.first_child {
+            Some(value: first) => {
+              let pushed_first = push_node(stack: &stack, node: first^);
+            }
+            None() => {
+            }
+          }
+        }
+      }
+    }
+    None() => {
+    }
+  }
+  return Ok<Box<Array<Bool>>, u8>(value: move changed);
+}
+
+fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: NodeId, inserted: Option<NodeId>, removed: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
+  doc "Times the stable-slot structural restyle, then translates changed slots to the temporary NodeId flags structure_changed needs. The kept tables and pseudo identities retain every old reference, so both style arguments share the kept result. A full request takes the previous full traversal/state path.";
+  let style_started = now(clock: clock);
+  let done = match structure_after(started: style_started, page: page, kept: kept, environment: environment, parent: parent, inserted: inserted, removed: removed) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(..) => {
+      return Err<StyleUpdate, u8>(error: 5_u8);
+    }
+  }
+  let style_finished = stamp_styles(clock: clock, witness: &kept^.state.styles);
+  let style_ns = nanoseconds_from(earlier: style_started, later: style_finished);
+  if done.full {
+    put_text(buffer: report, text: &structure_fallback_label[0_u64..structure_fallback_label.len]);
+    put_decimal(buffer: report, value: number);
+    put_byte(buffer: report, value: 10_u8);
+    let rebuilt = propagate full_structure_edit(page: page, fonts: fonts, kept: kept, prior_style_ns: style_ns, parent: parent, inserted: inserted, removed: removed, environment: environment, viewport: viewport, timing: timing, compare: compare, clock: clock, report: report, number: number);
+    return Ok<StyleUpdate, u8>(value: rebuilt);
+  }
+  let started = now(clock: clock);
+  let changed = propagate structure_flags(started: started, page: page, done: &done, removed: removed);
+  let nodes = changed.inner.len;
+  let no = False();
+  let marked = structure_changed(layout: &kept^.layout, document: &page^.document, old: &kept^.state.styles, new: &kept^.state.styles, traversal: &page^.traversal, atoms: &page^.atoms, changed: &changed.inner[0_u64..nodes], parent: parent);
+  let after_delta = stamp(clock: clock, witness: &kept^.layout);
+  match marked {
+    Ok(..) => {
+    }
+    Err(..) => {
+      let refused = StyleUpdate(applied: no, micros: 0_u64);
+      return Ok<StyleUpdate, u8>(value: refused);
+    }
+  }
+  let extend = True();
+  let updated = propagate finish_style_edit(page: page, fonts: fonts, kept: kept, viewport: viewport, timing: timing, compare: compare, clock: clock, report: report, number: number, started: started, after_delta: after_delta, style_ns: style_ns, extend: extend);
+  if updated.applied {
+    let (built_contexts, built_paragraphs, reused) = structure_counts(layout: &kept^.layout);
+    put_text(buffer: report, text: &structure_edit_label[0_u64..structure_edit_label.len]);
+    put_decimal(buffer: report, value: number);
+    put_text(buffer: report, text: &contexts_label[0_u64..contexts_label.len]);
+    put_decimal(buffer: report, value: built_contexts);
+    put_text(buffer: report, text: &paragraphs_label[0_u64..paragraphs_label.len]);
+    put_decimal(buffer: report, value: built_paragraphs);
+    put_text(buffer: report, text: &reused_label[0_u64..reused_label.len]);
+    put_decimal(buffer: report, value: reused);
+    put_byte(buffer: report, value: 10_u8);
+  }
+  return Ok<StyleUpdate, u8>(value: updated);
+}
+
+fn full_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, prior_style_ns: u64, parent: NodeId, inserted: Option<NodeId>, removed: Option<NodeId>, environment: Environment, viewport: Viewport, timing: Bool, compare: Bool, clock: &Clock, report: &Box<Slots<u8>>, number: u64) -> result: Result<StyleUpdate, u8> reads(fonts), writes(page), writes(kept), writes(clock), writes(report) {
   doc "A B or X edit: builds the traversal and a new style state outside the incremental interval, then times layout_changes against the kept styles and structure_changed for the context parent's children are in, replaces the kept state, and finishes as finish_style_edit does, adding a structure edit line.";
   let style_started = now(clock: clock);
   let yes = True();
@@ -1101,7 +1222,8 @@ fn apply_structure_edit(page: &Page, fonts: &FontSet, kept: &Built, parent: Node
     }
   }
   let style_finished = stamp_styles(clock: clock, witness: &fresh.styles);
-  let style_ns = nanoseconds_from(earlier: style_started, later: style_finished);
+  let full_style_ns = nanoseconds_from(earlier: style_started, later: style_finished);
+  let style_ns = prior_style_ns +sat full_style_ns;
   let started = now(clock: clock);
   let changed = delta_after(started: started, old: &kept^.state.styles, new: &fresh.styles);
   let changed_count = changed.inner.len;
@@ -1282,7 +1404,7 @@ fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(la
 }
 
 fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, compare: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
-  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits also rebuild the traversal first and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes compute_styles and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
+  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits restyle stable slots and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes the separately reported style_us and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
   let dump = box_slots_new::<u8>(capacity: 65536_u64);
   let other = box_slots_new::<u8>(capacity: 65536_u64);
@@ -1293,7 +1415,8 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
     let written = flush(factory: files, output: err, buffer: &report);
     return 2_u8;
   }
-  let kept = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport) {
+  let preserve_traversal = False();
+  let kept = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport, preserve: preserve_traversal) {
     Ok(value: found) => {
       give move found;
     }
@@ -1336,6 +1459,17 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
       } else {
         set edits = edits +sat 1_u64;
         let structure = structure_parent(page: page, line: &script^[start..end]);
+        let inserted = if kind == 66_u8 {
+          give node_id_of(value: page^.document.nodes.inner.len);
+        } else {
+          give None<NodeId>();
+        }
+        let removed = if kind == 88_u8 {
+          let (found, value, after) = read_number(line: &script^[start..end], start: 2_u64);
+          give node_id_of(value: value);
+        } else {
+          give None<NodeId>();
+        }
         let applied = apply_edit(page: page, line: &script^[start..end], report: &report);
         if applied {
         } else {
@@ -1408,7 +1542,7 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
               }
               let token_lo = start +sat unused_next;
               let token_from = imin(token_lo, end);
-              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, token: &script^[token_from..end], structure: structure, environment: environment, viewport: viewport, timing: timing, compare: compare, clock: clock, report: &report, number: edits) {
+              let changed = match apply_style_incremental(page: page, fonts: fonts, kept: &kept, node: node, token: &script^[token_from..end], structure: structure, inserted: inserted, removed: removed, environment: environment, viewport: viewport, timing: timing, compare: compare, clock: clock, report: &report, number: edits) {
                 Ok(value: done) => {
                   give done;
                 }
@@ -1452,7 +1586,8 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
         }
         if incremental == 1_u8 {
         } else {
-          let rebuilt = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport) {
+          let preserve_comparison = incremental == 3_u8;
+          let rebuilt = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport, preserve: preserve_comparison) {
             Ok(value: found) => {
               give move found;
             }
@@ -1523,6 +1658,16 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
             }
             let resync = bnot(same);
             if resync {
+              if preserve_comparison {
+                match build_traversal(document: &page^.document) {
+                  Ok(value: fresh) => {
+                    set page^.traversal = move fresh;
+                  }
+                  Err(..) => {
+                    return 2_u8;
+                  }
+                }
+              }
               set kept = move rebuilt;
             } else {
               let discarded = move rebuilt;
