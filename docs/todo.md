@@ -11,21 +11,6 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
 
-- **Checking a module grows with the imported interfaces' struct widths.**
-  Minimal example: a module whose functions hold a struct imported from
-  another module, itself holding nested imported structs with many private
-  fields; checking it takes memory that grows with those widths, not with
-  the module's own code. `whitefootc --check-module pkg::oracle::layout`
-  (Whitefoot c3d26643c, M1 Pro) peaked at 2.5 GB on main, 12 GB after M1
-  step 4 and 13.5 GB in 178 s after the style stage's rule index gained a
-  feature filter, one nested field of `Rule`; a full `layout_oracle` build
-  past a 14 GB guard was killed, and nesting `Styles`' private fields under
-  one struct halved an earlier peak. Impact: every interface change in
-  `pkg::style` or `pkg::layout` costs minutes and most of the machine's
-  memory, and Snowghost's shape bends to keep structs narrow. Change: a
-  checker whose memory follows the checked module's own code. Reopen when
-  Whitefoot's checker changes; repeat the measurement on this module.
-
 - **A write through indices the program knows are distinct needs its
   facts derived again in each pass.** Minimal example: a tree in an arena,
   each node's children's indices kept in its own list; a counted loop over
