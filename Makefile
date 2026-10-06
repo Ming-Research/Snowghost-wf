@@ -14,7 +14,7 @@ WHITEFOOT := $(ROOT)/whitefoot
 DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*.md))))
 
 # The revision a design-tree change is reviewed against. CI selects it per
-# event with .github/design-review-base.sh.
+# event with design/skill/review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check compiler renderer design-lint design-ready \

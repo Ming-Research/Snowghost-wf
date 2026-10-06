@@ -1,11 +1,12 @@
-# Snowghost — agent instructions
+# Snowghost-wf — agent instructions
 
-Snowghost is a cross-platform renderer for user interfaces built with web
-technology. Its renderer implements a chosen subset of the web platform in
-Whitefoot, with a pipeline meant to be parallel and incremental from end to
-end, and a shell written in Rust hosts it on each operating system (the
-`processes` decision in `design/`). Whitefoot, the language and its compiler,
-is pinned as the `whitefoot/` submodule.
+Snowghost-wf, Snowghost for short, is a cross-platform renderer for user
+interfaces built with web technology. Its renderer implements a chosen subset
+of the web platform in Whitefoot, with a pipeline meant to be parallel and
+incremental from end to end, and a shell written in Rust hosts it on each
+operating system (the `processes` decision in `design/`). Whitefoot, the
+language and its compiler, is pinned as the `whitefoot/` submodule, and the
+`design-tree` skill as the `design/skill/` submodule.
 
 ## Project goal
 
@@ -117,12 +118,14 @@ its description and actual validation results current. A series of dependent
 PRs is stacked, each on the branch of the one before it. Updating a
 work-branch PR never authorizes a merge into `main`.
 
-**The design tree.** The `design-tree` skill (`design/skill/`, linked from
-`.claude/skills/` and `.agents/skills/`) is the one recurring procedure. Its
-live trees are the root node files under `design/` other than `log.md`, each
-with its subdirectory, which the Makefile finds and lints; its log is
-`design/log.md`, its research record `research/investigations/`, its TODO
-`docs/todo.md`, and its checks `make design-lint` and `make design-ready`.
+**The design tree.** The `design-tree` skill (`design/skill/`, a submodule of
+[Design-skill](https://github.com/Ming-Research/Design-skill) that Snowghost
+never edits, linked from `.claude/skills/` and `.agents/skills/`) is the one
+recurring procedure; a change to it is made in Design-skill. Its live trees
+are the root node files under `design/` other than `log.md`, each with its
+subdirectory, which the Makefile finds and lints; its log is `design/log.md`,
+its research record `research/investigations/`, its TODO `docs/todo.md`, and
+its checks `make design-lint` and `make design-ready`.
 
 **Investigations.** An investigation decides something. Before measuring,
 write in `research/investigations/<name>/` the question, the comparison that
@@ -164,12 +167,12 @@ These are the complete approval and merge rules:
    revision to be merged.
 3. The exact revision merged into `main` must pass `make check` before the
    merge.
-4. A change that moves the `whitefoot/` pin names the Whitefoot revisions it
-   adopts and why, and a revision merged into `main` pins a commit on
-   Whitefoot's `main`.
+4. A change that moves the `whitefoot/` or `design/skill/` pin names the
+   revisions it adopts and why, and a revision merged into `main` pins a
+   commit on that repository's `main`.
 
 **Exact revision** is the complete tree that will enter `main`, the
-submodule pin included; if it changes after approval or after its successful
+submodule pins included; if it changes after approval or after its successful
 check, rules 2 and 3 apply to the new revision. No other workflow step is an
 approval or merge precondition.
 
@@ -177,7 +180,7 @@ approval or merge precondition.
 
 - `make check`, the gate, in CI on every push and on the revision to merge.
   It needs git, Rust stable at least at the `rust-version` in
-  `whitefoot/compiler/Cargo.toml`, Python 3, the submodule
+  `whitefoot/compiler/Cargo.toml`, Python 3, the submodules
   (`git clone --recurse-submodules` or `git submodule update --init`) and
   the pinned compiler's locked crates, which it builds offline
   (`cargo fetch --locked --manifest-path whitefoot/compiler/Cargo.toml`). It
