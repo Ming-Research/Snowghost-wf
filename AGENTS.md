@@ -6,8 +6,9 @@ of the web platform in Whitefoot, with a pipeline meant to be parallel and
 incremental from end to end, and a shell written in Rust hosts it on each
 operating system (the `processes` decision in `design/`). Whitefoot, the
 language and its compiler, is pinned by the compiler release that
-`whitefoot.pin` names, which the build downloads, and the `design-tree` skill
-as the `design/skill/` submodule.
+`whitefoot.pin` names, which the build downloads under the rules of the
+`whitefoot-kit/` submodule, and the `design-tree` skill as the
+`design/skill/` submodule.
 
 ## Project goal
 
@@ -57,12 +58,11 @@ into an implied implementation requirement.
 
 The Whitefoot commit of the release in `whitefoot.pin`, the 12 hex digits
 after `wf-`, defines the language. Read the Whitefoot repository at that
-commit, in a clone checked out there or one file
-at a time with
-`gh api 'repos/Ming-Research/Whitefoot/contents/<path>?ref=<commit>' -H 'Accept: application/vnd.github.raw'`.
-Write Whitefoot from its specification `spec/kernel-spec.md`, which is
-normative, the compiler's diagnostics and repairs, and the maintained programs
-under `tests/programs` and `lib/std`, which Whitefoot's gate compiles on every
+commit, as [Reading the
+language](whitefoot-kit/downstream.md#reading-the-language) describes. Write
+Whitefoot from its specification `spec/kernel-spec.md`, which is normative,
+the compiler's diagnostics and repairs, and the maintained programs under
+`tests/programs` and `lib/std`, which Whitefoot's gate compiles on every
 change. Its `docs/patterns.md` lags the language and is not a reference;
 Snowghost is where current source patterns are tried. Snowghost never edits
 Whitefoot; see [The Whitefoot boundary](#the-whitefoot-boundary).
@@ -172,24 +172,26 @@ These are the complete approval and merge rules:
 3. The exact revision merged into `main` must pass `make check` before the
    merge.
 4. A change that moves the Whitefoot pin (`whitefoot.pin`) or the
-   `design/skill/` submodule names the revisions it adopts and why, and a
-   revision merged into `main` pins a commit on that repository's `main`:
-   for Whitefoot, a release `wf-<12 hex>`, never an experiment release.
+   `whitefoot-kit/` or `design/skill/` submodule names the revisions it
+   adopts and why, and a revision merged into `main` pins commits on those
+   repositories' `main`: for Whitefoot, a release `wf-<12 hex>`, never an
+   experiment release.
 
-**Exact revision** is the complete tree that will enter `main`, the
-Whitefoot pin and the submodule included; if it changes after approval or after its successful
-check, rules 2 and 3 apply to the new revision. No other workflow step is an
-approval or merge precondition.
+**Exact revision** is the complete tree that will enter `main`, the Whitefoot
+pin and the submodules included; if it changes after approval or after its
+successful check, rules 2 and 3 apply to the new revision. No other workflow
+step is an approval or merge precondition.
 
 ## Checks
 
 - `make check`, the gate, in CI on every push and on the revision to merge.
   It needs git, Python 3, curl, `/usr/bin/clang`, LLD on Linux and the
-  `design/skill` submodule (`git clone --recurse-submodules` or
-  `git submodule update --init`). It downloads the compiler release that
-  `whitefoot.pin` names for Linux x86-64 or macOS arm64 into
-  `build/whitefoot/`, builds the renderer and runs the design lint;
-  `make check WHITEFOOTC=<path>` uses another compiler instead.
+  `design/skill` and `whitefoot-kit` submodules (`git clone
+  --recurse-submodules` or `git submodule update --init`). It downloads the
+  compiler release that `whitefoot.pin` names ([The
+  pin](whitefoot-kit/downstream.md#the-pin)), builds the renderer and runs
+  the design lint; `make check WHITEFOOTC=<path>` uses another compiler
+  instead.
 - `make design-ready` and `make pin-ready`, before marking ready and in CI
   on ready PRs and main: every design-tree change is approved in the log, and
   `whitefoot.pin` names no experiment release.
@@ -208,51 +210,34 @@ the remote head is the reviewed revision, and fill the PR's review section.
 
 ## The Whitefoot boundary
 
-- Snowghost builds with exactly the compiler release that `whitefoot.pin`
-  names, and moving the pin is a deliberate change under rule 4.
-- A change Snowghost needs in Whitefoot is made in Whitefoot, under
-  Whitefoot's own AGENTS.md, as a branch and PR in its repository. While that
-  PR is open, a Snowghost work branch tries it in CI by pinning an experiment
-  release of the PR's head, `release = wf-exp-<12 hex>`, published with
-  `gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true`,
-  or locally with a compiler built from it (`make WHITEFOOTC=<path>`). Before
-  the branch is ready, the change is on Whitefoot's `main` and the pin names
-  its release; `make pin-ready` refuses an experiment pin.
+- Snowghost follows Whitefoot-kit's [downstream
+  rules](whitefoot-kit/downstream.md), which Halo-wf and Firn-wf share: it
+  builds with exactly the release `whitefoot.pin` names ([The
+  pin](whitefoot-kit/downstream.md#the-pin)), a revision bound for `main`
+  pins a release of a commit on Whitefoot's `main` ([Main pins a main
+  release](whitefoot-kit/downstream.md#main-pins-a-main-release)), and a
+  change Snowghost needs in Whitefoot is made in Whitefoot and tried on a
+  work branch with an experiment pin or `make WHITEFOOTC=<path>` ([Trying an
+  unmerged Whitefoot
+  change](whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 - When a missing Whitefoot feature would bend Snowghost's implementation or
-  architecture, add the feature to Whitefoot instead of working around it.
-  State the gap as its minimal semantic example, apart from the renderer code
-  that exposed it, and record it under *Whitefoot requirements* in
-  `docs/todo.md` until Whitefoot resolves it. A problem that belongs to the
-  renderer alone is fixed in Snowghost, not by generalizing the language.
+  architecture, add the feature to Whitefoot instead of working around it,
+  and record the gap, as its minimal semantic example, under *Whitefoot
+  requirements* in `docs/todo.md` until Whitefoot resolves it. A problem that
+  belongs to the renderer alone is fixed in Snowghost, not by generalizing
+  the language.
+- A change to the shared rules or to `whitefoot.mk` is made once in
+  Whitefoot-kit; Snowghost adopts it by moving the `whitefoot-kit/` submodule
+  under rule 4.
 
 ## Upgrading Whitefoot
 
-Whitefoot publishes a compiler release on request for a commit on its `main`
-whose gate passed: the prerelease `wf-` followed by the commit's first 12 hex
-digits, holding `whitefootc` for Linux x86-64 and macOS arm64,
-`whitefoot-release.json`, which names the release and its commit, and
-`SHA256SUMS`. Releases
-older than 30 days are deleted, except the newest. No scheduled CI moves the
-pin; the owner runs an agent that upgrades every downstream project. An
-upgrade:
-
-1. Chooses the commit, normally the tip of Whitefoot's `main` with a passing
-   gate, and publishes its release if it has none:
-   `gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash>`,
-   which does nothing when the release exists.
-2. Writes its one line, `release = wf-<12 hex digits>`, to `whitefoot.pin`,
-   the format every downstream project shares.
-3. Reads what changed between the two commits (Whitefoot's `spec/log.md`, the
-   specification's diff and the compiler's diagnostics on the renderer) and
-   adapts the renderer; a gap goes to Whitefoot as
-   [The Whitefoot boundary](#the-whitefoot-boundary) describes.
-4. Passes CI, and names in its PR the revisions adopted and why (rule 4).
-
-The same command publishes again a pinned release that has expired;
-`make compiler` prints it when the download fails. An experiment release,
-`wf-exp-<12 hex>`, is published for an unmerged Whitefoot commit with
-`-f experiment=true` and serves only a work branch
-([The Whitefoot boundary](#the-whitefoot-boundary)).
+An upgrade follows [Upgrading
+Whitefoot](whitefoot-kit/downstream.md#upgrading-whitefoot). When the
+compiler's code generation changed, Snowghost's pull request also compares
+the renderer's full-build and per-edit costs before and after the move on the
+same source and machine, as [Investigations](#how-work-proceeds) requires of
+a performance change.
 
 ## Code and tests
 
