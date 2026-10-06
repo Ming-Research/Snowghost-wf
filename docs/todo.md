@@ -147,6 +147,37 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **M2 typed payload ownership is still context-wide.** Step 3's
+  `EntrySequence` owns paged stable direct-entry handles and its local AVL
+  metadata, but `Context.blocks`, `paragraphs` and `children` still own the
+  typed payloads in growing Slots. Impact: order insertion/removal copies
+  no earlier entry payload, but allocating a heavy payload may still move
+  its context pool; this is not the complete FlowBlock ownership contract.
+  Change: move those typed payloads into owner-local pages and migrate
+  text/style/atomic/table routes together, retaining counted disjoint-slot
+  preparation and child layout. Reopen before declaring step 3 complete or
+  wiring step 5's successful splice. Validate certified sibling loops,
+  payload-storage permutations, stale handles and every edit-prefix dump;
+  count allocations and earlier-payload visits inside the edit. The current
+  index uses append-only slots with tombstones; generation-checked reuse
+  belongs with that migration and session-growth policy.
+
+- **M2 nested index still needs CI and allocation-cost evidence.**
+  `renderer/layout/sequence.wf` supplies local insert/remove/prefix/suffix
+  operations and a virtual walker, but only append construction and output
+  repair are wired before the step-5 splice. No local compile or execution
+  was authorized. Compare full dumps and edit prefixes, exercise AVL
+  rotations and deletion of a two-child node, inspect certified preparation
+  loops, and compare full-build costs against the frozen M1 source at the
+  same Whitefoot pin. Each sequence starts with four-slot pages and grows
+  its directory by wrapping the old roots, without copying existing pages.
+  Virtual rank lookup descends each owner index; line-summary publication
+  currently repairs ancestor paths during the reference walk. Measure those
+  costs before accepting the full-build envelope. Reopen with the primary
+  agent's step-3 CI and step 4's boundary-output propagation. Do not infer
+  byte identity, logarithmic physical visit counts or speed from source alone.
+
+
 - **M2 geometry still bridges the context-coordinate reference walker.**
   `renderer/layout/geometry.wf:geometry_reference` and `geometry_owned`
   materialize and re-encode whole-context scratch geometry around layout
@@ -158,12 +189,11 @@ example apart from the renderer code that exposed it
   the bridge with owner-local boundary outputs and anchored spanning
   fragments, naturals and baseline handles as the nested sequence lands.
   Keep the numeric compatibility path for every potentially saturating
-  block until an alternative proves byte identity. Reopen in M2 steps 3
-  and 4; compare all edit prefixes with fresh full dumps, inject the step-2
+  block until an alternative proves byte identity. Reopen in M2 step 4; compare all edit prefixes with fresh full dumps, inject the step-2
   geometry falsifiers, and count scratch/metadata visits separately from
-  translated local origins. Step-2 compile, seq/par dumps, extreme-coordinate
-  cases and placement timing are pending the primary agent's CI; none ran
-  locally.
+  translated local origins. The primary agent supplied steps 1 and 2 as
+  compiled input; seq/par dumps, extreme-coordinate cases and placement
+  timing have no additional evidence from this implementation session.
 
 
 - **M2 context-route publication still copies dense metadata.**

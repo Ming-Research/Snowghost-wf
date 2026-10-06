@@ -1,0 +1,683 @@
+fn absent_handle() -> made: EntryHandle pure {
+  doc "The absent line or entry handle.";
+  return EntryHandle(owner: no_index, slot: no_index);
+}
+
+fn empty_output() -> made: SequenceOutput pure {
+  doc "The empty sequence output; only this zero-entry transfer is known to be identity before step 4.";
+  let absent = absent_handle();
+  let yes = True();
+  return SequenceOutput(count: 0_u64, events: 0_u64, first_line: absent, last_line: absent, ordinary: yes, through: yes, leading_positive: 0_i32, leading_negative: 0_i32, advance: 0_i64, trailing_positive: 0_i32, trailing_negative: 0_i32);
+}
+
+fn pending_output(events: u64) -> made: SequenceOutput pure {
+  doc "One entry whose event span is known and whose semantic margin/line output still needs layout.";
+  let pending = empty_output();
+  set pending.count = 1_u64;
+  set pending.events = events;
+  set pending.ordinary = False();
+  return pending;
+}
+
+fn join_output(left: SequenceOutput, right: SequenceOutput) -> made: SequenceOutput pure {
+  doc "Combines structural summaries in document order. Margin composition is deliberately unsupported for nonempty runs until step 4 validates it against the reference machine.";
+  if left.count == 0_u64 {
+    return right;
+  }
+  if right.count == 0_u64 {
+    return left;
+  }
+  let joined = empty_output();
+  set joined.count = left.count +sat right.count;
+  set joined.events = left.events +sat right.events;
+  set joined.first_line = if left.first_line.slot != no_index { give left.first_line; } else { give right.first_line; }
+  set joined.last_line = if right.last_line.slot != no_index { give right.last_line; } else { give left.last_line; }
+  set joined.ordinary = False();
+  return joined;
+}
+
+fn vacant_node() -> made: SequenceNode pure {
+  doc "An absent index node used for empty links and unallocated slots.";
+  let empty = empty_output();
+  let no = False();
+  return SequenceNode(left: no_index, right: no_index, parent: no_index, height: 0_u32, live: no, own: empty, total: empty);
+}
+
+fn new_sequence() -> made: EntrySequence pure {
+  doc "An empty owner-local sequence allocates no payload or index pages.";
+  let payloads = SlotPages<Flow>::Vacant();
+  let nodes = SlotPages<SequenceNode>::Vacant();
+  return EntrySequence(payloads: move payloads, nodes: move nodes, root: no_index, allocated: 0_u32, span: 4_u32);
+}
+
+fn sequence_reserve(sequence: &EntrySequence) -> result: unit writes(sequence.nodes), writes(sequence.payloads), writes(sequence.span), reads(sequence.allocated) {
+  doc "Doubles the directory address space by wrapping its existing roots, without copying any payload or index page. The first small sequence allocates only one four-slot page per store.";
+  if sequence^.allocated < sequence^.span { return unit; }
+  if sequence^.span >= 1073741824_u32 { return unit; }
+  let old_nodes = SlotPages<SequenceNode>::Vacant();
+  let old_payloads = SlotPages<Flow>::Vacant();
+  swap(first: &old_nodes, second: &sequence^.nodes);
+  swap(first: &old_payloads, second: &sequence^.payloads);
+  let right_nodes = SlotPages<SequenceNode>::Vacant();
+  let right_payloads = SlotPages<Flow>::Vacant();
+  let node_left = box_new::<SlotPages<SequenceNode>>(value: move old_nodes);
+  let node_right = box_new::<SlotPages<SequenceNode>>(value: move right_nodes);
+  let payload_left = box_new::<SlotPages<Flow>>(value: move old_payloads);
+  let payload_right = box_new::<SlotPages<Flow>>(value: move right_payloads);
+  set sequence^.nodes = SlotPages<SequenceNode>::Fork(left: move node_left, right: move node_right);
+  set sequence^.payloads = SlotPages<Flow>::Fork(left: move payload_left, right: move payload_right);
+  set sequence^.span = sequence^.span + sequence^.span;
+  return unit;
+}
+
+fn later_handles(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, handles: &Box<Slots<EntryHandle>>) -> result: unit reads(sequence.nodes), reads(sequence.span), writes(handles) {
+  doc "Visits only index subtrees intersecting a direct suffix and emits stable handles in order. The result is an immutable work list, not a retained alternate order index.";
+  let held = sequence_node(sequence: sequence, slot: root);
+  if held.live { } else { return unit; }
+  if skip >= held.total.count { return unit; }
+  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  if skip < left_node.total.count {
+    later_handles(sequence: sequence, root: held.left, skip: skip, owner: owner, handles: handles);
+  }
+  if skip <= left_node.total.count {
+    let handle = EntryHandle(owner: owner, slot: root);
+    let kept = push_item::<EntryHandle>(cell: handles, value: handle, ceiling: item_ceiling);
+    later_handles(sequence: sequence, root: held.right, skip: 0_u64, owner: owner, handles: handles);
+  } else {
+    let past_left = skip - left_node.total.count;
+    let past_self = past_left - 1_u64;
+    later_handles(sequence: sequence, root: held.right, skip: past_self, owner: owner, handles: handles);
+  }
+  return unit;
+}
+
+fn visit_later(sequence: &EntrySequence, after: u32, owner: u32) -> made: Box<Slots<EntryHandle>> reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  doc "Returns the direct entries after a stable slot, never descending their block contents or reading the unchanged prefix payloads. Step 4 consumes these handles for independent sibling origins; this function performs no payload scatter.";
+  let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
+  let current = sequence_node(sequence: sequence, slot: after);
+  if current.live {
+    let rank = sequence_rank(sequence: sequence, slot: after);
+    let start = rank +sat 1_u64;
+    later_handles(sequence: sequence, root: sequence^.root, skip: start, owner: owner, handles: &handles);
+  }
+  return move handles;
+}
+
+fn slot_read<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, missing: T) -> value: T reads(pages) {
+  doc "Reads one stable slot through a bounded directory path; absent pages return the supplied vacant value.";
+  if slot >= span { return missing; }
+  match pages^ {
+    Vacant() => { return missing; }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len { return page^.inner[at]; }
+      return missing;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half { return slot_read::<T>(pages: &left_page^.inner, slot: slot, span: half, missing: missing); }
+      let later = slot - half;
+      return slot_read::<T>(pages: &right_page^.inner, slot: later, span: half, missing: missing);
+    }
+  }
+}
+
+fn slot_write<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, value: T, missing: T) -> result: unit writes(pages) {
+  doc "Allocates only a missing directory path and its four-slot page, then writes one slot. Existing payload pages never move.";
+  if slot >= span { return unit; }
+  match pages^ {
+    Vacant() => {
+      if span <= 4_u32 {
+        let count = cvt::<u32, u64>(span);
+        let values = box_array_filled::<T>(count: count, value: missing);
+        set pages^ = SlotPages<T>::Page(values: move values);
+      } else {
+        let empty_left = SlotPages<T>::Vacant();
+        let empty_right = SlotPages<T>::Vacant();
+        let new_left = box_new::<SlotPages<T>>(value: move empty_left);
+        let new_right = box_new::<SlotPages<T>>(value: move empty_right);
+        set pages^ = SlotPages<T>::Fork(left: move new_left, right: move new_right);
+      }
+    }
+    Fork(..) => { }
+    Page(..) => { }
+  }
+  match pages^ {
+    Vacant() => { }
+    Page(values: stored_page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < stored_page^.inner.len { set stored_page^.inner[at] = value; }
+    }
+    Fork(left: stored_left, right: stored_right) => {
+      let half = span / 2_u32;
+      if slot < half {
+        slot_write::<T>(pages: &stored_left^.inner, slot: slot, span: half, value: value, missing: missing);
+      } else {
+        let later = slot - half;
+        slot_write::<T>(pages: &stored_right^.inner, slot: later, span: half, value: value, missing: missing);
+      }
+    }
+  }
+  return unit;
+}
+
+fn sequence_node(sequence: &EntrySequence, slot: u32) -> made: SequenceNode reads(sequence.nodes), reads(sequence.span) {
+  doc "Reads index metadata without opening the corresponding payload slot.";
+  let missing = vacant_node();
+  return slot_read::<SequenceNode>(pages: &sequence^.nodes, slot: slot, span: sequence^.span, missing: missing);
+}
+
+fn sequence_write(sequence: &EntrySequence, slot: u32, node: SequenceNode) -> result: unit writes(sequence.nodes), reads(sequence.span) {
+  doc "Writes one index slot without accessing payload storage.";
+  let missing = vacant_node();
+  slot_write::<SequenceNode>(pages: &sequence^.nodes, slot: slot, span: sequence^.span, value: node, missing: missing);
+  return unit;
+}
+
+fn sequence_output(sequence: &EntrySequence) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  doc "Reads the cached output at this owner's root.";
+  let root_node = sequence_node(sequence: sequence, slot: sequence^.root);
+  return root_node.total;
+}
+
+fn sequence_payload(sequence: &EntrySequence, slot: u32) -> made: Flow reads(sequence.nodes), reads(sequence.payloads), reads(sequence.span) {
+  doc "Reads a live direct-entry payload; a removed or invalid handle yields an invalid Close event, never a reused payload.";
+  let missing = Flow::Close(block: no_index);
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    return slot_read::<Flow>(pages: &sequence^.payloads, slot: slot, span: sequence^.span, missing: missing);
+  }
+  return missing;
+}
+
+fn sequence_parent(sequence: &EntrySequence, slot: u32, parent: u32) -> result: unit writes(sequence.nodes), reads(sequence.span) {
+  doc "Repairs the parent link of a live index node; empty links require no storage.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    set held.parent = parent;
+    sequence_write(sequence: sequence, slot: slot, node: held);
+  }
+  return unit;
+}
+
+fn sequence_repair(sequence: &EntrySequence, slot: u32) -> result: unit writes(sequence.nodes), reads(sequence.span) {
+  doc "Recomputes one height and summary from the two cached child outputs and this node's boundary output.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    let left_node = sequence_node(sequence: sequence, slot: held.left);
+    let right_node = sequence_node(sequence: sequence, slot: held.right);
+    let prefix = join_output(left: left_node.total, right: held.own);
+    set held.total = join_output(left: prefix, right: right_node.total);
+    let taller = imax(left_node.height, right_node.height);
+    set held.height = taller +sat 1_u32;
+    sequence_write(sequence: sequence, slot: slot, node: held);
+  }
+  return unit;
+}
+
+fn sequence_rotate_left(sequence: &EntrySequence, slot: u32) -> root: u32 writes(sequence.nodes), reads(sequence.span) {
+  doc "Rotates metadata links left while preserving every stable payload slot and the order of entries.";
+  let base = sequence_node(sequence: sequence, slot: slot);
+  let pivot_slot = base.right;
+  let pivot = sequence_node(sequence: sequence, slot: pivot_slot);
+  if pivot.live {
+    set base.right = pivot.left;
+    sequence_parent(sequence: sequence, slot: pivot.left, parent: slot);
+    set pivot.left = slot;
+    set pivot.parent = base.parent;
+    set base.parent = pivot_slot;
+    sequence_write(sequence: sequence, slot: slot, node: base);
+    sequence_write(sequence: sequence, slot: pivot_slot, node: pivot);
+    sequence_repair(sequence: sequence, slot: slot);
+    sequence_repair(sequence: sequence, slot: pivot_slot);
+    return pivot_slot;
+  }
+  return slot;
+}
+
+fn sequence_rotate_right(sequence: &EntrySequence, slot: u32) -> root: u32 writes(sequence.nodes), reads(sequence.span) {
+  doc "Rotates metadata links right without reading or moving payloads.";
+  let base = sequence_node(sequence: sequence, slot: slot);
+  let pivot_slot = base.left;
+  let pivot = sequence_node(sequence: sequence, slot: pivot_slot);
+  if pivot.live {
+    set base.left = pivot.right;
+    sequence_parent(sequence: sequence, slot: pivot.right, parent: slot);
+    set pivot.right = slot;
+    set pivot.parent = base.parent;
+    set base.parent = pivot_slot;
+    sequence_write(sequence: sequence, slot: slot, node: base);
+    sequence_write(sequence: sequence, slot: pivot_slot, node: pivot);
+    sequence_repair(sequence: sequence, slot: slot);
+    sequence_repair(sequence: sequence, slot: pivot_slot);
+    return pivot_slot;
+  }
+  return slot;
+}
+
+fn sequence_balance(sequence: &EntrySequence, slot: u32) -> root: u32 writes(sequence.nodes), reads(sequence.span) {
+  doc "Repairs an AVL insertion/removal ancestor with at most two rotations.";
+  sequence_repair(sequence: sequence, slot: slot);
+  let held = sequence_node(sequence: sequence, slot: slot);
+  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  let right_node = sequence_node(sequence: sequence, slot: held.right);
+  let right_limit = right_node.height +sat 1_u32;
+  if left_node.height > right_limit {
+    let ll = sequence_node(sequence: sequence, slot: left_node.left);
+    let lr = sequence_node(sequence: sequence, slot: left_node.right);
+    if lr.height > ll.height {
+      set held.left = sequence_rotate_left(sequence: sequence, slot: held.left);
+      sequence_write(sequence: sequence, slot: slot, node: held);
+    }
+    return sequence_rotate_right(sequence: sequence, slot: slot);
+  }
+  let left_limit = left_node.height +sat 1_u32;
+  if right_node.height > left_limit {
+    let rl = sequence_node(sequence: sequence, slot: right_node.left);
+    let rr = sequence_node(sequence: sequence, slot: right_node.right);
+    if rl.height > rr.height {
+      set held.right = sequence_rotate_right(sequence: sequence, slot: held.right);
+      sequence_write(sequence: sequence, slot: slot, node: held);
+    }
+    return sequence_rotate_left(sequence: sequence, slot: slot);
+  }
+  return slot;
+}
+
+fn sequence_rank(sequence: &EntrySequence, slot: u32) -> rank: u64 reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  doc "Computes a temporary rank from parent links and cached counts. no_index denotes the end; no rank is persisted on a payload.";
+  let current = sequence_node(sequence: sequence, slot: slot);
+  if current.live { } else {
+    let total = sequence_output(sequence: sequence);
+    return total.count;
+  }
+  let left_node = sequence_node(sequence: sequence, slot: current.left);
+  let rank = left_node.total.count;
+  let cursor = slot;
+  let ancestor = current.parent;
+  for (level in 0_u64..64_u64) {
+    let parent_node = sequence_node(sequence: sequence, slot: ancestor);
+    if parent_node.live { } else { return rank; }
+    if parent_node.right == cursor {
+      let preceding = sequence_node(sequence: sequence, slot: parent_node.left);
+      let before_parent = preceding.total.count +sat 1_u64;
+      set rank = rank +sat before_parent;
+    }
+    set cursor = ancestor;
+    set ancestor = parent_node.parent;
+  }
+  return rank;
+}
+
+fn sequence_insert_at(sequence: &EntrySequence, root: u32, rank: u64, added: u32, parent: u32) -> made: u32 writes(sequence.nodes), reads(sequence.span) {
+  doc "Inserts a previously allocated stable leaf into an AVL rank path; only index ancestors are visited.";
+  let held = sequence_node(sequence: sequence, slot: root);
+  if held.live { } else {
+    sequence_parent(sequence: sequence, slot: added, parent: parent);
+    return added;
+  }
+  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  if rank <= left_node.total.count {
+    set held.left = sequence_insert_at(sequence: sequence, root: held.left, rank: rank, added: added, parent: root);
+  } else {
+    let after_left = rank - left_node.total.count;
+    let after_self = after_left - 1_u64;
+    set held.right = sequence_insert_at(sequence: sequence, root: held.right, rank: after_self, added: added, parent: root);
+  }
+  sequence_write(sequence: sequence, slot: root, node: held);
+  return sequence_balance(sequence: sequence, slot: root);
+}
+
+fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: SequenceOutput) -> result: Result<u32, LayoutError> writes(sequence) {
+  doc "Inserts one new direct entry before a live stable slot, or at end for no_index. A range is a batch of these operations in source order. Earlier payload slots are neither read nor copied.";
+  if sequence^.allocated >= 1073741824_u32 { return too_large::<u32>(); }
+  if before != no_index {
+    let target = sequence_node(sequence: sequence, slot: before);
+    if target.live { } else {
+      let inconsistent = LayoutError::Inconsistent();
+      return Err<u32, LayoutError>(error: inconsistent);
+    }
+  }
+  let rank = sequence_rank(sequence: sequence, slot: before);
+  sequence_reserve(sequence: sequence);
+  let fresh = sequence^.allocated;
+  let missing = Flow::Close(block: no_index);
+  slot_write::<Flow>(pages: &sequence^.payloads, slot: fresh, span: sequence^.span, value: item, missing: missing);
+  let yes = True();
+  let node = SequenceNode(left: no_index, right: no_index, parent: no_index, height: 1_u32, live: yes, own: output, total: output);
+  sequence_write(sequence: sequence, slot: fresh, node: node);
+  let old_root = sequence^.root;
+  set sequence^.root = sequence_insert_at(sequence: sequence, root: old_root, rank: rank, added: fresh, parent: no_index);
+  set sequence^.allocated = fresh + 1_u32;
+  return Ok<u32, LayoutError>(value: fresh);
+}
+
+fn sequence_extract_first(sequence: &EntrySequence, root: u32) -> (rest: u32, first: u32) writes(sequence.nodes), reads(sequence.span) {
+  doc "Detaches the first index node for AVL deletion without reading its payload or changing its stable slot.";
+  let held = sequence_node(sequence: sequence, slot: root);
+  if held.left == no_index {
+    sequence_parent(sequence: sequence, slot: held.right, parent: held.parent);
+    return held.right, root;
+  }
+  let (remainder, first) = sequence_extract_first(sequence: sequence, root: held.left);
+  set held.left = remainder;
+  sequence_write(sequence: sequence, slot: root, node: held);
+  let balanced = sequence_balance(sequence: sequence, slot: root);
+  return balanced, first;
+}
+
+fn sequence_remove_at(sequence: &EntrySequence, root: u32, rank: u64) -> made: u32 writes(sequence.nodes), reads(sequence.span) {
+  doc "Removes one AVL leaf by rank, transplanting metadata links at a two-child node while leaving every other payload untouched.";
+  let held = sequence_node(sequence: sequence, slot: root);
+  if held.live { } else { return no_index; }
+  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  if rank < left_node.total.count {
+    set held.left = sequence_remove_at(sequence: sequence, root: held.left, rank: rank);
+  } else if rank > left_node.total.count {
+    let past_left = rank - left_node.total.count;
+    let past_self = past_left - 1_u64;
+    set held.right = sequence_remove_at(sequence: sequence, root: held.right, rank: past_self);
+  } else {
+    let vacant = vacant_node();
+    sequence_write(sequence: sequence, slot: root, node: vacant);
+    if held.right == no_index {
+      sequence_parent(sequence: sequence, slot: held.left, parent: held.parent);
+      return held.left;
+    }
+    let (rest, successor) = sequence_extract_first(sequence: sequence, root: held.right);
+    let replacement = sequence_node(sequence: sequence, slot: successor);
+    set replacement.left = held.left;
+    set replacement.right = rest;
+    set replacement.parent = held.parent;
+    sequence_parent(sequence: sequence, slot: held.left, parent: successor);
+    sequence_parent(sequence: sequence, slot: rest, parent: successor);
+    sequence_write(sequence: sequence, slot: successor, node: replacement);
+    return sequence_balance(sequence: sequence, slot: successor);
+  }
+  sequence_write(sequence: sequence, slot: root, node: held);
+  return sequence_balance(sequence: sequence, slot: root);
+}
+
+fn remove(sequence: &EntrySequence, slot: u32) -> result: unit writes(sequence.nodes), writes(sequence.root), reads(sequence.span) {
+  doc "Removes one stable slot, leaving its payload page as a hole. Removing a range repeats this operation over the removed handles; unrelated payloads are untouched.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    let rank = sequence_rank(sequence: sequence, slot: slot);
+    let old_root = sequence^.root;
+    set sequence^.root = sequence_remove_at(sequence: sequence, root: old_root, rank: rank);
+  }
+  return unit;
+}
+
+fn prefix_output(sequence: &EntrySequence, before: u32) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  doc "Composes only cached index outputs before a stable entry. No preceding payload leaf is opened.";
+  if before == no_index { return sequence_output(sequence: sequence); }
+  let current = sequence_node(sequence: sequence, slot: before);
+  if current.live { } else { return empty_output(); }
+  let left_node = sequence_node(sequence: sequence, slot: current.left);
+  let prefix = left_node.total;
+  let cursor = before;
+  let ancestor = current.parent;
+  for (level in 0_u64..64_u64) {
+    let parent_node = sequence_node(sequence: sequence, slot: ancestor);
+    if parent_node.live { } else { return prefix; }
+    if parent_node.right == cursor {
+      let preceding = sequence_node(sequence: sequence, slot: parent_node.left);
+      let parent_prefix = join_output(left: preceding.total, right: parent_node.own);
+      set prefix = join_output(left: parent_prefix, right: prefix);
+    }
+    set cursor = ancestor;
+    set ancestor = parent_node.parent;
+  }
+  return prefix;
+}
+
+fn sequence_set_output(sequence: &EntrySequence, slot: u32, output: SequenceOutput) -> result: unit writes(sequence.nodes), reads(sequence.span) {
+  doc "Updates one boundary output and only its AVL ancestors, without accessing earlier payloads.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live { } else { return unit; }
+  set held.own = output;
+  sequence_write(sequence: sequence, slot: slot, node: held);
+  let cursor = slot;
+  for (level in 0_u64..64_u64) {
+    let current = sequence_node(sequence: sequence, slot: cursor);
+    if current.live { } else { return unit; }
+    sequence_repair(sequence: sequence, slot: cursor);
+    set cursor = current.parent;
+  }
+  return unit;
+}
+
+fn sequence_select(sequence: &EntrySequence, event: u64) -> (slot: u32, offset: u64) reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  doc "Selects a direct entry by its virtual event weight in logarithmic index work, skipping cached subtree spans.";
+  let cursor = sequence^.root;
+  let remaining = event;
+  for (level in 0_u64..64_u64) {
+    let held = sequence_node(sequence: sequence, slot: cursor);
+    if held.live { } else { return no_index, 0_u64; }
+    let left_node = sequence_node(sequence: sequence, slot: held.left);
+    if remaining < left_node.total.events {
+      set cursor = held.left;
+    } else {
+      set remaining = remaining - left_node.total.events;
+      if remaining < held.own.events { return cursor, remaining; }
+      set remaining = remaining - held.own.events;
+      set cursor = held.right;
+    }
+  }
+  return no_index, 0_u64;
+}
+
+fn block_snapshot(block: &Block) -> made: BlockSnapshot reads(block) {
+  doc "Copies only the reference walker geometry/style fields, leaving nested entry ownership in place.";
+  return BlockSnapshot(style: block^.style, x: block^.x, y: block^.y, dx: block^.dx, dy: block^.dy, normal_x: block^.normal_x, normal_y: block^.normal_y, resolved_x: block^.resolved_x, resolved_y: block^.resolved_y, width: block^.width, height: block^.height, marker: block^.marker, parent: block^.parent, flow_at: block^.flow_at, inner_x: block^.inner_x, held_y: block^.held_y, avail_left: block^.avail_left, avail_width: block^.avail_width, content_left: block^.content_left, content_width: block^.content_width);
+}
+
+fn flow_length(context: &Context) -> count: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span) {
+  doc "The number of virtual Open/Close/Text/Child/Float/Out events, read from the synthetic root's cached summary without constructing a stream.";
+  let output = sequence_output(sequence: &context^.entries);
+  return output.events;
+}
+
+fn nested_event(context: &Context, sequence: &EntrySequence, at: u64) -> made: Flow reads(context), reads(sequence) {
+  doc "Random access through local weighted indexes. Descending a lexical block preserves the caller's BFC exclusion state; a Close is synthesized after its nested entries.";
+  let (slot, offset) = sequence_select(sequence: sequence, event: at);
+  let item = sequence_payload(sequence: sequence, slot: slot);
+  match item {
+    Open(block: child) => {
+      if offset == 0_u64 { return item; }
+      let child_at = cvt::<u32, u64>(child);
+      if child_at < context^.blocks.inner.len {
+        let inside = sequence_output(sequence: &context^.blocks.inner[child_at].entries);
+        let close_at = inside.events +sat 1_u64;
+        if offset == close_at { return Flow::Close(block: child); }
+        let local_at = offset - 1_u64;
+        return nested_event(context: context, sequence: &context^.blocks.inner[child_at].entries, at: local_at);
+      }
+      return Flow::Close(block: no_index);
+    }
+    Close(..) => { return item; }
+    Text(..) => { return item; }
+    Child(..) => { return item; }
+    Float(..) => { return item; }
+    Out(..) => { return item; }
+  }
+}
+
+fn flow_event(context: &Context, at: u64) -> made: Flow reads(context) {
+  doc "The compatibility iterator's event at a temporary rank. Full builds and legacy restacks share this adapter; neither retains or rebuilds a context-wide Flow array.";
+  return nested_event(context: context, sequence: &context^.entries, at: at);
+}
+
+fn building_flow_length(context: &Context) -> count: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span), reads(context.blocks.inner), reads(context.build_owner) {
+  doc "The builder's emitted virtual length. Open ancestors have weight one until close; summing the currently open owner chain adds their unfinished contents without a shared event counter.";
+  let total = flow_length(context: context);
+  let owner = context^.build_owner;
+  let limit = context^.blocks.inner.len;
+  for (level in 0_u64..limit) {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      let inside = sequence_output(sequence: &context^.blocks.inner[at].entries);
+      set total = total +sat inside.events;
+      set owner = context^.blocks.inner[at].parent;
+    } else { return total; }
+  }
+  return total;
+}
+
+fn owner_insert(context: &Context, owner: u32, item: Flow, output: SequenceOutput) -> result: Result<u32, LayoutError> writes(context.entries), writes(context.blocks.inner) {
+  doc "Appends directly to one owner's sequence. The existing serial box builder determines source order; there is no global order index or renumbering of earlier entry slots.";
+  if owner == no_index {
+    return insert_before(sequence: &context^.entries, before: no_index, item: item, output: output);
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    return insert_before(sequence: &context^.blocks.inner[at].entries, before: no_index, item: item, output: output);
+  }
+  let inconsistent = LayoutError::Inconsistent();
+  return Err<u32, LayoutError>(error: inconsistent);
+}
+
+fn owner_set_output(context: &Context, owner: u32, slot: u32, output: SequenceOutput) -> result: unit writes(context.entries.nodes), reads(context.entries.span), writes(context.blocks.inner) {
+  doc "Repairs one block-local summary path. A caller changing a descendant's event span also repairs its owner path, never a flat stream.";
+  if owner == no_index {
+    sequence_set_output(sequence: &context^.entries, slot: slot, output: output);
+  } else {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      sequence_set_output(sequence: &context^.blocks.inner[at].entries, slot: slot, output: output);
+    }
+  }
+  return unit;
+}
+
+fn append_flow(context: &Context, item: Flow) -> result: Result<unit, LayoutError> writes(context.entries), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(context.build_owner) {
+  doc "Builds nested sequences directly. Open starts an owned sequence and Close publishes its event weight into the parent; only actual entries allocate stable slots. Float remains a context-owned child in the enclosing BFC.";
+  match item {
+    Close(block: closed) => {
+      let closed_at = cvt::<u32, u64>(closed);
+      if closed_at < context^.blocks.inner.len {
+        let inside = sequence_output(sequence: &context^.blocks.inner[closed_at].entries);
+        let events = inside.events +sat 2_u64;
+        let output = pending_output(events: events);
+        let parent = context^.blocks.inner[closed_at].parent;
+        let slot = context^.blocks.inner[closed_at].entry_slot;
+        set context^.blocks.inner[closed_at].boundary = output;
+        set context^.build_owner = parent;
+        owner_set_output(context: context, owner: parent, slot: slot, output: output);
+      }
+      return Ok<unit, LayoutError>(value: unit);
+    }
+    Open(..) => { }
+    Text(..) => { }
+    Child(..) => { }
+    Float(..) => { }
+    Out(..) => { }
+  }
+  let owner = context^.build_owner;
+  let output = pending_output(events: 1_u64);
+  let slot = propagate owner_insert(context: context, owner: owner, item: item, output: output);
+  match item {
+    Open(block: opened) => {
+      let opened_at = cvt::<u32, u64>(opened);
+      if opened_at < context^.blocks.inner.len {
+        set context^.blocks.inner[opened_at].parent = owner;
+        set context^.blocks.inner[opened_at].entry_slot = slot;
+        set context^.build_owner = opened;
+      }
+    }
+    Text(paragraph: paragraph_slot) => {
+      let paragraph_at = cvt::<u32, u64>(paragraph_slot);
+      if paragraph_at < context^.paragraphs.inner.len {
+        set context^.paragraphs.inner[paragraph_at].block = owner;
+        set context^.paragraphs.inner[paragraph_at].entry_slot = slot;
+      }
+    }
+    Child(context: child) => { record_child_entry(context: context, child: child, owner: owner, slot: slot); }
+    Float(context: floated) => { record_child_entry(context: context, child: floated, owner: owner, slot: slot); }
+    Out(context: positioned) => { record_child_entry(context: context, child: positioned, owner: owner, slot: slot); }
+    Close(..) => { }
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn record_child_entry(context: &Context, child: u32, owner: u32, slot: u32) -> result: unit writes(context.children.inner) {
+  doc "Records the stable geometric-owner entry of a non-atomic child without changing its independent formatting-context ownership.";
+  let at = cvt::<u32, u64>(child);
+  if at < context^.children.inner.len {
+    set context^.children.inner[at].block = owner;
+    set context^.children.inner[at].entry_slot = slot;
+  }
+  return unit;
+}
+
+fn refresh_owner_output(context: &Context, owner: u32) -> result: unit writes(context.blocks.inner), writes(context.entries.nodes), reads(context.entries.span) {
+  doc "Propagates cached descendant line handles and virtual event spans up the changed owner path. This is semantic output repair, not a context-wide stream rebuild.";
+  let cursor = owner;
+  let limit = context^.blocks.inner.len;
+  for (level in 0_u64..limit) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      let inside = sequence_output(sequence: &context^.blocks.inner[at].entries);
+      let events = inside.events +sat 2_u64;
+      let output = pending_output(events: events);
+      set output.first_line = inside.first_line;
+      set output.last_line = inside.last_line;
+      set context^.blocks.inner[at].boundary = output;
+      let parent = context^.blocks.inner[at].parent;
+      let slot = context^.blocks.inner[at].entry_slot;
+      owner_set_output(context: context, owner: parent, slot: slot, output: output);
+      set cursor = parent;
+    } else { return unit; }
+  }
+  return unit;
+}
+
+fn record_line_output(context: &Context, owner: u32, slot: u32, has_lines: Bool) -> result: unit writes(context.blocks.inner), writes(context.entries.nodes), reads(context.entries.span) {
+  doc "Publishes a paragraph or in-flow child baseline handle and repairs only its local index and ancestor path. A handle identifies the line-bearing entry; first/last select its first/last line.";
+  if slot == no_index { return unit; }
+  let output = pending_output(events: 1_u64);
+  if has_lines {
+    let handle = EntryHandle(owner: owner, slot: slot);
+    set output.first_line = handle;
+    set output.last_line = handle;
+  }
+  owner_set_output(context: context, owner: owner, slot: slot, output: output);
+  refresh_owner_output(context: context, owner: owner);
+  return unit;
+}
+
+fn record_paragraph_lines(context: &Context, at: u64) -> result: unit reads(context.paragraphs.inner), writes(context.blocks.inner), writes(context.entries.nodes), reads(context.entries.span) {
+  doc "Refreshes one paragraph's line-bearing entry after line breaking without scanning sibling payloads.";
+  if at < context^.paragraphs.inner.len {
+    let owner = context^.paragraphs.inner[at].block;
+    let slot = context^.paragraphs.inner[at].entry_slot;
+    let lined = context^.paragraphs.inner[at].lines.inner.len > 0_u64;
+    record_line_output(context: context, owner: owner, slot: slot, has_lines: lined);
+  }
+  return unit;
+}
+
+fn record_event_lines(context: &Context, item: Flow) -> result: unit reads(context.paragraphs.inner), reads(context.children.inner), writes(context.blocks.inner), writes(context.entries.nodes), reads(context.entries.span) {
+  doc "Publishes line summaries as the compatibility walker visits entries. Float and positioned children never become normal-flow line outputs, and lexical Close does not clear the BFC's floats.";
+  match item {
+    Text(paragraph: paragraph_slot) => {
+      let paragraph_at = cvt::<u32, u64>(paragraph_slot);
+      record_paragraph_lines(context: context, at: paragraph_at);
+    }
+    Child(context: child) => {
+      let child_at = cvt::<u32, u64>(child);
+      if child_at < context^.children.inner.len {
+        let owner = context^.children.inner[child_at].block;
+        let slot = context^.children.inner[child_at].entry_slot;
+        let lined = context^.children.inner[child_at].has_baseline;
+        record_line_output(context: context, owner: owner, slot: slot, has_lines: lined);
+      }
+    }
+    Close(block: closed_block) => { refresh_owner_output(context: context, owner: closed_block); }
+    Open(..) => { }
+    Float(..) => { }
+    Out(..) => { }
+  }
+  return unit;
+}

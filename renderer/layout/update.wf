@@ -448,10 +448,10 @@ fn clear_paragraph_marks(context: &Context) -> result: unit writes(context) {
 }
 
 fn first_float_entry(context: &Context) -> (first: u64, floats: Bool) reads(context) {
-  doc "The first Float position in Context.flow, or the flow length when none exists, and whether one exists. Paragraphs after that entry may need their full-width lines restored; paragraph payload slot order is immaterial.";
-  let count = context^.flow.inner.len;
+  doc "The first Float position in the virtual nested flow, or the flow length when none exists, and whether one exists. Paragraphs after that entry may need their full-width lines restored; paragraph payload slot order is immaterial.";
+  let count = flow_length(context: context);
   for (k in 0_u64..count) {
-    let item = context^.flow.inner[k];
+    let item = flow_event(context: context, at: k);
     match item {
       Float(..) => {
         return k, True();
@@ -835,11 +835,11 @@ struct Change {
 fn entry_kind(context: &Context, flow_at: u32) -> (kind: u8, index: u64) reads(context) {
   doc "What flow entry flow_at of the context is: 0 a paragraph, 1 an in-flow child context, 2 a float, 3 an out-of-flow child, 4 a block's open or close or no entry; and the paragraph's or child's index.";
   let at = cvt::<u32, u64>(flow_at);
-  if at < context^.flow.inner.len {
+  if at < flow_length(context: context) {
   } else {
     return 4_u8, 0_u64;
   }
-  let item = context^.flow.inner[at];
+  let item = flow_event(context: context, at: at);
   match item {
     Text(paragraph: p) => {
       return 0_u8, cvt::<u32, u64>(p);
@@ -1015,7 +1015,7 @@ fn translate_reference_after(context: &Context, flow_at: u32, delta: i32) -> res
   doc "The delta path's translation (Q70): moves every placed paragraph, child context and block whose flow entry follows flow_at down by delta. Paragraph and block membership comes from the flow suffix alone; child placement also includes atomic inlines whose flow_at is their paragraph's entry.";
   let at_entry = cvt::<u32, u64>(flow_at);
   let first = at_entry +sat 1_u64;
-  let entries = context^.flow.inner.len;
+  let entries = flow_length(context: context);
   for (k in first..entries) {
     let p = paragraph_at_entry(context: context, at_entry: k);
     if p < context^.paragraphs.inner.len {
@@ -1158,6 +1158,7 @@ fn break_in_place(context: &Context, styles: &Styles, fonts: &FontSet, picks: &F
   let new_base = last_line_baseline(paragraph: &context^.paragraphs.inner[at]);
   let delta = new_height -sat old_height;
   let base_delta = new_base -sat old_base;
+  record_paragraph_lines(context: context, at: at);
   return old_lines, new_lines, delta, base_delta;
 }
 
@@ -1363,7 +1364,7 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
     let changed_at = cvt::<u32, u64>(change.flow_at);
     shift_naturals(context: context, after: changed_at, delta: change.delta);
     grow_blocks(context: context, first: change.block, delta: change.delta);
-    let total = context^.flow.inner.len;
+    let total = flow_length(context: context);
     let at = cvt::<u32, u64>(change.flow_at);
     let after = at +sat 1_u64;
     give total -sat after;
@@ -1389,6 +1390,7 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Updates through the compatibility coordinate bridge and virtual nested-event adapter; step 4 replaces the remaining context-wide scratch conversion.";
   geometry_reference(context: context);
   let updated = update_flow_reference(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
   geometry_owned(context: context);
@@ -1574,7 +1576,7 @@ fn update_flow_reference(context: &Context, styles: &Styles, document: &Document
   let summed = sum_counts(results: &results);
   let with_finished = add_counts(first: summed, second: finished);
   let below = add_counts(first: with_finished, second: early);
-  let walked = context^.flow.inner.len;
+  let walked = flow_length(context: context);
   let held_here = if marked_paragraphs {
     give walked;
   } else {
@@ -1709,7 +1711,7 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
       split_fragments_with_empty(context: context, styles: styles, content_left: frame.content_left, kept: &previous_fragments.inner[first_kept..old_count], preserve_empty: stacked.fragments_same);
     }
   }
-  let total = context^.flow.inner.len;
+  let total = flow_length(context: context);
   let walked = if stacked.stopped {
     let after = stacked.stop_at +sat 1_u64;
     give total -sat after;
@@ -1726,11 +1728,11 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
 fn range_start(context: &Context, from: u64) -> (found: Bool, top: i32, chain: u32) reads(context) {
   doc "The top of the entry a re-stack started from, when it is a paragraph, a child context, a float or a block whose top did not move (held_y), and the block around it; found is False for a Close or an out-of-flow entry.";
   let no = False();
-  if from < context^.flow.inner.len {
+  if from < flow_length(context: context) {
   } else {
     return no, 0_i32, no_index;
   }
-  let first = context^.flow.inner[from];
+  let first = flow_event(context: context, at: from);
   match first {
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
@@ -1782,7 +1784,7 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
   } else {
     return no, 0_i32, 0_i32;
   }
-  if stop < context^.flow.inner.len {
+  if stop < flow_length(context: context) {
   } else {
     return no, 0_i32, 0_i32;
   }
@@ -1826,11 +1828,11 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
   }
   let end = stop +sat 1_u64;
   for (k in from..end) {
-    if k < context^.flow.inner.len {
+    if k < flow_length(context: context) {
     } else {
       break;
     }
-    let item = context^.flow.inner[k];
+    let item = flow_event(context: context, at: k);
     match item {
       Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
@@ -1857,7 +1859,7 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
       }
     }
   }
-  let last = context^.flow.inner[stop];
+  let last = flow_event(context: context, at: stop);
   match last {
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
@@ -1954,7 +1956,7 @@ fn local_width(style: StyleRef, styles: &Styles, left: i32, width: i32) -> geome
 
 struct WidthBlock {
   doc "A block copied at its Open entry's offset in one affected flat-walk range, with its parent's Open entry resolved through the parent payload link. Unused entries in the temporary array carry a seed and are never queried.";
-  block: Block;
+  block: BlockSnapshot;
   parent_entry: u32;
 }
 
@@ -2022,34 +2024,15 @@ fn write_local_paragraph(paragraph: &Paragraph, blocks: &[WidthBlock], styles: &
   return kept;
 }
 
-fn write_local_split(split: &Split, flow: &[Flow], blocks: &[WidthBlock], styles: &Styles, from: u64, until: u64) -> result: unit reads(flow), reads(blocks), reads(styles), writes(split) {
-  doc "Updates an interrupted inline box's containing width when its opening block lies in the changed range.";
+fn write_local_split(split: &Split, opening: Bool, blocks: &[WidthBlock], styles: &Styles, from: u64, until: u64) -> result: unit reads(blocks), reads(styles), writes(split) {
+  doc "Updates a split's containing width from a pre-resolved virtual Open event, without borrowing the context containing the split.";
   let at = cvt::<u32, u64>(split^.open);
-  if at < from {
-    return unit;
-  }
-  if at > until {
-    return unit;
-  }
-  if at < flow^.len {
-    let item = flow^[at];
-    match item {
-      Open(..) => {
-        let geometry = local_ancestor_width(blocks: blocks, styles: styles, from: from, at_entry: at);
-        set split^.left = geometry.avail_left;
-        set split^.width = geometry.avail_width;
-      }
-      Close(..) => {
-      }
-      Text(..) => {
-      }
-      Child(..) => {
-      }
-      Float(..) => {
-      }
-      Out(..) => {
-      }
-    }
+  if at < from { return unit; }
+  if at > until { return unit; }
+  if opening {
+    let geometry = local_ancestor_width(blocks: blocks, styles: styles, from: from, at_entry: at);
+    set split^.left = geometry.avail_left;
+    set split^.width = geometry.avail_width;
   }
   return unit;
 }
@@ -2060,7 +2043,7 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   } else {
     return False(), False();
   }
-  if until < context^.flow.inner.len {
+  if until < flow_length(context: context) {
   } else {
     return False(), False();
   }
@@ -2071,13 +2054,14 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   }
   let span_before_close = until - from;
   let span = span_before_close +sat 1_u64;
-  let seed = WidthBlock(block: context^.blocks.inner[first], parent_entry: no_index);
+  let seed_block = block_snapshot(block: &context^.blocks.inner[first]);
+  let seed = WidthBlock(block: seed_block, parent_entry: no_index);
   let old = box_array_filled::<WidthBlock>(count: span, value: seed);
   for (i in 0_u64..span) {
     let at_entry = from +sat i;
     let at = block_at_entry(context: context, at_entry: at_entry);
     if at < context^.blocks.inner.len {
-      let held = context^.blocks.inner[at];
+      let held = block_snapshot(block: &context^.blocks.inner[at]);
       let parent = block_entry(context: context, block: held.parent);
       set old.inner[i] = WidthBlock(block: held, parent_entry: parent);
     }
@@ -2101,10 +2085,12 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
       set kept = band(kept, same);
     }
   }
-  let flow_count = context^.flow.inner.len;
   let splits = context^.splits.inner.len;
   for (s in 0_u64..splits) {
-    write_local_split(split: &context^.splits.inner[s], flow: &context^.flow.inner[0_u64..flow_count], blocks: &old.inner[0_u64..span], styles: styles, from: from, until: until);
+    let split_open = cvt::<u32, u64>(context^.splits.inner[s].open);
+    let opening_block = block_at_entry(context: context, at_entry: split_open);
+    let opening = opening_block < context^.blocks.inner.len;
+    write_local_split(split: &context^.splits.inner[s], opening: opening, blocks: &old.inner[0_u64..span], styles: styles, from: from, until: until);
   }
   return True(), kept;
 }
@@ -2115,7 +2101,7 @@ fn block_keeps_width(context: &Context, styles: &Styles, b: u64) -> kept: Bool r
   } else {
     return False();
   }
-  let block = context^.blocks.inner[b];
+  let block = block_snapshot(block: &context^.blocks.inner[b]);
   let (box_width, offset, margin_left, margin_right) = block_width(styles: styles, style: block.style, available: block.avail_width);
   let x = block.avail_left +sat offset;
   let border = border_edges(styles: styles, style: block.style);
@@ -2149,9 +2135,9 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   } else {
     return False(), refused;
   }
-  let block = context^.blocks.inner[b];
+  let block = block_snapshot(block: &context^.blocks.inner[b]);
   let from = cvt::<u32, u64>(block.flow_at);
-  let entries = context^.flow.inner.len;
+  let entries = flow_length(context: context);
   if from < entries {
   } else {
     return False(), refused;
@@ -2164,7 +2150,7 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   let until = from;
   let block_only = True();
   for (k in from..entries) {
-    let item = context^.flow.inner[k];
+    let item = flow_event(context: context, at: k);
     match item {
       Open(..) => {
         set depth = depth +sat 1_u64;
@@ -2293,11 +2279,11 @@ fn update_atomics_in(context: &Context, styles: &Styles, document: &Document, fo
   let counted = no_updates();
   let end = until +sat 1_u64;
   for (k in from..end) {
-    if k < context^.flow.inner.len {
+    if k < flow_length(context: context) {
     } else {
       break;
     }
-    let item = context^.flow.inner[k];
+    let item = flow_event(context: context, at: k);
     match item {
       Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
