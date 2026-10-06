@@ -449,14 +449,14 @@ fn relative_steps(paths: &Box<Slots<ContextPath>>, from: u32, to: u32) -> found:
   return None<Box<Slots<u32>>>();
 }
 
-fn take_prepared(fresh: &Paragraph, fresh_pieces: &[Piece], old: &Context, steps: &[u32], depth: u64, paragraph: u64, changed: &[Bool], root: u32) -> taken: Bool reads(fresh_pieces), reads(steps), reads(changed), writes(fresh), writes(old) {
+fn take_prepared(fresh: &Paragraph, old: &Context, steps: &[u32], depth: u64, paragraph: u64, changed: &[Bool], root: u32) -> taken: Bool reads(steps), reads(changed), writes(fresh), writes(old) {
   doc "Descends from old by steps from depth on to the context holding the old paragraph at index paragraph; when its pieces equal fresh's piece by piece, its own style is fresh's and no style either reads changed, swaps its prepared text, runs, run styles, marks and shaped text into fresh, which then needs no preparation. The runs keep the font group identifiers of the style run that prepared them, which only shaping reads; the shaped faces they chose stay right because the groups are equal in value.";
   let count = steps^.len;
   if depth < count {
     let child = cvt::<u32, u64>(steps^[depth]);
     if child < old^.children.inner.len {
       let next = depth +sat 1_u64;
-      let taken = take_prepared(fresh: fresh, fresh_pieces: fresh_pieces, old: &old^.children.inner[child], steps: steps, depth: next, paragraph: paragraph, changed: changed, root: root);
+      let taken = take_prepared(fresh: fresh, old: &old^.children.inner[child], steps: steps, depth: next, paragraph: paragraph, changed: changed, root: root);
       return taken;
     }
     return False();
@@ -477,23 +477,19 @@ fn take_prepared(fresh: &Paragraph, fresh_pieces: &[Piece], old: &Context, steps
   } else {
     return False();
   }
-  let length = fresh^.count;
-  if length != old^.paragraphs.inner[paragraph].count {
+  let length = fresh^.pieces.inner.len;
+  if length != old^.paragraphs.inner[paragraph].pieces.inner.len {
     return False();
   }
-  let fresh_first = fresh^.first;
-  let old_first = old^.paragraphs.inner[paragraph].first;
-  let total = old^.pieces.inner.len;
+  let total = old^.paragraphs.inner[paragraph].pieces.inner.len;
   let equal = True();
   for (k in 0_u64..length) {
-    let a = fresh_first +sat k;
-    let b = old_first +sat k;
-    let fresh_inside = a < fresh_pieces^.len;
-    let old_inside = b < total;
+    let fresh_inside = k < fresh^.pieces.inner.len;
+    let old_inside = k < total;
     let inside = band(fresh_inside, old_inside);
     let same = if inside {
-      let piece = fresh_pieces^[a];
-      let equal_piece = same_piece(first: piece, second: old^.pieces.inner[b]);
+      let piece = fresh^.pieces.inner[k];
+      let equal_piece = same_piece(first: piece, second: old^.paragraphs.inner[paragraph].pieces.inner[k]);
       let reads_change = piece_is_changed(changed: changed, root: root, piece: piece);
       let kept = bnot(reads_change);
       give band(equal_piece, kept);
@@ -515,13 +511,11 @@ fn take_prepared(fresh: &Paragraph, fresh_pieces: &[Piece], old: &Context, steps
   return True();
 }
 
-fn first_text_node(pieces: &[Piece], first: u64, count: u64) -> node: u32 reads(pieces) {
-  doc "The NodeId index of the text node of the first Bytes piece from first that has one, among count pieces, or no_index.";
-  let end = first +sat count;
-  let total = pieces^.len;
-  let bounded = imin(end, total);
-  for (k in first..bounded) {
-    let piece = pieces^[k];
+fn first_text_node(paragraph: &Paragraph) -> node: u32 reads(paragraph) {
+  doc "The NodeId index of the text node of the paragraph's first Bytes piece that has one, or no_index.";
+  let total = paragraph^.pieces.inner.len;
+  for (k in 0_u64..total) {
+    let piece = paragraph^.pieces.inner[k];
     match piece {
       Bytes(node: source, ..) => {
         if source != no_index {
@@ -547,11 +541,8 @@ fn reuse_prepared(fresh: &Context, old_root: &Context, base: &[u32], from: u32, 
   doc "For each paragraph of fresh and of the contexts below it, finds the old paragraph its first text node's unit names, inside the old context with serial from that base leads to from old_root, and takes its preparation when it is the same input (take_prepared); a paragraph that takes none is marked for preparation. Returns the paragraphs that took one. The loop is sequential: each iteration swaps into an old paragraph the compiler cannot prove apart from another iteration's.";
   let reused = 0_u64;
   let count = fresh^.paragraphs.inner.len;
-  let pieces = fresh^.pieces.inner.len;
   for (i in 0_u64..count) {
-    let first = fresh^.paragraphs.inner[i].first;
-    let length = fresh^.paragraphs.inner[i].count;
-    let node = first_text_node(pieces: &fresh^.pieces.inner[0_u64..pieces], first: first, count: length);
+    let node = first_text_node(paragraph: &fresh^.paragraphs.inner[i]);
     let at = cvt::<u32, u64>(node);
     let named = node != no_index;
     let taken = if at < old_units^.inner.len {
@@ -577,7 +568,7 @@ fn reuse_prepared(fresh: &Context, old_root: &Context, base: &[u32], from: u32, 
             }
             let paragraph = cvt::<u32, u64>(held.paragraph);
             let made = steps.inner.len;
-            let swapped = take_prepared(fresh: &fresh^.paragraphs.inner[i], fresh_pieces: &fresh^.pieces.inner[0_u64..pieces], old: old_root, steps: &steps.inner[0_u64..made], depth: 0_u64, paragraph: paragraph, changed: changed, root: root);
+            let swapped = take_prepared(fresh: &fresh^.paragraphs.inner[i], old: old_root, steps: &steps.inner[0_u64..made], depth: 0_u64, paragraph: paragraph, changed: changed, root: root);
             give swapped;
           }
           None() => {
