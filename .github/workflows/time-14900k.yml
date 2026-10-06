@@ -19,7 +19,7 @@ concurrency:
 
 env:
   # name=ref: each build is compiled from its own checkout of ref.
-  BUILDS: "main=origin/main s2=0e2a093 fix=2084e34"
+  BUILDS: "s2=0e2a093 fix=2084e34 nb=6a025f9 nr=0ef88d4"
   # The names avoid PAGES, MODES and RUNS, which the run.sh scripts read.
   PAGE_LIST: "ecma262 html5 apollo11"
   EDIT_KINDS: ""
@@ -160,6 +160,31 @@ jobs:
             done
           done
 
+      - name: Profile the repaired build (perf without sudo)
+        continue-on-error: true
+        run: |
+          set -eu
+          echo "perf_event_paranoid $(cat /proc/sys/kernel/perf_event_paranoid)"
+          mkdir -p "$DEPS/perfdebs" && cd "$DEPS/perfdebs"
+          k=$(uname -r)
+          for p in linux-tools-common "linux-tools-$k" "linux-tools-${k%-generic}"; do apt-get download "$p" >/dev/null 2>&1 || echo "not downloadable: $p"; done
+          wanted=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "linux-tools-${k%-generic}" 2>/dev/null | grep -E '^[a-z0-9]' | sort -u)
+          for p in $wanted; do
+            if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then continue; fi
+            ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || true
+          done
+          for d in *.deb; do dpkg -x "$d" "$DEPS/perfroot"; done
+          perf=$(find "$DEPS/perfroot" -type f -name perf | head -1)
+          lib="$DEPS/perfroot/usr/lib/x86_64-linux-gnu:$DEPS/perfroot/lib/x86_64-linux-gnu"
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p results
+          for name in fix s2; do
+            LD_LIBRARY_PATH=$lib "$perf" record -F 1999 -g -o "build/$name.perf" "build/drivers/$name-seq" layout 3 build/research/concurrency/html5.html renderer/style/ua.css > /dev/null
+            LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name.perf" --no-children --stdio --percent-limit 0.7 -g none 2>/dev/null | grep -v '^$' | head -80 > "results/perf-$name.txt"
+            LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name.perf" --children --stdio --percent-limit 2 -g none 2>/dev/null | grep -v '^$' | head -80 > "results/perf-children-$name.txt"
+            head -40 "results/perf-$name.txt"
+          done
+
       - name: Time the full stages
         if: env.FULL == '1'
         run: |
@@ -170,7 +195,7 @@ jobs:
             mkdir -p "$tree/build/research" && rm -rf "$tree/build/research/concurrency" "$tree/build/fonts"
             cp -R build/research/concurrency "$tree/build/research/"
             cp -R build/fonts "$tree/build/fonts"
-            (cd "$tree" && for page in html5 ecma262; do WORKERS=4 RUNS=3 MODES="boxes text layout" sh research/investigations/layout/run.sh time $page; done) | tee "results/full-layout-$name.txt"
+            (cd "$tree" && for page in html5; do WORKERS=4 RUNS=3 MODES="boxes text layout" sh research/investigations/layout/run.sh time $page; done) | tee "results/full-layout-$name.txt"
           done
 
       - uses: actions/upload-artifact@v4
