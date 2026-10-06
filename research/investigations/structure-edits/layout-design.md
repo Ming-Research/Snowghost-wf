@@ -690,7 +690,8 @@ with the primary agent, and is not a step-2 validation result.
 The step-3 source removes `Context.flow`: each block and the context root
 own an `EntrySequence`. Its stable direct-entry slots and AVL metadata use
 separate lazy pages. The virtual walker synthesizes Open/Close events by
-weighted descent, without materializing a context-wide stream. Recorded
+weighted descent for isolated lookups; compatibility walks materialize one
+transient event array, filled through disjoint cached rank ranges. Recorded
 compatibility positions, split endpoints and baseline entries are still ranks;
 the block, paragraph and child-context records also carry local entry slots.
 The indirect payload writes still need a Whitefoot disjointness proof;
@@ -719,7 +720,8 @@ Step 3 now has the nested order representation and small virtual-event
 adapters in flex, grid, table and columns. Its node summaries carry direct
 counts, virtual event spans and first/last line-bearing entry handles;
 nonempty margin transfers are populated by the step-4 source described below.
-The builder writes nested sequences directly. Typed block, paragraph and
+The builder collects direct entries in per-owner pending lists, then seals
+each closed block and context into a balanced sequence in bulk. Typed block, paragraph and
 child-context payload pools remain context-owned migration storage: the
 paged entries contain handles into those pools, not the heavy payloads.
 Physical typed-payload ownership and local route publication remain open;
@@ -896,15 +898,58 @@ for (extra_at in 0_u64..extra_count) {
 }
 ```
 
+### Full-build regression repair
+
+The question is whether removing repeated nested rank descent and incremental
+AVL construction restores the full-build envelope without changing event
+order, stable payload identities, AVL validity or boundary behavior. The
+owner selected transient walk materialization and bulk construction; their
+cost advantage still requires CI measurement. Reject the repair if html5 or
+ecma262 full layout exceeds step 2 by more than 5% in either sequential or
+four-worker mode, or if dumps or incremental identity differ. Compare the
+same source/pin/settings before and after with interleaved runs and a twin
+of the baseline as the noise control; the supplied best-of-three results
+motivate this repair but do not establish its acceptance.
+
+`sequence.wf:materialize_flow` allocates a local `Box<Slots<Flow>>` and
+`fill_flow` partitions it by cached left-subtree and own-entry event counts.
+Left, own and right ranges are independent; a block's interior uses another
+disjoint range between its Open and synthesized Close. The window is first
+initialized with `place_back`, whose length updates form a serial chain;
+the pinned prelude provides no runtime-sized filled Slots constructor or
+runtime Array-to-Slots conversion. Recursive filling uses slices, not
+recursive append. Range bounds and compiler scheduling remain unvalidated.
+The `SequenceCursor` leaf projection copies links, liveness and event counts
+instead of both full boundary transfers through every directory return.
+Legacy restacks also use transient streams; this is not bounded-edit evidence.
+
+`pending_append` assigns stable slots from each owner's plain list. Closing a
+block calls `finish_sequence` and changes only its parent's pending entry
+span; context publication seals the root owner. `bulk_nodes` chooses the
+middle slot, constructs halves into disjoint slices, then computes parent
+height and summary from both outputs. `bulk_pages` allocates independent
+page-directory halves once. Slot numbers remain append indices and are not
+reassigned by balancing. Pending storage is released after sealing.
+Construction still follows the existing counter/quote and open-owner walk;
+no shared order counter or repeated rotation chain is introduced. Incremental
+`insert_before`, removal, boundary propagation and counter accounting keep
+their existing paths. Different balanced shapes may change physical visit
+counts without changing what those counters measure.
+
+No compilation, dump comparison, edit validation or measurement accompanies
+this source repair. In particular, disjoint-slice proof acceptance, summary
+repair costs during layout, and the full-build envelope remain for the
+primary agent's CI. The governing layout node records the requested choice;
+no approval-log or readiness claim is made here.
+
 ### Step-3 source falsifiers for CI
 
 These are mutations to apply separately and revert, not executed results.
 The primary agent compiles and runs the ordinary layout/edit checks.
 
-1. In `flex.wf:flex_collect`, replace the virtual event read at `k` with
-   `let reverse_end = flow_count -sat 1_u64;`,
-   `let reversed = reverse_end -sat k;` and
-   `let piece = flow_event(context: context, at: reversed);`.
+1. In `flex.wf:flex_collect`, replace the materialized event read at `k` with a guarded read
+   at `flow_count -sat 1_u64 -sat k` (split the two arithmetic operations
+   into separate let initializers).
    Give several siblings the same nonzero `order` so stable sorting is
    exercised. Their per-owner fragment positions must differ from the
    unchanged source. Apply the equivalent mutation to `grid_collect` for
@@ -916,22 +961,13 @@ The primary agent compiles and runs the ordinary layout/edit checks.
    A float inside one non-BFC block extending beside a paragraph in the
    next block must lose its exclusion under the mutation. Compare with the
    independent float fixture/reference rectangles, including clearance.
-3. Replace `sequence.wf:flow_event`'s direct `nested_event` return with
-   the following body after its doc. This restores a whole-context flat
-   rebuild at every virtual lookup, including partial restacks. Output
-   equality alone must not accept it: count the payload/index visits and
-   allocations on a fixed-size edit as unrelated width and depth grow.
-
-   ```whitefoot
-   let count = flow_length(context: context);
-   let flat = box_slots_new::<Flow>(capacity: 0_u64);
-   for (cursor in 0_u64..count) {
-     let item = nested_event(context: context, sequence: &context^.entries, at: cursor);
-     let pushed = push_item::<Flow>(cell: &flat, value: item, ceiling: item_ceiling);
-   }
-   if at < flat.inner.len { return flat.inner[at]; }
-   return Flow::Close(block: no_index);
-   ```
+3. Replace a walk's materialized `events.inner[k]` read with a call to
+   `flow_event(context: context, at: k)`, keeping the ordinary rank guard.
+   This restores a nested root descent per rank. Correctness comparisons
+   need not reject it; the same-source full-build timing comparison must
+   distinguish its cost. Separately, moving `materialize_flow` into the
+   rank loop must be rejected by allocation/index-visit growth. Temporary
+   arrays on the reference path do not demonstrate bounded edit locality.
 
 The current compatibility geometry and routing paths already contain
 whole-context work. The third falsifier therefore needs counters at the

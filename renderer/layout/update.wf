@@ -450,9 +450,10 @@ fn clear_paragraph_marks(context: &Context) -> result: unit writes(context) {
 
 fn first_float_entry(context: &Context) -> (first: u64, floats: Bool) reads(context) {
   doc "The first Float position in the virtual nested flow, or the flow length when none exists, and whether one exists. Paragraphs after that entry may need their full-width lines restored; paragraph payload slot order is immaterial.";
-  let count = flow_length(context: context);
+  let events = materialize_flow(context: context);
+  let count = events.inner.len;
   for (k in 0_u64..count) {
-    let item = flow_event(context: context, at: k);
+    let item = events.inner[k];
     match item {
       Float(..) => {
         return k, True();
@@ -840,15 +841,8 @@ struct Change {
   bottom: i32;
 }
 
-fn entry_kind(context: &Context, flow_at: u32) -> (kind: u8, index: u64) reads(context) {
-  doc "What flow entry flow_at of the context is: 0 a paragraph, 1 an in-flow child context, 2 a float, 3 an out-of-flow child, 4 a block's open or close or no entry; and the paragraph's or child's index.";
-  let at = cvt::<u32, u64>(flow_at);
-  let flow_bound_838 = flow_length(context: context);
-  if at < flow_bound_838 {
-  } else {
-    return 4_u8, 0_u64;
-  }
-  let item = flow_event(context: context, at: at);
+fn entry_kind(item: Flow) -> (kind: u8, index: u64) pure {
+  doc "Classifies a flow event: 0 a paragraph, 1 an in-flow child context, 2 a float, 3 an out-of-flow child, 4 a block opening or closing; also returns the paragraph or child payload slot.";
   match item {
     Text(paragraph: p) => {
       return 0_u8, cvt::<u32, u64>(p);
@@ -873,7 +867,14 @@ fn entry_kind(context: &Context, flow_at: u32) -> (kind: u8, index: u64) reads(c
 
 fn movable_child(context: &Context, child: &Context) -> movable: Bool reads(context), reads(child) {
   doc "Tells whether a marked child can be updated in the space it was laid out in without its parent's passes: an atomic inline, or an in-flow child context no float placed before it reaches; a float or an out-of-flow child cannot.";
-  let (kind, index) = entry_kind(context: context, flow_at: child^.flow_at);
+  let event_rank = cvt::<u32, u64>(child^.flow_at);
+  let event_count = flow_length(context: context);
+  let event_value = Flow::Close(block: no_index);
+  if event_rank < event_count {
+    let selected_event = flow_event(context: context, at: event_rank);
+    set event_value = selected_event;
+  }
+  let (kind, index) = entry_kind(item: event_value);
   if kind == 0_u8 {
     return True();
   }
@@ -1028,11 +1029,12 @@ fn shift_reference_block(block: &Block, delta: i32) -> result: unit writes(block
 
 fn translate_reference_after(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
   doc "The delta path's translation (Q70): moves every placed paragraph, child context and block whose flow entry follows flow_at down by delta. Paragraph and block membership comes from the flow suffix alone; child placement also includes atomic inlines whose flow_at is their paragraph's entry.";
+  let events = materialize_flow(context: context);
   let at_entry = cvt::<u32, u64>(flow_at);
   let first = at_entry +sat 1_u64;
-  let entries = flow_length(context: context);
+  let entries = events.inner.len;
   for (k in first..entries) {
-    let p = paragraph_at_entry(context: context, at_entry: k);
+    let p = paragraph_at_entry(context: context, events: &events, at_entry: k);
     if p < context^.paragraphs.inner.len {
       shift_paragraph(paragraph: &context^.paragraphs.inner[p], delta: delta);
     }
@@ -1042,7 +1044,7 @@ fn translate_reference_after(context: &Context, flow_at: u32, delta: i32) -> res
     shift_child(child: &context^.children.inner[i], flow_at: flow_at, delta: delta);
   }
   for (k in first..entries) {
-    let b = block_at_entry(context: context, at_entry: k);
+    let b = block_at_entry(context: context, events: &events, at_entry: k);
     if b < context^.blocks.inner.len {
       shift_reference_block(block: &context^.blocks.inner[b], delta: delta);
     }
@@ -1231,7 +1233,14 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
     } else {
       return False(), none;
     }
-    let (kind, holder) = entry_kind(context: context, flow_at: context^.children.inner[c].flow_at);
+    let event_rank = cvt::<u32, u64>(context^.children.inner[c].flow_at);
+    let event_count = flow_length(context: context);
+    let event_value = Flow::Close(block: no_index);
+    if event_rank < event_count {
+      let selected_event = flow_event(context: context, at: event_rank);
+      set event_value = selected_event;
+    }
+    let (kind, holder) = entry_kind(item: event_value);
     set child_kind = kind;
     set child_holder = holder;
     set held = before_of(context: &context^.children.inner[c]);
@@ -1761,15 +1770,15 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
   return summed;
 }
 
-fn range_start(context: &Context, from: u64) -> (found: Bool, top: i32, chain: u32) reads(context) {
+fn range_start(context: &Context, events: &Box<Slots<Flow>>, from: u64) -> (found: Bool, top: i32, chain: u32) reads(context), reads(events) {
   doc "The top of the entry a re-stack started from, when it is a paragraph, a child context, a float or a block whose top did not move (held_y), and the block around it; found is False for a Close or an out-of-flow entry.";
   let no = False();
-  let flow_bound_1731 = flow_length(context: context);
+  let flow_bound_1731 = events^.inner.len;
   if from < flow_bound_1731 {
   } else {
     return no, 0_i32, no_index;
   }
-  let first = flow_event(context: context, at: from);
+  let first = events^.inner[from];
   match first {
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
@@ -1821,12 +1830,13 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
   } else {
     return no, 0_i32, 0_i32;
   }
-  let flow_bound_1787 = flow_length(context: context);
+  let events = materialize_flow(context: context);
+  let flow_bound_1787 = events.inner.len;
   if stop < flow_bound_1787 {
   } else {
     return no, 0_i32, 0_i32;
   }
-  let (found, top, chain) = range_start(context: context, from: from);
+  let (found, top, chain) = range_start(context: context, events: &events, from: from);
   if found {
   } else {
     return no, 0_i32, 0_i32;
@@ -1866,12 +1876,12 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
   }
   let end = stop +sat 1_u64;
   for (k in from..end) {
-    let flow_bound_1831 = flow_length(context: context);
+    let flow_bound_1831 = events.inner.len;
     if k < flow_bound_1831 {
     } else {
       break;
     }
-    let item = flow_event(context: context, at: k);
+    let item = events.inner[k];
     match item {
       Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
@@ -1898,7 +1908,7 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
       }
     }
   }
-  let last = flow_event(context: context, at: stop);
+  let last = events.inner[stop];
   match last {
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
@@ -2080,18 +2090,18 @@ fn write_local_split(split: &Split, opening: Bool, blocks: &[WidthBlock], styles
   return unit;
 }
 
-fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u64) -> (handled: Bool, empty_kept: Bool) reads(styles), writes(context) {
+fn prepare_local_widths(context: &Context, events: &Box<Slots<Flow>>, styles: &Styles, from: u64, until: u64) -> (handled: Bool, empty_kept: Bool) reads(events), reads(styles), writes(context) {
   doc "Recomputes the horizontal geometry of a block-only affected subtree, visiting its flow range rather than a payload-slot interval. An immutable copy indexed by entries in that range gives each block and paragraph only its own ancestor dependencies; no child context or atomic inline is admitted by the caller. Temporary flat-walk storage is not a locality claim.";
   if from <= until {
   } else {
     return False(), False();
   }
-  let flow_bound_2046 = flow_length(context: context);
+  let flow_bound_2046 = events^.inner.len;
   if until < flow_bound_2046 {
   } else {
     return False(), False();
   }
-  let first = block_at_entry(context: context, at_entry: from);
+  let first = block_at_entry(context: context, events: events, at_entry: from);
   if first < context^.blocks.inner.len {
   } else {
     return False(), False();
@@ -2103,7 +2113,7 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   let old = box_array_filled::<WidthBlock>(count: span, value: seed);
   for (i in 0_u64..span) {
     let at_entry = from +sat i;
-    let at = block_at_entry(context: context, at_entry: at_entry);
+    let at = block_at_entry(context: context, events: events, at_entry: at_entry);
     if at < context^.blocks.inner.len {
       let held = block_snapshot(block: &context^.blocks.inner[at]);
       let parent = block_entry(context: context, block: held.parent);
@@ -2112,7 +2122,7 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   }
   for (i in 0_u64..span) {
     let at_entry = from +sat i;
-    let at = block_at_entry(context: context, at_entry: at_entry);
+    let at = block_at_entry(context: context, events: events, at_entry: at_entry);
     if at < context^.blocks.inner.len {
       let geometry = local_ancestor_width(blocks: &old.inner[0_u64..span], styles: styles, from: from, at_entry: at_entry);
       write_local_block(block: &context^.blocks.inner[at], geometry: geometry);
@@ -2121,7 +2131,7 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   let kept = True();
   for (i in 0_u64..span) {
     let at_entry = from +sat i;
-    let p = paragraph_at_entry(context: context, at_entry: at_entry);
+    let p = paragraph_at_entry(context: context, events: events, at_entry: at_entry);
     if p < context^.paragraphs.inner.len {
       let owner = block_entry(context: context, block: context^.paragraphs.inner[p].block);
       let owner_entry = cvt::<u32, u64>(owner);
@@ -2132,7 +2142,7 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   let splits = context^.splits.inner.len;
   for (s in 0_u64..splits) {
     let split_open = cvt::<u32, u64>(context^.splits.inner[s].open);
-    let opening_block = block_at_entry(context: context, at_entry: split_open);
+    let opening_block = block_at_entry(context: context, events: events, at_entry: split_open);
     let opening = opening_block < context^.blocks.inner.len;
     write_local_split(split: &context^.splits.inner[s], opening: opening, blocks: &old.inner[0_u64..span], styles: styles, from: from, until: until);
   }
@@ -2186,7 +2196,8 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   }
   let block = block_snapshot(block: &context^.blocks.inner[b]);
   let from = cvt::<u32, u64>(block.flow_at);
-  let entries = flow_length(context: context);
+  let events = materialize_flow(context: context);
+  let entries = events.inner.len;
   if from < entries {
   } else {
     return False(), refused;
@@ -2199,7 +2210,7 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   let until = from;
   let block_only = True();
   for (k in from..entries) {
-    let item = flow_event(context: context, at: k);
+    let item = events.inner[k];
     match item {
       Open(..) => {
         set depth = depth +sat 1_u64;
@@ -2284,7 +2295,7 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   let relative_height = False();
   let end = until +sat 1_u64;
   for (at_entry in from..end) {
-    let nested = block_at_entry(context: context, at_entry: at_entry);
+    let nested = block_at_entry(context: context, events: &events, at_entry: at_entry);
     if nested < context^.blocks.inner.len {
       let kept = block_keeps_width(context: context, styles: styles, b: nested);
       set widths_kept = band(widths_kept, kept);
@@ -2299,7 +2310,7 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
     } else {
       return False(), refused;
     }
-    let (handled, kept) = prepare_local_widths(context: context, styles: styles, from: from, until: until);
+    let (handled, kept) = prepare_local_widths(context: context, events: &events, styles: styles, from: from, until: until);
     if handled {
       set empty_stable = kept;
     } else {
@@ -2311,7 +2322,7 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
     set context^.definite_free = False();
   }
   let atomic_counts = if children_inside > 0_u32 {
-    let updated = update_atomics_in(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, from: from, until: until);
+    let updated = update_atomics_in(context: context, events: &events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, from: from, until: until);
     give updated;
   } else {
     let nothing = no_updates();
@@ -2323,17 +2334,17 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   return True(), total;
 }
 
-fn update_atomics_in(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, from: u64, until: u64) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn update_atomics_in(context: &Context, events: &Box<Slots<Flow>>, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, from: u64, until: u64) -> counts: UpdateCounts reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Updates each marked atomic inline child held by a paragraph of the flow entries from..until, in the space it was last laid out in (its paragraph's width is unchanged, so prepare_spaces would write that space again), as update_in_place updates one; the re-stack then breaks the paragraph again. Returns the children's counts.";
   let counted = no_updates();
   let end = until +sat 1_u64;
   for (k in from..end) {
-    let flow_bound_2282 = flow_length(context: context);
+    let flow_bound_2282 = events^.inner.len;
     if k < flow_bound_2282 {
     } else {
       break;
     }
-    let item = flow_event(context: context, at: k);
+    let item = events^.inner[k];
     match item {
       Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
@@ -2404,7 +2415,14 @@ fn restack_entry(context: &Context) -> (from: u64, paragraph: u64, inline_child:
     return none, none, none;
   }
   let flow_at = context^.children.inner[c].flow_at;
-  let (kind, index) = entry_kind(context: context, flow_at: flow_at);
+  let event_rank = cvt::<u32, u64>(flow_at);
+  let event_count = flow_length(context: context);
+  let event_value = Flow::Close(block: no_index);
+  if event_rank < event_count {
+    let selected_event = flow_event(context: context, at: event_rank);
+    set event_value = selected_event;
+  }
+  let (kind, index) = entry_kind(item: event_value);
   let at = cvt::<u32, u64>(flow_at);
   if kind == 1_u8 {
     return at, none, none;
