@@ -127,16 +127,105 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
-- **Matching on apollo11 costs 83 µs per element, against 13 to 16 µs on
-  html5 and ecma262.** The sequential style stage takes 0.98 s on apollo11's
-  11,845 elements, almost all in matching (`experiments/x12/efficiency.txt`
-  and `experiments/x1-x3-x16/results/timing.json` under
-  `research/investigations/incremental/`). Not investigated; Wikipedia's
-  sheets are large, so the rule index may leave many candidates per
-  element. Impact: apollo11's style stage is 0.28 s at four workers, the
-  largest share of its full build. Change: count candidate rules per
-  element and profile matching. Reopen with the next style work.
+- **The incremental restyle runs its loops sequentially.** `restyle`,
+  `restyle_level`, `root_font_readers` and `class_restyle`
+  (`renderer/style`) are plain loops that push into shared lists (the
+  level's batch, the next level, the touched list). The level cascade of a
+  full build proves the same per-node work parallel, and nothing but the
+  appends orders one restyled node after another. Impact: no par-4 gain on
+  restyles of many elements (body and custom-property edits, the root
+  font-size levels); par-4 E1 colour edits are slower than seq because of
+  the runtime's fixed cost, not this. Change: write each level's
+  computation as the full cascade's counted loop over the level's distinct
+  positions and gather the appends after it. Reopen when an incremental
+  edit's restyle set grows past a few hundred elements on a measured page,
+  or with the parallel incremental timing that M1's criterion 2 asks for
+  (par-1 and par-4 with the set's size).
 
+- **Kept style state only grows (a condition of Q89).** The owner approved
+  Q89, value tables kept across edits, with this item required.
+  - What grows: `class_attribute_changed` appends an element's class records
+    on every class edit and leaves the old ones unread. The kept value
+    tables, custom-property sets and generated text only append, so every
+    distinct value a session meets stays.
+  - Impact: memory grows with a session's edits, not with the page. A table
+    that reaches its ceiling refuses, and the edit falls back to a full
+    rebuild.
+  - Change: the compaction Q89 recommended. It is an epoch that renumbers
+    every table and every holder of an identifier: the styles, layout's keys
+    and the class-record heads. It runs when a table has doubled since the
+    last full build. Measure first how a long editing session grows.
+  - Reopen before the shell runs editing sessions, or when an editing
+    session's measured memory grows past the full build's by half.
+
+- **No incremental regression runs in the gate.** `make check` builds and
+  checks modules; the identity checks of incremental style and layout
+  (`research/investigations/incremental-style/run.sh incremental`,
+  `incremental-layout/run.sh inc`) need the fetched pages under build/ and
+  run by hand, and the restack boundary page the restack investigation built
+  was not kept. A matcher defect (a sibling combinator's left compound
+  required as an ancestor by the feature filter) passed every page check
+  because the pages hold no matching selector of that shape. Change: keep
+  focused case pages and edit scripts in the repository (as
+  `incremental-layout/scripts/style-case.*` are) for the shapes found, and a
+  gate target that runs them against a full rebuild. Reopen when the next
+  incremental defect is found by review rather than a check.
+
+- **The Chromium style oracle cannot run on the development Mac.**
+  `tests/css/style_oracle.mjs` needs the Playwright module, which is not
+  installed there; only the Chromium binary is. `tests/css/style-cases.html`
+  gained the sibling-combinator selector cases the feature-filter defect
+  showed, unchecked against Chromium so far. Change: install Playwright, or
+  drive Chromium over the DevTools protocol as
+  `research/investigations/engine-comparison/chromium.mjs` does. Reopen
+  before the next style change claims Chromium agreement.
+
+- **Matching still costs more per element on apollo11.** After the
+  per-alternative index and the feature filter, the sequential style stage
+  takes 0.39 s for three runs of apollo11's 11,845 elements, about 11 us per
+  element, against about 4 on html5 (1.54 s, about 120,000 styled nodes)
+  and 10 on ecma262 (2.95 s, about 96,000); the gap to html5 that the old
+  item reported (83 against 13 to 16 us) narrowed but remains. Candidate
+  rules per element were not counted.
+  Change: count candidates and admitted rules per element and profile the
+  admitted ones. Reopen with the next style performance work.
+
+- **The restack prototype increases some edits' font-pick interval.** Paired
+  sequential Apollo runs report colour/body/custom medians 3-4 us above
+  the base, concentrated in `picks_us`, although font-pick source did not
+  change; reversed-order ecma262 custom-property runs also regress 2-3 us. The combined candidate therefore fails its nonregression
+  criterion. Change: isolate the executable or retained-state difference
+  with the same source and workload before attributing or fixing it.
+  Reopen before adopting the restack prototype; the paired median must
+  cease to increase, and all identity checks must still pass
+  ([evidence](../research/investigations/incremental-style/runs/restack-astra.txt)).
+
+- **An ecma262 font-size edit on emu-alg still prepares the whole flow
+  context.** With child counts propagated, ecma262 sfontsize edits 7-8
+  (an emu-alg with ol/li blocks) take #spec-container's full pre-pass
+  path (112,819 entries, about 10 ms) although the context is not
+  restyled, has two restyled blocks with a valid common block and no
+  marked child: `restack_block` refuses, and which check refuses (a
+  marked paragraph outside the common block, a changed block width in
+  a subtree that is not block-and-text-only, or no close found) is not
+  isolated. Change: report the refusal in a diagnostic run, then widen
+  that check. Reopen with the next ecma262 incremental layout target
+  ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
+
+- **A re-stack makes the context's inline-box fragments again.** After
+  every re-stack of a context with block-in-inline splits,
+  `restack_flow` runs `split_fragments_with_empty`: a sort of the
+  splits, a flag per flow entry, the per-split loop and a copy of the
+  kept empty fragments with a binary search each. On #spec-container
+  that is about 0.8 ms of each 1.1-1.5 ms sfontsize edit (timing-only
+  probe). A converged re-stack now keeps and translates the list when
+  no split opens or closes in the re-stacked range and no lineless
+  paragraph there opens an inline box; a range holding such a split or
+  paragraph still regenerates everything. Change: keep the sorted keys
+  and closing flags, which depend only on the flow's structure, and
+  regenerate only the runs that intersect the range. Reopen with the
+  next ecma262 incremental layout target
+  ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
 
 - **A context's cached intrinsic sizes depend on when they are first
   asked for.** `intrinsic_sizes` (`renderer/layout/box.wf`) resolves a

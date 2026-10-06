@@ -37,11 +37,12 @@ compiler:
 WHITEFOOTC := $(WHITEFOOT)/compiler/target/gate/whitefootc
 BUILD := $(ROOT)/build
 # Every renderer build and check reuses the compiler's cache of module
-# verdicts, function proofs and compiled code (whitefootc --cache), so an
-# edit is checked and compiled again only where it reaches; CACHE= with an
+# verdicts, function proofs and compiled code (whitefootc --cache), with code
+# cached per function (--fragments function), so an edit is checked and
+# compiled again only where it reaches; CACHE= with an
 # empty value builds without it.
 CACHE := $(BUILD)/whitefoot-cache
-WFC = $(WHITEFOOTC)$(if $(CACHE), --cache $(CACHE))
+WFC = $(WHITEFOOTC)$(if $(CACHE), --cache $(CACHE) --fragments function)
 ORACLE := $(BUILD)/oracle
 
 # Checks every renderer module against its interface; a module whose

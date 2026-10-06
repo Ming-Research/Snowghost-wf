@@ -28,13 +28,6 @@ const word_ceiling: u64 = 1073741824_u64;
 
 const predefined_tag: u64 = 1099511627776_u64;
 
-struct WordTable {
-  words: Box<Slots<u64>>;
-  starts: Box<Slots<u64>>;
-  slots: Box<Array<u32>>;
-  mask: u64;
-}
-
 struct Interned {
   id: u32;
   fresh: Bool;
@@ -105,8 +98,54 @@ fn same_words(table: &WordTable, slot_entry: u64, key: &[u64]) -> same: Bool rea
   return True();
 }
 
+fn sequence_hash(words: &[u64]) -> hash: u64 reads(words) {
+  doc "The hash word_intern probes with for a sequence of words.";
+  let hash = 14695981039346656037_u64;
+  let length = words^.len;
+  for (k in 0_u64..length) {
+    set hash = mix(hash: hash, value: words^[k]);
+  }
+  return hash;
+}
+
+fn word_table_grow(table: &WordTable) -> result: unit writes(table) {
+  doc "Doubles the table's slots, within word_ceiling, and places every sequence again by its hash, so a table kept across style runs takes new sequences without changing the identifiers it gave; a table already at word_ceiling is left as it is. One sequential pass over the sequences, which only a full table pays.";
+  let capacity = table^.slots.inner.len;
+  let doubled = capacity *sat 2_u64;
+  if doubled > word_ceiling {
+    return unit;
+  }
+  let slots = box_array_filled::<u32>(count: doubled, value: 0_u32);
+  let mask = doubled -sat 1_u64;
+  let entries = table^.starts.inner.len;
+  for (e in 0_u64..entries) {
+    let (start, end) = entry_bounds(table: table, slot_entry: e);
+    let hash = sequence_hash(words: &table^.words.inner[start..end]);
+    let probe = iand(hash, mask);
+    for (step in 0_u64..doubled) {
+      let at = iand(probe, mask);
+      if at < slots.inner.len {
+        if slots.inner[at] == 0_u32 {
+          let one_based = e +sat 1_u64;
+          set slots.inner[at] = cvt.wrap::<u64, u32>(one_based);
+          break;
+        }
+      }
+      set probe = at +wrap 1_u64;
+    }
+  }
+  set table^.slots = move slots;
+  set table^.mask = mask;
+  return unit;
+}
+
 fn word_intern(table: &WordTable, key: &[u64]) -> found: Interned reads(key), writes(table) {
-  doc "The identifier of key among the table's sequences, the order in which equal sequences were first given, and whether key is new; a full table gives every new key the identifier 0.";
+  doc "The identifier of key among the table's sequences, the order in which equal sequences were first given, and whether key is new; a table at least half full is grown first (word_table_grow), and one already at word_ceiling gives every new key the identifier 0.";
+  let filled = table^.starts.inner.len;
+  let half_full = table^.slots.inner.len / 2_u64;
+  if filled >= half_full {
+    word_table_grow(table: table);
+  }
   let hash = 14695981039346656037_u64;
   let length = key^.len;
   for (k in 0_u64..length) {
@@ -257,11 +296,6 @@ struct TrackOut {
   line_names: Box<Slots<Atom>>;
   area_maps: Box<Slots<AreaMap>>;
   named_areas: Box<Slots<NamedArea>>;
-}
-
-struct ContainerTables {
-  groups: Box<Slots<ContainerGroup>>;
-  lists: TrackOut;
 }
 
 fn put_names(key: &Box<Slots<u64>>, inherited: &Inherited, names: LineNames) -> result: unit reads(inherited), writes(key) {
@@ -462,66 +496,43 @@ fn predefine(table: &WordTable, key: &Box<Slots<u64>>, tag: u64) -> result: unit
   return unit;
 }
 
-fn intern_container_group(values: &[ContainerGroup], nodes: &[TrackNodes], inherited: &Inherited, ids: &[u32]) -> tables: ContainerTables reads(values), reads(nodes), reads(inherited), writes(ids) {
-  doc "Interns each node's flex and grid container values: its track-list and area-map references become identifiers of computed lists, track_lists[0] being none and [1] one auto track, area_maps[0] none, equal lists sharing one, and the groups are then interned by their values.";
+fn intern_container_group(groups: &Box<Slots<ContainerGroup>>, out: &TrackOut, group_table: &WordTable, track_table: &WordTable, area_table: &WordTable, values: &[ContainerGroup], nodes: &[TrackNodes], inherited: &Inherited, ids: &[u32]) -> result: unit reads(values), reads(nodes), reads(inherited), writes(groups), writes(out), writes(group_table), writes(track_table), writes(area_table), writes(ids) {
+  doc "Interns each node's flex and grid container values: its track-list and area-map references become identifiers of computed lists, track_lists[0] being none and [1] one auto track, area_maps[0] none, equal lists sharing one, and the groups are then interned by their values. Groups, lists and their word tables are kept across style runs: a full build passes them empty, and the predefined lists are placed only into empty tables; a restyle appends what is new.";
   let count = values^.len;
-  let groups = box_slots_new::<ContainerGroup>(capacity: 0_u64);
-  let tracks = box_slots_new::<Track>(capacity: 0_u64);
-  let track_lists = box_slots_new::<TrackList>(capacity: 0_u64);
-  let line_names = box_slots_new::<Atom>(capacity: 0_u64);
-  let area_maps = box_slots_new::<AreaMap>(capacity: 0_u64);
-  let named_areas = box_slots_new::<NamedArea>(capacity: 0_u64);
-  let out = TrackOut(tracks: move tracks, track_lists: move track_lists, line_names: move line_names, area_maps: move area_maps, named_areas: move named_areas);
   let none_names = LineNames(first: 0_u32, end: 0_u32);
-  let none_list = TrackList(first: 0_u32, end: 0_u32, repeat_kind: repeat_none, repeat_names_before: none_names, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: none_names, names_after: none_names);
-  append_group::<TrackList>(cell: &out.track_lists, value: none_list);
-  let no = False();
-  let zero = LengthPercentage(px: 0.0_f32, percent: 0.0_f32, has_percent: no);
-  let auto_breadth = TrackBreadth(kind: track_auto, value: zero, flex: 0.0_f32);
-  let auto_track = Track(min: auto_breadth, max: auto_breadth, fit_content: no, names_before: none_names);
-  append_group::<Track>(cell: &out.tracks, value: auto_track);
-  let auto_list = TrackList(first: 0_u32, end: 1_u32, repeat_kind: repeat_none, repeat_names_before: none_names, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: none_names, names_after: none_names);
-  append_group::<TrackList>(cell: &out.track_lists, value: auto_list);
-  let none_map = AreaMap(rows: 0_u32, columns: 0_u32, first: 0_u32, end: 0_u32);
-  append_group::<AreaMap>(cell: &out.area_maps, value: none_map);
+  let fresh_tables = out^.track_lists.inner.len == 0_u64;
+  let key = box_slots_new::<u64>(capacity: 0_u64);
+  if fresh_tables {
+    let none_list = TrackList(first: 0_u32, end: 0_u32, repeat_kind: repeat_none, repeat_names_before: none_names, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: none_names, names_after: none_names);
+    append_group::<TrackList>(cell: &out^.track_lists, value: none_list);
+    let no = False();
+    let zero = LengthPercentage(px: 0.0_f32, percent: 0.0_f32, has_percent: no);
+    let auto_breadth = TrackBreadth(kind: track_auto, value: zero, flex: 0.0_f32);
+    let auto_track = Track(min: auto_breadth, max: auto_breadth, fit_content: no, names_before: none_names);
+    append_group::<Track>(cell: &out^.tracks, value: auto_track);
+    let auto_list = TrackList(first: 0_u32, end: 1_u32, repeat_kind: repeat_none, repeat_names_before: none_names, repeat_first: 0_u32, repeat_end: 0_u32, repeat_names_after: none_names, names_after: none_names);
+    append_group::<TrackList>(cell: &out^.track_lists, value: auto_list);
+    let none_map = AreaMap(rows: 0_u32, columns: 0_u32, first: 0_u32, end: 0_u32);
+    append_group::<AreaMap>(cell: &out^.area_maps, value: none_map);
+    predefine(table: track_table, key: &key, tag: 0_u64);
+    predefine(table: track_table, key: &key, tag: 1_u64);
+    predefine(table: area_table, key: &key, tag: 0_u64);
+  }
   let same_nodes = nodes^.len == count;
   let same_ids = ids^.len == count;
   let usable = band(same_nodes, same_ids);
   if usable {
   } else {
-    return ContainerTables(groups: move groups, lists: move out);
+    return unit;
   }
-  let listed = 0_u64;
-  for (i in 0_u64..count) {
-    let value = values^[i];
-    let a = value.template_columns != list_none_ref;
-    let b = value.template_rows != list_none_ref;
-    let c = value.auto_columns != list_none_ref;
-    let d = value.auto_rows != list_none_ref;
-    let e = value.template_areas != list_none_ref;
-    let any_track = bor(a, b);
-    let any_auto = bor(c, d);
-    let some = bor(any_track, any_auto);
-    let any = bor(some, e);
-    if any {
-      set listed = listed +sat 5_u64;
-    }
-  }
-  let track_table = word_table_new(expected: listed);
-  let area_table = word_table_new(expected: listed);
-  let group_table = word_table_new(expected: count);
-  let key = box_slots_new::<u64>(capacity: 0_u64);
-  predefine(table: &track_table, key: &key, tag: 0_u64);
-  predefine(table: &track_table, key: &key, tag: 1_u64);
-  predefine(table: &area_table, key: &key, tag: 0_u64);
   for (i in 0_u64..count) {
     let value = values^[i];
     let node = nodes^[i];
-    let columns = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.template_columns, node: node.columns, none_id: 0_u32);
-    let rows = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.template_rows, node: node.rows, none_id: 0_u32);
-    let auto_columns = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.auto_columns, node: node.auto_columns, none_id: 1_u32);
-    let auto_rows = track_id(table: &track_table, key: &key, out: &out, inherited: inherited, reference: value.auto_rows, node: node.auto_rows, none_id: 1_u32);
-    let areas = area_id(table: &area_table, key: &key, out: &out, inherited: inherited, reference: value.template_areas);
+    let columns = track_id(table: track_table, key: &key, out: out, inherited: inherited, reference: value.template_columns, node: node.columns, none_id: 0_u32);
+    let rows = track_id(table: track_table, key: &key, out: out, inherited: inherited, reference: value.template_rows, node: node.rows, none_id: 0_u32);
+    let auto_columns = track_id(table: track_table, key: &key, out: out, inherited: inherited, reference: value.auto_columns, node: node.auto_columns, none_id: 1_u32);
+    let auto_rows = track_id(table: track_table, key: &key, out: out, inherited: inherited, reference: value.auto_rows, node: node.auto_rows, none_id: 1_u32);
+    let areas = area_id(table: area_table, key: &key, out: out, inherited: inherited, reference: value.template_areas);
     let made = ContainerGroup(flex_direction: value.flex_direction, flex_wrap: value.flex_wrap, justify_content: value.justify_content, align_items: value.align_items, align_content: value.align_content, justify_items: value.justify_items, row_gap: value.row_gap, column_gap: value.column_gap, template_columns: columns, template_rows: rows, template_areas: areas, auto_flow: value.auto_flow, auto_columns: auto_columns, auto_rows: auto_rows, column_count: value.column_count, column_width: value.column_width, column_fill: value.column_fill);
     clear_key(key: &key);
     let w_direction = cvt::<u8, u64>(made.flex_direction);
@@ -556,25 +567,23 @@ fn intern_container_group(values: &[ContainerGroup], nodes: &[TrackNodes], inher
     put_sizing(key: &key, value: made.column_width);
     put_word(key: &key, value: w_column_fill);
     let length = key.inner.len;
-    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    let found = word_intern(table: group_table, key: &key.inner[0_u64..length]);
     if found.fresh {
-      append_group::<ContainerGroup>(cell: &groups, value: made);
+      append_group::<ContainerGroup>(cell: groups, value: made);
     }
     set ids^[i] = found.id;
   }
-  return ContainerTables(groups: move groups, lists: move out);
+  return unit;
 }
 
-fn intern_item_group(values: &[ItemGroup], ids: &[u32]) -> table: Box<Slots<ItemGroup>> reads(values), writes(ids) {
-  doc "Interns each node's flex and grid item values by their values.";
+fn intern_item_group(groups: &Box<Slots<ItemGroup>>, words: &WordTable, values: &[ItemGroup], ids: &[u32]) -> result: unit reads(values), writes(groups), writes(words), writes(ids) {
+  doc "Interns each node's flex and grid item values by their values., into groups and their word table words, both kept across style runs: a full build passes them empty, a restyle passes the kept ones and appends what is new.";
   let count = values^.len;
-  let groups = box_slots_new::<ItemGroup>(capacity: 0_u64);
   let usable = ids^.len == count;
   if usable {
   } else {
-    return move groups;
+    return unit;
   }
-  let group_table = word_table_new(expected: count);
   let key = box_slots_new::<u64>(capacity: 0_u64);
   for (i in 0_u64..count) {
     let value = values^[i];
@@ -597,25 +606,23 @@ fn intern_item_group(values: &[ItemGroup], ids: &[u32]) -> table: Box<Slots<Item
     let w_break = cvt::<u8, u64>(value.break_inside);
     put_word(key: &key, value: w_break);
     let length = key.inner.len;
-    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    let found = word_intern(table: words, key: &key.inner[0_u64..length]);
     if found.fresh {
-      append_group::<ItemGroup>(cell: &groups, value: value);
+      append_group::<ItemGroup>(cell: groups, value: value);
     }
     set ids^[i] = found.id;
   }
-  return move groups;
+  return unit;
 }
 
-fn intern_table_group(values: &[TableGroup], ids: &[u32]) -> table: Box<Slots<TableGroup>> reads(values), writes(ids) {
-  doc "Interns each node's table values by their values.";
+fn intern_table_group(groups: &Box<Slots<TableGroup>>, words: &WordTable, values: &[TableGroup], ids: &[u32]) -> result: unit reads(values), writes(groups), writes(words), writes(ids) {
+  doc "Interns each node's table values by their values., into groups and their word table words, both kept across style runs: a full build passes them empty, a restyle passes the kept ones and appends what is new.";
   let count = values^.len;
-  let groups = box_slots_new::<TableGroup>(capacity: 0_u64);
   let usable = ids^.len == count;
   if usable {
   } else {
-    return move groups;
+    return unit;
   }
-  let group_table = word_table_new(expected: count);
   let key = box_slots_new::<u64>(capacity: 0_u64);
   for (i in 0_u64..count) {
     let value = values^[i];
@@ -631,13 +638,13 @@ fn intern_table_group(values: &[TableGroup], ids: &[u32]) -> table: Box<Slots<Ta
     put_word(key: &key, value: w_layout);
     put_word(key: &key, value: w_caption);
     let length = key.inner.len;
-    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    let found = word_intern(table: words, key: &key.inner[0_u64..length]);
     if found.fresh {
-      append_group::<TableGroup>(cell: &groups, value: value);
+      append_group::<TableGroup>(cell: groups, value: value);
     }
     set ids^[i] = found.id;
   }
-  return move groups;
+  return unit;
 }
 
 struct ContentOut {
@@ -648,11 +655,6 @@ struct ContentOut {
   quote_lists: Box<Slots<QuoteList>>;
   quote_pairs: Box<Slots<QuotePair>>;
   text: Box<Slots<u8>>;
-}
-
-struct ContentTables {
-  groups: Box<Slots<ContentGroup>>;
-  lists: ContentOut;
 }
 
 fn put_text_words(key: &Box<Slots<u64>>, inherited: &Inherited, start: u32, end: u32) -> result: unit reads(inherited), writes(key) {
@@ -868,30 +870,30 @@ fn memo_for(count: u64) -> memo: Box<Array<u32>> pure {
   return move empty;
 }
 
-fn intern_content_group(values: &[ContentGroup], inherited: &Inherited, ids: &[u32]) -> tables: ContentTables reads(values), reads(inherited), writes(ids) {
-  doc "Interns each node's generated-content values: its content, counter and quote references become identifiers of lists, content_lists[0] being normal and [1] none, counter_lists[0] none, quote_lists[0] auto and [1] none, equal lists sharing one, and the groups are then interned by their values. A value's quotes field holds the second part's quote reference.";
+fn intern_content_group(groups: &Box<Slots<ContentGroup>>, out: &ContentOut, group_table: &WordTable, content_table: &WordTable, counter_table: &WordTable, quote_table: &WordTable, values: &[ContentGroup], inherited: &Inherited, ids: &[u32]) -> result: unit reads(values), reads(inherited), writes(groups), writes(out), writes(group_table), writes(content_table), writes(counter_table), writes(quote_table), writes(ids) {
+  doc "Interns each node's generated-content values: its content, counter and quote references become identifiers of lists, content_lists[0] being normal and [1] none, counter_lists[0] none, quote_lists[0] auto and [1] none, equal lists sharing one, and the groups are then interned by their values. A value's quotes field holds the second part's quote reference. Groups, lists, their text and their word tables are kept across style runs: a full build passes them empty, and the predefined lists are placed only into empty tables; a restyle appends what is new, so offsets into the text already handed out stay valid.";
   let count = values^.len;
-  let groups = box_slots_new::<ContentGroup>(capacity: 0_u64);
-  let content_lists = box_slots_new::<ContentList>(capacity: 0_u64);
-  let content_items = box_slots_new::<ContentItem>(capacity: 0_u64);
-  let counter_lists = box_slots_new::<CounterList>(capacity: 0_u64);
-  let counter_changes = box_slots_new::<CounterChange>(capacity: 0_u64);
-  let quote_lists = box_slots_new::<QuoteList>(capacity: 0_u64);
-  let quote_pairs = box_slots_new::<QuotePair>(capacity: 0_u64);
-  let text = box_slots_new::<u8>(capacity: 0_u64);
-  let out = ContentOut(content_lists: move content_lists, content_items: move content_items, counter_lists: move counter_lists, counter_changes: move counter_changes, quote_lists: move quote_lists, quote_pairs: move quote_pairs, text: move text);
-  let empty_content = ContentList(first: 0_u32, end: 0_u32);
-  append_group::<ContentList>(cell: &out.content_lists, value: empty_content);
-  append_group::<ContentList>(cell: &out.content_lists, value: empty_content);
-  let empty_counters = CounterList(first: 0_u32, end: 0_u32);
-  append_group::<CounterList>(cell: &out.counter_lists, value: empty_counters);
-  let empty_quotes = QuoteList(first: 0_u32, end: 0_u32);
-  append_group::<QuoteList>(cell: &out.quote_lists, value: empty_quotes);
-  append_group::<QuoteList>(cell: &out.quote_lists, value: empty_quotes);
+  let key = box_slots_new::<u64>(capacity: 0_u64);
+  let fresh_tables = out^.content_lists.inner.len == 0_u64;
+  if fresh_tables {
+    let empty_content = ContentList(first: 0_u32, end: 0_u32);
+    append_group::<ContentList>(cell: &out^.content_lists, value: empty_content);
+    append_group::<ContentList>(cell: &out^.content_lists, value: empty_content);
+    let empty_counters = CounterList(first: 0_u32, end: 0_u32);
+    append_group::<CounterList>(cell: &out^.counter_lists, value: empty_counters);
+    let empty_quotes = QuoteList(first: 0_u32, end: 0_u32);
+    append_group::<QuoteList>(cell: &out^.quote_lists, value: empty_quotes);
+    append_group::<QuoteList>(cell: &out^.quote_lists, value: empty_quotes);
+    predefine(table: content_table, key: &key, tag: 0_u64);
+    predefine(table: content_table, key: &key, tag: 1_u64);
+    predefine(table: counter_table, key: &key, tag: 0_u64);
+    predefine(table: quote_table, key: &key, tag: 0_u64);
+    predefine(table: quote_table, key: &key, tag: 1_u64);
+  }
   let usable = ids^.len == count;
   if usable {
   } else {
-    return ContentTables(groups: move groups, lists: move out);
+    return unit;
   }
   let content_count = inherited^.named.content_lists.inner.len;
   let counter_count = inherited^.named.counter_lists.inner.len;
@@ -899,26 +901,13 @@ fn intern_content_group(values: &[ContentGroup], inherited: &Inherited, ids: &[u
   let content_memo = memo_for(count: content_count);
   let counter_memo = memo_for(count: counter_count);
   let quote_memo = memo_for(count: quote_count);
-  let content_expected = content_count +sat 2_u64;
-  let counter_expected = counter_count +sat 1_u64;
-  let quote_expected = quote_count +sat 2_u64;
-  let content_table = word_table_new(expected: content_expected);
-  let counter_table = word_table_new(expected: counter_expected);
-  let quote_table = word_table_new(expected: quote_expected);
-  let group_table = word_table_new(expected: count);
-  let key = box_slots_new::<u64>(capacity: 0_u64);
-  predefine(table: &content_table, key: &key, tag: 0_u64);
-  predefine(table: &content_table, key: &key, tag: 1_u64);
-  predefine(table: &counter_table, key: &key, tag: 0_u64);
-  predefine(table: &quote_table, key: &key, tag: 0_u64);
-  predefine(table: &quote_table, key: &key, tag: 1_u64);
   for (i in 0_u64..count) {
     let value = values^[i];
-    let content = content_id(table: &content_table, memo: &content_memo, key: &key, out: &out, inherited: inherited, reference: value.content);
-    let reset = counter_id(table: &counter_table, memo: &counter_memo, key: &key, out: &out, inherited: inherited, reference: value.counter_reset);
-    let increment = counter_id(table: &counter_table, memo: &counter_memo, key: &key, out: &out, inherited: inherited, reference: value.counter_increment);
-    let assignment = counter_id(table: &counter_table, memo: &counter_memo, key: &key, out: &out, inherited: inherited, reference: value.counter_set);
-    let quotes = quote_id(table: &quote_table, memo: &quote_memo, key: &key, out: &out, inherited: inherited, reference: value.quotes);
+    let content = content_id(table: content_table, memo: &content_memo, key: &key, out: out, inherited: inherited, reference: value.content);
+    let reset = counter_id(table: counter_table, memo: &counter_memo, key: &key, out: out, inherited: inherited, reference: value.counter_reset);
+    let increment = counter_id(table: counter_table, memo: &counter_memo, key: &key, out: out, inherited: inherited, reference: value.counter_increment);
+    let assignment = counter_id(table: counter_table, memo: &counter_memo, key: &key, out: out, inherited: inherited, reference: value.counter_set);
+    let quotes = quote_id(table: quote_table, memo: &quote_memo, key: &key, out: out, inherited: inherited, reference: value.quotes);
     let made = ContentGroup(content: content, counter_reset: reset, counter_increment: increment, counter_set: assignment, quotes: quotes, list_style_position: value.list_style_position);
     clear_key(key: &key);
     let w_content = cvt::<u32, u64>(content);
@@ -934,11 +923,11 @@ fn intern_content_group(values: &[ContentGroup], inherited: &Inherited, ids: &[u
     put_word(key: &key, value: w_quotes);
     put_word(key: &key, value: w_position);
     let length = key.inner.len;
-    let found = word_intern(table: &group_table, key: &key.inner[0_u64..length]);
+    let found = word_intern(table: group_table, key: &key.inner[0_u64..length]);
     if found.fresh {
-      append_group::<ContentGroup>(cell: &groups, value: made);
+      append_group::<ContentGroup>(cell: groups, value: made);
     }
     set ids^[i] = found.id;
   }
-  return ContentTables(groups: move groups, lists: move out);
+  return unit;
 }

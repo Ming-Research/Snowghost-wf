@@ -122,8 +122,35 @@ public enum SubjectKey {
   Type(public hash: u64);
 }
 
+public const reach_self: u8 = 1_u8;
+
+public const reach_descendants: u8 = 2_u8;
+
+public const reach_siblings: u8 = 4_u8;
+
+public const reach_sibling_descendants: u8 = 8_u8;
+
+public const reach_all: u8 = 16_u8;
+
+public struct ClassReach {
+  doc "Where a change of one class word on an element e can change what a selector's alternative matches: e itself (reach_self), its descendants, its later siblings, the descendants of its later siblings, or any element of the document (reach_all), as bits of reach; the elements in the first four must also carry subject. hash is the class's name_hash; every marks a reach that holds for every class word, from an attribute selector on the class attribute or an :nth-child of-clause. generated marks a reach from an alternative ending in ::before or ::after, whose match decides whether the element has that pseudo-element.";
+  public every: Bool;
+  public hash: u64;
+  public reach: u8;
+  public subject: SubjectKey;
+  public generated: Bool;
+}
+
 public struct Positions {
-  table: Box<Array<u64>>;
+  table: Box<Slots<u64>>;
+}
+
+public struct FeatureFilter {
+  doc "A 256-bit Bloom filter over element features (an id, a class word or a local name, each by its name_hash, kind and whether it is the subject's or an ancestor's), two bits a feature; it can say a feature is absent, never that it is present.";
+  w0: u64;
+  w1: u64;
+  w2: u64;
+  w3: u64;
 }
 
 public struct Specificity {
@@ -147,6 +174,8 @@ public fn alternative_count(list: &SelectorList) -> count: u64 reads(list) doc "
 
 public fn subject_key(list: &SelectorList, atoms: &AtomTable, alternative: u64) -> key: SubjectKey reads(list), reads(atoms) doc "Returns a key that every element the alternative at index alternative of list matches carries: Id with the name_hash of its subject compound's id when the compound, its rightmost, has an id selector; otherwise Class with the name_hash of its first class selector; otherwise Type with the name_hash of its type selector's lowercase name; Nothing when the alternative matches no element (it ends in a pseudo-element, which pseudo_subject_key keys, or has no compound); and Anything when it has none of these or the list is malformed. An element with no id attribute value, class word or local name of that hash, compared as the matchers compare them with ASCII case folded, does not match the alternative.";
 
+public fn class_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassReach>>) -> complete: Bool reads(list), reads(atoms), writes(out) doc "Appends to out a reach for each class selector, and each attribute selector on the class attribute, of the top-level alternatives of list that style an element or its ::before or ::after, so that adding or removing a class word on an element e changes what those alternatives match only on the elements the reaches name: the rightmost compound reaches e; another compound reaches e's descendants when only descendant and child combinators follow it, its later siblings when only sibling combinators do, and both with the later siblings' descendants when both do; a class inside a selector-list argument (:not, :is, :where) reaches as its compound reaches the element the argument tests, composed with that element's reach to the subject: the same as the holding compound's when it is in the argument's rightmost compound, the argument's own when the holding compound is the subject, and e with all four otherwise; an of-clause of :nth-child or :nth-last-child reaches any element for any class. subject is the alternative's subject key (for ::before and ::after, its originating compound's), which every element it styles carries. Returns False when out passes a storage limit, and the reaches are then incomplete.";
+
 public fn alternative_pseudo_element(list: &SelectorList, alternative: u64) -> kind: u8 reads(list) doc "Returns the pseudo-element the alternative at index alternative of list ends in: pseudo_element_before or pseudo_element_after for ::before and ::after and their single-colon forms, pseudo_element_other for ::first-line, ::first-letter and ::slotted(), and pseudo_element_none for an alternative that ends in none or a malformed list.";
 
 public fn pseudo_subject_key(list: &SelectorList, atoms: &AtomTable, alternative: u64) -> key: SubjectKey reads(list), reads(atoms) doc "Returns, for an alternative ending in ::before or ::after, the key subject_key would give the alternative without its pseudo-element, which every element whose pseudo-element it matches carries: from the compound the pseudo-element ends, Anything when that compound has no id, class or type selector; Nothing for any other alternative, and Anything for a malformed list.";
@@ -155,10 +184,20 @@ public fn pseudo_matching_specificity(list: &SelectorList, document: &Document, 
 
 public fn name_hash(bytes: &[u8]) -> hash: u64 reads(bytes) doc "Returns the 64-bit FNV-1a hash of bytes with each ASCII upper-case letter folded to lower case, so names that differ only in ASCII case hash alike.";
 
-public fn sibling_positions(document: &Document) -> made: Positions reads(document) doc "Returns, for every node of document by its index, its 1-based position among its parent's element children and their number, and its position among those children with its namespace and local name and their number, 0 for a node that is not an element child of a node; each parent's children are walked twice, first child to last. A document past 2^32 - 2 nodes, or whose names give more than 2^32 namespace and name pairs, gets empty positions, which selector_matches_positioned treats as absent.";
+public fn sibling_positions(document: &Document) -> made: Positions reads(document) doc "Returns, for every node of document by its index, its 1-based position among its parent's element children and their number, and its position among those children with its namespace and local name and their number, 0 for a node that is not an element child of a node; each parent's children are walked twice, first child to last. A document past 2^32 - 2 nodes, or whose names give more than 2^32 namespace and name pairs, gets empty positions, which selector_matches_positioned treats as absent. It also indexes every element's class words (their name_hash and text spans), which the Class test of the positioned matchers reads instead of scanning the class value; class_attribute_changed indexes an element again after its class changes";
+
+public fn class_attribute_changed(positions: &Positions, document: &Document, node: NodeId) -> result: unit reads(document), writes(positions) doc "Updates positions, which sibling_positions made for document, after the class attribute of the element node changed in it, so that matching with positions reads node's new class words.";
 
 public fn selector_matches_positioned(list: &SelectorList, document: &Document, atoms: &AtomTable, element: NodeId, context: MatchContext, positions: &Positions) -> result: Bool reads(list), reads(document), reads(atoms), reads(positions) doc "Returns what selector_matches returns, reading positions, which sibling_positions made for document, for :first-child, :last-child, :only-child, :nth-child, :nth-last-child and their -of-type forms instead of counting siblings; the of-clause forms of :nth-child and :nth-last-child, and a node positions does not cover, count as selector_matches does.";
 
 public fn matching_specificity(list: &SelectorList, document: &Document, atoms: &AtomTable, element: NodeId, context: MatchContext, positions: &Positions) -> result: Option<Specificity> reads(list), reads(document), reads(atoms), reads(positions) doc "Returns the greatest specificity, under Selectors Level 4, among the complex selectors at the top level of list that element, an Element node of document, matches as selector_matches_positioned judges, or None when it matches none. Specificity counts ids in ids, classes, attribute selectors and pseudo-classes in classes, and type selectors in types; the universal selector and :where() count nothing, :is() and :not() count their most specific argument, and :nth-child(An+B of S) and :nth-last-child(An+B of S) count one pseudo-class and their most specific S. Each column saturates at the largest u32.";
 
+public fn alternative_specificity(list: &SelectorList, document: &Document, atoms: &AtomTable, element: NodeId, context: MatchContext, positions: &Positions, pseudo: u8, alternative: u64) -> result: Option<Specificity> reads(list), reads(document), reads(atoms), reads(positions) doc "Returns, for the top-level alternative at index alternative of list alone, what matching_specificity returns when pseudo is pseudo_element_none, and what pseudo_matching_specificity returns for pseudo otherwise; None for an index past the alternatives. The greatest over every alternative is what those functions return for the whole list.";
+
 public fn uniform_specificity(list: &SelectorList) -> result: Option<Specificity> reads(list) doc "Returns the specificity that every top-level alternative of list that can match has, under the rules matching_specificity follows, or None when two alternatives differ or none can match; a list with one has it statically, so a caller can match it with selector_matches_positioned and read the specificity once.";
+
+public fn selector_mask(list: &SelectorList, atoms: &AtomTable) -> mask: FeatureFilter reads(list), reads(atoms) doc "Returns the filter bits that the element_filter of every element some top-level alternative of list matches, or whose ::before or ::after it matches, must hold: for each alternative, the bits of every id, class and type selector of its rightmost compound as the subject's features, and of each compound immediately followed by a descendant or child combinator, which matches an ancestor of the subject, as ancestors' features; the bits common to all alternatives. Empty, admitting every element, for a list with none.";
+
+public fn element_filter(document: &Document, atoms: &AtomTable, positions: &Positions, element: NodeId) -> filter: FeatureFilter reads(document), reads(atoms), reads(positions) doc "Returns the filter of the features of element and, apart from them, of every ancestor of element in document, the parents the matchers walk: each one's local name, id attribute values and class words, hashed as name_hash hashes, which folds ASCII case.";
+
+public fn filter_admits(filter: FeatureFilter, mask: FeatureFilter) -> admits: Bool pure doc "Returns whether filter holds every bit of mask; when it does not, no element with that element_filter matches the list selector_mask gave mask.";

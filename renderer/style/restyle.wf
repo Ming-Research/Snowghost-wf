@@ -1,0 +1,594 @@
+alias AtomTable = pkg::base::atom::AtomTable;
+alias ClassReach = pkg::css::selectors::ClassReach;
+alias Document = pkg::dom::Document;
+alias NodeId = pkg::dom::NodeId;
+alias SubjectKey = pkg::css::selectors::SubjectKey;
+alias TextSpan = pkg::dom::TextSpan;
+alias atom_class = pkg::base::static_atoms::atom_class;
+alias atom_id = pkg::base::static_atoms::atom_id;
+alias name_hash = pkg::css::selectors::name_hash;
+alias reach_all = pkg::css::selectors::reach_all;
+alias reach_descendants = pkg::css::selectors::reach_descendants;
+alias reach_self = pkg::css::selectors::reach_self;
+alias reach_sibling_descendants = pkg::css::selectors::reach_sibling_descendants;
+alias reach_siblings = pkg::css::selectors::reach_siblings;
+
+const key_ceiling: u64 = 4194304_u64;
+
+struct Reached {
+  doc "The union of the reaches a class change meets: whether node itself is reached and whether every element is, and for descendants, later siblings and their descendants the subject keys an element must carry, with a flag for a key every element carries.";
+  full: Bool;
+  pseudos: Bool;
+  self_reached: Bool;
+  down_any: Bool;
+  down: Box<Slots<SubjectKey>>;
+  across_any: Bool;
+  across: Box<Slots<SubjectKey>>;
+  beyond_any: Bool;
+  beyond: Box<Slots<SubjectKey>>;
+}
+
+struct ElementKeys {
+  doc "What a subject key tests on one element: the name_hash of its local name and of its first id attribute value (has_id when it has one), and its first class attribute value's span.";
+  local: u64;
+  has_id: Bool;
+  id: u64;
+  classes: TextSpan;
+}
+
+fn is_anything(key: SubjectKey) -> anything: Bool pure {
+  doc "Whether key is Anything, which every element carries.";
+  match key {
+    Anything() => {
+      return True();
+    }
+    Nothing() => {
+      return False();
+    }
+    Id(..) => {
+      return False();
+    }
+    Class(..) => {
+      return False();
+    }
+    Type(..) => {
+      return False();
+    }
+  }
+}
+
+const reach_low_mask: u64 = 1023_u64;
+
+const reach_bucket_count: u64 = 1025_u64;
+
+fn reach_bucket(reach: ClassReach) -> bucket: u64 pure {
+  doc "The bucket order_reaches files a reach under: 0 for a reach that holds for every class, else one more than its hash's low ten bits.";
+  if reach.every {
+    return 0_u64;
+  }
+  let low = iand(reach.hash, reach_low_mask);
+  let bucket = low + 1_u64;
+  return bucket;
+}
+
+fn order_reaches(store: &RuleStore) -> result: unit writes(store) {
+  doc "Reorders the store's reaches by reach_bucket, a stable counting sort, so gather_reaches finds a class's reaches by binary search.";
+  let count = store^.reaches.inner.len;
+  if count < 2_u64 {
+    return unit;
+  }
+  let slots = reach_bucket_count + 1_u64;
+  let starts = box_array_filled::<u64>(count: slots, value: 0_u64);
+  for (r in 0_u64..count) {
+    let bucket = reach_bucket(reach: store^.reaches.inner[r]);
+    let next = bucket +sat 1_u64;
+    if next < starts.inner.len {
+      set starts.inner[next] = starts.inner[next] +wrap 1_u64;
+    }
+  }
+  for (b in 0_u64..reach_bucket_count) {
+    let next = b + 1_u64;
+    if next < starts.inner.len {
+      set starts.inner[next] = starts.inner[next] +wrap starts.inner[b];
+    }
+  }
+  let first = store^.reaches.inner[0_u64];
+  let ordered = box_array_filled::<ClassReach>(count: count, value: first);
+  for (r in 0_u64..count) {
+    let reach = store^.reaches.inner[r];
+    let bucket = reach_bucket(reach: reach);
+    if bucket < starts.inner.len {
+      let slot = starts.inner[bucket];
+      if slot < count {
+        set ordered.inner[slot] = reach;
+        set starts.inner[bucket] = slot + 1_u64;
+      }
+    }
+  }
+  for (r in 0_u64..count) {
+    if r < store^.reaches.inner.len {
+      set store^.reaches.inner[r] = ordered.inner[r];
+    }
+  }
+  return unit;
+}
+
+fn take_reach(gathered: &Reached, reach: ClassReach) -> result: Result<unit, StyleError> writes(gathered) {
+  doc "Adds one reach to gathered.";
+  if reach.generated {
+    set gathered^.pseudos = True();
+  }
+  let all_bit = iand(reach.reach, reach_all);
+  if all_bit != 0_u8 {
+    set gathered^.full = True();
+  }
+  let self_bit = iand(reach.reach, reach_self);
+  if self_bit != 0_u8 {
+    set gathered^.self_reached = True();
+  }
+  let any_key = is_anything(key: reach.subject);
+  let down_bit = iand(reach.reach, reach_descendants);
+  if down_bit != 0_u8 {
+    if any_key {
+      set gathered^.down_any = True();
+    } else {
+      let pushed = propagate push::<SubjectKey>(cell: &gathered^.down, value: reach.subject, ceiling: key_ceiling);
+    }
+  }
+  let across_bit = iand(reach.reach, reach_siblings);
+  if across_bit != 0_u8 {
+    if any_key {
+      set gathered^.across_any = True();
+    } else {
+      let pushed = propagate push::<SubjectKey>(cell: &gathered^.across, value: reach.subject, ceiling: key_ceiling);
+    }
+  }
+  let beyond_bit = iand(reach.reach, reach_sibling_descendants);
+  if beyond_bit != 0_u8 {
+    if any_key {
+      set gathered^.beyond_any = True();
+    } else {
+      let pushed = propagate push::<SubjectKey>(cell: &gathered^.beyond, value: reach.subject, ceiling: key_ceiling);
+    }
+  }
+  return Ok<unit, StyleError>(value: unit);
+}
+
+fn gather_reaches(store: &RuleStore, hash: u64) -> result: Result<Reached, StyleError> reads(store) {
+  doc "Collects the reaches of the store whose class hash is hash or that hold for every class: the leading run of bucket 0, and the run of hash's bucket, found by binary search in the order order_reaches left.";
+  let no = False();
+  let down = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let across = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let beyond = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let incomplete = bnot(store^.reaches_complete);
+  let gathered = Reached(full: incomplete, pseudos: no, self_reached: no, down_any: no, down: move down, across_any: no, across: move across, beyond_any: no, beyond: move beyond);
+  let count = store^.reaches.inner.len;
+  for (r in 0_u64..count) {
+    let reach = store^.reaches.inner[r];
+    if reach.every {
+      let taken = propagate take_reach(gathered: &gathered, reach: reach);
+    } else {
+      break;
+    }
+  }
+  let low = iand(hash, reach_low_mask);
+  let wanted = low + 1_u64;
+  let from = 0_u64;
+  let to = count;
+  for (step in 0_u64..64_u64) {
+    if from >= to {
+      break;
+    }
+    let width = to - from;
+    let half = width / 2_u64;
+    let middle = from + half;
+    if middle < count {
+      let bucket = reach_bucket(reach: store^.reaches.inner[middle]);
+      if bucket < wanted {
+        set from = middle + 1_u64;
+      } else {
+        set to = middle;
+      }
+    } else {
+      break;
+    }
+  }
+  for (r in from..count) {
+    let reach = store^.reaches.inner[r];
+    let bucket = reach_bucket(reach: reach);
+    if bucket != wanted {
+      break;
+    }
+    if reach.hash == hash {
+      let taken = propagate take_reach(gathered: &gathered, reach: reach);
+    }
+  }
+  return Ok<Reached, StyleError>(value: move gathered);
+}
+
+fn span_hash(document: &Document, span: TextSpan) -> hash: u64 reads(document) {
+  doc "name_hash of the document text span holds, 0 for a span outside the text.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  let inside = end <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+    let hash = name_hash(bytes: &document^.text.inner[start..end]);
+    return hash;
+  }
+  return 0_u64;
+}
+
+fn element_keys(document: &Document, atoms: &AtomTable, node: NodeId) -> keys: ElementKeys reads(document), reads(atoms) {
+  doc "The local name, first id and first class attribute of node, as the rule index reads them (match_indexed).";
+  let empty = TextSpan(start: 0_u32, end: 0_u32);
+  let none = False();
+  let found = ElementKeys(local: 0_u64, has_id: none, id: 0_u64, classes: empty);
+  let at = cvt::<u32, u64>(node.index);
+  let known = at < document^.nodes.inner.len;
+  if known {
+  } else {
+    return found;
+  }
+  let data = &document^.nodes.inner[at].data;
+  match data^ {
+    Element(namespace: space, local_name: name, attributes: attrs, template_contents: contents) => {
+      let local_index = cvt::<u32, u64>(name^.index);
+      let named = local_index < atoms^.spans.inner.len;
+      if named {
+        let span = atoms^.spans.inner[local_index];
+        let start = cvt::<u32, u64>(span.start);
+        let end = cvt::<u32, u64>(span.end);
+        let ordered = start <= end;
+        let inside = end <= atoms^.text.inner.len;
+        let usable = band(ordered, inside);
+        if usable {
+          set found.local = name_hash(bytes: &atoms^.text.inner[start..end]);
+        }
+      }
+      let count = attrs^.inner.len;
+      let seen_class = False();
+      for (k in 0_u64..count) {
+        let attribute = attrs^.inner[k];
+        let plain = match attribute.namespace {
+          NoNamespace() => {
+            give True();
+          }
+          XLink() => {
+            give False();
+          }
+          Xml() => {
+            give False();
+          }
+          XmlNs() => {
+            give False();
+          }
+        }
+        if plain {
+          let is_id = attribute.name.index == atom_id;
+          let fresh_id = bnot(found.has_id);
+          let first_id = band(is_id, fresh_id);
+          if first_id {
+            set found.has_id = True();
+            set found.id = span_hash(document: document, span: attribute.value);
+          }
+          let is_class = attribute.name.index == atom_class;
+          let fresh_class = bnot(seen_class);
+          let first_class = band(is_class, fresh_class);
+          if first_class {
+            set seen_class = True();
+            set found.classes = attribute.value;
+          }
+        }
+      }
+    }
+    DocumentRoot(..) => {
+    }
+    DocumentType(..) => {
+    }
+    Text(..) => {
+    }
+    Comment(..) => {
+    }
+    Fragment() => {
+    }
+  }
+  return found;
+}
+
+fn has_class_word(document: &Document, span: TextSpan, hash: u64) -> found: Bool reads(document) {
+  doc "Whether some whitespace-separated word of the class value span holds has name_hash hash.";
+  let start = cvt::<u32, u64>(span.start);
+  let end = cvt::<u32, u64>(span.end);
+  let ordered = start <= end;
+  let inside = end <= document^.text.inner.len;
+  let usable = band(ordered, inside);
+  if usable {
+  } else {
+    return False();
+  }
+  let word_start = start;
+  let in_word = False();
+  for (at in start..end) {
+    let space = is_class_space(byte: document^.text.inner[at]);
+    if space {
+      let started = word_start <= at;
+      let closes = band(in_word, started);
+      if closes {
+        let word = name_hash(bytes: &document^.text.inner[word_start..at]);
+        if word == hash {
+          return True();
+        }
+      }
+      set in_word = False();
+    } else if in_word {
+    } else {
+      set word_start = at;
+      set in_word = True();
+    }
+  }
+  if in_word {
+    let ends = word_start <= end;
+    if ends {
+      let word = name_hash(bytes: &document^.text.inner[word_start..end]);
+      if word == hash {
+        return True();
+      }
+    }
+  }
+  return False();
+}
+
+fn carries(document: &Document, keys: ElementKeys, any: Bool, wanted: &Box<Slots<SubjectKey>>) -> found: Bool reads(document), reads(wanted) {
+  doc "Whether an element with keys carries one of the wanted subject keys, or any is set.";
+  if any {
+    return True();
+  }
+  let count = wanted^.inner.len;
+  for (k in 0_u64..count) {
+    let key = wanted^.inner[k];
+    match key {
+      Anything() => {
+        return True();
+      }
+      Nothing() => {
+      }
+      Id(hash: value) => {
+        let same = value == keys.id;
+        let holds = band(keys.has_id, same);
+        if holds {
+          return True();
+        }
+      }
+      Class(hash: value) => {
+        let holds = has_class_word(document: document, span: keys.classes, hash: value);
+        if holds {
+          return True();
+        }
+      }
+      Type(hash: value) => {
+        if value == keys.local {
+          return True();
+        }
+      }
+    }
+  }
+  return False();
+}
+
+fn class_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, node: NodeId, class: &[u8]) -> result: Result<RestyleSet, StyleError> reads(store), reads(document), reads(atoms), reads(traversal), reads(class) {
+  doc "Gathers the reaches of class, then marks node, the reached elements of its subtree and those after it under its parent in one flag per element of the range, each flag written by its own element, and lists the marked ones in preorder.";
+  let elements = box_slots_new::<u32>(capacity: 0_u64);
+  let hash = name_hash(bytes: class);
+  let reached = propagate gather_reaches(store: store, hash: hash);
+  let count = traversal^.elements.inner.len;
+  let listed = traversal^.depths.inner.len == count;
+  let index = cvt::<u32, u64>(node.index);
+  let known = index < traversal^.order.inner.len;
+  let position = if known {
+    give cvt::<u32, u64>(traversal^.order.inner[index]);
+  } else {
+    give count;
+  }
+  let element = position < count;
+  let usable = band(listed, element);
+  let bounded = count <= 4294967295_u64;
+  let fine = band(usable, bounded);
+  let whole = bnot(fine);
+  let full = bor(reached.full, whole);
+  if full {
+    let everything = True();
+    let made = RestyleSet(full: everything, elements: move elements, pseudos: everything, edited: node);
+    return Ok<RestyleSet, StyleError>(value: move made);
+  }
+  let depth = traversal^.depths.inner[position];
+  let subtree_end = count;
+  let next = position + 1_u64;
+  for (i in next..count) {
+    if traversal^.depths.inner[i] <= depth {
+      set subtree_end = i;
+      break;
+    }
+  }
+  let parent_end = count;
+  for (i in subtree_end..count) {
+    if traversal^.depths.inner[i] < depth {
+      set parent_end = i;
+      break;
+    }
+  }
+  let down_keyed = reached.down.inner.len > 0_u64;
+  let down = bor(reached.down_any, down_keyed);
+  let across_keyed = reached.across.inner.len > 0_u64;
+  let across_some = bor(reached.across_any, across_keyed);
+  let beyond_keyed = reached.beyond.inner.len > 0_u64;
+  let beyond_some = bor(reached.beyond_any, beyond_keyed);
+  let sideways = bor(across_some, beyond_some);
+  let range_end = if sideways {
+    give parent_end;
+  } else if down {
+    give subtree_end;
+  } else {
+    give next;
+  }
+  let span = range_end - position;
+  let unmarked = False();
+  let span_bounded = span <= 4294967296_u64;
+  if span_bounded {
+  } else {
+    let everything_else = True();
+    let made = RestyleSet(full: everything_else, elements: move elements, pseudos: everything_else, edited: node);
+    return Ok<RestyleSet, StyleError>(value: move made);
+  }
+  let marks = box_array_filled::<Bool>(count: span, value: unmarked);
+  set marks.inner[0_u64] = reached.self_reached;
+  for (k in 1_u64..span) {
+    let i = position + k;
+    let inside = i < count;
+    if inside {
+      let keys = element_keys(document: document, atoms: atoms, node: traversal^.elements.inner[i]);
+      let in_subtree = i < subtree_end;
+      if in_subtree {
+        if down {
+          set marks.inner[k] = carries(document: document, keys: keys, any: reached.down_any, wanted: &reached.down);
+        }
+      } else {
+        let sibling = traversal^.depths.inner[i] == depth;
+        if sibling {
+          set marks.inner[k] = carries(document: document, keys: keys, any: reached.across_any, wanted: &reached.across);
+        } else {
+          set marks.inner[k] = carries(document: document, keys: keys, any: reached.beyond_any, wanted: &reached.beyond);
+        }
+      }
+    }
+  }
+  for (k in 0_u64..span) {
+    if marks.inner[k] {
+      let i = position + k;
+      let narrowed = cvt.wrap::<u64, u32>(i);
+      let pushed = propagate push::<u32>(cell: &elements, value: narrowed, ceiling: 4294967296_u64);
+    }
+  }
+  let partial = False();
+  let made = RestyleSet(full: partial, elements: move elements, pseudos: reached.pseudos, edited: node);
+  return Ok<RestyleSet, StyleError>(value: move made);
+}
+
+fn winners_differ(old: &Cascade, new: &Cascade, old_node: u64, new_node: u64) -> differ: Bool reads(old), reads(new) {
+  doc "Whether the styled node old_node of old and new_node of new have different winners or different custom-rule keys; a row outside either cascade counts as different.";
+  let old_first = winner_words *sat old_node;
+  let new_first = winner_words *sat new_node;
+  for (w in 0_u64..winner_words) {
+    let a = old_first +sat w;
+    let b = new_first +sat w;
+    let a_in = a < old^.winners.inner.len;
+    let b_in = b < new^.winners.inner.len;
+    let both = band(a_in, b_in);
+    if both {
+      if old^.winners.inner[a] != new^.winners.inner[b] {
+        return True();
+      }
+    } else {
+      return True();
+    }
+  }
+  let words = old^.custom_count;
+  if words != new^.custom_count {
+    return True();
+  }
+  let old_bits = words *sat old_node;
+  let new_bits = words *sat new_node;
+  for (w in 0_u64..words) {
+    let a = old_bits +sat w;
+    let b = new_bits +sat w;
+    let a_in = a < old^.custom_keys.inner.len;
+    let b_in = b < new^.custom_keys.inner.len;
+    let both = band(a_in, b_in);
+    if both {
+      if old^.custom_keys.inner[a] != new^.custom_keys.inner[b] {
+        return True();
+      }
+    } else {
+      return True();
+    }
+  }
+  return False();
+}
+
+fn pseudo_rank(cascade: &Cascade, node: u64) -> rank: u64 reads(cascade) {
+  doc "Orders the pseudo-element node of cascade by its element and kind, as match_elements numbers them; the largest u64 past the nodes.";
+  let inside = node < cascade^.parents.inner.len;
+  let kind_in = node < cascade^.kinds.inner.len;
+  let both = band(inside, kind_in);
+  if both {
+    let element = cvt::<u32, u64>(cascade^.parents.inner[node]);
+    let kind = cvt::<u8, u64>(cascade^.kinds.inner[node]);
+    let doubled = element *sat 4_u64;
+    let rank = doubled +sat kind;
+    return rank;
+  }
+  return 18446744073709551615_u64;
+}
+
+fn rematched(old: &Cascade, new: &Cascade) -> changed: Box<Array<Bool>> reads(old), reads(new) {
+  doc "One loop over the elements, each comparing its own rows, then one merge in order over both cascades' pseudo-elements, which pairs them by element and kind.";
+  let count = old^.element_count;
+  let unchanged = False();
+  let bounded = count <= 4294967296_u64;
+  if bounded {
+  } else {
+    let refused = box_array_filled::<Bool>(count: 0_u64, value: unchanged);
+    return move refused;
+  }
+  let changed = box_array_filled::<Bool>(count: count, value: unchanged);
+  if new^.element_count != count {
+    for (i in 0_u64..count) {
+      set changed.inner[i] = True();
+    }
+    return move changed;
+  }
+  for (i in 0_u64..count) {
+    set changed.inner[i] = winners_differ(old: old, new: new, old_node: i, new_node: i);
+  }
+  let old_nodes = old^.nodes.inner.len;
+  let new_nodes = new^.nodes.inner.len;
+  let a = count;
+  let b = count;
+  let steps = old_nodes +sat new_nodes;
+  for (step in 0_u64..steps) {
+    let a_left = a < old_nodes;
+    let b_left = b < new_nodes;
+    let any = bor(a_left, b_left);
+    if any {
+    } else {
+      break;
+    }
+    let a_rank = pseudo_rank(cascade: old, node: a);
+    let b_rank = pseudo_rank(cascade: new, node: b);
+    if a_rank == b_rank {
+      let element = a_rank / 4_u64;
+      let differ = winners_differ(old: old, new: new, old_node: a, new_node: b);
+      if element < changed.inner.len {
+        if differ {
+          set changed.inner[element] = True();
+        }
+      }
+      set a = a +sat 1_u64;
+      set b = b +sat 1_u64;
+    } else if a_rank < b_rank {
+      let element = a_rank / 4_u64;
+      if element < changed.inner.len {
+        set changed.inner[element] = True();
+      }
+      set a = a +sat 1_u64;
+    } else {
+      let element = b_rank / 4_u64;
+      if element < changed.inner.len {
+        set changed.inner[element] = True();
+      }
+      set b = b +sat 1_u64;
+    }
+  }
+  return move changed;
+}

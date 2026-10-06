@@ -1,0 +1,479 @@
+alias Atom = pkg::base::atom::Atom;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias atom_class = pkg::base::static_atoms::atom_class;
+
+const role_none: u8 = 0_u8;
+
+const role_class: u8 = 1_u8;
+
+const role_class_attribute: u8 = 2_u8;
+
+const role_nested: u8 = 3_u8;
+
+const role_counted: u8 = 4_u8;
+
+const reach_around: u8 = 15_u8;
+
+struct InstrRole {
+  doc "What one simple selector contributes to class reaches: nothing, a class (atom), an attribute selector on the class attribute, a selector-list argument (the alternatives start..end), or an :nth-child or :nth-last-child of-clause, which counts siblings on both sides.";
+  kind: u8;
+  atom: Atom;
+  start: u32;
+  end: u32;
+}
+
+fn role_of(instr: Instr) -> role: InstrRole pure {
+  doc "Classifies one simple selector for class_reaches.";
+  let none_atom = Atom(index: 0_u32);
+  let nothing = InstrRole(kind: role_none, atom: none_atom, start: 0_u32, end: 0_u32);
+  match instr {
+    Class(exact: ex, lower: lo) => {
+      return InstrRole(kind: role_class, atom: lo, start: 0_u32, end: 0_u32);
+    }
+    AttrPresence(ns: constraint, exact: ex, lower: lo) => {
+      if lo.index == atom_class {
+        return InstrRole(kind: role_class_attribute, atom: none_atom, start: 0_u32, end: 0_u32);
+      }
+      return nothing;
+    }
+    AttrMatch(ns: constraint, exact: ex, lower: lo, op: operator, value_exact: vx, value_lower: vl, case: sensitivity, default_ci: folded) => {
+      if lo.index == atom_class {
+        return InstrRole(kind: role_class_attribute, atom: none_atom, start: 0_u32, end: 0_u32);
+      }
+      return nothing;
+    }
+    NthChild(a: av, b: bv, of_start: first, of_end: last) => {
+      if first == no_of_clause {
+        return nothing;
+      }
+      return InstrRole(kind: role_counted, atom: none_atom, start: first, end: last);
+    }
+    NthLastChild(a: av, b: bv, of_start: first, of_end: last) => {
+      if first == no_of_clause {
+        return nothing;
+      }
+      return InstrRole(kind: role_counted, atom: none_atom, start: first, end: last);
+    }
+    Not(alt_start: first, alt_end: last) => {
+      return InstrRole(kind: role_nested, atom: none_atom, start: first, end: last);
+    }
+    Is(alt_start: first, alt_end: last) => {
+      return InstrRole(kind: role_nested, atom: none_atom, start: first, end: last);
+    }
+    Where(alt_start: first, alt_end: last) => {
+      return InstrRole(kind: role_nested, atom: none_atom, start: first, end: last);
+    }
+    Universal(..) => {
+      return nothing;
+    }
+    Type(..) => {
+      return nothing;
+    }
+    Id(..) => {
+      return nothing;
+    }
+    Root() => {
+      return nothing;
+    }
+    Empty() => {
+      return nothing;
+    }
+    FirstChild() => {
+      return nothing;
+    }
+    LastChild() => {
+      return nothing;
+    }
+    OnlyChild() => {
+      return nothing;
+    }
+    FirstOfType() => {
+      return nothing;
+    }
+    LastOfType() => {
+      return nothing;
+    }
+    OnlyOfType() => {
+      return nothing;
+    }
+    NthOfType(..) => {
+      return nothing;
+    }
+    NthLastOfType(..) => {
+      return nothing;
+    }
+    Link() => {
+      return nothing;
+    }
+    AnyLink() => {
+      return nothing;
+    }
+    Visited() => {
+      return nothing;
+    }
+    Checked() => {
+      return nothing;
+    }
+    Enabled() => {
+      return nothing;
+    }
+    Disabled() => {
+      return nothing;
+    }
+    Lang(..) => {
+      return nothing;
+    }
+    Target() => {
+      return nothing;
+    }
+    Scope() => {
+      return nothing;
+    }
+    Defined() => {
+      return nothing;
+    }
+    Hover() => {
+      return nothing;
+    }
+    Active() => {
+      return nothing;
+    }
+    Focus() => {
+      return nothing;
+    }
+    FocusWithin() => {
+      return nothing;
+    }
+    FocusVisible() => {
+      return nothing;
+    }
+  }
+}
+
+fn push_reach(out: &Box<Slots<ClassReach>>, value: ClassReach) -> pushed: Bool writes(out) {
+  doc "Appends value, growing out by doubling from 16 while at most array_growth_limit; False when it is full.";
+  let length = out^.inner.len;
+  let capacity = out^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 16_u64;
+    if small {
+      grow(cell: out, capacity: 16_u64);
+    } else {
+      let within = capacity <= array_growth_limit;
+      if within {
+      } else {
+        return False();
+      }
+      let doubled = capacity + capacity;
+      grow(cell: out, capacity: doubled);
+    }
+  }
+  let room = out^.inner.len < out^.inner.cap;
+  if room {
+    place_back(window: &out^.inner, value: value);
+    return True();
+  }
+  return False();
+}
+
+fn push_range(ranges: &Box<Slots<u64>>, start: u32, end: u32, reach: u8) -> pushed: Bool writes(ranges) {
+  doc "Appends a range of alternatives with the reach of the compound whose argument it is, start, end and reach packed in one word (end below 2^24), growing ranges by doubling from 16 while at most array_growth_limit; False when it is full or end does not fit.";
+  let fits = end < 16777216_u32;
+  if fits {
+  } else {
+    return False();
+  }
+  let length = ranges^.inner.len;
+  let capacity = ranges^.inner.cap;
+  if length >= capacity {
+    let small = capacity < 16_u64;
+    if small {
+      grow(cell: ranges, capacity: 16_u64);
+    } else {
+      let within = capacity <= array_growth_limit;
+      if within {
+      } else {
+        return False();
+      }
+      let doubled = capacity + capacity;
+      grow(cell: ranges, capacity: doubled);
+    }
+  }
+  let room = ranges^.inner.len < ranges^.inner.cap;
+  if room {
+    let high = cvt::<u32, u64>(start);
+    let middle = cvt::<u32, u64>(end);
+    let low = cvt::<u8, u64>(reach);
+    let shifted = ishl.wrap(high, 32_u32);
+    let placed = ishl.wrap(middle, 8_u32);
+    let upper = ior(shifted, placed);
+    let packed = ior(upper, low);
+    place_back(window: &ranges^.inner, value: packed);
+    return True();
+  }
+  return False();
+}
+
+fn compound_entry(list: &SelectorList, position: u64) -> found: Option<Compound> reads(list) {
+  doc "The compound at position of compound_order, or None for a malformed list.";
+  let order_ok = position < list^.compound_order.inner.len;
+  if order_ok {
+  } else {
+    return None<Compound>();
+  }
+  let at = cvt::<u32, u64>(list^.compound_order.inner[position]);
+  let inside = at < list^.compounds.inner.len;
+  if inside {
+  } else {
+    return None<Compound>();
+  }
+  let compound = list^.compounds.inner[at];
+  return Some<Compound>(value: compound);
+}
+
+fn compound_reach(list: &SelectorList, alt: AltEntry, position: u64) -> reach: u8 reads(list) {
+  doc "The elements a class change on an element e can make the alternative's subject match or stop matching through the compound at position: e itself for the rightmost compound; for another, its descendants when only descendant and child combinators follow it, its later siblings when only sibling combinators do, and descendants, later siblings and their descendants when both do; everything around e for a malformed list.";
+  let first = cvt::<u32, u64>(alt.compound_start);
+  let end = cvt::<u32, u64>(alt.compound_end);
+  let has_compound = first < end;
+  if has_compound {
+  } else {
+    return reach_around;
+  }
+  let last = end - 1_u64;
+  if position >= last {
+    return reach_self;
+  }
+  let next = position + 1_u64;
+  let down = False();
+  let across = False();
+  for (j in next..end) {
+    match compound_entry(list: list, position: j) {
+      Some(value: compound) => {
+        match compound.combinator {
+          Start() => {
+          }
+          Descendant() => {
+            set down = True();
+          }
+          Child() => {
+            set down = True();
+          }
+          NextSibling() => {
+            set across = True();
+          }
+          SubsequentSibling() => {
+            set across = True();
+          }
+        }
+      }
+      None() => {
+        return reach_around;
+      }
+    }
+  }
+  let both = band(down, across);
+  if both {
+    return reach_around;
+  }
+  if down {
+    return reach_descendants;
+  }
+  if across {
+    return reach_siblings;
+  }
+  return reach_around;
+}
+
+fn alternative_subject(list: &SelectorList, atoms: &AtomTable, alt: AltEntry) -> key: SubjectKey reads(list), reads(atoms) {
+  doc "The key every element the alternative styles carries: the originating element's for ::before and ::after, the subject's otherwise; Nothing for an alternative that styles no element or pseudo-element the style stage computes.";
+  let before = alt.pseudo == pseudo_element_before;
+  let after = alt.pseudo == pseudo_element_after;
+  let generated = bor(before, after);
+  if generated {
+    let key = compound_key(list: list, atoms: atoms, alt: alt);
+    return key;
+  }
+  if alt.never_matches {
+    return SubjectKey::Nothing();
+  }
+  let key = compound_key(list: list, atoms: atoms, alt: alt);
+  return key;
+}
+
+fn class_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassReach>>) -> complete: Bool reads(list), reads(atoms), writes(out) {
+  doc "Appends one reach per class selector and per attribute selector on the class attribute in list's top-level alternatives that style something, with the reach of its compound and the alternative's subject key; a class inside a selector-list argument, at any depth, reaches as nested_reaches composes it. An of-clause of :nth-child or :nth-last-child appends one reach_all entry for every class. False when out or the work list is full, and then the reaches appended are not all of them.";
+  let start = cvt::<u32, u64>(list^.top_start);
+  let count = alternative_count(list: list);
+  let end = start +sat count;
+  let ranges = box_slots_new::<u64>(capacity: 0_u64);
+  let complete = True();
+  for (i in start..end) {
+    let order_ok = i < list^.alt_order.inner.len;
+    if order_ok {
+    } else {
+      return False();
+    }
+    let actual = cvt::<u32, u64>(list^.alt_order.inner[i]);
+    let alt_ok = actual < list^.alts.inner.len;
+    if alt_ok {
+    } else {
+      return False();
+    }
+    let alt = list^.alts.inner[actual];
+    let key = alternative_subject(list: list, atoms: atoms, alt: alt);
+    let before_pseudo = alt.pseudo == pseudo_element_before;
+    let after_pseudo = alt.pseudo == pseudo_element_after;
+    let generated = bor(before_pseudo, after_pseudo);
+    let styles = match key {
+      Nothing() => {
+        give False();
+      }
+      Anything() => {
+        give True();
+      }
+      Id(..) => {
+        give True();
+      }
+      Class(..) => {
+        give True();
+      }
+      Type(..) => {
+        give True();
+      }
+    }
+    if styles {
+      let ranges_before = ranges.inner.len;
+      let first = cvt::<u32, u64>(alt.compound_start);
+      let last = cvt::<u32, u64>(alt.compound_end);
+      for (position in first..last) {
+        let reach = compound_reach(list: list, alt: alt, position: position);
+        match compound_entry(list: list, position: position) {
+          Some(value: compound) => {
+            let simple_first = cvt::<u32, u64>(compound.simple_start);
+            let simple_end = cvt::<u32, u64>(compound.simple_end);
+            for (k in simple_first..simple_end) {
+              let order_in = k < list^.instr_order.inner.len;
+              if order_in {
+                let at = cvt::<u32, u64>(list^.instr_order.inner[k]);
+                let instr_in = at < list^.instrs.inner.len;
+                if instr_in {
+                  let role = role_of(instr: list^.instrs.inner[at]);
+                  let pushed = add_role(out: out, ranges: &ranges, atoms: atoms, role: role, reach: reach, key: key, generated: generated);
+                  set complete = band(complete, pushed);
+                }
+              }
+            }
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+      let nested_done = nested_reaches(list: list, atoms: atoms, out: out, ranges: &ranges, from: ranges_before, key: key, generated: generated);
+      set complete = band(complete, nested_done);
+    }
+  }
+  return complete;
+}
+
+fn add_role(out: &Box<Slots<ClassReach>>, ranges: &Box<Slots<u64>>, atoms: &AtomTable, role: InstrRole, reach: u8, key: SubjectKey, generated: Bool) -> pushed: Bool reads(atoms), writes(out), writes(ranges) {
+  doc "Appends what one simple selector contributes: a class's reach, an every-class reach for the class attribute, a reach_all entry for an of-clause, or its argument's alternatives to ranges for nested_reaches.";
+  if role.kind == role_class {
+    let hash = atom_hash(atoms: atoms, atom: role.atom);
+    let single = False();
+    let made = ClassReach(every: single, hash: hash, reach: reach, subject: key, generated: generated);
+    let pushed = push_reach(out: out, value: made);
+    return pushed;
+  }
+  let all_words = True();
+  if role.kind == role_class_attribute {
+    let made = ClassReach(every: all_words, hash: 0_u64, reach: reach, subject: key, generated: generated);
+    let pushed = push_reach(out: out, value: made);
+    return pushed;
+  }
+  if role.kind == role_counted {
+    let made = ClassReach(every: all_words, hash: 0_u64, reach: reach_all, subject: key, generated: generated);
+    let pushed = push_reach(out: out, value: made);
+    return pushed;
+  }
+  if role.kind == role_nested {
+    let pushed = push_range(ranges: ranges, start: role.start, end: role.end, reach: reach);
+    return pushed;
+  }
+  return True();
+}
+
+fn compose(inner: u8, outer: u8) -> reach: u8 pure {
+  doc "The reach of a class through a compound of a selector-list argument whose own reach, to the element the argument tests, is inner, when that element reaches the alternative's subject by outer: inner when the element is the subject, outer when the class is on the element itself, and everything around e otherwise.";
+  if outer == reach_self {
+    return inner;
+  }
+  if inner == reach_self {
+    return outer;
+  }
+  return reach_around;
+}
+
+fn nested_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassReach>>, ranges: &Box<Slots<u64>>, from: u64, key: SubjectKey, generated: Bool) -> complete: Bool reads(list), reads(atoms), writes(out), writes(ranges) {
+  doc "Walks the argument alternatives queued in ranges from index from, queueing their own arguments in turn, and appends for every class selector and class-attribute selector in them the reach of its compound within the argument composed with the reach of the compound holding the argument (compose), or reach_all for an of-clause. Each argument is queued once, so the walk ends within the list's number of alternatives.";
+  let limit = list^.alts.inner.len +sat 1_u64;
+  let cursor = from;
+  let complete = True();
+  for (step in 0_u64..limit) {
+    let queued = cursor < ranges^.inner.len;
+    if queued {
+    } else {
+      return complete;
+    }
+    let packed = ranges^.inner[cursor];
+    set cursor = cursor + 1_u64;
+    let alt_first = ishr(packed, 32_u32);
+    let middle = ishr(packed, 8_u32);
+    let alt_end = iand(middle, 16777215_u64);
+    let low = iand(packed, 255_u64);
+    let outer = cvt.wrap::<u64, u8>(low);
+    for (i in alt_first..alt_end) {
+      let order_ok = i < list^.alt_order.inner.len;
+      if order_ok {
+      } else {
+        return False();
+      }
+      let actual = cvt::<u32, u64>(list^.alt_order.inner[i]);
+      let alt_ok = actual < list^.alts.inner.len;
+      if alt_ok {
+      } else {
+        return False();
+      }
+      let alt = list^.alts.inner[actual];
+      let first = cvt::<u32, u64>(alt.compound_start);
+      let last = cvt::<u32, u64>(alt.compound_end);
+      for (position in first..last) {
+        let inner = compound_reach(list: list, alt: alt, position: position);
+        let reach = compose(inner: inner, outer: outer);
+        match compound_entry(list: list, position: position) {
+          Some(value: compound) => {
+            let simple_first = cvt::<u32, u64>(compound.simple_start);
+            let simple_end = cvt::<u32, u64>(compound.simple_end);
+            for (k in simple_first..simple_end) {
+              let order_in = k < list^.instr_order.inner.len;
+              if order_in {
+                let at = cvt::<u32, u64>(list^.instr_order.inner[k]);
+                let instr_in = at < list^.instrs.inner.len;
+                if instr_in {
+                  let role = role_of(instr: list^.instrs.inner[at]);
+                  let pushed = add_role(out: out, ranges: ranges, atoms: atoms, role: role, reach: reach, key: key, generated: generated);
+                  set complete = band(complete, pushed);
+                }
+              }
+            }
+          }
+          None() => {
+            return False();
+          }
+        }
+      }
+    }
+  }
+  return False();
+}

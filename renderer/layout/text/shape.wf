@@ -82,19 +82,40 @@ const emoji_font_name: Array<u8, 16> = "Noto Color Emoji";
 const variation_text: u32 = 65038_u32;
 
 fn emoji_presentation(scalar: u32) -> yes: Bool pure {
-  doc "Tells whether scalar has the Emoji_Presentation property, which the reference draws with its emoji font by default.";
-  let pairs = 80_u64;
-  for (pair in 0_u64..pairs) {
-    let low_at = pair * 2_u64;
-    let high_at = low_at + 1_u64;
+  doc "Tells whether scalar has the Emoji_Presentation property, which the reference draws with its emoji font by default: a scalar below the first range has none, and otherwise a binary search over the sorted, disjoint ranges finds the last range starting at or below it.";
+  let first_low = emoji_ranges[0_u64];
+  if scalar < first_low {
+    return False();
+  }
+  let low_pair = 0_u64;
+  let high_pair = 80_u64;
+  for (step in 0_u64..8_u64) {
+    let span = high_pair -sat low_pair;
+    if span <= 1_u64 {
+      break;
+    }
+    let half = span / 2_u64;
+    let middle = low_pair +sat half;
+    let middle_at = middle *sat 2_u64;
+    if middle_at < 160_u64 {
+      if emoji_ranges[middle_at] <= scalar {
+        set low_pair = middle;
+      } else {
+        set high_pair = middle;
+      }
+    } else {
+      set high_pair = middle;
+    }
+  }
+  let low_at = low_pair *sat 2_u64;
+  let high_at = low_at +sat 1_u64;
+  if high_at < 160_u64 {
     let low = emoji_ranges[low_at];
     let high = emoji_ranges[high_at];
     let above = scalar >= low;
     let below = scalar <= high;
     let inside = band(above, below);
-    if inside {
-      return True();
-    }
+    return inside;
   }
   return False();
 }
@@ -271,8 +292,23 @@ fn push_segment(cell: &Box<Slots<FaceSegment>>, value: FaceSegment) -> result: R
   return Err<unit, TextError>(error: too_large);
 }
 
-fn shape_segment(fonts: &FontSet, face: u32, script: u8, size: f32, text: &[u32], start: u64, end: u64, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>) -> result: Result<unit, TextError> reads(fonts), reads(text), writes(advances), writes(clusters) {
-  doc "Shapes text from start to end with face in script once, and adds each glyph's advance in px, in glyph order, to the index of its cluster's first scalar, which it marks with cluster_start. TooLarge past shape_run's limits.";
+const glyph_held: u64 = 9223372036854775808_u64;
+
+const glyph_many: u64 = 18446744073709551615_u64;
+
+fn pack_glyph(nominal: u16, shaped: i32) -> packed: u64 pure {
+  doc "A cluster's one glyph as glyphs keeps it: glyph_held, its hmtx advance in bits 32 to 47 and its shaped advance in the low 32 bits.";
+  let wide = cvt::<u16, u64>(nominal);
+  let high = ishl.wrap(wide, 32_u32);
+  let narrow = cvt.wrap::<i32, u32>(shaped);
+  let low = cvt::<u32, u64>(narrow);
+  let both = ior(high, low);
+  let packed = ior(both, glyph_held);
+  return packed;
+}
+
+fn shape_segment(fonts: &FontSet, face: u32, script: u8, size: f32, text: &[u32], start: u64, end: u64, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>, glyphs: &Box<Array<u64>>) -> result: Result<unit, TextError> reads(fonts), reads(text), writes(advances), writes(clusters), writes(glyphs) {
+  doc "Shapes text from start to end with face in script once, and adds each glyph's advance in px, in glyph order, to the index of its cluster's first scalar, which it marks with cluster_start, keeping there the glyph's font-unit advances (pack_glyph), or glyph_many for a cluster of several glyphs. TooLarge past shape_run's limits.";
   let text_length = text^.len;
   let ordered = start <= end;
   let inside = end <= text_length;
@@ -300,8 +336,8 @@ fn shape_segment(fonts: &FontSet, face: u32, script: u8, size: f32, text: &[u32]
   let clusters_length = clusters^.inner.len;
   match shape_run(face: &fonts^.faces.inner[index].face, text: &text^[start..end], script: shaping) {
     Ok(value: run) => {
-      let glyphs = run.glyphs.inner.len;
-      for (position in 0_u64..glyphs) {
+      let shaped_count = run.glyphs.inner.len;
+      for (position in 0_u64..shaped_count) {
         let glyph = run.glyphs.inner[position];
         let cluster = cvt::<u32, u64>(glyph.cluster);
         let at = start +sat cluster;
@@ -316,6 +352,13 @@ fn shape_segment(fonts: &FontSet, face: u32, script: u8, size: f32, text: &[u32]
           let sum = fadd.strict(advances^.inner[at], px);
           set advances^.inner[at] = sum;
           set clusters^.inner[at] = cluster_start;
+          if at < glyphs^.inner.len {
+            if glyphs^.inner[at] == 0_u64 {
+              set glyphs^.inner[at] = pack_glyph(nominal: nominal, shaped: glyph.x_advance);
+            } else {
+              set glyphs^.inner[at] = glyph_many;
+            }
+          }
         }
       }
       return Ok<unit, TextError>(value: unit);
@@ -325,6 +368,101 @@ fn shape_segment(fonts: &FontSet, face: u32, script: u8, size: f32, text: &[u32]
       return Err<unit, TextError>(error: too_large);
     }
   }
+}
+
+fn kept_segment(previous: &ShapedText, face: u32, script: u8, start: u64, end: u64) -> kept: Bool reads(previous) {
+  doc "Whether previous holds a segment of face and script over exactly start to end whose clusters each hold one glyph, found by binary search on the segments' starts, which are in order.";
+  let count = previous^.segments.inner.len;
+  let low = 0_u64;
+  let high = count;
+  for (step in 0_u64..64_u64) {
+    if low >= high {
+      break;
+    }
+    let width = high - low;
+    let half = width / 2_u64;
+    let middle = low + half;
+    if middle < count {
+      let begins = cvt::<u32, u64>(previous^.segments.inner[middle].start);
+      if begins < start {
+        set low = middle + 1_u64;
+      } else {
+        set high = middle;
+      }
+    } else {
+      break;
+    }
+  }
+  if low < count {
+  } else {
+    return False();
+  }
+  let found = previous^.segments.inner[low];
+  let found_start = cvt::<u32, u64>(found.start);
+  let found_end = cvt::<u32, u64>(found.end);
+  let same_start = found_start == start;
+  let same_end = found_end == end;
+  let same_face = found.face == face;
+  let same_script = found.script == script;
+  let a = band(same_start, same_end);
+  let b = band(same_face, same_script);
+  let same = band(a, b);
+  if same {
+  } else {
+    return False();
+  }
+  let held = previous^.glyphs.inner.len;
+  if end <= held {
+  } else {
+    return False();
+  }
+  for (at in start..end) {
+    if previous^.glyphs.inner[at] == glyph_many {
+      return False();
+    }
+  }
+  return True();
+}
+
+fn rescale_segment(fonts: &FontSet, face: u32, size: f32, previous: &ShapedText, start: u64, end: u64, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>, glyphs: &Box<Array<u64>>) -> result: unit reads(fonts), reads(previous), writes(advances), writes(clusters), writes(glyphs) {
+  doc "Does for a segment kept_segment accepted what shape_segment does, from previous's glyphs instead of shaping: each cluster's one glyph's advance at size, its cluster_start mark and its kept advances.";
+  let index = cvt::<u32, u64>(face);
+  let count = fonts^.faces.inner.len;
+  if index >= count {
+    return unit;
+  }
+  let metrics = face_metrics(face: &fonts^.faces.inner[index].face);
+  let scale = advance_scale(size: size, units_per_em: metrics.units_per_em);
+  let held = previous^.glyphs.inner.len;
+  let advances_length = advances^.inner.len;
+  let clusters_length = clusters^.inner.len;
+  let glyphs_length = glyphs^.inner.len;
+  for (at in start..end) {
+    if at < held {
+      let packed = previous^.glyphs.inner[at];
+      if packed != 0_u64 {
+        let in_advances = at < advances_length;
+        let in_clusters = at < clusters_length;
+        let in_glyphs = at < glyphs_length;
+        let stored = band(in_advances, in_clusters);
+        let all = band(stored, in_glyphs);
+        if all {
+          let high = ishr(packed, 32_u32);
+          let nominal_wide = iand(high, 65535_u64);
+          let nominal = cvt.wrap::<u64, u16>(nominal_wide);
+          let low = iand(packed, 4294967295_u64);
+          let narrow = cvt.wrap::<u64, u32>(low);
+          let shaped = cvt.wrap::<u32, i32>(narrow);
+          let px = glyph_px(scale: scale, nominal: nominal, shaped: shaped);
+          let sum = fadd.strict(advances^.inner[at], px);
+          set advances^.inner[at] = sum;
+          set clusters^.inner[at] = cluster_start;
+          set glyphs^.inner[at] = packed;
+        }
+      }
+    }
+  }
+  return unit;
 }
 
 fn synthetic_bold_for(fonts: &FontSet, face: u32, weight: f32) -> result: Bool reads(fonts) {
@@ -341,8 +479,8 @@ fn synthetic_bold_for(fonts: &FontSet, face: u32, weight: f32) -> result: Bool r
   return False();
 }
 
-fn shape_segments(fonts: &FontSet, choice: FontChoice, text: &[u32], start: u64, end: u64, faces: &Box<Array<u32>>, scripts: &Box<Array<u8>>, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>, segments: &Box<Slots<FaceSegment>>) -> result: Result<unit, TextError> reads(fonts), reads(text), reads(faces), reads(scripts), writes(advances), writes(clusters), writes(segments) {
-  doc "Splits the run from start to end into maximal segments of one face and one resolved script, each control a segment of its own, shapes each segment once, and appends the segments in order. A control is not shaped: it is one cluster of advance 0.";
+fn shape_segments(fonts: &FontSet, choice: FontChoice, text: &[u32], start: u64, end: u64, faces: &Box<Array<u32>>, scripts: &Box<Array<u8>>, advances: &Box<Array<f32>>, clusters: &Box<Array<u8>>, segments: &Box<Slots<FaceSegment>>, glyphs: &Box<Array<u64>>, previous: &ShapedText, reuse: Bool) -> result: Result<unit, TextError> reads(fonts), reads(text), reads(faces), reads(scripts), reads(previous), writes(advances), writes(clusters), writes(segments), writes(glyphs) {
+  doc "Splits the run from start to end into maximal segments of one face and one resolved script, each control a segment of its own, shapes each segment once, or when reuse holds and kept_segment accepts it rescales previous's glyphs (rescale_segment), and appends the segments in order. A control is not shaped: it is one cluster of advance 0.";
   let text_length = text^.len;
   let faces_length = faces^.inner.len;
   let scripts_length = scripts^.inner.len;
@@ -387,12 +525,21 @@ fn shape_segments(fonts: &FontSet, choice: FontChoice, text: &[u32], start: u64,
           break @extend;
         }
       }
-      let shaped = propagate shape_segment(fonts: fonts, face: face, script: script, size: choice.size, text: text, start: at, end: after, advances: advances, clusters: clusters);
+      let kept = if reuse {
+        give kept_segment(previous: previous, face: face, script: script, start: at, end: after);
+      } else {
+        give False();
+      }
+      if kept {
+        rescale_segment(fonts: fonts, face: face, size: choice.size, previous: previous, start: at, end: after, advances: advances, clusters: clusters, glyphs: glyphs);
+      } else {
+        let shaped = propagate shape_segment(fonts: fonts, face: face, script: script, size: choice.size, text: text, start: at, end: after, advances: advances, clusters: clusters, glyphs: glyphs);
+      }
     }
     let synthetic = synthetic_bold_for(fonts: fonts, face: face, weight: choice.weight);
     let first = cvt.wrap::<u64, u32>(at);
     let last = cvt.wrap::<u64, u32>(after);
-    let segment = FaceSegment(start: first, end: last, face: face, size: choice.size, synthetic_bold: synthetic);
+    let segment = FaceSegment(start: first, end: last, face: face, size: choice.size, synthetic_bold: synthetic, script: script);
     let pushed = propagate push_segment(cell: segments, value: segment);
     set at = after;
   }
@@ -633,8 +780,40 @@ fn find_breaks(text: &[u32], runs: &[TextRun], run_of: &Box<Array<u32>>, cluster
 fn shape_paragraph(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[TextRun]) -> result: Result<ShapedText, TextError> reads(fonts), reads(picks), reads(text), reads(runs) contract {
   requires text^.len <= 1073741824_u64;
 } {
-  doc "Itemizes, shapes and spaces each run in order, appending its segments, then finds the paragraph's break opportunities. It reads only its inputs, so paragraphs are prepared independently. Invalid when the runs do not cover text in order or name a font outside picks.";
+  doc "shape_with, shaping every segment.";
+  let none = shaped_empty();
+  let fresh = False();
+  let made = propagate shape_with(fonts: fonts, picks: picks, text: text, runs: runs, previous: &none, reuse: fresh);
+  return Ok<ShapedText, TextError>(value: move made);
+}
+
+fn reshape_paragraph(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[TextRun], previous: &ShapedText, previous_text: &[u32]) -> result: Result<ShapedText, TextError> reads(fonts), reads(picks), reads(text), reads(runs), reads(previous), reads(previous_text) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "shape_with, reusing previous's segments when the text is the same scalar for scalar.";
   let length = text^.len;
+  let same = previous_text^.len == length;
+  let reuse = same;
+  if same {
+    for (at in 0_u64..length) {
+      if at < previous_text^.len {
+        if previous_text^[at] != text^[at] {
+          set reuse = False();
+          break;
+        }
+      }
+    }
+  }
+  let made = propagate shape_with(fonts: fonts, picks: picks, text: text, runs: runs, previous: previous, reuse: reuse);
+  return Ok<ShapedText, TextError>(value: move made);
+}
+
+fn shape_with(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[TextRun], previous: &ShapedText, reuse: Bool) -> result: Result<ShapedText, TextError> reads(fonts), reads(picks), reads(text), reads(runs), reads(previous) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Itemizes, shapes (or, with reuse, rescales previous's matching segments) and spaces each run in order, appending its segments, then finds the paragraph's break opportunities. It reads only its inputs, so paragraphs are prepared independently. Invalid when the runs do not cover text in order or name a font outside picks.";
+  let length = text^.len;
+  let glyphs = box_array_filled::<u64>(count: length, value: 0_u64);
   let advances = box_array_filled::<f32>(count: length, value: 0.0_f32);
   let clusters = box_array_filled::<u8>(count: length, value: 0_u8);
   let breaks = box_array_filled::<u8>(count: length, value: break_none);
@@ -671,7 +850,7 @@ fn shape_paragraph(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[Tex
     for (position in start..run_limit) {
       set run_of.inner[position] = run_number;
     }
-    let shaped = propagate shape_segments(fonts: fonts, choice: choice, text: text, start: start, end: end, faces: &faces, scripts: &scripts, advances: &advances, clusters: &clusters, segments: &segments);
+    let shaped = propagate shape_segments(fonts: fonts, choice: choice, text: text, start: start, end: end, faces: &faces, scripts: &scripts, advances: &advances, clusters: &clusters, segments: &segments, glyphs: &glyphs, previous: previous, reuse: reuse);
     apply_spacing(run: run, text: text, advances: &advances, clusters: &clusters);
     set expected = end;
   }
@@ -682,6 +861,6 @@ fn shape_paragraph(fonts: &FontSet, picks: &FontPicks, text: &[u32], runs: &[Tex
     return Err<ShapedText, TextError>(error: invalid);
   }
   find_breaks(text: text, runs: runs, run_of: &run_of, clusters: &clusters, breaks: &breaks);
-  let made = ShapedText(advances: move advances, breaks: move breaks, clusters: move clusters, segments: move segments);
+  let made = ShapedText(advances: move advances, breaks: move breaks, clusters: move clusters, segments: move segments, glyphs: move glyphs);
   return Ok<ShapedText, TextError>(value: move made);
 }

@@ -1,0 +1,125 @@
+Root font-size edits without a rematch
+======================================
+
+Question: a root font-size class edit makes restyle rebuild every node
+(rebuild_all), including matching every element again. Can the rebuild keep
+the cascade instead?
+
+The restyle has already rematched the restyle set. The reverse index puts
+every element whose matched rules change into that set (step 2). So the
+kept cascade holds every element's winners, and only the inherited and
+reset passes and the interning depend on the root font size.
+
+Criterion, written before measuring: keep the change only if the style
+oracle's incremental check (a full style run after each edit) reports 0
+differ on the root font-size scripts and the incremental layout check
+reports inc same on them.
+
+Environment: Apple M1 Pro, Whitefoot c3d26643c, sequential build, machine
+shared with other agents. Base: 29f059a. Result: the commit carrying this
+file.
+
+Style oracle incremental mode, restyle_us median (cold; full style between
+edits)
+  apollo11 rootfont (60 edits)   115546 -> 26224   differ 0 / 0
+  html5 srootfont (10 edits)     483447 -> 184974  differ 0 / 0
+  ecma262 srootfont (10 edits)   932629 -> 528372  differ 0 / 0
+
+Layout identity: apollo11 rootfont 60/60, html5 srootfont 10/10 and ecma262
+srootfont 10/10 report inc same, with DIFF 0 and refused 0.
+
+E1 under run.sh time with ALONE=1 (edittime mode). Values are median
+microseconds for style and style+update. Chromium's numbers come from
+engine-comparison/runs/e1.txt.
+
+  page      style    style+update   layout update   Chromium
+  apollo11  26669    65875          39051           61760
+  html5     183021   794447         610148          626640
+  ecma262   536684   989208         453144          241110
+
+What is left:
+
+- The inherited and reset passes and the interning over every node.
+  - A root font-size change reaches only the nodes that read the root's
+    font size through inheritance or a rem length.
+  - A record of the rem readers would let the level restyle replace the
+    rebuild.
+- The layout update. It is already below a full layout (html5 610 against
+  about 785 ms, ecma262 453 against about 700 ms), but it alone exceeds
+  Chromium's whole edit on ecma262.
+
+Root font-size readers and box-only changes
+-------------------------------------------
+Two measurements found where the rest of the time went. On ecma262 a root
+font-size edit changed only 18 elements in what layout reads. Body sets
+18px, so only html, head's subtree and #spec-container{max-width:80rem}
+read the root's size. Even so:
+
+- the layout update prepared and shaped 45,931 paragraphs again, because a
+  use records its paragraphs as one range and the range between the root's
+  first and last reader spans the page;
+- the style stage rebuilt every node.
+
+Changes:
+
+1. Paragraph marking tests each paragraph of the range. Its pieces are
+   always tested. Its strut is tested only when the element's font, text,
+   table or content values changed; restyle reports the other case with
+   changed_boxes_only.
+   Falsifier: ignoring the pieces makes apollo11 fontsize edit 1 DIFF.
+2. A root font-size change no longer rebuilds by default. The levels start
+   again with the elements whose winning declarations can read the root
+   size queued at their depths. Those are:
+   - a length with a rem part;
+   - a var() value whose text, or some custom property's value, holds a
+     rem dimension;
+   - a track list or border spacing.
+   It rebuilds without matching when the readers, or the elements visited,
+   pass one sixty-fourth of the elements (one sixteenth at first; html5 then wasted about 12 ms of levels before rebuilding). The changes the levels found before
+   that are added to the rebuild's list, since they already wrote those
+   styles; leaving them out made html5 srootfont edit 1 DIFF.
+   Falsifier: ignoring rem lengths makes ecma262 srootfont differ at
+   #spec-container.
+
+Style oracle incremental check: 0 differ on every script, the rootfont ones
+included. Layout identity: every script of the suite reports inc same, with
+DIFF 0 and refused 0.
+
+E1, run.sh time with ALONE=1 (edittime mode), seq, median us:
+
+  page      style    style+update   Chromium
+  apollo11  26967    66002          61760    (rebuilds: 11,838 elements change)
+  html5     185531   794094         626640   (rebuilds: 113,622 elements change; share 64)
+  ecma262   2922     14021          241110
+
+Keeping shaping across a font-size change
+-----------------------------------------
+After the changes above, html5's and apollo11's root font-size edits still
+trailed Chromium. Every element changes there, and about half the layout
+update went to shaping text again (sample of html5 srootfont: shaping 1361
+samples, other layout 548, style 675).
+
+Shaping does not read the font size. The px advance is glyph_px of the
+size's scale and two font-unit advances. So a shaped paragraph now keeps,
+per one-glyph cluster, its hmtx and shaped advances. Re-preparing the
+paragraph with the same text rescales each segment of the same face,
+script and range from them. A cluster of several glyphs keeps shaping.
+
+Identity: every script of the suite reports inc same, with DIFF 0 and
+refused 0. Falsifier: rescaling at size + 1 makes apollo11 rootfont edit 1
+DIFF.
+
+E1, ALONE=1, seq, style+update median (base = the build before this change):
+
+  apollo11 rootfont   65596 -> 51655 us   (Chromium 61760)
+  html5 srootfont     791515 -> 583172 us (Chromium 626640)
+  apollo11 fontsize   182 -> 166 us
+  html5 sfontsize     466 -> 422 us
+  ecma262 sfontsize   837 -> 847 us (unchanged; its cost is re-stacking)
+
+Full layout (layout_oracle layout 3, wall seconds, two runs each), base ->
+result:
+
+  html5     2.58, 2.56  -> 2.62, 2.62   (about +2%, one more array per paragraph)
+  ecma262   2.93, 2.91  -> 2.93, 2.93
+  apollo11  0.33, 0.32  -> 0.33, 0.33

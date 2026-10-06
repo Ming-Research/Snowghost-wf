@@ -208,17 +208,24 @@ def main():
     if first_styled:
         # Criterion 2: per style edit, the best update over the runs against
         # the best full layout over the runs, each chosen independently.
+        # A driver run in edittime mode skips the comparator and reports
+        # full_us 0 for every edit; it has no ratio to report.
+        compared = any(styled[edit][2] > 0 for _, _, styled, _ in runs for edit in styled)
         ratios, deltas, picks = [], [], []
         for edit in sorted(first_styled):
             full = min(styled[edit][2] for _, _, styled, _ in runs)
-            if full <= 0:
+            if compared and full <= 0:
                 raise ValueError('edit %d: full layout timed at 0 us' % edit)
-            ratios.append(best[edit] / full)
+            if compared:
+                ratios.append(best[edit] / full)
             deltas.append(min(styled[edit][0] for _, _, styled, _ in runs))
             picks.append(min(styled[edit][1] for _, _, styled, _ in runs))
-        print('update/full min %.3f median %.3f max %.3f; at most 1.2: %d of %d'
-              % (min(ratios), rank(ratios, 0.5), max(ratios),
-                 sum(1 for r in ratios if r <= 1.2), len(ratios)))
+        if ratios:
+            print('update/full min %.3f median %.3f max %.3f; at most 1.2: %d of %d'
+                  % (min(ratios), rank(ratios, 0.5), max(ratios),
+                     sum(1 for r in ratios if r <= 1.2), len(ratios)))
+        else:
+            print('update/full not measured (edittime)')
         print('delta_us median %d max %d; picks_us median %d max %d'
               % (rank(deltas, 0.5), max(deltas), rank(picks, 0.5), max(picks)))
         if all(len(first_styled[edit]) == 4 for edit in first_styled):

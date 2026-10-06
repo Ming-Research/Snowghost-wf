@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-05 Keep the style stage across edits
+
+Nodes: pipeline/style, pipeline/layout
+
+Owner-approved: 2026-10-05, the owner wrote in Chinese that Q89 was approved provided the kept state's memory growth went into the TODO, then, after reading the detailed cards of Q90 to Q106, that all of them were approved.
+
+Summary: The style tree now keeps the stage's state across edits. Its groups' identifiers and shared stores live in tables kept between edits, replacing per-run interning (Q83 retired; Q89, Q92); their growth is a TODO item the approval requires. A class edit's restyle set comes from a reverse index of the rules' class features, with a level frontier for inherited changes (Q91). Layout receives a sparse list of changed elements and marks only the paragraphs that read each one (Q93). Rules are indexed per selector alternative (Q99) and filtered by a feature filter of each element and its ancestors (Q100). A root font-size change restyles the elements that read the root's size (Q101). The layout tree records the re-stack decisions of the agent runs: the smallest common block, resuming after a paragraph with lines, marked child contexts settled at their entry, and translated fragments (Q95 to Q98). It also records glyphs kept in font units so that a size change rescales instead of reshaping (Q102), and Q70 reopened for M2 (Q104). NodeId-indexed state and per-parent positions are deferred to M2 (Q90, Q94). E1 is compared with Chromium in the edittime mode (Q103). Astra's colour branch stays unmerged (Q105). M2 comes next (Q106). The grounds and measurements are in research/investigations/incremental-style/DESIGN.md and its runs, step 5 above all.
+
 ## 2026-10-04 Keep layout across edits by marks pushed from each edit
 
 Nodes: pipeline, pipeline/layout, pipeline/style
