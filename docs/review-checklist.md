@@ -25,8 +25,9 @@ Task outcome and constraints: <...>
 Base and head: <...>; validation already run: <commands, results, revision>.
 Read the diff from the base (git diff <base>, plus untracked files), the
 changed sections in context, and "How to review" in docs/review-checklist.md.
-Check each group whose trigger applies. For M1, apply the design checks and
-correspondence checks of design/skill/SKILL.md to the relevant tree nodes and
+Check each group whose trigger applies. For M1, apply the design checks
+G1–G3 and correspondence checks DC1–DC4 (the owner-wide instructions' review
+checks, also in design/skill/SKILL.md) to the relevant tree nodes and
 ancestors. Do not rerun green suites. Report Scope (your model, base..head,
 groups checked and skipped), Checks (what you ran) and Findings (item ID,
 file:line, quoted text or missing evidence, reason; quote both sides of a
@@ -92,7 +93,7 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
 - [ ] **C4 — Interface fidelity.** Module bodies implement their `.wfm`
   interfaces as written. An interface, contract or effect row changed only
   with the architecture's approval, and none was weakened to let a body pass.
-- [ ] **C5 — Architectural fit.** Apply the design skill's
+- [ ] **C5 — Architectural fit.** Apply
   [G3](../design/skill/SKILL.md#design-checks) to structural choices, and
   check that the assessment happened when the choice was made.
 
@@ -114,7 +115,7 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
 ## R. Decisions — changed choices, premises or evidence
 
 Source: [How work proceeds](../AGENTS.md#how-work-proceeds) and the
-[design-tree skill](../design/skill/SKILL.md#what-is-a-decision). Applies to
+owner-wide instructions' design-tree part ("What is a decision"). Applies to
 changes under `design/` or `research/investigations/`, and to any task that
 made a material choice elsewhere.
 
@@ -132,17 +133,19 @@ made a material choice elsewhere.
   table, a sequential pass or a global counter
   ([AGENTS.md](../AGENTS.md#project-goal)).
 - [ ] **R4 — Maintained tree.** Added, changed or retired decisions have
-  corresponding design records under the design skill, and cited sources
-  resolve and support their scope.
+  corresponding records in `design/`, and cited sources resolve and support
+  their scope.
 
 ## M. Design review — every change
 
-- [ ] **M1 — Design procedure.** Apply the design-tree skill
-  (`design/skill/SKILL.md`) to the reviewed scope: its design checks G1–G3,
-  correspondence checks DC1–DC4 and structural validation, and include the
-  actual results.
+- [ ] **M1 — Design checks.** Apply the design checks G1–G3 and
+  correspondence checks DC1–DC4 (the owner-wide instructions' review checks,
+  also in
+  [`design/skill/SKILL.md`](../design/skill/SKILL.md#design-correspondence-review-dcr))
+  and `make design-lint` to the reviewed scope, and include the actual
+  results.
 
-## V. Validation and handoff — every change
+## V. Validation and report — every change
 
 - [ ] **V1 — Actual checks.** Applicable checks ran on the delivered content;
   commands, results and limitations are available. Focused success is not
