@@ -19,7 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         # reassociate-saturation is out until docs/todo.md's item on it is resolved.
-        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early]
+        # Step 4's descendant-scan mutation waits for the visit sentinels (docs/todo.md).
+        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +56,16 @@ jobs:
           elif m == "reassociate-saturation":
               swap("renderer/layout/flow.wf", "      let y_shifted = geometry_read_9.y +sat frame.dy;\n      set context^.blocks.inner[at].resolved_x = content_left +sat x_shifted;", "      let y_shifted = geometry_read_9.y +sat frame.dy;\n      set context^.blocks.inner[at].resolved_x = context^.blocks.inner[at].normal_x +sat frame.dx;")
               swap("renderer/layout/flow.wf", "            let y_shifted = geometry_read_15.y +sat dy;\n            set context^.blocks.inner[at].resolved_x = content_left +sat x_shifted;", "            let y_shifted = geometry_read_15.y +sat dy;\n            set context^.blocks.inner[at].resolved_x = context^.blocks.inner[at].normal_x +sat dx;")
+          elif m == "collapse-strut":
+              swap("renderer/layout/sequence.wf", "    set joined.leading_negative = composed_4;\n", "    set joined.leading_negative = composed_4;\n    set joined.leading_positive = joined.leading_positive +sat joined.leading_negative;\n    set joined.leading_negative = 0_i32;\n")
+          elif m == "clear-floats-at-close":
+              swap("renderer/layout/flow.wf", "      Close(block: b) => {\n        let depth = frames.inner.len;\n", "      Close(block: b) => {\n        let cleared_floats = box_slots_new::<Exclusion>(capacity: 0_u64);\n        set stack.floats = move cleared_floats;\n        set stack.reach = -2147483647_i32;\n        let depth = frames.inner.len;\n")
+          elif m == "stop-on-height":
+              swap("renderer/layout/boundary.wf", "let stable = band(same, size_same);", "let stable = size_same;")
+          elif m == "unchecked-baseline":
+              swap("renderer/layout/boundary.wf", "  if first.first_baseline != second.first_baseline {\n    return False();\n  }\n  if first.last_baseline != second.last_baseline {\n    return False();\n  }\n", "")
+          elif m == "omit-ancestor-height":
+              swap("renderer/layout/boundary.wf", "      set context^.blocks.inner[at].height = height;\n", "")
           print("applied", m)
           PYEOF
           git diff --stat
@@ -73,9 +84,12 @@ jobs:
             build/layout_mutated dump 1 "$page" renderer/style/ua.css $sheets > build/b.dump 2>/dev/null
             if ! cmp -s build/a.dump build/b.dump; then echo "detected: $page full-build dump differs"; detected=yes; fi
           done
-          for name in block-case style-case; do
-            build/layout_mutated edit "research/investigations/incremental-layout/scripts/$name.edits" "research/investigations/incremental-layout/scripts/$name.html" renderer/style/ua.css > build/m.raw 2>/dev/null
+          s=research/investigations/incremental-layout/scripts
+          for pair in block-case:block-case style-case:style-case boundary-case:block-case; do
+            name=${pair%%:*} html=${pair#*:}
+            build/layout_mutated edit "$s/$name.edits" "$s/$html.html" renderer/style/ua.css > build/m.raw 2> build/m.err
             differs=$(grep -c ' inc DIFF$' build/m.raw)
             [ "$differs" -gt 0 ] && { echo "detected: $name has $differs incremental differences"; detected=yes; }
+            grep -q 'boundary transfer check failed' build/m.err && { echo "detected: $name: boundary transfer check failed"; detected=yes; }
           done
           if [ -z "$detected" ]; then echo "NOT DETECTED: ${{ matrix.mutation }}"; exit 1; fi
