@@ -451,13 +451,13 @@ fn first_float_entry(context: &Context) -> (first: u64, floats: Bool) reads(cont
   return count, False();
 }
 
-fn paragraph_after_entry(paragraph: &Paragraph, entry: u64) -> after: Bool reads(paragraph) {
+fn paragraph_after_entry(paragraph: &Paragraph, at_entry: u64) -> after: Bool reads(paragraph) {
   doc "Whether the paragraph's Text entry follows an entry in the flat walk, independently of the paragraph's payload slot.";
   if paragraph^.flow_at == no_index {
     return False();
   }
   let at = cvt::<u32, u64>(paragraph^.flow_at);
-  return at > entry;
+  return at > at_entry;
 }
 
 fn full_width_lines(paragraph: &Paragraph, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> full: Bool reads(paragraph), reads(styles), reads(fonts), reads(picks) {
@@ -990,11 +990,11 @@ fn shift_block(block: &Block, delta: i32) -> result: unit writes(block) {
 
 fn translate_after(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
   doc "The delta path's translation (Q70): moves every placed paragraph, child context and block whose flow entry follows flow_at down by delta. Paragraph and block membership comes from the flow suffix alone; child placement also includes atomic inlines whose flow_at is their paragraph's entry.";
-  let entry = cvt::<u32, u64>(flow_at);
-  let first = entry +sat 1_u64;
+  let at_entry = cvt::<u32, u64>(flow_at);
+  let first = at_entry +sat 1_u64;
   let entries = context^.flow.inner.len;
   for (k in first..entries) {
-    let p = paragraph_at_entry(context: context, entry: k);
+    let p = paragraph_at_entry(context: context, at_entry: k);
     if p < context^.paragraphs.inner.len {
       shift_paragraph(paragraph: &context^.paragraphs.inner[p], delta: delta);
     }
@@ -1004,7 +1004,7 @@ fn translate_after(context: &Context, flow_at: u32, delta: i32) -> result: unit 
     shift_child(child: &context^.children.inner[i], flow_at: flow_at, delta: delta);
   }
   for (k in first..entries) {
-    let b = block_at_entry(context: context, entry: k);
+    let b = block_at_entry(context: context, at_entry: k);
     if b < context^.blocks.inner.len {
       shift_block(block: &context^.blocks.inner[b], delta: delta);
     }
@@ -1508,7 +1508,7 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
   let broken = 0_u64;
   for (i in 0_u64..breaking) {
     let marked = context^.paragraphs.inner[i].dirty;
-    let beside = paragraph_after_entry(paragraph: &context^.paragraphs.inner[i], entry: float_from);
+    let beside = paragraph_after_entry(paragraph: &context^.paragraphs.inner[i], at_entry: float_from);
     let holds_changed = if changed_any {
       give reads_changed(paragraph: &context^.paragraphs.inner[i], changed: &changed.inner[0_u64..changed_len]);
     } else {
@@ -1918,20 +1918,20 @@ struct WidthBlock {
   parent_entry: u32;
 }
 
-fn local_ancestor_width(blocks: &[WidthBlock], styles: &Styles, from: u64, entry: u64) -> geometry: LocalWidth reads(blocks), reads(styles) {
+fn local_ancestor_width(blocks: &[WidthBlock], styles: &Styles, from: u64, at_entry: u64) -> geometry: LocalWidth reads(blocks), reads(styles) {
   doc "Computes one affected block's width by following parent links resolved to entries in an immutable copy of the affected flow range. The range's opening block uses its unchanged outer space; every other block depends only on its parent, without any ordering test on payload slots. Duplicated ancestor work avoids ordering unrelated siblings.";
-  if entry >= from {
-    let at = entry - from;
+  if at_entry >= from {
+    let at = at_entry - from;
     if at < blocks^.len {
       let saved = blocks^[at];
       let held = saved.block;
-      if entry == from {
+      if at_entry == from {
         let made = local_width(style: held.style, styles: styles, left: held.avail_left, width: held.avail_width);
         return made;
       }
       let parent = cvt::<u32, u64>(saved.parent_entry);
       if parent >= from {
-        let outer = local_ancestor_width(blocks: blocks, styles: styles, from: from, entry: parent);
+        let outer = local_ancestor_width(blocks: blocks, styles: styles, from: from, at_entry: parent);
         let made = local_width(style: held.style, styles: styles, left: outer.left, width: outer.inner);
         return made;
       }
@@ -1956,7 +1956,7 @@ fn write_local_block(block: &Block, geometry: LocalWidth) -> result: unit writes
 
 fn write_local_paragraph(paragraph: &Paragraph, blocks: &[WidthBlock], styles: &Styles, from: u64, owner_entry: u64) -> empty_kept: Bool reads(blocks), reads(styles), writes(paragraph) {
   doc "Gives a paragraph its containing block's new width independently. Empty-inline fragments remain valid unless their left edge changes; paragraphs without Open marks contribute no such fragments.";
-  let geometry = local_ancestor_width(blocks: blocks, styles: styles, from: from, entry: owner_entry);
+  let geometry = local_ancestor_width(blocks: blocks, styles: styles, from: from, at_entry: owner_entry);
   let shifted = paragraph^.left != geometry.left;
   let empty = paragraph^.lines.inner.len == 0_u64;
   let needs_check = band(shifted, empty);
@@ -1995,7 +1995,7 @@ fn write_local_split(split: &Split, flow: &[Flow], blocks: &[WidthBlock], styles
     let item = flow^[at];
     match item {
       Open(..) => {
-        let geometry = local_ancestor_width(blocks: blocks, styles: styles, from: from, entry: at);
+        let geometry = local_ancestor_width(blocks: blocks, styles: styles, from: from, at_entry: at);
         set split^.left = geometry.avail_left;
         set split^.width = geometry.avail_width;
       }
@@ -2024,7 +2024,7 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   } else {
     return False(), False();
   }
-  let first = block_at_entry(context: context, entry: from);
+  let first = block_at_entry(context: context, at_entry: from);
   if first < context^.blocks.inner.len {
   } else {
     return False(), False();
@@ -2034,8 +2034,8 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
   let seed = WidthBlock(block: context^.blocks.inner[first], parent_entry: no_index);
   let old = box_array_filled::<WidthBlock>(count: span, value: seed);
   for (i in 0_u64..span) {
-    let entry = from +sat i;
-    let at = block_at_entry(context: context, entry: entry);
+    let at_entry = from +sat i;
+    let at = block_at_entry(context: context, at_entry: at_entry);
     if at < context^.blocks.inner.len {
       let held = context^.blocks.inner[at];
       let parent = block_entry(context: context, block: held.parent);
@@ -2043,17 +2043,17 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
     }
   }
   for (i in 0_u64..span) {
-    let entry = from +sat i;
-    let at = block_at_entry(context: context, entry: entry);
+    let at_entry = from +sat i;
+    let at = block_at_entry(context: context, at_entry: at_entry);
     if at < context^.blocks.inner.len {
-      let geometry = local_ancestor_width(blocks: &old.inner[0_u64..span], styles: styles, from: from, entry: entry);
+      let geometry = local_ancestor_width(blocks: &old.inner[0_u64..span], styles: styles, from: from, at_entry: at_entry);
       write_local_block(block: &context^.blocks.inner[at], geometry: geometry);
     }
   }
   let kept = True();
   for (i in 0_u64..span) {
-    let entry = from +sat i;
-    let p = paragraph_at_entry(context: context, entry: entry);
+    let at_entry = from +sat i;
+    let p = paragraph_at_entry(context: context, at_entry: at_entry);
     if p < context^.paragraphs.inner.len {
       let owner = block_entry(context: context, block: context^.paragraphs.inner[p].block);
       let owner_entry = cvt::<u32, u64>(owner);
@@ -2208,8 +2208,8 @@ fn restack_block(context: &Context, styles: &Styles, document: &Document, fonts:
   let widths_kept = True();
   let relative_height = False();
   let end = until +sat 1_u64;
-  for (entry in from..end) {
-    let nested = block_at_entry(context: context, entry: entry);
+  for (at_entry in from..end) {
+    let nested = block_at_entry(context: context, at_entry: at_entry);
     if nested < context^.blocks.inner.len {
       let kept = block_keeps_width(context: context, styles: styles, b: nested);
       set widths_kept = band(widths_kept, kept);
