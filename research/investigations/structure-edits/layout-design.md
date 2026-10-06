@@ -6,8 +6,8 @@ This is the layout design and sizing investigation for M2, based on
 `7ee44119358d7b08dc90555ebe7b9275be478bed`, with Whitefoot pinned at
 `f949e676acfa811f96b21afd07f02c06dcd14b51`. It proposes no rendering change.
 Q109 already approves nested flow entries per block; Q104 reopens Q70's
-context-relative suffix move. The implementation is staged below; Q114 and Q115 below are open
-recommendations.
+context-relative suffix move. The implementation is staged below; Q114 A is owner-approved; Q115 below remains an open
+recommendation.
 
 Recommend nested blocks with stable local entry slots, an owner-local
 order/summary index, and a counter-neutral block splice. ecma262's tested
@@ -43,7 +43,8 @@ No estimate derived from these timings is a measured M2 edit latency.
 ## Inventory: identity, order, geometry and consumers
 
 References below are to `renderer/layout/` unless prefixed otherwise. This
-is an inventory of the current code, not additional CSS promises. A block
+is an inventory of the compiled step-1/2 input, before the step-3 sequence
+replacement described below, not additional CSS promises. A block
 here is a non-BFC block in `Context.blocks`; a paragraph is an anonymous
 inline formatting unit, which need not correspond one-to-one to a DOM `p`.
 A child formatting context is a separate object with its own coordinate
@@ -458,10 +459,10 @@ evidence that Snowghost beats Chromium.
 
 Choose A, as Q109 directs. Expose a virtual flat iterator for comparison
 with the current walker during migration; do not retain B's additional
-global order representation on every edit. The new
-material choices are proposed here, not already implemented or owner
-approved: local stable slots, order/summary index and boundary outputs (Q114), and the initial
-splice's safe scope with explicit fallbacks (Q115).
+global order representation on every edit. The owner approved local stable slots, an order/summary index and boundary
+outputs (Q114 A). The initial splice's safe scope with explicit fallbacks
+(Q115) remains proposed. Approval does not establish implementation or
+measured locality.
 
 ### Ownership and lookup
 
@@ -686,8 +687,12 @@ replacement without renumbering retained contexts; dense routing metadata
 copies remain migration support. Stable entry handles, paged route growth
 and local splice publication remain unimplemented. Step 1 is the compiled input to step 2; its validation evidence remains
 with the primary agent, and is not a step-2 validation result.
-`Context.flow` is the temporary flat-walk adapter's single ordered sequence;
-its recorded positions, split endpoints and baseline entry are still ranks.
+The step-3 source removes `Context.flow`: each block and the context root
+own an `EntrySequence`. Its stable direct-entry slots and AVL metadata use
+separate lazy pages. The virtual walker synthesizes Open/Close events by
+weighted descent, without materializing a context-wide stream. Recorded
+compatibility positions, split endpoints and baseline entries are still ranks;
+the block, paragraph and child-context records also carry local entry slots.
 The indirect payload writes still need a Whitefoot disjointness proof;
 child-context publication still follows child slots. Both limitations are
 recorded in [the TODO](../../../docs/todo.md) and must be resolved before
@@ -703,13 +708,23 @@ changes only root entries in owner-relative storage when the numeric guard
 proves the corresponding i32 additions exact, otherwise it keeps the
 reference per-entry translation.
 
-This source has no step-2 compilation, dump, edit-prefix, mutation or timing
-results yet. The primary agent runs those in CI. Context-wide conversion
+Steps 1 and 2 are the committed, compiled input supplied by the primary
+agent. This implementation session supplies no additional dump, edit-prefix,
+mutation or timing results; the primary agent runs validation in CI. Context-wide conversion
 snapshots and the legacy fragment, split-line, natural and baseline state
 remain compatibility work, not evidence of bounded edits; their replacement
 with owner-local boundary outputs is recorded in the TODO. A lineless
 paragraph retains the reference walker's unplaced scratch-origin behavior.
-Steps 3 onward below remain unimplemented. Each step lands with
+Step 3 now has the nested order representation and small virtual-event
+adapters in flex, grid, table and columns. Its node summaries carry direct
+counts, virtual event spans and first/last line-bearing entry handles;
+nonempty margin transfers explicitly remain unsupported until step 4.
+The builder writes nested sequences directly. Typed block, paragraph and
+child-context payload pools remain context-owned migration storage: the
+paged entries contain handles into those pools, not the heavy payloads.
+Physical typed-payload ownership and local route publication remain open;
+this source does not claim the complete step-3 ownership contract or M2
+locality. Steps 4 onward remain unimplemented. Each step lands with
 the full-build and incremental paths producing exactly the same dump,
 including fragment order; a partial performance improvement never permits
 a rendering difference. Line ranges are estimates of changed/added source
@@ -743,12 +758,56 @@ child outputs. Sequence publication depends on completing its replacement.
 No allocator counter, shared shape cache, whole-context scan or serial
 scatter is justified by those semantic dependencies.
 
+### Step-3 source falsifiers for CI
+
+These are mutations to apply separately and revert, not executed results.
+The primary agent compiles and runs the ordinary layout/edit checks.
+
+1. In `flex.wf:flex_collect`, replace the virtual event read at `k` with
+   `let reverse_end = flow_count -sat 1_u64;`,
+   `let reversed = reverse_end -sat k;` and
+   `let piece = flow_event(context: context, at: reversed);`.
+   Give several siblings the same nonzero `order` so stable sorting is
+   exercised. Their per-owner fragment positions must differ from the
+   unchanged source. Apply the equivalent mutation to `grid_collect` for
+   the grid adapter. Entry order, not payload slot order, is the input to
+   the existing stable sorts.
+2. In `flow.wf:stack_flow`'s `Close(block: b)` arm, insert
+   `set stack.floats = box_slots_new::<Exclusion>(capacity: 0_u64);`,
+   `set stack.float_floor = 0_i32;` and `set stack.reach = 0_i32;`.
+   A float inside one non-BFC block extending beside a paragraph in the
+   next block must lose its exclusion under the mutation. Compare with the
+   independent float fixture/reference rectangles, including clearance.
+3. Replace `sequence.wf:flow_event`'s direct `nested_event` return with
+   the following body after its doc. This restores a whole-context flat
+   rebuild at every virtual lookup, including partial restacks. Output
+   equality alone must not accept it: count the payload/index visits and
+   allocations on a fixed-size edit as unrelated width and depth grow.
+
+   ```whitefoot
+   let count = flow_length(context: context);
+   let flat = box_slots_new::<Flow>(capacity: 0_u64);
+   for (cursor in 0_u64..count) {
+     let item = nested_event(context: context, sequence: &context^.entries, at: cursor);
+     let pushed = push_item::<Flow>(cell: &flat, value: item, ceiling: item_ceiling);
+   }
+   if at < flat.inner.len { return flat.inner[at]; }
+   return Flow::Close(block: no_index);
+   ```
+
+The current compatibility geometry and routing paths already contain
+whole-context work. The third falsifier therefore needs counters at the
+sequence operations, not the historical aggregate restack counters. The
+typed-payload migration and step-4/5 work remain necessary before a complete
+edit can satisfy the final locality criterion.
+
 ## Risks and owner questions
 
-Q104 and Q109 are approved directions. Q114 and Q115 below remain open;
-this research does not claim implementation approval for them.
+Q104, Q109 and Q114 A are approved directions. Q115 remains open.
+The descriptions below distinguish the approved contract from implementation
+and measurement still needed.
 
-- **Q114 — stable local slots and block boundary outputs (recommended).**
+- **Q114 A — stable local slots and block boundary outputs (approved).**
   This gives owned, independently writable siblings and removes every
   insertion-sensitive rank from retained identity. A local array costs
   O(s_parent) copies, including earlier handles, and cannot pass the existing
@@ -885,6 +944,7 @@ are recorded in `docs/todo.md` with impact, proposed counters and reopening
 condition. No language gap was demonstrated or filed. The proposed nested
 types, distinct-slot traversal, summary coverage, full-build allocation
 cost, parallel speed and actual E1 splice latency remain unverified.
-Q114 and Q115 are open recommendations; Q104 and Q109 are approved
-inputs. No approval log entry or readiness claim is made. Delivery is a
+Q114 A, Q104 and Q109 are approved inputs; Q115 remains an open
+recommendation. Step-3 source has not been compiled or executed in this
+implementation session; the primary agent owns CI validation. No approval log entry or readiness claim is made. Delivery is a
 local branch commit only, as requested; there is no push or PR update.

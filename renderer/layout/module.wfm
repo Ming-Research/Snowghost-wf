@@ -80,13 +80,61 @@ struct StyleRef {
 }
 
 enum Flow {
-  doc "One entry of a flow context's content in tree order. Context.flow is the single ordered sequence of these entries; block, paragraph and context numbers identify payload slots and carry no order or ancestry. The temporary flat-walk queries read this sequence, while flow_at still records a position in it, not a stable entry handle. Open and Close bracket a block-level box of the context's blocks; Text is a paragraph; Child is an in-flow block-level child context; Float is a floated child context, anchored where it occurs; Out is an absolutely or fixed positioned child context, whose static position is where it occurs.";
+  doc "One entry of a flow context's content in tree order. This is a virtual event from the nested owner-local sequences; Close is synthesized when leaving a block. No context retains a flat event array; block, paragraph and context numbers identify payload slots and carry no order or ancestry. Compatibility queries read virtual ranks, while entry_slot is the stable owner-local identity and flow_at remains a temporary compatibility rank. Open and Close bracket a block-level box of the context's blocks; Text is a paragraph; Child is an in-flow block-level child context; Float is a floated child context, anchored where it occurs; Out is an absolutely or fixed positioned child context, whose static position is where it occurs.";
   Open(block: u32);
   Close(block: u32);
   Text(paragraph: u32);
   Child(context: u32);
   Float(context: u32);
   Out(context: u32);
+}
+
+enum SlotPages<T> {
+  doc "A lazy binary page directory over the owner-local 30-bit slot space. Leaves hold four values; allocating a page changes only its directory path and never copies an existing page.";
+  Vacant();
+  Fork(left: Box<SlotPages<T>>, right: Box<SlotPages<T>>);
+  Page(values: Box<Array<T>>);
+}
+
+struct EntryHandle {
+  doc "A stable entry slot in one block sequence, or no_index. Slots are never reused, so deletion cannot make an old handle name a new entry.";
+  owner: u32;
+  slot: u32;
+}
+
+struct SequenceOutput {
+  doc "Cached direct-entry count, virtual event count and first/last descendant line handles. ordinary is false until step 4 establishes an ordinary margin transfer; no unsupported state is interpreted as an identity transfer.";
+  count: u64;
+  events: u64;
+  first_line: EntryHandle;
+  last_line: EntryHandle;
+  ordinary: Bool;
+  through: Bool;
+  leading_positive: i32;
+  leading_negative: i32;
+  advance: i64;
+  trailing_positive: i32;
+  trailing_negative: i32;
+}
+
+struct SequenceNode {
+  doc "AVL metadata in a slot separate from the payload page. Links are owner-local slots; height differs by at most one between children. Rotations and summary repair read and write metadata only. Removed nodes remain tombstones.";
+  left: u32;
+  right: u32;
+  parent: u32;
+  height: u32;
+  live: Bool;
+  own: SequenceOutput;
+  total: SequenceOutput;
+}
+
+struct EntrySequence {
+  doc "One block's direct entries, with independently paged stable payload slots and an AVL order/summary index. allocated is local to this owner, never a context-wide order counter. A block occurs once as Open; Close exists only in the virtual iterator.";
+  payloads: SlotPages<Flow>;
+  nodes: SlotPages<SequenceNode>;
+  root: u32;
+  allocated: u32;
+  span: u32;
 }
 
 struct Origin {
@@ -97,8 +145,35 @@ struct Origin {
   dy: i64;
 }
 
+struct BlockSnapshot {
+  doc "Copyable geometry and style inputs for the reference walker; excludes owned entry pages and indexes.";
+  style: StyleRef;
+  x: i64;
+  y: i64;
+  dx: i64;
+  dy: i64;
+  normal_x: i32;
+  normal_y: i32;
+  resolved_x: i32;
+  resolved_y: i32;
+  width: i32;
+  height: i32;
+  marker: Bool;
+  parent: u32;
+  flow_at: u32;
+  inner_x: i32;
+  held_y: i32;
+  avail_left: i32;
+  avail_width: i32;
+  content_left: i32;
+  content_width: i32;
+}
+
 struct Block {
-  doc "A block-level box inside a flow context that establishes no context of its own, with its normal border origin x/y stored as exact i64 differences from its owning block's normal origin (the context for no_index), and its effective CSS relative displacement dx/dy stored separately. normal_x/normal_y and resolved_x/resolved_y are the context-coordinate scratch outputs of the compatibility walker, authoritative only while Context.local_geometry is false; geometry.wf owns all conversions. marker holds for a list item with an outside marker, whose marker makes a line when its content has none; parent is the block it sits in (no_index when it sits directly in the context), flow_at its Open entry and inner_x its border box's left offset in the context's content box, which the pre-pass records (the stacking pass writes resolved_x in the border box, and starts again from inner_x); held_y is where an update's re-stack found the block before it stacked it again; avail_left and avail_width are the content box it sits in and content_left and content_width its own content box, as the pre-pass last computed them, which a style change of the block alone compares against (block_restyle).";
+  doc "A block-level box inside a flow context that establishes no context of its own, with its normal border origin x/y stored as exact i64 differences from its owning block's normal origin (the context for no_index), and its effective CSS relative displacement dx/dy stored separately. normal_x/normal_y and resolved_x/resolved_y are the context-coordinate scratch outputs of the compatibility walker, authoritative only while Context.local_geometry is false; geometry.wf owns all conversions. marker holds for a list item with an outside marker, whose marker makes a line when its content has none; parent is the block it sits in (no_index when it sits directly in the context), entry_slot its stable slot in the parent sequence and flow_at its compatibility Open rank and inner_x its border box's left offset in the context's content box, which the pre-pass records (the stacking pass writes resolved_x in the border box, and starts again from inner_x); held_y is where an update's re-stack found the block before it stacked it again; avail_left and avail_width are the content box it sits in and content_left and content_width its own content box, as the pre-pass last computed them, which a style change of the block alone compares against (block_restyle).";
+  entries: EntrySequence;
+  entry_slot: u32;
+  boundary: SequenceOutput;
   style: StyleRef;
   x: i64;
   y: i64;
@@ -224,6 +299,7 @@ struct Paragraph {
   dirty: Bool;
   x: i64;
   resolved_x: i32;
+  entry_slot: u32;
   flow_at: u32;
   block: u32;
   beside: Bool;
@@ -269,7 +345,7 @@ struct Space {
 }
 
 struct Context {
-  doc "A box that establishes an independent formatting context, owning the boxes inside it and its child contexts; each paragraph owns its pieces. slot is assigned once when published in Layout.paths and is never a preorder rank. kind is ctx_flow for a block container, ctx_flex, ctx_grid, ctx_table for a table wrapper (its captions are children listed in captions, its cells children listed in cells), or ctx_replaced. natural says what an image the stage does not load shows, as the reference draws an image whose fetch failed: natural_object is any other context (a replaced one 300 by 150 px); natural_icon the 16 px broken-image icon of an img without alt; natural_empty the nothing of an img with an empty alt or no source; natural_alt_icon the icon before an img's alt text; natural_alt_box an inline img showing its alt text, a flow context that ignores its width and height; natural_marker the bullet of an inside disc, circle or square list marker; natural_text_input a single-line text input, as wide as twenty characters of its font and as tall as its line; and natural_toggle a checkbox or radio button, 13 px square. splits lists the blocks inside open inline boxes in its flow, in the order they open; column_map, for a multi-column context, moves its content from the one column it is laid out in to its columns. Layout writes its border box size, fragments and, when a parent asked, intrinsic sizes. anchor stores its normal origin and effective visual displacement relative to block in its parent context (the viewport for viewport_origin); x/y and normal_x/normal_y are the parent's reference-walker scratch. local_geometry selects owner-relative storage for its contents; content_dx/content_dy are the table's content-origin adjustment, applied once after accumulating block origins and before paragraph-local fragments. The reference bridge materializes that adjustment before a compatibility replay. ratio_width and ratio_height are the width and height attributes of an img, video or svg the stage does not load (HTML Standard, 15.5.4: they give its aspect ratio), in layout units, or 0 when it lacks either. For pkg::layout's update: laid is the space of its last finished layout (laid_never before the first), flow_at and block the flow entry its parent's pre-pass gives it (its paragraph's for an atomic inline) and the parent's block it sits in, beside whether a float placed before it in its parent's flow reaches below its top; a flow context's stacking pass records the content height it returned before used_height (content_raw), the flow entry whose baseline is the context's (no_index for none) and whether its flow holds an out-of-flow child (has_out); intrinsic_basis is the percentage basis its intrinsic sizes were computed against when they became known; definite_free, which a flow context's pre-pass records, holds when no block or child context of its flow takes a percentage height, min-height or max-height, so that its content height being definite or not changes nothing but its own height. text_changed counts the paragraphs and the child contexts it marks in it (marked_paragraphs, marked_children) and records the last of each it marked (marked_paragraph, marked_child), so that an update with one of each finds it without a search; when an update prepares a marked context again it records whether its intrinsic sizes were known from the previous layout (intrinsic_held) and what they were (held_min, held_max), which a flex or grid container's update compares; the stacking pass records the end of the flow before the floats (flow_end) and, per flow entry, the position it starts from before floats and clearance move it (naturals; the largest i32 for an entry that a float cannot move), which the update's re-stack from an entry reads. restyled marks a change to styles this context reads locally; unlike an ancestor dirty mark alone, it forbids the text-only geometry cutoffs until the context has been laid out again. entered and left hold the builder's walk state as build_box began and ended the context (empty for the initial containing block), so that structure_changed can build an element's context again from where the walk entered it and check that the walk leaves it as before.";
+  doc "A box that establishes an independent formatting context, owning the boxes inside it and its child contexts; each paragraph owns its pieces. slot is assigned once when published in Layout.paths and is never a preorder rank. kind is ctx_flow for a block container, ctx_flex, ctx_grid, ctx_table for a table wrapper (its captions are children listed in captions, its cells children listed in cells), or ctx_replaced. natural says what an image the stage does not load shows, as the reference draws an image whose fetch failed: natural_object is any other context (a replaced one 300 by 150 px); natural_icon the 16 px broken-image icon of an img without alt; natural_empty the nothing of an img with an empty alt or no source; natural_alt_icon the icon before an img's alt text; natural_alt_box an inline img showing its alt text, a flow context that ignores its width and height; natural_marker the bullet of an inside disc, circle or square list marker; natural_text_input a single-line text input, as wide as twenty characters of its font and as tall as its line; and natural_toggle a checkbox or radio button, 13 px square. splits lists the blocks inside open inline boxes in its flow, in the order they open; column_map, for a multi-column context, moves its content from the one column it is laid out in to its columns. Layout writes its border box size, fragments and, when a parent asked, intrinsic sizes. anchor stores its normal origin and effective visual displacement relative to block in its parent context (the viewport for viewport_origin); x/y and normal_x/normal_y are the parent's reference-walker scratch. local_geometry selects owner-relative storage for its contents; content_dx/content_dy are the table's content-origin adjustment, applied once after accumulating block origins and before paragraph-local fragments. The reference bridge materializes that adjustment before a compatibility replay. ratio_width and ratio_height are the width and height attributes of an img, video or svg the stage does not load (HTML Standard, 15.5.4: they give its aspect ratio), in layout units, or 0 when it lacks either. For pkg::layout's update: laid is the space of its last finished layout (laid_never before the first), entry_slot the stable parent-sequence slot, and flow_at and block the compatibility flow rank its parent's pre-pass gives it (its paragraph's for an atomic inline) and the parent's block it sits in, beside whether a float placed before it in its parent's flow reaches below its top; a flow context's stacking pass records the content height it returned before used_height (content_raw), the flow entry whose baseline is the context's (no_index for none) and whether its flow holds an out-of-flow child (has_out); intrinsic_basis is the percentage basis its intrinsic sizes were computed against when they became known; definite_free, which a flow context's pre-pass records, holds when no block or child context of its flow takes a percentage height, min-height or max-height, so that its content height being definite or not changes nothing but its own height. text_changed counts the paragraphs and the child contexts it marks in it (marked_paragraphs, marked_children) and records the last of each it marked (marked_paragraph, marked_child), so that an update with one of each finds it without a search; when an update prepares a marked context again it records whether its intrinsic sizes were known from the previous layout (intrinsic_held) and what they were (held_min, held_max), which a flex or grid container's update compares; the stacking pass records the end of the flow before the floats (flow_end) and, per flow entry, the position it starts from before floats and clearance move it (naturals; the largest i32 for an entry that a float cannot move), which the update's re-stack from an entry reads. restyled marks a change to styles this context reads locally; unlike an ancestor dirty mark alone, it forbids the text-only geometry cutoffs until the context has been laid out again. entered and left hold the builder's walk state as build_box began and ended the context (empty for the initial containing block), so that structure_changed can build an element's context again from where the walk entered it and check that the walk leaves it as before.";
   local_geometry: Bool;
   content_dx: i32;
   content_dy: i32;
@@ -280,7 +356,8 @@ struct Context {
   kind: u8;
   natural: u8;
   style: StyleRef;
-  flow: Box<Slots<Flow>>;
+  entries: EntrySequence;
+  build_owner: u32;
   blocks: Box<Slots<Block>>;
   paragraphs: Box<Slots<Paragraph>>;
   children: Box<Slots<Context>>;
@@ -310,6 +387,7 @@ struct Context {
   ratio_height: i32;
   dirty: Bool;
   laid: Space;
+  entry_slot: u32;
   flow_at: u32;
   block: u32;
   beside: Bool;
