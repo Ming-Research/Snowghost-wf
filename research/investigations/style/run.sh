@@ -25,8 +25,9 @@
 # (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and
 # 4 (WORKERS overrides the list) and the sequential build. A part's time is
 # the difference between its mode and the one before it. The timed runs hold
-# the Whitefoot check lock, taken with RUN_CHECK (by default the pinned
-# checkout's .github/run-check.pl), so no other heavy job shares the machine.
+# the host lock RUN_CHECK names, such as Whitefoot's .github/run-check.pl,
+# so no other heavy job shares the machine; without RUN_CHECK they run as they
+# are, as on a CI runner that runs one job at a time.
 #
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
@@ -38,8 +39,8 @@
 # diagnostic run such as the one in runs/ua-table-gray.txt, whose sheet is
 # renderer/style/ua.css followed by the line `table { border-color: gray; }`.
 #
-# The drivers are built with WHITEFOOTC (by default the pinned compiler's
-# gate build, as the Makefile builds it). POSIX sh plus node and sha256sum.
+# The drivers are built with WHITEFOOTC (by default the release whitefoot.pin
+# names, which make compiler downloads). POSIX sh plus node and sha256sum.
 
 set -eu
 
@@ -51,8 +52,8 @@ data=${PAGES:-build/research/concurrency}
 oracle=build/oracle/style
 out=build/research/style
 ua=${UA:-renderer/style/ua.css}
-compiler=${WHITEFOOTC:-$root/whitefoot/compiler/target/gate/whitefootc}
-lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
+compiler=${WHITEFOOTC:-$root/build/whitefoot/$(sed -n "s/^release = //p" "$root/whitefoot.pin")/whitefootc}
+lock=${RUN_CHECK:-}
 runs=${RUNS:-5}
 workers=${WORKERS:-1 2 4}
 pages='ecma262 html5 apollo11 cases'
@@ -147,7 +148,7 @@ best() {
 }
 
 time_parts() {
-	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+	if [ -n "$lock" ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" style-time sh "$here/run.sh" time "$@"
 	fi
 	build

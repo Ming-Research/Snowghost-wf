@@ -39,9 +39,10 @@
 #                                   build/x5/time/ and prints
 #                                   scripts/inctime.py's summary; WF_WORKERS
 #                                   passes through to the --par build;
-#                                   RUN_CHECK names the lock script (by
-#                                   default the pinned checkout's
-#                                   .github/run-check.pl); ALONE=1 uses the driver's edittime
+#                                   RUN_CHECK names a host lock script,
+#                                   such as Whitefoot's
+#                                   .github/run-check.pl, and without it
+#                                   the runs take no lock; ALONE=1 uses the driver's edittime
 #                                   mode, which times the same edits
 #                                   without the full layout comparator
 #                                   between them, as Chromium's E1 runs
@@ -53,9 +54,8 @@
 # drivers are built by
 #   cd renderer && whitefootc --cache ../build/whitefoot-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq
 #   cd renderer && whitefootc --cache ../build/whitefoot-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par
-# under the host-wide lock (.github/run-check.pl of the pinned checkout). The
-# other runs here check results and are not timed, so only time takes the
-# lock.
+# with the release compiler of whitefoot.pin. The other runs here check
+# results and are not timed, so only time takes the lock RUN_CHECK names.
 # POSIX sh plus python3.
 
 set -eu
@@ -195,8 +195,8 @@ inc() {
 
 time_edits() {
 	build=$1 page=$2 kind=$3 runs=${4:-3}
-	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
-		exec perl "${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}" x5-time sh "$here/run.sh" time "$@"
+	if [ -n "${RUN_CHECK:-}" ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+		exec perl "$RUN_CHECK" x5-time sh "$here/run.sh" time "$@"
 	fi
 	case $runs in
 	''|*[!0-9]*) echo "run.sh: RUNS must be a positive integer" >&2; return 2 ;;
