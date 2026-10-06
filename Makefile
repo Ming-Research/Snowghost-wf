@@ -17,7 +17,7 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 # event with design/skill/review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
-.PHONY: check compiler renderer design-lint design-ready \
+.PHONY: check renderer design-lint design-ready \
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
@@ -26,55 +26,12 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 check: compiler renderer dom-selftest design-lint
 
-# The renderer builds with the Whitefoot compiler release that whitefoot.pin
-# names in its one line, release = wf-<12 hex digits of a Whitefoot commit>
-# (AGENTS.md, rule 4), downloaded once into build/whitefoot/<tag>/ and checked
-# against the release's SHA256SUMS and manifest. A pin whose release has expired gets it
-# again with the command the error prints. WHITEFOOTC=<path> builds with
-# another compiler instead, such as one built from an unmerged Whitefoot
-# change; CI uses only the release.
-WHITEFOOT_TAG := $(lastword $(shell cat $(ROOT)/whitefoot.pin))
-WHITEFOOT_COMMIT := $(patsubst wf-%,%,$(WHITEFOOT_TAG))
-WHITEFOOT_RELEASE := $(BUILD)/whitefoot/$(WHITEFOOT_TAG)
-WHITEFOOTC ?= $(WHITEFOOT_RELEASE)/whitefootc
-SHA256 := $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
-
-compiler:
-ifeq ($(origin WHITEFOOTC),file)
-	@set -e; \
-	if [ "$$(wc -l < '$(ROOT)/whitefoot.pin')" -ne 1 ] || \
-		! grep -qxE 'release = wf-[0-9a-f]{12}' '$(ROOT)/whitefoot.pin'; then \
-		echo "whitefoot.pin must hold one line: release = wf-<12 hex digits>" >&2; exit 1; \
-	fi; \
-	if [ ! -x '$(WHITEFOOTC)' ]; then \
-		case "$$(uname -s)-$$(uname -m)" in \
-			Linux-x86_64) platform=linux-x86_64 ;; \
-			Darwin-arm64) platform=macos-arm64 ;; \
-			*) echo "Whitefoot releases no compiler for $$(uname -s)-$$(uname -m); build one and pass WHITEFOOTC=" >&2; exit 1 ;; \
-		esac; \
-		url=https://github.com/Ming-Research/Whitefoot/releases/download/$(WHITEFOOT_TAG); \
-		partial='$(WHITEFOOT_RELEASE).partial'; rm -rf "$$partial"; mkdir -p "$$partial"; \
-		for asset in SHA256SUMS whitefoot-release.json whitefootc-$$platform.tar.gz; do \
-			if ! curl -fsSL --retry 3 -o "$$partial/$$asset" "$$url/$$asset"; then \
-				echo "cannot download $$asset of Whitefoot release $(WHITEFOOT_TAG); if it expired, publish it again:" >&2; \
-				echo "  gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=$(WHITEFOOT_COMMIT)" >&2; \
-				exit 1; \
-			fi; \
-		done; \
-		grep -E "  \*?(whitefoot-release\.json|whitefootc-$$platform\.tar\.gz)$$" "$$partial/SHA256SUMS" > "$$partial/checked"; \
-		test "$$(wc -l < "$$partial/checked")" -eq 2; \
-		(cd "$$partial" && $(SHA256) -c checked > /dev/null); \
-		if ! $(PY) -c 'import json, sys; m = json.load(open(sys.argv[1])); sys.exit(m["tag"] != sys.argv[2] or not m["commit"].startswith(sys.argv[3]))' \
-			"$$partial/whitefoot-release.json" '$(WHITEFOOT_TAG)' '$(WHITEFOOT_COMMIT)'; then \
-			echo "Whitefoot release $(WHITEFOOT_TAG)'s manifest names another release or commit" >&2; exit 1; \
-		fi; \
-		tar -xzf "$$partial/whitefootc-$$platform.tar.gz" -C "$$partial" whitefootc; \
-		test -x "$$partial/whitefootc"; \
-		rm -rf '$(WHITEFOOT_RELEASE)'; mv "$$partial" '$(WHITEFOOT_RELEASE)'; \
-	fi
-else
-	@test -x '$(WHITEFOOTC)' || { echo "WHITEFOOTC=$(WHITEFOOTC) is not an executable" >&2; exit 1; }
-endif
+# The renderer builds with the Whitefoot compiler release whitefoot.pin
+# names, which Whitefoot-kit's whitefoot.mk downloads and checks; it defines
+# compiler, pin-check, pin-ready and WHITEFOOTC (whitefoot-kit/downstream.md).
+# Every target that compiles depends on FORCE, and whitefootc's cache keys its
+# records by the compiler's SHA-256, so a moved pin reuses no output.
+include $(ROOT)/whitefoot-kit/whitefoot.mk
 
 # Every renderer build and check reuses the compiler's cache of module
 # verdicts, function proofs and compiled code (whitefootc --cache), with code
