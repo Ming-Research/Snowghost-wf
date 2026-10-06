@@ -1,4 +1,6 @@
 alias structure_restyle = pkg::style::structure_restyle;
+alias boundary_counts = pkg::layout::boundary_counts;
+alias boundary_transfer_check = pkg::layout::boundary_transfer_check;
 alias Atom = pkg::base::atom::Atom;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Attribute = pkg::dom::Attribute;
@@ -123,6 +125,18 @@ const paragraphs_label: Array<u8, 12> = " paragraphs ";
 const held_label: Array<u8, 14> = " held_entries ";
 
 const entries_label: Array<u8, 9> = " entries ";
+
+const boundary_entries_label: Array<u8, 18> = " boundary_entries ";
+
+const boundary_blocks_label: Array<u8, 17> = " boundary_blocks ";
+
+const boundary_indexes_label: Array<u8, 18> = " boundary_indexes ";
+
+const boundary_fallbacks_label: Array<u8, 20> = " boundary_fallbacks ";
+
+const boundary_reason_label: Array<u8, 17> = " boundary_reason ";
+
+const boundary_failure: Array<u8, 31> = "boundary transfer check failed\n";
 
 const full_label: Array<u8, 5> = " full";
 
@@ -1449,7 +1463,7 @@ fn marks_after(started: Instant, layout: &Layout, traversal: &Traversal, changed
 }
 
 fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(layout), writes(buffer) {
-  doc "Appends what the layout's last update did: ` prepared R contexts C paragraphs P held_entries H entries E`.";
+  doc "Appends the established update counts followed by boundary payload-entry, block and index visits, fallback count and refusal reason. Boundary visits exclude reference replay, so a nonzero fallback count disqualifies an ordinary-path locality assertion.";
   let (prepared, contexts, paragraphs, held_entries, entries) = update_counts(layout: layout);
   put_text(buffer: buffer, text: &prepared_label[0_u64..prepared_label.len]);
   put_decimal(buffer: buffer, value: prepared);
@@ -1461,12 +1475,31 @@ fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(la
   put_decimal(buffer: buffer, value: held_entries);
   put_text(buffer: buffer, text: &entries_label[0_u64..entries_label.len]);
   put_decimal(buffer: buffer, value: entries);
+  let (physical_entries, physical_blocks, indexes, fallbacks, reason) = boundary_counts(layout: layout);
+  put_text(buffer: buffer, text: &boundary_entries_label[0_u64..boundary_entries_label.len]);
+  put_decimal(buffer: buffer, value: physical_entries);
+  put_text(buffer: buffer, text: &boundary_blocks_label[0_u64..boundary_blocks_label.len]);
+  put_decimal(buffer: buffer, value: physical_blocks);
+  put_text(buffer: buffer, text: &boundary_indexes_label[0_u64..boundary_indexes_label.len]);
+  put_decimal(buffer: buffer, value: indexes);
+  put_text(buffer: buffer, text: &boundary_fallbacks_label[0_u64..boundary_fallbacks_label.len]);
+  put_decimal(buffer: buffer, value: fallbacks);
+  put_text(buffer: buffer, text: &boundary_reason_label[0_u64..boundary_reason_label.len]);
+  let wide_reason = cvt::<u32, u64>(reason);
+  put_decimal(buffer: buffer, value: wide_reason);
   return unit;
 }
 
 fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, compare: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
   doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits restyle stable slots and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes the separately reported style_us and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
+  let transfers_valid = boundary_transfer_check();
+  if transfers_valid {
+  } else {
+    put_text(buffer: &report, text: &boundary_failure[0_u64..boundary_failure.len]);
+    let reported = flush(factory: files, output: err, buffer: &report);
+    return 2_u8;
+  }
   let dump = box_slots_new::<u8>(capacity: 65536_u64);
   let other = box_slots_new::<u8>(capacity: 65536_u64);
   let dumps = box_slots_new::<u64>(capacity: 16_u64);

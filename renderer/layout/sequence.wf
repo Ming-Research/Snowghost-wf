@@ -5,10 +5,10 @@ fn absent_handle() -> made: EntryHandle pure {
 }
 
 fn empty_output() -> made: SequenceOutput pure {
-  doc "The empty sequence output; only this zero-entry transfer is known to be identity before step 4.";
+  doc "The identity Through transfer, with no line or float handles.";
   let absent = absent_handle();
   let yes = True();
-  let empty = SequenceOutput(count: 0_u64, events: 0_u64, first_line: absent, last_line: absent, ordinary: yes, through: yes, leading_positive: 0_i32, leading_negative: 0_i32, advance: 0_i64, trailing_positive: 0_i32, trailing_negative: 0_i32);
+  let empty = SequenceOutput(count: 0_u64, events: 0_u64, first_line: absent, last_line: absent, ordinary: yes, through: yes, leading_positive: 0_i32, leading_negative: 0_i32, advance: 0_i64, trailing_positive: 0_i32, trailing_negative: 0_i32, first_baseline: 0_i64, last_baseline: 0_i64, travel: 0_i64, min_content: 0_i32, max_content: 0_i32, floats: 0_u64, first_float: absent, last_float: absent, barriers: 0_u32);
   return empty;
 }
 
@@ -23,7 +23,7 @@ fn pending_output(events: u64) -> made: SequenceOutput pure {
 }
 
 fn join_output(left: SequenceOutput, right: SequenceOutput) -> made: SequenceOutput pure {
-  doc "Combines structural summaries in document order. Margin composition is deliberately unsupported for nonempty runs until step 4 validates it against the reference machine.";
+  doc "Composes Through/Through, Through/Solid, Solid/Through and Solid/Solid in document order. Only unsaturated ordinary transfers may drive placement; structural, baseline and float metadata remain available for unsupported runs.";
   if left.count == 0_u64 {
     return right;
   }
@@ -45,8 +45,75 @@ fn join_output(left: SequenceOutput, right: SequenceOutput) -> made: SequenceOut
     give left.last_line;
   }
   set joined.last_line = last_line;
-  let no = False();
-  set joined.ordinary = no;
+  let composed_1 = band(left.ordinary, right.ordinary);
+  set joined.ordinary = composed_1;
+  let composed_2 = band(left.through, right.through);
+  set joined.through = composed_2;
+  set joined.leading_positive = left.leading_positive;
+  set joined.leading_negative = left.leading_negative;
+  set joined.trailing_positive = right.trailing_positive;
+  set joined.trailing_negative = right.trailing_negative;
+  let displacement = 0_i64;
+  if left.through {
+    let composed_3 = imax(left.leading_positive, right.leading_positive);
+    set joined.leading_positive = composed_3;
+    let composed_4 = imin(left.leading_negative, right.leading_negative);
+    set joined.leading_negative = composed_4;
+    set joined.advance = right.advance;
+  } else if right.through {
+    set joined.advance = left.advance;
+    let composed_5 = imax(left.trailing_positive, right.leading_positive);
+    set joined.trailing_positive = composed_5;
+    let composed_6 = imin(left.trailing_negative, right.leading_negative);
+    set joined.trailing_negative = composed_6;
+  } else {
+    let positive = imax(left.trailing_positive, right.leading_positive);
+    let negative = imin(left.trailing_negative, right.leading_negative);
+    let wide_positive = cvt::<i32, i64>(positive);
+    let wide_negative = cvt::<i32, i64>(negative);
+    let gap = wide_positive +sat wide_negative;
+    set displacement = left.advance +sat gap;
+    set joined.advance = displacement +sat right.advance;
+  }
+  let first_offset = if left.first_line.slot != no_index {
+    give left.first_baseline;
+  } else if right.first_line.slot != no_index {
+    give displacement +sat right.first_baseline;
+  } else {
+    give 0_i64;
+  }
+  let last_offset = if right.last_line.slot != no_index {
+    give displacement +sat right.last_baseline;
+  } else if left.last_line.slot != no_index {
+    give left.last_baseline;
+  } else {
+    give 0_i64;
+  }
+  set joined.first_baseline = first_offset;
+  set joined.last_baseline = last_offset;
+  set joined.travel = left.travel +sat right.travel;
+  if joined.travel > 268435456_i64 {
+    set joined.ordinary = False();
+  }
+  let composed_7 = imax(left.min_content, right.min_content);
+  set joined.min_content = composed_7;
+  let composed_8 = imax(left.max_content, right.max_content);
+  set joined.max_content = composed_8;
+  set joined.floats = left.floats +sat right.floats;
+  let first_export = if left.first_float.slot != no_index {
+    give left.first_float;
+  } else {
+    give right.first_float;
+  }
+  let last_export = if right.last_float.slot != no_index {
+    give right.last_float;
+  } else {
+    give left.last_float;
+  }
+  set joined.first_float = first_export;
+  set joined.last_float = last_export;
+  let composed_9 = imax(left.barriers, right.barriers);
+  set joined.barriers = composed_9;
   return joined;
 }
 
@@ -92,9 +159,9 @@ fn sequence_reserve(sequence: &EntrySequence) -> result: unit reads(sequence.all
   return unit;
 }
 
-fn later_handles(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, handles: &Box<Slots<EntryHandle>>) -> result: unit reads(sequence.nodes), reads(sequence.span), writes(handles) {
+fn later_handles(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, handles: &Box<Slots<EntryHandle>>, visits: &BoundaryVisits) -> result: unit reads(sequence.nodes), reads(sequence.span), writes(handles), writes(visits) {
   doc "Visits only index subtrees intersecting a direct suffix and emits stable handles in order. The result is an immutable work list, not a retained alternate order index.";
-  let held = sequence_node(sequence: sequence, slot: root);
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
   if held.live {
   } else {
     return unit;
@@ -102,18 +169,18 @@ fn later_handles(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, han
   if skip >= held.total.count {
     return unit;
   }
-  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
   if skip < left_node.total.count {
-    later_handles(sequence: sequence, root: held.left, skip: skip, owner: owner, handles: handles);
+    later_handles(sequence: sequence, root: held.left, skip: skip, owner: owner, handles: handles, visits: visits);
   }
   if skip <= left_node.total.count {
     let handle = EntryHandle(owner: owner, slot: root);
     let kept = push_item::<EntryHandle>(cell: handles, value: handle, ceiling: item_ceiling);
-    later_handles(sequence: sequence, root: held.right, skip: 0_u64, owner: owner, handles: handles);
+    later_handles(sequence: sequence, root: held.right, skip: 0_u64, owner: owner, handles: handles, visits: visits);
   } else {
     let past_left = skip -sat left_node.total.count;
     let past_self = past_left -sat 1_u64;
-    later_handles(sequence: sequence, root: held.right, skip: past_self, owner: owner, handles: handles);
+    later_handles(sequence: sequence, root: held.right, skip: past_self, owner: owner, handles: handles, visits: visits);
   }
   return unit;
 }
@@ -125,7 +192,8 @@ fn visit_later(sequence: &EntrySequence, after: u32, owner: u32) -> made: Box<Sl
   if current.live {
     let rank = sequence_rank(sequence: sequence, slot: after);
     let start = rank +sat 1_u64;
-    later_handles(sequence: sequence, root: sequence^.root, skip: start, owner: owner, handles: &handles);
+    let visits = no_boundary_visits();
+    later_handles(sequence: sequence, root: sequence^.root, skip: start, owner: owner, handles: &handles, visits: &visits);
   }
   return move handles;
 }
@@ -338,31 +406,9 @@ fn sequence_balance(sequence: &EntrySequence, slot: u32) -> root: u32 reads(sequ
 }
 
 fn sequence_rank(sequence: &EntrySequence, slot: u32) -> rank: u64 reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
-  doc "Computes a temporary rank from parent links and cached counts. no_index denotes the end; no rank is persisted on a payload.";
-  let current = sequence_node(sequence: sequence, slot: slot);
-  if current.live {
-  } else {
-    let total = sequence_output(sequence: sequence);
-    return total.count;
-  }
-  let left_node = sequence_node(sequence: sequence, slot: current.left);
-  let rank = left_node.total.count;
-  let cursor = slot;
-  let ancestor = current.parent;
-  for (level in 0_u64..64_u64) {
-    let parent_node = sequence_node(sequence: sequence, slot: ancestor);
-    if parent_node.live {
-    } else {
-      return rank;
-    }
-    if parent_node.right == cursor {
-      let preceding = sequence_node(sequence: sequence, slot: parent_node.left);
-      let before_parent = preceding.total.count +sat 1_u64;
-      set rank = rank +sat before_parent;
-    }
-    set cursor = ancestor;
-    set ancestor = parent_node.parent;
-  }
+  doc "Returns a transient direct rank through the shared counted index descent.";
+  let visits = no_boundary_visits();
+  let rank = boundary_rank(sequence: sequence, slot: slot, visits: &visits);
   return rank;
 }
 
@@ -520,24 +566,9 @@ fn prefix_output(sequence: &EntrySequence, before: u32) -> made: SequenceOutput 
 }
 
 fn sequence_set_output(sequence: &EntrySequence, slot: u32, output: SequenceOutput) -> result: unit reads(sequence.span), writes(sequence.nodes) {
-  doc "Updates one boundary output and only its AVL ancestors, without accessing earlier payloads.";
-  let held = sequence_node(sequence: sequence, slot: slot);
-  if held.live {
-  } else {
-    return unit;
-  }
-  set held.own = output;
-  sequence_write(sequence: sequence, slot: slot, node: held);
-  let cursor = slot;
-  for (level in 0_u64..64_u64) {
-    let current = sequence_node(sequence: sequence, slot: cursor);
-    if current.live {
-    } else {
-      return unit;
-    }
-    sequence_repair(sequence: sequence, slot: cursor);
-    set cursor = current.parent;
-  }
+  doc "Repairs one boundary through the same index operation used by the counted update path.";
+  let visits = no_boundary_visits();
+  boundary_set(sequence: sequence, slot: slot, output: output, visits: &visits);
   return unit;
 }
 
@@ -760,6 +791,7 @@ fn refresh_owner_output(context: &Context, owner: u32) -> result: unit reads(con
       set output.first_line = inside.first_line;
       set output.last_line = inside.last_line;
       set context^.blocks.inner[at].boundary = output;
+      set context^.blocks.inner[at].output.valid = False();
       let parent = context^.blocks.inner[at].parent;
       let slot = context^.blocks.inner[at].entry_slot;
       owner_set_output(context: context, owner: parent, slot: slot, output: output);

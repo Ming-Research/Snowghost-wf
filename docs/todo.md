@@ -162,6 +162,40 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **M2 step 4 has a narrower update frontier than its final contract.**
+  `boundary.wf` handles one marked paragraph or child context recursively,
+  and one restyled block on its ancestor path. Multiple marked paragraphs
+  or blocks, intrinsic demand, columns and spanning context fragments still
+  select reference replay. Impact: broad font-size edits and many real-page
+  edits do not yet establish bounded M2 work. Add an owner-local dirty-entry
+  frontier and combine changed outputs before translating siblings; migrate
+  spanning fragments and natural positions to stable anchors. Reopen before
+  step 5 uses this path. Require every edit prefix to equal a fresh build,
+  with zero unexplained fallback on the claimed ordinary workloads.
+
+- **M2 step 4 needs parallel scatter and complete physical-work evidence.**
+  AVL reduction repair is local, but `later_handles` appends to one temporary
+  list and sibling payload writes still route through the context pools.
+  The code does not establish independent sibling writes at the pinned
+  compiler; this is the existing step-3 distinct-slot proof gap, also affecting
+  step 4. Replace the append down-sweep with disjoint result regions and the
+  payload scatter with a compiler-proved distinct-slot operation. The new
+  counters count boundary payload opens and metadata nodes, not reference
+  replay, preparation or page-directory steps. Add earlier-leaf and unchanged
+  descendant sentinels plus those missing counters before claiming physical
+  locality. Reopen before M2 completion; validate compiler certificates and
+  unchanged-subtree scaling with the deliberate extra-scan mutation.
+
+- **M2 step 4 acceptance has not run.** The incremental oracle now calls
+  `boundary_transfer_check` for associative composition against the reference
+  margin operations and prints the new boundary visit counts. The source-only
+  delivery has no compilation, dump, mutation or timing evidence. Add the
+  nested empty/top-bottom-border/marker/min-max-height entering-state cases
+  against `stack_flow`, confirm the new edit script's NodeIds, and run seq/par
+  fresh-build comparisons and all five mutations from the structure-edits
+  investigation. Reopen in primary-agent CI before accepting the fast path;
+  a passing standalone algebra check does not settle nested classification.
+
 - **Step 2's reassociation falsifier is not yet detected.** M2 layout step
   2 stores origins owner-relative and sums them in i64 (geometry.wf). Its
   falsifier rewrites `content_left +sat (inner_x +sat dx)` as

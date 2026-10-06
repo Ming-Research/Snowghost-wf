@@ -388,7 +388,8 @@ struct Before {
 
 fn no_updates() -> made: UpdateCounts pure {
   doc "The counts of an update that did nothing.";
-  return UpdateCounts(prepared: 0_u64, contexts: 0_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
+  let boundary_work = no_boundary_visits();
+  return UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: 0_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
 }
 
 fn update_counts(layout: &Layout) -> (prepared: u64, contexts: u64, paragraphs: u64, held_entries: u64, entries: u64) reads(layout) {
@@ -560,6 +561,7 @@ fn update_child(child: &Context, styles: &Styles, document: &Document, fonts: &F
 
 fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> (counts: UpdateCounts, still: Bool) reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
   doc "Brings a marked child context up to date in the space its parent wrote, as lay_out_child would lay it out: a flow context by update_flow; a flex or grid container by update_container when that finds its result unchanged, else by its own algorithm while it is marked, so that lay_out_child keeps or updates its items (counted as one context, with its items' counts added); a table or replaced context in full, its subtree returned to the fresh state by reset_marked_children first when its parent is a flow context, and the marks below it cleared after (clear_tree_marks), since its layout in full does not go through their updates and a mark left would hide the next edit's from text_changed's counts. Then it records the space as laid and resolves its margins. still tells whether the child lays out as before in every space its parent's algorithm may give it: a flow context whose outputs (same_outputs) and content height (content_raw) came out as before and whose content does not read a definite height (definite_free), or a container update_container stopped at.";
+  let boundary_work = no_boundary_visits();
   if child^.kind == ctx_flow {
     let old_raw = child^.content_raw;
     let counts = update_flow(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
@@ -606,12 +608,13 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
   }
   clear_tree_marks(context: child);
   let (contexts, paragraphs) = count_tree(context: child);
-  return UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64), no;
+  return UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64), no;
 }
 
 fn one_context_count() -> made: UpdateCounts pure {
   doc "The counts of one context laid out again.";
-  return UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
+  let boundary_work = no_boundary_visits();
+  return UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: 1_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
 }
 
 fn update_container(container: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (stopped: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(container) {
@@ -733,16 +736,18 @@ fn marked_children_state(context: &Context, styles: &Styles) -> (asked: Bool, ou
 
 fn add_counts(first: UpdateCounts, second: UpdateCounts) -> made: UpdateCounts pure {
   doc "The sum of two updates' counts.";
+  let boundary_work = add_boundary_visits(first: first.work, second: second.work);
   let prepared = first.prepared +sat second.prepared;
   let contexts = first.contexts +sat second.contexts;
   let paragraphs = first.paragraphs +sat second.paragraphs;
   let held_entries = first.held_entries +sat second.held_entries;
   let entries = first.entries +sat second.entries;
-  return UpdateCounts(prepared: prepared, contexts: contexts, paragraphs: paragraphs, held_entries: held_entries, entries: entries);
+  return UpdateCounts(work: boundary_work, prepared: prepared, contexts: contexts, paragraphs: paragraphs, held_entries: held_entries, entries: entries);
 }
 
 fn sum_counts(results: &Box<Array<UpdateCounts>>) -> counts: UpdateCounts reads(results) {
   doc "The sum of the counts the children's updates returned.";
+  let boundary_work = no_boundary_visits();
   let count = results^.inner.len;
   let contexts = 0_u64;
   let paragraphs = 0_u64;
@@ -750,12 +755,14 @@ fn sum_counts(results: &Box<Array<UpdateCounts>>) -> counts: UpdateCounts reads(
   let entries = 0_u64;
   for (k in 0_u64..count) {
     let got = results^.inner[k];
+    let added_work = add_boundary_visits(first: boundary_work, second: got.work);
+    set boundary_work = added_work;
     set contexts = contexts +sat got.contexts;
     set paragraphs = paragraphs +sat got.paragraphs;
     set held_entries = held_entries +sat got.held_entries;
     set entries = entries +sat got.entries;
   }
-  return UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: held_entries, entries: entries);
+  return UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: held_entries, entries: entries);
 }
 
 fn any_set(flags: &Box<Array<Bool>>) -> found: Bool reads(flags) {
@@ -777,6 +784,7 @@ fn fresh_before() -> made: Before pure {
 
 fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked: Bool, marked_parent: Bool, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result_unit: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(result) {
   doc "One iteration of update_flow's children pass after the pre-pass: a marked child is updated; an unmarked child whose space came out as before records is kept, its margins resolved again (the parent's intrinsic sizes may have resolved them against no width); a positioned child that position_out_with lays out again in the space its insets leave keeps its layout for now, with its margins resolved in this space as a layout in it would leave them, and position_out_with keeps it again when that space is the one it was laid out in; any other is laid out again with lay_out_child as its parent's update does (a flow context updated from its last layout, any other kind in full). It forgets the child's intrinsic sizes first only where a full layout of the edited document would compute them against another basis: when the parent is marked (its content changed, so the edited document's layout reaches the child afresh), nobody asked for them in this update (so the first request is the child's own layout) and they were computed against another percentage basis than its new space's; a parent laid out again without a mark, as lay_out_child lays it out in full, keeps them. Records the counts.";
+  let boundary_work = no_boundary_visits();
   if child^.dirty {
     let got = update_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
     set result^ = got;
@@ -808,7 +816,7 @@ fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked:
   let whole = False();
   let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: whole);
   let (contexts, paragraphs) = count_tree(context: child);
-  set result^ = UpdateCounts(prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
+  set result^ = UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
   return unit;
 }
 
@@ -899,13 +907,19 @@ fn vertical_padding_fixed(styles: &Styles, style: StyleRef) -> fixed: Bool reads
 }
 
 fn block_grows(context: &Context, styles: &Styles, block: u64, delta: i32, basis_height: i32, lines: Bool) -> grows: Bool reads(context), reads(styles) {
-  doc "Tells whether the stacking pass makes block's height grow by exactly delta when the content inside it does: an auto height, no max-height, a min-height no taller than its paddings and borders, paddings that do not depend on a width, a height above its paddings and borders before and not below them after, and, for a list item with an outside marker, a line box inside it, so that the marker makes no line.";
+  doc "Checks one guarded block payload through the shared snapshot rule.";
   if block < context^.blocks.inner.len {
-  } else {
-    return False();
+    let snapshot = block_snapshot(block: &context^.blocks.inner[block]);
+    let checked = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: basis_height, lines: lines);
+    return checked;
   }
-  let style = context^.blocks.inner[block].style;
-  let marker = context^.blocks.inner[block].marker;
+  return False();
+}
+
+fn snapshot_grows(block: BlockSnapshot, styles: &Styles, delta: i32, basis_height: i32, lines: Bool) -> grows: Bool reads(styles) {
+  doc "Tells whether the stacking pass makes block's height grow by exactly delta when the content inside it does: an auto height, no max-height, a min-height no taller than its paddings and borders, paddings that do not depend on a width, a height above its paddings and borders before and not below them after, and, for a list item with an outside marker, a line box inside it, so that the marker makes no line.";
+  let style = block.style;
+  let marker = block.marker;
   let unlined = bnot(lines);
   let marker_lined = band(marker, unlined);
   if marker_lined {
@@ -932,7 +946,7 @@ fn block_grows(context: &Context, styles: &Styles, block: u64, delta: i32, basis
   if minimum > frame {
     return False();
   }
-  let height = context^.blocks.inner[block].height;
+  let height = block.height;
   if height <= frame {
     return False();
   }
@@ -1165,6 +1179,7 @@ fn break_in_place(context: &Context, styles: &Styles, fonts: &FontSet, picks: &F
 
 fn update_in_place(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, measured: Bool) -> (handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Updates a marked flow context whose geometry and space are those of its previous layout without its pre-pass or stacking pass (decision 1 of X5's step 3b), when text_changed marked at most one of its child contexts and at most one of its paragraphs. When its intrinsic sizes were computed in this update (measured), which resolves its children's inline margins against no width (intrinsic_flow), every child's margins are resolved again first, as the pre-pass path's children pass does. Then the marked child, an atomic inline or an in-flow child no earlier float reaches, is updated in the space it was laid out in; the one entry whose layout then changed (the marked paragraph, broken again, the paragraph holding the child when it is an atomic inline whose outputs changed, or the in-flow child when its outputs changed) keeps its place, and when its height changed by delta and no float placed before it reaches below its top, every block around it grows by delta with it (blocks_grow), the margins it leaves below are unchanged and a line box lies in it as before, every later entry moves down by delta (translate_after); then finish_in_place gives the context its content height, height, own fragment and out-of-flow children, and its baseline follows the entry it is read from. The fragments of the context's own list move or grow with it (translate_fragments). False when any of that does not hold, when the entry had no height, or when the context has columns; whatever it already updated (the child, the marked paragraph broken again, its mark then cleared, the paragraph holding a changed atomic inline, broken again for it) its caller's passes keep, since breaking again in them would give the same lines, and the counts it returns are the child's and the paragraph's.";
+  let boundary_work = no_boundary_visits();
   let none = no_updates();
   if frame.columned {
     return False(), none;
@@ -1200,8 +1215,8 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
   }
   let no_entry = 18446744073709551615_u64;
   let counts = none;
-  let one_broken = UpdateCounts(prepared: 0_u64, contexts: 0_u64, paragraphs: 1_u64, held_entries: 0_u64, entries: 0_u64);
-  let one_context = UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
+  let one_broken = UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: 0_u64, paragraphs: 1_u64, held_entries: 0_u64, entries: 0_u64);
+  let one_context = UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: 1_u64, paragraphs: 0_u64, held_entries: 0_u64, entries: 0_u64);
   let child_kind = 4_u8;
   let child_holder = no_entry;
   let child_changed = False();
@@ -1386,16 +1401,33 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
   let total_paragraphs = with_positioned.paragraphs;
   let total_held = with_positioned.held_entries +sat walked;
   let total_entries = with_positioned.entries +sat walked;
-  let made = UpdateCounts(prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
+  let made = UpdateCounts(work: with_positioned.work, prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
   return True(), made;
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Updates through the compatibility coordinate bridge and virtual nested-event adapter; step 4 replaces the remaining context-wide scratch conversion.";
+  doc "Attempts bounded boundary propagation before touching the reference coordinate bridge. A prior ordinary edit invalidates legacy natural-position scratch, so a later refusal forces full stacking before republishing boundary outputs.";
+  let visits = no_boundary_visits();
+  set context^.boundary_visits = visits;
+  let (handled, local) = boundary_update(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  if handled {
+    let local_work = add_boundary_visits(first: local.work, second: context^.boundary_visits);
+    set local.work = local_work;
+    return local;
+  }
+  if context^.boundary_dirty {
+    set context^.restyled = True();
+  }
   geometry_reference(context: context);
   let updated = update_flow_reference(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  publish_boundaries(context: context, styles: styles, basis_height: frame.definite);
+  set context^.boundary_dirty = False();
   geometry_owned(context: context);
-  return updated;
+  let combined = add_counts(first: local, second: updated);
+  let work = add_boundary_visits(first: combined.work, second: context^.boundary_visits);
+  set combined.work = work;
+  return combined;
 }
 
 fn update_flow_reference(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
@@ -1587,7 +1619,7 @@ fn update_flow_reference(context: &Context, styles: &Styles, document: &Document
   let total_paragraphs = below.paragraphs +sat broken;
   let total_held = below.held_entries +sat held_here;
   let total_entries = below.entries +sat walked;
-  return UpdateCounts(prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
+  return UpdateCounts(work: below.work, prepared: 0_u64, contexts: total_contexts, paragraphs: total_paragraphs, held_entries: total_held, entries: total_entries);
 }
 
 fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> result: Result<unit, LayoutError> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout) {
@@ -1595,6 +1627,8 @@ fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet
   if layout^.dirty {
   } else {
     set layout^.last_update = no_updates();
+    let visits = no_boundary_visits();
+    set layout^.root.boundary_visits = visits;
     return Ok<unit, LayoutError>(value: unit);
   }
   let prepared = count_marked(context: &layout^.root);
@@ -1608,7 +1642,7 @@ fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet
   let counts = update_flow(context: &layout^.root, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
   set layout^.root.x = 0_i32;
   set layout^.root.y = 0_i32;
-  set layout^.last_update = UpdateCounts(prepared: prepared, contexts: counts.contexts, paragraphs: counts.paragraphs, held_entries: counts.held_entries, entries: counts.entries);
+  set layout^.last_update = UpdateCounts(work: counts.work, prepared: prepared, contexts: counts.contexts, paragraphs: counts.paragraphs, held_entries: counts.held_entries, entries: counts.entries);
   set layout^.dirty = False();
   if prepared_ok {
     return Ok<unit, LayoutError>(value: unit);
@@ -1619,6 +1653,7 @@ fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet
 
 fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, from: u64, until: u64, empty_stable: Bool, at: u64, old_top: i32, old_height: i32, old_lines: Bool, unasked: Bool) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Stacks an affected flow range after restoring its unchanged prefix state. from is the first changed entry and until the last entry that must be processed before convergence; at names a paragraph already prepared by the caller, or no paragraph. A converged suffix moves by one delta, including natural positions and split lines; later baselines follow that delta. Split rectangles are regenerated from their block extents, while unchanged empty-inline fragments are kept when empty_stable and the line-presence checks permit it. The context's height, own fragment and positioned children are then current.";
+  let boundary_work = no_boundary_visits();
   let held = context^.children.inner.len;
   let none = box_slots_new::<Exclusion>(capacity: 0_u64);
   if at < context^.paragraphs.inner.len {
@@ -1720,7 +1755,7 @@ fn restack_flow(context: &Context, styles: &Styles, document: &Document, fonts: 
     give 0_u64;
   }
   let entries = stacked.restacked +sat walked;
-  let own = UpdateCounts(prepared: 0_u64, contexts: 1_u64, paragraphs: 1_u64, held_entries: stacked.restacked, entries: entries);
+  let own = UpdateCounts(work: boundary_work, prepared: 0_u64, contexts: 1_u64, paragraphs: 1_u64, held_entries: stacked.restacked, entries: entries);
   let with_stacked = add_counts(first: own, second: stacked.below);
   let summed = add_counts(first: with_stacked, second: positioned_counts);
   return summed;
@@ -2105,12 +2140,17 @@ fn prepare_local_widths(context: &Context, styles: &Styles, from: u64, until: u6
 }
 
 fn block_keeps_width(context: &Context, styles: &Styles, b: u64) -> kept: Bool reads(context), reads(styles) {
-  doc "Whether a block keeps the horizontal geometry its pre-pass recorded in its unchanged containing width.";
+  doc "Checks one guarded block payload through the shared snapshot rule.";
   if b < context^.blocks.inner.len {
-  } else {
-    return False();
+    let snapshot = block_snapshot(block: &context^.blocks.inner[b]);
+    let checked = snapshot_keeps_width(block: snapshot, styles: styles);
+    return checked;
   }
-  let block = block_snapshot(block: &context^.blocks.inner[b]);
+  return False();
+}
+
+fn snapshot_keeps_width(block: BlockSnapshot, styles: &Styles) -> kept: Bool reads(styles) {
+  doc "Whether a block keeps the horizontal geometry its pre-pass recorded in its unchanged containing width.";
   let (box_width, offset, margin_left, margin_right) = block_width(styles: styles, style: block.style, available: block.avail_width);
   let x = block.avail_left +sat offset;
   let border = border_edges(styles: styles, style: block.style);

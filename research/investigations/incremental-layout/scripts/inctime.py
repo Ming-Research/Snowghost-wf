@@ -15,15 +15,20 @@ a filter. Raw dumps and the separate style diagnostics are accepted only
 in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
+Historical logs may omit the entire boundary-count suffix. Current logs
+must supply all five fields together; timings retain and compare those
+counts, and reject mixed old/new timing records within one run.
 """
 import re
 import sys
 
-TIMED = re.compile(r'edit (\d+) us (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)$')
+BOUNDARY = (r'(?: boundary_entries (\d+) boundary_blocks (\d+) boundary_indexes (\d+)'
+            r' boundary_fallbacks (\d+) boundary_reason (\d+))?')
+TIMED = re.compile(r'edit (\d+) us (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)' + BOUNDARY + '$')
 OTHER = re.compile(r'edit (\d+) (inc refused|full)$')
 HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|refused))?$')
 BASE = re.compile(r'base hash [0-9a-f]{16} bytes \d+$')
-STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+$')
+STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraphs \d+ held_entries \d+ entries \d+' + BOUNDARY + '$')
 STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)(?: style_us (\d+))?$')
 STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) reused (\d+)$')
 CREATED = re.compile(r'created \d+$')
@@ -111,7 +116,7 @@ def read(path, operations, checking=False):
         elif match:
             if not incremental:
                 raise ValueError('%s: edit %d: unexpected timed structural edit' % (path, edit))
-            timed[edit] = [int(value) for value in match.groups()[1:]]
+            timed[edit] = [int(value) for value in match.groups()[1:] if value is not None]
         else:
             status = fallback.group(2)
             if incremental or status != 'full':
@@ -216,6 +221,12 @@ def main():
           % (min(times), rank(times, 0.5), rank(times, 0.9), max(times),
              sum(1 for t in times if t < 1000), len(times)))
     names = ['prepared', 'contexts', 'paragraphs', 'held_entries', 'entries']
+    widths = {len(values) for values in first_timed.values()}
+    if len(widths) != 1:
+        raise ValueError('mixed legacy and boundary count records')
+    if widths == {11}:
+        names += ['boundary_entries', 'boundary_blocks', 'boundary_indexes',
+                  'boundary_fallbacks', 'boundary_reason']
     for k, name in enumerate(names):
         values = [first_timed[edit][k + 1] for edit in first_timed]
         print('%s min %d median %d max %d' % (name, min(values), rank(values, 0.5), max(values)))

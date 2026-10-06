@@ -718,13 +718,15 @@ paragraph retains the reference walker's unplaced scratch-origin behavior.
 Step 3 now has the nested order representation and small virtual-event
 adapters in flex, grid, table and columns. Its node summaries carry direct
 counts, virtual event spans and first/last line-bearing entry handles;
-nonempty margin transfers explicitly remain unsupported until step 4.
+nonempty margin transfers are populated by the step-4 source described below.
 The builder writes nested sequences directly. Typed block, paragraph and
 child-context payload pools remain context-owned migration storage: the
 paged entries contain handles into those pools, not the heavy payloads.
 Physical typed-payload ownership and local route publication remain open;
 this source does not claim the complete step-3 ownership contract or M2
-locality. Steps 4 onward remain unimplemented. Each step lands with
+locality. Step 4 has an unvalidated ordinary-path implementation; its wider
+dirty frontier and parallel scatter remain incomplete. Steps 5 onward remain
+unimplemented. Each step lands with
 the full-build and incremental paths producing exactly the same dump,
 including fragment order; a partial performance improvement never permits
 a rendering difference. Line ranges are estimates of changed/added source
@@ -757,6 +759,142 @@ not require a linear span. Parent height and intrinsic size depend on
 child outputs. Sequence publication depends on completing its replacement.
 No allocator counter, shared shape cache, whole-context scan or serial
 scatter is justified by those semantic dependencies.
+
+### Step-4 source and remaining acceptance work
+
+`renderer/layout/boundary.wf` is the maintained home of boundary publication
+and update helpers; `boundary_checks.wf` is its oracle check implementation,
+removed when the algebra coverage moves to a dedicated layout test entry.
+The edit script is test data consumed by the existing incremental driver,
+removed when equivalent generated edit cases replace it.
+
+The boundary module publishes block sizes, width inputs, baseline
+handles and offsets, separate positive/negative margin extrema, through
+state and barriers. Float exports retain first/last stable entry handles
+and a count in the enclosing BFC; `reads_floats` is conservative and never
+cleared at a lexical block close. They are routing metadata for reference
+replay, not a claimed constant-sized exclusion transfer. The full-build
+stacking algorithm is unchanged; a post-pass seeds the semantic summaries.
+
+The new update attempt precedes `geometry_reference`. It handles one
+marked paragraph or one marked child context per context, recursively, and
+at most one restyled block on that entry's ancestor chain. Thus text edits
+and single-paragraph font-size edits can propagate across block and context
+boundaries. Each ancestor uses the same width/growth checks as the old path,
+through a shared snapshot. AVL summary repair and a suffix down-sweep consume
+metadata before the changed entry without opening its payload. Sibling
+translation changes direct origins only. Size, baseline handles/offsets,
+margin transfer, intrinsic contributions and float metadata all participate
+in convergence. A baseline change does not stop merely because height agrees.
+
+The ordinary path requires stable widths and struts, existing solid content,
+no incoming/exported floats in that BFC, no clearance, marker-created line,
+height clamp, positioned dependency, intrinsic demand, column map or spanning
+context fragments. Arithmetic uses a conservative absolute-travel bound,
+including exposed baselines. Unsupported state takes the reference path,
+without changing rendering requirements. After a successful ordinary edit,
+`boundary_dirty` records that legacy naturals are stale: the next refusal
+forces full reference stacking before republishing them. A refusal after
+rebreaking also forces full stacking, so the newly computed paragraph height
+cannot be mistaken for the old height by a partial replay.
+
+The existing incremental oracle calls `boundary_transfer_check` before edit
+scripts. It compares both association orders with sequential calls to the
+reference margin operations for four transfer shapes, triples in document
+order, and nine entering struts; it also checks that equal height does not
+hide a changed baseline. This is algebra coverage, not proof of all nested
+Open/Close classifications. `boundary-case.edits`, applied to the existing
+`incremental-layout/scripts/block-case.html`, adds a same-line-height font
+change and text wrapping changes before and after it. Its inline-block
+containers expose the last paragraph's baseline to a parent line; that parent
+still takes the atomic-inline fallback, so this is a geometry test rather
+than a zero-fallback locality case. The script's NodeIds
+must be confirmed with the driver's `nodes` mode in CI; they have not been
+executed in this source-edit session. The temporary `oracles-m2` workflow
+selects this script against `block-case.html` in both builds and validates
+every edit with `inctime.py --check`; it has not been dispatched here.
+The timing parser accepts the complete new counter suffix, retains it in
+count comparisons and reports its ranges. Entirely legacy logs remain
+readable; a partial suffix is invalid.
+
+`put_counts` appends `boundary_entries`, `boundary_blocks`,
+`boundary_indexes`, `boundary_fallbacks` and `boundary_reason` to the existing
+update counts. These count boundary-path payload-opening operations and AVL
+metadata lookups, including repeated opens. They do not count each scalar
+load, slot-page directory step, preparation work or the reference replay.
+Any fallback therefore disqualifies a whole-edit locality claim. The counters
+are aggregated only through contexts actually updated, not by scanning
+unchanged contexts or summing stale counters.
+
+Remaining work is recorded in `docs/todo.md`: multiple dirty entries per
+context, compiler-proved independent suffix output/scatter, complete physical
+visit sentinels and reference-path counters, full nested margin/empty/marker
+classification cases, and exact seq/par edit-prefix validation. No build,
+test, lint, measurement or mutation was run in this implementation session.
+The algebra source is wired, but no acceptance result or performance result
+is claimed. No pin or design decision changed.
+
+A separate read-only review inspected the working diff from
+`8069a471c473c7e44b687c1a2d04035016862394`, the boundary decision and directly
+affected consumers. It found repeated uncounted helper reads (replaced by
+shared block snapshots), missing child propagation (added for flow children),
+non-flow child updates bypassing reset/fallback setup (now refused before
+calling `update_child`), and the timing parser's rejection of appended
+counters (updated). It also identified the remaining multi-entry,
+parallel-scatter, nested-case and sentinel gaps recorded above. The review
+ran no compiler or checks and did not establish byte identity. The final
+non-flow guard, parser and workflow wiring are local repairs inspected by the
+implementer, not a new validation run.
+
+#### Step-4 mutations for CI
+
+Apply each separately and restore it before the next run:
+
+1. **Collapse a strut to one scalar.** In `sequence.wf:join_output`, after
+   composing the leading pair, assign their sum to `leading_positive` and
+   assign zero to `leading_negative`. `boundary_transfer_check` must reject
+   the mixed-sign entering-state cases; a zero net strut must not erase its
+   extrema before a later join.
+2. **Clear an incoming float at a block boundary.** In `flow.wf:stack_flow`'s
+   `Close` arm, replace `stack.floats` with an empty `Slots<Exclusion>` and
+   reset `stack.reach`. Use a float inside a zero-height unframed block whose
+   float extends beside the following paragraph, with a later `clear: both`.
+   The independent Chromium case must change; resetting only
+   `BlockOutput.reads_floats` is masked by the additional BFC-wide refusal and
+   is not a sufficient falsifier of float preservation.
+3. **Stop on equal height with a changed baseline.** In
+   `propagate_boundary`, replace `band(same, size_same)` with `size_same`.
+   Apply the font-size class from `boundary-case.edits` under its fixed
+   line-height: a containing context that reads the descendant baseline must
+   differ from a fresh build. Separately, remove the baseline comparisons
+   from `same_transfer`; the wired algebra check must reject that mutation.
+4. **Omit an ancestor-height update.** Remove the assignment to
+   `context^.blocks.inner[at].height` in `propagate_boundary`, keeping the
+   cached output update. The wrapping text insertion must differ from the
+   fresh-build ancestor rectangle even when the sibling origins agree.
+5. **Scan an unchanged descendant.** In `apply_boundary_move`'s `Open` arm,
+   descend the moved block's `entries` and read a descendant through the
+   counted payload-opening path. On otherwise identical wide/deep fixtures,
+   the visit assertion must reject growth with the unchanged subtree size.
+   A new uninstrumented read is outside the present counters; the required
+   earlier-leaf/descendant sentinels remain an explicit acceptance gap.
+
+For mutation 5, widen that function's counter effect from
+`writes(context.boundary_visits.blocks)` to `writes(context.boundary_visits)`
+and insert this inside its existing guarded block branch before the origin
+write. This intentionally scans direct contents of an unchanged sibling:
+
+```text
+let extra_handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
+let extra_root = context^.blocks.inner[at].entries.root;
+later_handles(sequence: &context^.blocks.inner[at].entries, root: extra_root, skip: 0_u64, owner: b, handles: &extra_handles, visits: &context^.boundary_visits);
+let extra_count = extra_handles.inner.len;
+for (extra_at in 0_u64..extra_count) {
+  let extra_slot = extra_handles.inner[extra_at].slot;
+  let extra_payload = sequence_payload(sequence: &context^.blocks.inner[at].entries, slot: extra_slot);
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+}
+```
 
 ### Step-3 source falsifiers for CI
 

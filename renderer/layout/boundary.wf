@@ -1,0 +1,841 @@
+fn no_boundary_visits() -> made: BoundaryVisits pure {
+  doc "Empty physical-work counters for one attempted boundary update.";
+  let empty = BoundaryVisits(entries: 0_u64, blocks: 0_u64, indexes: 0_u64, fallbacks: 0_u64, reason: 0_u32);
+  return empty;
+}
+
+fn add_boundary_visits(first: BoundaryVisits, second: BoundaryVisits) -> made: BoundaryVisits pure {
+  doc "Combines physical work from contexts actually updated, without inspecting unmarked contexts or retaining stale counts from earlier edits.";
+  let entries = first.entries +sat second.entries;
+  let blocks = first.blocks +sat second.blocks;
+  let indexes = first.indexes +sat second.indexes;
+  let fallbacks = first.fallbacks +sat second.fallbacks;
+  let reason = imax(first.reason, second.reason);
+  let total = BoundaryVisits(entries: entries, blocks: blocks, indexes: indexes, fallbacks: fallbacks, reason: reason);
+  return total;
+}
+
+fn empty_block_output() -> made: BlockOutput pure {
+  doc "An unpublished block boundary cannot authorize a cutoff.";
+  let no = False();
+  let empty = BlockOutput(valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no);
+  return empty;
+}
+
+fn margin_output(margin: i32) -> made: SequenceOutput pure {
+  doc "One unresolved edge; two extrema are retained even when their sum is zero.";
+  let output = empty_output();
+  set output.count = 1_u64;
+  let boundary_value_1 = imax(margin, 0_i32);
+  set output.leading_positive = boundary_value_1;
+  let boundary_value_2 = imin(margin, 0_i32);
+  set output.leading_negative = boundary_value_2;
+  let wide = cvt::<i32, i64>(margin);
+  let opposite = 0_i64 -sat wide;
+  let boundary_value_3 = imax(wide, opposite);
+  set output.travel = boundary_value_3;
+  return output;
+}
+
+fn solid_output(height: i32) -> made: SequenceOutput pure {
+  doc "A resolved separator with no external margin.";
+  let output = margin_output(margin: 0_i32);
+  set output.through = False();
+  let wide = cvt::<i32, i64>(height);
+  set output.advance = wide;
+  let opposite = 0_i64 -sat wide;
+  let boundary_value_4 = imax(wide, opposite);
+  set output.travel = boundary_value_4;
+  return output;
+}
+
+fn baseline_travel(output: SequenceOutput) -> bound: i64 pure {
+  doc "Includes exposed baseline excursions in the exact-arithmetic bound, even when an explicit child height is smaller than its overflowing content.";
+  let first_opposite = 0_i64 -sat output.first_baseline;
+  let last_opposite = 0_i64 -sat output.last_baseline;
+  let first = imax(output.first_baseline, first_opposite);
+  let last = imax(output.last_baseline, last_opposite);
+  let excursion = first +sat last;
+  let bound = output.travel +sat excursion;
+  return bound;
+}
+
+fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragraph) {
+  doc "The paragraph's transfer and first/last baseline offsets; a lineless paragraph contributes the identity strut but remains a live entry.";
+  let output = margin_output(margin: 0_i32);
+  set output.events = 1_u64;
+  set output.min_content = paragraph^.min_content;
+  set output.max_content = paragraph^.max_content;
+  let count = paragraph^.lines.inner.len;
+  if count > 0_u64 {
+    set output.through = False();
+    let boundary_value_5 = cvt::<i32, i64>(paragraph^.height);
+    set output.advance = boundary_value_5;
+    set output.travel = output.advance;
+    let handle = EntryHandle(owner: paragraph^.block, slot: paragraph^.entry_slot);
+    set output.first_line = handle;
+    set output.last_line = handle;
+    let last = count - 1_u64;
+    let first_line = paragraph^.lines.inner[0_u64];
+    let last_line = paragraph^.lines.inner[last];
+    let first_top = cvt::<i32, i64>(first_line.top);
+    let first_base = cvt::<i32, i64>(first_line.baseline);
+    let last_top = cvt::<i32, i64>(last_line.top);
+    let last_base = cvt::<i32, i64>(last_line.baseline);
+    set output.first_baseline = first_top +sat first_base;
+    set output.last_baseline = last_top +sat last_base;
+    let travel = baseline_travel(output: output);
+    set output.travel = travel;
+  }
+  if paragraph^.beside {
+    set output.ordinary = False();
+    set output.barriers = 1_u32;
+  }
+  if paragraph^.atomics.inner.len > 0_u64 {
+    set output.ordinary = False();
+    set output.barriers = 5_u32;
+  }
+  return output;
+}
+
+fn lift_block_output(inside: SequenceOutput, measured: BlockOutput) -> made: SequenceOutput pure {
+  doc "Lifts ordinary Open/Close edges: top padding settles the leading strut and bottom padding settles the trailing strut. Unframed empty boxes remain Through. Height constraints and marker-created lines are rejected by the publisher.";
+  let leading = margin_output(margin: measured.margin_top);
+  let opened = leading;
+  if measured.top_frame > 0_i32 {
+    let top = solid_output(height: measured.top_frame);
+    let boundary_value_6 = join_output(left: leading, right: top);
+    set opened = boundary_value_6;
+  }
+  let content = join_output(left: opened, right: inside);
+  let closed = content;
+  if measured.bottom_frame > 0_i32 {
+    let bottom = solid_output(height: measured.bottom_frame);
+    let boundary_value_7 = join_output(left: content, right: bottom);
+    set closed = boundary_value_7;
+  }
+  let trailing = margin_output(margin: measured.margin_bottom);
+  let output = join_output(left: closed, right: trailing);
+  set output.count = 1_u64;
+  set output.events = inside.events +sat 2_u64;
+  return output;
+}
+
+fn publish_block_output(context: &Context, styles: &Styles, at: u64, basis_height: i32, incoming_floats: Bool) -> result: unit reads(context.entries.span), reads(styles), writes(context.blocks.inner), writes(context.entries.nodes) {
+  doc "Publishes the measured size, width inputs and semantic transfer of one block after reference stacking or ancestor repair. Barriers are refusal reasons: 1 floats, 2 clearance, 3 height constraints/markers, 4 unresolved or negative extent, 5 positioned dependency.";
+  if at < context^.blocks.inner.len {
+  } else {
+    return unit;
+  }
+  let held = block_snapshot(block: &context^.blocks.inner[at]);
+  let inside = sequence_output(sequence: &context^.blocks.inner[at].entries);
+  let slot = context^.blocks.inner[at].entry_slot;
+  let border = border_edges(styles: styles, style: held.style);
+  let padding = padding_edges(styles: styles, style: held.style, basis: held.avail_width);
+  let margins = margin_edges(styles: styles, style: held.style, basis: held.avail_width);
+  let group = box_of(styles: styles, style: held.style);
+  let top = border.top +sat padding.top;
+  let bottom = border.bottom +sat padding.bottom;
+  let frame = top +sat bottom;
+  let specified = specified_height(styles: styles, style: held.style, basis: basis_height, frame: frame);
+  let (minimum, maximum) = height_limits(styles: styles, style: held.style, basis: basis_height, frame: frame);
+  let yes = True();
+  let measured = BlockOutput(valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: basis_height, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats);
+  let output = lift_block_output(inside: inside, measured: measured);
+  let reason = inside.barriers;
+  if incoming_floats {
+    let boundary_value_8 = imax(reason, 1_u32);
+    set reason = boundary_value_8;
+  }
+  if output.floats > 0_u64 {
+    let boundary_value_9 = imax(reason, 1_u32);
+    set reason = boundary_value_9;
+  }
+  if group.clear != clear_none {
+    let boundary_value_10 = imax(reason, 2_u32);
+    set reason = boundary_value_10;
+  }
+  if specified >= 0_i32 {
+    let boundary_value_11 = imax(reason, 3_u32);
+    set reason = boundary_value_11;
+  }
+  if minimum > frame {
+    let boundary_value_12 = imax(reason, 3_u32);
+    set reason = boundary_value_12;
+  }
+  if maximum >= 0_i32 {
+    let boundary_value_13 = imax(reason, 3_u32);
+    set reason = boundary_value_13;
+  }
+  if held.marker {
+    let boundary_value_14 = imax(reason, 3_u32);
+    set reason = boundary_value_14;
+  }
+  if output.advance < 0_i64 {
+    let boundary_value_15 = imax(reason, 4_u32);
+    set reason = boundary_value_15;
+  }
+  let resolved_height = cvt::<i32, i64>(held.height);
+  if output.advance != resolved_height {
+    let boundary_value_101 = imax(reason, 4_u32);
+    set reason = boundary_value_101;
+  }
+  if group.position != position_static {
+    let boundary_value_16 = imax(reason, 5_u32);
+    set reason = boundary_value_16;
+  }
+  if reason != 0_u32 {
+    set output.ordinary = False();
+  }
+  set output.barriers = reason;
+  if at < context^.blocks.inner.len {
+    set context^.blocks.inner[at].output = measured;
+    set context^.blocks.inner[at].boundary = output;
+  }
+  owner_set_output(context: context, owner: held.parent, slot: slot, output: output);
+  return unit;
+}
+
+fn publish_boundaries(context: &Context, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "Seeds outputs from the unchanged full-build/re-stack reference. Close publishes bottom-up; a float is exported through every containing summary and remains an input dependency after its lexical block closes. This pass belongs only to the reference path.";
+  let count = flow_length(context: context);
+  let incoming = False();
+  for (rank in 0_u64..count) {
+    let item = flow_event(context: context, at: rank);
+    match item {
+      Text(paragraph: p) => {
+        let paragraph_at = cvt::<u32, u64>(p);
+        if paragraph_at < context^.paragraphs.inner.len {
+          let output = paragraph_output(paragraph: &context^.paragraphs.inner[paragraph_at]);
+          let owner = context^.paragraphs.inner[paragraph_at].block;
+          let slot = context^.paragraphs.inner[paragraph_at].entry_slot;
+          owner_set_output(context: context, owner: owner, slot: slot, output: output);
+        }
+      }
+      Close(block: b) => {
+        let block_at = cvt::<u32, u64>(b);
+        publish_block_output(context: context, styles: styles, at: block_at, basis_height: basis_height, incoming_floats: incoming);
+      }
+      Float(context: f) => {
+        set incoming = True();
+        publish_child_boundary(context: context, child: f, floated: incoming);
+      }
+      Child(context: c) => {
+        let child_at = cvt::<u32, u64>(c);
+        if child_at < context^.children.inner.len {
+          let child_output = context_entry_output(child: &context^.children.inner[child_at], styles: styles);
+          let child_owner = context^.children.inner[child_at].block;
+          let child_slot = context^.children.inner[child_at].entry_slot;
+          owner_set_output(context: context, owner: child_owner, slot: child_slot, output: child_output);
+        }
+      }
+      Out(context: o) => {
+        let no_out_float = False();
+        publish_child_boundary(context: context, child: o, floated: no_out_float);
+      }
+      Open(..) => {
+      }
+    }
+  }
+  return unit;
+}
+
+fn publish_child_boundary(context: &Context, child: u32, floated: Bool) -> result: unit reads(context.children.inner), reads(context.entries.span), writes(context.blocks.inner), writes(context.entries.nodes) {
+  doc "Retains exported float identities in the BFC and refuses floated and positioned transfers; neither is an ordinary in-flow context entry.";
+  let at = cvt::<u32, u64>(child);
+  if at < context^.children.inner.len {
+    let owner = context^.children.inner[at].block;
+    let slot = context^.children.inner[at].entry_slot;
+    let output = pending_output(events: 1_u64);
+    set output.barriers = 5_u32;
+    if floated {
+      let handle = EntryHandle(owner: owner, slot: slot);
+      set output.first_float = handle;
+      set output.last_float = handle;
+      set output.floats = 1_u64;
+      set output.barriers = 1_u32;
+    }
+    owner_set_output(context: context, owner: owner, slot: slot, output: output);
+  }
+  return unit;
+}
+
+fn context_entry_output(child: &Context, styles: &Styles) -> made: SequenceOutput reads(child), reads(styles) {
+  doc "An in-flow independent context is a solid margin-box transfer. Its internal floats stay inside its BFC; parent exclusions, clearance and positioned placement remain dependencies. The line handle names the context's exposed baseline.";
+  let leading = margin_output(margin: child^.margin_top);
+  let solid = solid_output(height: child^.height);
+  if child^.has_baseline {
+    let handle = EntryHandle(owner: child^.block, slot: child^.entry_slot);
+    let baseline = cvt::<i32, i64>(child^.baseline);
+    set solid.first_line = handle;
+    set solid.last_line = handle;
+    set solid.first_baseline = baseline;
+    set solid.last_baseline = baseline;
+  }
+  let opened = join_output(left: leading, right: solid);
+  let trailing = margin_output(margin: child^.margin_bottom);
+  let output = join_output(left: opened, right: trailing);
+  set output.count = 1_u64;
+  set output.events = 1_u64;
+  set output.min_content = child^.min_content;
+  set output.max_content = child^.max_content;
+  let travel = baseline_travel(output: output);
+  set output.travel = travel;
+  let group = box_of(styles: styles, style: child^.style);
+  if group.clear != clear_none {
+    set output.ordinary = False();
+    set output.barriers = 2_u32;
+  }
+  if group.position != position_static {
+    set output.ordinary = False();
+    set output.barriers = 5_u32;
+  }
+  if child^.beside {
+    set output.ordinary = False();
+    set output.barriers = 1_u32;
+  }
+  return output;
+}
+
+fn same_transfer(first: SequenceOutput, second: SequenceOutput) -> same: Bool pure {
+  doc "Compares every propagated semantic output, including baseline positions and intrinsic contributions when height alone is unchanged.";
+  let ordinary_same = eeq(first.ordinary, second.ordinary);
+  let ordinary_changed = bnot(ordinary_same);
+  if ordinary_changed {
+    return False();
+  }
+  let through_same = eeq(first.through, second.through);
+  let through_changed = bnot(through_same);
+  if through_changed {
+    return False();
+  }
+  if first.leading_positive != second.leading_positive {
+    return False();
+  }
+  if first.leading_negative != second.leading_negative {
+    return False();
+  }
+  if first.trailing_positive != second.trailing_positive {
+    return False();
+  }
+  if first.trailing_negative != second.trailing_negative {
+    return False();
+  }
+  if first.advance != second.advance {
+    return False();
+  }
+  if first.first_line.owner != second.first_line.owner {
+    return False();
+  }
+  if first.first_line.slot != second.first_line.slot {
+    return False();
+  }
+  if first.last_line.owner != second.last_line.owner {
+    return False();
+  }
+  if first.last_line.slot != second.last_line.slot {
+    return False();
+  }
+  if first.first_baseline != second.first_baseline {
+    return False();
+  }
+  if first.last_baseline != second.last_baseline {
+    return False();
+  }
+  if first.min_content != second.min_content {
+    return False();
+  }
+  if first.max_content != second.max_content {
+    return False();
+  }
+  if first.floats != second.floats {
+    return False();
+  }
+  if first.first_float.owner != second.first_float.owner {
+    return False();
+  }
+  if first.first_float.slot != second.first_float.slot {
+    return False();
+  }
+  if first.last_float.owner != second.last_float.owner {
+    return False();
+  }
+  if first.last_float.slot != second.last_float.slot {
+    return False();
+  }
+  if first.barriers != second.barriers {
+    return False();
+  }
+  return True();
+}
+
+struct BoundaryMove {
+  doc "A direct sibling payload and its independent translation. The temporary list owns values, never references or descendant payloads.";
+  item: Flow;
+  delta: i64;
+}
+
+fn boundary_node(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: SequenceNode reads(sequence.nodes), reads(sequence.span), writes(visits) {
+  doc "Counts each physical metadata lookup, including repeated lookups; an absent link opens no node.";
+  if slot != no_index {
+    set visits^.indexes = visits^.indexes +sat 1_u64;
+  }
+  let node = sequence_node(sequence: sequence, slot: slot);
+  return node;
+}
+
+fn boundary_set(sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Repairs the changed leaf and its balanced reduction path with counted metadata reads and no preceding payload access.";
+  let cursor = slot;
+  for (level in 0_u64..64_u64) {
+    let current = boundary_node(sequence: sequence, slot: cursor, visits: visits);
+    if current.live {
+    } else {
+      return unit;
+    }
+    if cursor == slot {
+      set current.own = output;
+    }
+    let left = boundary_node(sequence: sequence, slot: current.left, visits: visits);
+    let right = boundary_node(sequence: sequence, slot: current.right, visits: visits);
+    let prefix = join_output(left: left.total, right: current.own);
+    let total = join_output(left: prefix, right: right.total);
+    set current.total = total;
+    sequence_write(sequence: sequence, slot: cursor, node: current);
+    set cursor = current.parent;
+  }
+  return unit;
+}
+
+fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: u64 reads(sequence.nodes), reads(sequence.root), reads(sequence.span), writes(visits) {
+  doc "Finds the changed entry's direct rank through index parents; ranks are transient and earlier payloads are not read.";
+  let current = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if current.live {
+  } else {
+    let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+    return root.total.count;
+  }
+  let left = boundary_node(sequence: sequence, slot: current.left, visits: visits);
+  let rank = left.total.count;
+  let cursor = slot;
+  let parent = current.parent;
+  for (level in 0_u64..64_u64) {
+    let ancestor = boundary_node(sequence: sequence, slot: parent, visits: visits);
+    if ancestor.live {
+    } else {
+      return rank;
+    }
+    if ancestor.right == cursor {
+      let earlier = boundary_node(sequence: sequence, slot: ancestor.left, visits: visits);
+      let increment = earlier.total.count +sat 1_u64;
+      set rank = rank +sat increment;
+    }
+    set cursor = parent;
+    set parent = ancestor.parent;
+  }
+  return rank;
+}
+
+fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> reads(sequence.payloads), reads(sequence.root), reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Repairs the balanced reduction, then down-sweeps only the intersecting direct suffix. Since the changed solid entry preserves its struts, every later entering state changes by delta. Earlier entries are skipped using cached counts; equal-height baseline edits make no sibling list.";
+  boundary_set(sequence: sequence, slot: slot, output: output, visits: visits);
+  let moves = box_slots_new::<BoundaryMove>(capacity: 0_u64);
+  if delta != 0_i64 {
+    let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+    let after = rank +sat 1_u64;
+    let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
+    later_handles(sequence: sequence, root: sequence^.root, skip: after, owner: no_index, handles: &handles, visits: visits);
+    let count = handles.inner.len;
+    for (at in 0_u64..count) {
+      let handle = handles.inner[at];
+      let missing = Flow::Close(block: no_index);
+      let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: handle.slot, span: sequence^.span, missing: missing);
+      set visits^.entries = visits^.entries +sat 1_u64;
+      let translation = BoundaryMove(item: item, delta: delta);
+      let kept = push_item::<BoundaryMove>(cell: &moves, value: translation, ceiling: item_ceiling);
+    }
+  }
+  return move moves;
+}
+
+fn apply_boundary_move(context: &Context, translation: BoundaryMove) -> result: unit writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(context.boundary_visits.blocks) {
+  doc "Changes exactly one direct origin. A block move never opens descendants, and an unplaced lineless paragraph keeps its reference scratch origin.";
+  match translation.item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        set context^.blocks.inner[at].y = context^.blocks.inner[at].y +sat translation.delta;
+      }
+    }
+    Text(paragraph: p) => {
+      let paragraph_at = cvt::<u32, u64>(p);
+      if paragraph_at < context^.paragraphs.inner.len {
+        if context^.paragraphs.inner[paragraph_at].lines.inner.len > 0_u64 {
+          set context^.paragraphs.inner[paragraph_at].top = context^.paragraphs.inner[paragraph_at].top +sat translation.delta;
+        }
+      }
+    }
+    Child(context: c) => {
+      let child_at = cvt::<u32, u64>(c);
+      if child_at < context^.children.inner.len {
+        set context^.children.inner[child_at].anchor.y = context^.children.inner[child_at].anchor.y +sat translation.delta;
+      }
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
+  }
+  return unit;
+}
+
+fn boundary_owner_update(context: &Context, owner: u32, slot: u32, output: SequenceOutput, delta: i64) -> result: unit writes(context) {
+  doc "Routes one local reduction and direct-sibling translation, without a context-wide coordinate conversion. The current indirect payload scatter still needs the step-3 distinct-slot proof.";
+  let moves = if owner == no_index {
+    let delivered_102 = boundary_sequence_update(sequence: &context^.entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
+    give move delivered_102;
+  } else {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      let delivered_103 = boundary_sequence_update(sequence: &context^.blocks.inner[at].entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
+      give move delivered_103;
+    } else {
+      let delivered_104 = box_slots_new::<BoundaryMove>(capacity: 0_u64);
+      give move delivered_104;
+    }
+  }
+  let count = moves.inner.len;
+  for (position in 0_u64..count) {
+    let translation = moves.inner[position];
+    apply_boundary_move(context: context, translation: translation);
+  }
+  return unit;
+}
+
+fn boundary_path_ready(context: &Context, styles: &Styles, owner: u32, delta: i32, basis_height: i32) -> ready: Bool reads(context.blocks.inner), reads(context.restyled_blocks), reads(context.restyled_block), reads(styles), writes(context.boundary_visits.blocks) {
+  doc "Preflights only the ancestor chain before publishing a changed size. A changed clamp, unresolved edge, width input or stale output selects reference replay before any ancestor or sibling origin changes.";
+  let cursor = owner;
+  let limit = context^.blocks.inner.len;
+  let marked_seen = context^.restyled_blocks == 0_u32;
+  for (level in 0_u64..limit) {
+    if cursor == no_index {
+      return marked_seen;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return False();
+    }
+    set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+    let measured = context^.blocks.inner[at].output;
+    let output = context^.blocks.inner[at].boundary;
+    let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
+    if cursor == context^.restyled_block {
+      set marked_seen = True();
+    }
+    if measured.valid {
+    } else {
+      return False();
+    }
+    if output.ordinary {
+    } else {
+      return False();
+    }
+    if output.through {
+      return False();
+    }
+    let yes = True();
+    let grows = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: basis_height, lines: yes);
+    if grows {
+    } else {
+      return False();
+    }
+    let width_kept = snapshot_keeps_width(block: snapshot, styles: styles);
+    if width_kept {
+    } else {
+      return False();
+    }
+    let style = snapshot.style;
+    let border = border_edges(styles: styles, style: style);
+    let padding = padding_edges(styles: styles, style: style, basis: measured.available);
+    let margins = margin_edges(styles: styles, style: style, basis: measured.available);
+    let group = box_of(styles: styles, style: style);
+    let top = border.top +sat padding.top;
+    let bottom = border.bottom +sat padding.bottom;
+    if top != measured.top_frame {
+      return False();
+    }
+    if bottom != measured.bottom_frame {
+      return False();
+    }
+    if margins.top != measured.margin_top {
+      return False();
+    }
+    if margins.bottom != measured.margin_bottom {
+      return False();
+    }
+    if group.clear != clear_none {
+      return False();
+    }
+    if group.position != position_static {
+      return False();
+    }
+    if measured.available != snapshot.avail_width {
+      return False();
+    }
+    if measured.content_width != snapshot.content_width {
+      return False();
+    }
+    set cursor = snapshot.parent;
+  }
+  let ended = cursor == no_index;
+  let ready = band(ended, marked_seen);
+  return ready;
+}
+
+fn propagate_boundary(context: &Context, owner: u32, slot: u32, output: SequenceOutput, delta: i32) -> result: unit writes(context) {
+  doc "Repairs one ancestor at a time, translating only its direct later siblings. Stops only when its resolved size and all semantic outputs agree; a baseline or intrinsic change propagates even with zero height delta.";
+  let cursor = owner;
+  let changed = slot;
+  let outgoing = output;
+  let wide_delta = cvt::<i32, i64>(delta);
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    boundary_owner_update(context: context, owner: cursor, slot: changed, output: outgoing, delta: wide_delta);
+    if cursor == no_index {
+      return unit;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return unit;
+    }
+    set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+    let before = context^.blocks.inner[at].boundary;
+    let measured = context^.blocks.inner[at].output;
+    let root = context^.blocks.inner[at].entries.root;
+    let inside = boundary_node(sequence: &context^.blocks.inner[at].entries, slot: root, visits: &context^.boundary_visits);
+    let after = lift_block_output(inside: inside.total, measured: measured);
+    let height = measured.height +sat delta;
+    if at < context^.blocks.inner.len {
+      set context^.blocks.inner[at].height = height;
+      set context^.blocks.inner[at].output.height = height;
+      set context^.blocks.inner[at].boundary = after;
+      let same = same_transfer(first: before, second: after);
+      let size_same = measured.height == height;
+      let stable = band(same, size_same);
+      if stable {
+        return unit;
+      }
+      set changed = context^.blocks.inner[at].entry_slot;
+      set cursor = context^.blocks.inner[at].parent;
+      set outgoing = after;
+    }
+  }
+  return unit;
+}
+
+fn boundary_refusal(context: &Context, reason: u32) -> result: unit writes(context.boundary_visits) {
+  doc "Records a departure before the compatibility bridge. A nonzero fallback count forbids treating these counters as whole-update locality evidence.";
+  set context^.boundary_visits.fallbacks = context^.boundary_visits.fallbacks +sat 1_u64;
+  set context^.boundary_visits.reason = reason;
+  return unit;
+}
+
+struct BoundaryChange {
+  doc "A recomputed direct entry before publication into its owning sequence; validity requires stable external struts and width.";
+  owner: u32;
+  slot: u32;
+  delta: i32;
+  output: SequenceOutput;
+  valid: Bool;
+}
+
+fn recompute_boundary_entry(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (change: BoundaryChange, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Recomputes exactly the marked paragraph or child context. The parent validates its ancestor chain before publishing this result; a refusal forces reference stacking rather than treating a newly broken height as the old height.";
+  let output = empty_output();
+  let no = False();
+  let change = BoundaryChange(owner: no_index, slot: no_index, delta: 0_i32, output: output, valid: no);
+  let counts = no_updates();
+  if context^.marked_paragraphs == 1_u32 {
+    let at = cvt::<u32, u64>(context^.marked_paragraph);
+    if at < context^.paragraphs.inner.len {
+    } else {
+      return change, counts;
+    }
+    set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+    set change.owner = context^.paragraphs.inner[at].block;
+    set change.slot = context^.paragraphs.inner[at].entry_slot;
+    let old_height = context^.paragraphs.inner[at].height;
+    if context^.paragraphs.inner[at].lines.inner.len == 0_u64 {
+      return change, counts;
+    }
+    let children = context^.children.inner.len;
+    let exclusions = box_slots_new::<Exclusion>(capacity: 0_u64);
+    set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+    break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, exclusions: &exclusions.inner[0_u64..0_u64], origin_y: 0_i32);
+    set counts.paragraphs = 1_u64;
+    if at < context^.paragraphs.inner.len {
+      set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      let fresh = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+      set change.output = fresh;
+      set change.delta = context^.paragraphs.inner[at].height -sat old_height;
+      let solid = bnot(fresh.through);
+      set change.valid = solid;
+    }
+    return change, counts;
+  }
+  let child_at = cvt::<u32, u64>(context^.marked_child);
+  if child_at < context^.children.inner.len {
+  } else {
+    return change, counts;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  let before = before_of(context: &context^.children.inner[child_at]);
+  if context^.children.inner[child_at].kind != ctx_flow {
+    return change, counts;
+  }
+  set change.owner = context^.children.inner[child_at].block;
+  set change.slot = context^.children.inner[child_at].entry_slot;
+  if change.slot == no_index {
+    return change, counts;
+  }
+  let child_counts = update_child(child: &context^.children.inner[child_at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  set counts = child_counts;
+  if child_at < context^.children.inner.len {
+    set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+    let after = before_of(context: &context^.children.inner[child_at]);
+    let fresh_child = context_entry_output(child: &context^.children.inner[child_at], styles: styles);
+    set change.output = fresh_child;
+    set change.delta = after.height -sat before.height;
+    let same_width = before.width == after.width;
+    let same_top = before.margin_top == after.margin_top;
+    let same_bottom = before.margin_bottom == after.margin_bottom;
+    let same_left = before.margin_left == after.margin_left;
+    let same_right = before.margin_right == after.margin_right;
+    let same_baseline_kind = eeq(before.has_baseline, after.has_baseline);
+    let vertical = band(same_top, same_bottom);
+    let horizontal = band(same_left, same_right);
+    let margins = band(vertical, horizontal);
+    let shape = band(same_width, same_baseline_kind);
+    let stable = band(margins, shape);
+    set change.valid = stable;
+  }
+  return change, counts;
+}
+
+fn boundary_update(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> (handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Attempts one marked paragraph or child-context edit before any reference-coordinate conversion. Refusal codes 1-5 name semantic barriers, 6 a wider dirty frontier, 7 intrinsic demand/width changes, 8 columns or spanning fragments, and 9 a failed post-recompute ancestor or arithmetic check. A post-recompute refusal forces full reference stacking so changed lines cannot conceal the old height delta.";
+  let counts = no_updates();
+  let no = False();
+  if context^.local_geometry {
+  } else {
+    boundary_refusal(context: context, reason: 6_u32);
+    return no, counts;
+  }
+  if context^.restyled {
+    boundary_refusal(context: context, reason: 7_u32);
+    return no, counts;
+  }
+  if context^.restyled_blocks > 1_u32 {
+    boundary_refusal(context: context, reason: 6_u32);
+    return no, counts;
+  }
+  let marked = context^.marked_paragraphs +sat context^.marked_children;
+  if marked != 1_u32 {
+    boundary_refusal(context: context, reason: 6_u32);
+    return no, counts;
+  }
+  let known = bor(context^.intrinsic_held, context^.intrinsic_known);
+  if known {
+    boundary_refusal(context: context, reason: 7_u32);
+    return no, counts;
+  }
+  let space_kept = same_space(first: context^.space, second: before.space);
+  if space_kept {
+  } else {
+    boundary_refusal(context: context, reason: 7_u32);
+    return no, counts;
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let owns = owns_fragment(style: context^.style);
+  let fragments = if owns {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  }
+  if frame.columned {
+    boundary_refusal(context: context, reason: 8_u32);
+    return no, counts;
+  }
+  if context^.fragments.inner.len > fragments {
+    boundary_refusal(context: context, reason: 8_u32);
+    return no, counts;
+  }
+  if context^.splits.inner.len > 0_u64 {
+    boundary_refusal(context: context, reason: 8_u32);
+    return no, counts;
+  }
+  let root = context^.entries.root;
+  let root_node = boundary_node(sequence: &context^.entries, slot: root, visits: &context^.boundary_visits);
+  let old_root = root_node.total;
+  if old_root.ordinary {
+  } else {
+    let reason = imax(old_root.barriers, 1_u32);
+    boundary_refusal(context: context, reason: reason);
+    return no, counts;
+  }
+  let (change, recomputed) = recompute_boundary_entry(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  set counts = recomputed;
+  let ready = boundary_path_ready(context: context, styles: styles, owner: change.owner, delta: change.delta, basis_height: frame.definite);
+  let supported = band(change.valid, change.output.ordinary);
+  let safe_path = band(ready, supported);
+  let budget = old_root.travel +sat change.output.travel;
+  let small = budget < 134217728_i64;
+  let low_origin = frame.content_top >= 0_i32;
+  let high_origin = frame.content_top < 134217728_i32;
+  let origin_safe = band(low_origin, high_origin);
+  let bounded = band(small, origin_safe);
+  let acceptable = band(safe_path, bounded);
+  if acceptable {
+  } else {
+    set context^.restyled = True();
+    boundary_refusal(context: context, reason: 9_u32);
+    return no, counts;
+  }
+  propagate_boundary(context: context, owner: change.owner, slot: change.slot, output: change.output, delta: change.delta);
+  let new_root_slot = context^.entries.root;
+  let after = boundary_node(sequence: &context^.entries, slot: new_root_slot, visits: &context^.boundary_visits);
+  let baseline_delta = after.total.last_baseline -sat old_root.last_baseline;
+  let narrow_delta = geometry_narrow(value: baseline_delta);
+  if context^.has_baseline {
+    set context^.baseline = context^.baseline +sat narrow_delta;
+  }
+  let (moved, positioned_counts) = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
+  let combined = add_counts(first: counts, second: positioned_counts);
+  set combined.contexts = combined.contexts +sat 1_u64;
+  if context^.marked_paragraphs == 1_u32 {
+    let paragraph_at = cvt::<u32, u64>(context^.marked_paragraph);
+    if paragraph_at < context^.paragraphs.inner.len {
+      set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      set context^.paragraphs.inner[paragraph_at].dirty = False();
+    }
+  }
+  set context^.marked_paragraphs = 0_u32;
+  set context^.marked_children = 0_u32;
+  set context^.dirty = False();
+  set context^.restyled_blocks = 0_u32;
+  set context^.boundary_dirty = True();
+  let yes = True();
+  return yes, combined;
+}
+
+fn boundary_counts(layout: &Layout) -> (entries: u64, blocks: u64, indexes: u64, fallbacks: u64, reason: u32) reads(layout) {
+  doc "Boundary-path visits from contexts actually updated in the last edit; a fallback disqualifies a bounded-work claim and reference work is not included.";
+  let visits = layout^.last_update.work;
+  return visits.entries, visits.blocks, visits.indexes, visits.fallbacks, visits.reason;
+}
