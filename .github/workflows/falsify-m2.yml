@@ -1,0 +1,79 @@
+# Temporary, for M2's layout branch: applies each falsifier of the current
+# step to a copy of the sources, builds it, and requires the oracles to see a
+# difference: a full-build dump against the unmutated build, or an X5 case
+# page's incremental edit against its rebuild. A job passes when its mutation
+# is detected. Runs only for a head commit that asks ([falsify]). Removed
+# before the branch is ready.
+name: falsify-m2
+
+on:
+  push:
+    branches: [research/m2-layout]
+
+jobs:
+  falsify:
+    if: contains(github.event.head_commit.message, '[falsify]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, reassociate-saturation]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Toolchain and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+      - name: Unmutated driver
+        run: |
+          make -s compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+      - name: Apply the mutation
+        run: |
+          python3 - "${{ matrix.mutation }}" <<'PYEOF'
+          import sys
+          from pathlib import Path
+          m = sys.argv[1]
+          def swap(path, old, new):
+              p = Path(path); t = p.read_text()
+              assert t.count(old) == 1, (path, old, t.count(old))
+              p.write_text(t.replace(old, new))
+          if m == "omit-ancestor":
+              swap("renderer/layout/geometry.wf", "let normal_y = owner.y +sat local.y;", "let normal_y = local.y;")
+          elif m == "relative-twice":
+              swap("renderer/layout/geometry.wf", "  let wide_y = value.y +sat value.dy;\n", "  let wide_y = value.y +sat value.dy;\n  set wide_y = wide_y +sat value.dy;\n")
+          elif m == "shift-table-descendants":
+              swap("renderer/layout/table.wf", "  set cell^.content_dy = cell^.content_dy +sat dy;\n", "  set cell^.content_dy = cell^.content_dy +sat dy;\n  for (b in 0_u64..cell^.blocks.inner.len) {\n    shift_block(block: &cell^.blocks.inner[b], delta: dy);\n  }\n")
+          elif m == "column-map-early":
+              swap("renderer/layout/flow.wf", "let local_top = top -sat map_y;", "let local_top = fragment.y;")
+          elif m == "reassociate-saturation":
+              swap("renderer/layout/flow.wf", "set context^.blocks.inner[at].resolved_x = content_left +sat x_shifted;", "set context^.blocks.inner[at].resolved_x = context^.blocks.inner[at].normal_x +sat dx;")
+          print("applied", m)
+          PYEOF
+          git diff --stat
+      - name: Mutated driver
+        run: (cd renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+      - name: Detect
+        run: |
+          set +e
+          detected=""
+          sh research/investigations/concurrency/run.sh fetch >/dev/null 2>&1
+          d=build/research/concurrency
+          for page in tests/layout/*-cases.html "$d/ecma262.html"; do
+            sheets=""
+            [ "$page" = "$d/ecma262.html" ] && sheets="assets/css/ecmarkup.css=$d/ecma262-ecmarkup.css assets/css/print.css=$d/ecma262-print.css"
+            build/layout_base dump 1 "$page" renderer/style/ua.css $sheets > build/a.dump 2>/dev/null
+            build/layout_mutated dump 1 "$page" renderer/style/ua.css $sheets > build/b.dump 2>/dev/null
+            if ! cmp -s build/a.dump build/b.dump; then echo "detected: $page full-build dump differs"; detected=yes; fi
+          done
+          for name in block-case style-case; do
+            build/layout_mutated edit "research/investigations/incremental-layout/scripts/$name.edits" "research/investigations/incremental-layout/scripts/$name.html" renderer/style/ua.css > build/m.raw 2>/dev/null
+            differs=$(grep -c ' inc DIFF$' build/m.raw)
+            [ "$differs" -gt 0 ] && { echo "detected: $name has $differs incremental differences"; detected=yes; }
+          done
+          if [ -z "$detected" ]; then echo "NOT DETECTED: ${{ matrix.mutation }}"; exit 1; fi
