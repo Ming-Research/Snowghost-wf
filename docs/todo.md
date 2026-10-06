@@ -540,11 +540,6 @@ example apart from the renderer code that exposed it
   the models. Add the equivalent when the documents grow enough that a missed
   link or leaked path costs review time, or when one first reaches a pull
   request.
-- **CI rebuilds the Whitefoot compiler on every push.** A `make check` run
-  takes about two and a half minutes, most of it the compiler build. Cache
-  the built compiler keyed by the `whitefoot/` pin when the gate's run time
-  starts to slow down work, or when the pin moves often enough that the
-  build dominates.
 - **`bytes_push` (`html/tokenizer/buffers.wf`) leaves cell unchanged, rather
   than proving it, when a push would cross `ceiling`.** `text_ceiling` (3 *
   2^30) and `attribute_ceiling` (2^30) are sized from `next_token`'s own

@@ -31,17 +31,18 @@
 # (T(REPS) - T(0)) / REPS in seconds: the --par build at WF_WORKERS 1, 2 and 4
 # (WORKERS overrides the list) and the sequential build. REPS is chosen per
 # page and stage so the stage dominates T(REPS); a second argument overrides
-# it. The timed runs hold the Whitefoot check lock, taken with RUN_CHECK (by
-# default the pinned checkout's .github/run-check.pl), so no other heavy job
-# shares the machine.
+# it. With RUN_CHECK naming a host lock script, such as Whitefoot's
+# .github/run-check.pl, the timed runs hold that lock so no other heavy job
+# shares the machine; without it they run as they are, as on a CI runner that
+# runs one job at a time.
 #
 # layout prints the same columns with the mode (L1, L2 or L3) in place of the
 # shape; its T(0) also holds styling and building the context tree, and its
 # check compares L1, L2 and L3 and reports L3's fix-up totals. With KEEP_BUILD
 # set, layout times the drivers already in build/ instead of building them.
 #
-# The drivers are built with WHITEFOOTC (by default the pinned compiler's gate
-# build, as the Makefile builds it).
+# The drivers are built with WHITEFOOTC (by default the release of the
+# commit in whitefoot.pin, which make compiler downloads).
 #
 # POSIX sh plus curl and sha256sum.
 
@@ -53,8 +54,8 @@ cd "$root"
 
 data=build/research/concurrency
 ua=research/investigations/concurrency/ua.css
-compiler=${WHITEFOOTC:-$root/whitefoot/compiler/target/gate/whitefootc}
-lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
+compiler=${WHITEFOOTC:-$root/build/whitefoot/wf-$(cut -c1-12 "$root/whitefoot.pin")/whitefootc}
+lock=${RUN_CHECK:-}
 runs=${RUNS:-7}
 workers=${WORKERS:-1 2 4}
 modes=${MODES:-L1 L2}
@@ -308,12 +309,12 @@ build_layout() {
 }
 
 # Names the compiler by its path, relative to the checkout when it lies
-# inside it, and its SHA-256 prefix, and the pinned checkout's revision when
-# the compiler is the pin's own build.
+# inside it, and its SHA-256 prefix, and the pinned Whitefoot commit when the
+# compiler is the pin's release.
 compiler_line() {
 	line="compiler: ${compiler#"$root"/} $(sha256sum <"$compiler" | cut -c1-16)"
-	if [ "$compiler" = "$root/whitefoot/compiler/target/gate/whitefootc" ]; then
-		line="$line, whitefoot $(git -C "$root/whitefoot" rev-parse --short=8 HEAD)"
+	if [ "$compiler" = "$root/build/whitefoot/wf-$(cut -c1-12 "$root/whitefoot.pin")/whitefootc" ]; then
+		line="$line, whitefoot $(cut -c1-8 "$root/whitefoot.pin")"
 	fi
 	echo "$line"
 }
@@ -377,7 +378,7 @@ best() {
 
 style() {
 	driver=proto_style
-	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+	if [ -n "$lock" ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-style sh research/investigations/concurrency/run.sh style "$@"
 	fi
 	build
@@ -408,7 +409,7 @@ style() {
 
 layout() {
 	driver=proto_layout
-	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+	if [ -n "$lock" ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" concurrency-layout sh research/investigations/concurrency/run.sh layout "$@"
 	fi
 	if [ -z "${KEEP_BUILD:-}" ] || [ ! -x build/proto_layout ] || [ ! -x build/proto_layout_seq ]; then

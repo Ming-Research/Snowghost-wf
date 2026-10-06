@@ -27,7 +27,7 @@
 # apollo11 is the supplementary capture in build/x5/apollo-supplement. The
 # style oracle is built by
 #   cd renderer && whitefootc --cache ../build/whitefoot-cache --fragments function --graph modules.wfg --entry style_oracle -o ../build/m1/style_seq
-# under the host-wide lock. POSIX sh plus python3.
+# with the release compiler of whitefoot.pin. POSIX sh plus python3.
 
 set -eu
 

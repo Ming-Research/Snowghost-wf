@@ -43,9 +43,10 @@
 # and 4 (WORKERS overrides the list) and the sequential build. A part's time
 # is the difference between its mode and the one before it: the box tree is
 # boxes, the text preparation with the font matching is text minus boxes and
-# the layout passes are layout minus text. The timed runs hold the Whitefoot
-# check lock, taken with RUN_CHECK (by default the pinned checkout's
-# .github/run-check.pl), so no other heavy job shares the machine.
+# the layout passes are layout minus text. The timed runs hold the host lock
+# RUN_CHECK names, such as Whitefoot's .github/run-check.pl, so no other heavy
+# job shares the machine; without RUN_CHECK they run as they are, as on a CI
+# runner that runs one job at a time.
 #
 # PAGES replaces the directory of the real pages and their sheets,
 # build/research/concurrency by default; a worktree whose build directory
@@ -56,8 +57,8 @@
 # UA replaces the user-agent sheet, a path relative to the repository, for a
 # diagnostic run.
 #
-# The drivers are built with WHITEFOOTC (by default the pinned compiler's
-# gate build, as the Makefile builds it). POSIX sh plus node and sha256sum.
+# The drivers are built with WHITEFOOTC (by default the release of the
+# commit in whitefoot.pin, which make compiler downloads). POSIX sh plus node and sha256sum.
 
 set -eu
 
@@ -69,8 +70,8 @@ data=${PAGES:-build/research/concurrency}
 oracle=build/oracle/layout
 out=build/research/layout
 ua=${UA:-renderer/style/ua.css}
-compiler=${WHITEFOOTC:-$root/whitefoot/compiler/target/gate/whitefootc}
-lock=${RUN_CHECK:-$root/whitefoot/.github/run-check.pl}
+compiler=${WHITEFOOTC:-$root/build/whitefoot/wf-$(cut -c1-12 "$root/whitefoot.pin")/whitefootc}
+lock=${RUN_CHECK:-}
 runs=${RUNS:-5}
 workers=${WORKERS:-1 2 4}
 pages="ecma262 html5 apollo11 $(cd tests/layout && ls *-cases.html | sed 's/\.html$//' | tr '\n' ' ')"
@@ -231,7 +232,7 @@ best() {
 }
 
 time_parts() {
-	if [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
+	if [ -n "$lock" ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" layout-time sh "$here/run.sh" time "$@"
 	fi
 	build
