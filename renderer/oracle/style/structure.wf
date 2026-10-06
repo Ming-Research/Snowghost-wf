@@ -17,7 +17,13 @@ alias store_text = pkg::dom::store_text;
 alias build_traversal = pkg::style::build_traversal;
 alias match_elements = pkg::style::match_elements;
 alias rematched = pkg::style::rematched;
-alias structural_restyle = pkg::style::structural_restyle;
+alias structure_restyle = pkg::style::structure_restyle;
+alias Environment = pkg::css::values::Environment;
+alias Styles = pkg::style::Styles;
+alias Traversal = pkg::style::Traversal;
+alias ComputedStyle = pkg::style::ComputedStyle;
+alias style_state = pkg::style::style_state;
+alias compute_styles = pkg::style::compute_styles;
 alias flush = pkg::oracle::support::flush;
 alias line_end = pkg::oracle::support::line_end;
 alias put_byte = pkg::oracle::support::put_byte;
@@ -193,17 +199,17 @@ fn structure_neighbours(document: &Document, line: &[u8]) -> (previous: Option<N
   }
 }
 
-fn apply_structure_line(document: &Document, atoms: &AtomTable, line: &[u8]) -> ok: Bool reads(line), writes(document), writes(atoms) {
-  doc "Applies B (insert a paragraph) or X (detach a node), with the layout oracle's edit syntax. False when the line does not parse or the operation is refused.";
+fn apply_structure_line(document: &Document, atoms: &AtomTable, line: &[u8]) -> root: Option<NodeId> reads(line), writes(document), writes(atoms) {
+  doc "Applies B (insert a paragraph) or X (detach a node), with the layout oracle's edit syntax, returning its root. None when the line does not parse or the operation is refused.";
   let length = line^.len;
   if length < 3_u64 {
-    return False();
+    return None<NodeId>();
   }
   let kind = line^[0_u64];
   let (node_found, node_value, after_node) = read_number(line: line, start: 2_u64);
   if node_found {
   } else {
-    return False();
+    return None<NodeId>();
   }
   let node_option = node_id_of(value: node_value);
   let node = match node_option {
@@ -211,25 +217,25 @@ fn apply_structure_line(document: &Document, atoms: &AtomTable, line: &[u8]) -> 
       give found;
     }
     None() => {
-      return False();
+      return None<NodeId>();
     }
   }
   if kind == 88_u8 {
     match detach(document: document, node: node) {
       Ok(..) => {
-        return True();
+        return Some<NodeId>(value: node);
       }
       Err(..) => {
-        return False();
+        return None<NodeId>();
       }
     }
   }
   if after_node > length {
-    return False();
+    return None<NodeId>();
   }
   if kind == 66_u8 {
     if after_node >= length {
-      return False();
+      return None<NodeId>();
     }
     let before_option = if line^[after_node] == 45_u8 {
       give None<NodeId>();
@@ -253,40 +259,232 @@ fn apply_structure_line(document: &Document, atoms: &AtomTable, line: &[u8]) -> 
     if wanted_before {
       if resolved {
       } else {
-        return False();
+        return None<NodeId>();
       }
     }
     let text_gap = field_end(line: line, start: after_node);
     let text_start = text_gap +sat 1_u64;
     if text_start > length {
-      return False();
+      return None<NodeId>();
     }
     let scratch = box_slots_new::<u8>(capacity: 256_u64);
     put_unescaped(buffer: &scratch, text: &line^[text_start..length]);
     let size = scratch.inner.len;
     if size > 1073741824_u64 {
-      return False();
+      return None<NodeId>();
     }
     match make_paragraph(document: document, atoms: atoms, parent: node, before: before_option, text: &scratch.inner[0_u64..size]) {
       Ok(value: made) => {
-        return True();
+        return Some<NodeId>(value: made);
       }
       Err(..) => {
+        return None<NodeId>();
+      }
+    }
+  }
+  return None<NodeId>();
+}
+
+const fallbacks_label: Array<u8, 11> = " fallbacks ";
+
+const edits_label: Array<u8, 6> = "edits ";
+
+fn structure_row(styles: &Styles, node: u64) -> row: u64 reads(styles) {
+  doc "The live element slot named by NodeId, or the absent sentinel.";
+  if node < styles^.order.inner.len {
+    let row = cvt::<u32, u64>(styles^.order.inner[node]);
+    if row < styles^.elements.inner.len {
+      return row;
+    }
+  }
+  return 4294967295_u64;
+}
+
+fn structure_pseudo(styles: &Styles, slot: u64, kind: u8) -> style: Option<ComputedStyle> reads(styles) {
+  doc "Binary search of the full-build pseudo list, by stable element slot and kind. Insertions that generate pseudos use the full fallback.";
+  let count = styles^.pseudos.inner.len;
+  let low = 0_u64;
+  let high = count;
+  for (step in 0_u64..count) {
+    if low >= high {
+      break;
+    }
+    let width = high -sat low;
+    let half = width / 2_u64;
+    let middle = low +sat half;
+    if middle < count {
+      let item = styles^.pseudos.inner[middle];
+      let origin = cvt::<u32, u64>(item.element);
+      let earlier = origin < slot;
+      let same = origin == slot;
+      let earlier_kind = item.kind < kind;
+      let same_earlier = band(same, earlier_kind);
+      let before = bor(earlier, same_earlier);
+      if before {
+        set low = middle +sat 1_u64;
+      } else {
+        set high = middle;
+      }
+    }
+  }
+  if low < count {
+    let item = styles^.pseudos.inner[low];
+    let origin = cvt::<u32, u64>(item.element);
+    let same = origin == slot;
+    let same_kind = item.kind == kind;
+    let found = band(same, same_kind);
+    if found {
+      return Some<ComputedStyle>(value: item.style);
+    }
+  }
+  return None<ComputedStyle>();
+}
+
+fn structure_values_same(first: &Styles, second: &Styles, document: &Document, atoms: &AtomTable, node: NodeId, a_row: u64, b_row: u64) -> same: Bool reads(first), reads(second), reads(document), reads(atoms) {
+  doc "Compares the element and both pseudo-elements through their complete dump serialization, resolving each run's identifiers against its own tables.";
+  if a_row < first^.elements.inner.len {
+    if b_row < second^.elements.inner.len {
+      let a = style_line(styles: first, atoms: atoms, document: document, node: node, style: first^.elements.inner[a_row]);
+      let b = style_line(styles: second, atoms: atoms, document: document, node: node, style: second^.elements.inner[b_row]);
+      let same = same_line(first: &a, second: &b);
+      if same {
+      } else {
         return False();
       }
+      for (kind_index in 0_u64..2_u64) {
+        let kind = cvt::<u64, u8>(kind_index);
+        let a_pseudo = structure_pseudo(styles: first, slot: a_row, kind: kind);
+        let b_pseudo = structure_pseudo(styles: second, slot: b_row, kind: kind);
+        match a_pseudo {
+          Some(value: a_style) => {
+            match b_pseudo {
+              Some(value: b_style) => {
+                let a_line = style_line(styles: first, atoms: atoms, document: document, node: node, style: a_style);
+                let b_line = style_line(styles: second, atoms: atoms, document: document, node: node, style: b_style);
+                let same_pseudo = same_line(first: &a_line, second: &b_line);
+                if same_pseudo {
+                } else {
+                  return False();
+                }
+              }
+              None() => {
+                return False();
+              }
+            }
+          }
+          None() => {
+            match b_pseudo {
+              Some(..) => {
+                return False();
+              }
+              None() => {
+              }
+            }
+          }
+        }
+      }
+      return True();
     }
   }
   return False();
 }
 
-fn run_structure(store: &RuleStore, document: &Document, atoms: &AtomTable, script: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(script), writes(document), writes(atoms), writes(out), writes(err), writes(files) waits {
-  doc "Full matches before and after every B/X edit, mapped by NodeId; compares only surviving elements, checks structural_restyle after the edit, and reports structure I set S changed C missing M (or full changed C), with first NODE on a miss. Returns 1 if any edit misses an element, 2 on a refused input, otherwise 0. S sheets were loaded before this call. A third match uses the original traversal to align rows for rematched: matching reads positions and ancestry from the edited DOM, not traversal parent rows. Intersection of the old and rebuilt traversal membership excludes detached and inserted subtrees.";
+fn structure_differing(first: &Styles, second: &Styles, document: &Document, atoms: &AtomTable, kept: &Traversal, fresh: &Traversal) -> (count: u64, at: u64) reads(first), reads(second), reads(document), reads(atoms), reads(kept), reads(fresh) {
+  doc "Checks all NodeIds for live membership, all live computed values including pseudos, and each kept traversal slot for an absent sentinel or a live inverse order mapping. Detached slots that remain populated fail even when no live element's computed value changes.";
+  let differ = 0_u64;
+  let first_at = 0_u64;
+  let count = document^.nodes.inner.len;
+  for (node in 0_u64..count) {
+    let a_row = structure_row(styles: first, node: node);
+    let b_row = structure_row(styles: second, node: node);
+    let a_live = a_row != 4294967295_u64;
+    let b_live = b_row != 4294967295_u64;
+    let same = eeq(a_live, b_live);
+    if a_live {
+      if b_live {
+        if node <= 4294967295_u64 {
+          let small = cvt::<u64, u32>(node);
+          let id = NodeId(index: small);
+          set same = structure_values_same(first: first, second: second, document: document, atoms: atoms, node: id, a_row: a_row, b_row: b_row);
+          if a_row < kept^.elements.inner.len {
+            if kept^.elements.inner[a_row].index != small {
+              set same = False();
+            }
+          } else {
+            set same = False();
+          }
+          if node < kept^.order.inner.len {
+            let kept_row = cvt::<u32, u64>(kept^.order.inner[node]);
+            if kept_row != a_row {
+              set same = False();
+            }
+          } else {
+            set same = False();
+          }
+        }
+      }
+    }
+    if same {
+    } else {
+      if differ == 0_u64 {
+        set first_at = node;
+      }
+      set differ = differ +sat 1_u64;
+    }
+  }
+  for (slot in 0_u64..kept^.elements.inner.len) {
+    let node = kept^.elements.inner[slot];
+    if node.index != 4294967295_u32 {
+      let index = cvt::<u32, u64>(node.index);
+      let live = False();
+      if index < fresh^.order.inner.len {
+        let row = cvt::<u32, u64>(fresh^.order.inner[index]);
+        if row < fresh^.elements.inner.len {
+          if index < kept^.order.inner.len {
+            let kept_row = cvt::<u32, u64>(kept^.order.inner[index]);
+            set live = kept_row == slot;
+          }
+        }
+      }
+      if live {
+      } else {
+        if differ == 0_u64 {
+          set first_at = index;
+        }
+        set differ = differ +sat 1_u64;
+      }
+    }
+  }
+  return differ, first_at;
+}
+
+fn run_structure(store: &RuleStore, document: &Document, atoms: &AtomTable, environment: Environment, script: &[u8], out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(store), reads(script), writes(document), writes(atoms), writes(out), writes(err), writes(files) waits {
+  doc "Keeps the traversal and style state across B/X edits, comparing every edited document with a fresh full build by NodeId. Reports each edit and an aggregate edit/difference/fallback count; fails for any difference or zero edits. S lines were loaded before this call. A full result rebuilds both traversal and state, exactly as the layout caller does.";
   let notes = box_slots_new::<u8>(capacity: 4096_u64);
+  let traversal = match build_traversal(document: document) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, failure: failure);
+      return 2_u8;
+    }
+  }
+  let state = match style_state(store: store, document: document, atoms: atoms, traversal: &traversal, environment: environment) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: failure) => {
+      report_style(err: err, files: files, failure: failure);
+      return 2_u8;
+    }
+  }
   let length = script^.len;
   let at = 0_u64;
   let number = 0_u64;
   let edits = 0_u64;
-  let status = 0_u8;
+  let differences = 0_u64;
+  let fallbacks = 0_u64;
   for (step in 0_u64..length) {
     if at >= length {
       break;
@@ -299,7 +497,8 @@ fn run_structure(store: &RuleStore, document: &Document, atoms: &AtomTable, scri
       return 2_u8;
     }
     if start < end {
-      if script^[start] == 83_u8 {
+      let sheet = script^[start] == 83_u8;
+      if sheet {
       } else {
         let line = &script^[start..end];
         let parent = match structure_parent(document: document, line: line) {
@@ -313,32 +512,24 @@ fn run_structure(store: &RuleStore, document: &Document, atoms: &AtomTable, scri
           }
         }
         let (edit_previous, edit_next) = structure_neighbours(document: document, line: line);
-        let before = match build_traversal(document: document) {
-          Ok(value: found) => {
-            give move found;
+        let root = match apply_structure_line(document: document, atoms: atoms, line: line) {
+          Some(value: found) => {
+            give found;
           }
-          Err(error: failure) => {
-            report_style(err: err, files: files, failure: failure);
+          None() => {
+            put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
+            let reported = flush(factory: files, output: err, buffer: &notes);
             return 2_u8;
           }
         }
-        let old = match match_elements(store: store, document: document, atoms: atoms, traversal: &before) {
-          Ok(value: found) => {
-            give move found;
-          }
-          Err(error: failure) => {
-            report_style(err: err, files: files, failure: failure);
-            return 2_u8;
-          }
-        }
-        let applied = apply_structure_line(document: document, atoms: atoms, line: line);
-        if applied {
+        let inserted = None<NodeId>();
+        let removed = None<NodeId>();
+        if script^[start] == 66_u8 {
+          set inserted = Some<NodeId>(value: root);
         } else {
-          put_failure(notes: &notes, number: number, reason: &operation_reason[0_u64..operation_reason.len]);
-          let reported = flush(factory: files, output: err, buffer: &notes);
-          return 2_u8;
+          set removed = Some<NodeId>(value: root);
         }
-        let after = match build_traversal(document: document) {
+        let done = match structure_restyle(state: &state, store: store, document: document, atoms: atoms, traversal: &traversal, environment: environment, parent: parent, previous: edit_previous, next: edit_next, inserted: inserted, removed: removed) {
           Ok(value: found) => {
             give move found;
           }
@@ -347,99 +538,64 @@ fn run_structure(store: &RuleStore, document: &Document, atoms: &AtomTable, scri
             return 2_u8;
           }
         }
-        let new = match match_elements(store: store, document: document, atoms: atoms, traversal: &after) {
-          Ok(value: found) => {
-            give move found;
-          }
-          Err(error: failure) => {
-            report_style(err: err, files: files, failure: failure);
-            return 2_u8;
-          }
-        }
-        let aligned = match match_elements(store: store, document: document, atoms: atoms, traversal: &before) {
-          Ok(value: found) => {
-            give move found;
-          }
-          Err(error: failure) => {
-            report_style(err: err, files: files, failure: failure);
-            return 2_u8;
-          }
-        }
-        let row_changes = rematched(old: &old, new: &aligned);
-        let wanted = match structural_restyle(store: store, document: document, atoms: atoms, parent: parent, previous: edit_previous, next: edit_next) {
-          Ok(value: found) => {
-            give move found;
-          }
-          Err(error: failure) => {
-            report_style(err: err, files: files, failure: failure);
-            return 2_u8;
-          }
-        }
-        let count = document^.nodes.inner.len;
-        if count > 4294967296_u64 {
-          return 2_u8;
-        }
-        let no = False();
-        let in_set = box_array_filled::<Bool>(count: count, value: no);
-        let listed = wanted.nodes.inner.len;
-        for (k in 0_u64..listed) {
-          let index = cvt::<u32, u64>(wanted.nodes.inner[k].index);
-          if index < in_set.inner.len {
-            set in_set.inner[index] = True();
-          }
-        }
-        let changed = box_array_filled::<Bool>(count: count, value: no);
-        for (node in 0_u64..count) {
-          if node < before.order.inner.len {
-            if node < after.order.inner.len {
-              let old_row = cvt::<u32, u64>(before.order.inner[node]);
-              let new_row = cvt::<u32, u64>(after.order.inner[node]);
-              if old_row < before.elements.inner.len {
-                if new_row < after.elements.inner.len {
-                  if old_row < row_changes.inner.len {
-                    set changed.inner[node] = row_changes.inner[old_row];
-                  }
-                }
-              }
+        if done.full {
+          set fallbacks = fallbacks +sat 1_u64;
+          let rebuilt = match build_traversal(document: document) {
+            Ok(value: found) => {
+              give move found;
+            }
+            Err(error: failure) => {
+              report_style(err: err, files: files, failure: failure);
+              return 2_u8;
             }
           }
-        }
-        let flagged = 0_u64;
-        let missing = 0_u64;
-        let first_missing = 0_u64;
-        for (node in 0_u64..count) {
-          if changed.inner[node] {
-            set flagged = flagged +sat 1_u64;
-            let covered = bor(wanted.full, in_set.inner[node]);
-            if covered {
-            } else {
-              if missing == 0_u64 {
-                set first_missing = node;
-              }
-              set missing = missing +sat 1_u64;
+          let replacement = match style_state(store: store, document: document, atoms: atoms, traversal: &rebuilt, environment: environment) {
+            Ok(value: found) => {
+              give move found;
+            }
+            Err(error: failure) => {
+              report_style(err: err, files: files, failure: failure);
+              return 2_u8;
             }
           }
+          set traversal = move rebuilt;
+          set state = move replacement;
         }
+        let fresh_traversal = match build_traversal(document: document) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let fresh = match compute_styles(store: store, document: document, atoms: atoms, traversal: &fresh_traversal, environment: environment) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: failure) => {
+            report_style(err: err, files: files, failure: failure);
+            return 2_u8;
+          }
+        }
+        let (differ, first_at) = structure_differing(first: &state.styles, second: &fresh, document: document, atoms: atoms, kept: &traversal, fresh: &fresh_traversal);
+        set differences = differences +sat differ;
         set edits = edits +sat 1_u64;
         put_text(buffer: &notes, text: &structure_label[0_u64..structure_label.len]);
         put_decimal(buffer: &notes, value: edits);
-        if wanted.full {
-          put_text(buffer: &notes, text: &full_label[0_u64..full_label.len]);
-        } else {
-          put_text(buffer: &notes, text: &set_label[0_u64..set_label.len]);
-          put_decimal(buffer: &notes, value: listed);
-        }
+        put_text(buffer: &notes, text: &visited_label[0_u64..visited_label.len]);
+        put_decimal(buffer: &notes, value: done.visited);
         put_text(buffer: &notes, text: &changed_label[0_u64..changed_label.len]);
-        put_decimal(buffer: &notes, value: flagged);
-        if wanted.full {
-        } else {
-          put_text(buffer: &notes, text: &missing_label[0_u64..missing_label.len]);
-          put_decimal(buffer: &notes, value: missing);
-        }
-        if missing > 0_u64 {
-          set status = 1_u8;
+        put_decimal(buffer: &notes, value: done.changed.inner.len);
+        put_text(buffer: &notes, text: &differ_label[0_u64..differ_label.len]);
+        put_decimal(buffer: &notes, value: differ);
+        if differ > 0_u64 {
           put_text(buffer: &notes, text: &first_label[0_u64..first_label.len]);
-          put_decimal(buffer: &notes, value: first_missing);
+          put_decimal(buffer: &notes, value: first_at);
+        }
+        if done.full {
+          put_text(buffer: &notes, text: &rebuilt_label[0_u64..rebuilt_label.len]);
         }
         put_byte(buffer: &notes, value: 10_u8);
         let flushed = flush(factory: files, output: out, buffer: &notes);
@@ -450,5 +606,24 @@ fn run_structure(store: &RuleStore, document: &Document, atoms: &AtomTable, scri
       }
     }
   }
-  return status;
+  put_text(buffer: &notes, text: &structure_label[0_u64..structure_label.len]);
+  put_text(buffer: &notes, text: &edits_label[0_u64..edits_label.len]);
+  put_decimal(buffer: &notes, value: edits);
+  put_text(buffer: &notes, text: &differ_label[0_u64..differ_label.len]);
+  put_decimal(buffer: &notes, value: differences);
+  put_text(buffer: &notes, text: &fallbacks_label[0_u64..fallbacks_label.len]);
+  put_decimal(buffer: &notes, value: fallbacks);
+  put_byte(buffer: &notes, value: 10_u8);
+  let flushed = flush(factory: files, output: out, buffer: &notes);
+  if flushed {
+  } else {
+    return 2_u8;
+  }
+  if edits == 0_u64 {
+    return 1_u8;
+  }
+  if differences > 0_u64 {
+    return 1_u8;
+  }
+  return 0_u8;
 }

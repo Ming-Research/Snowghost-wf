@@ -16,8 +16,12 @@
 #                                   sets and the sizes of the sets against
 #                                   the elements rematched; fails when an
 #                                   element is missing
-#   run.sh structure PAGE KIND...  checks B/X restyle completeness; also accepts
-#                                   PAGE structure, KIND case or full, and PAGE sides, KIND case, for fixtures
+#   run.sh structure PAGE KIND...  keeps stable style slots across B/X edits and
+#                                   compares every element with a fresh computation
+#                                   by NodeId (structure_restyle); fails on a difference
+#   run.sh reach PAGE KIND...      checks B/X restyle completeness (structural_restyle);
+#                                   also accepts PAGE structure, KIND case or full, and
+#                                   PAGE sides, KIND case, for fixtures
 #   run.sh incremental PAGE KIND... runs the style oracle's incremental check
 #                                   (restyle on a kept state against a full
 #                                   style run after every C and K edit) and
@@ -110,11 +114,28 @@ structure() {
 		[ -f "$script" ] || script=$work/scripts/$page-$kind.edits
 		[ -f "$script" ] || script=$cases/$page-$kind.edits
 		out=$work/structure/$page-$kind.txt
-		# Keep the summary even when the oracle exits nonzero for missing nodes.
 		# shellcheck disable=SC2046
 		"${STYLE:-$work/style_seq}" structure "$script" $(page_args "$page") >"$out" || status=1
+		awk -v name="$page-$kind" '/^structure edits/ { print name ": " $3 " edits, " $5 " differ, " $7 " fallbacks"; found = 1 } END { exit !found }' "$out" || status=1
+	done
+	return $status
+}
+
+reach() {
+	page=$1
+	shift
+	mkdir -p "$work/reach"
+	status=0
+	for kind in "$@"; do
+		script=build/x5/scripts/$page-$kind.edits
+		[ -f "$script" ] || script=$work/scripts/$page-$kind.edits
+		[ -f "$script" ] || script=$cases/$page-$kind.edits
+		out=$work/reach/$page-$kind.txt
+		# Keep the summary even when the oracle exits nonzero for missing nodes.
+		# shellcheck disable=SC2046
+		"${STYLE:-$work/style_seq}" reach "$script" $(page_args "$page") >"$out" || status=1
 		awk -v name="$page-$kind" '
-			/^structure/ {
+			/^reach/ {
 				edits++
 				for (i = 3; i < NF; i++) {
 					if ($i == "set") { total += $(i + 1); if (partial++ == 0 || $(i + 1) < lo) lo = $(i + 1); if ($(i + 1) > hi) hi = $(i + 1) }
@@ -161,6 +182,7 @@ case $command in
 scripts) scripts "$@" ;;
 restyle) restyle "$@" ;;
 structure) structure "$@" ;;
+reach) reach "$@" ;;
 incremental) incremental "$@" ;;
 *)
 	echo "usage: run.sh scripts|restyle|structure|incremental ..." >&2

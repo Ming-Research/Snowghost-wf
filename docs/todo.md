@@ -139,6 +139,27 @@ example apart from the renderer code that exposed it
   when M2 step 2's measured insertion cost on html5 shows the set's rematch
   matters against Chromium's 3.06 ms (Q113 option C).
 
+- **Stable-slot structural style still has nonlocal boundaries.**
+  `structure_restyle` keeps the style rows, but contiguous `Slots` storage
+  can copy its allocation on growth; the 4096-entry reserve postpones rather
+  than removes that cost. The selector position cache updates original
+  children of the edited parent, while new NodeIds scan siblings. Also,
+  `class_restyle` uses preorder ranges and requests a full build after a
+  structure edit. Change: bound allocation growth, extend the position
+  cache and replace the class reach's preorder ranges with DOM links before
+  claiming strict locality across mixed editing sessions. Validate with
+  growth-boundary, wide-sibling and interleaved B/X/C/K scripts against a
+  fresh style computation. Reopen in M2's follow-up before E2; see
+  `research/investigations/structure-edits/runs/slots.txt`.
+
+- **Inserted declarations need a RuleStore update.** `structure_restyle`
+  reads the store, whose NodeId-indexed inline declarations and hints were
+  parsed at load. Inserting `<p style="color:red">` cannot register its
+  declaration through that interface; B's plain paragraph has no such
+  declarations. Change: add an insertion preparation operation for style
+  attributes and hints, with a minimal inserted styled-element oracle.
+  Reopen before accepting general element insertion beyond B/X.
+
 - **The DOM's node array only grows.** `pkg::dom` appends every created
   node and keeps detached ones (`detach` leaves the node and its subtree in
   the document without a parent), so an editing session's DOM grows with
