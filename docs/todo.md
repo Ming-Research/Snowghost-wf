@@ -125,6 +125,61 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Structural reaches through `+` chains reach every later sibling.** In
+  `h1 + div + h2`, the `div` compound reaches its later siblings, which
+  `structural_restyle` widens to every element child after the edit point
+  (`renderer/style/restyle.wf`, `widen_side`), while only the element two
+  after the point can change. Impact: html5's largest block-edit set is 548
+  elements, every later heading, against a handful
+  (`research/investigations/structure-edits/runs/structure-check.txt`).
+  Change: record in `FeatureReach` the number of `+` hops when only `+`
+  follows the compound, and walk that many elements past the point. Reopen
+  when M2 step 2's measured insertion cost on html5 shows the set's rematch
+  matters against Chromium's 3.06 ms (Q113 option C).
+
+- **Stable-slot structural style still has nonlocal boundaries.**
+  `structure_restyle` keeps the style rows, but contiguous `Slots` storage
+  can copy its allocation on growth; the 4096-entry reserve postpones rather
+  than removes that cost. The selector position cache updates original
+  children of the edited parent, while new NodeIds scan siblings. Also,
+  `class_restyle` uses preorder ranges and requests a full build after a
+  structure edit. Change: bound allocation growth, extend the position
+  cache and replace the class reach's preorder ranges with DOM links before
+  claiming strict locality across mixed editing sessions. Validate with
+  growth-boundary, wide-sibling and interleaved B/X/C/K scripts against a
+  fresh style computation. Reopen in M2's follow-up before E2; see
+  `research/investigations/structure-edits/runs/slots.txt`.
+
+- **Inserted declarations need a RuleStore update.** `structure_restyle`
+  reads the store, whose NodeId-indexed inline declarations and hints were
+  parsed at load. Inserting `<p style="color:red">` cannot register its
+  declaration through that interface; B's plain paragraph has no such
+  declarations. Change: add an insertion preparation operation for style
+  attributes and hints, with a minimal inserted styled-element oracle.
+  Reopen before accepting general element insertion beyond B/X.
+
+- **Layout update entry counts are not physical visits.** In
+  `renderer/layout/update.wf:restack_flow`, `entries` includes the suffix
+  length after convergence even for a zero translation, excludes prefix
+  recovery and auxiliary scans, and `paragraphs` is one for an entire
+  block range. These counters cannot establish M2's locality criterion.
+  Change: retain the old report columns for comparison and add physical
+  replay, translated-direct-entry, subtree-skip, routing and fragment-work
+  counts at their operations. Reopen when implementing M2's nested flow;
+  require tiny hand-counted cases and mutations that hide a suffix walk
+  to fail the locality check. See
+  `research/investigations/structure-edits/layout-design.md`, Inventory.
+
+- **The DOM's node array only grows.** `pkg::dom` appends every created
+  node and keeps detached ones (`detach` leaves the node and its subtree in
+  the document without a parent), so an editing session's DOM grows with
+  every insertion and never shrinks. Every NodeId-indexed table follows it:
+  layout's uses and order maps, the class records and the sibling
+  positions. Change: reclaim detached subtrees, by a free list for new nodes
+  or by an epoch that renumbers NodeIds together with every holder. Reopen
+  with the stable-slot compaction above, or before the shell runs editing
+  sessions.
+
 - **The incremental restyle runs its loops sequentially.** `restyle`,
   `restyle_level`, `root_font_readers` and `class_restyle`
   (`renderer/style`) are plain loops that push into shared lists (the
@@ -153,6 +208,9 @@ example apart from the renderer code that exposed it
     every table and every holder of an identifier: the styles, layout's keys
     and the class-record heads. It runs when a table has doubled since the
     last full build. Measure first how a long editing session grows.
+  - M2's stable element slots (Q111) grow the same way. Inserted elements
+    are appended and removed ones leave holes. The same epoch packs the live
+    slots and renumbers the NodeId-to-slot map and every holder of a slot.
   - Reopen before the shell runs editing sessions, or when an editing
     session's measured memory grows past the full build's by half.
 

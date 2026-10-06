@@ -62,15 +62,15 @@ fn style_state(store: &RuleStore, document: &Document, atoms: &AtomTable, traver
     let failure = StyleError::TooLarge();
     return Err<StyleState, StyleError>(error: failure);
   }
-  let flag_bits = box_array_filled::<u8>(count: element_count, value: 0_u8);
-  let first_numbers = box_array_filled::<u32>(count: element_count, value: no_pseudo);
+  let flag_bits = filled_slots::<u8>(count: element_count, value: 0_u8);
+  let first_numbers = filled_slots::<u32>(count: element_count, value: no_pseudo);
   map_pseudos(cascade: &cascade, flags: &flag_bits, first: &first_numbers);
-  let marks = box_array_filled::<u8>(count: node_count, value: 0_u8);
+  let marks = filled_slots::<u8>(count: node_count, value: 0_u8);
   let made = StyleState(cascade: move cascade, inherited: move inherited, resets: move resets, styles: move styles, index: move index, pseudo_index: move pseudo_index, pseudo_flags: move flag_bits, pseudo_first: move first_numbers, marks: move marks);
   return Ok<StyleState, StyleError>(value: move made);
 }
 
-fn map_pseudos(cascade: &Cascade, flags: &Box<Array<u8>>, first: &Box<Array<u32>>) -> result: unit reads(cascade), writes(flags), writes(first) {
+fn map_pseudos(cascade: &Cascade, flags: &Box<Slots<u8>>, first: &Box<Slots<u32>>) -> result: unit reads(cascade), writes(flags), writes(first) {
   doc "Records, for each element, bit 1 when it has a ::before and bit 2 when it has an ::after among the cascade's styled nodes, and the number of its first pseudo-element; flags and first start cleared.";
   let element_count = cascade^.element_count;
   let node_count = cascade^.nodes.inner.len;
@@ -265,6 +265,15 @@ fn style_at(styles: &Styles, element_count: u64, node: u64) -> style: Option<Com
     }
     return None<ComputedStyle>();
   }
+  let first_appended = element_count +sat styles^.pseudos.inner.len;
+  if node >= first_appended {
+    let element = node -sat styles^.pseudos.inner.len;
+    if element < styles^.elements.inner.len {
+      let found = styles^.elements.inner[element];
+      return Some<ComputedStyle>(value: found);
+    }
+    return None<ComputedStyle>();
+  }
   let pseudo = node - element_count;
   if pseudo < styles^.pseudos.inner.len {
     let found = styles^.pseudos.inner[pseudo].style;
@@ -278,6 +287,14 @@ fn place_style(styles: &Styles, element_count: u64, node: u64, style: ComputedSt
   if node < element_count {
     if node < styles^.elements.inner.len {
       set styles^.elements.inner[node] = style;
+    }
+    return unit;
+  }
+  let first_appended = element_count +sat styles^.pseudos.inner.len;
+  if node >= first_appended {
+    let element = node -sat styles^.pseudos.inner.len;
+    if element < styles^.elements.inner.len {
+      set styles^.elements.inner[element] = style;
     }
     return unit;
   }
@@ -1051,7 +1068,8 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
   let batch = box_slots_new::<u64>(capacity: 0_u64);
   let owners = box_slots_new::<u64>(capacity: 0_u64);
   for (k in 0_u64..count) {
-    let at = level^.inner[k];
+    let slot = level^.inner[k];
+    let at = element_node(state: state, element: slot);
     let old = match stored_node(state: &state^.inherited, at: at) {
       Some(value: found) => {
         give found;
@@ -1068,8 +1086,8 @@ fn restyle_level(state: &StyleState, store: &RuleStore, document: &Document, ato
     }
     let old_set = state^.inherited.sets.inner[at];
     let old_root = state^.inherited.root_font_size;
-    let keep_set = if at < state^.marks.inner.len {
-      give state^.marks.inner[at] == queued;
+    let keep_set = if slot < state^.marks.inner.len {
+      give state^.marks.inner[slot] == queued;
     } else {
       give False();
     }
@@ -1222,7 +1240,7 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
     let rebuilt = propagate rebuild_all(state: state, store: store, document: document, atoms: atoms, traversal: traversal, environment: environment, matched: kept_cascade);
     return Ok<Restyled, StyleError>(value: move rebuilt);
   }
-  let element_count = state^.cascade.element_count;
+  let element_count = state^.styles.elements.inner.len;
   let listed = wanted^.elements.inner.len;
   let elements_known = traversal^.elements.inner.len == element_count;
   let depths_known = traversal^.depths.inner.len == element_count;
@@ -1266,7 +1284,8 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
   let deepest = 0_u64;
   for (k in 0_u64..listed) {
     let at = cvt::<u32, u64>(wanted^.elements.inner[k]);
-    let own = rematch_node(state: state, store: store, document: document, atoms: atoms, node: at);
+    let node_slot = element_node(state: state, element: at);
+    let own = rematch_node(state: state, store: store, document: document, atoms: atoms, node: node_slot);
     set fits = band(fits, own);
     let pseudos = box_slots_new::<u64>(capacity: 0_u64);
     let found = propagate pseudo_nodes(state: state, element: at, nodes: &pseudos);
@@ -1353,6 +1372,11 @@ fn restyle(state: &StyleState, store: &RuleStore, document: &Document, atoms: &A
         break;
       }
     }
+    if rebuild {
+      if traversal^.stale {
+        return structure_fallback();
+      }
+    }
     let first_pass = pass == 0_u64;
     let retry = band(rebuild, first_pass);
     if retry {
@@ -1434,6 +1458,9 @@ fn rank_in(pseudos: &Box<Slots<PseudoStyle>>, at: u64) -> rank: u64 reads(pseudo
 
 fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms: &AtomTable, traversal: &Traversal, environment: Environment, matched: Bool) -> result: Result<Restyled, StyleError> reads(store), reads(document), reads(traversal), writes(state), writes(atoms) {
   doc "Runs the three parts again over every styled node with the kept rule indexes, or only the last two when matched says the kept cascade already holds every element's winners, as after a root font-size change, where restyle rematched the restyle set, which holds every element whose matched rules changed, and interns every node into the kept tables, so identifiers stay comparable; changed lists every element whose style or a pseudo-element's style differs from before in what layout reads, or whose set of pseudo-elements differs, and structural says whether box construction reads a difference.";
+  if traversal^.stale {
+    return structure_fallback();
+  }
   let element_count = state^.cascade.element_count;
   let old_count = state^.styles.elements.inner.len;
   let bounded_old = old_count <= 4294967296_u64;
@@ -1478,12 +1505,12 @@ fn rebuild_all(state: &StyleState, store: &RuleStore, document: &Document, atoms
     let failure = StyleError::Inconsistent();
     return Err<Restyled, StyleError>(error: failure);
   }
-  let flags = box_array_filled::<u8>(count: new_elements, value: 0_u8);
-  let first = box_array_filled::<u32>(count: new_elements, value: no_pseudo);
+  let flags = filled_slots::<u8>(count: new_elements, value: 0_u8);
+  let first = filled_slots::<u32>(count: new_elements, value: no_pseudo);
   map_pseudos(cascade: &state^.cascade, flags: &flags, first: &first);
   set state^.pseudo_flags = move flags;
   set state^.pseudo_first = move first;
-  let marks = box_array_filled::<u8>(count: node_count, value: 0_u8);
+  let marks = filled_slots::<u8>(count: node_count, value: 0_u8);
   set state^.marks = move marks;
   let all = box_array_filled::<u64>(count: node_count, value: 0_u64);
   for (k in 0_u64..node_count) {
