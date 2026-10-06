@@ -44,8 +44,8 @@ edit (insert a paragraph), in ms.
 ## What the target implies
 
 ecma262's 0.12 ms is about 120 us for the whole edit: DOM insertion, style
-and layout. ecma262 has about 96,000 elements and 118,000 flow entries in
-one context. Any step that touches every element or every entry, at even
+and layout. ecma262 has 179,471 elements (419,309 nodes with its text nodes) and about
+118,000 flow entries in one context. Any step that touches every element or every entry, at even
 1 ns each, spends most of that budget. So the edit's path may not hold:
 
 - a traversal built again (step 1);
@@ -196,11 +196,22 @@ Written before implementation and kept as written, as M1's was.
 
 These open questions go to the owner before step 1 starts, because they
 set the direction of the work (design-tree skill, "Before starting").
-- **Q107**, the style state's key: NodeId, approved. Reopened as Q111 when
-  step 1 found that the full stage's parallel loops would then write through
-  NodeIds whose distinctness Whitefoot cannot state (docs/todo.md, Whitefoot
-  requirements). The recommendation is now a stable slot: an element's
-  preorder position at the last full build, with inserted elements appended.
+- **Q107**, the style state's key: NodeId, approved, then reopened as Q111.
+- **Q111**: a stable slot, approved. An element's slot is its preorder
+  position at the last full build. An inserted element is appended and a
+  removed one leaves a hole.
+  - The full build keeps its code and layout, and the NodeId-to-slot map is
+    the traversal's existing order map.
+  - NodeId arrays would also stay parallel: the level cascade's inverse-map
+    precondition and `apart` certificate prove writes through NodeIds
+    distinct, at one O(n) check per pass. But they would hold every text
+    node's slot (2.3 times the elements on ecma262), spread each pass's
+    accesses over that many cache lines, and grow with the DOM arena, which
+    only appends and cannot be compacted alone.
+  - Slots grow only with inserted elements, and a compaction can renumber
+    them alone. It is part of the TODO that the approval of Q89 required.
+  - Not measured; the comparison follows from what each pass reads and
+    writes.
 - **Q108**, no traversal per edit: approved. An edit takes depths from
   parents; the preorder list is rebuilt by the next full build.
 - **Q109**, nested flow entries with offsets relative to the parent block:

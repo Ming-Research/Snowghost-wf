@@ -127,6 +127,16 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **The DOM's node array only grows.** `pkg::dom` appends every created
+  node and keeps detached ones (`detach` leaves the node and its subtree in
+  the document without a parent), so an editing session's DOM grows with
+  every insertion and never shrinks. Every NodeId-indexed table follows it:
+  layout's uses and order maps, the class records and the sibling
+  positions. Change: reclaim detached subtrees, by a free list for new nodes
+  or by an epoch that renumbers NodeIds together with every holder. Reopen
+  with the stable-slot compaction above, or before the shell runs editing
+  sessions.
+
 - **The incremental restyle runs its loops sequentially.** `restyle`,
   `restyle_level`, `root_font_readers` and `class_restyle`
   (`renderer/style`) are plain loops that push into shared lists (the
@@ -155,6 +165,9 @@ example apart from the renderer code that exposed it
     every table and every holder of an identifier: the styles, layout's keys
     and the class-record heads. It runs when a table has doubled since the
     last full build. Measure first how a long editing session grows.
+  - M2's stable element slots (Q111) grow the same way. Inserted elements
+    are appended and removed ones leave holes. The same epoch packs the live
+    slots and renumbers the NodeId-to-slot map and every holder of a slot.
   - Reopen before the shell runs editing sessions, or when an editing
     session's measured memory grows past the full build's by half.
 
