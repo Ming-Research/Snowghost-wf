@@ -108,6 +108,7 @@ Correctness is judged by oracles independent of Snowghost:
 | `research/investigations/` | One directory per question: its design, experiments, measurements and rejected alternatives |
 | `docs/` | The review checklist, and the TODO of known defects and Whitefoot requirements |
 | `whitefoot.pin` | The Whitefoot compiler release the renderer builds with, `release = wf-<12 hex digits of its commit>` |
+| `whitefoot-kit/` | [Whitefoot-kit](https://github.com/Ming-Research/Whitefoot-kit), as a submodule: the build rules and downstream rules shared by projects written in Whitefoot |
 
 ## Building and checking
 

@@ -96,7 +96,7 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
   [G3](../design/skill/SKILL.md#design-checks) to structural choices, and
   check that the assessment happened when the choice was made.
 
-## T. Checks and the pin — changes to tests, the Makefile, `.github/` or `whitefoot.pin`
+## T. Checks and the pin — changes to tests, the Makefile, `.github/`, `whitefoot.pin` or a submodule
 
 - [ ] **T1 — Preserved checks.** Every removed, skipped, narrowed or weakened
   test or check has a technical reason consistent with the requested change.
@@ -104,10 +104,12 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
   shows that a representative wrong result is detected.
 - [ ] **T3 — Local and CI correspondence.** CI runs the same Makefile targets
   as local `make check`; changed selection adds no omission or extra check.
-- [ ] **T4 — The pin.** A moved `whitefoot.pin` names the adopted Whitefoot
-  revisions and why; a revision bound for `main` pins a commit on
-  Whitefoot's `main` that has a compiler release, never an experiment release
-  `wf-exp-`, and Snowghost's checks pass with it.
+- [ ] **T4 — The pin.** Whitefoot-kit's
+  [review items](../whitefoot-kit/downstream.md#review-items) hold: a moved
+  `whitefoot.pin` or submodule names the adopted revisions and why, and a
+  revision bound for `main` pins a release of a commit on Whitefoot's `main`,
+  never an experiment release `wf-exp-`, and submodule commits on their
+  repositories' `main`; Snowghost's checks pass with them.
 
 ## R. Decisions — changed choices, premises or evidence
 
