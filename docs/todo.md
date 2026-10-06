@@ -147,6 +147,21 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Step 2's reassociation falsifier is not yet detected.** M2 layout step
+  2 stores origins owner-relative and sums them in i64 (geometry.wf). Its
+  falsifier rewrites `content_left +sat (inner_x +sat dx)` as
+  `(content_left +sat inner_x) +sat dx` in settle_open and stack_flow, and
+  `research/investigations/structure-edits/scripts/saturation-case.html`
+  puts a block's origin within 512 units of LayoutUnit's maximum under a
+  negative relative offset, where the two orders differ by 321 units; yet
+  the mutated build's full-build dump equals the unmutated one's (falsify-m2
+  run 37476680126). Either the case's block takes another path to its
+  resolved origin, or the dump does not show the difference. Impact: a
+  wrong saturation order would go unnoticed. Change: trace that block's
+  origin through placement in the oracle's dump and make the case reach the
+  sum, or mutate the sum it does reach. Reopen before M2's layout PR is
+  ready; the falsifier stays out of falsify-m2's matrix until then.
+
 - **M2 typed payload ownership is still context-wide.** Step 3's
   `EntrySequence` owns paged stable direct-entry handles and its local AVL
   metadata, but `Context.blocks`, `paragraphs` and `children` still own the
