@@ -39,8 +39,8 @@
 # diagnostic run such as the one in runs/ua-table-gray.txt, whose sheet is
 # renderer/style/ua.css followed by the line `table { border-color: gray; }`.
 #
-# The drivers are built with WHITEFOOTC (by default the release of the
-# commit in whitefoot.pin, which make compiler downloads). POSIX sh plus node and sha256sum.
+# The drivers are built with WHITEFOOTC (by default the release whitefoot.pin
+# names, which make compiler downloads). POSIX sh plus node and sha256sum.
 
 set -eu
 
@@ -52,7 +52,7 @@ data=${PAGES:-build/research/concurrency}
 oracle=build/oracle/style
 out=build/research/style
 ua=${UA:-renderer/style/ua.css}
-compiler=${WHITEFOOTC:-$root/build/whitefoot/wf-$(cut -c1-12 "$root/whitefoot.pin")/whitefootc}
+compiler=${WHITEFOOTC:-$root/build/whitefoot/$(sed -n "s/^release = //p" "$root/whitefoot.pin")/whitefootc}
 lock=${RUN_CHECK:-}
 runs=${RUNS:-5}
 workers=${WORKERS:-1 2 4}

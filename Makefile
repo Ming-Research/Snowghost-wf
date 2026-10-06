@@ -26,15 +26,15 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 check: compiler renderer dom-selftest design-lint
 
-# The renderer builds with the compiler of the Whitefoot commit in
-# whitefoot.pin (AGENTS.md, rule 4): Whitefoot's release wf-<its first 12 hex
-# digits>, downloaded once into build/whitefoot/<tag>/ and checked against the
-# release's SHA256SUMS and manifest. A pin whose release has expired gets it
+# The renderer builds with the Whitefoot compiler release that whitefoot.pin
+# names in its one line, release = wf-<12 hex digits of a Whitefoot commit>
+# (AGENTS.md, rule 4), downloaded once into build/whitefoot/<tag>/ and checked
+# against the release's SHA256SUMS and manifest. A pin whose release has expired gets it
 # again with the command the error prints. WHITEFOOTC=<path> builds with
 # another compiler instead, such as one built from an unmerged Whitefoot
 # change; CI uses only the release.
-WHITEFOOT_COMMIT := $(strip $(shell cat $(ROOT)/whitefoot.pin))
-WHITEFOOT_TAG := wf-$(shell printf '%.12s' '$(WHITEFOOT_COMMIT)')
+WHITEFOOT_TAG := $(lastword $(shell cat $(ROOT)/whitefoot.pin))
+WHITEFOOT_COMMIT := $(patsubst wf-%,%,$(WHITEFOOT_TAG))
 WHITEFOOT_RELEASE := $(BUILD)/whitefoot/$(WHITEFOOT_TAG)
 WHITEFOOTC ?= $(WHITEFOOT_RELEASE)/whitefootc
 SHA256 := $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
@@ -42,8 +42,9 @@ SHA256 := $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
 compiler:
 ifeq ($(origin WHITEFOOTC),file)
 	@set -e; \
-	if ! printf '%s\n' '$(WHITEFOOT_COMMIT)' | grep -qxE '[0-9a-f]{40}'; then \
-		echo "whitefoot.pin must hold one full Whitefoot commit hash" >&2; exit 1; \
+	if [ "$$(wc -l < '$(ROOT)/whitefoot.pin')" -ne 1 ] || \
+		! grep -qxE 'release = wf-[0-9a-f]{12}' '$(ROOT)/whitefoot.pin'; then \
+		echo "whitefoot.pin must hold one line: release = wf-<12 hex digits>" >&2; exit 1; \
 	fi; \
 	if [ ! -x '$(WHITEFOOTC)' ]; then \
 		case "$$(uname -s)-$$(uname -m)" in \
@@ -63,9 +64,9 @@ ifeq ($(origin WHITEFOOTC),file)
 		grep -E "  \*?(whitefoot-release\.json|whitefootc-$$platform\.tar\.gz)$$" "$$partial/SHA256SUMS" > "$$partial/checked"; \
 		test "$$(wc -l < "$$partial/checked")" -eq 2; \
 		(cd "$$partial" && $(SHA256) -c checked > /dev/null); \
-		if ! $(PY) -c 'import json, sys; sys.exit(json.load(open(sys.argv[1]))["commit"] != sys.argv[2])' \
-			"$$partial/whitefoot-release.json" '$(WHITEFOOT_COMMIT)'; then \
-			echo "Whitefoot release $(WHITEFOOT_TAG) names another commit than whitefoot.pin" >&2; exit 1; \
+		if ! $(PY) -c 'import json, sys; m = json.load(open(sys.argv[1])); sys.exit(m["tag"] != sys.argv[2] or not m["commit"].startswith(sys.argv[3]))' \
+			"$$partial/whitefoot-release.json" '$(WHITEFOOT_TAG)' '$(WHITEFOOT_COMMIT)'; then \
+			echo "Whitefoot release $(WHITEFOOT_TAG)'s manifest names another release or commit" >&2; exit 1; \
 		fi; \
 		tar -xzf "$$partial/whitefootc-$$platform.tar.gz" -C "$$partial" whitefootc; \
 		test -x "$$partial/whitefootc"; \

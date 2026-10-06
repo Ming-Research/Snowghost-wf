@@ -41,8 +41,8 @@
 # check compares L1, L2 and L3 and reports L3's fix-up totals. With KEEP_BUILD
 # set, layout times the drivers already in build/ instead of building them.
 #
-# The drivers are built with WHITEFOOTC (by default the release of the
-# commit in whitefoot.pin, which make compiler downloads).
+# The drivers are built with WHITEFOOTC (by default the release whitefoot.pin
+# names, which make compiler downloads).
 #
 # POSIX sh plus curl and sha256sum.
 
@@ -54,7 +54,7 @@ cd "$root"
 
 data=build/research/concurrency
 ua=research/investigations/concurrency/ua.css
-compiler=${WHITEFOOTC:-$root/build/whitefoot/wf-$(cut -c1-12 "$root/whitefoot.pin")/whitefootc}
+compiler=${WHITEFOOTC:-$root/build/whitefoot/$(sed -n "s/^release = //p" "$root/whitefoot.pin")/whitefootc}
 lock=${RUN_CHECK:-}
 runs=${RUNS:-7}
 workers=${WORKERS:-1 2 4}
@@ -309,12 +309,12 @@ build_layout() {
 }
 
 # Names the compiler by its path, relative to the checkout when it lies
-# inside it, and its SHA-256 prefix, and the pinned Whitefoot commit when the
-# compiler is the pin's release.
+# inside it, and its SHA-256 prefix, and the pinned Whitefoot release when the
+# compiler is that release.
 compiler_line() {
 	line="compiler: ${compiler#"$root"/} $(sha256sum <"$compiler" | cut -c1-16)"
-	if [ "$compiler" = "$root/build/whitefoot/wf-$(cut -c1-12 "$root/whitefoot.pin")/whitefootc" ]; then
-		line="$line, whitefoot $(cut -c1-8 "$root/whitefoot.pin")"
+	if [ "$compiler" = "$root/build/whitefoot/$(sed -n "s/^release = //p" "$root/whitefoot.pin")/whitefootc" ]; then
+		line="$line, whitefoot $(sed -n "s/^release = //p" "$root/whitefoot.pin")"
 	fi
 	echo "$line"
 }

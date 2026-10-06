@@ -5,9 +5,9 @@ interfaces built with web technology. Its renderer implements a chosen subset
 of the web platform in Whitefoot, with a pipeline meant to be parallel and
 incremental from end to end, and a shell written in Rust hosts it on each
 operating system (the `processes` decision in `design/`). Whitefoot, the
-language and its compiler, is pinned by the commit in `whitefoot.pin`, whose
-compiler release the build downloads, and the `design-tree` skill as the
-`design/skill/` submodule.
+language and its compiler, is pinned by the compiler release that
+`whitefoot.pin` names, which the build downloads, and the `design-tree` skill
+as the `design/skill/` submodule.
 
 ## Project goal
 
@@ -55,8 +55,9 @@ and rejected alternatives, and its surviving decision goes to the design
 tree. Read only the material relevant to the task, and do not turn research
 into an implied implementation requirement.
 
-The Whitefoot commit in `whitefoot.pin` defines the language. Read the
-Whitefoot repository at that commit, in a clone checked out there or one file
+The Whitefoot commit of the release in `whitefoot.pin`, the 12 hex digits
+after `wf-`, defines the language. Read the Whitefoot repository at that
+commit, in a clone checked out there or one file
 at a time with
 `gh api 'repos/Ming-Research/Whitefoot/contents/<path>?ref=<commit>' -H 'Accept: application/vnd.github.raw'`.
 Write Whitefoot from its specification `spec/kernel-spec.md`, which is
@@ -184,8 +185,8 @@ approval or merge precondition.
 - `make check`, the gate, in CI on every push and on the revision to merge.
   It needs git, Python 3, curl, `/usr/bin/clang`, LLD on Linux and the
   `design/skill` submodule (`git clone --recurse-submodules` or
-  `git submodule update --init`). It downloads the compiler release of the
-  commit in `whitefoot.pin` for Linux x86-64 or macOS arm64 into
+  `git submodule update --init`). It downloads the compiler release that
+  `whitefoot.pin` names for Linux x86-64 or macOS arm64 into
   `build/whitefoot/`, builds the renderer and runs the design lint;
   `make check WHITEFOOTC=<path>` uses another compiler instead.
 - `make design-ready`, before marking ready and in CI on ready PRs and main:
@@ -205,8 +206,8 @@ the remote head is the reviewed revision, and fill the PR's review section.
 
 ## The Whitefoot boundary
 
-- Snowghost builds with exactly the compiler release of the commit in
-  `whitefoot.pin`, and moving the pin is a deliberate change under rule 4.
+- Snowghost builds with exactly the compiler release that `whitefoot.pin`
+  names, and moving the pin is a deliberate change under rule 4.
 - A change Snowghost needs in Whitefoot is made in Whitefoot, under
   Whitefoot's own AGENTS.md, as a branch and PR in its repository. While that
   PR is open, a Snowghost work branch tries it with a compiler built from the
@@ -224,7 +225,8 @@ the remote head is the reviewed revision, and fill the PR's review section.
 Whitefoot publishes a compiler release on request for a commit on its `main`
 whose gate passed: the prerelease `wf-` followed by the commit's first 12 hex
 digits, holding `whitefootc` for Linux x86-64 and macOS arm64,
-`whitefoot-release.json`, which names the commit, and `SHA256SUMS`. Releases
+`whitefoot-release.json`, which names the release and its commit, and
+`SHA256SUMS`. Releases
 older than 30 days are deleted, except the newest. No scheduled CI moves the
 pin; the owner runs an agent that upgrades every downstream project. An
 upgrade:
@@ -233,7 +235,8 @@ upgrade:
    gate, and publishes its release if it has none:
    `gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash>`,
    which does nothing when the release exists.
-2. Writes the full hash to `whitefoot.pin`.
+2. Writes its one line, `release = wf-<12 hex digits>`, to `whitefoot.pin`,
+   the format every downstream project shares.
 3. Reads what changed between the two commits (Whitefoot's `spec/log.md`, the
    specification's diff and the compiler's diagnostics on the renderer) and
    adapts the renderer; a gap goes to Whitefoot as
