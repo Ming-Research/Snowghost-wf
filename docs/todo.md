@@ -1,15 +1,14 @@
 # Known defects and follow-up work
 
 Items the work has found and not yet done, each with its impact, the change
-that would address it and when to reopen it ([AGENTS.md](../AGENTS.md#how-work-proceeds),
-"Fix or record what you notice"). Remove an item in the change that resolves
-it.
+that would address it and when to reopen it, as the owner-wide instructions
+ask. Remove an item in the change that resolves it.
 
 ## Whitefoot requirements
 
 Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
-([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
+([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
 - **A write through indices the program knows are distinct needs its
   facts derived again in each pass.** Minimal example: a tree in an arena,
