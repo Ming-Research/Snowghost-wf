@@ -233,9 +233,12 @@ example apart from the renderer code that exposed it
   loops, and compare full-build costs against the frozen M1 source at the
   same Whitefoot pin. Each sequence starts with four-slot pages and grows
   its directory by wrapping the old roots, without copying existing pages.
-  Virtual rank lookup descends each owner index; line-summary publication
-  currently repairs ancestor paths during the reference walk. Measure those
-  costs before accepting the full-build envelope. Reopen with the primary
+  Isolated virtual rank lookup descends each owner index; reference walks
+  materialize events and now reduce payload outputs once bottom-up before
+  page publication. Validate the disjoint slice proofs, restored float-prefix
+  state, physical-read counters and temporary snapshot/output memory, then
+  measure against the [full-build repair criterion](../research/investigations/structure-edits/layout-design.md#full-build-regression-repair)
+  before accepting its performance envelope. Reopen with the primary
   agent's step-3 CI and step 4's boundary-output propagation. Do not infer
   byte identity, logarithmic physical visit counts or speed from source alone.
 

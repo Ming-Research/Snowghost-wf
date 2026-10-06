@@ -900,47 +900,104 @@ for (extra_at in 0_u64..extra_count) {
 
 ### Full-build regression repair
 
-The question is whether removing repeated nested rank descent and incremental
-AVL construction restores the full-build envelope without changing event
-order, stable payload identities, AVL validity or boundary behavior. The
-owner selected transient walk materialization and bulk construction; their
-cost advantage still requires CI measurement. Reject the repair if html5 or
-ecma262 full layout exceeds step 2 by more than 5% in either sequential or
-four-worker mode, or if dumps or incremental identity differ. Compare the
-same source/pin/settings before and after with interleaved runs and a twin
-of the baseline as the noise control; the supplied best-of-three results
-motivate this repair but do not establish its acceptance.
+The question is whether removing repeated nested rank descent, incremental
+AVL construction and per-entry ancestor summary repair restores the full-build
+envelope without changing event order, stable payload identities, AVL validity
+or boundary behavior. The owner selected transient walk materialization, bulk
+construction, field-narrow index access and one bottom-up semantic reduction
+after each reference walk. Reject the repair if html5 or ecma262 full layout
+exceeds step 2 by more than 5% in either sequential or four-worker mode, or if
+dumps or incremental identity differ. Compare the same source/pin/settings
+before and after with interleaved runs and a twin of the baseline as the noise
+control; the supplied best-of-three results motivate the repair but do not
+establish acceptance.
 
-`sequence.wf:materialize_flow` allocates a local `Box<Slots<Flow>>` and
-`fill_flow` partitions it by cached left-subtree and own-entry event counts.
-Left, own and right ranges are independent; a block's interior uses another
-disjoint range between its Open and synthesized Close. The window is first
-initialized with `place_back`, whose length updates form a serial chain;
-the pinned prelude provides no runtime-sized filled Slots constructor or
-runtime Array-to-Slots conversion. Recursive filling uses slices, not
-recursive append. Range bounds and compiler scheduling remain unvalidated.
-The `SequenceCursor` leaf projection copies links, liveness and event counts
-instead of both full boundary transfers through every directory return.
-Legacy restacks also use transient streams; this is not bounded-edit evidence.
+The owner's i9-14900K measurements, `layout/run.sh time html5`, best of three,
+seconds per run, isolate the remaining summary cost:
 
-`pending_append` assigns stable slots from each owner's plain list. Closing a
-block calls `finish_sequence` and changes only its parent's pending entry
-span; context publication seals the root owner. `bulk_nodes` chooses the
-middle slot, constructs halves into disjoint slices, then computes parent
-height and summary from both outputs. `bulk_pages` allocates independent
-page-directory halves once. Slot numbers remain append indices and are not
-reassigned by balancing. Pending storage is released after sealing.
-Construction still follows the existing counter/quote and open-owner walk;
-no shared order counter or repeated rotation chain is introduced. Incremental
-`insert_before`, removal, boundary propagation and counter accounting keep
-their existing paths. Different balanced shapes may change physical visit
-counts without changing what those counters measure.
+| Source | Boxes, sequential | Layout, sequential | Layout, four workers |
+| --- | ---: | ---: | ---: |
+| Step 2, `0e2a0931f630f156bf99bcc9596d37acea787ca8` | 0.070 | 0.630 | 0.297 |
+| First repair, `2084e34be7cbf57318c4228312dbcf5a6ba9cd3e` | 0.110 | 1.370 | 1.060 |
+| First repair without full-build `publish_boundaries` | — | 1.270 | 0.970 |
+| Also without both `stack_flow` calls to `record_event_lines` | — | 0.700 | 0.373 |
 
-No compilation, dump comparison, edit validation or measurement accompanies
-this source repair. In particular, disjoint-slice proof acceptance, summary
-repair costs during layout, and the full-build envelope remain for the
-primary agent's CI. The governing layout node records the requested choice;
-no approval-log or readiness claim is made here.
+The same supplied sequential profile attributes 29.7% self time to
+`__memmove_avx_unaligned_erms`, versus 0.9% at step 2; `boundary_set` is 4.8%,
+`slot_read` 3.0%, `fill_flow` 1.7%, `join_output` 1.5%, `slot_write` 1.0%,
+and allocation/free about 8%. Compiler version and other settings were not
+included with these observations. Source inspection confirms repeated whole
+node copies through page directories and ancestor repair in the line-summary
+writer and semantic publisher; it does not independently attribute machine
+instructions. These ablations remove required behavior and are diagnostic
+variants, not acceptable implementations.
+
+`sequence.wf:materialize_flow` allocates one transient event array;
+`fill_flow` partitions disjoint left, own and right ranges using cached event
+weights. A block's interior occupies the range between its Open and synthesized
+Close. Initializing Slots with `place_back` retains a length-update chain:
+the pinned prelude has no runtime-sized filled Slots constructor or runtime
+Array-to-Slots conversion. The compatibility walker still follows its true
+margin, float and stacking-state dependencies.
+
+During stacking, paragraph and child outputs stay in their existing payloads;
+no line-summary writer repairs an index or owner chain. Close records only
+whether any preceding BFC Float has been seen, including floats whose lexical
+owner has already closed. A resumed walk starts that flag from its restored
+exclusion list. Unvisited closes retain their flag: a reference re-stack
+changes geometry, not event order. This prefix dependency is already carried
+by the stacking walk and adds no new order to the reduction.
+
+`boundary.wf:publish_boundaries` now performs the semantic reduction.
+`sequence_inputs` snapshots each owner's topology and payload identities by
+independent page halves, omitting both transfers. `reduce_owner` then uses
+constant-time slot indexing; `reduce_sequence` visits each live AVL node once,
+combining left total, own output and right total in the existing association
+order. The own output of a block waits for its nested sequence and then applies
+the existing margin/frame/refusal rules through `block_output`. Left, nested
+block and right subtrees write disjoint transient event slices and read only
+the completed reference payloads. Their only join is the parent transfer.
+Snapshot work is linear in retained allocated slots (including tombstones),
+reduction work in live entries, and output storage in virtual events.
+
+`store_reduction` publishes own/total fields by independent page halves;
+`store_block_reduction` publishes blocks independently. Temporary
+`BoundaryRanks` arrays project existing compatibility ranks so publication
+does not alias the block collection it writes. All snapshots, rank projections
+and reduction results are released after publication; none is a retained
+alternate order index. Publication depends on completed results, not a
+left-to-right repair chain. The added linear scratch storage and page
+publication costs remain measurement questions.
+
+`SequenceNode.links` holds a small `SequenceCursor`: topology, height,
+liveness and structural counts. `slot_cursor` and `slot_links` access only
+that field. `slot_output` and `slot_store_output` access one transfer;
+`join_output`, `lift_block_output` and `baseline_travel` borrow inputs
+without storing references. Structural weights remain usable before semantic
+publication; the three scalar weights duplicate the semantic counts after
+publication so topology-only operations remain narrow. Step 4 retains `boundary_set` through
+`boundary_sequence_update`, repairing only one AVL path. Metadata-opening
+counters still count repeated physical reads, including separate topology and
+transfer reads; directory steps and reference work remain excluded. Values can
+change with the narrower read operations, but their meaning and printed
+format do not.
+
+`pending_append` already grows geometrically through `push_item`; no
+quadratic pending-list growth was found. `bulk_nodes` now builds only small
+topology values and scalar event weights in disjoint median halves.
+`bulk_pages` fills final payload/index pages directly from pending entries
+and topology, eliminating the intermediate full-node and payload arrays and
+per-entry transfer construction/composition. Close reads only root event
+weights. Stable append slots, incremental insert/remove and pending-list
+release are unchanged.
+
+No compilation, dump comparison, edit validation, falsifier execution or
+measurement accompanies this source edit. Existing exact-string falsifier
+anchors are preserved. CI must check slice bounds and disjointness in the
+snapshot/reduction, page payload references and effect rows, resumed float
+prefixes, unchanged dumps and edit behavior, and the performance envelope.
+The proposed layout decision is updated; no approval-log or readiness claim
+is made here.
 
 ### Step-3 source falsifiers for CI
 

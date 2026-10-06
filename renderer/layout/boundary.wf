@@ -54,14 +54,14 @@ fn solid_output(height: i32) -> made: SequenceOutput pure {
   return output;
 }
 
-fn baseline_travel(output: SequenceOutput) -> bound: i64 pure {
+fn baseline_travel(output: &SequenceOutput) -> bound: i64 reads(output) {
   doc "Includes exposed baseline excursions in the exact-arithmetic bound, even when an explicit child height is smaller than its overflowing content.";
-  let first_opposite = 0_i64 -sat output.first_baseline;
-  let last_opposite = 0_i64 -sat output.last_baseline;
-  let first = imax(output.first_baseline, first_opposite);
-  let last = imax(output.last_baseline, last_opposite);
+  let first_opposite = 0_i64 -sat output^.first_baseline;
+  let last_opposite = 0_i64 -sat output^.last_baseline;
+  let first = imax(output^.first_baseline, first_opposite);
+  let last = imax(output^.last_baseline, last_opposite);
   let excursion = first +sat last;
-  let bound = output.travel +sat excursion;
+  let bound = output^.travel +sat excursion;
   return bound;
 }
 
@@ -89,7 +89,7 @@ fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragra
     let last_base = cvt::<i32, i64>(last_line.baseline);
     set output.first_baseline = first_top +sat first_base;
     set output.last_baseline = last_top +sat last_base;
-    let travel = baseline_travel(output: output);
+    let travel = baseline_travel(output: &output);
     set output.travel = travel;
   }
   if paragraph^.beside {
@@ -103,38 +103,33 @@ fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragra
   return output;
 }
 
-fn lift_block_output(inside: SequenceOutput, measured: BlockOutput) -> made: SequenceOutput pure {
+fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: SequenceOutput reads(inside) {
   doc "Lifts ordinary Open/Close edges: top padding settles the leading strut and bottom padding settles the trailing strut. Unframed empty boxes remain Through. Height constraints and marker-created lines are rejected by the publisher.";
   let leading = margin_output(margin: measured.margin_top);
   let opened = leading;
   if measured.top_frame > 0_i32 {
     let top = solid_output(height: measured.top_frame);
-    let boundary_value_6 = join_output(left: leading, right: top);
+    let boundary_value_6 = join_output(left: &leading, right: &top);
     set opened = boundary_value_6;
   }
-  let content = join_output(left: opened, right: inside);
+  let content = join_output(left: &opened, right: inside);
   let closed = content;
   if measured.bottom_frame > 0_i32 {
     let bottom = solid_output(height: measured.bottom_frame);
-    let boundary_value_7 = join_output(left: content, right: bottom);
+    let boundary_value_7 = join_output(left: &content, right: &bottom);
     set closed = boundary_value_7;
   }
   let trailing = margin_output(margin: measured.margin_bottom);
-  let output = join_output(left: closed, right: trailing);
+  let output = join_output(left: &closed, right: &trailing);
   set output.count = 1_u64;
-  set output.events = inside.events +sat 2_u64;
+  set output.events = inside^.events +sat 2_u64;
   return output;
 }
 
-fn publish_block_output(context: &Context, styles: &Styles, at: u64, basis_height: i32, incoming_floats: Bool) -> result: unit reads(context.entries.span), reads(styles), writes(context.blocks.inner), writes(context.entries.nodes) {
-  doc "Publishes the measured size, width inputs and semantic transfer of one block after reference stacking or ancestor repair. Barriers are refusal reasons: 1 floats, 2 clearance, 3 height constraints/markers, 4 unresolved or negative extent, 5 positioned dependency.";
-  if at < context^.blocks.inner.len {
-  } else {
-    return unit;
-  }
-  let held = block_snapshot(block: &context^.blocks.inner[at]);
-  let inside = sequence_output(sequence: &context^.blocks.inner[at].entries);
-  let slot = context^.blocks.inner[at].entry_slot;
+fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_height: i32) -> (transfer: SequenceOutput, size: BlockOutput) reads(block), reads(styles), reads(inside) {
+  doc "Combines a completed child reduction with the block's reference geometry and retained float-prefix dependency. Refusal reasons preserve the reference publisher's meaning.";
+  let held = block_snapshot(block: block);
+  let incoming_floats = block^.output.reads_floats;
   let border = border_edges(styles: styles, style: held.style);
   let padding = padding_edges(styles: styles, style: held.style, basis: held.avail_width);
   let margins = margin_edges(styles: styles, style: held.style, basis: held.avail_width);
@@ -147,7 +142,7 @@ fn publish_block_output(context: &Context, styles: &Styles, at: u64, basis_heigh
   let yes = True();
   let measured = BlockOutput(valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: basis_height, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats);
   let output = lift_block_output(inside: inside, measured: measured);
-  let reason = inside.barriers;
+  let reason = inside^.barriers;
   if incoming_floats {
     let boundary_value_8 = imax(reason, 1_u32);
     set reason = boundary_value_8;
@@ -193,78 +188,286 @@ fn publish_block_output(context: &Context, styles: &Styles, at: u64, basis_heigh
     set output.ordinary = False();
   }
   set output.barriers = reason;
-  if at < context^.blocks.inner.len {
-    set context^.blocks.inner[at].output = measured;
-    set context^.blocks.inner[at].boundary = output;
+  return output, measured;
+}
+
+fn sequence_inputs(nodes: &SlotPages<SequenceNode>, payloads: &SlotPages<Flow>, span: u32, destination: &[SequenceInput]) -> result: unit reads(nodes), reads(payloads), writes(destination) {
+  doc "Copies each allocated page once into disjoint stable-slot ranges, excluding own/total. Tombstones retain their slots and stay absent from the reduction.";
+  match nodes^ {
+    Vacant() => {
+    }
+    Page(values: node_page) => {
+      match payloads^ {
+        Page(values: payload_page) => {
+          let count = destination^.len;
+          for (at in 0_u64..count) {
+            if at < node_page^.inner.len {
+              if at < payload_page^.inner.len {
+                let input = SequenceInput(links: node_page^.inner[at].links, item: payload_page^.inner[at]);
+                set destination^[at] = input;
+              }
+            }
+          }
+        }
+        Vacant() => {
+        }
+        Fork(..) => {
+        }
+      }
+    }
+    Fork(left: node_left, right: node_right) => {
+      match payloads^ {
+        Fork(left: payload_left, right: payload_right) => {
+          let half = span / 2_u32;
+          let width = cvt::<u32, u64>(half);
+          let count = destination^.len;
+          let middle = imin(count, width);
+          sequence_inputs(nodes: &node_left^.inner, payloads: &payload_left^.inner, span: half, destination: &destination^[0_u64..middle]);
+          sequence_inputs(nodes: &node_right^.inner, payloads: &payload_right^.inner, span: half, destination: &destination^[middle..count]);
+        }
+        Vacant() => {
+        }
+        Page(..) => {
+        }
+      }
+    }
   }
-  owner_set_output(context: context, owner: held.parent, slot: slot, output: output);
+  return unit;
+}
+
+fn reduce_owner(context: &Context, sequence: &EntrySequence, styles: &Styles, basis_height: i32, destination: &[BoundaryReduction]) -> made: SequenceOutput reads(context), reads(sequence), reads(styles), writes(destination) {
+  doc "Snapshots one owner's small slot metadata in linear work, then reduces its AVL without per-node directory descent. Nested owners take independent snapshots only when their Open is reduced.";
+  let count = cvt::<u32, u64>(sequence^.allocated);
+  let links = vacant_cursor();
+  let item = Flow::Close(block: no_index);
+  let missing = SequenceInput(links: links, item: item);
+  let inputs = box_array_filled::<SequenceInput>(count: count, value: missing);
+  sequence_inputs(nodes: &sequence^.nodes, payloads: &sequence^.payloads, span: sequence^.span, destination: &inputs.inner[0_u64..count]);
+  let total = reduce_sequence(context: context, inputs: &inputs.inner[0_u64..count], root: sequence^.root, styles: styles, basis_height: basis_height, destination: destination);
+  return total;
+}
+
+fn reduce_sequence(context: &Context, inputs: &[SequenceInput], root: u32, styles: &Styles, basis_height: i32, destination: &[BoundaryReduction]) -> made: SequenceOutput reads(context), reads(inputs), reads(styles), writes(destination) {
+  doc "Reduces each live AVL node once in post-order. Left, nested block and right use disjoint event slices; only their parent transfer waits for returned totals. Geometry stays in payloads throughout the reference walk.";
+  let root_at = cvt::<u32, u64>(root);
+  if root_at < inputs^.len {
+  } else {
+    let empty = empty_output();
+    return empty;
+  }
+  let held = inputs^[root_at].links;
+  if held.live {
+  } else {
+    let empty = empty_output();
+    return empty;
+  }
+  let left_at = cvt::<u32, u64>(held.left);
+  let before = if left_at < inputs^.len {
+    give inputs^[left_at].links.total_events;
+  } else {
+    give 0_u64;
+  }
+  let after = before +sat held.own_events;
+  let count = destination^.len;
+  if before >= after {
+    let empty = empty_output();
+    return empty;
+  }
+  if after > count {
+    let empty = empty_output();
+    return empty;
+  }
+  let left = reduce_sequence(context: context, inputs: inputs, root: held.left, styles: styles, basis_height: basis_height, destination: &destination^[0_u64..before]);
+  let right = reduce_sequence(context: context, inputs: inputs, root: held.right, styles: styles, basis_height: basis_height, destination: &destination^[after..count]);
+  let item = inputs^[root_at].item;
+  let own = pending_output(events: held.own_events);
+  let measured = empty_block_output();
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      let inside_start = before + 1_u64;
+      let inside_end = after - 1_u64;
+      if inside_start <= inside_end {
+        if at < context^.blocks.inner.len {
+          let block = &context^.blocks.inner[at];
+          let nested = &block^.entries;
+          let inside = reduce_owner(context: context, sequence: nested, styles: styles, basis_height: basis_height, destination: &destination^[inside_start..inside_end]);
+          let (transfer, size) = block_output(block: block, styles: styles, inside: &inside, basis_height: basis_height);
+          set own = transfer;
+          set measured = size;
+        }
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        let transfer = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+        set own = transfer;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let transfer = context_entry_output(child: &context^.children.inner[at], styles: styles);
+        set own = transfer;
+      }
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      if at < context^.children.inner.len {
+        let handle = EntryHandle(owner: context^.children.inner[at].block, slot: context^.children.inner[at].entry_slot);
+        set own.first_float = handle;
+        set own.last_float = handle;
+        set own.floats = 1_u64;
+        set own.barriers = 1_u32;
+      }
+    }
+    Out(..) => {
+      set own.barriers = 5_u32;
+    }
+    Close(..) => {
+    }
+  }
+  let prefix = join_output(left: &left, right: &own);
+  let total = join_output(left: &prefix, right: &right);
+  if before < destination^.len {
+    let reduced = BoundaryReduction(own: own, total: total, block: measured);
+    set destination^[before] = reduced;
+  }
+  return total;
+}
+
+fn boundary_ranks(context: &Context) -> made: BoundaryRanks reads(context.blocks.inner), reads(context.paragraphs.inner), reads(context.children.inner) {
+  doc "Snapshots only compatibility ranks before publishing page fields, so independent block writes share no context read alias.";
+  let blocks = context^.blocks.inner.len;
+  let paragraphs = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  let block_ranks = box_array_filled::<u64>(count: blocks, value: 0_u64);
+  let paragraph_ranks = box_array_filled::<u64>(count: paragraphs, value: 0_u64);
+  let child_ranks = box_array_filled::<u64>(count: children, value: 0_u64);
+  for (b in 0_u64..blocks) {
+    let rank = cvt::<u32, u64>(context^.blocks.inner[b].flow_at);
+    set block_ranks.inner[b] = rank;
+  }
+  for (p in 0_u64..paragraphs) {
+    let rank = cvt::<u32, u64>(context^.paragraphs.inner[p].flow_at);
+    set paragraph_ranks.inner[p] = rank;
+  }
+  for (c in 0_u64..children) {
+    let rank = cvt::<u32, u64>(context^.children.inner[c].flow_at);
+    set child_ranks.inner[c] = rank;
+  }
+  let ranks = BoundaryRanks(blocks: move block_ranks, paragraphs: move paragraph_ranks, children: move child_ranks);
+  return move ranks;
+}
+
+fn boundary_event_rank(item: Flow, ranks: &BoundaryRanks) -> made: u64 reads(ranks) {
+  doc "Maps a live payload identity to this reference walk's temporary event rank; slot order is never used as document order.";
+  let child = no_index;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < ranks^.blocks.inner.len {
+        return ranks^.blocks.inner[at];
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < ranks^.paragraphs.inner.len {
+        return ranks^.paragraphs.inner[at];
+      }
+    }
+    Child(context: c) => {
+      set child = c;
+    }
+    Float(context: f) => {
+      set child = f;
+    }
+    Out(context: o) => {
+      set child = o;
+    }
+    Close(..) => {
+    }
+  }
+  let child_at = cvt::<u32, u64>(child);
+  if child_at < ranks^.children.inner.len {
+    return ranks^.children.inner[child_at];
+  }
+  return 18446744073709551615_u64;
+}
+
+fn store_reduction(nodes: &SlotPages<SequenceNode>, payloads: &SlotPages<Flow>, ranks: &BoundaryRanks, reduced: &[BoundaryReduction]) -> result: unit reads(payloads), reads(ranks), reads(reduced), writes(nodes) {
+  doc "Publishes already reduced own/total fields by disjoint page halves. Each live cell is written once; no directory lookup or ancestor repair is performed per entry.";
+  match nodes^ {
+    Vacant() => {
+    }
+    Page(values: node_page) => {
+      match payloads^ {
+        Page(values: payload_page) => {
+          let count = node_page^.inner.len;
+          for (at in 0_u64..count) {
+            if at < node_page^.inner.len {
+              if node_page^.inner[at].links.live {
+                if at < payload_page^.inner.len {
+                  let item = payload_page^.inner[at];
+                  let rank = boundary_event_rank(item: item, ranks: ranks);
+                  if rank < reduced^.len {
+                    set node_page^.inner[at].own = reduced^[rank].own;
+                    set node_page^.inner[at].total = reduced^[rank].total;
+                  }
+                }
+              }
+            }
+          }
+        }
+        Vacant() => {
+        }
+        Fork(..) => {
+        }
+      }
+    }
+    Fork(left: node_left, right: node_right) => {
+      match payloads^ {
+        Fork(left: payload_left, right: payload_right) => {
+          store_reduction(nodes: &node_left^.inner, payloads: &payload_left^.inner, ranks: ranks, reduced: reduced);
+          store_reduction(nodes: &node_right^.inner, payloads: &payload_right^.inner, ranks: ranks, reduced: reduced);
+        }
+        Vacant() => {
+        }
+        Page(..) => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn store_block_reduction(block: &Block, ranks: &BoundaryRanks, reduced: &[BoundaryReduction]) -> result: unit reads(block.flow_at), reads(block.entries.payloads), reads(ranks), reads(reduced), writes(block.entries.nodes), writes(block.boundary), writes(block.output) {
+  doc "Publishes one block independently of every other block after all nested reductions have completed.";
+  let rank = cvt::<u32, u64>(block^.flow_at);
+  if rank < reduced^.len {
+    set block^.boundary = reduced^[rank].own;
+    set block^.output = reduced^[rank].block;
+  }
+  store_reduction(nodes: &block^.entries.nodes, payloads: &block^.entries.payloads, ranks: ranks, reduced: reduced);
   return unit;
 }
 
 fn publish_boundaries(context: &Context, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
-  doc "Seeds outputs from the unchanged full-build/re-stack reference. Close publishes bottom-up; a float is exported through every containing summary and remains an input dependency after its lexical block closes. This pass belongs only to the reference path.";
-  let events = materialize_flow(context: context);
-  let count = events.inner.len;
-  let incoming = False();
-  for (rank in 0_u64..count) {
-    if rank >= events.inner.len {
-      break;
+  doc "Finishes full and partial reference walks with one post-order semantic reduction and independent page publication. The incremental boundary path never calls this full-context operation.";
+  let count = flow_length(context: context);
+  let empty = empty_output();
+  let no_block = empty_block_output();
+  let missing = BoundaryReduction(own: empty, total: empty, block: no_block);
+  let reduced = box_array_filled::<BoundaryReduction>(count: count, value: missing);
+  let ranks = boundary_ranks(context: context);
+  let total = reduce_owner(context: context, sequence: &context^.entries, styles: styles, basis_height: basis_height, destination: &reduced.inner[0_u64..count]);
+  store_reduction(nodes: &context^.entries.nodes, payloads: &context^.entries.payloads, ranks: &ranks, reduced: &reduced.inner[0_u64..count]);
+  let blocks = context^.blocks.inner.len;
+  for (at in 0_u64..blocks) {
+    if at < context^.blocks.inner.len {
+      store_block_reduction(block: &context^.blocks.inner[at], ranks: &ranks, reduced: &reduced.inner[0_u64..count]);
     }
-    let item = events.inner[rank];
-    match item {
-      Text(paragraph: p) => {
-        let paragraph_at = cvt::<u32, u64>(p);
-        if paragraph_at < context^.paragraphs.inner.len {
-          let output = paragraph_output(paragraph: &context^.paragraphs.inner[paragraph_at]);
-          let owner = context^.paragraphs.inner[paragraph_at].block;
-          let slot = context^.paragraphs.inner[paragraph_at].entry_slot;
-          owner_set_output(context: context, owner: owner, slot: slot, output: output);
-        }
-      }
-      Close(block: b) => {
-        let block_at = cvt::<u32, u64>(b);
-        publish_block_output(context: context, styles: styles, at: block_at, basis_height: basis_height, incoming_floats: incoming);
-      }
-      Float(context: f) => {
-        set incoming = True();
-        publish_child_boundary(context: context, child: f, floated: incoming);
-      }
-      Child(context: c) => {
-        let child_at = cvt::<u32, u64>(c);
-        if child_at < context^.children.inner.len {
-          let child_output = context_entry_output(child: &context^.children.inner[child_at], styles: styles);
-          let child_owner = context^.children.inner[child_at].block;
-          let child_slot = context^.children.inner[child_at].entry_slot;
-          owner_set_output(context: context, owner: child_owner, slot: child_slot, output: child_output);
-        }
-      }
-      Out(context: o) => {
-        let no_out_float = False();
-        publish_child_boundary(context: context, child: o, floated: no_out_float);
-      }
-      Open(..) => {
-      }
-    }
-  }
-  return unit;
-}
-
-fn publish_child_boundary(context: &Context, child: u32, floated: Bool) -> result: unit reads(context.children.inner), reads(context.entries.span), writes(context.blocks.inner), writes(context.entries.nodes) {
-  doc "Retains exported float identities in the BFC and refuses floated and positioned transfers; neither is an ordinary in-flow context entry.";
-  let at = cvt::<u32, u64>(child);
-  if at < context^.children.inner.len {
-    let owner = context^.children.inner[at].block;
-    let slot = context^.children.inner[at].entry_slot;
-    let output = pending_output(events: 1_u64);
-    set output.barriers = 5_u32;
-    if floated {
-      let handle = EntryHandle(owner: owner, slot: slot);
-      set output.first_float = handle;
-      set output.last_float = handle;
-      set output.floats = 1_u64;
-      set output.barriers = 1_u32;
-    }
-    owner_set_output(context: context, owner: owner, slot: slot, output: output);
   }
   return unit;
 }
@@ -281,14 +484,14 @@ fn context_entry_output(child: &Context, styles: &Styles) -> made: SequenceOutpu
     set solid.first_baseline = baseline;
     set solid.last_baseline = baseline;
   }
-  let opened = join_output(left: leading, right: solid);
+  let opened = join_output(left: &leading, right: &solid);
   let trailing = margin_output(margin: child^.margin_bottom);
-  let output = join_output(left: opened, right: trailing);
+  let output = join_output(left: &opened, right: &trailing);
   set output.count = 1_u64;
   set output.events = 1_u64;
   set output.min_content = child^.min_content;
   set output.max_content = child^.max_content;
-  let travel = baseline_travel(output: output);
+  let travel = baseline_travel(output: &output);
   set output.travel = travel;
   let group = box_of(styles: styles, style: child^.style);
   if group.clear != clear_none {
@@ -384,7 +587,7 @@ struct BoundaryMove {
   delta: i64;
 }
 
-fn boundary_node(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: SequenceNode reads(sequence.nodes), reads(sequence.span), writes(visits) {
+fn boundary_node(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: SequenceCursor reads(sequence.nodes), reads(sequence.span), writes(visits) {
   doc "Counts each physical metadata lookup, including repeated lookups; an absent link opens no node.";
   if slot != no_index {
     set visits^.indexes = visits^.indexes +sat 1_u64;
@@ -393,24 +596,38 @@ fn boundary_node(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
   return node;
 }
 
+fn boundary_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
+  doc "Counts one field-narrow metadata opening; separate topology and transfer lookups count separately, while directory steps remain excluded.";
+  if slot != no_index {
+    set visits^.indexes = visits^.indexes +sat 1_u64;
+  }
+  let output = slot_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, own: own);
+  return output;
+}
+
 fn boundary_set(sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
-  doc "Repairs the changed leaf and its balanced reduction path with counted metadata reads and no preceding payload access.";
+  doc "Repairs one changed entry and its logarithmic AVL path. Each lookup opens only topology or the transfer consumed by the join.";
   let cursor = slot;
+  let own_field = True();
+  let total_field = False();
   for (level in 0_u64..64_u64) {
     let current = boundary_node(sequence: sequence, slot: cursor, visits: visits);
     if current.live {
     } else {
       return unit;
     }
-    if cursor == slot {
-      set current.own = output;
+    let own_output = if cursor == slot {
+      slot_store_output(pages: &sequence^.nodes, slot: cursor, span: sequence^.span, output: &output, own: own_field);
+      give output;
+    } else {
+      let retained = boundary_output(sequence: sequence, slot: cursor, own: own_field, visits: visits);
+      give retained;
     }
-    let left = boundary_node(sequence: sequence, slot: current.left, visits: visits);
-    let right = boundary_node(sequence: sequence, slot: current.right, visits: visits);
-    let prefix = join_output(left: left.total, right: current.own);
-    let total = join_output(left: prefix, right: right.total);
-    set current.total = total;
-    sequence_write(sequence: sequence, slot: cursor, node: current);
+    let left = boundary_output(sequence: sequence, slot: current.left, own: total_field, visits: visits);
+    let right = boundary_output(sequence: sequence, slot: current.right, own: total_field, visits: visits);
+    let prefix = join_output(left: &left, right: &own_output);
+    let total = join_output(left: &prefix, right: &right);
+    slot_store_output(pages: &sequence^.nodes, slot: cursor, span: sequence^.span, output: &total, own: total_field);
     set cursor = current.parent;
   }
   return unit;
@@ -422,10 +639,10 @@ fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
   if current.live {
   } else {
     let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
-    return root.total.count;
+    return root.total_count;
   }
   let left = boundary_node(sequence: sequence, slot: current.left, visits: visits);
-  let rank = left.total.count;
+  let rank = left.total_count;
   let cursor = slot;
   let parent = current.parent;
   for (level in 0_u64..64_u64) {
@@ -436,7 +653,7 @@ fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
     }
     if ancestor.right == cursor {
       let earlier = boundary_node(sequence: sequence, slot: ancestor.left, visits: visits);
-      let increment = earlier.total.count +sat 1_u64;
+      let increment = earlier.total_count +sat 1_u64;
       set rank = rank +sat increment;
     }
     set cursor = parent;
@@ -627,8 +844,9 @@ fn propagate_boundary(context: &Context, owner: u32, slot: u32, output: Sequence
     let before = context^.blocks.inner[at].boundary;
     let measured = context^.blocks.inner[at].output;
     let root = context^.blocks.inner[at].entries.root;
-    let inside = boundary_node(sequence: &context^.blocks.inner[at].entries, slot: root, visits: &context^.boundary_visits);
-    let after = lift_block_output(inside: inside.total, measured: measured);
+    let total_field = False();
+    let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
+    let after = lift_block_output(inside: &inside, measured: measured);
     let height = measured.height +sat delta;
     if at < context^.blocks.inner.len {
       set context^.blocks.inner[at].height = height;
@@ -790,8 +1008,8 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
     return no, counts;
   }
   let root = context^.entries.root;
-  let root_node = boundary_node(sequence: &context^.entries, slot: root, visits: &context^.boundary_visits);
-  let old_root = root_node.total;
+  let total_field = False();
+  let old_root = boundary_output(sequence: &context^.entries, slot: root, own: total_field, visits: &context^.boundary_visits);
   if old_root.ordinary {
   } else {
     let reason = imax(old_root.barriers, 1_u32);
@@ -818,8 +1036,8 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
   }
   propagate_boundary(context: context, owner: change.owner, slot: change.slot, output: change.output, delta: change.delta);
   let new_root_slot = context^.entries.root;
-  let after = boundary_node(sequence: &context^.entries, slot: new_root_slot, visits: &context^.boundary_visits);
-  let baseline_delta = after.total.last_baseline -sat old_root.last_baseline;
+  let after = boundary_output(sequence: &context^.entries, slot: new_root_slot, own: total_field, visits: &context^.boundary_visits);
+  let baseline_delta = after.last_baseline -sat old_root.last_baseline;
   let narrow_delta = geometry_narrow(value: baseline_delta);
   if context^.has_baseline {
     set context^.baseline = context^.baseline +sat narrow_delta;
