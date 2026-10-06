@@ -127,6 +127,18 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Layout update entry counts are not physical visits.** In
+  `renderer/layout/update.wf:restack_flow`, `entries` includes the suffix
+  length after convergence even for a zero translation, excludes prefix
+  recovery and auxiliary scans, and `paragraphs` is one for an entire
+  block range. These counters cannot establish M2's locality criterion.
+  Change: retain the old report columns for comparison and add physical
+  replay, translated-direct-entry, subtree-skip, routing and fragment-work
+  counts at their operations. Reopen when implementing M2's nested flow;
+  require tiny hand-counted cases and mutations that hide a suffix walk
+  to fail the locality check. See
+  `research/investigations/structure-edits/layout-design.md`, Inventory.
+
 - **The DOM's node array only grows.** `pkg::dom` appends every created
   node and keeps detached ones (`detach` leaves the node and its subtree in
   the document without a parent), so an editing session's DOM grows with
