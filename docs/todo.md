@@ -9,20 +9,25 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
-- **No way to reach into a nested owned structure without repeating the
-  descent.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
-  Fork(left: Box<Pages>, right: Box<Pages>); }`, and a function that must
-  change field `value` of the item at index i. Without a borrowed result
-  (`fn at(pages: &Pages, i: u64) -> &Item`, its lifetime the argument's) or
-  an operation passed to a generic descent (a function value or an
-  interface method applied at the leaf), each distinct read or write of an
-  item needs its own descending function. M2 layout step 3's move of block,
+- **Reaching into a nested owned structure needs one descent helper per
+  structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
+  Fork(left: Box<Pages>, right: Box<Pages>); }`, and functions that change
+  one field of the item at index i. A function cannot return `&Item`
+  (REF-3), but at Whitefoot `f949e676acfa811f96b21afd07f02c06dcd14b51` a
+  helper can take a raw function-kind generic parameter (`fn_sig` in its
+  generics, FN-5; as `hash_map_edit` in `lib/std/collections/hash_map`
+  does), run the variable-depth descent itself with a loop-carried cursor
+  (REF-1's `R.**` cover) and call that function once at the target, so
+  each read or write is one call. Limits: FN-6 refuses a callback that
+  re-enters the same helper with another function argument, and its row is
+  the helper's coarse `writes(pages)`. M2 layout step 3's move of block,
   paragraph and child-context payloads into their owners' paged sequences
-  (branch research/m2-step3b-owned, unadopted) added 13,766 lines across 19
-  files, update.wf alone 6,421, almost all inlined descents. Change: one of
-  the two in Whitefoot, stated as this example, then move the payloads into
-  their owners. Reopen when Whitefoot offers it, or when the owner rules
-  that block-local payload slots are needed before then (Q122).
+  (branch research/m2-step3b-owned, unadopted) inlined every descent
+  instead and added 13,766 lines across 19 files, update.wf alone 6,421.
+  Change: redo the move with one such helper per structure and measure its
+  size and full-build cost; the Whitefoot session on Q122 is weighing an
+  address-stable O(1)-indexed store, which would change the best layout.
+  Reopen when the owner rules on Q122.
 
 - **Flow-selected payload writes need a proof over stored fields.** Minimal
   semantic example: an ordered `Entry::Item(slot)` sequence names payloads
