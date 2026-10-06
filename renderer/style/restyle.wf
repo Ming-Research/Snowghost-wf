@@ -2,6 +2,7 @@ alias AtomTable = pkg::base::atom::AtomTable;
 alias FeatureReach = pkg::css::selectors::FeatureReach;
 alias Document = pkg::dom::Document;
 alias NodeId = pkg::dom::NodeId;
+alias feature_parent = pkg::css::selectors::feature_parent;
 alias SubjectKey = pkg::css::selectors::SubjectKey;
 alias TextSpan = pkg::dom::TextSpan;
 alias atom_class = pkg::base::static_atoms::atom_class;
@@ -597,4 +598,235 @@ fn rematched(old: &Cascade, new: &Cascade) -> changed: Box<Array<Bool>> reads(ol
     }
   }
   return move changed;
+}
+
+fn is_element_node(document: &Document, node: NodeId) -> element: Bool reads(document) {
+  doc "Whether node is an Element node of document.";
+  let at = cvt::<u32, u64>(node.index);
+  if at < document^.nodes.inner.len {
+  } else {
+    return False();
+  }
+  let data = &document^.nodes.inner[at].data;
+  match data^ {
+    Element(..) => {
+      return True();
+    }
+    DocumentRoot(..) => {
+      return False();
+    }
+    DocumentType(..) => {
+      return False();
+    }
+    Text(..) => {
+      return False();
+    }
+    Comment(..) => {
+      return False();
+    }
+    Fragment() => {
+      return False();
+    }
+  }
+}
+
+fn next_within(document: &Document, node: NodeId, root: NodeId) -> next: Option<NodeId> reads(document) {
+  doc "The node after node in tree order inside root's subtree, root excluded: node's first child, else the next sibling of node or of its nearest ancestor below root; None past the subtree.";
+  match node_links(document: document, node: node) {
+    Some(value: links) => {
+      match links.first_child {
+        Some(value: child) => {
+          return Some<NodeId>(value: child);
+        }
+        None() => {
+        }
+      }
+    }
+    None() => {
+      return None<NodeId>();
+    }
+  }
+  let count = document^.nodes.inner.len;
+  let at = node;
+  for (up in 0_u64..count) {
+    if at.index == root.index {
+      return None<NodeId>();
+    }
+    match node_links(document: document, node: at) {
+      Some(value: links) => {
+        match links.next_sibling {
+          Some(value: sibling) => {
+            return Some<NodeId>(value: sibling);
+          }
+          None() => {
+          }
+        }
+        match links.parent {
+          Some(value: holder) => {
+            set at = holder;
+          }
+          None() => {
+            return None<NodeId>();
+          }
+        }
+      }
+      None() => {
+        return None<NodeId>();
+      }
+    }
+  }
+  return None<NodeId>();
+}
+
+fn structural_restyle(store: &RuleStore, document: &Document, atoms: &AtomTable, parent: NodeId) -> result: Result<StructureSet, StyleError> reads(store), reads(document), reads(atoms) {
+  doc "Gathers the structural reaches (feature_children and feature_parent), then lists by NodeId the elements whose matching an insertion or removal of a child of parent can change: each remaining element child of parent carrying a reached subject key, the elements of their subtrees carrying a key reached downward, and parent itself for a parent reach of its own; full for a reach of the whole document, a parent reach beyond parent, or incomplete reaches. Only parent's children and the subtrees a reach names are walked, through the document's links.";
+  let nodes = box_slots_new::<NodeId>(capacity: 0_u64);
+  let child_self = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let child_down = box_slots_new::<SubjectKey>(capacity: 0_u64);
+  let child_self_any = False();
+  let child_down_any = False();
+  let parent_self = False();
+  let full = bnot(store^.reaches_complete);
+  let pseudos = False();
+  let count = store^.reaches.inner.len;
+  let from = 0_u64;
+  let to = count;
+  for (step in 0_u64..64_u64) {
+    if from >= to {
+      break;
+    }
+    let width = to - from;
+    let half = width / 2_u64;
+    let middle = from + half;
+    if middle < count {
+      let bucket = reach_bucket(reach: store^.reaches.inner[middle]);
+      if bucket < structural_bucket {
+        set from = middle + 1_u64;
+      } else {
+        set to = middle;
+      }
+    } else {
+      break;
+    }
+  }
+  for (r in from..count) {
+    let reach = store^.reaches.inner[r];
+    if reach.generated {
+      set pseudos = True();
+    }
+    let all_bit = iand(reach.reach, reach_all);
+    if all_bit != 0_u8 {
+      set full = True();
+    }
+    let any_key = is_anything(key: reach.subject);
+    if reach.feature == feature_parent {
+      let wide_bits = iand(reach.reach, 14_u8);
+      if wide_bits != 0_u8 {
+        set full = True();
+      }
+      let own = iand(reach.reach, reach_self);
+      if own != 0_u8 {
+        set parent_self = True();
+      }
+    } else {
+      let near_self = iand(reach.reach, reach_self);
+      let near_across = iand(reach.reach, reach_siblings);
+      let near = ior(near_self, near_across);
+      if near != 0_u8 {
+        if any_key {
+          set child_self_any = True();
+        } else {
+          let pushed = propagate push::<SubjectKey>(cell: &child_self, value: reach.subject, ceiling: key_ceiling);
+        }
+      }
+      let deep_down = iand(reach.reach, reach_descendants);
+      let deep_beyond = iand(reach.reach, reach_sibling_descendants);
+      let deep = ior(deep_down, deep_beyond);
+      if deep != 0_u8 {
+        if any_key {
+          set child_down_any = True();
+        } else {
+          let pushed = propagate push::<SubjectKey>(cell: &child_down, value: reach.subject, ceiling: key_ceiling);
+        }
+      }
+    }
+  }
+  if full {
+    let everything = True();
+    let made = StructureSet(full: everything, nodes: move nodes, pseudos: everything);
+    return Ok<StructureSet, StyleError>(value: move made);
+  }
+  if parent_self {
+    let pushed = propagate push::<NodeId>(cell: &nodes, value: parent, ceiling: 4294967296_u64);
+  }
+  let near_keyed = child_self.inner.len > 0_u64;
+  let near_some = bor(child_self_any, near_keyed);
+  let deep_keyed = child_down.inner.len > 0_u64;
+  let deep_some = bor(child_down_any, deep_keyed);
+  let some = bor(near_some, deep_some);
+  if some {
+  } else {
+    let partial = False();
+    let made = StructureSet(full: partial, nodes: move nodes, pseudos: pseudos);
+    return Ok<StructureSet, StyleError>(value: move made);
+  }
+  let limit = document^.nodes.inner.len;
+  let child = match node_links(document: document, node: parent) {
+    Some(value: links) => {
+      give links.first_child;
+    }
+    None() => {
+      give None<NodeId>();
+    }
+  }
+  for (step in 0_u64..limit) {
+    match child {
+      Some(value: current) => {
+        let element = is_element_node(document: document, node: current);
+        if element {
+          let keys = element_keys(document: document, atoms: atoms, node: current);
+          let near_hit = carries(document: document, keys: keys, any: child_self_any, wanted: &child_self);
+          if near_hit {
+            let pushed = propagate push::<NodeId>(cell: &nodes, value: current, ceiling: 4294967296_u64);
+          }
+          if deep_some {
+            let inner = next_within(document: document, node: current, root: current);
+            for (walk in 0_u64..limit) {
+              match inner {
+                Some(value: below) => {
+                  let below_element = is_element_node(document: document, node: below);
+                  if below_element {
+                    let below_keys = element_keys(document: document, atoms: atoms, node: below);
+                    let deep_hit = carries(document: document, keys: below_keys, any: child_down_any, wanted: &child_down);
+                    if deep_hit {
+                      let pushed = propagate push::<NodeId>(cell: &nodes, value: below, ceiling: 4294967296_u64);
+                    }
+                  }
+                  set inner = next_within(document: document, node: below, root: current);
+                }
+                None() => {
+                  break;
+                }
+              }
+            }
+          }
+        }
+        let after = match node_links(document: document, node: current) {
+          Some(value: links) => {
+            give links.next_sibling;
+          }
+          None() => {
+            give None<NodeId>();
+          }
+        }
+        set child = after;
+      }
+      None() => {
+        break;
+      }
+    }
+  }
+  let partial = False();
+  let made = StructureSet(full: partial, nodes: move nodes, pseudos: pseudos);
+  return Ok<StructureSet, StyleError>(value: move made);
 }
