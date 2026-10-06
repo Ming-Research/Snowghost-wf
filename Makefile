@@ -17,7 +17,7 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 # event with design/skill/review-base.sh.
 DESIGN_REVIEW_BASE ?= origin/main
 
-.PHONY: check compiler renderer design-lint design-ready \
+.PHONY: check compiler renderer design-lint design-ready pin-ready \
 	static-atoms dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
@@ -27,14 +27,16 @@ DESIGN_REVIEW_BASE ?= origin/main
 check: compiler renderer dom-selftest design-lint
 
 # The renderer builds with the Whitefoot compiler release that whitefoot.pin
-# names in its one line, release = wf-<12 hex digits of a Whitefoot commit>
-# (AGENTS.md, rule 4), downloaded once into build/whitefoot/<tag>/ and checked
-# against the release's SHA256SUMS and manifest. A pin whose release has expired gets it
+# names in its one line, release = wf-<12 hex digits of a Whitefoot commit>,
+# or wf-exp-<12 hex> for an experiment release of an unmerged commit, which
+# only a work branch may pin (AGENTS.md, rule 4; make pin-ready refuses it).
+# It is downloaded once into build/whitefoot/<tag>/ and checked against the
+# release's SHA256SUMS and manifest. A pin whose release has expired gets it
 # again with the command the error prints. WHITEFOOTC=<path> builds with
 # another compiler instead, such as one built from an unmerged Whitefoot
 # change; CI uses only the release.
 WHITEFOOT_TAG := $(lastword $(shell cat $(ROOT)/whitefoot.pin))
-WHITEFOOT_COMMIT := $(patsubst wf-%,%,$(WHITEFOOT_TAG))
+WHITEFOOT_COMMIT := $(lastword $(subst -, ,$(WHITEFOOT_TAG)))
 WHITEFOOT_RELEASE := $(BUILD)/whitefoot/$(WHITEFOOT_TAG)
 WHITEFOOTC ?= $(WHITEFOOT_RELEASE)/whitefootc
 SHA256 := $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
@@ -43,8 +45,8 @@ compiler:
 ifeq ($(origin WHITEFOOTC),file)
 	@set -e; \
 	if [ "$$(wc -l < '$(ROOT)/whitefoot.pin')" -ne 1 ] || \
-		! grep -qxE 'release = wf-[0-9a-f]{12}' '$(ROOT)/whitefoot.pin'; then \
-		echo "whitefoot.pin must hold one line: release = wf-<12 hex digits>" >&2; exit 1; \
+		! grep -qxE 'release = wf-(exp-)?[0-9a-f]{12}' '$(ROOT)/whitefoot.pin'; then \
+		echo "whitefoot.pin must hold one line: release = wf-<12 hex digits> or wf-exp-<12 hex digits>" >&2; exit 1; \
 	fi; \
 	if [ ! -x '$(WHITEFOOTC)' ]; then \
 		case "$$(uname -s)-$$(uname -m)" in \
@@ -57,7 +59,7 @@ ifeq ($(origin WHITEFOOTC),file)
 		for asset in SHA256SUMS whitefoot-release.json whitefootc-$$platform.tar.gz; do \
 			if ! curl -fsSL --retry 3 -o "$$partial/$$asset" "$$url/$$asset"; then \
 				echo "cannot download $$asset of Whitefoot release $(WHITEFOOT_TAG); if it expired, publish it again:" >&2; \
-				echo "  gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=$(WHITEFOOT_COMMIT)" >&2; \
+				echo "  gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=$(WHITEFOOT_COMMIT)$(if $(findstring wf-exp-,$(WHITEFOOT_TAG)), -f experiment=true)" >&2; \
 				exit 1; \
 			fi; \
 		done; \
@@ -112,6 +114,14 @@ $(BUILD)/static_atoms $(BUILD)/dom_selftest: compiler FORCE
 design-lint:
 	@$(PY) -B -m unittest discover -s $(ROOT)/design/skill -p 'test_lint.py'
 	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)"
+
+# A revision bound for main pins a release of a commit on Whitefoot's main,
+# never an experiment release (AGENTS.md, rule 4); CI runs this with
+# design-ready on ready pull requests and main.
+pin-ready:
+	@if grep -q '^release = wf-exp-' '$(ROOT)/whitefoot.pin'; then \
+		echo "whitefoot.pin names the experiment release $(WHITEFOOT_TAG); pin a release of a commit on Whitefoot's main before this reaches main" >&2; \
+		exit 1; fi
 
 design-ready:
 	@$(PY) -B $(ROOT)/design/skill/lint.py --root $(ROOT)/design --trees $(DESIGN_TREES) --base "$(DESIGN_REVIEW_BASE)" --require-approval
