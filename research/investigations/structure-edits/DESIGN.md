@@ -87,7 +87,11 @@ depends on:
 So the true chain is: E's subtree, P's later children, then P's ancestors
 up to the context. Every later block of the context only moves. In a flat
 flow with positions relative to the context, that move is O(suffix). With
-positions relative to the parent block, it is O(1) per ancestor.
+positions relative to the parent block, each unaffected sibling subtree
+moves in O(1), but the update still visits the affected direct sibling
+ranges along the ancestor path, plus any margin/float influence. It is not
+O(1) per ancestor. The concrete representation, dependency bounds, census
+and stack-pass measurements are in [the layout design](layout-design.md).
 
 ## Candidates
 
@@ -234,6 +238,18 @@ set the direction of the work (design-tree skill, "Before starting").
   coarse set and accept the cost (rejected by the target). Bounding a
   reach by its count of `+` hops (C) waits for step 2's measured cost
   (`docs/todo.md`).
+- **Q114**, open: the nested flow's identity and order (steps 3 and 4). See
+  [the layout design](layout-design.md#recommended-contract). Recommended:
+  each block owns its entries in stable local slots with a block-local
+  balanced order and summary index, stores its boundary outputs (size,
+  baselines, margin struts, float exports) and an insertion translates only
+  the direct later siblings, instead of a plain local array, whose insertion
+  copies the earlier entries too, or a flat flow with a second subtree index.
+- **Q115**, open: the first splice's scope. Recommended: a complete
+  block-level seam with no counter, quote or inline run crossing it first,
+  every other seam keeping today's rebuild as a counted fallback, and no
+  fallback allowed on a timed E1 block edit, instead of supporting every
+  builder state before the first local splice.
 
 ## Step 1 and 2 in detail: stable slots and the insertion restyle
 
