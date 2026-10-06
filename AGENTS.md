@@ -7,8 +7,14 @@ incremental from end to end, and a shell written in Rust hosts it on each
 operating system (the `processes` decision in `design/`). Whitefoot, the
 language and its compiler, is pinned by the compiler release that
 `whitefoot.pin` names, which the build downloads under the rules of the
-`whitefoot-kit/` submodule, and the `design-tree` skill as the
-`design/skill/` submodule.
+`whitefoot-kit/` submodule, and the design tree's lint comes from the
+`design/skill/` submodule of Design-skill.
+
+The owner-wide agent instructions, which every Claude and Codex session loads
+(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`), govern reports, the ledger,
+decision cards, pull requests, completion and the design tree. This file adds
+what is Snowghost's own: its goal, paths, checks, review checklist, merge
+rules and project rules.
 
 ## Project goal
 
@@ -83,25 +89,16 @@ a design decision. Restoring decided behavior or editing prose without
 changing its meaning is routine.
 
 1. **Before starting,** read the affected design-tree nodes and their
-   ancestors, verify the worktree and PR state on resumption, and settle the
-   direction with the owner as the `design-tree` skill describes.
+   ancestors, and verify the worktree and PR state on resumption.
 2. **While working,** state why each material choice fits its evidence and
    record an experiment's criterion before using it to choose. Change the
    code and the design tree together on a Draft PR, and update what a changed
    conclusion affects in the same work.
 3. **At completion,** run the [checks](#checks) and, when it applies, the
-   [review](#review), then hand the work back as the skill describes, adding
-   the validation run and its revision, what remains unverified, any
-   Whitefoot pin moved or gap filed, and what the work found along the way.
+   [review](#review). The completion report also names any Whitefoot pin or
+   submodule moved and any Whitefoot gap filed.
 4. **After the owner approves** every decision, write the log entry and mark
    the PR ready (rule 1 below).
-
-**Fix or record what you notice.** When work exposes a defect elsewhere, such
-as a bug, an awkward interface, duplicated logic or a stale document, fix it
-in the same change if it is small and within the files you are changing;
-otherwise add an item to `docs/todo.md` with its impact, the change you would
-make and when to reopen it. List each in the PR's *Found along the way*
-section with its disposition.
 
 **Verify with observations that could have come out otherwise.** A passing
 result is evidence only if a wrong result would have failed it. Make each new
@@ -116,20 +113,18 @@ measurement or experiment, run the smallest useful sample, time it and look
 at its spread, then choose the scale; repeat or lengthen only where the
 spread is too large to decide. Never open with a run of hours.
 
-Use a PR as the owner's review surface from the start, as a Draft until rule 1
-below lets it become ready. Push coherent progress to the same branch and keep
-its description and actual validation results current. A series of dependent
-PRs is stacked, each on the branch of the one before it. Updating a
-work-branch PR never authorizes a merge into `main`.
+A series of dependent PRs is stacked, each on the branch of the one before
+it. Updating a work-branch PR never authorizes a merge into `main`.
 
-**The design tree.** The `design-tree` skill (`design/skill/`, a submodule of
-[Design-skill](https://github.com/Ming-Research/Design-skill) that Snowghost
-never edits, linked from `.claude/skills/` and `.agents/skills/`) is the one
-recurring procedure; a change to it is made in Design-skill. Its live trees
-are the root node files under `design/` other than `log.md`, each with its
-subdirectory, which the Makefile finds and lints; its log is `design/log.md`,
-its research record `research/investigations/`, its TODO `docs/todo.md`, and
-its checks `make design-lint` and `make design-ready`.
+**The design tree.** The owner-wide instructions' design-tree part applies,
+with these roles: the live trees are the root node files under `design/`
+other than `log.md`, each with its subdirectory, which the Makefile finds and
+lints; the change log is `design/log.md`, the research record
+`research/investigations/`, the maintained TODO `docs/todo.md`, and the form
+and readiness checks `make design-lint` and `make design-ready`. Both run
+`lint.py` from the `design/skill/` submodule of
+[Design-skill](https://github.com/Ming-Research/Design-skill), which
+Snowghost never edits.
 
 **Investigations.** An investigation decides something. Before measuring,
 write in `research/investigations/<name>/` the question, the comparison that
@@ -198,15 +193,13 @@ step is an approval or merge precondition.
 
 ## Review
 
-A substantial task gets one review at completion, and any task gets one when
-the owner asks. A change is substantial when it edits `design/` or the
-renderer-shell format, adds or changes a module interface, or changes more
-code than a small fix; a small fix, a documentation change or a process
-change needs only the checks. Start a separate, read-only agent that did not
-implement the change, with the prompt in
-[the review checklist](docs/review-checklist.md#how-to-review), then fix every
-finding as the `design-tree` skill's workflow describes, push, verify that
-the remote head is the reviewed revision, and fill the PR's review section.
+A substantial task gets the owner-wide completion review, and any task gets
+one when the owner asks. A change is substantial when it edits `design/` or
+the renderer-shell format, adds or changes a module interface, or changes
+more code than a small fix; a small fix, a documentation change or a process
+change needs only the checks. The reviewer gets the prompt, the model size
+and the groups in [the review checklist](docs/review-checklist.md#how-to-review),
+and its scope and the findings fixed go in the PR's review section.
 
 ## The Whitefoot boundary
 
