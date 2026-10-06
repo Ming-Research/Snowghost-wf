@@ -147,6 +147,25 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **M2 geometry still bridges the context-coordinate reference walker.**
+  `renderer/layout/geometry.wf:geometry_reference` and `geometry_owned`
+  materialize and re-encode whole-context scratch geometry around layout
+  and update; `translation_exact` conservatively scans it before moving
+  suffix roots. Context fragments, `Split.line`, `naturals`, `held_y` and
+  the context baseline retain their legacy coordinate/rank semantics.
+  Impact: local origins remove descendant origin mutations, but these
+  scans and scratch writes are not bounded-edit evidence. Change: replace
+  the bridge with owner-local boundary outputs and anchored spanning
+  fragments, naturals and baseline handles as the nested sequence lands.
+  Keep the numeric compatibility path for every potentially saturating
+  block until an alternative proves byte identity. Reopen in M2 steps 3
+  and 4; compare all edit prefixes with fresh full dumps, inject the step-2
+  geometry falsifiers, and count scratch/metadata visits separately from
+  translated local origins. Step-2 compile, seq/par dumps, extreme-coordinate
+  cases and placement timing are pending the primary agent's CI; none ran
+  locally.
+
+
 - **M2 context-route publication still copies dense metadata.**
   `renderer/layout/structure.wf:structure_changed` retains stable context
   slots and visits context payloads only along the replacement path and

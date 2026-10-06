@@ -311,7 +311,8 @@ fn table_first_baseline(cell: &Context) -> (baseline: i32, found: Bool) reads(ce
           if at < cell^.paragraphs.inner.len {
             if 0_u64 < cell^.paragraphs.inner[at].lines.inner.len {
               let line = cell^.paragraphs.inner[at].lines.inner[0_u64];
-              let top = cell^.paragraphs.inner[at].top;
+              let geometry_read_1 = paragraph_position(context: cell, at: at);
+              let top = geometry_read_1.y;
               let inner = top +sat line.top;
               let made = inner +sat line.baseline;
               return made, True();
@@ -322,7 +323,8 @@ fn table_first_baseline(cell: &Context) -> (baseline: i32, found: Bool) reads(ce
           let at = cvt::<u32, u64>(c);
           if at < cell^.children.inner.len {
             if cell^.children.inner[at].has_baseline {
-              let top = cell^.children.inner[at].y;
+              let geometry_read_2 = child_position(context: cell, at: at);
+              let top = geometry_read_2.y;
               let made = top +sat cell^.children.inner[at].baseline;
               return made, True();
             }
@@ -369,59 +371,9 @@ fn owns_fragment(style: StyleRef) -> own: Bool pure {
 }
 
 fn shift_cell(cell: &Context, dx: i32, dy: i32) -> result: unit writes(cell) {
-  doc "Moves a laid-out cell's content by dx, dy: every fragment but the cell's own, which comes first when it has one, every block box, the origin of every paragraph with lines, and every child context.";
-  let moved = dx != 0_i32;
-  let lowered = dy != 0_i32;
-  let any = bor(moved, lowered);
-  if any {
-  } else {
-    return unit;
-  }
-  let fragments = cell^.fragments.inner.len;
-  let own = owns_fragment(style: cell^.style);
-  let first = if own {
-    give 1_u64;
-  } else {
-    give 0_u64;
-  }
-  for (f in first..fragments) {
-    if f < cell^.fragments.inner.len {
-      let x = cell^.fragments.inner[f].x +sat dx;
-      let y = cell^.fragments.inner[f].y +sat dy;
-      set cell^.fragments.inner[f].x = x;
-      set cell^.fragments.inner[f].y = y;
-    }
-  }
-  let blocks = cell^.blocks.inner.len;
-  for (b in 0_u64..blocks) {
-    if b < cell^.blocks.inner.len {
-      let x = cell^.blocks.inner[b].x +sat dx;
-      let y = cell^.blocks.inner[b].y +sat dy;
-      set cell^.blocks.inner[b].x = x;
-      set cell^.blocks.inner[b].y = y;
-    }
-  }
-  let paragraphs = cell^.paragraphs.inner.len;
-  for (p in 0_u64..paragraphs) {
-    if p < cell^.paragraphs.inner.len {
-      let lines = cell^.paragraphs.inner[p].lines.inner.len;
-      if lines > 0_u64 {
-        let x = cell^.paragraphs.inner[p].x +sat dx;
-        let y = cell^.paragraphs.inner[p].top +sat dy;
-        set cell^.paragraphs.inner[p].x = x;
-        set cell^.paragraphs.inner[p].top = y;
-      }
-    }
-  }
-  let children = cell^.children.inner.len;
-  for (c in 0_u64..children) {
-    if c < cell^.children.inner.len {
-      let x = cell^.children.inner[c].x +sat dx;
-      let y = cell^.children.inner[c].y +sat dy;
-      set cell^.children.inner[c].x = x;
-      set cell^.children.inner[c].y = y;
-    }
-  }
+  doc "Moves cell content once at its content origin. Each reader applies this offset after accumulating the owning blocks and before adding paragraph-local fragments, preserving the old saturation points.";
+  set cell^.content_dx = cell^.content_dx +sat dx;
+  set cell^.content_dy = cell^.content_dy +sat dy;
   return unit;
 }
 
@@ -928,7 +880,9 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
       let used_left = item.used.left -sat item.border.left;
       let total_dy = offset +sat used_top;
       if item.child < context^.children.inner.len {
+        set context^.children.inner[item.child].normal_x = left;
         set context^.children.inner[item.child].x = left;
+        set context^.children.inner[item.child].normal_y = top_track.y;
         set context^.children.inner[item.child].y = top_track.y;
       }
       put_i32(list: &finals_width, at: item.child, value: box_width);
@@ -952,7 +906,9 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
       let cell = item.child;
       let used = item.used;
       if cell < context^.children.inner.len {
+        geometry_reference(context: &context^.children.inner[cell]);
         let positioned_counts = position_out_with(context: &context^.children.inner[cell], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: used);
+        geometry_owned(context: &context^.children.inner[cell]);
       }
     }
   }
@@ -977,13 +933,17 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
         let caption_height = context^.children.inner[child].height;
         if side.caption_side == 1_u8 {
           let y = bottom_cursor +sat margin_top;
+          set context^.children.inner[child].normal_x = x;
           set context^.children.inner[child].x = x;
+          set context^.children.inner[child].normal_y = y;
           set context^.children.inner[child].y = y;
           let after = y +sat caption_height;
           set bottom_cursor = after +sat context^.children.inner[child].margin_bottom;
         } else {
           let y = top_cursor +sat margin_top;
+          set context^.children.inner[child].normal_x = x;
           set context^.children.inner[child].x = x;
+          set context^.children.inner[child].normal_y = y;
           set context^.children.inner[child].y = y;
           let after = y +sat caption_height;
           set top_cursor = after +sat context^.children.inner[child].margin_bottom;

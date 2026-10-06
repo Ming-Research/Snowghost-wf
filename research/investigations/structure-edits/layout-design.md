@@ -6,7 +6,7 @@ This is the layout design and sizing investigation for M2, based on
 `7ee44119358d7b08dc90555ebe7b9275be478bed`, with Whitefoot pinned at
 `f949e676acfa811f96b21afd07f02c06dcd14b51`. It proposes no rendering change.
 Q109 already approves nested flow entries per block; Q104 reopens Q70's
-context-relative suffix move. The implementation remains future work; Q114 and Q115 below are open
+context-relative suffix move. The implementation is staged below; Q114 and Q115 below are open
 recommendations.
 
 Recommend nested blocks with stable local entry slots, an owner-local
@@ -58,7 +58,7 @@ space. DOM child count is therefore not the flow sibling count.
 | An open inline is closed and reopened across a block interruption; inserting a block can divide or join adjacent paragraphs. | `build.wf:stash_inlines`, `restore_inlines`, `emit_begins`, `end_paragraph`, `place_element`. | The splice boundary includes the two adjacent inline runs and open inline stack, not just the inserted DOM subtree. Plain block-between-blocks has empty boundary state; mixed inline/block content needs boundary repair or the existing rebuild fallback. |
 | Splits are ordered by `open`, and `open`/`close` are flat flow indices. | `build.wf:open_splits`, `close_splits`; `flow.wf:place_splits`, `line_splits`, `split_closings`, `sibling_above`, `gap_lineless`, `split_fragments_with_empty`. | Stable entry endpoints and a local owning scope; order comparisons use that scope's sequence. A closing bit array sized to the context flow is not a retained edit structure. |
 | Split/empty-inline fragments are derived from flow ranges and context-space extents, although `Fragment` itself has **no flow-index key**. | `flow.wf:entry_extent`, `shows_owner`, `empty_inline_fragments`, `split_fragments_with_empty`; `update.wf:range_start`, `translatable_fragments`, `translate_fragments`, `shift_split_lines`. | Anchor fragments to the narrowest owning block/paragraph and retain endpoint references for spanning fragments. Recompute a changed spanning fragment; do not translate every fragment of a context. |
-| `Block.x/y` and `Paragraph.x/top` are in the context border box; paragraph line/fragment offsets are already paragraph-local. | `module.wfm:Block`, `Paragraph`, `Line`; `flow.wf:resolve_open`, `stack_flow`, `place_paragraph`; `inline.wf:break_lines`, `finish_lines`; `update.wf:range_start` and position readers and translation functions. | Distinguish normal-flow origin, CSS relative displacement and final visual origin. Store block/paragraph origins relative to their owning block; preserve paragraph-local lines. A mechanical `y -= parent.y` is insufficient. |
+| `Block.x/y` and `Paragraph.x/top` are owner-relative normal i64 origins; effective visual displacement is separate. The compatibility walker retains explicitly named context-coordinate scratch; paragraph line/fragment offsets remain paragraph-local. | `module.wfm:Block`, `Paragraph`, `Line`; `flow.wf:resolve_open`, `stack_flow`, `place_paragraph`; `inline.wf:break_lines`, `finish_lines`; `update.wf:range_start` and position readers and translation functions. | Distinguish normal-flow origin, CSS relative displacement and final visual origin. Store block/paragraph origins relative to their owning block; preserve paragraph-local lines. A mechanical `y -= parent.y` is insufficient. |
 | Pre-pass `inner_x`, `avail_left`, `content_left`, paragraph `left` and `broken_left` are context-content coordinates. | `flow.wf:prepare_spaces`, `block_relative_offset`; `update.wf:local_width`, `write_local_block`, `write_local_paragraph`, `block_keeps_width`; `inline.wf:exclusion_room`, `break_lines`. | Keep width/percentage inputs separate from coordinate origins. Convert to context-content coordinates only where exclusion tests need them; a rigid subtree translation must not appear to change its line-breaking key. |
 | `flow_at` names a flat entry for blocks, paragraphs and children; an atomic child uses its paragraph's entry. | `flow.wf:prepare_spaces`; `module.wfm:Context`, `Block`, `Paragraph`; `update.wf:entry_kind`, `restack_entry`, `shift_child`, `update_atomics_in`. | Stable `(owner block, entry slot)` handles, with explicit atomic/paragraph ownership. Ranks are ephemeral iterator positions, never persistent handles. |
 | `naturals` has one position per flow entry; `baseline_entry`, restack ranges and `held_y` share its index/coordinate system. | `flow.wf:prepare_naturals`, `set_natural`, `later_floors`, `previous_stacked_paragraph`, `resume_open_frames`, `restack_settles`; `update.wf:restack_flow`, `shift_naturals`. | Attach natural state to local entries and baseline to a stable descendant handle. Parent motion must not rewrite descendant natural positions. Preserve the distinction between no-line/sentinel state and a valid coordinate. |
@@ -684,16 +684,32 @@ append-only context identities with checked routes, and explicit paragraph
 style uses. Context rebuilding retires only its subtree and publishes its
 replacement without renumbering retained contexts; dense routing metadata
 copies remain migration support. Stable entry handles, paged route growth
-and local splice publication remain unimplemented. The part 1c source has
-not yet been compiled or compared with full-build dumps; CI must establish
-that preservation before claiming validation.
+and local splice publication remain unimplemented. Step 1 is the compiled input to step 2; its validation evidence remains
+with the primary agent, and is not a step-2 validation result.
 `Context.flow` is the temporary flat-walk adapter's single ordered sequence;
 its recorded positions, split endpoints and baseline entry are still ranks.
 The indirect payload writes still need a Whitefoot disjointness proof;
 child-context publication still follows child slots. Both limitations are
 recorded in [the TODO](../../../docs/todo.md) and must be resolved before
 claiming the full step's independence and storage-permutation checks.
-The later steps below remain unimplemented. Each step lands with
+Step 2's source encodes reference-walker outputs through `geometry.wf`.
+The walker still performs every potentially saturating layout operation in
+its original order, then stores exact wider parent differences. Placement
+accumulates block origins once in flow order, keeping normal and effective
+visual displacement separate, and applies column maps after accumulation.
+Table alignment uses a content offset; a later compatibility positioning
+pass materializes it before writing positioned children. A suffix move
+changes only root entries in owner-relative storage when the numeric guard
+proves the corresponding i32 additions exact, otherwise it keeps the
+reference per-entry translation.
+
+This source has no step-2 compilation, dump, edit-prefix, mutation or timing
+results yet. The primary agent runs those in CI. Context-wide conversion
+snapshots and the legacy fragment, split-line, natural and baseline state
+remain compatibility work, not evidence of bounded edits; their replacement
+with owner-local boundary outputs is recorded in the TODO. A lineless
+paragraph retains the reference walker's unplaced scratch-origin behavior.
+Steps 3 onward below remain unimplemented. Each step lands with
 the full-build and incremental paths producing exactly the same dump,
 including fragment order; a partial performance improvement never permits
 a rendering difference. Line ranges are estimates of changed/added source

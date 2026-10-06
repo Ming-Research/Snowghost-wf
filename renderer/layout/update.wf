@@ -987,7 +987,8 @@ fn shift_paragraph(paragraph: &Paragraph, delta: i32) -> result: unit writes(par
   doc "Moves a placed paragraph (one with lines) down by delta.";
   let lines = paragraph^.lines.inner.len;
   if lines > 0_u64 {
-    set paragraph^.top = paragraph^.top +sat delta;
+    set paragraph^.resolved_top = paragraph^.resolved_top +sat delta;
+    set paragraph^.normal_top = paragraph^.normal_top +sat delta;
   }
   return unit;
 }
@@ -996,19 +997,21 @@ fn shift_child(child: &Context, flow_at: u32, delta: i32) -> result: unit writes
   doc "Moves a child context whose flow entry (its paragraph's for an atomic inline) follows flow_at down by delta.";
   if child^.flow_at > flow_at {
     if child^.flow_at != no_index {
+      set child^.normal_y = child^.normal_y +sat delta;
       set child^.y = child^.y +sat delta;
     }
   }
   return unit;
 }
 
-fn shift_block(block: &Block, delta: i32) -> result: unit writes(block) {
+fn shift_reference_block(block: &Block, delta: i32) -> result: unit writes(block) {
   doc "Moves a block down by delta.";
-  set block^.y = block^.y +sat delta;
+  set block^.resolved_y = block^.resolved_y +sat delta;
+  set block^.normal_y = block^.normal_y +sat delta;
   return unit;
 }
 
-fn translate_after(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
+fn translate_reference_after(context: &Context, flow_at: u32, delta: i32) -> result: unit writes(context) {
   doc "The delta path's translation (Q70): moves every placed paragraph, child context and block whose flow entry follows flow_at down by delta. Paragraph and block membership comes from the flow suffix alone; child placement also includes atomic inlines whose flow_at is their paragraph's entry.";
   let at_entry = cvt::<u32, u64>(flow_at);
   let first = at_entry +sat 1_u64;
@@ -1026,7 +1029,7 @@ fn translate_after(context: &Context, flow_at: u32, delta: i32) -> result: unit 
   for (k in first..entries) {
     let b = block_at_entry(context: context, at_entry: k);
     if b < context^.blocks.inner.len {
-      shift_block(block: &context^.blocks.inner[b], delta: delta);
+      shift_reference_block(block: &context^.blocks.inner[b], delta: delta);
     }
   }
   return unit;
@@ -1300,7 +1303,8 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
     } else {
       return False(), counts;
     }
-    let paragraph_top = context^.paragraphs.inner[at].top;
+    let geometry_read_1 = paragraph_position(context: context, at: at);
+    let paragraph_top = geometry_read_1.y;
     let new_height = context^.paragraphs.inner[at].height;
     let old_height = new_height -sat delta;
     if old_height > 0_i32 {
@@ -1337,7 +1341,8 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
     } else {
       return False(), counts;
     }
-    let child_top = context^.children.inner[c].y;
+    let geometry_read_2 = child_position(context: context, at: c);
+    let child_top = geometry_read_2.y;
     let child_bottom = child_top +sat held.height;
     give Change(paragraph: no_entry, child: c, flow_at: context^.children.inner[c].flow_at, block: context^.children.inner[c].block, delta: delta, baseline_delta: base_delta, lines: lined, top: child_top, bottom: child_bottom);
   }
@@ -1384,6 +1389,13 @@ fn update_in_place(context: &Context, styles: &Styles, document: &Document, font
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  geometry_reference(context: context);
+  let updated = update_flow_reference(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  geometry_owned(context: context);
+  return updated;
+}
+
+fn update_flow_reference(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Brings the marked flow context up to date, before holding its space and outputs from its previous layout, with lay_out_flow's passes: its width; then, when its geometry and space are those of its previous layout and no marked child is positioned, update_in_place updates it without the pre-pass or the stacking pass where it can. Otherwise the pre-pass runs again, each marked child is updated, each unmarked child whose space came out unchanged is kept (its margins resolved again) and every other one laid out again, each paragraph is broken again when it is marked, its flow width changed, it follows a float and holds lines the stacking pass narrowed or moved beside one (full_width_lines), or it holds an atomic inline whose outputs changed, and finish_flow stacks the flow and writes the fragments again. Each loop over the children or the paragraphs is a counted loop whose iteration writes only its own element and its own entry of a local array.";
   reset_marked_children(context: context);
   let was_known = context^.intrinsic_known;
@@ -1441,7 +1453,8 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
     let found = from != 18446744073709551615_u64;
     let restackable = band(found, unscaled);
     let old_top = if p < context^.paragraphs.inner.len {
-      give context^.paragraphs.inner[p].top;
+      let geometry_read_3 = paragraph_position(context: context, at: p);
+      give geometry_read_3.y;
     } else {
       give 0_i32;
     }
@@ -1722,29 +1735,34 @@ fn range_start(context: &Context, from: u64) -> (found: Bool, top: i32, chain: u
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
       if at < context^.paragraphs.inner.len {
-        return True(), context^.paragraphs.inner[at].top, context^.paragraphs.inner[at].block;
+        let geometry_read_4 = paragraph_position(context: context, at: at);
+        return True(), geometry_read_4.y, context^.paragraphs.inner[at].block;
       }
       return no, 0_i32, no_index;
     }
     Open(block: b) => {
       let at = cvt::<u32, u64>(b);
       if at < context^.blocks.inner.len {
-        let same = context^.blocks.inner[at].held_y == context^.blocks.inner[at].y;
-        return same, context^.blocks.inner[at].y, context^.blocks.inner[at].parent;
+        let geometry_read_5 = block_position(context: context, at: at);
+        let same = context^.blocks.inner[at].held_y == geometry_read_5.y;
+        let geometry_read_6 = block_position(context: context, at: at);
+        return same, geometry_read_6.y, context^.blocks.inner[at].parent;
       }
       return no, 0_i32, no_index;
     }
     Child(context: c) => {
       let at = cvt::<u32, u64>(c);
       if at < context^.children.inner.len {
-        return True(), context^.children.inner[at].y, context^.children.inner[at].block;
+        let geometry_read_7 = child_position(context: context, at: at);
+        return True(), geometry_read_7.y, context^.children.inner[at].block;
       }
       return no, 0_i32, no_index;
     }
     Float(context: c) => {
       let at = cvt::<u32, u64>(c);
       if at < context^.children.inner.len {
-        return True(), context^.children.inner[at].y, context^.children.inner[at].block;
+        let geometry_read_8 = child_position(context: context, at: at);
+        return True(), geometry_read_8.y, context^.children.inner[at].block;
       }
       return no, 0_i32, no_index;
     }
@@ -1781,7 +1799,8 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
     }
     let at = cvt::<u32, u64>(ancestor);
     if at < context^.blocks.inner.len {
-      if context^.blocks.inner[at].held_y != context^.blocks.inner[at].y {
+      let geometry_read_9 = block_position(context: context, at: at);
+      if context^.blocks.inner[at].held_y != geometry_read_9.y {
         return no, 0_i32, 0_i32;
       }
       set ancestor = context^.blocks.inner[at].parent;
@@ -1845,7 +1864,8 @@ fn translatable_fragments(context: &Context, converged: Bool, from: u64, stop: u
       if at < context^.paragraphs.inner.len {
         let lines = context^.paragraphs.inner[at].lines.inner.len;
         if lines > 0_u64 {
-          let bottom = context^.paragraphs.inner[at].top +sat context^.paragraphs.inner[at].height;
+          let geometry_read_10 = paragraph_position(context: context, at: at);
+          let bottom = geometry_read_10.y +sat context^.paragraphs.inner[at].height;
           return True(), top, bottom;
         }
       }
@@ -1964,7 +1984,7 @@ fn local_ancestor_width(blocks: &[WidthBlock], styles: &Styles, from: u64, at_en
 
 fn write_local_block(block: &Block, geometry: LocalWidth) -> result: unit writes(block) {
   doc "Writes the same horizontal fields as the full pre-pass, leaving vertical geometry for stacking.";
-  set block^.x = geometry.x;
+  set block^.resolved_x = geometry.x;
   set block^.inner_x = geometry.x;
   set block^.width = geometry.width;
   set block^.avail_left = geometry.avail_left;
