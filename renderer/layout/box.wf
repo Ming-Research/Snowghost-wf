@@ -307,7 +307,7 @@ fn sizes_ignored(context: &Context, styles: &Styles) -> ignored: Bool reads(styl
   return False();
 }
 
-fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> width: i32 reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+fn used_width(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> width: i32 reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The border-box width of context in its space (CSS 2.2 10.3): the width its parent imposes; else its width property; else, for a shrink-to-fit box, its intrinsic sizes clamped to the available space, min(max(min-content, available), max-content); else the available space less its margins; then clamped by min-width and max-width.";
   let space = context^.space;
   let style = context^.style;
@@ -335,13 +335,14 @@ fn used_width(context: &Context, styles: &Styles, document: &Document, fonts: &F
   let content_sized = keyword >= 0_i32;
   let base = if content_sized {
     let no = False();
-    let (low, high) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: no);
+    let (low, high) = intrinsic_content_events(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: no);
     let high_content = imax(high, low);
     let least = low +sat frame;
     let most = high_content +sat frame;
     give keyword_size(keyword: keyword, least: least, most: most, room: room);
   } else if space.shrink {
-    let (least, most) = intrinsic_sizes(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let standalone = False();
+    let (least, most) = intrinsic_sizes_events(context: context, events: events, standalone: standalone, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     let floor = imax(least, room);
     give imin(floor, most);
   } else {
@@ -400,6 +401,14 @@ fn add_own_fragment(context: &Context) -> result: unit writes(context) {
 }
 
 fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "An intrinsic query without a caller-owned pass. Materialization is deferred until content is actually requested, after cached and specified-width exits.";
+  let no_events = slots_new::<Flow, 0>();
+  let standalone = True();
+  let (least, most) = intrinsic_sizes_events(context: context, events: &no_events[0_u64..0_u64], standalone: standalone, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  return least, most;
+}
+
+fn intrinsic_sizes_events(context: &Context, events: &[Flow], standalone: Bool, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (minimum: i32, maximum: i32) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The min-content and max-content border-box widths of context (Q56), computed on first request from its kind's content and kept: a specified width gives both, min-width and max-width clamp them, and paddings and borders are added to the content's; a width or limit that is a percentage counts as auto and none, since the containing block's width is not known until its content has been measured.";
   if context^.intrinsic_known {
     return context^.min_content, context^.max_content;
@@ -417,7 +426,17 @@ fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, font
   let specified = applied_width(styles: styles, style: style, basis: percent_basis, frame: frame, ignored: ignored);
   let keyword = width_keyword(styles: styles, style: style, ignored: ignored);
   let skipped = specified >= 0_i32;
-  let (least_content, most_content) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
+  let least_content = 0_i32;
+  let most_content = 0_i32;
+  if standalone {
+    let (queried_low, queried_high) = intrinsic_content(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
+    set least_content = queried_low;
+    set most_content = queried_high;
+  } else {
+    let (queried_low, queried_high) = intrinsic_content_events(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skipped);
+    set least_content = queried_low;
+    set most_content = queried_high;
+  }
   let content_high = imax(most_content, least_content);
   let low_frame = least_content +sat frame;
   let high_frame = content_high +sat frame;
@@ -448,16 +467,35 @@ fn intrinsic_sizes(context: &Context, styles: &Styles, document: &Document, font
 }
 
 fn intrinsic_content(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, skip: Bool) -> (minimum: i32, maximum: i32) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "An intrinsic content query without a caller-owned pass. Skipped queries and table/replaced dispatch need no event array; other kinds share one slice throughout the query.";
+  if skip {
+    return 0_i32, 0_i32;
+  }
+  let table = context^.kind == ctx_table;
+  let replaced = context^.kind == ctx_replaced;
+  let without_flow = bor(table, replaced);
+  if without_flow {
+    let no_events = slots_new::<Flow, 0>();
+    let (least, most) = intrinsic_content_events(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skip);
+    return least, most;
+  }
+  let event_buffer = materialize_flow(context: context);
+  let event_count = event_buffer.inner.len;
+  let (least, most) = intrinsic_content_events(context: context, events: &event_buffer.inner[0_u64..event_count], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, skip: skip);
+  return least, most;
+}
+
+fn intrinsic_content_events(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, skip: Bool) -> (minimum: i32, maximum: i32) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The content's intrinsic widths of context by its kind, zero when skip holds (a specified width replaces them).";
   if skip {
     return 0_i32, 0_i32;
   }
   if context^.kind == ctx_flex {
-    let (least, most) = intrinsic_flex(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let (least, most) = intrinsic_flex(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     return least, most;
   }
   if context^.kind == ctx_grid {
-    let (least, most) = intrinsic_grid(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let (least, most) = intrinsic_grid(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     return least, most;
   }
   if context^.kind == ctx_table {
@@ -468,7 +506,7 @@ fn intrinsic_content(context: &Context, styles: &Styles, document: &Document, fo
     let (least, most) = intrinsic_replaced(context: context, styles: styles, fonts: fonts, picks: picks);
     return least, most;
   }
-  let (least, most) = intrinsic_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let (least, most) = intrinsic_flow(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   return least, most;
 }
 
@@ -485,16 +523,21 @@ fn lay_out_context(context: &Context, styles: &Styles, document: &Document, font
     }
     let dropped = take_back(window: &context^.fragments.inner);
   }
-  if context^.kind == ctx_flex {
-    lay_out_flex(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-  } else if context^.kind == ctx_grid {
-    lay_out_grid(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-  } else if context^.kind == ctx_table {
+  if context^.kind == ctx_table {
     lay_out_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   } else if context^.kind == ctx_replaced {
     lay_out_replaced(context: context, styles: styles, fonts: fonts, picks: picks);
   } else {
-    lay_out_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    let event_buffer = materialize_flow(context: context);
+    let event_count = event_buffer.inner.len;
+    let events = &event_buffer.inner[0_u64..event_count];
+    if context^.kind == ctx_flex {
+      lay_out_flex(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    } else if context^.kind == ctx_grid {
+      lay_out_grid(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    } else {
+      lay_out_flow(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    }
   }
   geometry_owned(context: context);
   set context^.laid = context^.space;

@@ -932,72 +932,150 @@ writer and semantic publisher; it does not independently attribute machine
 instructions. These ablations remove required behavior and are diagnostic
 variants, not acceptable implementations.
 
-`sequence.wf:materialize_flow` allocates one transient event array;
-`fill_flow` partitions disjoint left, own and right ranges using cached event
-weights. A block's interior occupies the range between its Open and synthesized
-Close. Initializing Slots with `place_back` retains a length-update chain:
-the pinned prelude has no runtime-sized filled Slots constructor or runtime
-Array-to-Slots conversion. The compatibility walker still follows its true
-margin, float and stacking-state dependencies.
+The second repair (`a0d2a05`, run 37515789411 in
+[runs/full-14900k.txt](runs/full-14900k.txt))
+reduced html5 layout to 0.7267 s sequential / 0.4033 s with four workers,
+against step 2's 0.6333 / 0.2967 s; ecma262 was 0.7100 / 0.4067 s against
+0.5833 / 0.2733 s. Boxes remained 0.1133 and 0.1167 s sequential, against
+0.0667 and 0.0767 s. The supplied next profile puts memmove at 1.5%,
+`fill_flow` at 2.6%, `store_reduction` at 0.7%, and allocation/free/unlink/
+consolidation at about 15% versus step 2's 12%. These are supplied observations,
+not new measurements or proof that any individual allocation causes the gap.
 
-During stacking, paragraph and child outputs stay in their existing payloads;
-no line-summary writer repairs an index or owner chain. Close records only
-whether any preceding BFC Float has been seen, including floats whose lexical
-owner has already closed. A resumed walk starts that flag from its restored
-exclusion list. Unvisited closes retain their flag: a reference re-stack
-changes geometry, not event order. This prefix dependency is already carried
-by the stacking walk and adds no new order to the reduction.
+The next source repair starts from `2a630a0`. Its comparison and rejection
+criterion remain those above. The dependency choices are:
 
-`boundary.wf:publish_boundaries` now performs the semantic reduction.
-`sequence_inputs` snapshots each owner's topology and payload identities by
-independent page halves, omitting both transfers. `reduce_owner` then uses
-constant-time slot indexing; `reduce_sequence` visits each live AVL node once,
-combining left total, own output and right total in the existing association
-order. The own output of a block waits for its nested sequence and then applies
-the existing margin/frame/refusal rules through `block_output`. Left, nested
-block and right subtrees write disjoint transient event slices and read only
-the completed reference payloads. Their only join is the parent transfer.
-Snapshot work is linear in retained allocated slots (including tombstones),
-reduction work in live entries, and output storage in virtual events.
+- Re-materializing at each walker and borrowing one immutable pass slice
+  have the same topology dependencies. The latter removes repeated work
+  without ordering independent contexts or retaining a cache. `lay_out_context`
+  owns the array for a flow/flex/grid layout, `update_flow` creates it only
+  after the bounded boundary path refuses, and `place_context` owns a separate
+  dump-publication pass. The space, stacking, positioning, split-fragment,
+  intrinsic, flex/grid and column walkers borrow slices. `materialize_flow`
+  now uses a filled Array rather than incrementing a Slots length for each
+  event. Cached weights still partition left, nested and right event ranges.
+- A query from a parent has no child pass to borrow. `intrinsic_content`
+  materializes for such a query after its skip and table/replaced dispatches;
+  `intrinsic_sizes` reaches it only after cache and specified-width checks.
+  Queries made by `used_width` instead reuse the active pass. Children keep
+  their own independent queries. `table_first_baseline` queries a cell after
+  its layout has returned and therefore owns its buffer; `position_out_with`
+  similarly starts a cell positioning pass after the table finalizes its
+  dimensions. These, plus the three pass owners above, are the remaining
+  materialization sites. The bounded boundary path allocates none: an ordinary
+  root transfer excludes Out entries, so its `finish_in_place` call can pass
+  an empty stack slice without dropping positioning work.
+- Initial four-slot leaves plus boxed binary directory nodes and one
+  owner-sized leaf have the same stable-slot identity and no sibling data
+  dependency. An initial owner-sized leaf removes directory allocation and
+  makes its payload copy and transfer publication single counted loops.
+  `finish_sequence` allocates two final pages at the smallest power of two
+  covering the owner's count (minimum four), and `bulk_nodes` writes links
+  directly into the final node page. There is no topology scratch array.
+  This trades fewer allocations/descent steps for padding: up to nearly
+  twice the live slots instead of rounding only to four. Initialization
+  bytes and peak memory must be measured alongside allocation count.
+  Incremental growth wraps the existing leaf, then adds small directory
+  leaves; it never copies or enlarges an existing page.
+- `pending` is now an optional builder list, allocated at first append and
+  released to None at sealing. Empty owners and sealed owners allocate no
+  pending box. Close publishes only its completed pending event span to its
+  parent. That source-order dependency remains; sealing has none and moves
+  after the document walk into `finish_tree_sequences`, with counted disjoint
+  block-owner and child-context loops. Both full build and replacement-tree
+  publication call it. All closed pending lists now survive until this phase,
+  so peak construction scratch lifetime grows; no retained scratch survives
+  publication.
+- Owner-sized pages let `reduce_sequence` read topology/payload slots directly,
+  eliminating `SequenceInput`, `sequence_inputs` and `reduce_owner` snapshots,
+  including allocations inside nested reductions. After later directory
+  growth these reads follow the directory; that full reference fallback may
+  do more lookup work than a dense snapshot, while the bounded edit path is
+  unchanged. `prepare_boundary_entry` computes paragraph/child/float/Out
+  transfers in a counted event loop before reduction. Each iteration reads
+  completed geometry and writes only its own result; no iteration allocates.
+  The remaining reduction preserves left-own-right association and block
+  lifting after nested results, then publishes pages and blocks independently.
 
-`store_reduction` publishes own/total fields by independent page halves;
-`store_block_reduction` publishes blocks independently. Temporary
-`BoundaryRanks` arrays project existing compatibility ranks so publication
-does not alias the block collection it writes. All snapshots, rank projections
-and reduction results are released after publication; none is a retained
-alternate order index. Publication depends on completed results, not a
-left-to-right repair chain. The added linear scratch storage and page
-publication costs remain measurement questions.
+For a nonempty owner with n direct entries, let P = ceil(n/4), F be the
+number of allocated binary forks in the old bulk directory, and G be the
+number of positive-capacity pending buffers (initial four plus doublings).
+The source-level Box allocation estimate for construction is:
 
-`SequenceNode.links` holds a small `SequenceCursor`: topology, height,
-liveness and structural counts. `slot_cursor` and `slot_links` access only
-that field. `slot_output` and `slot_store_output` access one transfer;
-`join_output`, `lift_block_output` and `baseline_travel` borrow inputs
-without storing references. Structural weights remain usable before semantic
-publication; the three scalar weights duplicate the semantic counts after
-publication so topology-only operations remain narrow. Step 4 retains `boundary_set` through
-`boundary_sequence_update`, repairing only one AVL path. Metadata-opening
-counters still count repeated physical reads, including separate topology and
-transfer reads; directory steps and reference work remain excluded. Values can
-change with the narrower read operations, but their meaning and printed
-format do not.
+| Storage | Before | After |
+| --- | ---: | ---: |
+| Initial empty pending and replacement empty pending | 2 | 0 |
+| Positive-capacity pending buffers | G | G |
+| Topology scratch | 1 | 0 |
+| Payload and metadata leaves | 2P | 2 |
+| Boxed directory children | 4F | 0 |
+| Total per direct entry | (3 + G + 2P + 4F) / n | (G + 2) / n |
 
-`pending_append` already grows geometrically through `push_item`; no
-quadratic pending-list growth was found. `bulk_nodes` now builds only small
-topology values and scalar event weights in disjoint median halves.
-`bulk_pages` fills final payload/index pages directly from pending entries
-and topology, eliminating the intermediate full-node and payload arrays and
-per-entry transfer construction/composition. Close reads only root event
-weights. Stable append slots, incremental insert/remove and pending-list
-release are unchanged.
+Examples: n=1 is 6 -> 3 allocations per entry; n=4 is 1.5 -> 0.75;
+n=8 is 13/8 -> 4/8; n=16 is 26/16 -> 5/16. An empty owner falls from
+one pending allocation to zero. Counts include replaced buffers, not just
+live allocations, and exclude payload construction common to both versions.
+Step 2 had no owner sequence allocations. Full reference reduction additionally
+removes one snapshot allocation per owner, even for empty owners; the one
+context-wide reduction array and three rank arrays remain. These are source
+estimates under Whitefoot STOR-1's one-allocation Box rule, not allocator
+measurements. The language source inspected is
+[the specified Whitefoot revision](https://github.com/Ming-Research/Whitefoot/blob/f949e676acfa811f96b21afd07f02c06dcd14b51/spec/kernel-spec.md).
 
-No compilation, dump comparison, edit validation, falsifier execution or
-measurement accompanies this source edit. Existing exact-string falsifier
-anchors are preserved. CI must check slice bounds and disjointness in the
-snapshot/reduction, page payload references and effect rows, resumed float
-prefixes, unchanged dumps and edit behavior, and the performance envelope.
+Changed loop dependencies and remaining limits:
+
+| Operation | Dependency / compiler-facing form |
+| --- | --- |
+| `finish_sequence` capacity selection | Scalar doubling recurrence, bounded by the slot ceiling; no layout ordering is introduced. |
+| `finish_sequence` payload publication | Counted index at writes only final payload[at], reading pending[at]. |
+| `finish_tree_sequences` block and child loops | Each iteration mutates one owned block sequence or one child subtree; parents' pending weights are already complete. |
+| `publish_boundaries` leaf preparation | Counted event index at reads geometry and writes only reduced[at]. |
+| `store_reduction` page publication | Existing counted cell loop now spans the initial owner-sized leaf; every cell writes only its own/total fields. Block publication remains a counted owner loop. |
+| `bulk_nodes` | Disjoint recursive median halves; parent height/event totals wait on both. |
+| `fill_flow` | Disjoint recursive event slices, with no semantic sibling dependency; Array construction removes the former append-length chain. |
+| `reduce_sequence` | Disjoint recursive left/nested/right slices; only ordered transfer joins and enclosing block lifting wait on child outputs. |
+| Slice-threaded reference walkers | Existing order and arithmetic are unchanged: margin/float/stack state, positioned ancestor stacks, stable flex/grid collection, column units and fragment output order supply the dependencies. |
+
+The last three recursive kernels have **not** been converted to counted
+branch scheduling. Their disjoint source effects do not establish that the
+current --par backend overlaps recursive calls. The counted leaf preparation,
+owner sealing and wider page loops expose additional independent work, but
+full four-worker recovery remains unverified and this part of the requested
+repair is incomplete. A counted branch representation must avoid allocating
+one result box per tree node or imposing global depth barriers; neither is
+introduced just to obtain a parallel loop. No compiler limitation is claimed
+without a compile/lowering result.
+
+In the profile's terms, sharing a common four-walker flow pass can remove
+three of its four fills, but intrinsic queries, table queries and dump passes
+remain separate. Even eliminating all reported `fill_flow` self time would
+save only about 19 ms of the supplied 0.727 s html5 run; 75% of that is about
+14 ms, an upper-bound illustration, not a predicted measured gain. The
+allocation changes target the much larger construction gap and the 15%
+allocator bucket, with no supported per-allocation time estimate. Direct page
+indexing also removes directory traversal from the initial materialization
+and reduction; its effect is not separately identified by the flat profile.
+Larger-page initialization can offset those savings. No source-only result
+establishes the acceptance envelope.
+
+Boundary transfers, Close's preceding-float flag, geometry arithmetic,
+identity and oracle counter meanings remain unchanged. Metadata-opening
+counters still count repeated physical reads; page-directory steps and
+reference work remain excluded. The semantic publication continues to keep
+outputs in payloads during stacking, with one later reduction; narrower
+reads do not change the step-4 boundary contract.
+
+No compilation, gate, dump comparison, edit validation, falsifier execution
+or measurement accompanies this source edit. The primary agent owns CI.
+All exact-string falsifier anchors remain in place. Proof-sensitive changes
+are slice/effect threading, the borrowed optional pending list while disjoint
+sequence fields are published, bounds after recursive reduction writes,
+initial large leaves followed by wrapped directory growth, and the empty
+slice on the ordinary boundary-only finish path. Review found and repaired
+unnecessary materialization for skipped intrinsic/table/replaced paths and an
+unsupported tuple-if initializer. No pin, submodule or Whitefoot gap changed.
 The proposed layout decision is updated; no approval-log or readiness claim
-is made here.
+is made.
 
 ### Step-3 source falsifiers for CI
 
@@ -1018,7 +1096,7 @@ The primary agent compiles and runs the ordinary layout/edit checks.
    A float inside one non-BFC block extending beside a paragraph in the
    next block must lose its exclusion under the mutation. Compare with the
    independent float fixture/reference rectangles, including clearance.
-3. Replace a walk's materialized `events.inner[k]` read with a call to
+3. Replace a walk's borrowed `events^[k]` read with a call to
    `flow_event(context: context, at: k)`, keeping the ordinary rank guard.
    This restores a nested root descent per rank. Correctness comparisons
    need not reject it; the same-source full-build timing comparison must

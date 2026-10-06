@@ -136,7 +136,7 @@ fn new_sequence() -> made: EntrySequence pure {
   doc "An empty owner-local sequence allocates no payload or index pages.";
   let payloads = SlotPages<Flow>::Vacant();
   let nodes = SlotPages<SequenceNode>::Vacant();
-  let pending = box_slots_new::<PendingEntry>(capacity: 0_u64);
+  let pending = None<Box<Slots<PendingEntry>>>();
   let sequence = EntrySequence(payloads: move payloads, nodes: move nodes, root: no_index, allocated: 0_u32, span: 4_u32, pending: move pending, pending_events: 0_u64);
   return move sequence;
 }
@@ -228,70 +228,17 @@ fn fill_flow(context: &Context, sequence: &EntrySequence, root: u32, destination
   return unit;
 }
 
-fn materialize_flow(context: &Context) -> made: Box<Slots<Flow>> reads(context) {
-  doc "Makes one transient event array for one compatibility walk, never retained by Context. The initialized window permits independent subtree fills into cached disjoint rank ranges.";
+fn materialize_flow(context: &Context) -> made: Box<Array<Flow>> reads(context) {
+  doc "Makes one immutable event array for a context pass. Filled Array construction avoids a Slots length-update chain; walkers borrow its slice until the pass ends.";
   let count = flow_length(context: context);
-  let events = box_slots_new::<Flow>(capacity: count);
   let missing = Flow::Close(block: no_index);
-  for (at in 0_u64..count) {
-    if events.inner.len < events.inner.cap {
-      place_back(window: &events.inner, value: missing);
-    }
-  }
-  let length = events.inner.len;
-  fill_flow(context: context, sequence: &context^.entries, root: context^.entries.root, destination: &events.inner[0_u64..length]);
+  let events = box_array_filled::<Flow>(count: count, value: missing);
+  fill_flow(context: context, sequence: &context^.entries, root: context^.entries.root, destination: &events.inner[0_u64..count]);
   return move events;
 }
 
-fn bulk_pages(pending: &[PendingEntry], nodes: &[SequenceCursor], span: u32) -> (payloads: SlotPages<Flow>, index: SlotPages<SequenceNode>) reads(pending), reads(nodes) {
-  doc "Allocates final payload and index pages directly from pending entries and small topology values. No intermediate full-node or payload array is copied into pages.";
-  let count = pending^.len;
-  if count == 0_u64 {
-    let no_payloads = SlotPages<Flow>::Vacant();
-    let no_nodes = SlotPages<SequenceNode>::Vacant();
-    return move no_payloads, move no_nodes;
-  }
-  if span <= 4_u32 {
-    let width = cvt::<u32, u64>(span);
-    let missing_payload = Flow::Close(block: no_index);
-    let missing_node = vacant_node();
-    let payload_page = box_array_filled::<Flow>(count: width, value: missing_payload);
-    let node_page = box_array_filled::<SequenceNode>(count: width, value: missing_node);
-    for (at in 0_u64..count) {
-      if at < payload_page.inner.len {
-        set payload_page.inner[at] = pending^[at].item;
-      }
-      if at < node_page.inner.len {
-        if at < nodes^.len {
-          set node_page.inner[at].links = nodes^[at];
-        }
-      }
-    }
-    let payload_leaf = SlotPages<Flow>::Page(values: move payload_page);
-    let node_leaf = SlotPages<SequenceNode>::Page(values: move node_page);
-    return move payload_leaf, move node_leaf;
-  }
-  let half = span / 2_u32;
-  let wide_half = cvt::<u32, u64>(half);
-  let middle = imin(count, wide_half);
-  if count > nodes^.len {
-    let no_payloads = SlotPages<Flow>::Vacant();
-    let no_nodes = SlotPages<SequenceNode>::Vacant();
-    return move no_payloads, move no_nodes;
-  }
-  let (left_payloads, left_nodes) = bulk_pages(pending: &pending^[0_u64..middle], nodes: &nodes^[0_u64..middle], span: half);
-  let (right_payloads, right_nodes) = bulk_pages(pending: &pending^[middle..count], nodes: &nodes^[middle..count], span: half);
-  let payload_left = box_new::<SlotPages<Flow>>(value: move left_payloads);
-  let payload_right = box_new::<SlotPages<Flow>>(value: move right_payloads);
-  let node_left = box_new::<SlotPages<SequenceNode>>(value: move left_nodes);
-  let node_right = box_new::<SlotPages<SequenceNode>>(value: move right_nodes);
-  let payload_fork = SlotPages<Flow>::Fork(left: move payload_left, right: move payload_right);
-  let node_fork = SlotPages<SequenceNode>::Fork(left: move node_left, right: move node_right);
-  return move payload_fork, move node_fork;
-}
-
-fn bulk_nodes(pending: &[PendingEntry], nodes: &[SequenceCursor], base: u64, parent: u32) -> (root: u32, height: u32, events: u64) reads(pending), writes(nodes) {
-  doc "Builds only topology and event weights. Independent median halves return scalar heights and spans; no semantic transfer is constructed or joined per entry.";
+fn bulk_nodes(pending: &[PendingEntry], nodes: &[SequenceNode], base: u64, parent: u32) -> (root: u32, height: u32, events: u64) reads(pending), writes(nodes) {
+  doc "Builds topology and event weights directly in final node storage. Median halves write disjoint slices; the parent waits only for their heights and event spans.";
   let count = pending^.len;
   if count == 0_u64 {
     return no_index, 0_u32, 0_u64;
@@ -317,60 +264,105 @@ fn bulk_nodes(pending: &[PendingEntry], nodes: &[SequenceCursor], base: u64, par
   let yes = True();
   let node = SequenceCursor(left: left, right: right, parent: parent, height: height, live: yes, own_events: own_events, total_events: total_events, total_count: count);
   if middle < nodes^.len {
-    set nodes^[middle] = node;
+    set nodes^[middle].links = node;
   }
   return slot, height, total_events;
 }
 
 fn finish_sequence(sequence: &EntrySequence) -> result: unit writes(sequence) {
-  doc "Publishes a construction-only pending list as stable payload pages and a balanced summary index in linear work, then releases the list. An already published sequence is unchanged.";
-  let count = sequence^.pending.inner.len;
-  if count == 0_u64 {
-    return unit;
-  }
-  let span = 4_u32;
-  for (level in 0_u64..28_u64) {
-    let width = cvt::<u32, u64>(span);
-    if count <= width {
-      break;
+  doc "Publishes a pending list into two owner-sized pages and builds topology directly in the final index page, then releases pending scratch. Initial capacity is a power of two; later directory growth wraps this immutable-capacity leaf without copying it.";
+  match sequence^.pending {
+    None() => {
+      return unit;
     }
-    set span = span +sat span;
+    Some(value: pending) => {
+      let count = pending^.inner.len;
+      if count == 0_u64 {
+        return unit;
+      }
+      let span = 4_u32;
+      for (level in 0_u64..28_u64) {
+        let width = cvt::<u32, u64>(span);
+        if count <= width {
+          break;
+        }
+        set span = span +sat span;
+      }
+      let page_width = cvt::<u32, u64>(span);
+      let missing_node = vacant_node();
+      let nodes = box_array_filled::<SequenceNode>(count: page_width, value: missing_node);
+      let missing_payload = Flow::Close(block: no_index);
+      let payloads = box_array_filled::<Flow>(count: page_width, value: missing_payload);
+      if count > nodes.inner.len {
+        return unit;
+      }
+      let (root, height, events) = bulk_nodes(pending: &pending^.inner[0_u64..count], nodes: &nodes.inner[0_u64..count], base: 0_u64, parent: no_index);
+      for (at in 0_u64..count) {
+        if at < pending^.inner.len {
+          if at < payloads.inner.len {
+            set payloads.inner[at] = pending^.inner[at].item;
+          }
+        }
+      }
+      let payload_pages = SlotPages<Flow>::Page(values: move payloads);
+      let node_pages = SlotPages<SequenceNode>::Page(values: move nodes);
+      set sequence^.nodes = move node_pages;
+      set sequence^.payloads = move payload_pages;
+      set sequence^.root = root;
+      let allocated = flow_index(at: count);
+      set sequence^.allocated = allocated;
+      set sequence^.span = span;
+    }
   }
-  let missing_node = vacant_cursor();
-  let nodes = box_array_filled::<SequenceCursor>(count: count, value: missing_node);
-  let (root, height, events) = bulk_nodes(pending: &sequence^.pending.inner[0_u64..count], nodes: &nodes.inner[0_u64..count], base: 0_u64, parent: no_index);
-  let (payload_pages, node_pages) = bulk_pages(pending: &sequence^.pending.inner[0_u64..count], nodes: &nodes.inner[0_u64..count], span: span);
-  set sequence^.nodes = move node_pages;
-  set sequence^.payloads = move payload_pages;
-  set sequence^.root = root;
-  let allocated = flow_index(at: count);
-  set sequence^.allocated = allocated;
-  set sequence^.span = span;
-  let empty_pending = box_slots_new::<PendingEntry>(capacity: 0_u64);
+  let empty_pending = None<Box<Slots<PendingEntry>>>();
   set sequence^.pending = move empty_pending;
   set sequence^.pending_events = 0_u64;
   return unit;
 }
 
 fn pending_append(sequence: &EntrySequence, item: Flow) -> result: Result<u32, LayoutError> writes(sequence.pending), writes(sequence.pending_events) {
-  doc "Appends one builder entry in amortized constant time; its pending index is its final stable slot.";
-  let count = sequence^.pending.inner.len;
-  let slot = flow_index(at: count);
-  let pending = PendingEntry(item: item, events: 1_u64);
-  let kept = propagate push_or_fail::<PendingEntry>(cell: &sequence^.pending, value: pending);
-  set sequence^.pending_events = sequence^.pending_events +sat 1_u64;
-  let success = Ok<u32, LayoutError>(value: slot);
-  return success;
+  doc "Lazily allocates a builder list on its first direct entry, then grows geometrically; its pending index becomes its stable slot.";
+  match sequence^.pending {
+    None() => {
+      let values = box_slots_new::<PendingEntry>(capacity: 4_u64);
+      let started = Some<Box<Slots<PendingEntry>>>(value: move values);
+      set sequence^.pending = move started;
+    }
+    Some(..) => {
+    }
+  }
+  match sequence^.pending {
+    Some(value: pending) => {
+      let count = pending^.inner.len;
+      let slot = flow_index(at: count);
+      let added = PendingEntry(item: item, events: 1_u64);
+      let kept = propagate push_or_fail::<PendingEntry>(cell: pending, value: added);
+      set sequence^.pending_events = sequence^.pending_events +sat 1_u64;
+      let success = Ok<u32, LayoutError>(value: slot);
+      return success;
+    }
+    None() => {
+      let inconsistent = LayoutError::Inconsistent();
+      let failure = Err<u32, LayoutError>(error: inconsistent);
+      return failure;
+    }
+  }
 }
 
-fn pending_close(sequence: &EntrySequence, slot: u32, events: u64) -> result: unit writes(sequence.pending.inner), writes(sequence.pending_events) {
+fn pending_close(sequence: &EntrySequence, slot: u32, events: u64) -> result: unit writes(sequence.pending), writes(sequence.pending_events) {
   doc "Replaces an Open's provisional single event with its completed nested span in the unfinished parent, without index repair.";
   let at = cvt::<u32, u64>(slot);
-  if at < sequence^.pending.inner.len {
-    let previous = sequence^.pending.inner[at].events;
-    set sequence^.pending.inner[at].events = events;
-    let rest = sequence^.pending_events -sat previous;
-    set sequence^.pending_events = rest +sat events;
+  match sequence^.pending {
+    Some(value: pending) => {
+      if at < pending^.inner.len {
+        let previous = pending^.inner[at].events;
+        set pending^.inner[at].events = events;
+        let rest = sequence^.pending_events -sat previous;
+        set sequence^.pending_events = rest +sat events;
+      }
+    }
+    None() => {
+    }
   }
   return unit;
 }
@@ -994,7 +986,7 @@ fn nested_event(context: &Context, sequence: &EntrySequence, at: u64) -> made: F
 }
 
 fn flow_event(context: &Context, at: u64) -> made: Flow reads(context) {
-  doc "The compatibility iterator's event at a temporary rank. Used only for isolated lookups; rank walks materialize their own transient event array.";
+  doc "The compatibility iterator's event at a temporary rank. Used only for isolated lookups; rank walks borrow the event slice owned by their pass.";
   let item = nested_event(context: context, sequence: &context^.entries, at: at);
   return item;
 }
@@ -1033,15 +1025,13 @@ fn owner_insert(context: &Context, owner: u32, item: Flow) -> result: Result<u32
 }
 
 fn append_flow(context: &Context, item: Flow) -> result: Result<unit, LayoutError> writes(context.entries), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(context.build_owner) {
-  doc "Builds pending direct-entry lists. Close bulk-builds its owner and publishes its event weight into the pending parent; only actual entries allocate stable slots. Float remains a context-owned child in the enclosing BFC.";
+  doc "Builds pending direct-entry lists. Close publishes only its completed event weight into the pending parent; sealing waits until the ordered builder finishes. Float remains a context-owned child in the enclosing BFC.";
   match item {
     Close(block: closed) => {
       let closed_at = cvt::<u32, u64>(closed);
       if closed_at < context^.blocks.inner.len {
-        finish_sequence(sequence: &context^.blocks.inner[closed_at].entries);
-        let nested = &context^.blocks.inner[closed_at].entries;
-        let inside = sequence_node(sequence: nested, slot: nested^.root);
-        let events = inside.total_events +sat 2_u64;
+        let inside = context^.blocks.inner[closed_at].entries.pending_events;
+        let events = inside +sat 2_u64;
         let parent = context^.blocks.inner[closed_at].parent;
         let slot = context^.blocks.inner[closed_at].entry_slot;
         set context^.blocks.inner[closed_at].boundary.count = 1_u64;

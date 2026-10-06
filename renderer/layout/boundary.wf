@@ -191,112 +191,11 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
   return output, measured;
 }
 
-fn sequence_inputs(nodes: &SlotPages<SequenceNode>, payloads: &SlotPages<Flow>, span: u32, destination: &[SequenceInput]) -> result: unit reads(nodes), reads(payloads), writes(destination) {
-  doc "Copies each allocated page once into disjoint stable-slot ranges, excluding own/total. Tombstones retain their slots and stay absent from the reduction.";
-  match nodes^ {
-    Vacant() => {
-    }
-    Page(values: node_page) => {
-      match payloads^ {
-        Page(values: payload_page) => {
-          let count = destination^.len;
-          for (at in 0_u64..count) {
-            if at < node_page^.inner.len {
-              if at < payload_page^.inner.len {
-                let input = SequenceInput(links: node_page^.inner[at].links, item: payload_page^.inner[at]);
-                set destination^[at] = input;
-              }
-            }
-          }
-        }
-        Vacant() => {
-        }
-        Fork(..) => {
-        }
-      }
-    }
-    Fork(left: node_left, right: node_right) => {
-      match payloads^ {
-        Fork(left: payload_left, right: payload_right) => {
-          let half = span / 2_u32;
-          let width = cvt::<u32, u64>(half);
-          let count = destination^.len;
-          let middle = imin(count, width);
-          sequence_inputs(nodes: &node_left^.inner, payloads: &payload_left^.inner, span: half, destination: &destination^[0_u64..middle]);
-          sequence_inputs(nodes: &node_right^.inner, payloads: &payload_right^.inner, span: half, destination: &destination^[middle..count]);
-        }
-        Vacant() => {
-        }
-        Page(..) => {
-        }
-      }
-    }
-  }
-  return unit;
-}
-
-fn reduce_owner(context: &Context, sequence: &EntrySequence, styles: &Styles, basis_height: i32, destination: &[BoundaryReduction]) -> made: SequenceOutput reads(context), reads(sequence), reads(styles), writes(destination) {
-  doc "Snapshots one owner's small slot metadata in linear work, then reduces its AVL without per-node directory descent. Nested owners take independent snapshots only when their Open is reduced.";
-  let count = cvt::<u32, u64>(sequence^.allocated);
-  let links = vacant_cursor();
-  let item = Flow::Close(block: no_index);
-  let missing = SequenceInput(links: links, item: item);
-  let inputs = box_array_filled::<SequenceInput>(count: count, value: missing);
-  sequence_inputs(nodes: &sequence^.nodes, payloads: &sequence^.payloads, span: sequence^.span, destination: &inputs.inner[0_u64..count]);
-  let total = reduce_sequence(context: context, inputs: &inputs.inner[0_u64..count], root: sequence^.root, styles: styles, basis_height: basis_height, destination: destination);
-  return total;
-}
-
-fn reduce_sequence(context: &Context, inputs: &[SequenceInput], root: u32, styles: &Styles, basis_height: i32, destination: &[BoundaryReduction]) -> made: SequenceOutput reads(context), reads(inputs), reads(styles), writes(destination) {
-  doc "Reduces each live AVL node once in post-order. Left, nested block and right use disjoint event slices; only their parent transfer waits for returned totals. Geometry stays in payloads throughout the reference walk.";
-  let root_at = cvt::<u32, u64>(root);
-  if root_at < inputs^.len {
-  } else {
-    let empty = empty_output();
-    return empty;
-  }
-  let held = inputs^[root_at].links;
-  if held.live {
-  } else {
-    let empty = empty_output();
-    return empty;
-  }
-  let left_at = cvt::<u32, u64>(held.left);
-  let before = if left_at < inputs^.len {
-    give inputs^[left_at].links.total_events;
-  } else {
-    give 0_u64;
-  }
-  let after = before +sat held.own_events;
-  let count = destination^.len;
-  if before >= after {
-    let empty = empty_output();
-    return empty;
-  }
-  if after > count {
-    let empty = empty_output();
-    return empty;
-  }
-  let left = reduce_sequence(context: context, inputs: inputs, root: held.left, styles: styles, basis_height: basis_height, destination: &destination^[0_u64..before]);
-  let right = reduce_sequence(context: context, inputs: inputs, root: held.right, styles: styles, basis_height: basis_height, destination: &destination^[after..count]);
-  let item = inputs^[root_at].item;
-  let own = pending_output(events: held.own_events);
-  let measured = empty_block_output();
+fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destination: &BoundaryReduction) -> result: unit reads(context), reads(styles), writes(destination.own) {
+  doc "Prepares a paragraph, child, float or out-of-flow transfer independently at one event rank. A block waits for its nested reduction; synthesized Close ranks are unused.";
+  let own = pending_output(events: 1_u64);
   match item {
-    Open(block: b) => {
-      let at = cvt::<u32, u64>(b);
-      let inside_start = before + 1_u64;
-      let inside_end = after - 1_u64;
-      if inside_start <= inside_end {
-        if at < context^.blocks.inner.len {
-          let block = &context^.blocks.inner[at];
-          let nested = &block^.entries;
-          let inside = reduce_owner(context: context, sequence: nested, styles: styles, basis_height: basis_height, destination: &destination^[inside_start..inside_end]);
-          let (transfer, size) = block_output(block: block, styles: styles, inside: &inside, basis_height: basis_height);
-          set own = transfer;
-          set measured = size;
-        }
-      }
+    Open(..) => {
     }
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
@@ -324,6 +223,70 @@ fn reduce_sequence(context: &Context, inputs: &[SequenceInput], root: u32, style
     }
     Out(..) => {
       set own.barriers = 5_u32;
+    }
+    Close(..) => {
+    }
+  }
+  set destination^.own = own;
+  return unit;
+}
+
+fn reduce_sequence(context: &Context, sequence: &EntrySequence, root: u32, styles: &Styles, basis_height: i32, destination: &[BoundaryReduction]) -> made: SequenceOutput reads(context), reads(sequence), reads(styles), writes(destination) {
+  doc "Reduces each live AVL node once in post-order. Left, nested block and right use disjoint event slices; only their parent transfer waits for returned totals. Initial owner pages provide direct slot reads without an allocated snapshot; grown directories retain bounded lookup paths.";
+  let held = sequence_node(sequence: sequence, slot: root);
+  if held.live {
+  } else {
+    let empty = empty_output();
+    return empty;
+  }
+  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  let before = left_node.total_events;
+  let after = before +sat held.own_events;
+  let count = destination^.len;
+  if before >= after {
+    let empty = empty_output();
+    return empty;
+  }
+  if after > count {
+    let empty = empty_output();
+    return empty;
+  }
+  let left = reduce_sequence(context: context, sequence: sequence, root: held.left, styles: styles, basis_height: basis_height, destination: &destination^[0_u64..before]);
+  let right = reduce_sequence(context: context, sequence: sequence, root: held.right, styles: styles, basis_height: basis_height, destination: &destination^[after..count]);
+  if before >= destination^.len {
+    let empty = empty_output();
+    return empty;
+  }
+  let item = sequence_payload(sequence: sequence, slot: root);
+  let own = pending_output(events: held.own_events);
+  let measured = empty_block_output();
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      let inside_start = before + 1_u64;
+      let inside_end = after - 1_u64;
+      if inside_start <= inside_end {
+        if at < context^.blocks.inner.len {
+          let block = &context^.blocks.inner[at];
+          let nested = &block^.entries;
+          let inside = reduce_sequence(context: context, sequence: nested, root: nested^.root, styles: styles, basis_height: basis_height, destination: &destination^[inside_start..inside_end]);
+          let (transfer, size) = block_output(block: block, styles: styles, inside: &inside, basis_height: basis_height);
+          set own = transfer;
+          set measured = size;
+        }
+      }
+    }
+    Text(..) => {
+      set own = destination^[before].own;
+    }
+    Child(..) => {
+      set own = destination^[before].own;
+    }
+    Float(..) => {
+      set own = destination^[before].own;
+    }
+    Out(..) => {
+      set own = destination^[before].own;
     }
     Close(..) => {
     }
@@ -453,15 +416,20 @@ fn store_block_reduction(block: &Block, ranks: &BoundaryRanks, reduced: &[Bounda
   return unit;
 }
 
-fn publish_boundaries(context: &Context, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
-  doc "Finishes full and partial reference walks with one post-order semantic reduction and independent page publication. The incremental boundary path never calls this full-context operation.";
+fn publish_boundaries(context: &Context, events: &[Flow], styles: &Styles, basis_height: i32) -> result: unit reads(events), reads(styles), writes(context) {
+  doc "Finishes full and partial reference walks with independent leaf transfer preparation, one post-order semantic reduction and independent page publication. The incremental boundary path never calls this full-context operation.";
   let count = flow_length(context: context);
   let empty = empty_output();
   let no_block = empty_block_output();
   let missing = BoundaryReduction(own: empty, total: empty, block: no_block);
   let reduced = box_array_filled::<BoundaryReduction>(count: count, value: missing);
+  for (at in 0_u64..count) {
+    if at < events^.len {
+      prepare_boundary_entry(context: context, item: events^[at], styles: styles, destination: &reduced.inner[at]);
+    }
+  }
   let ranks = boundary_ranks(context: context);
-  let total = reduce_owner(context: context, sequence: &context^.entries, styles: styles, basis_height: basis_height, destination: &reduced.inner[0_u64..count]);
+  let total = reduce_sequence(context: context, sequence: &context^.entries, root: context^.entries.root, styles: styles, basis_height: basis_height, destination: &reduced.inner[0_u64..count]);
   store_reduction(nodes: &context^.entries.nodes, payloads: &context^.entries.payloads, ranks: &ranks, reduced: &reduced.inner[0_u64..count]);
   let blocks = context^.blocks.inner.len;
   for (at in 0_u64..blocks) {
@@ -1042,7 +1010,8 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
   if context^.has_baseline {
     set context^.baseline = context^.baseline +sat narrow_delta;
   }
-  let (moved, positioned_counts) = finish_in_place(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
+  let no_events = slots_new::<Flow, 0>();
+  let (moved, positioned_counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
   let combined = add_counts(first: counts, second: positioned_counts);
   set combined.contexts = combined.contexts +sat 1_u64;
   if context^.marked_paragraphs == 1_u32 {
