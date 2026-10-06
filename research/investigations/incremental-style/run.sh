@@ -17,7 +17,7 @@
 #                                   the elements rematched; fails when an
 #                                   element is missing
 #   run.sh structure PAGE KIND...  checks B/X restyle completeness; also accepts
-#                                   PAGE structure, KIND case or full for fixtures
+#                                   PAGE structure, KIND case or full, and PAGE sides, KIND case, for fixtures
 #   run.sh incremental PAGE KIND... runs the style oracle's incremental check
 #                                   (restyle on a kept state against a full
 #                                   style run after every C and K edit) and
@@ -48,6 +48,7 @@ page_args() {
 	ecma262) echo "$data/ecma262.html $ua assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css assets/css/print.css=$data/ecma262-print.css" ;;
 	html5) echo "$data/html5.html $ua" ;;
 	structure) echo "$cases/structure-case.html $ua" ;;
+	sides) echo "$cases/sides-case.html $ua" ;;
 	apollo11) echo "$apollo/apollo11.html $ua wikibase.client.init&only=styles&skin=vector-2022=$apollo/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$apollo/apollo11-site.css" ;;
 	*)
 		echo "run.sh: unknown page $1" >&2

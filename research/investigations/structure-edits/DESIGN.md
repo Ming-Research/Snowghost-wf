@@ -218,6 +218,20 @@ set the direction of the work (design-tree skill, "Before starting").
   approved.
 - **Q110**, a structural reverse index for `:nth-*`, `+` and `~`, with P's
   positions recomputed: approved.
+- **Q113**, open: the structural set's precision. Astra's completeness check
+  (`runs/structure-check.txt`) found the set complete but html5 naming
+  58,230 elements for an insertion that changed none: `p + * > li` reached
+  the `li` of every child of body, and `.status p:first-child + p > a`
+  every later `a`. Recommended and implemented on that recommendation:
+  - each structural reach records the side of the edit point whose
+    children it reaches (previous, next, earlier, later), and
+    `structural_restyle` takes the point's two neighbours and walks only
+    those places;
+  - each reach records the ancestor features of its left compounds, and a
+    reach the parent's chain does not admit is skipped.
+  Largest html5 set 58,230 → 548; the remainder is `hN + div + hM`, whose
+  `div` compound reaches every later heading. Alternative: keep the
+  coarse set and accept the cost (rejected by the target).
 
 ## Step 1 and 2 in detail: stable slots and the insertion restyle
 
