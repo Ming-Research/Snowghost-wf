@@ -1552,18 +1552,69 @@ fn interior_position(value: i32) -> interior: Bool pure {
   return band(above, below);
 }
 
-fn previous_stacked_paragraph(context: &Context, from: u64) -> paragraph: u64 reads(context) {
-  doc "The last unchanged paragraph with lines before from, found by paragraph order. Its natural position, height and parent chain describe the state immediately after it. The paragraph count denotes none.";
-  let count = context^.paragraphs.inner.len;
-  if from == 0_u64 {
-    return count;
+fn paragraph_at_entry(context: &Context, entry: u64) -> paragraph: u64 reads(context.flow.inner), reads(context.paragraphs.inner.len) {
+  doc "The paragraph payload slot named by a Text entry in the flat flow walk, or the paragraph count for another entry or the end. Payload slots are identities, not flow ranks.";
+  if entry < context^.flow.inner.len {
+    let item = context^.flow.inner[entry];
+    match item {
+      Text(paragraph: p) => {
+        return cvt::<u32, u64>(p);
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
   }
-  let before = from - 1_u64;
-  let before_index = flow_index(at: before);
-  let end = first_paragraph_after(context: context, flow_at: before_index);
+  return context^.paragraphs.inner.len;
+}
+
+fn block_at_entry(context: &Context, entry: u64) -> block: u64 reads(context.flow.inner), reads(context.blocks.inner.len) {
+  doc "The block payload slot named by an Open entry in the flat flow walk, or the block count for another entry or the end.";
+  if entry < context^.flow.inner.len {
+    let item = context^.flow.inner[entry];
+    match item {
+      Open(block: b) => {
+        return cvt::<u32, u64>(b);
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return context^.blocks.inner.len;
+}
+
+fn block_entry(context: &Context, block: u32) -> entry: u32 reads(context.blocks.inner) {
+  doc "The Open entry of a block payload slot, or no_index for the context itself. Only positions in Context.flow carry order.";
+  let at = cvt::<u32, u64>(block);
+  if at < context^.blocks.inner.len {
+    return context^.blocks.inner[at].flow_at;
+  }
+  return no_index;
+}
+
+fn previous_stacked_paragraph(context: &Context, from: u64) -> paragraph: u64 reads(context) {
+  doc "The last unchanged paragraph with lines before the flow entry from, found by walking preceding flow entries. Its natural position, height and parent chain describe the state immediately after it. The paragraph count denotes none.";
+  let count = context^.paragraphs.inner.len;
+  let end = imin(from, context^.flow.inner.len);
   for (step in 0_u64..end) {
     let back = end - step;
-    let at = back - 1_u64;
+    let entry = back - 1_u64;
+    let at = paragraph_at_entry(context: context, entry: entry);
     if at < context^.paragraphs.inner.len {
       if context^.paragraphs.inner[at].lines.inner.len > 0_u64 {
         return at;
@@ -1573,15 +1624,64 @@ fn previous_stacked_paragraph(context: &Context, from: u64) -> paragraph: u64 re
   return count;
 }
 
-fn resume_float_state(context: &Context, styles: &Styles, stack: &Stack, from: u64, content_left: i32, content_top: i32) -> usable: Bool reads(context), reads(styles), writes(stack) {
-  doc "Recovers the exclusions of floats preceding the restart boundary from their placed margin boxes. A saturated coordinate refuses recovery. Floats retain their flow order in the existing exclusion list; later placement reads that list and its maximum top and bottom.";
+fn preceding_float_entries(context: &Context, before: u64) -> entries: Box<Slots<u32>> reads(context) {
+  doc "The Float entries before a restart boundary, in Context.flow order. Reads the existing child candidates and their flow entries, then insertion-sorts only the selected entry positions; it does not scan the unchanged flow prefix or rely on child slot order. This temporary flat-walk query retains no second ordered sequence.";
+  let entries = box_slots_new::<u32>(capacity: 0_u64);
   let children = context^.children.inner.len;
   for (c in 0_u64..children) {
-    let child = &context^.children.inner[c];
-    let flow = cvt::<u32, u64>(child^.flow_at);
-    if flow < from {
-      let (kind, index) = entry_kind(context: context, flow_at: child^.flow_at);
+    let entry = context^.children.inner[c].flow_at;
+    let flow = cvt::<u32, u64>(entry);
+    if flow < before {
+      let (kind, index) = entry_kind(context: context, flow_at: entry);
       if kind == 2_u8 {
+        if index == c {
+          let pushed = push_item::<u32>(cell: &entries, value: entry, ceiling: item_ceiling);
+        }
+      }
+    }
+  }
+  let count = entries.inner.len;
+  for (j in 0_u64..count) {
+    if j >= entries.inner.len {
+      break;
+    }
+    let key = entries.inner[j];
+    let hole = j;
+    for (step in 0_u64..j) {
+      if hole == 0_u64 {
+        break;
+      }
+      let previous = hole - 1_u64;
+      if previous >= entries.inner.len {
+        break;
+      }
+      let held = entries.inner[previous];
+      if held > key {
+        if hole < entries.inner.len {
+          set entries.inner[hole] = held;
+        }
+        set hole = previous;
+      } else {
+        break;
+      }
+    }
+    if hole < entries.inner.len {
+      set entries.inner[hole] = key;
+    }
+  }
+  return move entries;
+}
+
+fn resume_float_state(context: &Context, styles: &Styles, stack: &Stack, from: u64, content_left: i32, content_top: i32) -> usable: Bool reads(context), reads(styles), writes(stack) {
+  doc "Recovers the exclusions of floats preceding the restart boundary from their placed margin boxes, in the order of their Float entries. A saturated coordinate refuses recovery. Later placement reads that ordered list and its maximum top and bottom.";
+  let entries = preceding_float_entries(context: context, before: from);
+  let count = entries.inner.len;
+  for (f in 0_u64..count) {
+    let entry = entries.inner[f];
+    let (kind, c) = entry_kind(context: context, flow_at: entry);
+    if kind == 2_u8 {
+      if c < context^.children.inner.len {
+        let child = &context^.children.inner[c];
         let (dx, dy) = block_relative_offset(context: context, styles: styles, block: child^.block);
         let x_shifted = child^.x -sat dx;
         let y_shifted = child^.y -sat dy;
@@ -3192,7 +3292,7 @@ fn place_rect(fragment: Fragment, x: i32, y: i32, map: &[ColumnPiece], map_y: i3
 }
 
 fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: i32, out: &Box<Slots<PlacedRect>>) -> result: unit reads(context), reads(map), writes(out) {
-  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin, moving them by the innermost multi-column context's column map: a multi-column context's own box by its parent's map, its content by its own. Its own box's fragment comes first, then each shown block box's border box and each paragraph's fragments at the paragraph's origin, then the rest of its fragments, the order lay_out_flow made them in when it copied the blocks' and paragraphs' into its list.";
+  doc "Appends context's fragments at its absolute origin x, y, then its children's, each at its own origin, moving them by the innermost multi-column context's column map: a multi-column context's own box by its parent's map, its content by its own. Its own box's fragment comes first, then each shown block box's border box in Open-entry order and each paragraph's fragments in Text-entry order at the paragraph's origin, then the rest of its fragments. These publication phases keep the reference dump order independently of block and paragraph payload slots.";
   let own_pieces = context^.column_map.inner.len;
   let own_map = own_pieces > 0_u64;
   let style = context^.style;
@@ -3209,22 +3309,25 @@ fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: 
       place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
     }
   }
-  let blocks = context^.blocks.inner.len;
-  for (b in 0_u64..blocks) {
-    let block = context^.blocks.inner[b];
-    let shown = shown_owner(style: block.style);
-    if shown {
-      let fragment = Fragment(kind: placed_element, owner: block.style.element, x: block.x, y: block.y, width: block.width, height: block.height);
-      place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+  let entries = context^.flow.inner.len;
+  for (entry in 0_u64..entries) {
+    let b = block_at_entry(context: context, entry: entry);
+    if b < context^.blocks.inner.len {
+      let block = context^.blocks.inner[b];
+      let shown = shown_owner(style: block.style);
+      if shown {
+        let fragment = Fragment(kind: placed_element, owner: block.style.element, x: block.x, y: block.y, width: block.width, height: block.height);
+        place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+      }
     }
   }
-  let paragraphs = context^.paragraphs.inner.len;
-  for (p in 0_u64..paragraphs) {
-    let left = context^.paragraphs.inner[p].x;
-    let top = context^.paragraphs.inner[p].top;
-    let pieces = context^.paragraphs.inner[p].fragments.inner.len;
-    for (f in 0_u64..pieces) {
-      if p < context^.paragraphs.inner.len {
+  for (entry in 0_u64..entries) {
+    let p = paragraph_at_entry(context: context, entry: entry);
+    if p < context^.paragraphs.inner.len {
+      let left = context^.paragraphs.inner[p].x;
+      let top = context^.paragraphs.inner[p].top;
+      let pieces = context^.paragraphs.inner[p].fragments.inner.len;
+      for (f in 0_u64..pieces) {
         if f < context^.paragraphs.inner[p].fragments.inner.len {
           let piece = context^.paragraphs.inner[p].fragments.inner[f];
           let moved_x = left +sat piece.x;

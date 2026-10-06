@@ -11,6 +11,26 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
 
+- **Flow-selected payload writes need a proof over stored fields.** Minimal
+  semantic example: an ordered `Entry::Item(slot)` sequence names payloads
+  whose `entry` field is its inverse; independent iteration `k` updates
+  `payloads[slot].value`, with `payloads[slot].entry == k`. At Whitefoot
+  `f949e676acfa811f96b21afd07f02c06dcd14b51`, RANGE-1 admits integer-array
+  elements but no field below an element or enum payload. PAR-2 therefore
+  does not certify Snowghost's indirect translation and local-width writes
+  in `translate_after` and `prepare_local_widths`; their sibling writes
+  have no semantic dependency. This is a specification/source inspection
+  finding, not a new compiler trial or timing result. The maintained
+  `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
+  demonstrates the supported separate integer-array inverse, which would
+  add proof-only representation to this migration. Change: support this
+  field/enum inverse proof in Whitefoot, including projected helper reads,
+  then certify the renderer loops without a whole-context proof-data pass.
+  Reopen before accepting M2 step 1's parallelism; validate a minimal
+  field-based scatter and a duplicate-slot rejection, inspect the parallel
+  ledger, and retain seq/par dump equality. The temporary flat-walk writes
+  remain uncertified until then.
+
 - **A write through indices the program knows are distinct needs its
   facts derived again in each pass.** Minimal example: a tree in an arena,
   each node's children's indices kept in its own list; a counted loop over
@@ -126,6 +146,18 @@ example apart from the renderer code that exposed it
   layout code needs no change.
 
 ## Snowghost
+
+- **Child-context publication still follows payload-slot order.**
+  `renderer/layout/flow.wf:place_context` emits blocks and paragraphs through
+  their flow entries, then visits child contexts by slot. Impact: reordering
+  child slots could change fragment publication order; current construction
+  still appends them in the reference order. Change: visit child contexts
+  through explicit ownership/order routes, including atomics held by Text
+  entries and table cells/captions that are not ordinary flow entries.
+  Reopen with M2 step 1's child ownership and stable-route migration;
+  permute child storage while preserving those routes and compare the full
+  dump, including every owner's fragment order. This is deferred from the
+  paragraph/block order-query slice, not claimed as permutation-safe.
 
 - **Structural reaches through `+` chains reach every later sibling.** In
   `h1 + div + h2`, the `div` compound reaches its later siblings, which
@@ -348,8 +380,9 @@ example apart from the renderer code that exposed it
   instructions of the 2.8 million of sentence edit 3, one of the three
   ecma262 sentence edits above 1 ms
   (`research/investigations/incremental-layout/runs/step3c.txt`). Change:
-  find the first later child by binary search where children are in flow
-  order, and keep the naturals relative to their entry's placed position
+  visit later children through the flow sequence, including the atomic
+  children owned by its Text entries, rather than binary-searching child
+  payload slots; keep the naturals relative to their entry's placed position
   so a translation leaves them; or reopen Q70's summary tree. Reopen with
   the next update performance work on ecma262.
 
