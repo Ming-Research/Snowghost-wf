@@ -7,6 +7,26 @@ it.
 
 ## Whitefoot requirements
 
+- **Owner-local counted traversal with route-selected scratch needs proof.**
+  Source-only uncertainty at the pinned Whitefoot revision: `flex_prepare_child_pages`
+  in `renderer/layout/flex.wf`, `grid_columns_child_pages` and
+  `grid_rows_child_pages` in `renderer/layout/grid.wf`, and
+  `settle_owned_children` in
+  `renderer/layout/update.wf` keep counted loops over independently owned
+  optional payload slots. Each child operation also writes a temporary scratch slot
+  selected by a unique `EntryHandle` route. Minimal semantic example:
+  `for i in 0..page.len { let j = lookup(routes, owner_slot(i));
+  update(&page[i].Some.value, &scratch[j]); }` (contract sketch, not runnable
+  Whitefoot). Different live owner slots imply different route positions, but
+  the stored owner/slot relation is outside the pin's field/enum scatter
+  proof described below. No compiler result is claimed. Keep the counted
+  form; do not add a serial handle walk. Reopen with the primary agent's CI
+  diagnostics and certified-loop inspection; if unproved, file the minimal
+  relation with Whitefoot and validate both distinct-slot acceptance and
+  duplicate-route rejection. Pure nested owned-page preparation and local
+  reference-cursor lifetime checks also await that CI run.
+
+
 Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([AGENTS.md](../AGENTS.md#the-whitefoot-boundary)).
@@ -162,20 +182,34 @@ example apart from the renderer code that exposed it
   sum, or mutate the sum it does reach. Reopen before M2's layout PR is
   ready; the falsifier stays out of falsify-m2's matrix until then.
 
-- **M2 typed payload ownership is still context-wide.** Step 3's
-  `EntrySequence` owns paged stable direct-entry handles and its local AVL
-  metadata, but `Context.blocks`, `paragraphs` and `children` still own the
-  typed payloads in growing Slots. Impact: order insertion/removal copies
-  no earlier entry payload, but allocating a heavy payload may still move
-  its context pool; this is not the complete FlowBlock ownership contract.
-  Change: move those typed payloads into owner-local pages and migrate
-  text/style/atomic/table routes together, retaining counted disjoint-slot
-  preparation and child layout. Reopen before declaring step 3 complete or
-  wiring step 5's successful splice. Validate certified sibling loops,
-  payload-storage permutations, stale handles and every edit-prefix dump;
-  count allocations and earlier-payload visits inside the edit. The current
-  index uses append-only slots with tombstones; generation-checked reuse
-  belongs with that migration and session-growth policy.
+- **M2 owner-local payload migration needs CI evidence.** Typed payloads now
+  live in their owner's `EntrySequence` pages, and text/style/context routes,
+  atomics, table cells and update marks carry `EntryHandle`. Context-wide
+  `block_routes`, `paragraph_routes` and `child_routes` store handles only;
+  their growth and publication still copy routing metadata. No compile,
+  execution or byte-identity result is supplied by this source-only change.
+  Reopen before declaring step 3 validated or wiring step 5's splice.
+  Validate full-build and every edit-prefix dump, stale handles, payload
+  permutation, live totals from `count_tree`, and seq/par equivalence; inspect
+  certified sibling loops and count allocation/earlier-payload visits.
+  Append-only local slots retain tombstones; checked-generation reuse remains
+  part of the session-growth work, rather than silently reusing identities.
+
+- **M2 compatibility adapters still have context-wide costs.** Geometry
+  conversion snapshots, child scalar snapshots, natural/split/baseline state,
+  and flex/grid/table scratch remain context-wide. They own no retained
+  block/paragraph/context payload and rebuild no flat Flow stream, but they
+  are not bounded edit work. `child_route_index` linearly searches a handle
+  route list, so mapping all children can take quadratic lookup work;
+  `atomic_index` likewise scans scalar snapshots. Change: replace repeated
+  lookup with a temporary owner-slot inverse or owner-local scratch while
+  preserving disjoint counted payload traversal; remove context-wide replay
+  through step 4's boundary outputs. Reopen before measuring/accepting M2's
+  full-build or edit envelope, comparing the same-source alternatives and
+  recording certified loops. Long repeated checked local cursor adapters in
+  update/structure/style code also need consolidation into small typed
+  operations when those consumers move off the compatibility walker; preserve
+  reference lifetimes and narrow effects, and recheck every edit prefix.
 
 - **M2 nested index still needs CI and allocation-cost evidence.**
   `renderer/layout/sequence.wf` supplies local insert/remove/prefix/suffix
@@ -227,10 +261,10 @@ example apart from the renderer code that exposed it
   remain for the primary agent's CI; no local execution was authorized.
 
 
-- **Child-context publication still follows payload-slot order.**
+- **Child-context publication still follows route-directory traversal order.**
   `renderer/layout/flow.wf:place_context` emits blocks and paragraphs through
-  their flow entries, then visits child contexts by slot. Impact: reordering
-  child slots could change fragment publication order; current construction
+  their flow entries, then visits child contexts in `child_routes` order. Impact: reordering
+  that route directory could change fragment publication order; current construction
   still appends them in the reference order. Change: visit child contexts
   through explicit ownership/order routes, including atomics held by Text
   entries and table cells/captions that are not ordinary flow entries.

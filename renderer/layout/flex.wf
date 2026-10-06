@@ -59,7 +59,7 @@ struct FlexBox {
 }
 
 struct FlexItem {
-  doc "One child context of a flex container as the flex algorithm sees it, in the container's main and cross axes: whether it is a flex item (an absolutely positioned child is not), its order, its margins (auto as zero, with which are auto), its paddings and borders, its flex factors, its border-box sizes (flex base, automatic or given minimum, maximum or unknown, hypothetical, target after flexing, and the main size of its natural layout), its cross-size limits, its alignment as a flex_at constant, the cross size it is stretched to or unknown, its baseline from its border-box top, and its border box's offsets along the main and the cross axis from the content box's start edges.";
+  doc "One child context of a flex container as the flex algorithm sees it (child names a temporary route/scratch position, never persistent payload identity), in the container's main and cross axes: whether it is a flex item (an absolutely positioned child is not), its order, its margins (auto as zero, with which are auto), its paddings and borders, its flex factors, its border-box sizes (flex base, automatic or given minimum, maximum or unknown, hypothetical, target after flexing, and the main size of its natural layout), its cross-size limits, its alignment as a flex_at constant, the cross size it is stretched to or unknown, its baseline from its border-box top, and its border box's offsets along the main and the cross axis from the content box's start edges.";
   child: u64;
   active: Bool;
   order: i32;
@@ -301,9 +301,13 @@ fn intrinsic_flex(context: &Context, styles: &Styles, document: &Document, fonts
     let piece = flow_event(context: context, at: k);
     match piece {
       Child(context: c) => {
-        let at = cvt::<u32, u64>(c);
-        if at < context^.children.inner.len {
-          let (low, high) = flex_contribution(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, row: row);
+        let at = child_route_index(routes: &context^.child_routes, handle: c);
+        if at < context^.child_routes.inner.len {
+          let contribution = FlexContribution(viewport: viewport, row: row, low: 0_i32, high: 0_i32);
+          let unused = unit;
+          flex_contribution_at(context: context, handle: c, a: styles, b: document, c: fonts, d: picks, e: &unused, state: &contribution);
+          let low = contribution.low;
+          let high = contribution.high;
           set big_least = imax(big_least, low);
           set big_most = imax(big_most, high);
           let spaced_least = sum_least +sat low;
@@ -338,7 +342,6 @@ fn intrinsic_flex(context: &Context, styles: &Styles, document: &Document, fonts
   }
   return big_least, big_most;
 }
-
 fn flex_divide(total: i32, parts: i32) -> share: i32 pure {
   doc "total divided by parts, truncated toward zero; zero when parts is not positive.";
   if parts > 0_i32 {
@@ -387,7 +390,7 @@ fn flex_scrolls(styles: &Styles, style: StyleRef, row: Bool) -> scrolling: Bool 
   return made;
 }
 
-fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(styles), reads(child) {
+fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(child), reads(styles) {
   doc "The border-box height an item's content needs, its automatic height, as the lowest bottom edge of its laid-out child contexts (with their bottom margins), paragraphs and block boxes below its paddings and borders, plus them; an approximation that sees no margin collapsing through the item's edges. A column item with a given height needs it for its automatic minimum size, where the laid-out height is the given one.";
   let style = child^.style;
   let border = border_edges(styles: styles, style: style);
@@ -397,30 +400,35 @@ fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(st
   let frame_padding = vertical(edges: padding);
   let frame = frame_border +sat frame_padding;
   let bottom = top_frame;
-  let children = child^.children.inner.len;
+  let children = child^.child_routes.inner.len;
   for (c in 0_u64..children) {
-    let geometry_read_1 = child_position(context: child, at: c);
-    let below = geometry_read_1.y +sat child^.children.inner[c].height;
-    let edge = below +sat child^.children.inner[c].margin_bottom;
+    let nested_handle = child^.child_routes.inner[c];
+    let nested_child = child_value(context: child, handle: nested_handle);
+    let geometry_read_1 = child_position(context: child, at: nested_handle);
+    let below = geometry_read_1.y +sat nested_child.height;
+    let edge = below +sat nested_child.margin_bottom;
     set bottom = imax(bottom, edge);
   }
-  let paragraphs = child^.paragraphs.inner.len;
+  let paragraphs = child^.paragraph_routes.inner.len;
   for (p in 0_u64..paragraphs) {
-    let geometry_read_2 = paragraph_position(context: child, at: p);
-    let edge = geometry_read_2.y +sat child^.paragraphs.inner[p].height;
+    let paragraph_handle = child^.paragraph_routes.inner[p];
+    let paragraph_held = paragraph_value(context: child, handle: paragraph_handle);
+    let geometry_read_2 = paragraph_position(context: child, at: paragraph_handle);
+    let edge = geometry_read_2.y +sat paragraph_held.height;
     set bottom = imax(bottom, edge);
   }
-  let blocks = child^.blocks.inner.len;
+  let blocks = child^.block_routes.inner.len;
   for (b in 0_u64..blocks) {
-    let geometry_read_3 = block_position(context: child, at: b);
-    let edge = geometry_read_3.y +sat child^.blocks.inner[b].height;
+    let flex_block_route = child^.block_routes.inner[b];
+    let block_held = block_value(context: child, handle: flex_block_route);
+    let geometry_read_3 = block_position(context: child, at: flex_block_route);
+    let edge = geometry_read_3.y +sat block_held.height;
     set bottom = imax(bottom, edge);
   }
   let inner = bottom -sat top_frame;
   let made = inner +sat frame;
   return made;
 }
-
 fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
   doc "Gives one child of a flex container its space and, for a flex item, everything the flex algorithm needs of it before flexing (CSS Flexbox 9.2 and 9.3): its margins, paddings, borders and flex factors in the container's axes, its flex base size from flex-basis, width or height, or its content (in a column by laying it out at its cross size, which is kept as its natural layout), its minimum and maximum main sizes with the automatic minimum of 4.5, its hypothetical main size, its cross limits and its alignment. It reads and writes only this child and this item, so a counted loop runs it for every child.";
   let style = child^.style;
@@ -704,13 +712,15 @@ fn flex_collect(context: &Context, styles: &Styles, items: &Box<Slots<FlexItem>>
     let piece = flow_event(context: context, at: k);
     match piece {
       Child(context: c) => {
-        let at = cvt::<u32, u64>(c);
-        let inside = at < context^.children.inner.len;
+        let at = child_route_index(routes: &context^.child_routes, handle: c);
+        let inside = at < context^.child_routes.inner.len;
         let listed = at < items^.inner.len;
         let usable = band(inside, listed);
         if usable {
-          let group = item_of(styles: styles, style: context^.children.inner[at].style);
-          set items^.inner[at].active = True();
+          let child_snapshot = child_value(context: context, handle: c);
+          let group = item_of(styles: styles, style: child_snapshot.style);
+          let owned_result_1 = True();
+          set items^.inner[at].active = owned_result_1;
           set items^.inner[at].order = group.order;
           let moved = group.order != 0_i32;
           set ordered = bor(ordered, moved);
@@ -734,7 +744,6 @@ fn flex_collect(context: &Context, styles: &Styles, items: &Box<Slots<FlexItem>>
   }
   return move sequence;
 }
-
 fn flex_gather(items: &Box<Slots<FlexItem>>, sequence: &Box<Slots<u64>>) -> lanes: Box<Slots<FlexItem>> reads(items), reads(sequence) {
   doc "The flex items in sequence's order, copies of their entries of items.";
   let count = sequence^.inner.len;
@@ -1444,7 +1453,8 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   let inner_height = if definite {
     let used_definite = used_height(context: context, styles: styles, content: 0_i32);
     let room = used_definite -sat frame_vertical;
-    give imax(room, 0_i32);
+    let owned_result_1 = imax(room, 0_i32);
+    give owned_result_1;
   } else {
     give unknown;
   }
@@ -1477,7 +1487,7 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   }
   let content_place = flex_place(value: content_value, reversed: wrap_reverse);
   let setup = FlexBox(row: row, reverse: reverse, wrapping: wrapping, wrap_reverse: wrap_reverse, content_width: content_width, inner_height: inner_height, main_gap: main_gap, cross_gap: cross_gap, align_items: group.align_items, justify_content: justify, align_content: content_place, updating: context^.dirty);
-  let count = context^.children.inner.len;
+  let count = context^.child_routes.inner.len;
   let items = box_slots_new::<FlexItem>(capacity: 8_u64);
   for (i in 0_u64..count) {
     let blank = flex_blank_item();
@@ -1485,11 +1495,10 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
     let pushed = push_item::<FlexItem>(cell: &items, value: blank, ceiling: item_ceiling);
   }
   let sequence = flex_collect(context: context, styles: styles, items: &items);
+  let work = FlexWork(viewport: viewport, setup: setup, content_left: content_left, content_top: content_top, main_total: 0_i32, cross_total: 0_i32);
   let prepared = count <= items.inner.len;
   if prepared {
-    for (i in 0_u64..count) {
-      flex_prepare(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
-    }
+    flex_prepare_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &items, a: styles, b: document, c: fonts, d: picks, e: &work);
   }
   let lanes = flex_gather(items: &items, sequence: &sequence);
   let column_room = if definite {
@@ -1497,7 +1506,8 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   } else if wrapping {
     if max_height_box >= 0_i32 {
       let room = max_height_box -sat frame_vertical;
-      give imax(room, 0_i32);
+      let owned_result_2 = imax(room, 0_i32);
+      give owned_result_2;
     } else {
       give flex_infinite;
     }
@@ -1525,7 +1535,8 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   } else {
     let used_main = used_height(context: context, styles: styles, content: widest);
     let room = used_main -sat frame_vertical;
-    give imax(room, 0_i32);
+    let owned_result_3 = imax(room, 0_i32);
+    give owned_result_3;
   }
   for (l in 0_u64..line_count) {
     if l >= lines.inner.len {
@@ -1539,9 +1550,7 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   flex_store(lanes: &lanes, items: &items);
   let ready_final = count <= items.inner.len;
   if ready_final {
-    for (i in 0_u64..count) {
-      flex_final(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
-    }
+    flex_final_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &items, a: styles, b: document, c: fonts, d: picks, e: &work);
   }
   flex_load(items: &items, lanes: &lanes);
   let natural_cross = 0_i32;
@@ -1560,14 +1569,17 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
     set natural_cross = natural_cross +sat cross;
   }
   let used = if row {
-    give used_height(context: context, styles: styles, content: natural_cross);
+    let owned_result_4 = used_height(context: context, styles: styles, content: natural_cross);
+    give owned_result_4;
   } else {
-    give used_height(context: context, styles: styles, content: main_inner);
+    let owned_result_5 = used_height(context: context, styles: styles, content: main_inner);
+    give owned_result_5;
   }
   set context^.height = used;
   let used_inner = used -sat frame_vertical;
   let cross_inner = if row {
-    give imax(used_inner, 0_i32);
+    let owned_result_6 = imax(used_inner, 0_i32);
+    give owned_result_6;
   } else {
     give content_width;
   }
@@ -1586,30 +1598,423 @@ fn lay_out_flex(context: &Context, styles: &Styles, document: &Document, fonts: 
   flex_store(lanes: &lanes, items: &items);
   let ready_stretch = count <= items.inner.len;
   if ready_stretch {
-    for (i in 0_u64..count) {
-      flex_stretch(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, setup: setup);
-    }
+    flex_stretch_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &items, a: styles, b: document, c: fonts, d: picks, e: &work);
   }
   let ready_place = count <= items.inner.len;
   if ready_place {
-    for (i in 0_u64..count) {
-      flex_position(child: &context^.children.inner[i], item: &items.inner[i], styles: styles, setup: setup, content_left: content_left, content_top: content_top, main_total: main_inner, cross_total: cross_inner);
-    }
+    set work.main_total = main_inner;
+    set work.cross_total = cross_inner;
+    flex_position_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &items.inner[0_u64..items.inner.len], a: styles, b: document, c: fonts, d: picks, e: &work);
   }
-  set context^.has_baseline = False();
+  let owned_result_7 = False();
+  set context^.has_baseline = owned_result_7;
   if sequence.inner.len > 0_u64 {
     let first_child = sequence.inner[0_u64];
-    if first_child < context^.children.inner.len {
+    if first_child < context^.child_routes.inner.len {
       if first_child < items.inner.len {
-        let geometry_read_4 = child_position(context: context, at: first_child);
+        let first_handle = context^.child_routes.inner[first_child];
+        let geometry_read_4 = child_position(context: context, at: first_handle);
         let top = geometry_read_4.y;
         let shown = top +sat items.inner[first_child].baseline;
         set context^.baseline = shown;
-        set context^.has_baseline = True();
+        let owned_result_8 = True();
+        set context^.has_baseline = owned_result_8;
       }
     }
   }
   let positioned_counts = position_out(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
+  return unit;
+}
+struct FlexWork {
+  doc "Immutable inputs shared by independent owner-local flex child workers.";
+  viewport: Viewport;
+  setup: FlexBox;
+  content_left: i32;
+  content_top: i32;
+  main_total: i32;
+  cross_total: i32;
+}
+
+struct FlexContribution {
+  doc "Inputs and scalar result of one flex intrinsic contribution.";
+  viewport: Viewport;
+  row: Bool;
+  low: i32;
+  high: i32;
+}
+
+fn flex_contribution_action(value: &Context, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &unit, state: &FlexContribution) -> result: unit reads(a), reads(b), reads(c), reads(d), writes(value), writes(state) {
+  doc "Measures one owner-local child without passing its enclosing context as a second alias.";
+  let (low, high) = flex_contribution(child: value, styles: a, document: b, fonts: c, picks: d, viewport: state^.viewport, row: state^.row);
+  set state^.low = low;
+  set state^.high = high;
+  return unit;
+}
+fn flex_prepare_action(value: &Context, item: &FlexItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(item) {
+  doc "Applies the flex prepare operation to one independently owned child and its temporary item.";
+  flex_prepare(child: value, item: item, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, setup: e^.setup);
+  return unit;
+}
+fn flex_final_action(value: &Context, item: &FlexItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(item) {
+  doc "Applies the flex final operation to one independently owned child and its temporary item.";
+  flex_final(child: value, item: item, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, setup: e^.setup);
+  return unit;
+}
+fn flex_stretch_action(value: &Context, item: &FlexItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(item) {
+  doc "Applies the flex stretch operation to one independently owned child and its temporary item.";
+  flex_stretch(child: value, item: item, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, setup: e^.setup);
+  return unit;
+}
+fn flex_position_action(value: &Context, item: &FlexItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(item), reads(a), reads(e), writes(value) {
+  doc "Applies the flex position operation to one independently owned child and its temporary item.";
+  flex_position(child: value, item: item, styles: a, setup: e^.setup, content_left: e^.content_left, content_top: e^.content_top, main_total: e^.main_total, cross_total: e^.cross_total);
+  return unit;
+}
+fn flex_prepare_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(sequence.span), reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children), writes(items) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  flex_prepare_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  flex_prepare_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn flex_prepare_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      flex_prepare_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_prepare_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            flex_prepare_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_prepare_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      flex_prepare_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_prepare_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.inner.len {
+              flex_prepare_action(value: child, item: &items^.inner[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_final_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(sequence.span), reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children), writes(items) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  flex_final_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  flex_final_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn flex_final_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      flex_final_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_final_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            flex_final_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_final_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      flex_final_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_final_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.inner.len {
+              flex_final_action(value: child, item: &items^.inner[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_stretch_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(sequence.span), reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children), writes(items) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  flex_stretch_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  flex_stretch_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn flex_stretch_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      flex_stretch_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_stretch_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            flex_stretch_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_stretch_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<FlexItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      flex_stretch_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_stretch_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.inner.len {
+              flex_stretch_action(value: child, item: &items^.inner[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_position_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[FlexItem], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(sequence.span), reads(routes), reads(items), reads(a), reads(e), writes(sequence.blocks), writes(sequence.children) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  flex_position_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  flex_position_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn flex_position_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &[FlexItem], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(items), reads(a), reads(e), writes(pages) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      flex_position_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_position_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            flex_position_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_position_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[FlexItem], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &FlexWork) -> result: unit reads(routes), reads(items), reads(a), reads(e), writes(pages) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      flex_position_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      flex_position_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.len {
+              flex_position_action(value: child, item: &items^[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn flex_contribution_at(context: &Context, handle: EntryHandle, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &unit, state: &FlexContribution) -> result: unit reads(context.block_routes.inner), reads(a), reads(b), reads(c), reads(d), writes(context.entries), writes(state) {
+  doc "Resolves an owner through checked local block slots and invokes one operation on that owner's sequence. Cursors are local borrows and directory slots own no payload.";
+  let path = owner_path(context: context, owner: handle.owner);
+  let count = path.inner.len;
+  let sequence = &context^.entries;
+  for (depth in 0_u64..count) {
+    let reverse = count -sat depth;
+    let at = reverse -sat 1_u64;
+    if at < path.inner.len {
+      let local_slot = path.inner[at];
+      let held = sequence_node(sequence: sequence, slot: local_slot);
+      if held.live {
+      } else {
+        return unit;
+      }
+      let pages = &sequence^.blocks;
+      let remaining = local_slot;
+      let span = sequence^.span;
+      let found = False();
+      loop {
+        match pages^ {
+          Vacant() => {
+            break;
+          }
+          Fork(left: left_page, right: right_page) => {
+            let half = span / 2_u32;
+            if remaining < half {
+              set pages = &left_page^.inner;
+            } else {
+              set remaining = remaining -sat half;
+              set pages = &right_page^.inner;
+            }
+            set span = half;
+          }
+          Page(values: page) => {
+            let offset = cvt::<u32, u64>(remaining);
+            if offset < page^.inner.len {
+              match page^.inner[offset] {
+                Some(value: block) => {
+                  set sequence = &block^.entries;
+                  let owned_result_1 = True();
+                  set found = owned_result_1;
+                }
+                None() => {
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+      if found {
+      } else {
+        return unit;
+      }
+    }
+  }
+  let payload_node = sequence_node(sequence: sequence, slot: handle.slot);
+  if payload_node.live {
+    flex_contribution_pages(pages: &sequence^.children, slot: handle.slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn flex_contribution_pages(pages: &OwnedPages<Context>, slot: u32, span: u32, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &unit, state: &FlexContribution) -> result: unit reads(a), reads(b), reads(c), reads(d), writes(pages), writes(state) {
+  doc "Borrows one live typed local slot for a callback; no reference leaves the call and no payload is copied.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            flex_contribution_action(value: payload, a: a, b: b, c: c, d: d, e: e, state: state);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        flex_contribution_pages(pages: &left_page^.inner, slot: slot, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      } else {
+        let later = slot -sat half;
+        flex_contribution_pages(pages: &right_page^.inner, slot: later, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      }
+    }
+  }
   return unit;
 }

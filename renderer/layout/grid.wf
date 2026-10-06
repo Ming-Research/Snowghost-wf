@@ -814,7 +814,7 @@ fn grid_spot(styles: &Styles, def: GridDef, areas: u32, rows: Bool, first: GridL
 }
 
 struct GridModel {
-  doc "The grid's working state, built from the context's children each time it lays out or measures: items, indexed by child; the order the items are placed in (their children's indices); and the tracks of each axis.";
+  doc "The grid's working state, built from the context's children each time it lays out or measures: items, indexed by temporary child-route positions; the order the items are placed in (those scratch positions, never persistent payload identities); and the tracks of each axis.";
   items: Box<Slots<GridItem>>;
   sequence: Box<Slots<u32>>;
   columns: Box<Slots<GridTrack>>;
@@ -850,7 +850,7 @@ fn grid_put(items: &Box<Slots<GridItem>>, at: u64, item: GridItem) -> result: un
 
 fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_def: GridDef, row_def: GridDef, areas: u32) -> result: unit reads(context), reads(styles), writes(model) {
   doc "Makes an item entry for each child of context and lists the in-flow children in document order, each with its order and its placement along both axes; an absolutely positioned child is no item.";
-  let count = context^.children.inner.len;
+  let count = context^.child_routes.inner.len;
   for (c in 0_u64..count) {
     let blank = grid_new_item();
     let pushed = push_item::<GridItem>(cell: &model^.items, value: blank, ceiling: item_ceiling);
@@ -865,9 +865,10 @@ fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_de
     let piece = flow_event(context: context, at: k);
     match piece {
       Child(context: child) => {
-        let at = cvt::<u32, u64>(child);
-        if at < context^.children.inner.len {
-          let style = context^.children.inner[at].style;
+        let at = child_route_index(routes: &context^.child_routes, handle: child);
+        if at < context^.child_routes.inner.len {
+          let child_snapshot = child_value(context: context, handle: child);
+          let style = child_snapshot.style;
           let group = item_of(styles: styles, style: style);
           let yes = True();
           let no = False();
@@ -875,9 +876,11 @@ fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_de
           let column = grid_spot(styles: styles, def: column_def, areas: areas, rows: no, first: group.column_start, last: group.column_end);
           let made = GridItem(active: yes, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, shim: 0_i32);
           grid_put(items: &model^.items, at: at, item: made);
-          let pushed = push_item::<u32>(cell: &model^.sequence, value: child, ceiling: item_ceiling);
+          let route_key = flow_index(at: at);
+          let pushed = push_item::<u32>(cell: &model^.sequence, value: route_key, ceiling: item_ceiling);
           if group.order != 0_i32 {
-            set ordered = True();
+            let owned_result_1 = True();
+            set ordered = owned_result_1;
           }
         }
       }
@@ -898,7 +901,6 @@ fn grid_collect(context: &Context, styles: &Styles, model: &GridModel, column_de
   }
   return unit;
 }
-
 fn grid_order_of(model: &GridModel, child: u32) -> order: i32 reads(model) {
   doc "The order property of the item whose child index is child.";
   let at = cvt::<u32, u64>(child);
@@ -2244,26 +2246,30 @@ fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, al
     let one = item.rows == 1_i32;
     let live = band(item.active, one);
     let shares = if live {
-      if c < context^.children.inner.len {
-        let style = context^.children.inner[c].style;
+      if c < context^.child_routes.inner.len {
+        let handle = context^.child_routes.inner[c];
+        let held = child_value(context: context, handle: handle);
+        let style = held.style;
         let group = item_of(styles: styles, style: style);
         let align = grid_choose(own: group.align_self, inherited: align_items);
         give align == align_baseline;
       } else {
-        give False();
+        let owned_result_1 = False();
+        give owned_result_1;
       }
     } else {
-      give False();
+      let owned_result_2 = False();
+      give owned_result_2;
     }
     set model^.items.inner[c].shared = shares;
     set model^.items.inner[c].shim = 0_i32;
     if shares {
-      set model^.items.inner[c].needs = True();
+      let owned_result_3 = True();
+      set model^.items.inner[c].needs = owned_result_3;
     }
   }
   return unit;
 }
-
 fn grid_shim_baselines(context: &Context, model: &GridModel) -> result: unit reads(context), writes(model) {
   doc "Shifts the items that share a baseline within their row so that their baselines line up: each is moved down by the difference between the largest distance from the top of a margin box to the baseline in its row and its own, and its contributions to the row grow by that shim.";
   let rows = model^.rows.inner.len;
@@ -2273,14 +2279,15 @@ fn grid_shim_baselines(context: &Context, model: &GridModel) -> result: unit rea
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
     if item.shared {
-      if c < context^.children.inner.len {
-        let child = &context^.children.inner[c];
-        let inner = if child^.has_baseline {
-          give child^.baseline;
+      if c < context^.child_routes.inner.len {
+        let handle = context^.child_routes.inner[c];
+        let child = child_value(context: context, handle: handle);
+        let inner = if child.has_baseline {
+          give child.baseline;
         } else {
-          give child^.height;
+          give child.height;
         }
-        let ascent = child^.margin_top +sat inner;
+        let ascent = child.margin_top +sat inner;
         let at = grid_index(value: item.row);
         if at < tops.inner.len {
           let larger = imax(tops.inner[at], ascent);
@@ -2292,14 +2299,15 @@ fn grid_shim_baselines(context: &Context, model: &GridModel) -> result: unit rea
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
     if item.shared {
-      if c < context^.children.inner.len {
-        let child = &context^.children.inner[c];
-        let inner = if child^.has_baseline {
-          give child^.baseline;
+      if c < context^.child_routes.inner.len {
+        let handle = context^.child_routes.inner[c];
+        let child = child_value(context: context, handle: handle);
+        let inner = if child.has_baseline {
+          give child.baseline;
         } else {
-          give child^.height;
+          give child.height;
         }
-        let ascent = child^.margin_top +sat inner;
+        let ascent = child.margin_top +sat inner;
         let at = grid_index(value: item.row);
         if at < tops.inner.len {
           let top = tops.inner[at];
@@ -2314,7 +2322,6 @@ fn grid_shim_baselines(context: &Context, model: &GridModel) -> result: unit rea
   }
   return unit;
 }
-
 fn grid_distribute(align: u8, free: i32, count: i32) -> (lead: i32, between: i32) pure {
   doc "How the free space around count tracks is shared by justify-content or align-content: the space before the first track, and the extra space between tracks. Start-like values and stretch (whose extra space the sizing algorithm already gave the auto tracks) leave the tracks at the start; the space-* values with no space to share fall back to center.";
   let at_end_one = align == align_end;
@@ -2433,36 +2440,26 @@ fn grid_assign(model: &GridModel, rows: Bool) -> result: unit writes(model) {
 
 fn grid_columns_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(model) {
   doc "Finds the contributions to the columns of each item that spans a column sized by its items, in one counted loop in which each iteration writes only its own child and item.";
-  let count = context^.children.inner.len;
+  let count = context^.child_routes.inner.len;
   let listed = model^.items.inner.len;
   if count == listed {
-    for (c in 0_u64..count) {
-      if model^.items.inner[c].needs {
-        let made = grid_measure_column(child: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
-        set model^.items.inner[c].least = made.least;
-        set model^.items.inner[c].most = made.most;
-        set model^.items.inner[c].minimum = made.minimum;
-      }
-    }
+    let no = False();
+    let work = GridWork(viewport: viewport, justify_items: 0_u8, align_items: 0_u8, content_left: 0_i32, content_top: 0_i32, content_width: 0_i32, content_height: 0_i32, updating: no);
+    grid_columns_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &model^.items, a: styles, b: document, c: fonts, d: picks, e: &work);
   }
   return unit;
 }
-
 fn grid_rows_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel, justify_items: u8, align_items: u8) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(model) {
   doc "Lays out, at the width of its grid area, each item that spans a row sized by its items, and records its height as its contributions to the rows, in one counted loop in which each iteration writes only its own child and item.";
-  let count = context^.children.inner.len;
+  let count = context^.child_routes.inner.len;
   let listed = model^.items.inner.len;
   let updating = context^.dirty;
   if count == listed {
-    for (c in 0_u64..count) {
-      if model^.items.inner[c].needs {
-        grid_measure_item(child: &context^.children.inner[c], item: &model^.items.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, justify_items: justify_items, align_items: align_items, updating: updating);
-      }
-    }
+    let work = GridWork(viewport: viewport, justify_items: justify_items, align_items: align_items, content_left: 0_i32, content_top: 0_i32, content_width: 0_i32, content_height: 0_i32, updating: updating);
+    grid_rows_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &model^.items, a: styles, b: document, c: fonts, d: picks, e: &work);
   }
   return unit;
 }
-
 fn grid_percent_height(styles: &Styles, style: StyleRef) -> percent: Bool reads(styles) {
   doc "Whether an item's height, min-height or max-height is a percentage, which its grid area's height resolves.";
   let sizes = size_of(styles: styles, style: style);
@@ -2537,17 +2534,15 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
 
 fn grid_final_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), reads(model), writes(context) {
   doc "Lays out and places every child of the context in one counted loop in which each iteration writes only its own child.";
-  let count = context^.children.inner.len;
+  let count = context^.child_routes.inner.len;
   let listed = model^.items.inner.len;
   let updating = context^.dirty;
   if count == listed {
-    for (c in 0_u64..count) {
-      grid_finish_child(child: &context^.children.inner[c], item: &model^.items.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, justify_items: justify_items, align_items: align_items, content_left: content_left, content_top: content_top, content_width: content_width, content_height: content_height, updating: updating);
-    }
+    let work = GridWork(viewport: viewport, justify_items: justify_items, align_items: align_items, content_left: content_left, content_top: content_top, content_width: content_width, content_height: content_height, updating: updating);
+    grid_final_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &model^.items.inner[0_u64..model^.items.inner.len], a: styles, b: document, c: fonts, d: picks, e: &work);
   }
   return unit;
 }
-
 fn grid_arrange(context: &Context, styles: &Styles, model: &GridModel, group: ContainerGroup, column_def: GridDef, row_def: GridDef) -> size: GridSize reads(context), reads(styles), writes(model) {
   doc "Collects the context's children into the model and places them by the container's grid-auto-flow, returning the implicit grid's size.";
   grid_collect(context: context, styles: styles, model: model, column_def: column_def, row_def: row_def, areas: group.template_areas);
@@ -2583,20 +2578,23 @@ fn grid_first_baseline(context: &Context, model: &GridModel) -> (baseline: i32, 
     let child = model^.sequence.inner[s];
     let at = cvt::<u32, u64>(child);
     if at < model^.items.inner.len {
-      if at < context^.children.inner.len {
+      if at < context^.child_routes.inner.len {
+        let handle = context^.child_routes.inner[at];
+        let held = child_value(context: context, handle: handle);
         let item = model^.items.inner[at];
         let rows = item.row *sat 4096_i32;
         let key = rows +sat item.column;
         let earlier = key < best;
         if earlier {
           set best = key;
-          set found = True();
-          let geometry_read_1 = child_position(context: context, at: at);
+          let owned_result_1 = True();
+          set found = owned_result_1;
+          let geometry_read_1 = child_position(context: context, at: handle);
           let top = geometry_read_1.y;
-          let inner = if context^.children.inner[at].has_baseline {
-            give context^.children.inner[at].baseline;
+          let inner = if held.has_baseline {
+            give held.baseline;
           } else {
-            give context^.children.inner[at].height;
+            give held.height;
           }
           set baseline = top +sat inner;
         }
@@ -2605,7 +2603,6 @@ fn grid_first_baseline(context: &Context, model: &GridModel) -> (baseline: i32, 
   }
   return baseline, found;
 }
-
 fn lay_out_grid(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Lays out a grid container (CSS Grid 1): its width; the explicit grid from its templates and the placement of its items; the columns sized from the items' intrinsic widths, then the items laid out at their column widths in a counted loop to size the rows that depend on their heights; the rows; the items laid out in their grid areas in a counted loop, aligned in them; its height; and its absolutely positioned children.";
   let no = False();
@@ -2716,4 +2713,228 @@ fn intrinsic_grid(context: &Context, styles: &Styles, document: &Document, fonts
   let rest = model.columns.inner.len;
   let most = grid_sum(tracks: &model.columns, first: 0_u64, end: rest, limits: no);
   return least, most;
+}
+
+struct GridWork {
+  doc "Immutable inputs to independent grid child preparation and layout workers.";
+  viewport: Viewport;
+  justify_items: u8;
+  align_items: u8;
+  content_left: i32;
+  content_top: i32;
+  content_width: i32;
+  content_height: i32;
+  updating: Bool;
+}
+
+fn grid_columns_action(value: &Context, item: &GridItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(item) {
+  doc "Measures a grid column contribution from one owned child slot.";
+  if item^.needs {
+    let made = grid_measure_column(child: value, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport);
+    set item^.least = made.least;
+    set item^.most = made.most;
+    set item^.minimum = made.minimum;
+  }
+  return unit;
+}
+fn grid_rows_action(value: &Context, item: &GridItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(item) {
+  doc "Measures a grid row contribution from one owned child slot.";
+  if item^.needs {
+    grid_measure_item(child: value, item: item, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, justify_items: e^.justify_items, align_items: e^.align_items, updating: e^.updating);
+  }
+  return unit;
+}
+fn grid_final_action(value: &Context, item: &GridItem, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(item), reads(a), reads(b), reads(c), reads(d), reads(e), writes(value) {
+  doc "Finishes a grid child's layout from its immutable placement item.";
+  grid_finish_child(child: value, item: item, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, justify_items: e^.justify_items, align_items: e^.align_items, content_left: e^.content_left, content_top: e^.content_top, content_width: e^.content_width, content_height: e^.content_height, updating: e^.updating);
+  return unit;
+}
+fn grid_columns_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<GridItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(sequence.span), reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children), writes(items) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  grid_columns_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  grid_columns_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn grid_columns_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<GridItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      grid_columns_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      grid_columns_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            grid_columns_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn grid_columns_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<GridItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      grid_columns_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      grid_columns_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.inner.len {
+              grid_columns_action(value: child, item: &items^.inner[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn grid_rows_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<GridItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(sequence.span), reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children), writes(items) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  grid_rows_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  grid_rows_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn grid_rows_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<GridItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      grid_rows_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      grid_rows_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            grid_rows_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn grid_rows_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &Box<Slots<GridItem>>, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(routes), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(items) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      grid_rows_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      grid_rows_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.inner.len {
+              grid_rows_action(value: child, item: &items^.inner[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn grid_final_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[GridItem], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(sequence.span), reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  grid_final_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  grid_final_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn grid_final_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &[GridItem], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      grid_final_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      grid_final_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            grid_final_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn grid_final_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[GridItem], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &GridWork) -> result: unit reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      grid_final_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      grid_final_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.len {
+              grid_final_action(value: child, item: &items^[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
 }

@@ -62,11 +62,13 @@ fn new_sequence() -> made: EntrySequence pure {
   doc "An empty owner-local sequence allocates no payload or index pages.";
   let payloads = SlotPages<Flow>::Vacant();
   let nodes = SlotPages<SequenceNode>::Vacant();
-  let sequence = EntrySequence(payloads: move payloads, nodes: move nodes, root: no_index, allocated: 0_u32, span: 4_u32);
+  let blocks = OwnedPages<Block>::Vacant();
+  let paragraphs = OwnedPages<Paragraph>::Vacant();
+  let children = OwnedPages<Context>::Vacant();
+  let sequence = EntrySequence(payloads: move payloads, blocks: move blocks, paragraphs: move paragraphs, children: move children, nodes: move nodes, root: no_index, allocated: 0_u32, span: 4_u32);
   return move sequence;
 }
-
-fn sequence_reserve(sequence: &EntrySequence) -> result: unit reads(sequence.allocated), writes(sequence.nodes), writes(sequence.payloads), writes(sequence.span) {
+fn sequence_reserve(sequence: &EntrySequence) -> result: unit reads(sequence.allocated), writes(sequence.nodes), writes(sequence.payloads), writes(sequence.blocks), writes(sequence.paragraphs), writes(sequence.children), writes(sequence.span) {
   doc "Doubles the directory address space by wrapping its existing roots, without copying any payload or index page. The first small sequence allocates only one four-slot page per store.";
   if sequence^.allocated < sequence^.span {
     return unit;
@@ -88,10 +90,12 @@ fn sequence_reserve(sequence: &EntrySequence) -> result: unit reads(sequence.all
   set sequence^.nodes = move nodes;
   let payloads = SlotPages<Flow>::Fork(left: move payload_left, right: move payload_right);
   set sequence^.payloads = move payloads;
+  owned_expand::<Block>(pages: &sequence^.blocks);
+  owned_expand::<Paragraph>(pages: &sequence^.paragraphs);
+  owned_expand::<Context>(pages: &sequence^.children);
   set sequence^.span = sequence^.span +sat sequence^.span;
   return unit;
 }
-
 fn later_handles(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, handles: &Box<Slots<EntryHandle>>) -> result: unit reads(sequence.nodes), reads(sequence.span), writes(handles) {
   doc "Visits only index subtrees intersecting a direct suffix and emits stable handles in order. The result is an immutable work list, not a retained alternate order index.";
   let held = sequence_node(sequence: sequence, slot: root);
@@ -119,10 +123,12 @@ fn later_handles(sequence: &EntrySequence, root: u32, skip: u64, owner: u32, han
 }
 
 fn visit_later(sequence: &EntrySequence, after: u32, owner: u32) -> made: Box<Slots<EntryHandle>> reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
-  doc "Returns the direct entries after a stable slot, never descending their block contents or reading the unchanged prefix payloads. Step 4 consumes these handles for independent sibling origins; this function performs no payload scatter.";
+  doc "Returns the direct entries after an indexed stable slot, or none for absent or detached slots, never descending their block contents or reading the unchanged prefix payloads. Step 4 consumes these handles for independent sibling origins; this function performs no payload scatter.";
   let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
   let current = sequence_node(sequence: sequence, slot: after);
-  if current.live {
+  let has_index_output = current.own.count > 0_u64;
+  let indexed_current = band(current.live, has_index_output);
+  if indexed_current {
     let rank = sequence_rank(sequence: sequence, slot: after);
     let start = rank +sat 1_u64;
     later_handles(sequence: sequence, root: sequence^.root, skip: start, owner: owner, handles: &handles);
@@ -229,7 +235,8 @@ fn sequence_output(sequence: &EntrySequence) -> made: SequenceOutput reads(seque
 
 fn sequence_payload(sequence: &EntrySequence, slot: u32) -> made: Flow reads(sequence.nodes), reads(sequence.payloads), reads(sequence.span) {
   doc "Reads a live direct-entry payload; a removed or invalid handle yields an invalid Close event, never a reused payload.";
-  let missing = Flow::Close(block: no_index);
+  let absent = absent_handle();
+  let missing = Flow::Close(block: absent);
   let held = sequence_node(sequence: sequence, slot: slot);
   if held.live {
     let payload = slot_read::<Flow>(pages: &sequence^.payloads, slot: slot, span: sequence^.span, missing: missing);
@@ -237,7 +244,6 @@ fn sequence_payload(sequence: &EntrySequence, slot: u32) -> made: Flow reads(seq
   }
   return missing;
 }
-
 fn sequence_parent(sequence: &EntrySequence, slot: u32, parent: u32) -> result: unit reads(sequence.span), writes(sequence.nodes) {
   doc "Repairs the parent link of a live index node; empty links require no storage.";
   let held = sequence_node(sequence: sequence, slot: slot);
@@ -390,24 +396,27 @@ fn sequence_insert_at(sequence: &EntrySequence, root: u32, rank: u64, added: u32
 }
 
 fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: SequenceOutput) -> result: Result<u32, LayoutError> writes(sequence) {
-  doc "Inserts one new direct entry before a live stable slot, or at end for no_index. A range is a batch of these operations in source order. Earlier payload slots are neither read nor copied.";
+  doc "Inserts one new direct entry before an indexed live stable slot, or at end for no_index. A range is a batch of these operations in source order. Earlier payload slots are neither read nor copied.";
   if sequence^.allocated >= 1073741824_u32 {
     let failure = too_large::<u32>();
     return failure;
   }
   if before != no_index {
     let target = sequence_node(sequence: sequence, slot: before);
-    if target.live {
+    let has_target_output = target.own.count > 0_u64;
+    let indexed_target = band(target.live, has_target_output);
+    if indexed_target {
     } else {
-      let inconsistent = LayoutError::Inconsistent();
-      let failure = Err<u32, LayoutError>(error: inconsistent);
+      let invalid_target = LayoutError::Inconsistent();
+      let failure = Err<u32, LayoutError>(error: invalid_target);
       return failure;
     }
   }
   let rank = sequence_rank(sequence: sequence, slot: before);
   sequence_reserve(sequence: sequence);
   let fresh = sequence^.allocated;
-  let missing = Flow::Close(block: no_index);
+  let absent = absent_handle();
+  let missing = Flow::Close(block: absent);
   slot_write::<Flow>(pages: &sequence^.payloads, slot: fresh, span: sequence^.span, value: item, missing: missing);
   let yes = True();
   let node = SequenceNode(left: no_index, right: no_index, parent: no_index, height: 1_u32, live: yes, own: output, total: output);
@@ -419,7 +428,6 @@ fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: Sequ
   let success = Ok<u32, LayoutError>(value: fresh);
   return success;
 }
-
 fn sequence_extract_first(sequence: &EntrySequence, root: u32) -> (rest: u32, first: u32) reads(sequence.span), writes(sequence.nodes) {
   doc "Detaches the first index node for AVL deletion without reading its payload or changing its stable slot.";
   let held = sequence_node(sequence: sequence, slot: root);
@@ -473,26 +481,35 @@ fn sequence_remove_at(sequence: &EntrySequence, root: u32, rank: u64) -> made: u
   return balanced;
 }
 
-fn remove(sequence: &EntrySequence, slot: u32) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(sequence.root) {
-  doc "Removes one stable slot, leaving its payload page as a hole. Removing a range repeats this operation over the removed handles; unrelated payloads are untouched.";
+fn remove(sequence: &EntrySequence, slot: u32) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(sequence.root), writes(sequence.blocks), writes(sequence.paragraphs), writes(sequence.children) {
+  doc "Removes one stable indexed or detached slot, dropping its payload and leaving a permanent hole without moving any other payload.";
   let held = sequence_node(sequence: sequence, slot: slot);
   if held.live {
-    let rank = sequence_rank(sequence: sequence, slot: slot);
-    let old_root = sequence^.root;
-    let remainder = sequence_remove_at(sequence: sequence, root: old_root, rank: rank);
-    set sequence^.root = remainder;
+    if held.own.count > 0_u64 {
+      let rank = sequence_rank(sequence: sequence, slot: slot);
+      let old_root = sequence^.root;
+      let remainder = sequence_remove_at(sequence: sequence, root: old_root, rank: rank);
+      set sequence^.root = remainder;
+    } else {
+      let vacant = vacant_node();
+      sequence_write(sequence: sequence, slot: slot, node: vacant);
+    }
+    owned_clear::<Block>(pages: &sequence^.blocks, slot: slot, span: sequence^.span);
+    owned_clear::<Paragraph>(pages: &sequence^.paragraphs, slot: slot, span: sequence^.span);
+    owned_clear::<Context>(pages: &sequence^.children, slot: slot, span: sequence^.span);
   }
   return unit;
 }
-
 fn prefix_output(sequence: &EntrySequence, before: u32) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
-  doc "Composes only cached index outputs before a stable entry. No preceding payload leaf is opened.";
+  doc "Composes cached index outputs before an indexed stable entry; no_index denotes the end and returns the whole output, while invalid, retired or detached slots return empty. No preceding payload leaf is opened.";
   if before == no_index {
     let output = sequence_output(sequence: sequence);
     return output;
   }
   let current = sequence_node(sequence: sequence, slot: before);
-  if current.live {
+  let has_index_output = current.own.count > 0_u64;
+  let indexed_current = band(current.live, has_index_output);
+  if indexed_current {
   } else {
     let empty = empty_output();
     return empty;
@@ -566,41 +583,455 @@ fn sequence_select(sequence: &EntrySequence, event: u64) -> (slot: u32, offset: 
   return no_index, 0_u64;
 }
 
+fn handle_equal(a: EntryHandle, b: EntryHandle) -> same: Bool pure {
+  doc "Compares the owner directory identity and stable local slot, never an order rank.";
+  let same_owner = a.owner == b.owner;
+  let same_slot = a.slot == b.slot;
+  let same = band(same_owner, same_slot);
+  return same;
+}
+fn owned_expand<T: drop>(pages: &OwnedPages<T>) -> result: unit writes(pages) {
+  doc "Wraps a payload directory root when its owner doubles the slot address space; no live payload page is copied.";
+  match pages^ {
+    Vacant() => {
+      return unit;
+    }
+    Fork(..) => {
+    }
+    Page(..) => {
+    }
+  }
+  let old = OwnedPages<T>::Vacant();
+  swap(first: &old, second: pages);
+  let vacant = OwnedPages<T>::Vacant();
+  let left = box_new::<OwnedPages<T>>(value: move old);
+  let right = box_new::<OwnedPages<T>>(value: move vacant);
+  let expanded = OwnedPages<T>::Fork(left: move left, right: move right);
+  set pages^ = move expanded;
+  return unit;
+}
+fn owned_write<T: drop>(pages: &OwnedPages<T>, slot: u32, span: u32, value: T) -> result: unit writes(pages) {
+  doc "Moves one payload into a stable owner-local slot, allocating only its directory path and four optional leaf slots.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+      if span <= 4_u32 {
+        let count = cvt::<u32, u64>(span);
+        let values = box_slots_new::<Option<T>>(capacity: count);
+        for (fill in 0_u64..count) {
+          if values.inner.len < values.inner.cap {
+            let empty = None<T>();
+            place_back(window: &values.inner, value: move empty);
+          }
+        }
+        let page = OwnedPages<T>::Page(values: move values);
+        set pages^ = move page;
+      } else {
+        let left_empty = OwnedPages<T>::Vacant();
+        let right_empty = OwnedPages<T>::Vacant();
+        let left = box_new::<OwnedPages<T>>(value: move left_empty);
+        let right = box_new::<OwnedPages<T>>(value: move right_empty);
+        let fork = OwnedPages<T>::Fork(left: move left, right: move right);
+        set pages^ = move fork;
+      }
+    }
+    Fork(..) => {
+    }
+    Page(..) => {
+    }
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: stored) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < stored^.inner.len {
+        let live = Some<T>(value: move value);
+        set stored^.inner[at] = move live;
+      }
+    }
+    Fork(left: stored_left, right: stored_right) => {
+      let half = span / 2_u32;
+      if slot < half {
+        owned_write::<T>(pages: &stored_left^.inner, slot: slot, span: half, value: move value);
+      } else {
+        let later = slot -sat half;
+        owned_write::<T>(pages: &stored_right^.inner, slot: later, span: half, value: move value);
+      }
+    }
+  }
+  return unit;
+}
+fn owner_path(context: &Context, owner: u32) -> path: Box<Slots<u32>> reads(context.block_routes.inner) {
+  doc "Returns the owner's reverse chain of local block slots. Directory keys route owners only; payload identity is the handle in that directory. Invalid chains include an absent step and cannot select the root accidentally.";
+  let path = box_slots_new::<u32>(capacity: 0_u64);
+  let cursor = owner;
+  let limit = context^.block_routes.inner.len;
+  for (depth in 0_u64..limit) {
+    if cursor == no_index {
+      return move path;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.block_routes.inner.len {
+      let handle = context^.block_routes.inner[at];
+      let kept = push_item::<u32>(cell: &path, value: handle.slot, ceiling: item_ceiling);
+      set cursor = handle.owner;
+    } else {
+      let invalid = push_item::<u32>(cell: &path, value: no_index, ceiling: item_ceiling);
+      return move path;
+    }
+  }
+  if cursor != no_index {
+    let cyclic = push_item::<u32>(cell: &path, value: no_index, ceiling: item_ceiling);
+  }
+  return move path;
+}
+fn read_owned_slot<T: drop, A, B, C, D, E, S, fn action(value: &T, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(pages: &OwnedPages<T>, slot: u32, span: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(pages), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Borrows one live typed local slot for a callback; no reference leaves the call and no payload is copied.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            action(value: payload, a: a, b: b, c: c, d: d, e: e, state: state);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        read_owned_slot::<T, A, B, C, D, E, S, fn action>(pages: &left_page^.inner, slot: slot, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      } else {
+        let later = slot -sat half;
+        read_owned_slot::<T, A, B, C, D, E, S, fn action>(pages: &right_page^.inner, slot: later, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      }
+    }
+  }
+  return unit;
+}
+fn read_owner<A, B, C, D, E, S, fn action(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(sequence), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(context.entries), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Resolves an owner through checked local block slots and invokes one operation on that owner's sequence. Cursors are local borrows and directory slots own no payload.";
+  let path = owner_path(context: context, owner: handle.owner);
+  let count = path.inner.len;
+  let sequence = &context^.entries;
+  for (depth in 0_u64..count) {
+    let reverse = count -sat depth;
+    let at = reverse -sat 1_u64;
+    if at < path.inner.len {
+      let local_slot = path.inner[at];
+      let held = sequence_node(sequence: sequence, slot: local_slot);
+      if held.live {
+      } else {
+        return unit;
+      }
+      let pages = &sequence^.blocks;
+      let remaining = local_slot;
+      let span = sequence^.span;
+      let found = False();
+      loop {
+        match pages^ {
+          Vacant() => {
+            break;
+          }
+          Fork(left: left_page, right: right_page) => {
+            let half = span / 2_u32;
+            if remaining < half {
+              set pages = &left_page^.inner;
+            } else {
+              set remaining = remaining -sat half;
+              set pages = &right_page^.inner;
+            }
+            set span = half;
+          }
+          Page(values: page) => {
+            let offset = cvt::<u32, u64>(remaining);
+            if offset < page^.inner.len {
+              match page^.inner[offset] {
+                Some(value: block) => {
+                  set sequence = &block^.entries;
+                  let owned_result_1 = True();
+                  set found = owned_result_1;
+                }
+                None() => {
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+      if found {
+      } else {
+        return unit;
+      }
+    }
+  }
+  action(sequence: sequence, slot: handle.slot, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn read_block_slot<A, B, C, D, E, S, fn action(value: &Block, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(sequence), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Applies a typed callback only while the local entry is live; detached atomic payloads also have live metadata.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    read_owned_slot::<Block, A, B, C, D, E, S, fn action>(pages: &sequence^.blocks, slot: slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn read_block<A, B, C, D, E, S, fn action(value: &Block, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(context.entries), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Addresses a block by owner plus stable slot without a context-wide payload pool or escaped reference.";
+  read_owner::<A, B, C, D, E, S, fn read_block_slot::<A, B, C, D, E, S, fn action>>(context: context, handle: handle, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn read_paragraph_slot<A, B, C, D, E, S, fn action(value: &Paragraph, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(sequence), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Applies a typed callback only while the local entry is live; detached atomic payloads also have live metadata.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    read_owned_slot::<Paragraph, A, B, C, D, E, S, fn action>(pages: &sequence^.paragraphs, slot: slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn read_paragraph<A, B, C, D, E, S, fn action(value: &Paragraph, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(context.entries), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Addresses a paragraph by owner plus stable slot without a context-wide payload pool or escaped reference.";
+  read_owner::<A, B, C, D, E, S, fn read_paragraph_slot::<A, B, C, D, E, S, fn action>>(context: context, handle: handle, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn read_child_slot<A, B, C, D, E, S, fn action(value: &Context, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(sequence), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Applies a typed callback only while the local entry is live; detached atomic payloads also have live metadata.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    read_owned_slot::<Context, A, B, C, D, E, S, fn action>(pages: &sequence^.children, slot: slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn read_child<A, B, C, D, E, S, fn action(value: &Context, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(value), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(context.entries), reads(a), reads(b), reads(c), reads(d), reads(e), writes(state) {
+  doc "Addresses a child by owner plus stable slot without a context-wide payload pool or escaped reference.";
+  read_owner::<A, B, C, D, E, S, fn read_child_slot::<A, B, C, D, E, S, fn action>>(context: context, handle: handle, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn edit_owned_slot<T: drop, A, B, C, D, E, S, fn action(value: &T, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(pages: &OwnedPages<T>, slot: u32, span: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages), writes(state) {
+  doc "Borrows one live typed local slot for a callback; no reference leaves the call and no payload is copied.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            action(value: payload, a: a, b: b, c: c, d: d, e: e, state: state);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        edit_owned_slot::<T, A, B, C, D, E, S, fn action>(pages: &left_page^.inner, slot: slot, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      } else {
+        let later = slot -sat half;
+        edit_owned_slot::<T, A, B, C, D, E, S, fn action>(pages: &right_page^.inner, slot: later, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      }
+    }
+  }
+  return unit;
+}
+fn edit_owner<A, B, C, D, E, S, fn action(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(a), reads(b), reads(c), reads(d), reads(e), writes(context.entries), writes(state) {
+  doc "Resolves an owner through checked local block slots and invokes one operation on that owner's sequence. Cursors are local borrows and directory slots own no payload.";
+  let path = owner_path(context: context, owner: handle.owner);
+  let count = path.inner.len;
+  let sequence = &context^.entries;
+  for (depth in 0_u64..count) {
+    let reverse = count -sat depth;
+    let at = reverse -sat 1_u64;
+    if at < path.inner.len {
+      let local_slot = path.inner[at];
+      let held = sequence_node(sequence: sequence, slot: local_slot);
+      if held.live {
+      } else {
+        return unit;
+      }
+      let pages = &sequence^.blocks;
+      let remaining = local_slot;
+      let span = sequence^.span;
+      let found = False();
+      loop {
+        match pages^ {
+          Vacant() => {
+            break;
+          }
+          Fork(left: left_page, right: right_page) => {
+            let half = span / 2_u32;
+            if remaining < half {
+              set pages = &left_page^.inner;
+            } else {
+              set remaining = remaining -sat half;
+              set pages = &right_page^.inner;
+            }
+            set span = half;
+          }
+          Page(values: page) => {
+            let offset = cvt::<u32, u64>(remaining);
+            if offset < page^.inner.len {
+              match page^.inner[offset] {
+                Some(value: block) => {
+                  set sequence = &block^.entries;
+                  let owned_result_1 = True();
+                  set found = owned_result_1;
+                }
+                None() => {
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+      if found {
+      } else {
+        return unit;
+      }
+    }
+  }
+  action(sequence: sequence, slot: handle.slot, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn edit_block_slot<A, B, C, D, E, S, fn action(value: &Block, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence), writes(state) {
+  doc "Applies a typed callback only while the local entry is live; detached atomic payloads also have live metadata.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    edit_owned_slot::<Block, A, B, C, D, E, S, fn action>(pages: &sequence^.blocks, slot: slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn edit_block<A, B, C, D, E, S, fn action(value: &Block, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(a), reads(b), reads(c), reads(d), reads(e), writes(context.entries), writes(state) {
+  doc "Addresses a block by owner plus stable slot without a context-wide payload pool or escaped reference.";
+  edit_owner::<A, B, C, D, E, S, fn edit_block_slot::<A, B, C, D, E, S, fn action>>(context: context, handle: handle, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn edit_paragraph_slot<A, B, C, D, E, S, fn action(value: &Paragraph, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence), writes(state) {
+  doc "Applies a typed callback only while the local entry is live; detached atomic payloads also have live metadata.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    edit_owned_slot::<Paragraph, A, B, C, D, E, S, fn action>(pages: &sequence^.paragraphs, slot: slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn edit_paragraph<A, B, C, D, E, S, fn action(value: &Paragraph, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(a), reads(b), reads(c), reads(d), reads(e), writes(context.entries), writes(state) {
+  doc "Addresses a paragraph by owner plus stable slot without a context-wide payload pool or escaped reference.";
+  edit_owner::<A, B, C, D, E, S, fn edit_paragraph_slot::<A, B, C, D, E, S, fn action>>(context: context, handle: handle, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
+fn edit_child_slot<A, B, C, D, E, S, fn action(value: &Context, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(sequence: &EntrySequence, slot: u32, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence), writes(state) {
+  doc "Applies a typed callback only while the local entry is live; detached atomic payloads also have live metadata.";
+  let held = sequence_node(sequence: sequence, slot: slot);
+  if held.live {
+    edit_owned_slot::<Context, A, B, C, D, E, S, fn action>(pages: &sequence^.children, slot: slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn edit_child<A, B, C, D, E, S, fn action(value: &Context, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value), writes(state)>(context: &Context, handle: EntryHandle, a: &A, b: &B, c: &C, d: &D, e: &E, state: &S) -> result: unit reads(context.block_routes.inner), reads(a), reads(b), reads(c), reads(d), reads(e), writes(context.entries), writes(state) {
+  doc "Addresses a child by owner plus stable slot without a context-wide payload pool or escaped reference.";
+  edit_owner::<A, B, C, D, E, S, fn edit_child_slot::<A, B, C, D, E, S, fn action>>(context: context, handle: handle, a: a, b: b, c: c, d: d, e: e, state: state);
+  return unit;
+}
 fn block_snapshot(block: &Block) -> made: BlockSnapshot reads(block) {
-  doc "Copies only the reference walker geometry/style fields, leaving nested entry ownership in place.";
-  let snapshot = BlockSnapshot(style: block^.style, x: block^.x, y: block^.y, dx: block^.dx, dy: block^.dy, normal_x: block^.normal_x, normal_y: block^.normal_y, resolved_x: block^.resolved_x, resolved_y: block^.resolved_y, width: block^.width, height: block^.height, marker: block^.marker, parent: block^.parent, flow_at: block^.flow_at, inner_x: block^.inner_x, held_y: block^.held_y, avail_left: block^.avail_left, avail_width: block^.avail_width, content_left: block^.content_left, content_width: block^.content_width);
+  doc "Copies scalar geometry and style only, leaving nested sequence and payload ownership in place.";
+  let snapshot = BlockSnapshot(directory: block^.directory, style: block^.style, x: block^.x, y: block^.y, dx: block^.dx, dy: block^.dy, normal_x: block^.normal_x, normal_y: block^.normal_y, resolved_x: block^.resolved_x, resolved_y: block^.resolved_y, width: block^.width, height: block^.height, marker: block^.marker, parent: block^.parent, flow_at: block^.flow_at, inner_x: block^.inner_x, held_y: block^.held_y, avail_left: block^.avail_left, avail_width: block^.avail_width, content_left: block^.content_left, content_width: block^.content_width);
   return snapshot;
 }
-
+fn copy_block_value(value: &Block, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &BlockSnapshot) -> result: unit reads(value), writes(state) {
+  doc "Copies the selected block's scalar state into the caller's snapshot.";
+  let snapshot = block_snapshot(block: value);
+  set state^ = snapshot;
+  return unit;
+}
+fn block_value(context: &Context, handle: EntryHandle) -> value: BlockSnapshot reads(context.block_routes.inner), reads(context.entries) {
+  doc "Reads scalar block state by stable handle. An absent or retired handle has no directory or flow position.";
+  let unused = unit;
+  let no = False();
+  let style = StyleRef(element: no_index, pseudo: no_pseudo, anonymous: no);
+  let state = BlockSnapshot(directory: no_index, style: style, x: 0_i64, y: 0_i64, dx: 0_i64, dy: 0_i64, normal_x: 0_i32, normal_y: 0_i32, resolved_x: 0_i32, resolved_y: 0_i32, width: 0_i32, height: 0_i32, marker: no, parent: no_index, flow_at: no_index, inner_x: 0_i32, held_y: 0_i32, avail_left: 0_i32, avail_width: 0_i32, content_left: 0_i32, content_width: 0_i32);
+  read_block::<unit, unit, unit, unit, unit, BlockSnapshot, fn copy_block_value>(context: context, handle: handle, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  return state;
+}
 fn flow_length(context: &Context) -> count: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span) {
-  doc "The number of virtual Open/Close/Text/Child/Float/Out events, read from the synthetic root's cached summary without constructing a stream.";
+  doc "Reads the synthetic root's cached virtual event span without rebuilding a flat stream.";
   let output = sequence_output(sequence: &context^.entries);
   return output.events;
 }
-
-fn nested_event(context: &Context, sequence: &EntrySequence, at: u64) -> made: Flow reads(context), reads(sequence) {
-  doc "Random access through local weighted indexes. Descending a lexical block preserves the caller's BFC exclusion state; a Close is synthesized after its nested entries.";
+fn nested_block_event(pages: &OwnedPages<Block>, slot: u32, span: u32, offset: u64, handle: EntryHandle) -> made: Flow reads(pages) {
+  doc "Descends the block payload selected by a local event slot, preserving the surrounding formatting context's float domain.";
+  let absent = absent_handle();
+  let missing = Flow::Close(block: absent);
+  if slot >= span {
+    return missing;
+  }
+  match pages^ {
+    Vacant() => {
+      return missing;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        match page^.inner[at] {
+          Some(value: block) => {
+            let inside = sequence_output(sequence: &block^.entries);
+            let closing_offset = inside.events +sat 1_u64;
+            if offset == closing_offset {
+              let close = Flow::Close(block: handle);
+              return close;
+            }
+            if offset > 0_u64 {
+              let local = offset -sat 1_u64;
+              let nested = nested_event(sequence: &block^.entries, at: local);
+              return nested;
+            }
+          }
+          None() => {
+          }
+        }
+      }
+      return missing;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let left = nested_block_event(pages: &left_page^.inner, slot: slot, span: half, offset: offset, handle: handle);
+        return left;
+      }
+      let later = slot -sat half;
+      let right = nested_block_event(pages: &right_page^.inner, slot: later, span: half, offset: offset, handle: handle);
+      return right;
+    }
+  }
+}
+fn nested_event(sequence: &EntrySequence, at: u64) -> made: Flow reads(sequence) {
+  doc "Adapts owner-local indexed entries to temporary flat events; a block occurs once in storage and synthesizes its Close.";
   let (slot, offset) = sequence_select(sequence: sequence, event: at);
   let item = sequence_payload(sequence: sequence, slot: slot);
   match item {
-    Open(block: child) => {
+    Open(block: handle) => {
       if offset == 0_u64 {
         return item;
       }
-      let child_at = cvt::<u32, u64>(child);
-      if child_at < context^.blocks.inner.len {
-        let inside = sequence_output(sequence: &context^.blocks.inner[child_at].entries);
-        let close_at = inside.events +sat 1_u64;
-        if offset == close_at {
-          let close = Flow::Close(block: child);
-          return close;
-        }
-        let local_at = offset - 1_u64;
-        let nested = nested_event(context: context, sequence: &context^.blocks.inner[child_at].entries, at: local_at);
-        return nested;
-      }
-      let missing = Flow::Close(block: no_index);
-      return missing;
+      let nested = nested_block_event(pages: &sequence^.blocks, slot: slot, span: sequence^.span, offset: offset, handle: handle);
+      return nested;
     }
     Close(..) => {
       return item;
@@ -619,209 +1050,371 @@ fn nested_event(context: &Context, sequence: &EntrySequence, at: u64) -> made: F
     }
   }
 }
-
-fn flow_event(context: &Context, at: u64) -> made: Flow reads(context) {
-  doc "The compatibility iterator's event at a temporary rank. Full builds and legacy restacks share this adapter; neither retains or rebuilds a context-wide Flow array.";
-  let item = nested_event(context: context, sequence: &context^.entries, at: at);
+fn flow_event(context: &Context, at: u64) -> made: Flow reads(context.entries) {
+  doc "Reads one compatibility event at a temporary rank; neither full builds nor edits retain a flat event array.";
+  let item = nested_event(sequence: &context^.entries, at: at);
   return item;
 }
-
-fn building_flow_length(context: &Context) -> count: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span), reads(context.blocks.inner), reads(context.build_owner) {
-  doc "The builder's emitted virtual length. Open ancestors have weight one until close; summing the currently open owner chain adds their unfinished contents without a shared event counter.";
+fn copy_owner_output(sequence: &EntrySequence, slot: u32, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &SequenceOutput) -> result: unit reads(sequence.nodes), reads(sequence.root), reads(sequence.span), writes(state) {
+  doc "Reads one owner's cached boundary output.";
+  let output = sequence_output(sequence: sequence);
+  set state^ = output;
+  return unit;
+}
+fn owner_output(context: &Context, owner: u32) -> output: SequenceOutput reads(context.block_routes.inner), reads(context.entries) {
+  doc "Reads an owner sequence through its route; no descendant payload is copied.";
+  let unused = unit;
+  let state = empty_output();
+  let handle = EntryHandle(owner: owner, slot: no_index);
+  read_owner::<unit, unit, unit, unit, unit, SequenceOutput, fn copy_owner_output>(context: context, handle: handle, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  return state;
+}
+fn building_flow_length(context: &Context) -> count: u64 reads(context.block_routes.inner), reads(context.entries), reads(context.build_owner) {
+  doc "Adds unfinished open-owner spans to the completed root span during the ordered builder walk.";
   let total = flow_length(context: context);
   let owner = context^.build_owner;
-  let limit = context^.blocks.inner.len;
+  let limit = context^.block_routes.inner.len;
   for (level in 0_u64..limit) {
     let at = cvt::<u32, u64>(owner);
-    if at < context^.blocks.inner.len {
-      let inside = sequence_output(sequence: &context^.blocks.inner[at].entries);
+    if at < context^.block_routes.inner.len {
+      let inside = owner_output(context: context, owner: owner);
       set total = total +sat inside.events;
-      set owner = context^.blocks.inner[at].parent;
+      set owner = context^.block_routes.inner[at].owner;
     } else {
       return total;
     }
   }
   return total;
 }
-
-fn owner_insert(context: &Context, owner: u32, item: Flow, output: SequenceOutput) -> result: Result<u32, LayoutError> writes(context.entries), writes(context.blocks.inner) {
-  doc "Appends directly to one owner's sequence. The existing serial box builder determines source order; there is no global order index or renumbering of earlier entry slots.";
-  if owner == no_index {
-    let inserted = insert_before(sequence: &context^.entries, before: no_index, item: item, output: output);
-    return inserted;
-  }
-  let at = cvt::<u32, u64>(owner);
-  if at < context^.blocks.inner.len {
-    let inserted = insert_before(sequence: &context^.blocks.inner[at].entries, before: no_index, item: item, output: output);
-    return inserted;
-  }
-  let inconsistent = LayoutError::Inconsistent();
-  let failure = Err<u32, LayoutError>(error: inconsistent);
-  return failure;
-}
-
-fn owner_set_output(context: &Context, owner: u32, slot: u32, output: SequenceOutput) -> result: unit reads(context.entries.span), writes(context.entries.nodes), writes(context.blocks.inner) {
-  doc "Repairs one block-local summary path. A caller changing a descendant's event span also repairs its owner path, never a flat stream.";
-  if owner == no_index {
-    sequence_set_output(sequence: &context^.entries, slot: slot, output: output);
-  } else {
-    let at = cvt::<u32, u64>(owner);
-    if at < context^.blocks.inner.len {
-      sequence_set_output(sequence: &context^.blocks.inner[at].entries, slot: slot, output: output);
-    }
-  }
+fn write_owner_output(sequence: &EntrySequence, slot: u32, a: &SequenceOutput, b: &unit, c: &unit, d: &unit, e: &unit, state: &unit) -> result: unit reads(sequence.span), reads(a), writes(sequence.nodes) {
+  doc "Repairs only the selected owner's summary-index ancestors.";
+  sequence_set_output(sequence: sequence, slot: slot, output: a^);
   return unit;
 }
+fn owner_set_output(context: &Context, owner: u32, slot: u32, output: SequenceOutput) -> result: unit reads(context.block_routes.inner), writes(context.entries) {
+  doc "Publishes one local boundary output without touching unrelated payloads.";
+  let unused = unit;
+  let state = unit;
+  let handle = EntryHandle(owner: owner, slot: slot);
+  edit_owner::<SequenceOutput, unit, unit, unit, unit, unit, fn write_owner_output>(context: context, handle: handle, a: &output, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  return unit;
+}
+struct AppendPayload<T> {
+  doc "Private ownership transfer into one sequence; result is published only after the payload and index slot exist.";
+  value: Option<T>;
+  owner: u32;
+  directory: u32;
+  kind: u8;
+  result: Result<EntryHandle, LayoutError>;
+}
 
-fn append_flow(context: &Context, item: Flow) -> result: Result<unit, LayoutError> writes(context.entries), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(context.build_owner) {
-  doc "Builds nested sequences directly. Open starts an owned sequence and Close publishes its event weight into the parent; only actual entries allocate stable slots. Float remains a context-owned child in the enclosing BFC.";
-  match item {
-    Close(block: closed) => {
-      let closed_at = cvt::<u32, u64>(closed);
-      if closed_at < context^.blocks.inner.len {
-        let inside = sequence_output(sequence: &context^.blocks.inner[closed_at].entries);
-        let events = inside.events +sat 2_u64;
-        let output = pending_output(events: events);
-        let parent = context^.blocks.inner[closed_at].parent;
-        let slot = context^.blocks.inner[closed_at].entry_slot;
-        set context^.blocks.inner[closed_at].boundary = output;
-        set context^.build_owner = parent;
-        owner_set_output(context: context, owner: parent, slot: slot, output: output);
-      }
-      let success = Ok<unit, LayoutError>(value: unit);
-      return success;
-    }
-    Open(..) => {
-    }
-    Text(..) => {
-    }
-    Child(..) => {
-    }
-    Float(..) => {
-    }
-    Out(..) => {
-    }
+fn detached_slot(sequence: &EntrySequence) -> result: Result<u32, LayoutError> writes(sequence) {
+  doc "Allocates a live owner-local payload slot for an atomic inline or table cell without adding a virtual flow event.";
+  if sequence^.allocated >= 1073741824_u32 {
+    let failure = too_large::<u32>();
+    return failure;
   }
-  let owner = context^.build_owner;
+  sequence_reserve(sequence: sequence);
+  let fresh = sequence^.allocated;
+  let node = vacant_node();
+  let owned_result_1 = True();
+  set node.live = owned_result_1;
+  sequence_write(sequence: sequence, slot: fresh, node: node);
+  set sequence^.allocated = fresh +sat 1_u32;
+  let result = Ok<u32, LayoutError>(value: fresh);
+  return result;
+}
+fn append_block_slot(sequence: &EntrySequence, slot: u32, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &AppendPayload<Block>) -> result: unit writes(sequence), writes(state) {
+  doc "Moves one block into its owner's stable local slot; route publication follows this private construction.";
+  let handle = EntryHandle(owner: state^.owner, slot: sequence^.allocated);
+  let item = Flow::Open(block: handle);
   let output = pending_output(events: 1_u64);
-  let slot = propagate owner_insert(context: context, owner: owner, item: item, output: output);
-  match item {
-    Open(block: opened) => {
-      let opened_at = cvt::<u32, u64>(opened);
-      if opened_at < context^.blocks.inner.len {
-        set context^.blocks.inner[opened_at].parent = owner;
-        set context^.blocks.inner[opened_at].entry_slot = slot;
-        set context^.build_owner = opened;
+  let inserted = insert_before(sequence: sequence, before: no_index, item: item, output: output);
+  match inserted {
+    Err(error: failure) => {
+      let refused = Err<EntryHandle, LayoutError>(error: failure);
+      set state^.result = refused;
+    }
+    Ok(value: local_slot) => {
+      let staged = None<Block>();
+      swap(first: &staged, second: &state^.value);
+      match move staged {
+        Some(value: payload) => {
+          set payload.entry_slot = local_slot;
+          set payload.parent = handle.owner;
+          set payload.directory = state^.directory;
+          owned_write::<Block>(pages: &sequence^.blocks, slot: local_slot, span: sequence^.span, value: move payload);
+          let accepted = Ok<EntryHandle, LayoutError>(value: handle);
+          set state^.result = accepted;
+        }
+        None() => {
+        }
       }
     }
-    Text(paragraph: paragraph_slot) => {
-      let paragraph_at = cvt::<u32, u64>(paragraph_slot);
-      if paragraph_at < context^.paragraphs.inner.len {
-        set context^.paragraphs.inner[paragraph_at].block = owner;
-        set context^.paragraphs.inner[paragraph_at].entry_slot = slot;
-      }
-    }
-    Child(context: child) => {
-      record_child_entry(context: context, child: child, owner: owner, slot: slot);
-    }
-    Float(context: floated) => {
-      record_child_entry(context: context, child: floated, owner: owner, slot: slot);
-    }
-    Out(context: positioned) => {
-      record_child_entry(context: context, child: positioned, owner: owner, slot: slot);
-    }
-    Close(..) => {
-    }
-  }
-  let success = Ok<unit, LayoutError>(value: unit);
-  return success;
-}
-
-fn record_child_entry(context: &Context, child: u32, owner: u32, slot: u32) -> result: unit writes(context.children.inner) {
-  doc "Records the stable geometric-owner entry of a non-atomic child without changing its independent formatting-context ownership.";
-  let at = cvt::<u32, u64>(child);
-  if at < context^.children.inner.len {
-    set context^.children.inner[at].block = owner;
-    set context^.children.inner[at].entry_slot = slot;
   }
   return unit;
 }
-
-fn refresh_owner_output(context: &Context, owner: u32) -> result: unit reads(context.entries.span), writes(context.blocks.inner), writes(context.entries.nodes) {
-  doc "Propagates cached descendant line handles and virtual event spans up the changed owner path. This is semantic output repair, not a context-wide stream rebuild.";
+fn append_block(context: &Context, value: Block) -> result: Result<EntryHandle, LayoutError> writes(context) {
+  doc "Appends one owned block and publishes its owner-plus-slot route; no context-wide payload index is allocated.";
+  let owner = context^.build_owner;
+  let route_count = context^.block_routes.inner.len;
+  if route_count >= 1073741824_u64 {
+    let refused = too_large::<EntryHandle>();
+    return refused;
+  }
+  let directory = cvt::<u64, u32>(route_count);
+  let staged = Some<Block>(value: move value);
+  let failure = inconsistent::<EntryHandle>();
+  let state = AppendPayload<Block>(value: move staged, owner: owner, directory: directory, kind: 0_u8, result: failure);
+  let unused = unit;
+  let target = EntryHandle(owner: owner, slot: no_index);
+  edit_owner::<unit, unit, unit, unit, unit, AppendPayload<Block>, fn append_block_slot>(context: context, handle: target, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  let handle = propagate state.result;
+  let published = propagate push_or_fail::<EntryHandle>(cell: &context^.block_routes, value: handle);
+  set context^.build_owner = directory;
+  let accepted = Ok<EntryHandle, LayoutError>(value: handle);
+  return accepted;
+}
+fn append_paragraph_slot(sequence: &EntrySequence, slot: u32, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &AppendPayload<Paragraph>) -> result: unit writes(sequence), writes(state) {
+  doc "Moves one paragraph into its owner's stable local slot; route publication follows this private construction.";
+  let handle = EntryHandle(owner: state^.owner, slot: sequence^.allocated);
+  let item = Flow::Text(paragraph: handle);
+  let output = pending_output(events: 1_u64);
+  let inserted = insert_before(sequence: sequence, before: no_index, item: item, output: output);
+  match inserted {
+    Err(error: failure) => {
+      let refused = Err<EntryHandle, LayoutError>(error: failure);
+      set state^.result = refused;
+    }
+    Ok(value: local_slot) => {
+      let staged = None<Paragraph>();
+      swap(first: &staged, second: &state^.value);
+      match move staged {
+        Some(value: payload) => {
+          set payload.entry_slot = local_slot;
+          set payload.block = handle.owner;
+          owned_write::<Paragraph>(pages: &sequence^.paragraphs, slot: local_slot, span: sequence^.span, value: move payload);
+          let accepted = Ok<EntryHandle, LayoutError>(value: handle);
+          set state^.result = accepted;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn append_paragraph(context: &Context, value: Paragraph) -> result: Result<EntryHandle, LayoutError> writes(context) {
+  doc "Appends one owned paragraph and publishes its owner-plus-slot route; no context-wide payload index is allocated.";
+  let owner = context^.build_owner;
+  let route_count = context^.paragraph_routes.inner.len;
+  if route_count >= 1073741824_u64 {
+    let refused = too_large::<EntryHandle>();
+    return refused;
+  }
+  let directory = cvt::<u64, u32>(route_count);
+  let staged = Some<Paragraph>(value: move value);
+  let failure = inconsistent::<EntryHandle>();
+  let state = AppendPayload<Paragraph>(value: move staged, owner: owner, directory: directory, kind: 0_u8, result: failure);
+  let unused = unit;
+  let target = EntryHandle(owner: owner, slot: no_index);
+  edit_owner::<unit, unit, unit, unit, unit, AppendPayload<Paragraph>, fn append_paragraph_slot>(context: context, handle: target, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  let handle = propagate state.result;
+  let published = propagate push_or_fail::<EntryHandle>(cell: &context^.paragraph_routes, value: handle);
+  let accepted = Ok<EntryHandle, LayoutError>(value: handle);
+  return accepted;
+}
+fn append_child_slot(sequence: &EntrySequence, slot: u32, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &AppendPayload<Context>) -> result: unit writes(sequence), writes(state) {
+  doc "Moves one child into its owner's stable local slot; route publication follows this private construction.";
+  let handle = EntryHandle(owner: state^.owner, slot: sequence^.allocated);
+  let inserted = if state^.kind == 3_u8 {
+    let owned_result_1 = detached_slot(sequence: sequence);
+    give owned_result_1;
+  } else {
+    let item = if state^.kind == 1_u8 {
+      let owned_result_2 = Flow::Float(context: handle);
+      give owned_result_2;
+    } else if state^.kind == 2_u8 {
+      let owned_result_3 = Flow::Out(context: handle);
+      give owned_result_3;
+    } else {
+      let owned_result_4 = Flow::Child(context: handle);
+      give owned_result_4;
+    }
+    let output = pending_output(events: 1_u64);
+    let owned_result_5 = insert_before(sequence: sequence, before: no_index, item: item, output: output);
+    give owned_result_5;
+  }
+  match inserted {
+    Err(error: failure) => {
+      let refused = Err<EntryHandle, LayoutError>(error: failure);
+      set state^.result = refused;
+    }
+    Ok(value: local_slot) => {
+      let staged = None<Context>();
+      swap(first: &staged, second: &state^.value);
+      match move staged {
+        Some(value: payload) => {
+          set payload.entry_slot = local_slot;
+          set payload.block = handle.owner;
+          owned_write::<Context>(pages: &sequence^.children, slot: local_slot, span: sequence^.span, value: move payload);
+          let accepted = Ok<EntryHandle, LayoutError>(value: handle);
+          set state^.result = accepted;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn append_child(context: &Context, value: Context, kind: u8) -> result: Result<EntryHandle, LayoutError> writes(context) {
+  doc "Appends one owned child and publishes its owner-plus-slot route; no context-wide payload index is allocated.";
+  let owner = context^.build_owner;
+  let route_count = context^.child_routes.inner.len;
+  if route_count >= 1073741824_u64 {
+    let refused = too_large::<EntryHandle>();
+    return refused;
+  }
+  let directory = cvt::<u64, u32>(route_count);
+  let staged = Some<Context>(value: move value);
+  let failure = inconsistent::<EntryHandle>();
+  let state = AppendPayload<Context>(value: move staged, owner: owner, directory: directory, kind: kind, result: failure);
+  let unused = unit;
+  let target = EntryHandle(owner: owner, slot: no_index);
+  edit_owner::<unit, unit, unit, unit, unit, AppendPayload<Context>, fn append_child_slot>(context: context, handle: target, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  let handle = propagate state.result;
+  let published = propagate push_or_fail::<EntryHandle>(cell: &context^.child_routes, value: handle);
+  let accepted = Ok<EntryHandle, LayoutError>(value: handle);
+  return accepted;
+}
+fn copy_block_output(value: &Block, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &SequenceOutput) -> result: unit reads(value.entries), writes(state) {
+  doc "Converts a block's inner event and line summary into its enclosing entry's output.";
+  let inside = sequence_output(sequence: &value^.entries);
+  let events = inside.events +sat 2_u64;
+  let output = pending_output(events: events);
+  set output.first_line = inside.first_line;
+  set output.last_line = inside.last_line;
+  set state^ = output;
+  return unit;
+}
+fn write_block_output(value: &Block, a: &SequenceOutput, b: &unit, c: &unit, d: &unit, e: &unit, state: &unit) -> result: unit reads(a), writes(value.boundary) {
+  doc "Stores a block's boundary independently of its nested payloads.";
+  set value^.boundary = a^;
+  return unit;
+}
+fn finish_block(context: &Context, handle: EntryHandle) -> result: unit reads(context.block_routes.inner), writes(context.entries), writes(context.build_owner) {
+  doc "Closes the currently built block by publishing its local summary; no Close payload or flattened stream is allocated.";
+  let unused = unit;
+  let state = unit;
+  let output = empty_output();
+  read_block::<unit, unit, unit, unit, unit, SequenceOutput, fn copy_block_output>(context: context, handle: handle, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &output);
+  edit_block::<SequenceOutput, unit, unit, unit, unit, unit, fn write_block_output>(context: context, handle: handle, a: &output, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  owner_set_output(context: context, owner: handle.owner, slot: handle.slot, output: output);
+  set context^.build_owner = handle.owner;
+  return unit;
+}
+fn refresh_owner_output(context: &Context, owner: u32) -> result: unit reads(context.block_routes.inner), writes(context.entries) {
+  doc "Repairs semantic output only along the owner route, without visiting siblings or rebuilding a flat order.";
   let cursor = owner;
-  let limit = context^.blocks.inner.len;
+  let limit = context^.block_routes.inner.len;
   for (level in 0_u64..limit) {
     let at = cvt::<u32, u64>(cursor);
-    if at < context^.blocks.inner.len {
-      let inside = sequence_output(sequence: &context^.blocks.inner[at].entries);
-      let events = inside.events +sat 2_u64;
-      let output = pending_output(events: events);
-      set output.first_line = inside.first_line;
-      set output.last_line = inside.last_line;
-      set context^.blocks.inner[at].boundary = output;
-      let parent = context^.blocks.inner[at].parent;
-      let slot = context^.blocks.inner[at].entry_slot;
-      owner_set_output(context: context, owner: parent, slot: slot, output: output);
-      set cursor = parent;
+    if at < context^.block_routes.inner.len {
+      let handle = context^.block_routes.inner[at];
+      let unused = unit;
+      let state = unit;
+      let output = empty_output();
+      read_block::<unit, unit, unit, unit, unit, SequenceOutput, fn copy_block_output>(context: context, handle: handle, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &output);
+      edit_block::<SequenceOutput, unit, unit, unit, unit, unit, fn write_block_output>(context: context, handle: handle, a: &output, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+      owner_set_output(context: context, owner: handle.owner, slot: handle.slot, output: output);
+      set cursor = handle.owner;
     } else {
       return unit;
     }
   }
   return unit;
 }
-
-fn record_line_output(context: &Context, owner: u32, slot: u32, has_lines: Bool) -> result: unit reads(context.entries.span), writes(context.blocks.inner), writes(context.entries.nodes) {
-  doc "Publishes a paragraph or in-flow child baseline handle and repairs only its local index and ancestor path. A handle identifies the line-bearing entry; first/last select its first/last line.";
-  if slot == no_index {
+fn record_line_output(context: &Context, handle: EntryHandle, has_lines: Bool) -> result: unit reads(context.block_routes.inner), writes(context.entries) {
+  doc "Publishes a stable line-bearing entry and repairs only its owner's index and ancestor summaries.";
+  if handle.slot == no_index {
     return unit;
   }
   let output = pending_output(events: 1_u64);
   if has_lines {
-    let handle = EntryHandle(owner: owner, slot: slot);
     set output.first_line = handle;
     set output.last_line = handle;
   }
-  owner_set_output(context: context, owner: owner, slot: slot, output: output);
-  refresh_owner_output(context: context, owner: owner);
+  owner_set_output(context: context, owner: handle.owner, slot: handle.slot, output: output);
+  refresh_owner_output(context: context, owner: handle.owner);
   return unit;
 }
-
-fn record_paragraph_lines(context: &Context, at: u64) -> result: unit reads(context.paragraphs.inner), reads(context.entries.span), writes(context.blocks.inner), writes(context.entries.nodes) {
-  doc "Refreshes one paragraph's line-bearing entry after line breaking without scanning sibling payloads.";
-  if at < context^.paragraphs.inner.len {
-    let owner = context^.paragraphs.inner[at].block;
-    let slot = context^.paragraphs.inner[at].entry_slot;
-    let lined = context^.paragraphs.inner[at].lines.inner.len > 0_u64;
-    record_line_output(context: context, owner: owner, slot: slot, has_lines: lined);
-  }
+fn paragraph_has_lines(value: &Paragraph, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &Bool) -> result: unit reads(value.lines.inner), writes(state) {
+  doc "Reads whether one paragraph contributes lines to its entry output.";
+  set state^ = value^.lines.inner.len > 0_u64;
   return unit;
 }
-
-fn record_event_lines(context: &Context, item: Flow) -> result: unit reads(context.paragraphs.inner), reads(context.children.inner), reads(context.entries.span), writes(context.blocks.inner), writes(context.entries.nodes) {
-  doc "Publishes line summaries as the compatibility walker visits entries. Float and positioned children never become normal-flow line outputs, and lexical Close does not clear the BFC's floats.";
+fn child_has_lines(value: &Context, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &Bool) -> result: unit reads(value.has_baseline), writes(state) {
+  doc "Reads whether an in-flow child contributes a baseline.";
+  set state^ = value^.has_baseline;
+  return unit;
+}
+fn record_paragraph_lines(context: &Context, at: EntryHandle) -> result: unit reads(context.block_routes.inner), writes(context.entries) {
+  doc "Refreshes one paragraph's line-bearing output by stable owner and slot.";
+  let unused = unit;
+  let state = False();
+  read_paragraph::<unit, unit, unit, unit, unit, Bool, fn paragraph_has_lines>(context: context, handle: at, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  record_line_output(context: context, handle: at, has_lines: state);
+  return unit;
+}
+fn record_event_lines(context: &Context, item: Flow) -> result: unit reads(context.block_routes.inner), writes(context.entries) {
+  doc "Updates normal-flow line summaries; lexical block boundaries never clear the enclosing context's float state.";
   match item {
-    Text(paragraph: paragraph_slot) => {
-      let paragraph_at = cvt::<u32, u64>(paragraph_slot);
-      record_paragraph_lines(context: context, at: paragraph_at);
+    Text(paragraph: paragraph) => {
+      record_paragraph_lines(context: context, at: paragraph);
     }
     Child(context: child) => {
-      let child_at = cvt::<u32, u64>(child);
-      if child_at < context^.children.inner.len {
-        let owner = context^.children.inner[child_at].block;
-        let slot = context^.children.inner[child_at].entry_slot;
-        let lined = context^.children.inner[child_at].has_baseline;
-        record_line_output(context: context, owner: owner, slot: slot, has_lines: lined);
-      }
+      let unused = unit;
+      let state = False();
+      read_child::<unit, unit, unit, unit, unit, Bool, fn child_has_lines>(context: context, handle: child, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+      record_line_output(context: context, handle: child, has_lines: state);
     }
-    Close(block: closed_block) => {
-      refresh_owner_output(context: context, owner: closed_block);
+    Close(block: closed) => {
+      let held = block_value(context: context, handle: closed);
+      refresh_owner_output(context: context, owner: held.directory);
     }
     Open(..) => {
     }
     Float(..) => {
     }
     Out(..) => {
+    }
+  }
+  return unit;
+}
+fn owned_clear<T: drop>(pages: &OwnedPages<T>, slot: u32, span: u32) -> result: unit writes(pages) {
+  doc "Drops only the removed local payload, leaving a hole and retaining every other slot and directory page.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        let vacant = None<T>();
+        set page^.inner[at] = move vacant;
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        owned_clear::<T>(pages: &left_page^.inner, slot: slot, span: half);
+      } else {
+        let later = slot -sat half;
+        owned_clear::<T>(pages: &right_page^.inner, slot: later, span: half);
+      }
     }
   }
   return unit;

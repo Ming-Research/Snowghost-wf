@@ -694,7 +694,7 @@ weighted descent, without materializing a context-wide stream. Recorded
 compatibility positions, split endpoints and baseline entries are still ranks;
 the block, paragraph and child-context records also carry local entry slots.
 The indirect payload writes still need a Whitefoot disjointness proof;
-child-context publication still follows child slots. Both limitations are
+child-context publication still follows retained child route-directory order. Both limitations are
 recorded in [the TODO](../../../docs/todo.md) and must be resolved before
 claiming the full step's independence and storage-permutation checks.
 Step 2's source encodes reference-walker outputs through `geometry.wf`.
@@ -719,12 +719,24 @@ Step 3 now has the nested order representation and small virtual-event
 adapters in flex, grid, table and columns. Its node summaries carry direct
 counts, virtual event spans and first/last line-bearing entry handles;
 nonempty margin transfers explicitly remain unsupported until step 4.
-The builder writes nested sequences directly. Typed block, paragraph and
-child-context payload pools remain context-owned migration storage: the
-paged entries contain handles into those pools, not the heavy payloads.
-Physical typed-payload ownership and local route publication remain open;
-this source does not claim the complete step-3 ownership contract or M2
-locality. Steps 4 onward remain unimplemented. Each step lands with
+The builder writes nested sequences and typed payload pages directly. Each
+block/context sequence owns separate `OwnedPages<Block>`,
+`OwnedPages<Paragraph>` and `OwnedPages<Context>` stores sharing its stable
+local slot space. Atomic inline contexts and table-only children allocate
+live payload slots without contributing virtual events. `EntryHandle`
+addresses flow entries, text/style/context routes, inline atomics, table
+metadata and update marks. Owner-directory keys select owner routes only;
+context-wide route lists contain no heavy payloads.
+
+Preparation and child layout recurse actual owned pages and retain counted
+leaf-slot loops. Child scalar snapshots separate paragraph writes from child
+metric reads; no reference is returned or stored. Compilation, loop
+certification and byte identity remain unverified in this source-only
+session. In particular, mapping an independently owned child to temporary
+scratch through a handle-route lookup may require the Whitefoot relation
+recorded in `docs/todo.md`. Context-wide route publication, scalar snapshots,
+legacy geometry conversions and linear route searches remain migration
+costs; physical ownership alone is not M2 locality evidence. Steps 4 onward remain unimplemented. Each step lands with
 the full-build and incremental paths producing exactly the same dump,
 including fragment order; a partial performance improvement never permits
 a rendering difference. Line ranges are estimates of changed/added source
@@ -760,46 +772,38 @@ scatter is justified by those semantic dependencies.
 
 ### Step-3 source falsifiers for CI
 
-These are mutations to apply separately and revert, not executed results.
-The primary agent compiles and runs the ordinary layout/edit checks.
+These mutations are planned rejection checks, not executed results. Apply
+one at a time and restore it before the next comparison:
 
-1. In `flex.wf:flex_collect`, replace the virtual event read at `k` with
-   `let reverse_end = flow_count -sat 1_u64;`,
-   `let reversed = reverse_end -sat k;` and
-   `let piece = flow_event(context: context, at: reversed);`.
-   Give several siblings the same nonzero `order` so stable sorting is
-   exercised. Their per-owner fragment positions must differ from the
-   unchanged source. Apply the equivalent mutation to `grid_collect` for
-   the grid adapter. Entry order, not payload slot order, is the input to
-   the existing stable sorts.
-2. In `flow.wf:stack_flow`'s `Close(block: b)` arm, insert
-   `set stack.floats = box_slots_new::<Exclusion>(capacity: 0_u64);`,
-   `set stack.float_floor = 0_i32;` and `set stack.reach = 0_i32;`.
-   A float inside one non-BFC block extending beside a paragraph in the
-   next block must lose its exclusion under the mutation. Compare with the
-   independent float fixture/reference rectangles, including clearance.
-3. Replace `sequence.wf:flow_event`'s direct `nested_event` return with
-   the following body after its doc. This restores a whole-context flat
-   rebuild at every virtual lookup, including partial restacks. Output
-   equality alone must not accept it: count the payload/index visits and
-   allocations on a fixed-size edit as unrelated width and depth grow.
+- In `renderer/layout/flex.wf: flex_sort`, change
+  `let later = previous_order > key_order;` to
+  `let later = previous_order >= key_order;`. Equal-order siblings then move
+  ahead of earlier equal-order siblings. An equal-order flex fixture's exact
+  ordered output must differ.
+- In `renderer/layout/flow.wf: stack_flow`, inside its `Close` arm, add
+  `let cleared = box_slots_new::<Exclusion>(capacity: 0_u64);`,
+  `set stack.floats = move cleared;`, `set stack.float_floor = 0_i32;` and
+  `set stack.reach = 0_i32;` as separate statements. This incorrectly makes a
+  lexical block contain floats. A float reaching a later sibling outside the
+  block must change that sibling's exact geometry; legitimate close handling
+  leaves the formatting context's exclusion state intact.
+- Immediately after the doc in `update_flow_reference`, insert the fragment
+  below. This deliberately leaves rendering unchanged while restoring a
+  whole-context flat rebuild on every flow edit. Physical event
+  visits/allocations and a wide/deep synthetic edit-scaling case must reject
+  it; dump equality alone cannot detect this mutation. The existing semantic
+  context rebuild in `structure_changed` remains the recorded pre-splice
+  fallback, distinct from retaining a flat stream during a local edit.
 
-   ```whitefoot
-   let count = flow_length(context: context);
-   let flat = box_slots_new::<Flow>(capacity: 0_u64);
-   for (cursor in 0_u64..count) {
-     let item = nested_event(context: context, sequence: &context^.entries, at: cursor);
-     let pushed = push_item::<Flow>(cell: &flat, value: item, ceiling: item_ceiling);
-   }
-   if at < flat.inner.len { return flat.inner[at]; }
-   return Flow::Close(block: no_index);
-   ```
+  ```whitefoot
+  let mutation_count = flow_length(context: context);
+  let mutation_flat = box_slots_new::<Flow>(capacity: 0_u64);
+  for (mutation_at in 0_u64..mutation_count) {
+    let mutation_event = flow_event(context: context, at: mutation_at);
+    let mutation_kept = push_item::<Flow>(cell: &mutation_flat, value: mutation_event, ceiling: item_ceiling);
+  }
+  ```
 
-The current compatibility geometry and routing paths already contain
-whole-context work. The third falsifier therefore needs counters at the
-sequence operations, not the historical aggregate restack counters. The
-typed-payload migration and step-4/5 work remain necessary before a complete
-edit can satisfy the final locality criterion.
 
 ## Risks and owner questions
 

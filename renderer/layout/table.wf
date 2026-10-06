@@ -56,9 +56,11 @@ fn measure_cells(context: &Context, styles: &Styles, borders: &Box<Slots<Edges>>
   for (i in 0_u64..cells) {
     if i < context^.cells.inner.len {
       let cell = context^.cells.inner[i];
-      let child = cvt::<u32, u64>(cell.context);
-      if child < context^.children.inner.len {
-        let style = context^.children.inner[child].style;
+      let child_handle = cell.context;
+      let held_child = child_value(context: context, handle: child_handle);
+      let child = child_route_index(routes: &context^.child_routes, handle: child_handle);
+      if child < context^.child_routes.inner.len {
+        let style = held_child.style;
         let border = border_edges(styles: styles, style: style);
         let padding = padding_edges(styles: styles, style: style, basis: basis);
         let used = edges_get(list: borders, at: i);
@@ -73,12 +75,12 @@ fn measure_cells(context: &Context, styles: &Styles, borders: &Box<Slots<Edges>>
         let content_least = if fixed_mode {
           give 0_i32;
         } else {
-          give context^.children.inner[child].min_content;
+          give held_child.min_content;
         }
         let content_most = if fixed_mode {
           give 0_i32;
         } else {
-          give context^.children.inner[child].max_content;
+          give held_child.max_content;
         }
         let outer_content_least = content_least +sat frame;
         let outer_content_most = content_most +sat frame;
@@ -86,7 +88,8 @@ fn measure_cells(context: &Context, styles: &Styles, borders: &Box<Slots<Edges>>
         let stated = imax(specified, 0_i32);
         let wanted = imax(outer_least, stated);
         let capped = if maximum >= 0_i32 {
-          give imin(maximum, outer_content_most);
+          let owned_result_1 = imin(maximum, outer_content_most);
+          give owned_result_1;
         } else {
           give outer_content_most;
         }
@@ -123,7 +126,6 @@ fn measure_cells(context: &Context, styles: &Styles, borders: &Box<Slots<Edges>>
   }
   return unit;
 }
-
 fn prepare_table(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> prepared: Table reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Everything about a table's columns before a width is chosen: the borders of its cells and its own by the border model, the intrinsic sizes of its cells and captions in one counted loop over its child contexts, each iteration writing only its own child, and the columns' min-content and max-content widths and intrinsic percentage widths.";
   let style = context^.style;
@@ -131,13 +133,14 @@ fn prepare_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let collapsed = group.border_collapse == 1_u8;
   let basis = imax(context^.space.basis_width, 0_i32);
   let cells = context^.cells.inner.len;
-  let children = context^.children.inner.len;
+  let children = context^.child_routes.inner.len;
   let columns = context^.columns.inner.len;
   let borders = zeros_edges(count: cells);
   let kinds = filled_i32(count: children, value: 0_i32);
   for (i in 0_u64..cells) {
     if i < context^.cells.inner.len {
-      let child = cvt::<u32, u64>(context^.cells.inner[i].context);
+      let child_handle = context^.cells.inner[i].context;
+      let child = child_route_index(routes: &context^.child_routes, handle: child_handle);
       put_i32(list: &kinds, at: child, value: 1_i32);
     }
   }
@@ -171,15 +174,8 @@ fn prepare_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let width_given = sizes.width.kind == sizing_value;
   let layout_fixed = group.table_layout == 1_u8;
   let fixed_mode = band(layout_fixed, width_given);
-  for (k in 0_u64..children) {
-    let value = get_i32(list: &kinds, at: k);
-    let cell = value > 0_i32;
-    let skipped = band(cell, fixed_mode);
-    if skipped {
-    } else {
-      measure_child(child: &context^.children.inner[k], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, cell: cell);
-    }
-  }
+  let work = TableMeasureWork(viewport: viewport, fixed: fixed_mode);
+  table_measure_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &kinds.inner[0_u64..kinds.inner.len], a: styles, b: document, c: fonts, d: picks, e: &work);
   let item_capacity = imin(cells, item_ceiling);
   let items = box_slots_new::<Item>(capacity: item_capacity);
   measure_cells(context: context, styles: styles, borders: &borders, items: &items, fixed_mode: fixed_mode, basis: basis);
@@ -195,21 +191,23 @@ fn prepare_table(context: &Context, styles: &Styles, document: &Document, fonts:
   } else {
     give 0_i32;
   }
-  return Table(borders: move borders, items: move items, cols: move cols, kinds: move kinds, collapsed: collapsed, fixed: fixed_mode, spacing_h: spacing_h, spacing_v: rows_spacing, border: own_border, padding: own_padding, basis: basis);
+  let owned_result_1 = Table(borders: move borders, items: move items, cols: move cols, kinds: move kinds, collapsed: collapsed, fixed: fixed_mode, spacing_h: spacing_h, spacing_v: rows_spacing, border: own_border, padding: own_padding, basis: basis);
+  return owned_result_1;
 }
-
 fn captions_minimum(context: &Context, styles: &Styles) -> least: i32 reads(context), reads(styles) {
   doc "CAPMIN (CSS Tables 3, 3.9.1): the largest min-content contribution of the captions, their margins included; their intrinsic sizes are measured.";
   let best = 0_i32;
   let count = context^.captions.inner.len;
   for (n in 0_u64..count) {
     if n < context^.captions.inner.len {
-      let child = cvt::<u32, u64>(context^.captions.inner[n]);
-      if child < context^.children.inner.len {
-        let style = context^.children.inner[child].style;
+      let child_handle = context^.captions.inner[n];
+      let held_child = child_value(context: context, handle: child_handle);
+      let child = child_route_index(routes: &context^.child_routes, handle: child_handle);
+      if child < context^.child_routes.inner.len {
+        let style = held_child.style;
         let margins = margin_edges(styles: styles, style: style, basis: 0_i32);
         let around = horizontal(edges: margins);
-        let own = context^.children.inner[child].min_content;
+        let own = held_child.min_content;
         let outer = own +sat around;
         set best = imax(best, outer);
       }
@@ -217,7 +215,6 @@ fn captions_minimum(context: &Context, styles: &Styles) -> least: i32 reads(cont
   }
   return best;
 }
-
 fn grid_spacing(table: &Table) -> total: i32 reads(table) {
   doc "The horizontal border spacing a table with at least one column holds: one more than its columns (CSS Tables 3, 3.8.2), the collapsed columns not counted.";
   let columns = table^.cols.inner.len;
@@ -308,27 +305,23 @@ fn table_first_baseline(cell: &Context) -> (baseline: i32, found: Bool) reads(ce
       let item = flow_event(context: cell, at: k);
       match item {
         Text(paragraph: p) => {
-          let at = cvt::<u32, u64>(p);
-          if at < cell^.paragraphs.inner.len {
-            if 0_u64 < cell^.paragraphs.inner[at].lines.inner.len {
-              let line = cell^.paragraphs.inner[at].lines.inner[0_u64];
-              let geometry_read_1 = paragraph_position(context: cell, at: at);
-              let top = geometry_read_1.y;
-              let inner = top +sat line.top;
-              let made = inner +sat line.baseline;
-              return made, True();
-            }
+          let paragraph = paragraph_value(context: cell, handle: p);
+          if paragraph.lines_count > 0_u64 {
+            let line = paragraph_line(context: cell, handle: p, index: 0_u64);
+            let origin = paragraph_position(context: cell, at: p);
+            let inner = origin.y +sat line.top;
+            let made = inner +sat line.baseline;
+            let owned_result_1 = True();
+            return made, owned_result_1;
           }
         }
         Child(context: c) => {
-          let at = cvt::<u32, u64>(c);
-          if at < cell^.children.inner.len {
-            if cell^.children.inner[at].has_baseline {
-              let geometry_read_2 = child_position(context: cell, at: at);
-              let top = geometry_read_2.y;
-              let made = top +sat cell^.children.inner[at].baseline;
-              return made, True();
-            }
+          let child = child_value(context: cell, handle: c);
+          if child.has_baseline {
+            let origin = child_position(context: cell, at: c);
+            let made = origin.y +sat child.baseline;
+            let owned_result_2 = True();
+            return made, owned_result_2;
           }
         }
         Open(..) => {
@@ -342,9 +335,9 @@ fn table_first_baseline(cell: &Context) -> (baseline: i32, found: Bool) reads(ce
       }
     }
   }
-  return 0_i32, False();
+  let owned_result_3 = False();
+  return 0_i32, owned_result_3;
 }
-
 fn align_of(styles: &Styles, style: StyleRef) -> align: i32 reads(styles) {
   doc "How a cell aligns vertically in its rows: 0 baseline (also for every value that does not apply to cells), 1 top, 2 middle, 3 bottom.";
   let text = text_of(styles: styles, style: style);
@@ -519,8 +512,10 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
         set track.fixed = length;
         let has_percent = fgt(percent, 0.0_f32);
         let has_length = length >= 0_i32;
-        set track.constrained = bor(has_length, has_percent);
-        set track.size = imax(length, 0_i32);
+        let owned_result_1 = bor(has_length, has_percent);
+        set track.constrained = owned_result_1;
+        let owned_result_2 = imax(length, 0_i32);
+        set track.size = owned_result_2;
       }
       track_put(tracks: tracks, at: r, value: track);
     }
@@ -531,14 +526,18 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
       let item = table^.items.inner[i];
       set longest = imax(longest, item.rows);
       let child = item.child;
-      if child < context^.children.inner.len {
-        let style = context^.children.inner[child].style;
-        let height = context^.children.inner[child].height;
+      if child < context^.child_routes.inner.len {
+        let child_handle = context^.child_routes.inner[child];
+        let held_child = child_value(context: context, handle: child_handle);
+        let style = held_child.style;
+        let height = held_child.height;
         let outer = height +sat item.used.top;
         let above = outer +sat item.used.bottom;
         let computed_top = item.border.top +sat item.border.bottom;
         let natural_height = above -sat computed_top;
-        let (line, found) = table_first_baseline(cell: &context^.children.inner[child]);
+        let first_line = table_baseline_value(context: context, handle: child_handle);
+        let line = first_line.line;
+        let found = first_line.found;
         let used_top = item.used.top -sat item.border.top;
         let ascent = if found {
           give line +sat used_top;
@@ -573,7 +572,8 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
         if item.rows == 1_u64 {
           let sizes = size_of(styles: styles, style: style);
           if sizes.height.kind == sizing_value {
-            set track.constrained = True();
+            let owned_result_3 = True();
+            set track.constrained = owned_result_3;
           }
         }
         track_put(tracks: tracks, at: item.row, value: track);
@@ -613,7 +613,6 @@ fn measure_rows(context: &Context, styles: &Styles, table: &Table, tracks: &Box<
   }
   return unit;
 }
-
 fn apply_group_heights(context: &Context, styles: &Styles, tracks: &Box<Slots<TableTrack>>, spacing: i32) -> result: unit reads(context), reads(styles), writes(tracks) {
   doc "A row group's height is a least height for its rows (the reference does; the draft ignores heights on row groups): what it exceeds its rows' heights and the spacing between them by goes to the rows by grow_tracks.";
   let rows = tracks^.inner.len;
@@ -668,7 +667,7 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let table = prepare_table(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   let columns = table.cols.inner.len;
   let rows = context^.rows.inner.len;
-  let children = context^.children.inner.len;
+  let children = context^.child_routes.inner.len;
   let border_frame = horizontal(edges: table.border);
   let padding_frame = horizontal(edges: table.padding);
   let frame = border_frame +sat padding_frame;
@@ -712,7 +711,8 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
           set context^.columns.inner[c].x = start;
           set context^.columns.inner[c].width = col.width;
           set edge = start +sat col.width;
-          set seen = True();
+          let owned_result_1 = True();
+          set seen = owned_result_1;
         }
       }
     }
@@ -741,10 +741,8 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
       }
     }
   }
-  for (k in 0_u64..children) {
-    let box_width = get_i32(list: &forced, at: k);
-    lay_out_part(child: &context^.children.inner[k], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, forced: box_width, basis: table.basis, available: width);
-  }
+  let layout_work = TableLayoutWork(viewport: viewport, basis: table.basis, available: width);
+  table_layout_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &forced.inner[0_u64..forced.inner.len], a: styles, b: document, c: fonts, d: picks, e: &layout_work);
   let track_capacity = imin(rows, item_ceiling);
   let tracks = box_slots_new::<TableTrack>(capacity: track_capacity);
   let fresh = fresh_track();
@@ -762,12 +760,14 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let captions = context^.captions.inner.len;
   for (n in 0_u64..captions) {
     if n < context^.captions.inner.len {
-      let child = cvt::<u32, u64>(context^.captions.inner[n]);
-      if child < context^.children.inner.len {
-        let caption_style = context^.children.inner[child].style;
+      let child_handle = context^.captions.inner[n];
+      let held_child = child_value(context: context, handle: child_handle);
+      let child = child_route_index(routes: &context^.child_routes, handle: child_handle);
+      if child < context^.child_routes.inner.len {
+        let caption_style = held_child.style;
         let side = table_of(styles: styles, style: caption_style);
-        let above = context^.children.inner[child].margin_top +sat context^.children.inner[child].height;
-        let outer = above +sat context^.children.inner[child].margin_bottom;
+        let above = held_child.margin_top +sat held_child.height;
+        let outer = above +sat held_child.margin_bottom;
         if side.caption_side == 1_u8 {
           set bottom_captions = bottom_captions +sat outer;
         } else {
@@ -798,13 +798,15 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let imposed = if space.forced_height >= 0_i32 {
     let captions_total = top_captions +sat bottom_captions;
     let left = space.forced_height -sat captions_total;
-    give imax(left, 0_i32);
+    let owned_result_2 = imax(left, 0_i32);
+    give owned_result_2;
   } else {
     give specified_grid;
   }
   let capped_target = if maximum_height >= 0_i32 {
     if imposed >= 0_i32 {
-      give imin(imposed, maximum_height);
+      let owned_result_3 = imin(imposed, maximum_height);
+      give owned_result_3;
     }
     give imposed;
   } else {
@@ -880,11 +882,14 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
       let used_top = item.used.top -sat item.border.top;
       let used_left = item.used.left -sat item.border.left;
       let total_dy = offset +sat used_top;
-      if item.child < context^.children.inner.len {
-        set context^.children.inner[item.child].normal_x = left;
-        set context^.children.inner[item.child].x = left;
-        set context^.children.inner[item.child].normal_y = top_track.y;
-        set context^.children.inner[item.child].y = top_track.y;
+      if item.child < context^.child_routes.inner.len {
+        let child_handle = context^.child_routes.inner[item.child];
+        let positioned_child_snapshot = child_value(context: context, handle: child_handle);
+        set positioned_child_snapshot.normal_x = left;
+        set positioned_child_snapshot.x = left;
+        set positioned_child_snapshot.normal_y = top_track.y;
+        set positioned_child_snapshot.y = top_track.y;
+        set_child_value(context: context, handle: child_handle, value: positioned_child_snapshot);
       }
       put_i32(list: &finals_width, at: item.child, value: box_width);
       put_i32(list: &finals_height, at: item.child, value: box_height);
@@ -892,6 +897,9 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
       put_i32(list: &finals_dy, at: item.child, value: total_dy);
     }
   }
+  let no_finish = False();
+  let blank_finish = TableFinish(cell: no_finish, width: 0_i32, height: 0_i32, dx: 0_i32, dy: 0_i32);
+  let finishes = box_array_filled::<TableFinish>(count: children, value: blank_finish);
   for (k in 0_u64..children) {
     let kind = get_i32(list: &table.kinds, at: k);
     let cell = kind > 0_i32;
@@ -899,17 +907,21 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
     let box_height = get_i32(list: &finals_height, at: k);
     let dx = get_i32(list: &finals_dx, at: k);
     let dy = get_i32(list: &finals_dy, at: k);
-    finish_part(child: &context^.children.inner[k], cell: cell, width: box_width, height: box_height, dx: dx, dy: dy);
+    let finish = TableFinish(cell: cell, width: box_width, height: box_height, dx: dx, dy: dy);
+    set finishes.inner[k] = finish;
   }
+  let unused_finish = unit;
+  table_finish_owned_children(sequence: &context^.entries, owner: no_index, routes: &context^.child_routes, items: &finishes.inner[0_u64..finishes.inner.len], a: &unused_finish, b: &unused_finish, c: &unused_finish, d: &unused_finish, e: &unused_finish);
   for (i in 0_u64..items) {
     if i < table.items.inner.len {
       let item = table.items.inner[i];
       let cell = item.child;
       let used = item.used;
-      if cell < context^.children.inner.len {
-        geometry_reference(context: &context^.children.inner[cell]);
-        let positioned_counts = position_out_with(context: &context^.children.inner[cell], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: used);
-        geometry_owned(context: &context^.children.inner[cell]);
+      if cell < context^.child_routes.inner.len {
+        let child_handle = context^.child_routes.inner[cell];
+        let work = TablePositionWork(viewport: viewport, border: used);
+        let unused = unit;
+        table_position_at(context: context, handle: child_handle, a: styles, b: document, c: fonts, d: picks, e: &work, state: &unused);
       }
     }
   }
@@ -918,37 +930,40 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
   let bottom_cursor = grid_bottom;
   for (n in 0_u64..captions) {
     if n < context^.captions.inner.len {
-      let child = cvt::<u32, u64>(context^.captions.inner[n]);
-      if child < context^.children.inner.len {
-        let caption_style = context^.children.inner[child].style;
+      let child_handle = context^.captions.inner[n];
+      let held_child = child_value(context: context, handle: child_handle);
+      let child = child_route_index(routes: &context^.child_routes, handle: child_handle);
+      if child < context^.child_routes.inner.len {
+        let caption_style = held_child.style;
         let side = table_of(styles: styles, style: caption_style);
-        let margin_left = context^.children.inner[child].margin_left;
-        let margin_right = context^.children.inner[child].margin_right;
-        let caption_width = context^.children.inner[child].width;
+        let margin_left = held_child.margin_left;
+        let margin_right = held_child.margin_right;
+        let caption_width = held_child.width;
         let used = margin_left +sat caption_width;
         let all = used +sat margin_right;
         let free = width -sat all;
         let half = free / 2_i32;
         let x = margin_left +sat half;
-        let margin_top = context^.children.inner[child].margin_top;
-        let caption_height = context^.children.inner[child].height;
+        let margin_top = held_child.margin_top;
+        let caption_height = held_child.height;
         if side.caption_side == 1_u8 {
           let y = bottom_cursor +sat margin_top;
-          set context^.children.inner[child].normal_x = x;
-          set context^.children.inner[child].x = x;
-          set context^.children.inner[child].normal_y = y;
-          set context^.children.inner[child].y = y;
+          set held_child.normal_x = x;
+          set held_child.x = x;
+          set held_child.normal_y = y;
+          set held_child.y = y;
           let after = y +sat caption_height;
-          set bottom_cursor = after +sat context^.children.inner[child].margin_bottom;
+          set bottom_cursor = after +sat held_child.margin_bottom;
         } else {
           let y = top_cursor +sat margin_top;
-          set context^.children.inner[child].normal_x = x;
-          set context^.children.inner[child].x = x;
-          set context^.children.inner[child].normal_y = y;
-          set context^.children.inner[child].y = y;
+          set held_child.normal_x = x;
+          set held_child.x = x;
+          set held_child.normal_y = y;
+          set held_child.y = y;
           let after = y +sat caption_height;
-          set top_cursor = after +sat context^.children.inner[child].margin_bottom;
+          set top_cursor = after +sat held_child.margin_bottom;
         }
+        set_child_value(context: context, handle: child_handle, value: held_child);
       }
     }
   }
@@ -969,7 +984,6 @@ fn lay_out_table(context: &Context, styles: &Styles, document: &Document, fonts:
   add_column_fragments(context: context, tracks: &tracks, grid_top: grid_top);
   return unit;
 }
-
 fn group_at(context: &Context, at: u64) -> style: StyleRef reads(context) {
   doc "The style of the row group of row at, an anonymous one outside the rows.";
   if at < context^.rows.inner.len {
@@ -1142,6 +1156,462 @@ fn add_column_fragments(context: &Context, tracks: &Box<Slots<TableTrack>>, grid
         }
         let width = right -sat column.x;
         add_fragment(context: context, kind: placed_element, owner: column.group.element, x: column.x, y: top, width: width, height: height);
+      }
+    }
+  }
+  return unit;
+}
+
+struct TableMeasureWork {
+  doc "Immutable settings for independent table child intrinsic measurement.";
+  viewport: Viewport;
+  fixed: Bool;
+}
+
+struct TableLayoutWork {
+  doc "Immutable width bases for independent table child layout.";
+  viewport: Viewport;
+  basis: i32;
+  available: i32;
+}
+
+struct TableFinish {
+  doc "One temporary child placement record, addressed only during the table pass.";
+  cell: Bool;
+  width: i32;
+  height: i32;
+  dx: i32;
+  dy: i32;
+}
+
+struct TablePositionWork {
+  doc "The viewport and resolved table-cell border for positioned descendants.";
+  viewport: Viewport;
+  border: Edges;
+}
+
+struct TableBaseline {
+  doc "The first baseline found inside an owner-local table cell.";
+  line: i32;
+  found: Bool;
+}
+
+fn table_baseline_action(value: &Context, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &TableBaseline) -> result: unit reads(value), writes(state) {
+  doc "Reads a cell's first baseline through its owner-local payload.";
+  let (line, found) = table_first_baseline(cell: value);
+  set state^.line = line;
+  set state^.found = found;
+  return unit;
+}
+fn table_baseline_value(context: &Context, handle: EntryHandle) -> made: TableBaseline reads(context) {
+  doc "Resolves a table-cell baseline using a stable local handle.";
+  let no = False();
+  let state = TableBaseline(line: 0_i32, found: no);
+  let unused = unit;
+  table_baseline_at(context: context, handle: handle, a: &unused, b: &unused, c: &unused, d: &unused, e: &unused, state: &state);
+  return state;
+}
+fn table_measure_action(value: &Context, item: &i32, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableMeasureWork) -> result: unit reads(item), reads(a), reads(b), reads(c), reads(d), reads(e), writes(value) {
+  doc "Measures one physically owned table child with its immutable cell flag.";
+  let cell = item^ > 0_i32;
+  let skipped = band(cell, e^.fixed);
+  if skipped {
+  } else {
+    measure_child(child: value, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, cell: cell);
+  }
+  return unit;
+}
+fn table_layout_action(value: &Context, item: &i32, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableLayoutWork) -> result: unit reads(item), reads(a), reads(b), reads(c), reads(d), reads(e), writes(value) {
+  doc "Lays out one physically owned table child at its assigned width.";
+  lay_out_part(child: value, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, forced: item^, basis: e^.basis, available: e^.available);
+  return unit;
+}
+fn table_finish_action(value: &Context, item: &TableFinish, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit) -> result: unit reads(item), writes(value) {
+  doc "Applies final table geometry to one independently owned child.";
+  finish_part(child: value, cell: item^.cell, width: item^.width, height: item^.height, dx: item^.dx, dy: item^.dy);
+  return unit;
+}
+fn table_position_action(value: &Context, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TablePositionWork, state: &unit) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(value) {
+  doc "Positions a table cell's descendants using its resolved border without an enclosing-context alias.";
+  geometry_reference(context: value);
+  let positioned_counts = position_out_with(context: value, styles: a, document: b, fonts: c, picks: d, viewport: e^.viewport, border: e^.border);
+  geometry_owned(context: value);
+  return unit;
+}
+fn table_measure_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[i32], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableMeasureWork) -> result: unit reads(sequence.span), reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  table_measure_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  table_measure_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn table_measure_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &[i32], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableMeasureWork) -> result: unit reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      table_measure_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      table_measure_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            table_measure_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn table_measure_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[i32], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableMeasureWork) -> result: unit reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      table_measure_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      table_measure_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.len {
+              table_measure_action(value: child, item: &items^[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn table_layout_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[i32], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableLayoutWork) -> result: unit reads(sequence.span), reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(sequence.blocks), writes(sequence.children) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  table_layout_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  table_layout_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn table_layout_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &[i32], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableLayoutWork) -> result: unit reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      table_layout_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      table_layout_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            table_layout_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn table_layout_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[i32], a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TableLayoutWork) -> result: unit reads(routes), reads(items), reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      table_layout_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      table_layout_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.len {
+              table_layout_action(value: child, item: &items^[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn table_finish_owned_children(sequence: &EntrySequence, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[TableFinish], a: &unit, b: &unit, c: &unit, d: &unit, e: &unit) -> result: unit reads(sequence.span), reads(routes), reads(items), writes(sequence.blocks), writes(sequence.children) {
+  doc "Runs child work over physically independent owned page slots; route positions address temporary scratch only.";
+  table_finish_child_pages(pages: &sequence^.children, span: sequence^.span, base: 0_u32, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  table_finish_block_children(pages: &sequence^.blocks, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+  return unit;
+}
+fn table_finish_block_children(pages: &OwnedPages<Block>, routes: &Box<Slots<EntryHandle>>, items: &[TableFinish], a: &unit, b: &unit, c: &unit, d: &unit, e: &unit) -> result: unit reads(routes), reads(items), writes(pages) {
+  doc "Descends block-owned sequences without replacing their independent page loops by a route-directory mutation loop.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      table_finish_block_children(pages: &left_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      table_finish_block_children(pages: &right_pages^.inner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (block_at in 0_u64..count) {
+        match values^.inner[block_at] {
+          None() => {
+          }
+          Some(value: block) => {
+            let directory = block^.directory;
+            table_finish_owned_children(sequence: &block^.entries, owner: directory, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn table_finish_child_pages(pages: &OwnedPages<Context>, span: u32, base: u32, owner: u32, routes: &Box<Slots<EntryHandle>>, items: &[TableFinish], a: &unit, b: &unit, c: &unit, d: &unit, e: &unit) -> result: unit reads(routes), reads(items), writes(pages) {
+  doc "Keeps a counted worker loop over each page's owned child slots; distinct scratch-route indexes remain a compiler proof obligation.";
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_pages, right: right_pages) => {
+      let half = span / 2_u32;
+      let next_base = base +sat half;
+      table_finish_child_pages(pages: &left_pages^.inner, span: half, base: base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+      table_finish_child_pages(pages: &right_pages^.inner, span: half, base: next_base, owner: owner, routes: routes, items: items, a: a, b: b, c: c, d: d, e: e);
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (child_at in 0_u64..count) {
+        match values^.inner[child_at] {
+          None() => {
+          }
+          Some(value: child) => {
+            let local_slot = flow_index(at: child_at);
+            let slot = base +sat local_slot;
+            let handle = EntryHandle(owner: owner, slot: slot);
+            let position = child_route_index(routes: routes, handle: handle);
+            if position < items^.len {
+              table_finish_action(value: child, item: &items^[position], a: a, b: b, c: c, d: d, e: e);
+            }
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+fn table_position_at(context: &Context, handle: EntryHandle, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TablePositionWork, state: &unit) -> result: unit reads(context.block_routes.inner), reads(a), reads(b), reads(c), reads(d), reads(e), writes(context.entries) {
+  doc "Resolves an owner through checked local block slots and invokes one operation on that owner's sequence. Cursors are local borrows and directory slots own no payload.";
+  let path = owner_path(context: context, owner: handle.owner);
+  let count = path.inner.len;
+  let sequence = &context^.entries;
+  for (depth in 0_u64..count) {
+    let reverse = count -sat depth;
+    let at = reverse -sat 1_u64;
+    if at < path.inner.len {
+      let local_slot = path.inner[at];
+      let held = sequence_node(sequence: sequence, slot: local_slot);
+      if held.live {
+      } else {
+        return unit;
+      }
+      let pages = &sequence^.blocks;
+      let remaining = local_slot;
+      let span = sequence^.span;
+      let found = False();
+      loop {
+        match pages^ {
+          Vacant() => {
+            break;
+          }
+          Fork(left: left_page, right: right_page) => {
+            let half = span / 2_u32;
+            if remaining < half {
+              set pages = &left_page^.inner;
+            } else {
+              set remaining = remaining -sat half;
+              set pages = &right_page^.inner;
+            }
+            set span = half;
+          }
+          Page(values: page) => {
+            let offset = cvt::<u32, u64>(remaining);
+            if offset < page^.inner.len {
+              match page^.inner[offset] {
+                Some(value: block) => {
+                  set sequence = &block^.entries;
+                  let owned_result_1 = True();
+                  set found = owned_result_1;
+                }
+                None() => {
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+      if found {
+      } else {
+        return unit;
+      }
+    }
+  }
+  let payload_node = sequence_node(sequence: sequence, slot: handle.slot);
+  if payload_node.live {
+    table_position_pages(pages: &sequence^.children, slot: handle.slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn table_position_pages(pages: &OwnedPages<Context>, slot: u32, span: u32, a: &Styles, b: &Document, c: &FontSet, d: &FontPicks, e: &TablePositionWork, state: &unit) -> result: unit reads(a), reads(b), reads(c), reads(d), reads(e), writes(pages) {
+  doc "Borrows one live typed local slot for a callback; no reference leaves the call and no payload is copied.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            table_position_action(value: payload, a: a, b: b, c: c, d: d, e: e, state: state);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        table_position_pages(pages: &left_page^.inner, slot: slot, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      } else {
+        let later = slot -sat half;
+        table_position_pages(pages: &right_page^.inner, slot: later, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      }
+    }
+  }
+  return unit;
+}
+fn table_baseline_at(context: &Context, handle: EntryHandle, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &TableBaseline) -> result: unit reads(context.block_routes.inner), reads(context.entries), writes(state) {
+  doc "Resolves an owner through checked local block slots and invokes one operation on that owner's sequence. Cursors are local borrows and directory slots own no payload.";
+  let path = owner_path(context: context, owner: handle.owner);
+  let count = path.inner.len;
+  let sequence = &context^.entries;
+  for (depth in 0_u64..count) {
+    let reverse = count -sat depth;
+    let at = reverse -sat 1_u64;
+    if at < path.inner.len {
+      let local_slot = path.inner[at];
+      let held = sequence_node(sequence: sequence, slot: local_slot);
+      if held.live {
+      } else {
+        return unit;
+      }
+      let pages = &sequence^.blocks;
+      let remaining = local_slot;
+      let span = sequence^.span;
+      let found = False();
+      loop {
+        match pages^ {
+          Vacant() => {
+            break;
+          }
+          Fork(left: left_page, right: right_page) => {
+            let half = span / 2_u32;
+            if remaining < half {
+              set pages = &left_page^.inner;
+            } else {
+              set remaining = remaining -sat half;
+              set pages = &right_page^.inner;
+            }
+            set span = half;
+          }
+          Page(values: page) => {
+            let offset = cvt::<u32, u64>(remaining);
+            if offset < page^.inner.len {
+              match page^.inner[offset] {
+                Some(value: block) => {
+                  set sequence = &block^.entries;
+                  let owned_result_1 = True();
+                  set found = owned_result_1;
+                }
+                None() => {
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+      if found {
+      } else {
+        return unit;
+      }
+    }
+  }
+  let payload_node = sequence_node(sequence: sequence, slot: handle.slot);
+  if payload_node.live {
+    table_baseline_pages(pages: &sequence^.children, slot: handle.slot, span: sequence^.span, a: a, b: b, c: c, d: d, e: e, state: state);
+  }
+  return unit;
+}
+fn table_baseline_pages(pages: &OwnedPages<Context>, slot: u32, span: u32, a: &unit, b: &unit, c: &unit, d: &unit, e: &unit, state: &TableBaseline) -> result: unit reads(pages), writes(state) {
+  doc "Borrows one live typed local slot for a callback; no reference leaves the call and no payload is copied.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            table_baseline_action(value: payload, a: a, b: b, c: c, d: d, e: e, state: state);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        table_baseline_pages(pages: &left_page^.inner, slot: slot, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
+      } else {
+        let later = slot -sat half;
+        table_baseline_pages(pages: &right_page^.inner, slot: later, span: half, a: a, b: b, c: c, d: d, e: e, state: state);
       }
     }
   }

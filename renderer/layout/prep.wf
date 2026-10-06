@@ -699,22 +699,105 @@ fn prepare_paragraph(bytes: &[u8], generated: &[u8], styles: &Styles, fonts: &Fo
   }
 }
 
-fn prepare_context(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
-  doc "Prepares every paragraph of context in one counted loop, each iteration writing only its own paragraph, and then every child context, one per iteration of a second counted loop; False when any paragraph's shaping failed.";
-  let count = context^.paragraphs.inner.len;
-  let stored = document^.text.inner.len;
-  let made = styles^.generated_text.inner.len;
+fn prepare_owned_paragraphs(pages: &OwnedPages<Paragraph>, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(pages) {
+  doc "Prepares independently owned paragraphs through disjoint directory branches and counted leaf slots; no route scatter or shared preparation cache orders siblings.";
   let ok = True();
-  for (i in 0_u64..count) {
-    let none = shaped_empty();
-    let no_text = array_filled::<u32, 1>(value: 0_u32);
-    let done = prepare_paragraph(bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i], previous: &none, previous_text: &no_text[0_u64..0_u64]);
-    set ok = band(ok, done);
-  }
-  let children = context^.children.inner.len;
-  for (k in 0_u64..children) {
-    let done = prepare_context(context: &context^.children.inner[k], document: document, styles: styles, fonts: fonts, picks: picks);
-    set ok = band(ok, done);
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_page, right: right_page) => {
+      let left_ok = prepare_owned_paragraphs(pages: &left_page^.inner, document: document, styles: styles, fonts: fonts, picks: picks);
+      let right_ok = prepare_owned_paragraphs(pages: &right_page^.inner, document: document, styles: styles, fonts: fonts, picks: picks);
+      let owned_result_1 = band(left_ok, right_ok);
+      set ok = owned_result_1;
+    }
+    Page(values: page) => {
+      let count = page^.inner.len;
+      for (at in 0_u64..count) {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            let stored = document^.text.inner.len;
+            let made = styles^.generated_text.inner.len;
+            let none = shaped_empty();
+            let no_text = array_filled::<u32, 1>(value: 0_u32);
+            let done = prepare_paragraph(bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: payload, previous: &none, previous_text: &no_text[0_u64..0_u64]);
+            set ok = band(ok, done);
+          }
+          None() => {
+          }
+        }
+      }
+    }
   }
   return ok;
+}
+fn prepare_owned_blocks(pages: &OwnedPages<Block>, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(pages) {
+  doc "Prepares independently owned blocks through disjoint directory branches and counted leaf slots; no route scatter or shared preparation cache orders siblings.";
+  let ok = True();
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_page, right: right_page) => {
+      let left_ok = prepare_owned_blocks(pages: &left_page^.inner, document: document, styles: styles, fonts: fonts, picks: picks);
+      let right_ok = prepare_owned_blocks(pages: &right_page^.inner, document: document, styles: styles, fonts: fonts, picks: picks);
+      let owned_result_1 = band(left_ok, right_ok);
+      set ok = owned_result_1;
+    }
+    Page(values: page) => {
+      let count = page^.inner.len;
+      for (at in 0_u64..count) {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            let done = prepare_owned_sequence(sequence: &payload^.entries, document: document, styles: styles, fonts: fonts, picks: picks);
+            set ok = band(ok, done);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return ok;
+}
+fn prepare_owned_children(pages: &OwnedPages<Context>, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(pages) {
+  doc "Prepares independently owned children through disjoint directory branches and counted leaf slots; no route scatter or shared preparation cache orders siblings.";
+  let ok = True();
+  match pages^ {
+    Vacant() => {
+    }
+    Fork(left: left_page, right: right_page) => {
+      let left_ok = prepare_owned_children(pages: &left_page^.inner, document: document, styles: styles, fonts: fonts, picks: picks);
+      let right_ok = prepare_owned_children(pages: &right_page^.inner, document: document, styles: styles, fonts: fonts, picks: picks);
+      let owned_result_1 = band(left_ok, right_ok);
+      set ok = owned_result_1;
+    }
+    Page(values: page) => {
+      let count = page^.inner.len;
+      for (at in 0_u64..count) {
+        match page^.inner[at] {
+          Some(value: payload) => {
+            let done = prepare_context(context: payload, document: document, styles: styles, fonts: fonts, picks: picks);
+            set ok = band(ok, done);
+          }
+          None() => {
+          }
+        }
+      }
+    }
+  }
+  return ok;
+}
+fn prepare_owned_sequence(sequence: &EntrySequence, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(sequence) {
+  doc "Prepares paragraph, block and child-context payloads from their physical owner; each store is disjoint from the others.";
+  let paragraphs_ok = prepare_owned_paragraphs(pages: &sequence^.paragraphs, document: document, styles: styles, fonts: fonts, picks: picks);
+  let blocks_ok = prepare_owned_blocks(pages: &sequence^.blocks, document: document, styles: styles, fonts: fonts, picks: picks);
+  let children_ok = prepare_owned_children(pages: &sequence^.children, document: document, styles: styles, fonts: fonts, picks: picks);
+  let local_ok = band(paragraphs_ok, blocks_ok);
+  let all_ok = band(local_ok, children_ok);
+  return all_ok;
+}
+fn prepare_context(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context.entries) {
+  doc "Prepares every paragraph and child context through counted loops over nested owned slots; context-wide tables route edits only.";
+  let done = prepare_owned_sequence(sequence: &context^.entries, document: document, styles: styles, fonts: fonts, picks: picks);
+  return done;
 }

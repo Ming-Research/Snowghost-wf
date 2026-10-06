@@ -101,13 +101,12 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
     match item {
       Open(block: b) => {
         set depth = depth +sat 1_u64;
-        let at = cvt::<u32, u64>(b);
         if skip_depth == 0_u64 {
-          if at < context^.blocks.inner.len {
-            let block = block_snapshot(block: &context^.blocks.inner[at]);
+          if b.slot != no_index {
+            let block = block_value(context: context, handle: b);
             let avoided = avoids_columns(styles: styles, style: block.style);
             if avoided {
-              let unit_origin = block_position(context: context, at: at);
+              let unit_origin = block_position(context: context, at: b);
               let bottom = unit_origin.y +sat block.height;
               push_unit(pieces_list: pieces_list, top: unit_origin.y, bottom: bottom);
               set skip_depth = depth;
@@ -123,49 +122,16 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
       }
       Text(paragraph: p) => {
         if skip_depth == 0_u64 {
-          let at = cvt::<u32, u64>(p);
-          if at < context^.paragraphs.inner.len {
-            let lines = context^.paragraphs.inner[at].lines.inner.len;
-            let geometry_read_1 = paragraph_position(context: context, at: at);
-            let origin = geometry_read_1.y;
-            for (l in 0_u64..lines) {
-              if at < context^.paragraphs.inner.len {
-                if l < context^.paragraphs.inner[at].lines.inner.len {
-                  let line = context^.paragraphs.inner[at].lines.inner[l];
-                  let top = origin +sat line.top;
-                  let bottom = top +sat line.height;
-                  push_unit(pieces_list: pieces_list, top: top, bottom: bottom);
-                }
-              }
-            }
-          }
+          let origin = paragraph_position(context: context, at: p);
+          let unused = unit;
+          read_paragraph::<Position, unit, unit, unit, unit, Box<Slots<Unit>>, fn collect_paragraph_units>(context: context, handle: p, a: &origin, b: &unused, c: &unused, d: &unused, e: &unused, state: pieces_list);
         }
       }
       Child(context: c) => {
         if skip_depth == 0_u64 {
-          let at = cvt::<u32, u64>(c);
-          if at < context^.children.inner.len {
-            let child = &context^.children.inner[at];
-            let child_origin = child_position(context: context, at: at);
-            let avoided = avoids_columns(styles: styles, style: child^.style);
-            let table = child^.kind == ctx_table;
-            let rows = child^.rows.inner.len;
-            let has_rows = rows > 0_u64;
-            let open_table = band(table, has_rows);
-            let not_avoided = bnot(avoided);
-            let by_rows = band(open_table, not_avoided);
-            if by_rows {
-              for (r in 0_u64..rows) {
-                let row = child^.rows.inner[r];
-                let top = child_origin.y +sat row.y;
-                let bottom = top +sat row.height;
-                push_unit(pieces_list: pieces_list, top: top, bottom: bottom);
-              }
-            } else {
-              let bottom = child_origin.y +sat child^.height;
-              push_unit(pieces_list: pieces_list, top: child_origin.y, bottom: bottom);
-            }
-          }
+          let origin = child_position(context: context, at: c);
+          let unused = unit;
+          read_child::<Position, Styles, unit, unit, unit, Box<Slots<Unit>>, fn collect_child_units>(context: context, handle: c, a: &origin, b: styles, c: &unused, d: &unused, e: &unused, state: pieces_list);
         }
       }
       Float(..) => {
@@ -176,7 +142,6 @@ fn collect_units(context: &Context, styles: &Styles, pieces_list: &Box<Slots<Uni
   }
   return unit;
 }
-
 fn column_shortage(pieces_list: &[Unit], height: i32, first: i32) -> (count: i32, shortage: i32) reads(pieces_list) {
   doc "The number of columns height tall that the pieces_list fill when each column takes the pieces_list in order while they fit, the first column starting at first, the content box's top, and each later one at the top of its first unit, where the margins before it are truncated; and the least amount by which a unit that moved to a later column overflowed its column, or 2147483647 when none moved.";
   let total = pieces_list^.len;
@@ -260,4 +225,38 @@ fn fragment_columns(context: &Context, styles: &Styles, count: i32, width: i32, 
   let final_piece = ColumnPiece(from: from, to: 2147483647_i32, dx: shift_x, dy: shift_y, bottom: column_bottom);
   let pushed_last = push_item::<ColumnPiece>(cell: &context^.column_map, value: final_piece, ceiling: item_ceiling);
   return height;
+}
+
+fn collect_paragraph_units(value: &Paragraph, a: &Position, b: &unit, c: &unit, d: &unit, e: &unit, state: &Box<Slots<Unit>>) -> result: unit reads(value), reads(a), writes(state) {
+  doc "Appends a paragraph's line units from its owner-local payload.";
+  let lines = value^.lines.inner.len;
+  for (line_at in 0_u64..lines) {
+    let line = value^.lines.inner[line_at];
+    let top = a^.y +sat line.top;
+    let bottom = top +sat line.height;
+    push_unit(pieces_list: state, top: top, bottom: bottom);
+  }
+  return unit;
+}
+fn collect_child_units(value: &Context, a: &Position, b: &Styles, c: &unit, d: &unit, e: &unit, state: &Box<Slots<Unit>>) -> result: unit reads(value), reads(a), reads(b), writes(state) {
+  doc "Appends child or table-row column units without treating a child route as a payload pool index.";
+  let avoided = avoids_columns(styles: b, style: value^.style);
+  let table = value^.kind == ctx_table;
+  let rows = value^.rows.inner.len;
+  let has_rows = rows > 0_u64;
+  let open_table = band(table, has_rows);
+  let not_avoided = bnot(avoided);
+  let by_rows = band(open_table, not_avoided);
+  if by_rows {
+    for (row_at in 0_u64..rows) {
+      let row = value^.rows.inner[row_at];
+      let top = a^.y +sat row.y;
+      let bottom = top +sat row.height;
+      push_unit(pieces_list: state, top: top, bottom: bottom);
+    }
+  } else {
+    let bottom = a^.y +sat value^.height;
+    push_unit(pieces_list: state, top: a^.y, bottom: bottom);
+  }
+  return unit;
 }
