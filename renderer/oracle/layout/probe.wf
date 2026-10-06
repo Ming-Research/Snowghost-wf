@@ -1,0 +1,87 @@
+alias Page = pkg::oracle::page::Page;
+alias Styles = pkg::style::Styles;
+alias FontSet = pkg::layout::text::FontSet;
+alias Viewport = pkg::layout::Viewport;
+alias Clock = std::time::Clock;
+alias OutputStream = std::io::OutputStream;
+alias HandleFactory = std::io::HandleFactory;
+alias build_layout = pkg::layout::build_layout;
+alias lay_out = pkg::layout::lay_out;
+alias place_boxes = pkg::layout::place_boxes;
+alias put_decimal = pkg::oracle::support::put_decimal;
+alias put_byte = pkg::oracle::support::put_byte;
+alias flush = pkg::oracle::support::flush;
+
+fn run_probe(page: &Page, styles: &Styles, fonts: &FontSet, viewport: Viewport, reps: u64, clock: &Clock, out: &OutputStream, files: &HandleFactory) -> code: u8 reads(page), reads(styles), reads(fonts), writes(clock), writes(out), writes(files) waits {
+  doc "Builds a disposable layout per repetition, checks every placed rectangle before and after the probe, then prints REP followed by each ten-column census row.";
+  let picks = match pick_all(fonts: fonts, styles: styles, atoms: &page^.atoms) {
+    Some(value: found) => {
+      give move found;
+    }
+    None() => {
+      return 2_u8;
+    }
+  }
+  for (rep in 0_u64..reps) {
+    let layout = match build_layout(document: &page^.document, traversal: &page^.traversal, styles: styles, atoms: &page^.atoms, fonts: fonts, picks: &picks, viewport: viewport) {
+      Ok(value: found) => {
+        give move found;
+      }
+      Err(..) => {
+        return 2_u8;
+      }
+    }
+    lay_out(layout: &layout, document: &page^.document, styles: styles, fonts: fonts, picks: &picks);
+    let before = place_boxes(layout: &layout);
+    let rows = pkg::layout::flow_probe(layout: &layout, document: &page^.document, styles: styles, fonts: fonts, picks: &picks, clock: clock);
+    let after = place_boxes(layout: &layout);
+    if before.inner.len != after.inner.len {
+      return 2_u8;
+    }
+    for (i in 0_u64..before.inner.len) {
+      if i < after.inner.len {
+        let a = before.inner[i];
+        let b = after.inner[i];
+        if a.kind != b.kind {
+          return 2_u8;
+        }
+        if a.owner != b.owner {
+          return 2_u8;
+        }
+        let same_x = feq(a.x, b.x);
+        if bnot(same_x) {
+          return 2_u8;
+        }
+        let same_y = feq(a.y, b.y);
+        if bnot(same_y) {
+          return 2_u8;
+        }
+        let same_width = feq(a.width, b.width);
+        if bnot(same_width) {
+          return 2_u8;
+        }
+        let same_height = feq(a.height, b.height);
+        if bnot(same_height) {
+          return 2_u8;
+        }
+      }
+    }
+    let buffer = box_slots_new::<u8>(capacity: 65536_u64);
+    for (i in 0_u64..rows.inner.len) {
+      if rows.inner[i][0_u64] == 3_u64 {
+        return 2_u8;
+      }
+      put_decimal(buffer: &buffer, value: rep);
+      for (j in 0_u64..10_u64) {
+        put_byte(buffer: &buffer, value: 32_u8);
+        put_decimal(buffer: &buffer, value: rows.inner[i][j]);
+      }
+      put_byte(buffer: &buffer, value: 10_u8);
+    }
+    let written = flush(factory: files, output: out, buffer: &buffer);
+    if bnot(written) {
+      return 2_u8;
+    }
+  }
+  return 0_u8;
+}

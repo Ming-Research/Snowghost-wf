@@ -1,0 +1,192 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+
+fn probe_stamp(clock: &std::time::Clock, witness: &Context) -> instant: std::time::Instant reads(witness), writes(clock) {
+  doc "Orders a clock reading after context writes, matching the oracle's stamp witness rule.";
+  let held = witness^.flow.inner.len;
+  return std::time::now(clock: clock);
+}
+
+fn probe_context(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, clock: &std::time::Clock, serial: u64, depth: u64, rows: &Box<Slots<Array<u64, 10>>>) -> next: u64 reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(clock), writes(rows) {
+  doc "Assigns preorder census identities, probes descendants, then restores this context with full layout outside its measured stack interval. Laying it out again outside the interval restores columns, fragments and positioned children for the placement comparison.";
+  let next = serial +sat 1_u64;
+  let child_count = context^.children.inner.len;
+  let child_depth = depth +sat 1_u64;
+  for (i in 0_u64..child_count) {
+    set next = probe_context(context: &context^.children.inner[i], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, clock: clock, serial: next, depth: child_depth, rows: rows);
+  }
+  lay_out_context(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let elapsed = 0_u64;
+  let consistent = True();
+  let initial_flow_count = context^.flow.inner.len;
+  let flow_kind = context^.kind == ctx_flow;
+  let nonempty = initial_flow_count > 0_u64;
+  if band(flow_kind, nonempty) {
+    let expected_height = imax(context^.content_raw, 0_i32);
+    let expected_baseline = context^.baseline;
+    let expected_end = context^.flow_end;
+    let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+    prepare_spaces(context: context, styles: styles, content_width: frame.flow_width, content_height: frame.definite);
+    lay_out_children(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    break_all(context: context, styles: styles, fonts: fonts, picks: picks);
+    let fresh_naturals = box_slots_new::<i32>(capacity: 0_u64);
+    set context^.naturals = move fresh_naturals;
+    let start = probe_stamp(clock: clock, witness: context);
+    let plan = full_stack();
+    let stacked = stack_flow(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite, plan: plan);
+    let end = probe_stamp(clock: clock, witness: context);
+    set elapsed = std::time::nanoseconds_from(earlier: start, later: end);
+    let height_same = stacked.height == expected_height;
+    let baseline_same = stacked.baseline == expected_baseline;
+    let end_same = context^.flow_end == expected_end;
+    let first_same = band(height_same, baseline_same);
+    set consistent = band(first_same, end_same);
+    lay_out_context(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  }
+  let n = context^.flow.inner.len;
+  let b = context^.blocks.inner.len;
+  let p = context^.paragraphs.inner.len;
+  let c = context^.children.inner.len;
+  let context_row = array_filled::<u64, 10>(value: 0_u64);
+  set context_row[0_u64] = 0_u64;
+  if bnot(consistent) {
+    set context_row[0_u64] = 3_u64;
+  }
+  set context_row[1_u64] = serial;
+  set context_row[2_u64] = cvt::<u32, u64>(context^.style.element);
+  set context_row[3_u64] = cvt::<u8, u64>(context^.kind);
+  set context_row[4_u64] = depth;
+  set context_row[5_u64] = n;
+  set context_row[6_u64] = b;
+  set context_row[7_u64] = p;
+  set context_row[8_u64] = c;
+  set context_row[9_u64] = elapsed;
+  let context_pushed = push_item::<Array<u64, 10>>(cell: rows, value: context_row, ceiling: item_ceiling);
+  let count = b +sat 1_u64;
+  let entries = box_array_filled::<u64>(count: count, value: 0_u64);
+  let children = box_array_filled::<u64>(count: count, value: 0_u64);
+  let depths = box_array_filled::<u64>(count: count, value: 0_u64);
+  let spans = box_array_filled::<u64>(count: count, value: 0_u64);
+  let parent = b;
+  for (i in 0_u64..n) {
+    let closing = False();
+    let item = context^.flow.inner[i];
+    match item {
+      Open(block: index) => {
+        let at = cvt::<u32, u64>(index);
+        if parent < children.inner.len {
+          set children.inner[parent] = children.inner[parent] +sat 1_u64;
+        }
+        if at < depths.inner.len {
+          if parent < depths.inner.len {
+            set depths.inner[at] = depths.inner[parent] +sat 1_u64;
+          }
+        }
+      }
+      Close(block: index) => {
+        set closing = True();
+        let at = cvt::<u32, u64>(index);
+        if at < b {
+          let block = context^.blocks.inner[at];
+          let first = cvt::<u32, u64>(block.flow_at);
+          if at < spans.inner.len {
+            let after = i +sat 1_u64;
+            set spans.inner[at] = after -sat first;
+          }
+          let parent_index = cvt::<u32, u64>(block.parent);
+          set parent = imin(parent_index, b);
+        }
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+    if bnot(closing) {
+      if parent < entries.inner.len {
+        set entries.inner[parent] = entries.inner[parent] +sat 1_u64;
+      }
+    }
+    match item {
+      Open(block: index) => {
+        set parent = cvt::<u32, u64>(index);
+      }
+      Close(..) => {
+      }
+      Text(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  for (step in 0_u64..count) {
+    let at = if step == 0_u64 {
+      give b;
+    } else {
+      give step - 1_u64;
+    }
+    if at < entries.inner.len {
+      if at < children.inner.len {
+        if at < depths.inner.len {
+          if at < spans.inner.len {
+            let index = if at == b {
+              give cvt::<u32, u64>(no_index);
+            } else {
+              give at;
+            }
+            let owner = cvt::<u32, u64>(context^.style.element);
+            let first = 0_u64;
+            let span = n;
+            let up = cvt::<u32, u64>(no_index);
+            if at < b {
+              let block = context^.blocks.inner[at];
+              set owner = cvt::<u32, u64>(block.style.element);
+              set first = cvt::<u32, u64>(block.flow_at);
+              set span = spans.inner[at];
+              set up = cvt::<u32, u64>(block.parent);
+            }
+            let row = array_filled::<u64, 10>(value: 0_u64);
+            set row[0_u64] = 1_u64;
+            set row[1_u64] = serial;
+            set row[2_u64] = index;
+            set row[3_u64] = owner;
+            set row[4_u64] = depths.inner[at];
+            set row[5_u64] = children.inner[at];
+            set row[6_u64] = entries.inner[at];
+            set row[7_u64] = first;
+            set row[8_u64] = span;
+            set row[9_u64] = up;
+            let pushed = push_item::<Array<u64, 10>>(cell: rows, value: row, ceiling: item_ceiling);
+          }
+        }
+      }
+    }
+  }
+  return next;
+}
+
+fn flow_probe(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks, clock: &std::time::Clock) -> rows: Box<Slots<Array<u64, 10>>> reads(document), reads(styles), reads(fonts), reads(picks), writes(layout), writes(clock) {
+  doc "The removable M2 oracle probe: empty clock pairs, one full-plan stack per nonempty flow context, and its block census. This diagnostic runs sequentially; its reporting order is not a renderer dependency.";
+  let rows = box_slots_new::<Array<u64, 10>>(capacity: 128_u64);
+  for (sample in 0_u64..32_u64) {
+    let start = probe_stamp(clock: clock, witness: &layout^.root);
+    let end = probe_stamp(clock: clock, witness: &layout^.root);
+    let row = array_filled::<u64, 10>(value: 0_u64);
+    set row[0_u64] = 2_u64;
+    set row[1_u64] = sample;
+    set row[9_u64] = std::time::nanoseconds_from(earlier: start, later: end);
+    let pushed = push_item::<Array<u64, 10>>(cell: &rows, value: row, ceiling: item_ceiling);
+  }
+  let next = probe_context(context: &layout^.root, styles: styles, document: document, fonts: fonts, picks: picks, viewport: layout^.viewport, clock: clock, serial: 0_u64, depth: 0_u64, rows: &rows);
+  return move rows;
+}
