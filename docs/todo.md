@@ -127,6 +127,18 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Structural reaches through `+` chains reach every later sibling.** In
+  `h1 + div + h2`, the `div` compound reaches its later siblings, which
+  `structural_restyle` widens to every element child after the edit point
+  (`renderer/style/restyle.wf`, `widen_side`), while only the element two
+  after the point can change. Impact: html5's largest block-edit set is 548
+  elements, every later heading, against a handful
+  (`research/investigations/structure-edits/runs/structure-check.txt`).
+  Change: record in `FeatureReach` the number of `+` hops when only `+`
+  follows the compound, and walk that many elements past the point. Reopen
+  when M2 step 2's measured insertion cost on html5 shows the set's rematch
+  matters against Chromium's 3.06 ms (Q113 option C).
+
 - **The DOM's node array only grows.** `pkg::dom` appends every created
   node and keeps detached ones (`detach` leaves the node and its subtree in
   the document without a parent), so an editing session's DOM grows with
