@@ -16,6 +16,8 @@
 #                                   sets and the sizes of the sets against
 #                                   the elements rematched; fails when an
 #                                   element is missing
+#   run.sh structure PAGE KIND...  checks B/X restyle completeness; also accepts
+#                                   PAGE structure, KIND case or full for fixtures
 #   run.sh incremental PAGE KIND... runs the style oracle's incremental check
 #                                   (restyle on a kept state against a full
 #                                   style run after every C and K edit) and
@@ -35,15 +37,17 @@ here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 cd "$root"
 
-data=build/research/concurrency
-apollo=build/x5/apollo-supplement
+data=${PAGES:-build/research/concurrency}
+apollo=${PAGES:-build/x5/apollo-supplement}
 ua=renderer/style/ua.css
 work=build/m1
+cases=research/investigations/incremental-style/scripts
 
 page_args() {
 	case $1 in
 	ecma262) echo "$data/ecma262.html $ua assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css assets/css/print.css=$data/ecma262-print.css" ;;
 	html5) echo "$data/html5.html $ua" ;;
+	structure) echo "$cases/structure-case.html $ua" ;;
 	apollo11) echo "$apollo/apollo11.html $ua wikibase.client.init&only=styles&skin=vector-2022=$apollo/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$apollo/apollo11-site.css" ;;
 	*)
 		echo "run.sh: unknown page $1" >&2
@@ -95,6 +99,35 @@ restyle() {
 	return $status
 }
 
+structure() {
+	page=$1
+	shift
+	mkdir -p "$work/structure"
+	status=0
+	for kind in "$@"; do
+		script=build/x5/scripts/$page-$kind.edits
+		[ -f "$script" ] || script=$work/scripts/$page-$kind.edits
+		[ -f "$script" ] || script=$cases/$page-$kind.edits
+		out=$work/structure/$page-$kind.txt
+		# Keep the summary even when the oracle exits nonzero for missing nodes.
+		# shellcheck disable=SC2046
+		"${STYLE:-$work/style_seq}" structure "$script" $(page_args "$page") >"$out" || status=1
+		awk -v name="$page-$kind" '
+			/^structure/ {
+				edits++
+				for (i = 3; i < NF; i++) {
+					if ($i == "set") { total += $(i + 1); if (partial++ == 0 || $(i + 1) < lo) lo = $(i + 1); if ($(i + 1) > hi) hi = $(i + 1) }
+					if ($i == "changed") changed += $(i + 1)
+					if ($i == "missing") { missing += $(i + 1); if ($(i + 1) > 0) missed++ }
+				}
+				if ($3 == "full") full++
+			}
+			END { printf "%s: %d edits, %d missing an element, %d full, set total %d (min %d max %d), changed total %d, missing total %d\n", name, edits, missed, full, total, lo, hi, changed, missing; exit (missing > 0 || edits == 0) }
+		' "$out" || status=1
+	done
+	return $status
+}
+
 incremental() {
 	page=$1
 	shift
@@ -126,9 +159,10 @@ command=${1:-}
 case $command in
 scripts) scripts "$@" ;;
 restyle) restyle "$@" ;;
+structure) structure "$@" ;;
 incremental) incremental "$@" ;;
 *)
-	echo "usage: run.sh scripts|restyle|incremental ..." >&2
+	echo "usage: run.sh scripts|restyle|structure|incremental ..." >&2
 	exit 2
 	;;
 esac
