@@ -1,0 +1,91 @@
+M2 steps 1 and 2 — stable slots and insertion restyle
+===================================================
+
+Base: 7ee44119358d7b08dc90555ebe7b9275be478bed.
+Work branch: research/slots-astra. Local commits only; no push.
+Compiler: prescribed Whitefoot f949e676a gate compiler; shared cache and
+host lock/memory guard. Whitefoot files and pin unchanged.
+Started: 2026-10-06 01:35 UTC. Task limit: 150 minutes.
+
+Status: implementation and validation in progress. This report is updated
+with actual observations before the task ends; pending is not a pass.
+
+Implementation
+--------------
+- renderer/style/structure.wf:structure_restyle appends stable element slots
+  and styled-node rows, marks removals with NodeId(4294967295) and unvisited
+  order entries, unions inserted elements with structural_restyle(parent),
+  and invokes the kept level frontier. element_node maps appended element
+  slots past the original pseudo range. New pseudo membership falls back.
+- renderer/style/traversal.wf:filled_slots makes the retained dense arrays
+  appendable. Full-build indices, values and processing passes are retained;
+  the allocation code changes because runtime Array cannot append.
+- renderer/style/incremental.wf:restyle/restyle_level map element slots to
+  styled nodes; style_at/place_style translate appended nodes back. Full
+  rebuild requests on stale traversal are returned to the caller.
+- renderer/css/selectors/positions.wf:children_changed recomputes only the
+  edited parent's original children's sibling positions and totals. New
+  NodeIds use the matcher's sibling scan; original class records survive
+  arena growth. The counter dependency is sibling rank, not document order.
+- renderer/oracle/layout/edit.wf:apply_structure_edit times structure_restyle,
+  creates the temporary NodeId Bool delta, marks the removed subtree and uses
+  structure_changed. Kept append-only tables preserve style references, so
+  old and new arguments share the kept styles; no old Styles copy is made.
+- renderer/oracle/layout/layout.wf:write_dump rebuilds preorder only for
+  untimed canonical output; style lookups use NodeId. The comparator retains
+  the incremental traversal when retaining the incremental style state.
+- renderer/oracle/style/structure.wf:run_structure compares kept and fresh
+  computed values per NodeId after each B/X, including pseudo values and
+  membership/holes. Wired as the style oracle's structure mode.
+
+Required checks
+---------------
+1. Full-build style dump identity on apollo11/html5/ecma262: pending.
+   make check: pending.
+2. Computed styles after every block and blk2 edit: large pages pending.
+   Small block-case: 10 edits, 0 differ, 0 fallbacks (0.00s). The same
+   script with S .box > p:last-child { color: red; } also has 10 edits,
+   0 differ and 0 fallbacks; it exercises structural invalidation.
+3. Layout large block seq/par and colour/fontsize/word: pending.
+   Sequential block-case: 8 same, 2 refused, DIFF 0 (0.08s).
+   Sequential style-case: 24 same, 6 refused, DIFF 0 (0.08s).
+   These counts equal 7ee4411; the same scripts are used without narrowing.
+4. Falsifiers (structural set omitted; removed slots retained): pending.
+5. Before/after edittime costs seq and par-4: pending.
+   Supporting checks: style module accepted (3.09s); full sequential
+   layout and style entries compiled (94.05s and 9.17s); design-lint passed
+   21 tests (6.78s) with the tree unchanged. Parser negative samples reject
+   duplicate/late/out-of-range/wrong-operation fallback records and DIFF.
+   Code revision for the current binaries: 1e931ed1c466c85ee5673709ce74eb228d3b5aa7.
+   Source review covered base through this integration; local findings
+   (depth ceiling, fallback timing/count visibility) were fixed. Runtime
+   evidence remains separate from that source review.
+
+Cost table (microseconds; medians and workload stated with final results)
+------------------------------------------------------------------------
+Pending baseline and changed binaries; no estimate is a measurement.
+
+Interface and locality gaps to report
+------------------------------------
+- Whitefoot runtime Array has no append or runtime Array-to-Slots conversion.
+  Retained arrays become Slots; this changes full-build allocation code.
+  The initializer reserves 4096 extra entries, intended to avoid an immediate copy
+  on scripts that append fewer than 4096 entries to each retained array. General unbounded appending still has amortized
+  growth with occasional O(array size) reallocation; strict worst-case
+  locality is not proved by this representation.
+- The existing selector table packs sibling words and class records with
+  offsets tied to its original count. Original nodes are updated in place;
+  newly appended nodes use uncached sibling/class scans. This avoids a whole
+  cache rebuild but does not complete an appendable per-parent position cache.
+- class_restyle consumes preorder ranges. After structural edits it requests
+  a full build for C/K; this is a remaining consumer of stale preorder.
+- The immutable RuleStore interface cannot register inserted inline style or
+  presentational-hint declarations. Minimal example: inserting a p with
+  style="color:red" into a store parsed before insertion. B inserts a plain p;
+  general insertion with new declarations remains outside this implementation.
+- The O(nodes) Bool delta and structure_changed's context work remain, as
+  permitted for steps 1/2. The Bool delta is charged to delta_us, not style_us.
+
+Fallbacks and unfinished work
+-----------------------------
+Counts and final priority order pending validation.
