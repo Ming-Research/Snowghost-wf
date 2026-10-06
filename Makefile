@@ -258,9 +258,12 @@ SYSTEM_FONTS := /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
 	/usr/share/fonts/opentype/tlwg/Loma-Oblique.otf \
 	/usr/share/fonts/opentype/tlwg/Loma-BoldOblique.otf \
 	/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf
+# FONT_ROOT prefixes the system paths, for fonts unpacked from their packages
+# into a directory instead of installed.
+FONT_ROOT ?=
 oracle-fonts:
 	@mkdir -p $(FONT_DIR)
-	@cp $(SYSTEM_FONTS) $(FONT_DIR)/
+	@cp $(addprefix $(FONT_ROOT),$(SYSTEM_FONTS)) $(FONT_DIR)/
 
 # The oracle of the layout stage's text preparation
 # (research/investigations/layout, "Text preparation results"): draws 1,000

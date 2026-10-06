@@ -78,3 +78,14 @@ and marking walk that visit the whole tree; a root font change is 1.2 to
 3.7 times, while its layout part alone is 0.34 to 0.73 of Chromium's.
 An incremental style stage therefore has to replace the whole-tree delta
 and marking as well as the full restyle.
+
+**On the 14900K runner** (2026-10-06,
+`.github/workflows/time-14900k.yml`). Both engines now run on one machine
+with the same 47 font files, which removes the "not comparable" fonts note
+above. The first run, at M2's steps 1 and 2, is in
+`research/investigations/structure-edits/runs/full-14900k.txt`. Snowghost
+leads every kind on every page, sequentially and at four workers, except
+block edits (28 to 2,000 times Chromium's) and ecma262's font size (1.9 to
+2.1 times). apollo11 is a capture taken on the runner, since Wikimedia's
+bytes are not revision-stable.
+
