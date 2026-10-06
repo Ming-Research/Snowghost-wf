@@ -173,7 +173,8 @@ These are the complete approval and merge rules:
    merge.
 4. A change that moves the Whitefoot pin (`whitefoot.pin`) or the
    `design/skill/` submodule names the revisions it adopts and why, and a
-   revision merged into `main` pins a commit on that repository's `main`.
+   revision merged into `main` pins a commit on that repository's `main`:
+   for Whitefoot, a release `wf-<12 hex>`, never an experiment release.
 
 **Exact revision** is the complete tree that will enter `main`, the
 Whitefoot pin and the submodule included; if it changes after approval or after its successful
@@ -189,8 +190,9 @@ approval or merge precondition.
   `whitefoot.pin` names for Linux x86-64 or macOS arm64 into
   `build/whitefoot/`, builds the renderer and runs the design lint;
   `make check WHITEFOOTC=<path>` uses another compiler instead.
-- `make design-ready`, before marking ready and in CI on ready PRs and main:
-  every design-tree change is approved in the log.
+- `make design-ready` and `make pin-ready`, before marking ready and in CI
+  on ready PRs and main: every design-tree change is approved in the log, and
+  `whitefoot.pin` names no experiment release.
 
 ## Review
 
@@ -210,9 +212,12 @@ the remote head is the reviewed revision, and fill the PR's review section.
   names, and moving the pin is a deliberate change under rule 4.
 - A change Snowghost needs in Whitefoot is made in Whitefoot, under
   Whitefoot's own AGENTS.md, as a branch and PR in its repository. While that
-  PR is open, a Snowghost work branch tries it with a compiler built from the
-  PR's head (`make WHITEFOOTC=<path>`); the pin moves once the change is on
-  Whitefoot's `main` and released, since CI builds only with releases.
+  PR is open, a Snowghost work branch tries it in CI by pinning an experiment
+  release of the PR's head, `release = wf-exp-<12 hex>`, published with
+  `gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=<hash> -f experiment=true`,
+  or locally with a compiler built from it (`make WHITEFOOTC=<path>`). Before
+  the branch is ready, the change is on Whitefoot's `main` and the pin names
+  its release; `make pin-ready` refuses an experiment pin.
 - When a missing Whitefoot feature would bend Snowghost's implementation or
   architecture, add the feature to Whitefoot instead of working around it.
   State the gap as its minimal semantic example, apart from the renderer code
@@ -244,7 +249,10 @@ upgrade:
 4. Passes CI, and names in its PR the revisions adopted and why (rule 4).
 
 The same command publishes again a pinned release that has expired;
-`make compiler` prints it when the download fails.
+`make compiler` prints it when the download fails. An experiment release,
+`wf-exp-<12 hex>`, is published for an unmerged Whitefoot commit with
+`-f experiment=true` and serves only a work branch
+([The Whitefoot boundary](#the-whitefoot-boundary)).
 
 ## Code and tests
 

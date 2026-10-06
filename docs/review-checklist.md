@@ -106,8 +106,8 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
   as local `make check`; changed selection adds no omission or extra check.
 - [ ] **T4 — The pin.** A moved `whitefoot.pin` names the adopted Whitefoot
   revisions and why; a revision bound for `main` pins a commit on
-  Whitefoot's `main` that has a compiler release, and Snowghost's checks pass
-  with it.
+  Whitefoot's `main` that has a compiler release, never an experiment release
+  `wf-exp-`, and Snowghost's checks pass with it.
 
 ## R. Decisions — changed choices, premises or evidence
 
