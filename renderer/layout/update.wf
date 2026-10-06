@@ -55,7 +55,7 @@ fn span_blank(document: &Document, start: u32, end: u32) -> blank: Bool reads(do
   return True();
 }
 
-fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, data: TextSpan) -> result: Result<unit, LayoutError> reads(document), writes(context) {
+fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, data: TextSpan, node: NodeId) -> result: Result<unit, LayoutError> reads(document), writes(context) {
   doc "Gives the paragraph-local pieces text_unit names in context the text node's new data, and marks their paragraph and context; Inconsistent when the pieces do not read that node, or when the new data is empty or differs from the old in being only white space, which would change the box tree.";
   let first = cvt::<u32, u64>(text_unit.piece);
   let count = cvt::<u32, u64>(text_unit.count);
@@ -85,7 +85,7 @@ fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, dat
   let piece = context^.paragraphs.inner[paragraph].pieces.inner[first];
   match piece {
     Bytes(start: from, end: to, style: owner, node: source) => {
-      let wrong = source == no_index;
+      let wrong = source != node.index;
       if wrong {
         return inconsistent::<unit>();
       }
@@ -126,57 +126,77 @@ fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, dat
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn mark_path(context: &Context, document: &Document, steps: &[u32], depth: u64, text_unit: TextUnit, data: TextSpan) -> result: Result<unit, LayoutError> reads(document), reads(steps), writes(context) {
-  doc "Descends from context by the child indices in steps from depth on, which lead to the context holding unit, patches its pieces (patch_pieces) and, once that succeeds, marks every context on the way back up.";
+fn mark_path(context: &Context, document: &Document, steps: &[ContextStep], depth: u64, text_unit: TextUnit, data: TextSpan, node: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(steps), writes(context) {
+  doc "Descends from context by the checked parent, child and context slots in steps from depth on, which lead to the context holding unit, patches its pieces (patch_pieces) and, once that succeeds, marks every context on the way back up.";
   let count = steps^.len;
   if depth >= count {
-    let patched = propagate patch_pieces(context: context, document: document, text_unit: text_unit, data: data);
+    if context^.slot != text_unit.serial {
+      return inconsistent::<unit>();
+    }
+    let patched = propagate patch_pieces(context: context, document: document, text_unit: text_unit, data: data, node: node);
     return Ok<unit, LayoutError>(value: unit);
   }
-  let child = cvt::<u32, u64>(steps^[depth]);
+  let child = cvt::<u32, u64>(steps^[depth].child);
   if child < context^.children.inner.len {
   } else {
     return inconsistent::<unit>();
   }
+  let route = steps^[depth];
+  if context^.slot != route.parent {
+    return inconsistent::<unit>();
+  }
+  if context^.children.inner[child].slot != route.slot {
+    return inconsistent::<unit>();
+  }
   let next = depth +sat 1_u64;
   let was = context^.children.inner[child].dirty;
-  let marked = propagate mark_path(context: &context^.children.inner[child], document: document, steps: steps, depth: next, text_unit: text_unit, data: data);
+  let marked = propagate mark_path(context: &context^.children.inner[child], document: document, steps: steps, depth: next, text_unit: text_unit, data: data, node: node);
   if was {
   } else {
     set context^.marked_children = context^.marked_children +sat 1_u32;
-    set context^.marked_child = steps^[depth];
+    set context^.marked_child = steps^[depth].child;
   }
   set context^.dirty = True();
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn path_steps(layout: &Layout, serial: u32) -> result: Result<Box<Slots<u32>>, LayoutError> reads(layout) {
-  doc "The child indices that lead from the initial containing block to the context with serial, read from paths by following parents up and reversing; Inconsistent when paths does not lead there.";
+fn path_steps(layout: &Layout, serial: u32) -> result: Result<Box<Slots<ContextStep>>, LayoutError> reads(layout) {
+  doc "The checked child steps that lead from the initial containing block to stable context slot serial, read from paths by following parents up and reversing; Inconsistent when paths does not lead there.";
   let count = layout^.paths.inner.len;
-  let upward = box_slots_new::<u32>(capacity: 16_u64);
+  let upward = box_slots_new::<ContextStep>(capacity: 16_u64);
   let at = cvt::<u32, u64>(serial);
   for (step in 0_u64..count) {
     if at < count {
     } else {
-      return inconsistent::<Box<Slots<u32>>>();
+      return inconsistent::<Box<Slots<ContextStep>>>();
     }
     let place = layout^.paths.inner[at];
+    if place.live {
+    } else {
+      return inconsistent::<Box<Slots<ContextStep>>>();
+    }
     if place.parent == no_index {
+      let slot = cvt::<u32, u64>(layout^.root.slot);
+      if at != slot {
+        return inconsistent::<Box<Slots<ContextStep>>>();
+      }
       let length = upward.inner.len;
       let reserve = imin(length, 4096_u64);
-      let steps = box_slots_new::<u32>(capacity: reserve);
+      let steps = box_slots_new::<ContextStep>(capacity: reserve);
       for (back in 0_u64..length) {
         let top = length - 1_u64;
         let k = top - back;
         let index = upward.inner[k];
-        let pushed = push_item::<u32>(cell: &steps, value: index, ceiling: item_ceiling);
+        let pushed = push_item::<ContextStep>(cell: &steps, value: index, ceiling: item_ceiling);
       }
-      return Ok<Box<Slots<u32>>, LayoutError>(value: move steps);
+      return Ok<Box<Slots<ContextStep>>, LayoutError>(value: move steps);
     }
-    let pushed = propagate push_or_fail::<u32>(cell: &upward, value: place.child);
+    let slot = cvt.wrap::<u64, u32>(at);
+    let route = ContextStep(parent: place.parent, child: place.child, slot: slot);
+    let pushed = propagate push_or_fail::<ContextStep>(cell: &upward, value: route);
     set at = cvt::<u32, u64>(place.parent);
   }
-  return inconsistent::<Box<Slots<u32>>>();
+  return inconsistent::<Box<Slots<ContextStep>>>();
 }
 
 fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: Result<unit, LayoutError> reads(document), writes(layout) {
@@ -207,7 +227,7 @@ fn text_changed(layout: &Layout, document: &Document, node: NodeId) -> result: R
   }
   let steps = propagate path_steps(layout: layout, serial: text_unit.serial);
   let depth = steps.inner.len;
-  let marked = propagate mark_path(context: &layout^.root, document: document, steps: &steps.inner[0_u64..depth], depth: 0_u64, text_unit: text_unit, data: data);
+  let marked = propagate mark_path(context: &layout^.root, document: document, steps: &steps.inner[0_u64..depth], depth: 0_u64, text_unit: text_unit, data: data, node: node);
   set layout^.dirty = True();
   return Ok<unit, LayoutError>(value: unit);
 }

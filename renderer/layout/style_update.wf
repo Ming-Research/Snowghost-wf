@@ -640,8 +640,8 @@ fn paragraph_reads(paragraph: &Paragraph, element: u32, root: u32, strut: Bool) 
   return False();
 }
 
-fn mark_use(context: &Context, steps: &[u32], depth: u64, restyle_target: Bool, block: u32, restyle_parent: Bool, first: u32, end: u32, element: u32, root: u32, strut: Bool) -> result: Result<unit, LayoutError> reads(steps), writes(context) {
-  doc "Descends from context by the child indices in steps from depth on, as mark_path does, and marks the context they lead to: restyled when restyle_target holds, the nearest block containing its changed blocks unless block is no_index (restyled_block, with restyled_blocks saturated at two), and, of its paragraphs first..end, each that reads the style of element (paragraph_reads, the strut counting only when strut holds) as dirty, counting each newly marked one; the context above it is marked restyled when restyle_parent holds and it is not a flow context, since a flex, grid or table container places its child by the child's style in its own algorithm, while a flow context's update settles a marked child at its flow entry, reading the style there (restack_block, restack_entry, update_in_place). Every context on the way is marked dirty.";
+fn mark_use(context: &Context, steps: &[ContextStep], depth: u64, restyle_target: Bool, block: u32, restyle_parent: Bool, paragraph: u32, element: u32, root: u32, strut: Bool) -> result: Result<unit, LayoutError> reads(steps), writes(context) {
+  doc "Descends from context by the child indices in steps from depth on, as mark_path does, and marks the context they lead to: restyled when restyle_target holds, the nearest block containing its changed blocks unless block is no_index (restyled_block, with restyled_blocks saturated at two), and its explicit paragraph when it reads the style of element (paragraph_reads, the strut counting only when strut holds) as dirty, counting it only when newly marked; the context above it is marked restyled when restyle_parent holds and it is not a flow context, since a flex, grid or table container places its child by the child's style in its own algorithm, while a flow context's update settles a marked child at its flow entry, reading the style there (restack_block, restack_entry, update_in_place). Every context on the way is marked dirty.";
   let count = steps^.len;
   if depth >= count {
     if restyle_target {
@@ -660,38 +660,44 @@ fn mark_use(context: &Context, steps: &[u32], depth: u64, restyle_target: Bool, 
         set context^.restyled_blocks = 2_u32;
       }
     }
-    let paragraphs = context^.paragraphs.inner.len;
-    let low = cvt::<u32, u64>(first);
-    let high_raw = cvt::<u32, u64>(end);
-    let high = imin(high_raw, paragraphs);
-    for (p in low..high) {
+    let p = cvt::<u32, u64>(paragraph);
+    if paragraph != no_index {
       if p < context^.paragraphs.inner.len {
-        let was = context^.paragraphs.inner[p].dirty;
-        let reading = paragraph_reads(paragraph: &context^.paragraphs.inner[p], element: element, root: root, strut: strut);
-        let fresh = bnot(was);
-        let marks = band(reading, fresh);
-        if marks {
-          set context^.marked_paragraphs = context^.marked_paragraphs +sat 1_u32;
-          set context^.marked_paragraph = cvt.wrap::<u64, u32>(p);
-          set context^.paragraphs.inner[p].dirty = True();
-        }
+      } else {
+        return inconsistent::<unit>();
+      }
+      let was = context^.paragraphs.inner[p].dirty;
+      let reading = paragraph_reads(paragraph: &context^.paragraphs.inner[p], element: element, root: root, strut: strut);
+      let fresh = bnot(was);
+      let marks = band(reading, fresh);
+      if marks {
+        set context^.marked_paragraphs = context^.marked_paragraphs +sat 1_u32;
+        set context^.marked_paragraph = paragraph;
+        set context^.paragraphs.inner[p].dirty = True();
       }
     }
     set context^.dirty = True();
     return Ok<unit, LayoutError>(value: unit);
   }
-  let child = cvt::<u32, u64>(steps^[depth]);
+  let child = cvt::<u32, u64>(steps^[depth].child);
   if child < context^.children.inner.len {
   } else {
     return inconsistent::<unit>();
   }
+  let route = steps^[depth];
+  if context^.slot != route.parent {
+    return inconsistent::<unit>();
+  }
+  if context^.children.inner[child].slot != route.slot {
+    return inconsistent::<unit>();
+  }
   let next = depth +sat 1_u64;
   let was = context^.children.inner[child].dirty;
-  let marked = propagate mark_use(context: &context^.children.inner[child], steps: steps, depth: next, restyle_target: restyle_target, block: block, restyle_parent: restyle_parent, first: first, end: end, element: element, root: root, strut: strut);
+  let marked = propagate mark_use(context: &context^.children.inner[child], steps: steps, depth: next, restyle_target: restyle_target, block: block, restyle_parent: restyle_parent, paragraph: paragraph, element: element, root: root, strut: strut);
   if was {
   } else {
     set context^.marked_children = context^.marked_children +sat 1_u32;
-    set context^.marked_child = steps^[depth];
+    set context^.marked_child = steps^[depth].child;
   }
   let at_parent = next >= count;
   let restyles_here = band(at_parent, restyle_parent);
@@ -705,10 +711,15 @@ fn mark_use(context: &Context, steps: &[u32], depth: u64, restyle_target: Bool, 
 }
 
 fn styles_restyled(layout: &Layout, traversal: &Traversal, changed: &[u32]) -> result: Result<unit, LayoutError> reads(traversal), reads(changed), writes(layout) {
-  doc "Marks, for each changed element in turn, the uses recorded for it: of the paragraphs its use records, those whose pieces read its style, and those whose strut does unless changed_boxes_only says only its box values changed, since a strut reads its block's font and text values and a changed width re-breaks the paragraph in the update; one loop in order, since two elements may mark the same contexts on their paths and the counts of newly marked children and paragraphs those contexts keep. An element marked shared falls back to marking the whole tree with a delta built from the list.";
+  doc "Follows each changed element's explicit style routes across all its contexts. Paragraph routes mark only actual consumers, excluding strut-only reads for changed_boxes_only. Uses may share ancestors and paragraphs, so marking counts each newly dirty unit once.";
   let count = changed^.len;
   let elements = traversal^.elements.inner.len;
-  let shared = False();
+  let root = if 0_u64 < elements {
+    give traversal^.elements.inner[0_u64].index;
+  } else {
+    give no_index;
+  }
+  let total = layout^.routes.inner.len;
   for (k in 0_u64..count) {
     let held = changed^[k];
     let bare = iand(held, changed_position);
@@ -720,73 +731,27 @@ fn styles_restyled(layout: &Layout, traversal: &Traversal, changed: &[u32]) -> r
     let node = traversal^.elements.inner[at];
     let index = cvt::<u32, u64>(node.index);
     if index < layout^.uses.inner.len {
-      let found = layout^.uses.inner[index];
-      if found.shared {
-        set shared = True();
+      let cursor = layout^.uses.inner[index].head;
+      for (step in 0_u64..total) {
+        if cursor == no_index {
+          break;
+        }
+        let route_at = cvt::<u32, u64>(cursor);
+        if route_at < layout^.routes.inner.len {
+        } else {
+          return inconsistent::<unit>();
+        }
+        let found = layout^.routes.inner[route_at];
+        let steps = propagate path_steps(layout: layout, serial: found.serial);
+        let depth = steps.inner.len;
+        let flag = iand(held, changed_boxes_only);
+        let strut = flag == 0_u32;
+        let marked = propagate mark_use(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, restyle_target: found.structural, block: found.block, restyle_parent: found.owner, paragraph: found.paragraph, element: node.index, root: root, strut: strut);
+        set layout^.dirty = True();
+        set cursor = found.next;
       }
-    }
-  }
-  if shared {
-    let nodes = layout^.uses.inner.len;
-    let unchanged = False();
-    let delta = box_array_filled::<Bool>(count: nodes, value: unchanged);
-    let runs = box_array_filled::<Bool>(count: nodes, value: unchanged);
-    for (k in 0_u64..count) {
-      let held = changed^[k];
-      let bare = iand(held, changed_position);
-      let at = cvt::<u32, u64>(bare);
-      let flag = iand(held, changed_boxes_only);
-      let reads_runs = flag == 0_u32;
-      if at < elements {
-        let node = traversal^.elements.inner[at];
-        let index = cvt::<u32, u64>(node.index);
-        if index < delta.inner.len {
-          set delta.inner[index] = True();
-        }
-        if index < runs.inner.len {
-          set runs.inner[index] = reads_runs;
-        }
-      }
-    }
-    let root = if 0_u64 < elements {
-      give traversal^.elements.inner[0_u64].index;
-    } else {
-      give no_index;
-    }
-    mark_style_context(context: &layout^.root, changed: &delta.inner[0_u64..nodes], runs: &runs.inner[0_u64..nodes], root: root);
-    set layout^.dirty = bor(layout^.dirty, layout^.root.dirty);
-    return Ok<unit, LayoutError>(value: unit);
-  }
-  let root = if 0_u64 < elements {
-    give traversal^.elements.inner[0_u64].index;
-  } else {
-    give no_index;
-  }
-  for (k in 0_u64..count) {
-    let held = changed^[k];
-    let bare = iand(held, changed_position);
-    let at = cvt::<u32, u64>(bare);
-    if at < elements {
-      let node = traversal^.elements.inner[at];
-      let index = cvt::<u32, u64>(node.index);
-      if index < layout^.uses.inner.len {
-        let found = layout^.uses.inner[index];
-        if found.serial != no_index {
-          let steps = propagate path_steps(layout: layout, serial: found.serial);
-          let depth = steps.inner.len;
-          let no = False();
-          let flag = iand(held, changed_boxes_only);
-          let strut = flag == 0_u32;
-          let marked = propagate mark_use(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, restyle_target: found.structural, block: found.block, restyle_parent: no, first: found.first, end: found.end, element: node.index, root: root, strut: strut);
-          set layout^.dirty = True();
-        }
-        if found.owner != no_index {
-          let steps = propagate path_steps(layout: layout, serial: found.owner);
-          let depth = steps.inner.len;
-          let yes = True();
-          let marked = propagate mark_use(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, restyle_target: yes, block: no_index, restyle_parent: yes, first: 0_u32, end: 0_u32, element: node.index, root: root, strut: yes);
-          set layout^.dirty = True();
-        }
+      if cursor != no_index {
+        return inconsistent::<unit>();
       }
     }
   }

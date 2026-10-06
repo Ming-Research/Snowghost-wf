@@ -356,49 +356,31 @@ fn changed_outside(document: &Document, old: &Styles, new: &Styles, changed: &[B
   return found;
 }
 
-fn fill_serials(context: &Context, next: u32, serial_of: &Box<Array<u32>>) -> after: u32 reads(context), writes(serial_of) {
-  doc "Numbers context and the contexts below it in the preorder record_tree gives them from next, writes each serial at the NodeId index of the element that establishes the context (one with a style of its own element, neither anonymous nor a pseudo-element's), and returns the next serial.";
-  let serial = next;
-  let style = context^.style;
-  let own = bnot(style.anonymous);
-  let element = style.pseudo == no_pseudo;
-  let named = style.element != root_element;
-  let plain = band(own, element);
-  let established = band(plain, named);
-  if established {
-    let at = cvt::<u32, u64>(style.element);
-    if at < serial_of^.inner.len {
-      if serial_of^.inner[at] == no_index {
-        set serial_of^.inner[at] = serial;
-      }
-    }
-  }
-  let following = serial +wrap 1_u32;
-  let count = context^.children.inner.len;
-  for (k in 0_u64..count) {
-    set following = fill_serials(context: &context^.children.inner[k], next: following, serial_of: serial_of);
-  }
-  return following;
-}
-
-fn contexts_at(context: &Context, steps: &[u32], depth: u64) -> count: u64 reads(context), reads(steps) {
-  doc "The contexts of the tree under the context that steps lead to from depth on, or 0 when they lead nowhere.";
+fn contexts_at(context: &Context, steps: &[ContextStep], depth: u64) -> (contexts: u64, paragraphs: u64) reads(context), reads(steps) {
+  doc "The context and paragraph counts below the checked route from depth on, or zero counts when it leads nowhere.";
   let length = steps^.len;
   if depth >= length {
     let (contexts, paragraphs) = count_tree(context: context);
-    return contexts;
+    return contexts, paragraphs;
   }
-  let child = cvt::<u32, u64>(steps^[depth]);
+  let child = cvt::<u32, u64>(steps^[depth].child);
   if child < context^.children.inner.len {
+    let route = steps^[depth];
+    if context^.slot != route.parent {
+      return 0_u64, 0_u64;
+    }
+    if context^.children.inner[child].slot != route.slot {
+      return 0_u64, 0_u64;
+    }
     let next = depth +sat 1_u64;
-    let count = contexts_at(context: &context^.children.inner[child], steps: steps, depth: next);
-    return count;
+    let (contexts, paragraphs) = contexts_at(context: &context^.children.inner[child], steps: steps, depth: next);
+    return contexts, paragraphs;
   }
-  return 0_u64;
+  return 0_u64, 0_u64;
 }
 
-fn rebuild_of(context: &Context, steps: &[u32], depth: u64) -> result: Result<Rebuild, LayoutError> reads(context), reads(steps) {
-  doc "Descends from context by the child indices in steps from depth on and returns the kind, style, entry and exit of the context they lead to.";
+fn rebuild_of(context: &Context, steps: &[ContextStep], depth: u64) -> result: Result<Rebuild, LayoutError> reads(context), reads(steps) {
+  doc "Descends from context by the checked parent, child and context slots in steps from depth on and returns the kind, style, entry and exit of the context they lead to.";
   let count = steps^.len;
   if depth >= count {
     let entered = copy_point(point: &context^.entered);
@@ -406,9 +388,16 @@ fn rebuild_of(context: &Context, steps: &[u32], depth: u64) -> result: Result<Re
     let made = Rebuild(kind: context^.kind, style: context^.style, entered: move entered, left: move left);
     return Ok<Rebuild, LayoutError>(value: move made);
   }
-  let child = cvt::<u32, u64>(steps^[depth]);
+  let child = cvt::<u32, u64>(steps^[depth].child);
   if child < context^.children.inner.len {
   } else {
+    return inconsistent::<Rebuild>();
+  }
+  let route = steps^[depth];
+  if context^.slot != route.parent {
+    return inconsistent::<Rebuild>();
+  }
+  if context^.children.inner[child].slot != route.slot {
     return inconsistent::<Rebuild>();
   }
   let next = depth +sat 1_u64;
@@ -416,45 +405,62 @@ fn rebuild_of(context: &Context, steps: &[u32], depth: u64) -> result: Result<Re
   return Ok<Rebuild, LayoutError>(value: move found);
 }
 
-fn relative_steps(paths: &Box<Slots<ContextPath>>, from: u32, to: u32) -> found: Option<Box<Slots<u32>>> reads(paths) {
-  doc "The child indices that lead from the context with serial from down to the one with serial to, read from paths by following parents up from to; None when from is not to or one of its ancestors.";
+fn relative_steps(paths: &Box<Slots<ContextPath>>, from: u32, to: u32) -> found: Option<Box<Slots<ContextStep>>> reads(paths) {
+  doc "The checked child steps from stable context slot from down to stable slot to, read from paths by following parents up from to; None when from is not to or one of its ancestors.";
   let count = paths^.inner.len;
-  let upward = box_slots_new::<u32>(capacity: 16_u64);
+  let upward = box_slots_new::<ContextStep>(capacity: 16_u64);
   let at = cvt::<u32, u64>(to);
   let goal = cvt::<u32, u64>(from);
   for (step in 0_u64..count) {
+    if at < count {
+      if paths^.inner[at].live {
+      } else {
+        return None<Box<Slots<ContextStep>>>();
+      }
+    } else {
+      return None<Box<Slots<ContextStep>>>();
+    }
     if at == goal {
       let length = upward.inner.len;
       let reserve = imin(length, 4096_u64);
-      let steps = box_slots_new::<u32>(capacity: reserve);
+      let steps = box_slots_new::<ContextStep>(capacity: reserve);
       for (back in 0_u64..length) {
         let top = length - 1_u64;
         let k = top - back;
         let index = upward.inner[k];
-        let pushed = push_item::<u32>(cell: &steps, value: index, ceiling: item_ceiling);
+        let pushed = push_item::<ContextStep>(cell: &steps, value: index, ceiling: item_ceiling);
       }
-      return Some<Box<Slots<u32>>>(value: move steps);
+      return Some<Box<Slots<ContextStep>>>(value: move steps);
     }
     if at < count {
     } else {
-      return None<Box<Slots<u32>>>();
+      return None<Box<Slots<ContextStep>>>();
     }
     let place = paths^.inner[at];
     if place.parent == no_index {
-      return None<Box<Slots<u32>>>();
+      return None<Box<Slots<ContextStep>>>();
     }
-    let pushed = push_item::<u32>(cell: &upward, value: place.child, ceiling: item_ceiling);
+    let slot = cvt.wrap::<u64, u32>(at);
+    let route = ContextStep(parent: place.parent, child: place.child, slot: slot);
+    let pushed = push_item::<ContextStep>(cell: &upward, value: route, ceiling: item_ceiling);
     set at = cvt::<u32, u64>(place.parent);
   }
-  return None<Box<Slots<u32>>>();
+  return None<Box<Slots<ContextStep>>>();
 }
 
-fn take_prepared(fresh: &Paragraph, old: &Context, steps: &[u32], depth: u64, paragraph: u64, changed: &[Bool], root: u32) -> taken: Bool reads(steps), reads(changed), writes(fresh), writes(old) {
+fn take_prepared(fresh: &Paragraph, old: &Context, steps: &[ContextStep], depth: u64, paragraph: u64, changed: &[Bool], root: u32) -> taken: Bool reads(steps), reads(changed), writes(fresh), writes(old) {
   doc "Descends from old by steps from depth on to the context holding the old paragraph at index paragraph; when its pieces equal fresh's piece by piece, its own style is fresh's and no style either reads changed, swaps its prepared text, runs, run styles, marks and shaped text into fresh, which then needs no preparation. The runs keep the font group identifiers of the style run that prepared them, which only shaping reads; the shaped faces they chose stay right because the groups are equal in value.";
   let count = steps^.len;
   if depth < count {
-    let child = cvt::<u32, u64>(steps^[depth]);
+    let child = cvt::<u32, u64>(steps^[depth].child);
     if child < old^.children.inner.len {
+      let route = steps^[depth];
+      if old^.slot != route.parent {
+        return False();
+      }
+      if old^.children.inner[child].slot != route.slot {
+        return False();
+      }
       let next = depth +sat 1_u64;
       let taken = take_prepared(fresh: fresh, old: &old^.children.inner[child], steps: steps, depth: next, paragraph: paragraph, changed: changed, root: root);
       return taken;
@@ -537,7 +543,7 @@ fn first_text_node(paragraph: &Paragraph) -> node: u32 reads(paragraph) {
   return no_index;
 }
 
-fn reuse_prepared(fresh: &Context, old_root: &Context, base: &[u32], from: u32, old_units: &Box<Array<TextUnit>>, paths: &Box<Slots<ContextPath>>, changed: &[Bool], root: u32) -> reused: u64 reads(base), reads(old_units), reads(paths), reads(changed), writes(fresh), writes(old_root) {
+fn reuse_prepared(fresh: &Context, old_root: &Context, base: &[ContextStep], from: u32, old_units: &Box<Array<TextUnit>>, paths: &Box<Slots<ContextPath>>, changed: &[Bool], root: u32) -> reused: u64 reads(base), reads(old_units), reads(paths), reads(changed), writes(fresh), writes(old_root) {
   doc "For each paragraph of fresh and of the contexts below it, finds the old paragraph its first text node's unit names, inside the old context with serial from that base leads to from old_root, and takes its preparation when it is the same input (take_prepared); a paragraph that takes none is marked for preparation. Returns the paragraphs that took one. The loop is sequential: each iteration swaps into an old paragraph the compiler cannot prove apart from another iteration's.";
   let reused = 0_u64;
   let count = fresh^.paragraphs.inner.len;
@@ -559,12 +565,12 @@ fn reuse_prepared(fresh: &Context, old_root: &Context, base: &[u32], from: u32, 
             let tail_length = tail.inner.len;
             let total = base_length +sat tail_length;
             let reserve = imin(total, 4096_u64);
-            let steps = box_slots_new::<u32>(capacity: reserve);
+            let steps = box_slots_new::<ContextStep>(capacity: reserve);
             for (k in 0_u64..base_length) {
-              let pushed = push_item::<u32>(cell: &steps, value: base^[k], ceiling: item_ceiling);
+              let pushed = push_item::<ContextStep>(cell: &steps, value: base^[k], ceiling: item_ceiling);
             }
             for (k in 0_u64..tail_length) {
-              let pushed = push_item::<u32>(cell: &steps, value: tail.inner[k], ceiling: item_ceiling);
+              let pushed = push_item::<ContextStep>(cell: &steps, value: tail.inner[k], ceiling: item_ceiling);
             }
             let paragraph = cvt::<u32, u64>(held.paragraph);
             let made = steps.inner.len;
@@ -649,17 +655,24 @@ fn keep_outputs(from: &Context, to: &Context) -> result: unit reads(from), write
   return unit;
 }
 
-fn place_rebuilt(context: &Context, steps: &[u32], depth: u64, built: &Context) -> result: Result<unit, LayoutError> reads(steps), writes(context), writes(built) {
-  doc "Descends from context by the child indices in steps from depth on, swaps built with the context they lead to, and marks every context on the way back up, as mark_path does.";
+fn place_rebuilt(context: &Context, steps: &[ContextStep], depth: u64, built: &Context) -> result: Result<unit, LayoutError> reads(steps), writes(context), writes(built) {
+  doc "Descends from context by the checked parent, child and context slots in steps from depth on, swaps built with the context they lead to, and marks every context on the way back up, as mark_path does.";
   let count = steps^.len;
   if depth >= count {
     keep_outputs(from: context, to: built);
     swap(first: context, second: built);
     return Ok<unit, LayoutError>(value: unit);
   }
-  let child = cvt::<u32, u64>(steps^[depth]);
+  let child = cvt::<u32, u64>(steps^[depth].child);
   if child < context^.children.inner.len {
   } else {
+    return inconsistent::<unit>();
+  }
+  let route = steps^[depth];
+  if context^.slot != route.parent {
+    return inconsistent::<unit>();
+  }
+  if context^.children.inner[child].slot != route.slot {
     return inconsistent::<unit>();
   }
   let next = depth +sat 1_u64;
@@ -668,14 +681,98 @@ fn place_rebuilt(context: &Context, steps: &[u32], depth: u64, built: &Context) 
   if was {
   } else {
     set context^.marked_children = context^.marked_children +sat 1_u32;
-    set context^.marked_child = steps^[depth];
+    set context^.marked_child = steps^[depth].child;
   }
   set context^.dirty = True();
   return Ok<unit, LayoutError>(value: unit);
 }
 
+fn live_context(paths: &Box<Slots<ContextPath>>, serial: u32) -> live: Bool reads(paths) {
+  let at = cvt::<u32, u64>(serial);
+  if at < paths^.inner.len {
+    return paths^.inner[at].live;
+  }
+  return False();
+}
+
+fn retire_tree(context: &Context, paths: &Box<Slots<ContextPath>>) -> result: unit reads(context), writes(paths) {
+  doc "Clears only the directory slots owned by the removed subtree.";
+  let at = cvt::<u32, u64>(context^.slot);
+  if at < paths^.inner.len {
+    let no = False();
+    set paths^.inner[at] = ContextPath(live: no, parent: no_index, child: no_index);
+  }
+  let count = context^.children.inner.len;
+  for (k in 0_u64..count) {
+    retire_tree(context: &context^.children.inner[k], paths: paths);
+  }
+  return unit;
+}
+
+fn retire_at(context: &Context, steps: &[ContextStep], depth: u64, paths: &Box<Slots<ContextPath>>) -> result: Result<unit, LayoutError> reads(context), reads(steps), writes(paths) {
+  let count = steps^.len;
+  if depth >= count {
+    retire_tree(context: context, paths: paths);
+    return Ok<unit, LayoutError>(value: unit);
+  }
+  let route = steps^[depth];
+  let child = cvt::<u32, u64>(route.child);
+  if child < context^.children.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  if context^.slot != route.parent {
+    return inconsistent::<unit>();
+  }
+  if context^.children.inner[child].slot != route.slot {
+    return inconsistent::<unit>();
+  }
+  let next = depth +sat 1_u64;
+  let retired = propagate retire_at(context: &context^.children.inner[child], steps: steps, depth: next, paths: paths);
+  return Ok<unit, LayoutError>(value: unit);
+}
+
+fn retain_routes(layout: &Layout, paths: &Box<Slots<ContextPath>>, uses: &Box<Array<StyleUse>>, routes: &Box<Slots<StyleRoute>>) -> result: Result<unit, LayoutError> reads(layout), reads(paths), writes(uses), writes(routes) {
+  doc "Copies surviving explicit uses without reading retained context payloads. Dense directory copying is migration support, not a local splice.";
+  let nodes = uses^.inner.len;
+  let total = layout^.routes.inner.len;
+  for (n in 0_u64..nodes) {
+    if n < layout^.uses.inner.len {
+      let cursor = layout^.uses.inner[n].head;
+      for (step in 0_u64..total) {
+        if cursor == no_index {
+          break;
+        }
+        let at = cvt::<u32, u64>(cursor);
+        if at < layout^.routes.inner.len {
+        } else {
+          return inconsistent::<unit>();
+        }
+        let held = layout^.routes.inner[at];
+        let live = live_context(paths: paths, serial: held.serial);
+        if live {
+          let next = routes^.inner.len;
+          if next < 4294967295_u64 {
+          } else {
+            return too_large::<unit>();
+          }
+          let head = uses^.inner[n].head;
+          let route = StyleRoute(serial: held.serial, structural: held.structural, block: held.block, paragraph: held.paragraph, owner: held.owner, next: head);
+          let pushed = propagate push_or_fail::<StyleRoute>(cell: routes, value: route);
+          set uses^.inner[n].head = cvt::<u64, u32>(next);
+        }
+        set cursor = held.next;
+      }
+      if cursor != no_index {
+        return inconsistent::<unit>();
+      }
+    }
+  }
+  return Ok<unit, LayoutError>(value: unit);
+}
+
 fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) {
-  doc "Builds again the context of the nearest element at or above parent that establishes one, from the walk's state as it entered that context, keeps every other context, takes the preparation of each unchanged paragraph from the old context, then records the layout's text units and paths again and marks the new context and its ancestors for update. Every check runs before the layout changes.";
+  doc "Builds again the context of the nearest element at or above parent that establishes one, from the walk's state as it entered that context, keeps every other context, takes the preparation of each unchanged paragraph from the old context, publishes fresh context slots and exact text/style routes for the replacement while retaining outside identities, and marks its ancestors for update. Refusal checks and replacement route construction precede preparation transfer and publication.";
   let none = StructureCounts(contexts: 0_u64, paragraphs: 0_u64, reused: 0_u64);
   set layout^.last_structure = none;
   let nodes = document^.nodes.inner.len;
@@ -691,8 +788,6 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
   } else {
     return inconsistent::<unit>();
   }
-  let serial_of = box_array_filled::<u32>(count: nodes, value: no_index);
-  let numbered = fill_serials(context: &layout^.root, next: 0_u32, serial_of: &serial_of);
   let at = cvt::<u32, u64>(parent.index);
   let element = nodes;
   let serial = no_index;
@@ -700,8 +795,8 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
     if at >= nodes {
       break;
     }
-    let held = if at < serial_of.inner.len {
-      give serial_of.inner[at];
+    let held = if at < layout^.context_of.inner.len {
+      give layout^.context_of.inner[at];
     } else {
       give no_index;
     }
@@ -759,51 +854,69 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
   } else {
     give no_index;
   }
-  let replaced = contexts_at(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64);
+  let (replaced, replaced_paragraphs) = contexts_at(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64);
   let (fresh_contexts, fresh_paragraphs) = count_tree(context: &built);
   let kept_contexts = layout^.contexts -sat replaced;
   let total_contexts = kept_contexts +sat fresh_contexts;
-  let fits = total_contexts < 4294967294_u64;
-  let within = total_contexts <= item_ceiling;
+  let directory_size = layout^.paths.inner.len +sat fresh_contexts;
+  let fits = directory_size < 4294967294_u64;
+  let within = directory_size <= item_ceiling;
   let recordable = band(fits, within);
   if recordable {
   } else {
     return too_large::<unit>();
   }
-  let reused = reuse_prepared(fresh: &built, old_root: &layout^.root, base: &base.inner[0_u64..base_count], from: serial, old_units: &layout^.text_units, paths: &layout^.paths, changed: changed, root: root);
-  mark_fresh(context: &built);
-  let placed = propagate place_rebuilt(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64, built: &built);
-  let (contexts, paragraphs) = count_tree(context: &layout^.root);
+  let paths = box_slots_new::<ContextPath>(capacity: directory_size);
+  let previous_paths = layout^.paths.inner.len;
+  for (k in 0_u64..previous_paths) {
+    let place = layout^.paths.inner[k];
+    let copied = propagate push_or_fail::<ContextPath>(cell: &paths, value: place);
+  }
+  let retired = propagate retire_at(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64, paths: &paths);
   let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
   let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);
-  let reserve = imin(contexts, item_ceiling);
-  let paths = box_slots_new::<ContextPath>(capacity: reserve);
-  let unused = unused_style();
-  let uses = box_array_filled::<StyleUse>(count: nodes, value: unused);
-  let root_node = if 0_u64 < traversal^.elements.inner.len {
-    give traversal^.elements.inner[0_u64].index;
-  } else {
-    give no_index;
-  }
-  let recorded = propagate record_tree(context: &layout^.root, parent: no_index, child: 0_u32, paths: &paths, listing: &listing, uses: &uses, root: root_node);
-  record_skipped(walk: &walk, listing: &listing);
-  let previous = layout^.text_units.inner.len;
-  let kept_skips = imin(previous, nodes);
-  for (k in 0_u64..kept_skips) {
-    if k < listing.inner.len {
-      let was_skipped = layout^.text_units.inner[k].serial == skipped_text;
-      let unread = listing.inner[k].serial == no_index;
-      let keep = band(was_skipped, unread);
+  let context_of = box_array_filled::<u32>(count: nodes, value: no_index);
+  for (k in 0_u64..nodes) {
+    if k < layout^.text_units.inner.len {
+      let held = layout^.text_units.inner[k];
+      let live = live_context(paths: &paths, serial: held.serial);
+      let skipped = held.serial == skipped_text;
+      let keep = bor(live, skipped);
       if keep {
-        set listing.inner[k].serial = skipped_text;
+        set listing.inner[k] = held;
+      }
+    }
+    if k < layout^.context_of.inner.len {
+      let held = layout^.context_of.inner[k];
+      let live = live_context(paths: &paths, serial: held);
+      if live {
+        set context_of.inner[k] = held;
       }
     }
   }
+  let unused = unused_style();
+  let uses = box_array_filled::<StyleUse>(count: nodes, value: unused);
+  let routes = box_slots_new::<StyleRoute>(capacity: 0_u64);
+  let retained = propagate retain_routes(layout: layout, paths: &paths, uses: &uses, routes: &routes);
+  let old_slot = cvt::<u32, u64>(serial);
+  if old_slot < layout^.paths.inner.len {
+  } else {
+    return inconsistent::<unit>();
+  }
+  let old_path = layout^.paths.inner[old_slot];
+  let recorded = propagate record_tree(context: &built, parent: old_path.parent, child: old_path.child, paths: &paths, listing: &listing, uses: &uses, routes: &routes, context_of: &context_of, root: root);
+  record_skipped(walk: &walk, listing: &listing);
+  let reused = reuse_prepared(fresh: &built, old_root: &layout^.root, base: &base.inner[0_u64..base_count], from: serial, old_units: &layout^.text_units, paths: &layout^.paths, changed: changed, root: root);
+  mark_fresh(context: &built);
+  let placed = propagate place_rebuilt(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64, built: &built);
   set layout^.text_units = move listing;
   set layout^.uses = move uses;
+  set layout^.routes = move routes;
+  set layout^.context_of = move context_of;
   set layout^.paths = move paths;
-  set layout^.contexts = contexts;
-  set layout^.paragraphs = paragraphs;
+  set layout^.contexts = total_contexts;
+  let kept_paragraphs = layout^.paragraphs -sat replaced_paragraphs;
+  set layout^.paragraphs = kept_paragraphs +sat fresh_paragraphs;
   set layout^.dirty = True();
   let counts = StructureCounts(contexts: fresh_contexts, paragraphs: fresh_paragraphs, reused: reused);
   set layout^.last_structure = counts;

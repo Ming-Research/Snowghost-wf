@@ -200,7 +200,7 @@ fn new_context(kind: u8, style: StyleRef) -> made: Context pure {
   let no = False();
   let space = Space(available: 0_i32, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
   let never = Space(available: laid_never, basis_width: 0_i32, basis_height: -1_i32, forced_width: -1_i32, forced_height: -1_i32, shrink: no);
-  return Context(kind: kind, natural: natural_object, style: style, flow: move flow, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no, restyled_block: no_index, restyled_blocks: 0_u32, entered: move entered, left: move left);
+  return Context(slot: no_index, kind: kind, natural: natural_object, style: style, flow: move flow, blocks: move blocks, paragraphs: move paragraphs, children: move children, rows: move rows, columns: move columns, cells: move cells, captions: move captions, fragments: move fragments, splits: move splits, column_map: move column_map, space: space, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, viewport_origin: no, min_content: 0_i32, max_content: 0_i32, intrinsic_known: no, ratio_width: 0_i32, ratio_height: 0_i32, dirty: no, laid: never, flow_at: no_index, block: no_index, beside: no, content_raw: 0_i32, baseline_entry: no_index, has_out: no, intrinsic_basis: 0_i32, definite_free: no, marked_paragraphs: 0_u32, marked_paragraph: no_index, marked_children: 0_u32, marked_child: no_index, intrinsic_held: no, held_min: 0_i32, held_max: 0_i32, flow_end: 0_i32, naturals: move naturals, restyled: no, restyled_block: no_index, restyled_blocks: 0_u32, entered: move entered, left: move left);
 }
 
 fn new_open(style: StyleRef) -> made: Open pure {
@@ -2654,7 +2654,7 @@ fn count_tree(context: &Context) -> (contexts: u64, paragraphs: u64) reads(conte
 }
 
 fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) -> result: unit reads(context), writes(listing) {
-  doc "Records, for each text node whose data a paragraph of context reads (a Bytes piece with a node), the context's serial, the paragraph-local piece offset and the paragraph in listing; consecutive pieces of one node in one paragraph extend its count.";
+  doc "Records, for each text node whose data a paragraph of context reads (a Bytes piece with a node), the context's stable directory slot, the paragraph-local piece offset and the paragraph in listing; consecutive pieces of one node in one paragraph extend its count.";
   let paragraphs = context^.paragraphs.inner.len;
   let known = listing^.inner.len;
   for (p in 0_u64..paragraphs) {
@@ -2705,35 +2705,51 @@ fn record_units(context: &Context, serial: u32, listing: &Box<Array<TextUnit>>) 
   return unit;
 }
 
-fn record_tree(context: &Context, parent: u32, child: u32, paths: &Box<Slots<ContextPath>>, listing: &Box<Array<TextUnit>>, uses: &Box<Array<StyleUse>>, root: u32) -> result: Result<unit, LayoutError> reads(context), writes(paths), writes(listing), writes(uses) {
-  doc "Gives context the next serial of a preorder walk of the owned tree, its position in paths, recording its parent's serial and its index among its parent's children, records the text nodes its paragraphs read (record_units) and where it reads elements' styles (record_uses), then does the same for its children in order. TooLarge past no_index contexts.";
+fn record_tree(context: &Context, parent: u32, child: u32, paths: &Box<Slots<ContextPath>>, listing: &Box<Array<TextUnit>>, uses: &Box<Array<StyleUse>>, routes: &Box<Slots<StyleRoute>>, context_of: &Box<Array<u32>>, root: u32) -> result: Result<unit, LayoutError> writes(context), writes(paths), writes(listing), writes(uses), writes(routes), writes(context_of) {
+  doc "Publishes an unpublished subtree in fresh directory slots; retained contexts are never passed here. Records checked parent/child links, text units, explicit style routes and establishing-element lookup.";
+  if context^.slot != no_index {
+    return inconsistent::<unit>();
+  }
   let next = paths^.inner.len;
-  let small = next < 4294967294_u64;
-  if small {
+  if next < 4294967294_u64 {
   } else {
     return too_large::<unit>();
   }
   let serial = cvt::<u64, u32>(next);
-  let place = ContextPath(parent: parent, child: child);
+  let yes = True();
+  let place = ContextPath(live: yes, parent: parent, child: child);
   let pushed = propagate push_or_fail::<ContextPath>(cell: paths, value: place);
+  set context^.slot = serial;
+  let style = context^.style;
+  let own = bnot(style.anonymous);
+  let element = style.pseudo == no_pseudo;
+  let named = style.element != root_element;
+  let plain = band(own, element);
+  let established = band(plain, named);
+  if established {
+    let at = cvt::<u32, u64>(style.element);
+    if at < context_of^.inner.len {
+      if context_of^.inner[at] == no_index {
+        set context_of^.inner[at] = serial;
+      }
+    }
+  }
   record_units(context: context, serial: serial, listing: listing);
-  record_uses(context: context, serial: serial, uses: uses, root: root);
+  let used = propagate record_uses(context: context, serial: serial, uses: uses, routes: routes, root: root);
   let children = context^.children.inner.len;
   for (k in 0_u64..children) {
     let narrow = k < 4294967295_u64;
     if narrow {
       let index = cvt::<u64, u32>(k);
-      let recorded = propagate record_tree(context: &context^.children.inner[k], parent: serial, child: index, paths: paths, listing: listing, uses: uses, root: root);
+      let recorded = propagate record_tree(context: &context^.children.inner[k], parent: serial, child: index, paths: paths, listing: listing, uses: uses, routes: routes, context_of: context_of, root: root);
     }
   }
   return Ok<unit, LayoutError>(value: unit);
 }
 
 fn unused_style() -> made: StyleUse pure {
-  doc "The uses of an element the tree does not read.";
-  let no = False();
-  let made = StyleUse(serial: no_index, structural: no, first: 0_u32, end: 0_u32, owner: no_index, block: no_index, shared: no);
-  return made;
+  doc "The empty list of style routes.";
+  return StyleUse(head: no_index);
 }
 
 fn use_element(style: StyleRef, root: u32) -> element: u32 pure {
@@ -2744,49 +2760,36 @@ fn use_element(style: StyleRef, root: u32) -> element: u32 pure {
   return style.element;
 }
 
-fn note_use(uses: &Box<Array<StyleUse>>, style: StyleRef, root: u32, serial: u32, structural: Bool, block: u32, paragraph: u32) -> result: unit writes(uses) {
-  doc "Records that the context serial reads style's element, for its geometry when structural, as the style of its block block unless it is no_index (a second block makes it structural), and in paragraph unless it is no_index; a second context marks the element shared.";
+fn note_use(uses: &Box<Array<StyleUse>>, routes: &Box<Slots<StyleRoute>>, style: StyleRef, root: u32, serial: u32, structural: Bool, block: u32, paragraph: u32, owner: Bool) -> result: Result<unit, LayoutError> writes(uses), writes(routes) {
+  doc "Adds an explicit context, block or paragraph use to the element's list. Repeated reads by one paragraph share its route; contexts with the same supplier keep separate routes.";
   let element = use_element(style: style, root: root);
   let at = cvt::<u32, u64>(element);
   if at < uses^.inner.len {
   } else {
-    return unit;
+    return Ok<unit, LayoutError>(value: unit);
   }
-  let held = uses^.inner[at];
-  if held.serial == no_index {
-    set uses^.inner[at].serial = serial;
-    set uses^.inner[at].structural = structural;
-    set uses^.inner[at].block = block;
-    if paragraph != no_index {
-      set uses^.inner[at].first = paragraph;
-      set uses^.inner[at].end = paragraph +sat 1_u32;
-    }
-    return unit;
-  }
-  if held.serial != serial {
-    set uses^.inner[at].shared = True();
-    return unit;
-  }
-  set uses^.inner[at].structural = bor(held.structural, structural);
-  if block != no_index {
-    if held.block == no_index {
-      set uses^.inner[at].block = block;
-    } else if held.block != block {
-      set uses^.inner[at].structural = True();
+  let head = uses^.inner[at].head;
+  let previous = cvt::<u32, u64>(head);
+  if previous < routes^.inner.len {
+    let held = routes^.inner[previous];
+    let same_context = held.serial == serial;
+    let same_paragraph = held.paragraph == paragraph;
+    let has_paragraph = paragraph != no_index;
+    let same = band(same_context, same_paragraph);
+    let duplicate = band(same, has_paragraph);
+    if duplicate {
+      return Ok<unit, LayoutError>(value: unit);
     }
   }
-  if paragraph != no_index {
-    let empty = held.first == held.end;
-    if empty {
-      set uses^.inner[at].first = paragraph;
-      set uses^.inner[at].end = paragraph +sat 1_u32;
-    } else {
-      set uses^.inner[at].first = imin(held.first, paragraph);
-      let after = paragraph +sat 1_u32;
-      set uses^.inner[at].end = imax(held.end, after);
-    }
+  let next = routes^.inner.len;
+  if next < 4294967295_u64 {
+  } else {
+    return too_large::<unit>();
   }
-  return unit;
+  let route = StyleRoute(serial: serial, structural: structural, block: block, paragraph: paragraph, owner: owner, next: head);
+  let pushed = propagate push_or_fail::<StyleRoute>(cell: routes, value: route);
+  set uses^.inner[at].head = cvt::<u64, u32>(next);
+  return Ok<unit, LayoutError>(value: unit);
 }
 
 fn piece_style(piece: Piece) -> style: StyleRef pure {
@@ -2813,48 +2816,44 @@ fn piece_style(piece: Piece) -> style: StyleRef pure {
   }
 }
 
-fn record_uses(context: &Context, serial: u32, uses: &Box<Array<StyleUse>>, root: u32) -> result: unit reads(context), writes(uses) {
+fn record_uses(context: &Context, serial: u32, uses: &Box<Array<StyleUse>>, routes: &Box<Slots<StyleRoute>>, root: u32) -> result: Result<unit, LayoutError> reads(context), writes(uses), writes(routes) {
   doc "Records the uses of elements' styles by context serial: its own style as the owner's, its blocks', rows' and columns' as structural, and each paragraph's strut and pieces as that paragraph's; a child context's own style, which places it, is reached through that child's owner use, whose marking marks its parent.";
-  let own = use_element(style: context^.style, root: root);
-  let own_at = cvt::<u32, u64>(own);
-  if own_at < uses^.inner.len {
-    set uses^.inner[own_at].owner = serial;
-  }
   let yes = True();
   let no = False();
+  let owned = propagate note_use(uses: uses, routes: routes, style: context^.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: yes);
   let blocks = context^.blocks.inner.len;
   for (i in 0_u64..blocks) {
     let narrow_block = cvt.wrap::<u64, u32>(i);
-    note_use(uses: uses, style: context^.blocks.inner[i].style, root: root, serial: serial, structural: no, block: narrow_block, paragraph: no_index);
+    let noted = propagate note_use(uses: uses, routes: routes, style: context^.blocks.inner[i].style, root: root, serial: serial, structural: no, block: narrow_block, paragraph: no_index, owner: no);
   }
   let rows = context^.rows.inner.len;
   for (i in 0_u64..rows) {
     let row = context^.rows.inner[i];
-    note_use(uses: uses, style: row.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
-    note_use(uses: uses, style: row.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
+    let noted = propagate note_use(uses: uses, routes: routes, style: row.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
+    let group_noted = propagate note_use(uses: uses, routes: routes, style: row.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
   }
   let columns = context^.columns.inner.len;
   for (i in 0_u64..columns) {
     let column = context^.columns.inner[i];
     if column.styled {
-      note_use(uses: uses, style: column.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
+      let noted = propagate note_use(uses: uses, routes: routes, style: column.style, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
     }
-    note_use(uses: uses, style: column.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index);
+    let noted = propagate note_use(uses: uses, routes: routes, style: column.group, root: root, serial: serial, structural: yes, block: no_index, paragraph: no_index, owner: no);
   }
   let paragraphs = context^.paragraphs.inner.len;
   for (p in 0_u64..paragraphs) {
     let small = p < 4294967295_u64;
     if small {
       let paragraph = cvt::<u64, u32>(p);
-      note_use(uses: uses, style: context^.paragraphs.inner[p].style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph);
+      let noted = propagate note_use(uses: uses, routes: routes, style: context^.paragraphs.inner[p].style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph, owner: no);
       let count = context^.paragraphs.inner[p].pieces.inner.len;
       for (k in 0_u64..count) {
         let style = piece_style(piece: context^.paragraphs.inner[p].pieces.inner[k]);
-        note_use(uses: uses, style: style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph);
+        let noted = propagate note_use(uses: uses, routes: routes, style: style, root: root, serial: serial, structural: no, block: no_index, paragraph: paragraph, owner: no);
       }
     }
   }
-  return unit;
+  return Ok<unit, LayoutError>(value: unit);
 }
 
 fn record_skipped(walk: &Walk, listing: &Box<Array<TextUnit>>) -> result: unit reads(walk), writes(listing) {
@@ -2920,6 +2919,8 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   let listing = box_array_filled::<TextUnit>(count: nodes, value: unreached);
   let reserve = imin(contexts, item_ceiling);
   let paths = box_slots_new::<ContextPath>(capacity: reserve);
+  let routes = box_slots_new::<StyleRoute>(capacity: 0_u64);
+  let context_of = box_array_filled::<u32>(count: nodes, value: no_index);
   let unused = unused_style();
   let uses = box_array_filled::<StyleUse>(count: nodes, value: unused);
   let root_node = if count > 0_u64 {
@@ -2927,12 +2928,12 @@ fn build_boxes(document: &Document, traversal: &Traversal, styles: &Styles, atom
   } else {
     give no_index;
   }
-  let recorded = propagate record_tree(context: &initial, parent: no_index, child: 0_u32, paths: &paths, listing: &listing, uses: &uses, root: root_node);
+  let recorded = propagate record_tree(context: &initial, parent: no_index, child: 0_u32, paths: &paths, listing: &listing, uses: &uses, routes: &routes, context_of: &context_of, root: root_node);
   record_skipped(walk: &walk, listing: &listing);
   let clean = False();
   let none = no_updates();
   let unbuilt = StructureCounts(contexts: 0_u64, paragraphs: 0_u64, reused: 0_u64);
-  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, uses: move uses, paths: move paths, dirty: clean, last_update: none, last_structure: unbuilt);
+  let made = Layout(root: move initial, viewport: viewport, paragraphs: paragraphs, contexts: contexts, text_units: move listing, uses: move uses, routes: move routes, context_of: move context_of, paths: move paths, dirty: clean, last_update: none, last_structure: unbuilt);
   return Ok<Layout, LayoutError>(value: move made);
 }
 

@@ -147,6 +147,22 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **M2 context-route publication still copies dense metadata.**
+  `renderer/layout/structure.wf:structure_changed` retains stable context
+  slots and visits context payloads only along the replacement path and
+  inside the replaced/new subtree, but copies the directory, NodeId-indexed
+  text/context lookup arrays and retained style routes. Context slots append
+  without reuse, leaving tombstones until a full build. Impact: routing
+  work and storage grow with the session, so part 1c is identity correctness,
+  not local splice or bounded-memory evidence. Change: paged route/NodeId
+  storage and targeted use unlink/publication, with checked generations if
+  slots are reused. Reopen in M2 steps 3 and 5; validate retained/new text
+  and style edits after repeated insert/delete, assert stale routes refuse,
+  and count metadata visits and allocations inside the measured edit.
+  Part 1c's compile, byte-identical full dumps and edit-prefix comparisons
+  remain for the primary agent's CI; no local execution was authorized.
+
+
 - **Child-context publication still follows payload-slot order.**
   `renderer/layout/flow.wf:place_context` emits blocks and paragraphs through
   their flow entries, then visits child contexts by slot. Impact: reordering
