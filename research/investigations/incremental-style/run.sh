@@ -21,7 +21,7 @@
 #                                   by NodeId (structure_restyle); fails on a difference
 #   run.sh reach PAGE KIND...      checks B/X restyle completeness (structural_restyle);
 #                                   also accepts PAGE structure, KIND case or full, and
-#                                   PAGE sides, KIND case, for fixtures
+#                                   PAGE sides or ofclause, KIND case, for fixtures
 #   run.sh incremental PAGE KIND... runs the style oracle's incremental check
 #                                   (restyle on a kept state against a full
 #                                   style run after every C and K edit) and
@@ -53,6 +53,7 @@ page_args() {
 	html5) echo "$data/html5.html $ua" ;;
 	structure) echo "$cases/structure-case.html $ua" ;;
 	sides) echo "$cases/sides-case.html $ua" ;;
+	ofclause) echo "$cases/ofclause-case.html $ua" ;;
 	apollo11) echo "$apollo/apollo11.html $ua wikibase.client.init&only=styles&skin=vector-2022=$apollo/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$apollo/apollo11-site.css" ;;
 	*)
 		echo "run.sh: unknown page $1" >&2

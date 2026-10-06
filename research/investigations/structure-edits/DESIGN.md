@@ -259,8 +259,9 @@ The completion review of steps 1 and 2 (a separate read-only agent, at
   changed which div matched and neither was rematched. They are now queued
   with reach_around; `:empty` inside a clause becomes a parent reach beyond
   the edit's parent, which `structural_restyle` answers with a full restyle.
-  `scripts/structure-case` holds the case, and the reach check fails on it
-  at 8e69668.
+  `incremental-style/scripts/ofclause-case` holds the case, apart from
+  `structure-case`, whose bounded sets a full restyle would otherwise hide;
+  the reach check fails on it at 8e69668.
 - **Slot initialization ordered siblings.** Each new element appended to
   every shared row store before the next, an order the insertion does not
   need. Rows now grow once by the subtree's size, the order maps are written
