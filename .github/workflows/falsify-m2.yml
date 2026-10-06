@@ -20,7 +20,7 @@ jobs:
       matrix:
         # reassociate-saturation is out until docs/todo.md's item on it is resolved.
         # Step 4's descendant-scan mutation waits for the visit sentinels (docs/todo.md).
-        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height]
+        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,6 +66,19 @@ jobs:
               swap("renderer/layout/boundary.wf", "  if first.first_baseline != second.first_baseline {\n    return False();\n  }\n  if first.last_baseline != second.last_baseline {\n    return False();\n  }\n", "")
           elif m == "omit-ancestor-height":
               swap("renderer/layout/boundary.wf", "      set context^.blocks.inner[at].height = height;\n", "")
+          elif m == "skip-seam":
+              swap("renderer/layout/splice_boundary.wf", "let reason = splice_boundary(context: context, item: preceding_item, removing: no, visits: visits);", "let reason = 0_u32;")
+              swap("renderer/layout/splice_boundary.wf", "let reason = splice_boundary(context: context, item: following_item, removing: no, visits: visits);", "let reason = 0_u32;")
+          elif m == "omit-edge":
+              swap("renderer/layout/splice_sequence.wf", "let gap = wide_positive +sat wide_negative;", "let gap = 0_i64;")
+          elif m == "no-sibling-move":
+              swap("renderer/layout/splice_boundary.wf", "let move_y = new_y -sat old_y;", "let move_y = 0_i64;")
+          elif m == "live-count-insert":
+              swap("renderer/layout/splice.wf", "set layout^.paragraphs = kept_paragraphs +sat added_paragraphs;", "set layout^.paragraphs = kept_paragraphs;")
+          elif m == "live-count-remove":
+              swap("renderer/layout/splice.wf", "let kept_paragraphs = layout^.paragraphs -sat lost_paragraphs;", "let kept_paragraphs = layout^.paragraphs;")
+          elif m == "lose-text-route":
+              swap("renderer/layout/splice_publish.wf", "route_write::<TextUnit>(table: &layout^.text_units, at: at, value: text);", "route_write::<TextUnit>(table: &layout^.text_units, at: at, value: absent_text);")
           print("applied", m)
           PYEOF
           git diff --stat
@@ -92,4 +105,7 @@ jobs:
             [ "$differs" -gt 0 ] && { echo "detected: $name has $differs incremental differences"; detected=yes; }
             grep -q 'boundary transfer check failed' build/m.err && { echo "detected: $name: boundary transfer check failed"; detected=yes; }
           done
+          build/layout_base edit "$s/block-case.edits" "$s/block-case.html" renderer/style/ua.css 2>/dev/null | grep 'structure path' > build/base.paths
+          build/layout_mutated edit "$s/block-case.edits" "$s/block-case.html" renderer/style/ua.css 2>/dev/null | grep 'structure path' > build/mutated.paths
+          if ! cmp -s build/base.paths build/mutated.paths; then echo "detected: block-case structure paths differ"; diff build/base.paths build/mutated.paths | head -6; detected=yes; fi
           if [ -z "$detected" ]; then echo "NOT DETECTED: ${{ matrix.mutation }}"; exit 1; fi
