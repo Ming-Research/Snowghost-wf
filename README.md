@@ -122,7 +122,9 @@ make check
 names, builds the renderer, runs the
 document arena's self-test and lints the design tree. It runs on Linux
 x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
-`/usr/bin/clang` and, on Linux, LLD. CI runs it on every push.
+`/usr/bin/clang` and, on Linux, LLD; on Linux both are the LLVM major the
+pinned release was built with, which `make toolchain` installs. CI runs it
+on every push.
 
 The oracles are separate `make oracle-*` targets. They need network access
 for their test suites and, for the Chromium oracles, Node.js and Playwright.

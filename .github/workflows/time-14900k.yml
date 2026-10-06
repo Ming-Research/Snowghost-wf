@@ -26,8 +26,18 @@ env:
   EDIT_RUNS: "3"
   CHROMIUM: "1"
   # 1 also times every build's full style and layout stages (style/run.sh
-  # time and layout/run.sh time, best of five, par at four workers).
+  # time and layout/run.sh time, par at four workers).
   FULL: "1"
+  # Rounds of the full-stage timing; each round times every build once in
+  # BUILDS order (one run each), so the builds interleave. Two names for one
+  # ref give the noise control.
+  ROUNDS: "1"
+  # 0 only builds and keeps the drivers. A build's drivers are kept in
+  # ~/snowghost-data/drivers under its commit and pin and reused from there,
+  # so a compiler upgrade can be timed after the runner's clang changed:
+  # whitefootc runs /usr/bin/clang, which must be its release's LLVM major
+  # (whitefoot-kit/downstream.md).
+  TIME: "1"
 
 jobs:
   time:
@@ -101,13 +111,31 @@ jobs:
             git worktree add -q --detach "$tree" "$ref"
             (cd "$tree" && git submodule update -q --init whitefoot-kit design/skill 2>/dev/null || git submodule update -q --init)
             make -s -C "$tree" compiler
-            wfc=$(realpath "$(ls "$tree"/build/whitefoot/*/whitefootc | head -1)")
-            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/drivers/$name-seq")
-            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/drivers/$name-par")
-            echo "$name $ref $(git -C "$tree" rev-parse --short HEAD) $(cat "$tree/whitefoot.pin") seq $(sha256sum < build/drivers/$name-seq | cut -c1-16) par $(sha256sum < build/drivers/$name-par | cut -c1-16)"
+            pin=$(sed -n 's/^release = //p' "$tree/whitefoot.pin")
+            kept=$HOME/snowghost-data/drivers/$(git -C "$tree" rev-parse --short=12 HEAD)-$pin
+            drivers="layout-seq layout-par style_oracle style_oracle_par layout_oracle layout_oracle_par"
+            if [ ! -f "$kept/toolchain.txt" ]; then
+              if grep -q '^toolchain-check' "$tree/whitefoot-kit/whitefoot.mk"; then make -s -C "$tree" toolchain-check; fi
+              wfc=$(realpath "$(ls "$tree"/build/whitefoot/*/whitefootc | head -1)")
+              mkdir -p "$kept.tmp"
+              (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$kept.tmp/layout-seq")
+              (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$kept.tmp/layout-par")
+              for entry in style_oracle layout_oracle; do
+                (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --graph modules.wfg --entry $entry -o "$kept.tmp/$entry")
+                (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --par --graph modules.wfg --entry $entry -o "$kept.tmp/${entry}_par")
+              done
+              { /usr/bin/clang --version | head -1; ld.lld --version | head -1; } > "$kept.tmp/toolchain.txt"
+              rm -rf "$kept"; mv "$kept.tmp" "$kept"
+            fi
+            mkdir -p "$tree/build"
+            cp "$kept/layout-seq" "build/drivers/$name-seq"
+            cp "$kept/layout-par" "build/drivers/$name-par"
+            for d in style_oracle style_oracle_par layout_oracle layout_oracle_par; do cp "$kept/$d" "$tree/build/$d"; done
+            echo "$name $ref $(git -C "$tree" rev-parse --short HEAD) $pin [$(head -1 "$kept/toolchain.txt")] seq $(sha256sum < build/drivers/$name-seq | cut -c1-16) par $(sha256sum < build/drivers/$name-par | cut -c1-16)"
           done
 
       - name: Fonts and edit scripts
+        if: env.TIME == '1'
         run: |
           set -euo pipefail
           make -s oracle-fonts FONT_ROOT="$DEPS/root"
@@ -118,6 +146,7 @@ jobs:
           wc -l build/x5/scripts/*.edits
 
       - name: Time Snowghost
+        if: env.TIME == '1'
         run: |
           set -euo pipefail
           mkdir -p results
@@ -141,7 +170,7 @@ jobs:
           done
 
       - name: Time Chromium
-        if: env.CHROMIUM == '1'
+        if: env.CHROMIUM == '1' && env.TIME == '1'
         run: |
           set -euo pipefail
           data=build/research/concurrency
@@ -159,17 +188,25 @@ jobs:
           done
 
       - name: Time the full stages
-        if: env.FULL == '1'
+        if: env.FULL == '1' && env.TIME == '1'
         run: |
           set -euo pipefail
+          mkdir -p results
           for pair in $BUILDS; do
-            name=${pair%%=*}
-            tree=build/trees/$name
+            tree=build/trees/${pair%%=*}
             mkdir -p "$tree/build/research" && rm -rf "$tree/build/research/concurrency" "$tree/build/fonts"
             cp -R build/research/concurrency "$tree/build/research/"
             cp -R build/fonts "$tree/build/fonts"
-            (cd "$tree" && WORKERS=4 sh research/investigations/style/run.sh time) | tee "results/full-style-$name.txt"
-            (cd "$tree" && WORKERS=4 sh research/investigations/layout/run.sh time) | tee "results/full-layout-$name.txt"
+          done
+          runs=5
+          [ "$ROUNDS" -gt 1 ] && runs=1
+          for round in $(seq "$ROUNDS"); do
+            for pair in $BUILDS; do
+              name=${pair%%=*}
+              tree=build/trees/$name
+              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 sh research/investigations/style/run.sh time) | tee "results/full-style-$name-$round.txt"
+              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 sh research/investigations/layout/run.sh time) | tee "results/full-layout-$name-$round.txt"
+            done
           done
 
       - uses: actions/upload-artifact@v4

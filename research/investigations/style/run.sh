@@ -151,7 +151,7 @@ time_parts() {
 	if [ -n "$lock" ] && [ -z "${WHITEFOOT_CHECK_OWNER:-}" ]; then
 		WHITEFOOT_CHECK_TIMEOUT=${WHITEFOOT_CHECK_TIMEOUT:-43200} exec perl "$lock" style-time sh "$here/run.sh" time "$@"
 	fi
-	build
+	[ -n "${BUILT:-}" ] || build
 	echo "machine: $(uname -srm), $(getconf _NPROCESSORS_ONLN) processors"
 	echo "compiler: $compiler $(sha256sum <"$compiler" | cut -c1-16)"
 	echo "drivers: $(sha256sum <build/style_oracle_par | cut -c1-16) $(sha256sum <build/style_oracle | cut -c1-16)"
