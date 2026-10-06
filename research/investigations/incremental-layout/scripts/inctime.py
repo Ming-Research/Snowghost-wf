@@ -27,6 +27,7 @@ STYLE_COUNTS = re.compile(r'style edit (\d+) prepared \d+ contexts \d+ paragraph
 STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us (\d+)(?: style_us (\d+))?$')
 STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) reused (\d+)$')
 CREATED = re.compile(r'created \d+$')
+STRUCTURE_FALLBACK = re.compile(r'structure fallback (\d+)$')
 INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'X')
 RESTYLED = ('C', 'K', 'B', 'X')
 
@@ -50,6 +51,7 @@ def script_operations(path):
 def read(path, operations, checking=False):
     timed, other, styled, built = {}, {}, {}, {}
     seen, auxiliary, structural = set(), set(), set()
+    fallbacks = set()
     base_count = 0
     created_count = 0
     for line_number, raw in enumerate(open(path), 1):
@@ -75,6 +77,15 @@ def read(path, operations, checking=False):
                 raise ValueError('%s:%d: unexpected structure edit' % (path, line_number))
             structural.add(edit)
             built[edit] = [int(value) for value in structure.groups()[1:]]
+            continue
+        fallback_record = STRUCTURE_FALLBACK.fullmatch(line)
+        if fallback_record:
+            edit = int(fallback_record.group(1))
+            if (edit in fallbacks or edit in seen or
+                    not 1 <= edit <= len(operations) or
+                    operations[edit - 1] not in ('B', 'X')):
+                raise ValueError('%s:%d: unexpected structure fallback' % (path, line_number))
+            fallbacks.add(edit)
             continue
         if CREATED.fullmatch(line):
             created_count += 1
@@ -196,6 +207,9 @@ def main():
     refused = sum(1 for kind in first_other.values() if kind == 'inc refused')
     full = sum(1 for kind in first_other.values() if kind == 'full')
     print('edits timed %d, refused %d, rebuilt %d, runs %d' % (len(times), refused, full, len(runs)))
+    style_fallbacks = sum(1 for path in sys.argv[2:] for line in open(path)
+                          if STRUCTURE_FALLBACK.fullmatch(line.rstrip('\n')))
+    print('structural style fallbacks %d across %d runs' % (style_fallbacks, len(runs)))
     if not times:
         raise ValueError('no edits were timed')
     print('us min %d median %d p90 %d max %d; under 1000 us: %d of %d'
