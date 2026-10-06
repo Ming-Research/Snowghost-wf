@@ -1,287 +1,156 @@
 # Snowghost-wf — agent instructions
 
 Snowghost-wf, Snowghost for short, is a cross-platform renderer for user
-interfaces built with web technology. Its renderer implements a chosen subset
-of the web platform in Whitefoot, with a pipeline meant to be parallel and
-incremental from end to end, and a shell written in Rust hosts it on each
-operating system (the `processes` decision in `design/`). Whitefoot, the
-language and its compiler, is pinned by the compiler release that
-`whitefoot.pin` names, which the build downloads under the rules of the
-`whitefoot-kit/` submodule, and the design tree's lint comes from the
-`design/skill/` submodule of Design-skill.
+interfaces built with web technology: a chosen subset of the web platform
+rendered in Whitefoot by a pipeline that is parallel and incremental end to
+end, hosted on each operating system by a shell written in Rust (the
+`processes` decision in `design/`). The owner-wide agent instructions
+(mbbill/agents_config) apply with this file.
 
-The owner-wide agent instructions, which every Claude and Codex session loads
-(`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`), govern reports, the ledger,
-decision cards, pull requests, completion and the design tree. This file adds
-what is Snowghost's own: its goal, paths, checks, review checklist, merge
-rules and project rules.
+## Goal and priorities
 
-## Project goal
-
-Snowghost exists to serve Whitefoot: it is the large real program that shows
-what Whitefoot gives a renderer and exposes what Whitefoot still lacks. Reach,
-as early as possible, renderings and measurements that show whether an
+Snowghost serves Whitefoot: it is the large real program that shows what
+Whitefoot gives a renderer and exposes what Whitefoot still lacks. Reach, as
+early as possible, renderings and measurements that show whether an
 end-to-end parallel and incremental pipeline written in Whitefoot beats the
 engines in use today, then grow to the subset of the web that mainstream
 sites and generated applications need.
 
-When priorities conflict, use this order:
+When priorities conflict:
 
 1. reach the next end-to-end rendering milestone or performance comparison;
 2. render correctly for the subset Snowghost claims, with every safety check
    Whitefoot requires;
 3. keep the implementation understandable and easy to change;
-4. add only the evidence needed to trust the current result; and
+4. add only the evidence needed to trust the current result;
 5. defer robustness, infrastructure and polish that no current milestone
    needs.
 
-Parallelism is maximal, not chosen: every stage keeps only its algorithm's
-true data dependencies and writes all other work in forms Whitefoot proves
-independent, leaving which work runs in parallel, and at what grain, to the
-compiler and runtime (the `pipeline` decision in `design/`). Do not pick a
-coarse unit of parallel work or add an order the computation does not need;
-a sequential step names the dependency that forces it.
+**Parallelism is maximal, not chosen** (the `pipeline` decision): every stage
+keeps only its algorithm's true data dependencies and writes all other work
+in forms Whitefoot proves independent, leaving which work runs in parallel,
+and at what grain, to the compiler and runtime. A sequential step names the
+dependency that forces it.
 
 **Design for parallelism first.** Every choice between alternatives, of a
-stage, an algorithm, a data structure or an interface, starts by writing
-out each candidate's dependencies: which work depends on which result and
-why, and which work is independent. The candidate with the shortest chain of
-true dependencies is preferred, and taking extra or duplicated work to
-shorten that chain is a valid trade. A recommendation that adds an order
-the algorithm does not need, such as a cache or table shared across
-elements, a sequential pass or a global counter, names the dependency that
-forces it or is not recommended. Measured speed decides between candidates
-of equal dependencies, not before.
+stage, an algorithm, a data structure or an interface, starts by writing out
+each candidate's dependencies. The shortest chain of true dependencies is
+preferred, and extra or duplicated work that shortens it is a valid trade. A
+recommendation that adds an order the algorithm does not need, such as a
+cache or table shared across elements, a sequential pass or a global
+counter, names the dependency that forces it or is not recommended. Measured
+speed decides only between candidates of equal dependencies.
 
-## Authority and reading
+## References and evidence
 
-`design/` holds the decisions Snowghost is built on, each with its reason and
-refused alternatives. Work is not planned in a document up front: a selected
-direction gets `research/investigations/<name>/` for its design, measurements
-and rejected alternatives, and its surviving decision goes to the design
-tree. Read only the material relevant to the task, and do not turn research
-into an implied implementation requirement.
+- `design/` holds the decisions Snowghost is built on. A design decision is a
+  choice between viable alternatives that changes rendered behavior, a safety
+  or trust condition, a shared interface or representation, a significant
+  performance commitment or a standing project rule. Read the nodes a change
+  touches and their ancestors before changing code.
+- Work is not planned in a document up front: a selected direction gets
+  `research/investigations/<name>/`, which writes, before measuring, the
+  question, the comparison that could answer it either way and the result
+  that would reject the proposal; its surviving decision goes to the tree.
+  Research is not an implied implementation requirement.
+  An agent writer trial records the model, prompt, context, turns and time of
+  each run, and keeps apart expressibility, the agent's success with the
+  supplied help, composition and cost.
+- The pinned Whitefoot commit defines the language; read it as
+  [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md#reading-the-language)
+  describes. Whitefoot's `docs/patterns.md` lags the language; Snowghost is
+  where current source patterns are tried. Cite the language from the pinned
+  revision, never from Snowghost's code.
+- A claim cites a design-tree decision, an investigation, a measurement with
+  its workload, environment and comparison, or an oracle independent of
+  Snowghost: a test suite, a format's conformance files, a specification's
+  example or a reference renderer's output, never Snowghost's earlier output.
+  Research and PRs may cite a decision as rationale, not as proof of an
+  empirical claim.
+- A performance comparison names its workload, machine, engine versions and
+  settings, and measures every engine under the same conditions; a
+  performance change is attributed with a same-source before-and-after
+  comparison and a falsifier.
+- No site, page, test or benchmark selects a special path in the renderer.
+- Process wording in older artifacts, such as early investigations, is
+  superseded by this file and the owner-wide instructions.
 
-The Whitefoot commit of the release in `whitefoot.pin`, the 12 hex digits
-after `wf-`, defines the language. Read the Whitefoot repository at that
-commit, as [Reading the
-language](whitefoot-kit/downstream.md#reading-the-language) describes. Write
-Whitefoot from its specification `spec/kernel-spec.md`, which is normative,
-the compiler's diagnostics and repairs, and the maintained programs under
-`tests/programs` and `lib/std`, which Whitefoot's gate compiles on every
-change. Its `docs/patterns.md` lags the language and is not a reference;
-Snowghost is where current source patterns are tried. Snowghost never edits
-Whitefoot; see [The Whitefoot boundary](#the-whitefoot-boundary).
+## Design tree
 
-A finished task is not evidence: a claim cites a design-tree decision, an
-investigation, a measurement with its workload, environment and comparison,
-or an oracle independent of Snowghost such as a test suite, a format's
-conformance files or a reference renderer's output. Process wording in any
-historical artifact, such as an older investigation, is superseded by the
-rules below.
-
-## How work proceeds
-
-A *material choice* changes rendered behavior, a safety or trust condition, a
-shared interface or representation, a significant performance commitment or a
-standing project rule; only a material choice between viable alternatives is
-a design decision. Restoring decided behavior or editing prose without
-changing its meaning is routine.
-
-1. **Before starting,** read the affected design-tree nodes and their
-   ancestors, and verify the worktree and PR state on resumption.
-2. **While working,** state why each material choice fits its evidence and
-   record an experiment's criterion before using it to choose. Change the
-   code and the design tree together on a Draft PR, and update what a changed
-   conclusion affects in the same work.
-3. **At completion,** run the [checks](#checks) and, when it applies, the
-   [review](#review). The completion report also names any Whitefoot pin or
-   submodule moved and any Whitefoot gap filed.
-4. **After the owner approves** every decision, write the log entry and mark
-   the PR ready (rule 1 below).
-
-**Verify with observations that could have come out otherwise.** A passing
-result is evidence only if a wrong result would have failed it. Make each new
-check fail once for each way it can fail, and never check a transform against
-its own output. Resolve every commit id, path, count and measurement with a
-tool when you write it. Another agent's or a reviewer's report is a lead to
-verify, not evidence. A green result reached by weakening a requirement does
-not answer the original question.
-
-**Size a run before starting it.** Before any build, test batch,
-measurement or experiment, run the smallest useful sample, time it and look
-at its spread, then choose the scale; repeat or lengthen only where the
-spread is too large to decide. Never open with a run of hours.
-
-A series of dependent PRs is stacked, each on the branch of the one before
-it. Updating a work-branch PR never authorizes a merge into `main`.
-
-**The design tree.** The owner-wide instructions' design-tree part applies,
-with these roles: the live trees are the root node files under `design/`
-other than `log.md`, each with its subdirectory, which the Makefile finds and
-lints; the change log is `design/log.md`, the research record
-`research/investigations/`, the maintained TODO `docs/todo.md`, and the form
-and readiness checks `make design-lint` and `make design-ready`. Both run
-`lint.py` from the `design/skill/` submodule of
-[Design-skill](https://github.com/Ming-Research/Design-skill), which
-Snowghost never edits.
-
-**Investigations.** An investigation decides something. Before measuring,
-write in `research/investigations/<name>/` the question, the comparison that
-could answer it either way and the result that would reject the proposal;
-the surviving decision goes to the tree. Attribute a performance change with
-a same-source before-and-after comparison and a falsifier. An agent writer
-trial keeps apart whether the program can be expressed in Whitefoot, whether
-the tested agent writes it with the supplied help, whether separately written
-modules compose, and whether it meets its cost goal, and records the model,
-prompt, context, turns and time of each run.
+Live trees: the root node files under `design/` other than `log.md`, each
+with its subdirectory, found by the Makefile. Change log: `design/log.md`.
+Research record: `research/investigations/`. Maintained TODO: `docs/todo.md`,
+which also holds Whitefoot requirements. Form and readiness checks:
+`make design-lint` and `make design-ready`, running `lint.py` from the
+`design/skill/` submodule of Design-skill, which Snowghost never edits.
 
 ## Agent roles
 
 - The owner and the primary agent own the architecture: the design tree, the
-  module graph and the Whitefoot module interfaces (`.wfm`), with their
-  contracts and effect rows, and the format the renderer and the shell
-  exchange.
+  module graph, the Whitefoot module interfaces (`.wfm`) with their contracts
+  and effect rows, and the format the renderer and the shell exchange.
 - Implementer agents write module bodies (`.wf`) against those interfaces,
   and the shell's Rust components against that format, in parallel. An
   implementer that finds an interface or the format insufficient reports the
   gap to the primary agent with a minimal example instead of editing it.
-- A separate reviewer agent that did not implement a change reviews it when
-  the [review](#review) calls for one.
-- The primary agent dispatches and supervises implementer and reviewer agents
-  and chooses the model for each kind of task from measured agent writer
-  trials.
 
-## Branch and main boundary
+## Merge rules
 
-These are the complete approval and merge rules:
+1. Work-branch changes need no approval beyond what the owner-wide
+   instructions require. A PR becomes ready only after the owner has approved
+   every decision it needs, recorded in `design/log.md`.
+2. Every merge into `main` requires owner approval of the exact revision.
+3. The exact revision merged into `main` passes `make check` first.
+4. A change that moves `whitefoot.pin` or the `whitefoot-kit/` or
+   `design/skill/` submodule names the revisions it adopts and why; a
+   revision merged into `main` pins commits on those repositories' `main`,
+   for Whitefoot a release `wf-<12 hex>`, never an experiment release.
 
-1. Work-branch changes need no approval, including the design tree, code,
-   tests, gate wiring and documentation, except that new repository-root
-   entries require owner approval. A PR becomes ready only after the owner
-   has approved every decision it needs, including every design-tree change;
-   the approval is recorded in `design/log.md` only then, and
-   `make design-ready` checks the record.
-2. Every change merged into `main` requires owner approval of the exact
-   revision to be merged.
-3. The exact revision merged into `main` must pass `make check` before the
-   merge.
-4. A change that moves the Whitefoot pin (`whitefoot.pin`) or the
-   `whitefoot-kit/` or `design/skill/` submodule names the revisions it
-   adopts and why, and a revision merged into `main` pins commits on those
-   repositories' `main`: for Whitefoot, a release `wf-<12 hex>`, never an
-   experiment release.
-
-**Exact revision** is the complete tree that will enter `main`, the Whitefoot
-pin and the submodules included; if it changes after approval or after its
-successful check, rules 2 and 3 apply to the new revision. No other workflow
-step is an approval or merge precondition.
+The exact revision is the complete tree that will enter `main`, the pin and
+submodules included; if it changes after approval or after its check, rules 2
+and 3 apply again. No other step is a merge precondition. Dependent PRs are
+stacked, each on the branch of the one before it.
 
 ## Checks
 
-- `make check`, the gate, in CI on every push and on the revision to merge.
-  It needs git, Python 3, curl, `/usr/bin/clang`, LLD on Linux and the
-  `design/skill` and `whitefoot-kit` submodules (`git clone
-  --recurse-submodules` or `git submodule update --init`). It downloads the
-  compiler release that `whitefoot.pin` names ([The
-  pin](whitefoot-kit/downstream.md#the-pin)), builds the renderer and runs
-  the design lint; `make check WHITEFOOTC=<path>` uses another compiler
-  instead.
-- `make design-ready` and `make pin-ready`, before marking ready and in CI
-  on ready PRs and main: every design-tree change is approved in the log, and
-  `whitefoot.pin` names no experiment release.
+- `make check`, the gate, in CI on every push: downloads the compiler release
+  `whitefoot.pin` names (Whitefoot-kit's `whitefoot.mk`), builds the renderer,
+  runs the document arena's self-test and lints the design tree. It needs
+  git, Python 3, curl, `/usr/bin/clang`, LLD on Linux and the `design/skill`
+  and `whitefoot-kit` submodules; `make check WHITEFOOTC=<path>` uses another
+  compiler.
+- `make design-ready` and `make pin-ready`, before marking ready and in CI on
+  ready PRs and `main`: every tree change is approved in the log, and the pin
+  names no experiment release.
+- The oracles are the `make oracle-*` targets, outside `make check`.
 
 ## Review
 
-A substantial task gets the owner-wide completion review, and any task gets
-one when the owner asks. A change is substantial when it edits `design/` or
-the renderer-shell format, adds or changes a module interface, or changes
-more code than a small fix; a small fix, a documentation change or a process
-change needs only the checks. The reviewer gets the prompt, the model size
-and the groups in [the review checklist](docs/review-checklist.md#how-to-review),
-and its scope and the findings fixed go in the PR's review section.
+A change that edits `design/` or the renderer-shell format, adds or changes a
+module interface, or changes more code than a small fix gets the owner-wide
+completion review, with the prompt and groups in
+[docs/review-checklist.md](docs/review-checklist.md#how-to-review); other
+changes need only the checks. The review's scope and fixed findings go in the
+PR's review section.
 
-## The Whitefoot boundary
+## Whitefoot
 
-- Snowghost follows Whitefoot-kit's [downstream
-  rules](whitefoot-kit/downstream.md), which Halo-wf and Firn-wf share: it
-  builds with exactly the release `whitefoot.pin` names ([The
-  pin](whitefoot-kit/downstream.md#the-pin)), a revision bound for `main`
-  pins a release of a commit on Whitefoot's `main` ([Main pins a main
-  release](whitefoot-kit/downstream.md#main-pins-a-main-release)), and a
-  change Snowghost needs in Whitefoot is made in Whitefoot and tried on a
-  work branch with an experiment pin or `make WHITEFOOTC=<path>` ([Trying an
-  unmerged Whitefoot
-  change](whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
-- When a missing Whitefoot feature would bend Snowghost's implementation or
-  architecture, add the feature to Whitefoot instead of working around it,
-  and record the gap, as its minimal semantic example, under *Whitefoot
-  requirements* in `docs/todo.md` until Whitefoot resolves it. A problem that
-  belongs to the renderer alone is fixed in Snowghost, not by generalizing
-  the language.
-- A change to the shared rules or to `whitefoot.mk` is made once in
-  Whitefoot-kit; Snowghost adopts it by moving the `whitefoot-kit/` submodule
-  under rule 4.
+Snowghost follows [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md):
+the pin, experiment pins for an unmerged Whitefoot change, Whitefoot gaps
+recorded under *Whitefoot requirements* in `docs/todo.md`, and upgrades.
+When an upgrade changes the compiler's code generation, its PR compares the
+renderer's full-build and per-edit costs before and after on the same source
+and machine. A change to the shared rules is made in Whitefoot-kit and adopted
+by moving the submodule.
 
-## Upgrading Whitefoot
+## Reports
 
-An upgrade follows [Upgrading
-Whitefoot](whitefoot-kit/downstream.md#upgrading-whitefoot). When the
-compiler's code generation changed, Snowghost's pull request also compares
-the renderer's full-build and per-edit costs before and after the move on the
-same source and machine, as [Investigations](#how-work-proceeds) requires of
-a performance change.
+A completion report also names any Whitefoot pin or submodule moved and any
+Whitefoot gap filed.
 
-## Code and tests
+## Documents
 
-- Snowghost's implementation rules are its design decisions in `design/`;
-  read the nodes a change touches and their ancestors before changing code.
-- Correctness is judged by an oracle independent of Snowghost: the relevant
-  test suite, a format's conformance files, a specification's example or a
-  reference renderer's output, never Snowghost's own earlier output.
-- No site, page, test or benchmark selects a special path in the renderer.
-- A performance comparison names its workload, machine, engine versions and
-  settings, and measures every engine under the same conditions.
-- Never delete, disable, narrow or unwire a test or check merely to make
-  `make check` green. A deliberately retired test leaves an honest technical
-  explanation in the same change.
-
-## Repository structure and hygiene
-
-The repository root and every established directory are a curated, closed
-set. Follow this by judgment and keep moving.
-
-- Do not add a repository-root entry without owner approval. Put new material
-  in the existing directory that owns its kind; if none fits, ask.
-- Every new file, directory, script or document earns its place before it is
-  created: name what it serves, its home and the condition under which it is
-  removed.
-- No bulk dumps. A script ships wired to a caller; a document ships into an
-  existing home and is kept current or deleted.
-- Prefer native tooling; a new script must justify why the native path cannot
-  do the job.
-- Supersede in place: when new material replaces old, update, merge or delete
-  the old in the same change.
-- Repository artifacts, identifiers, comments, diagnostics, fixtures, test
-  names and file names use English.
-- Each document keeps its role: `README.md` introduces and navigates, this
-  file holds the goal, authority, process and rules, `design/` the decisions
-  and their log, `docs/review-checklist.md` the review items, `docs/todo.md`
-  open defects and Whitefoot requirements until resolved,
-  `research/investigations/` questions, experiments and results, and the PR
-  description the current change. None narrates editing history.
-- A claim cites the evidence [Authority and reading](#authority-and-reading)
-  names; Whitefoot's language is cited from the pinned revision, never from
-  Snowghost's code. Research and PRs may cite a decision as rationale, not as
-  proof of an empirical claim.
-
-## Communication
-
-Describe renderer and language work with precise, neutral technical wording:
-name the concrete rule, failure and expected behavior, and report material
-risks accurately.
-
-## Data safety
-
-Preserve unrelated user changes in a dirty worktree. Never discard, overwrite
-or rewrite work outside the requested change boundary.
+`README.md` introduces and navigates; this file holds the goal and project
+rules; `design/` the decisions and their log; `docs/review-checklist.md` the
+review items; `docs/todo.md` open defects and Whitefoot requirements until
+resolved; `research/investigations/` questions, experiments and results.
