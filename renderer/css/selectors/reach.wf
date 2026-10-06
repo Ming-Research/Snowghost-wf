@@ -12,10 +12,14 @@ const role_nested: u8 = 3_u8;
 
 const role_counted: u8 = 4_u8;
 
+const role_position: u8 = 5_u8;
+
+const role_empty: u8 = 6_u8;
+
 const reach_around: u8 = 15_u8;
 
 struct InstrRole {
-  doc "What one simple selector contributes to class reaches: nothing, a class (atom), an attribute selector on the class attribute, a selector-list argument (the alternatives start..end), or an :nth-child or :nth-last-child of-clause, which counts siblings on both sides.";
+  doc "What one simple selector contributes to feature reaches: nothing, a class (atom), an attribute selector on the class attribute, a selector-list argument (the alternatives start..end), an :nth-child or :nth-last-child of-clause, which counts siblings on both sides, a position pseudo-class, or :empty.";
   kind: u8;
   atom: Atom;
   start: u32;
@@ -23,7 +27,7 @@ struct InstrRole {
 }
 
 fn role_of(instr: Instr) -> role: InstrRole pure {
-  doc "Classifies one simple selector for class_reaches.";
+  doc "Classifies one simple selector for feature_reaches.";
   let none_atom = Atom(index: 0_u32);
   let nothing = InstrRole(kind: role_none, atom: none_atom, start: 0_u32, end: 0_u32);
   match instr {
@@ -44,13 +48,13 @@ fn role_of(instr: Instr) -> role: InstrRole pure {
     }
     NthChild(a: av, b: bv, of_start: first, of_end: last) => {
       if first == no_of_clause {
-        return nothing;
+        return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
       }
       return InstrRole(kind: role_counted, atom: none_atom, start: first, end: last);
     }
     NthLastChild(a: av, b: bv, of_start: first, of_end: last) => {
       if first == no_of_clause {
-        return nothing;
+        return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
       }
       return InstrRole(kind: role_counted, atom: none_atom, start: first, end: last);
     }
@@ -76,31 +80,31 @@ fn role_of(instr: Instr) -> role: InstrRole pure {
       return nothing;
     }
     Empty() => {
-      return nothing;
+      return InstrRole(kind: role_empty, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     FirstChild() => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     LastChild() => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     OnlyChild() => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     FirstOfType() => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     LastOfType() => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     OnlyOfType() => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     NthOfType(..) => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     NthLastOfType(..) => {
-      return nothing;
+      return InstrRole(kind: role_position, atom: none_atom, start: 0_u32, end: 0_u32);
     }
     Link() => {
       return nothing;
@@ -150,7 +154,7 @@ fn role_of(instr: Instr) -> role: InstrRole pure {
   }
 }
 
-fn push_reach(out: &Box<Slots<ClassReach>>, value: ClassReach) -> pushed: Bool writes(out) {
+fn push_reach(out: &Box<Slots<FeatureReach>>, value: FeatureReach) -> pushed: Bool writes(out) {
   doc "Appends value, growing out by doubling from 16 while at most array_growth_limit; False when it is full.";
   let length = out^.inner.len;
   let capacity = out^.inner.cap;
@@ -301,7 +305,7 @@ fn alternative_subject(list: &SelectorList, atoms: &AtomTable, alt: AltEntry) ->
   return key;
 }
 
-fn class_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassReach>>) -> complete: Bool reads(list), reads(atoms), writes(out) {
+fn feature_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<FeatureReach>>) -> complete: Bool reads(list), reads(atoms), writes(out) {
   doc "Appends one reach per class selector and per attribute selector on the class attribute in list's top-level alternatives that style something, with the reach of its compound and the alternative's subject key; a class inside a selector-list argument, at any depth, reaches as nested_reaches composes it. An of-clause of :nth-child or :nth-last-child appends one reach_all entry for every class. False when out or the work list is full, and then the reaches appended are not all of them.";
   let start = cvt::<u32, u64>(list^.top_start);
   let count = alternative_count(list: list);
@@ -350,6 +354,13 @@ fn class_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassRe
         let reach = compound_reach(list: list, alt: alt, position: position);
         match compound_entry(list: list, position: position) {
           Some(value: compound) => {
+            let joined = sibling_joined(compound: compound);
+            if joined {
+              let single_word = False();
+              let sibling = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, subject: key, generated: generated);
+              let placed = push_reach(out: out, value: sibling);
+              set complete = band(complete, placed);
+            }
             let simple_first = cvt::<u32, u64>(compound.simple_start);
             let simple_end = cvt::<u32, u64>(compound.simple_end);
             for (k in simple_first..simple_end) {
@@ -377,23 +388,37 @@ fn class_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassRe
   return complete;
 }
 
-fn add_role(out: &Box<Slots<ClassReach>>, ranges: &Box<Slots<u64>>, atoms: &AtomTable, role: InstrRole, reach: u8, key: SubjectKey, generated: Bool) -> pushed: Bool reads(atoms), writes(out), writes(ranges) {
-  doc "Appends what one simple selector contributes: a class's reach, an every-class reach for the class attribute, a reach_all entry for an of-clause, or its argument's alternatives to ranges for nested_reaches.";
+fn add_role(out: &Box<Slots<FeatureReach>>, ranges: &Box<Slots<u64>>, atoms: &AtomTable, role: InstrRole, reach: u8, key: SubjectKey, generated: Bool) -> pushed: Bool reads(atoms), writes(out), writes(ranges) {
+  doc "Appends what one simple selector contributes: a class's reach, an every-class reach for the class attribute, a reach_all entry and a children reach for an of-clause, a children reach for a position pseudo-class, a parent reach for :empty, or its argument's alternatives to ranges for nested_reaches.";
   if role.kind == role_class {
     let hash = atom_hash(atoms: atoms, atom: role.atom);
     let single = False();
-    let made = ClassReach(every: single, hash: hash, reach: reach, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_class, every: single, hash: hash, reach: reach, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
   let all_words = True();
+  let single_word = False();
   if role.kind == role_class_attribute {
-    let made = ClassReach(every: all_words, hash: 0_u64, reach: reach, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_class, every: all_words, hash: 0_u64, reach: reach, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
   if role.kind == role_counted {
-    let made = ClassReach(every: all_words, hash: 0_u64, reach: reach_all, subject: key, generated: generated);
+    let made = FeatureReach(feature: feature_class, every: all_words, hash: 0_u64, reach: reach_all, subject: key, generated: generated);
+    let pushed = push_reach(out: out, value: made);
+    let position = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, subject: key, generated: generated);
+    let placed = push_reach(out: out, value: position);
+    let both = band(pushed, placed);
+    return both;
+  }
+  if role.kind == role_position {
+    let made = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, subject: key, generated: generated);
+    let pushed = push_reach(out: out, value: made);
+    return pushed;
+  }
+  if role.kind == role_empty {
+    let made = FeatureReach(feature: feature_parent, every: single_word, hash: 0_u64, reach: reach, subject: key, generated: generated);
     let pushed = push_reach(out: out, value: made);
     return pushed;
   }
@@ -402,6 +427,27 @@ fn add_role(out: &Box<Slots<ClassReach>>, ranges: &Box<Slots<u64>>, atoms: &Atom
     return pushed;
   }
   return True();
+}
+
+fn sibling_joined(compound: Compound) -> joined: Bool pure {
+  doc "Whether a sibling combinator joins compound to the compound on its left, so that which element precedes the one compound matches decides the match.";
+  match compound.combinator {
+    Start() => {
+      return False();
+    }
+    Descendant() => {
+      return False();
+    }
+    Child() => {
+      return False();
+    }
+    NextSibling() => {
+      return True();
+    }
+    SubsequentSibling() => {
+      return True();
+    }
+  }
 }
 
 fn compose(inner: u8, outer: u8) -> reach: u8 pure {
@@ -415,7 +461,7 @@ fn compose(inner: u8, outer: u8) -> reach: u8 pure {
   return reach_around;
 }
 
-fn nested_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassReach>>, ranges: &Box<Slots<u64>>, from: u64, key: SubjectKey, generated: Bool) -> complete: Bool reads(list), reads(atoms), writes(out), writes(ranges) {
+fn nested_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<FeatureReach>>, ranges: &Box<Slots<u64>>, from: u64, key: SubjectKey, generated: Bool) -> complete: Bool reads(list), reads(atoms), writes(out), writes(ranges) {
   doc "Walks the argument alternatives queued in ranges from index from, queueing their own arguments in turn, and appends for every class selector and class-attribute selector in them the reach of its compound within the argument composed with the reach of the compound holding the argument (compose), or reach_all for an of-clause. Each argument is queued once, so the walk ends within the list's number of alternatives.";
   let limit = list^.alts.inner.len +sat 1_u64;
   let cursor = from;
@@ -453,6 +499,13 @@ fn nested_reaches(list: &SelectorList, atoms: &AtomTable, out: &Box<Slots<ClassR
         let reach = compose(inner: inner, outer: outer);
         match compound_entry(list: list, position: position) {
           Some(value: compound) => {
+            let joined = sibling_joined(compound: compound);
+            if joined {
+              let single_word = False();
+              let sibling = FeatureReach(feature: feature_children, every: single_word, hash: 0_u64, reach: reach, subject: key, generated: generated);
+              let placed = push_reach(out: out, value: sibling);
+              set complete = band(complete, placed);
+            }
             let simple_first = cvt::<u32, u64>(compound.simple_start);
             let simple_end = cvt::<u32, u64>(compound.simple_end);
             for (k in simple_first..simple_end) {
