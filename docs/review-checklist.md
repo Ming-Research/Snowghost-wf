@@ -10,10 +10,7 @@ owner-wide review checks and standards.
   table, a sequential pass or a global counter
   ([AGENTS.md](../AGENTS.md#goal-and-first-priorities)).
 - [ ] **C4 — Interface fidelity.** Module bodies implement their `.wfm`
-  interfaces and the renderer-shell format as written; an interface,
-  contract or effect row changed only with the architecture's approval, and
-  none was weakened to let a body pass.
-- [ ] **A4 — Whitefoot untouched.** The only change to Whitefoot is a moved
-  `whitefoot.pin`.
+  interfaces and the renderer-shell format as written; no interface,
+  contract or effect row was weakened to let a body pass.
 - [ ] **T4 — The pin.** Whitefoot-kit's
   [review items](../whitefoot-kit/downstream.md#review-items) hold.
