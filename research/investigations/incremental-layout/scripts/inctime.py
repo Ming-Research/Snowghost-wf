@@ -15,6 +15,8 @@ a filter. Raw dumps and the separate style diagnostics are accepted only
 in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
+Structural path records distinguish local splices from reason-coded fallbacks.
+A complete legacy log may omit them; a partial path set is invalid.
 Historical logs may omit the entire boundary-count suffix. Current logs
 must supply all five fields together; timings retain and compare those
 counts, and reject mixed old/new timing records within one run.
@@ -33,6 +35,7 @@ STYLE_TIME = re.compile(r'style edit (\d+) delta_us (\d+) picks_us (\d+) full_us
 STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) reused (\d+)$')
 CREATED = re.compile(r'created \d+$')
 STRUCTURE_FALLBACK = re.compile(r'structure fallback (\d+)$')
+STRUCTURE_PATH = re.compile(r'structure path (\d+) splice ([01]) reason (\d+)$')
 INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'X')
 RESTYLED = ('C', 'K', 'B', 'X')
 
@@ -57,6 +60,7 @@ def read(path, operations, checking=False):
     timed, other, styled, built = {}, {}, {}, {}
     seen, auxiliary, structural = set(), set(), set()
     fallbacks = set()
+    paths = {}
     base_count = 0
     created_count = 0
     for line_number, raw in enumerate(open(path), 1):
@@ -82,6 +86,17 @@ def read(path, operations, checking=False):
                 raise ValueError('%s:%d: unexpected structure edit' % (path, line_number))
             structural.add(edit)
             built[edit] = [int(value) for value in structure.groups()[1:]]
+            continue
+        path_record = STRUCTURE_PATH.fullmatch(line)
+        if path_record:
+            edit, local, reason = map(int, path_record.groups())
+            if (edit in paths or edit in seen or
+                    not 1 <= edit <= len(operations) or
+                    operations[edit - 1] not in ('B', 'X')):
+                raise ValueError('%s:%d: unexpected structure path' % (path, line_number))
+            if (local == 1) != (reason == 0) or not 0 <= reason <= 9:
+                raise ValueError('%s:%d: inconsistent splice/fallback reason' % (path, line_number))
+            paths[edit] = [local, reason]
             continue
         fallback_record = STRUCTURE_FALLBACK.fullmatch(line)
         if fallback_record:
@@ -132,6 +147,12 @@ def read(path, operations, checking=False):
         raise ValueError(path + ': a timed style edit lacks its style edit line')
     if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'X')}:
         raise ValueError(path + ': a timed structural edit lacks its structure edit line')
+    if paths:
+        expected = {i for i, kind in enumerate(operations, 1) if kind in ('B', 'X')}
+        if set(paths) != expected:
+            raise ValueError(path + ': partial structural path records')
+        for edit in built:
+            built[edit] += paths[edit]
     return timed, other, styled, built
 
 
@@ -261,6 +282,14 @@ def main():
             print('style_us median %d max %d; style+update us median %d max %d'
                   % (rank(styles, 0.5), max(styles), rank(whole, 0.5), max(whole)))
     if first_built:
+        if all(len(values) == 5 for values in first_built.values()):
+            local = sum(values[3] for values in first_built.values())
+            reasons = {}
+            for values in first_built.values():
+                if values[4]:
+                    reasons[values[4]] = reasons.get(values[4], 0) + 1
+            print('structural layout splices %d, fallbacks %d; reasons %s'
+                  % (local, len(first_built) - local, sorted(reasons.items())))
         names = ['built contexts', 'built paragraphs', 'reused paragraphs']
         for k, name in enumerate(names):
             values = [first_built[edit][k] for edit in first_built]

@@ -638,9 +638,9 @@ fn sequence_payload(sequence: &EntrySequence, slot: u32) -> made: Flow reads(seq
   return missing;
 }
 
-fn sequence_parent(sequence: &EntrySequence, slot: u32, parent: u32) -> result: unit reads(sequence.span), writes(sequence.nodes) {
+fn sequence_parent(sequence: &EntrySequence, slot: u32, parent: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Repairs the parent link of a live index node; empty links require no storage.";
-  let held = sequence_node(sequence: sequence, slot: slot);
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
   if held.live {
     set held.parent = parent;
     sequence_write(sequence: sequence, slot: slot, node: held);
@@ -648,17 +648,17 @@ fn sequence_parent(sequence: &EntrySequence, slot: u32, parent: u32) -> result: 
   return unit;
 }
 
-fn sequence_repair(sequence: &EntrySequence, slot: u32) -> result: unit reads(sequence.span), writes(sequence.nodes) {
+fn sequence_repair(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Repairs topology and reads only the three transfers needed to compose one AVL node.";
-  let held = sequence_node(sequence: sequence, slot: slot);
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
   if held.live {
-    let left_node = sequence_node(sequence: sequence, slot: held.left);
-    let right_node = sequence_node(sequence: sequence, slot: held.right);
+    let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+    let right_node = boundary_node(sequence: sequence, slot: held.right, visits: visits);
     let own_field = True();
     let total_field = False();
-    let left_output = slot_output(pages: &sequence^.nodes, slot: held.left, span: sequence^.span, own: total_field);
-    let right_output = slot_output(pages: &sequence^.nodes, slot: held.right, span: sequence^.span, own: total_field);
-    let own_output = slot_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, own: own_field);
+    let left_output = boundary_output(sequence: sequence, slot: held.left, own: total_field, visits: visits);
+    let right_output = boundary_output(sequence: sequence, slot: held.right, own: total_field, visits: visits);
+    let own_output = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
     let prefix = join_output(left: &left_output, right: &own_output);
     let total = join_output(left: &prefix, right: &right_output);
     let taller = imax(left_node.height, right_node.height);
@@ -669,74 +669,74 @@ fn sequence_repair(sequence: &EntrySequence, slot: u32) -> result: unit reads(se
   return unit;
 }
 
-fn sequence_rotate_left(sequence: &EntrySequence, slot: u32) -> root: u32 reads(sequence.span), writes(sequence.nodes) {
+fn sequence_rotate_left(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> root: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Rotates metadata links left while preserving every stable payload slot and the order of entries.";
-  let base = sequence_node(sequence: sequence, slot: slot);
+  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);
   let pivot_slot = base.right;
-  let pivot = sequence_node(sequence: sequence, slot: pivot_slot);
+  let pivot = boundary_node(sequence: sequence, slot: pivot_slot, visits: visits);
   if pivot.live {
     set base.right = pivot.left;
-    sequence_parent(sequence: sequence, slot: pivot.left, parent: slot);
+    sequence_parent(sequence: sequence, slot: pivot.left, parent: slot, visits: visits);
     set pivot.left = slot;
     set pivot.parent = base.parent;
     set base.parent = pivot_slot;
     sequence_write(sequence: sequence, slot: slot, node: base);
     sequence_write(sequence: sequence, slot: pivot_slot, node: pivot);
-    sequence_repair(sequence: sequence, slot: slot);
-    sequence_repair(sequence: sequence, slot: pivot_slot);
+    sequence_repair(sequence: sequence, slot: slot, visits: visits);
+    sequence_repair(sequence: sequence, slot: pivot_slot, visits: visits);
     return pivot_slot;
   }
   return slot;
 }
 
-fn sequence_rotate_right(sequence: &EntrySequence, slot: u32) -> root: u32 reads(sequence.span), writes(sequence.nodes) {
+fn sequence_rotate_right(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> root: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Rotates metadata links right without reading or moving payloads.";
-  let base = sequence_node(sequence: sequence, slot: slot);
+  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);
   let pivot_slot = base.left;
-  let pivot = sequence_node(sequence: sequence, slot: pivot_slot);
+  let pivot = boundary_node(sequence: sequence, slot: pivot_slot, visits: visits);
   if pivot.live {
     set base.left = pivot.right;
-    sequence_parent(sequence: sequence, slot: pivot.right, parent: slot);
+    sequence_parent(sequence: sequence, slot: pivot.right, parent: slot, visits: visits);
     set pivot.right = slot;
     set pivot.parent = base.parent;
     set base.parent = pivot_slot;
     sequence_write(sequence: sequence, slot: slot, node: base);
     sequence_write(sequence: sequence, slot: pivot_slot, node: pivot);
-    sequence_repair(sequence: sequence, slot: slot);
-    sequence_repair(sequence: sequence, slot: pivot_slot);
+    sequence_repair(sequence: sequence, slot: slot, visits: visits);
+    sequence_repair(sequence: sequence, slot: pivot_slot, visits: visits);
     return pivot_slot;
   }
   return slot;
 }
 
-fn sequence_balance(sequence: &EntrySequence, slot: u32) -> root: u32 reads(sequence.span), writes(sequence.nodes) {
+fn sequence_balance(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> root: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Repairs an AVL insertion/removal ancestor with at most two rotations.";
-  sequence_repair(sequence: sequence, slot: slot);
-  let held = sequence_node(sequence: sequence, slot: slot);
-  let left_node = sequence_node(sequence: sequence, slot: held.left);
-  let right_node = sequence_node(sequence: sequence, slot: held.right);
+  sequence_repair(sequence: sequence, slot: slot, visits: visits);
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  let right_node = boundary_node(sequence: sequence, slot: held.right, visits: visits);
   let right_limit = right_node.height +sat 1_u32;
   if left_node.height > right_limit {
-    let ll = sequence_node(sequence: sequence, slot: left_node.left);
-    let lr = sequence_node(sequence: sequence, slot: left_node.right);
+    let ll = boundary_node(sequence: sequence, slot: left_node.left, visits: visits);
+    let lr = boundary_node(sequence: sequence, slot: left_node.right, visits: visits);
     if lr.height > ll.height {
-      let rotated = sequence_rotate_left(sequence: sequence, slot: held.left);
+      let rotated = sequence_rotate_left(sequence: sequence, slot: held.left, visits: visits);
       set held.left = rotated;
       sequence_write(sequence: sequence, slot: slot, node: held);
     }
-    let rotated = sequence_rotate_right(sequence: sequence, slot: slot);
+    let rotated = sequence_rotate_right(sequence: sequence, slot: slot, visits: visits);
     return rotated;
   }
   let left_limit = left_node.height +sat 1_u32;
   if right_node.height > left_limit {
-    let rl = sequence_node(sequence: sequence, slot: right_node.left);
-    let rr = sequence_node(sequence: sequence, slot: right_node.right);
+    let rl = boundary_node(sequence: sequence, slot: right_node.left, visits: visits);
+    let rr = boundary_node(sequence: sequence, slot: right_node.right, visits: visits);
     if rl.height > rr.height {
-      let rotated = sequence_rotate_right(sequence: sequence, slot: held.right);
+      let rotated = sequence_rotate_right(sequence: sequence, slot: held.right, visits: visits);
       set held.right = rotated;
       sequence_write(sequence: sequence, slot: slot, node: held);
     }
-    let rotated = sequence_rotate_left(sequence: sequence, slot: slot);
+    let rotated = sequence_rotate_left(sequence: sequence, slot: slot, visits: visits);
     return rotated;
   }
   return slot;
@@ -749,37 +749,37 @@ fn sequence_rank(sequence: &EntrySequence, slot: u32) -> rank: u64 reads(sequenc
   return rank;
 }
 
-fn sequence_insert_at(sequence: &EntrySequence, root: u32, rank: u64, added: u32, parent: u32) -> made: u32 reads(sequence.span), writes(sequence.nodes) {
+fn sequence_insert_at(sequence: &EntrySequence, root: u32, rank: u64, added: u32, parent: u32, visits: &BoundaryVisits) -> made: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Inserts a previously allocated stable leaf into an AVL rank path; only index ancestors are visited.";
-  let held = sequence_node(sequence: sequence, slot: root);
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
   if held.live {
   } else {
-    sequence_parent(sequence: sequence, slot: added, parent: parent);
+    sequence_parent(sequence: sequence, slot: added, parent: parent, visits: visits);
     return added;
   }
-  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
   if rank <= left_node.total_count {
-    let inserted = sequence_insert_at(sequence: sequence, root: held.left, rank: rank, added: added, parent: root);
+    let inserted = sequence_insert_at(sequence: sequence, root: held.left, rank: rank, added: added, parent: root, visits: visits);
     set held.left = inserted;
   } else {
     let after_left = rank -sat left_node.total_count;
     let after_self = after_left -sat 1_u64;
-    let inserted = sequence_insert_at(sequence: sequence, root: held.right, rank: after_self, added: added, parent: root);
+    let inserted = sequence_insert_at(sequence: sequence, root: held.right, rank: after_self, added: added, parent: root, visits: visits);
     set held.right = inserted;
   }
   sequence_write(sequence: sequence, slot: root, node: held);
-  let balanced = sequence_balance(sequence: sequence, slot: root);
+  let balanced = sequence_balance(sequence: sequence, slot: root, visits: visits);
   return balanced;
 }
 
-fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: SequenceOutput) -> result: Result<u32, LayoutError> writes(sequence) {
+fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: SequenceOutput, visits: &BoundaryVisits) -> result: Result<u32, LayoutError> writes(sequence), writes(visits) {
   doc "Inserts one new direct entry before a live stable slot, or at end for no_index. A range is a batch of these operations in source order. Earlier payload slots are neither read nor copied.";
   if sequence^.allocated >= 1073741824_u32 {
     let failure = too_large::<u32>();
     return failure;
   }
   if before != no_index {
-    let target = sequence_node(sequence: sequence, slot: before);
+    let target = boundary_node(sequence: sequence, slot: before, visits: visits);
     if target.live {
     } else {
       let inconsistent = LayoutError::Inconsistent();
@@ -787,7 +787,7 @@ fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: Sequ
       return failure;
     }
   }
-  let rank = sequence_rank(sequence: sequence, slot: before);
+  let rank = boundary_rank(sequence: sequence, slot: before, visits: visits);
   sequence_reserve(sequence: sequence);
   let fresh = sequence^.allocated;
   let missing = Flow::Close(block: no_index);
@@ -798,73 +798,73 @@ fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: Sequ
   let missing_node = vacant_node();
   slot_write::<SequenceNode>(pages: &sequence^.nodes, slot: fresh, span: sequence^.span, value: node, missing: missing_node);
   let old_root = sequence^.root;
-  let inserted = sequence_insert_at(sequence: sequence, root: old_root, rank: rank, added: fresh, parent: no_index);
+  let inserted = sequence_insert_at(sequence: sequence, root: old_root, rank: rank, added: fresh, parent: no_index, visits: visits);
   set sequence^.root = inserted;
   set sequence^.allocated = fresh + 1_u32;
   let success = Ok<u32, LayoutError>(value: fresh);
   return success;
 }
 
-fn sequence_extract_first(sequence: &EntrySequence, root: u32) -> (rest: u32, first: u32) reads(sequence.span), writes(sequence.nodes) {
+fn sequence_extract_first(sequence: &EntrySequence, root: u32, visits: &BoundaryVisits) -> (rest: u32, first: u32) reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Detaches the first index node for AVL deletion without reading its payload or changing its stable slot.";
-  let held = sequence_node(sequence: sequence, slot: root);
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
   if held.left == no_index {
-    sequence_parent(sequence: sequence, slot: held.right, parent: held.parent);
+    sequence_parent(sequence: sequence, slot: held.right, parent: held.parent, visits: visits);
     return held.right, root;
   }
-  let (remainder, first) = sequence_extract_first(sequence: sequence, root: held.left);
+  let (remainder, first) = sequence_extract_first(sequence: sequence, root: held.left, visits: visits);
   set held.left = remainder;
   sequence_write(sequence: sequence, slot: root, node: held);
-  let balanced = sequence_balance(sequence: sequence, slot: root);
+  let balanced = sequence_balance(sequence: sequence, slot: root, visits: visits);
   return balanced, first;
 }
 
-fn sequence_remove_at(sequence: &EntrySequence, root: u32, rank: u64) -> made: u32 reads(sequence.span), writes(sequence.nodes) {
+fn sequence_remove_at(sequence: &EntrySequence, root: u32, rank: u64, visits: &BoundaryVisits) -> made: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Removes one AVL leaf by rank, transplanting metadata links at a two-child node while leaving every other payload untouched.";
-  let held = sequence_node(sequence: sequence, slot: root);
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
   if held.live {
   } else {
     return no_index;
   }
-  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
   if rank < left_node.total_count {
-    let remainder = sequence_remove_at(sequence: sequence, root: held.left, rank: rank);
+    let remainder = sequence_remove_at(sequence: sequence, root: held.left, rank: rank, visits: visits);
     set held.left = remainder;
   } else if rank > left_node.total_count {
     let past_left = rank -sat left_node.total_count;
     let past_self = past_left -sat 1_u64;
-    let remainder = sequence_remove_at(sequence: sequence, root: held.right, rank: past_self);
+    let remainder = sequence_remove_at(sequence: sequence, root: held.right, rank: past_self, visits: visits);
     set held.right = remainder;
   } else {
     let vacant = vacant_cursor();
     sequence_write(sequence: sequence, slot: root, node: vacant);
     if held.right == no_index {
-      sequence_parent(sequence: sequence, slot: held.left, parent: held.parent);
+      sequence_parent(sequence: sequence, slot: held.left, parent: held.parent, visits: visits);
       return held.left;
     }
-    let (rest, successor) = sequence_extract_first(sequence: sequence, root: held.right);
-    let replacement = sequence_node(sequence: sequence, slot: successor);
+    let (rest, successor) = sequence_extract_first(sequence: sequence, root: held.right, visits: visits);
+    let replacement = boundary_node(sequence: sequence, slot: successor, visits: visits);
     set replacement.left = held.left;
     set replacement.right = rest;
     set replacement.parent = held.parent;
-    sequence_parent(sequence: sequence, slot: held.left, parent: successor);
-    sequence_parent(sequence: sequence, slot: rest, parent: successor);
+    sequence_parent(sequence: sequence, slot: held.left, parent: successor, visits: visits);
+    sequence_parent(sequence: sequence, slot: rest, parent: successor, visits: visits);
     sequence_write(sequence: sequence, slot: successor, node: replacement);
-    let balanced = sequence_balance(sequence: sequence, slot: successor);
+    let balanced = sequence_balance(sequence: sequence, slot: successor, visits: visits);
     return balanced;
   }
   sequence_write(sequence: sequence, slot: root, node: held);
-  let balanced = sequence_balance(sequence: sequence, slot: root);
+  let balanced = sequence_balance(sequence: sequence, slot: root, visits: visits);
   return balanced;
 }
 
-fn remove(sequence: &EntrySequence, slot: u32) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(sequence.root) {
+fn remove(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(sequence.root), writes(visits) {
   doc "Removes one stable slot, leaving its payload page as a hole. Removing a range repeats this operation over the removed handles; unrelated payloads are untouched.";
-  let held = sequence_node(sequence: sequence, slot: slot);
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
   if held.live {
-    let rank = sequence_rank(sequence: sequence, slot: slot);
+    let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
     let old_root = sequence^.root;
-    let remainder = sequence_remove_at(sequence: sequence, root: old_root, rank: rank);
+    let remainder = sequence_remove_at(sequence: sequence, root: old_root, rank: rank, visits: visits);
     set sequence^.root = remainder;
   }
   return unit;

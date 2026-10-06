@@ -1,0 +1,209 @@
+fn splice_payload(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: Flow reads(sequence.nodes), reads(sequence.payloads), reads(sequence.span), writes(visits) {
+  doc "Opens a direct payload with its live-slot check included in physical index visits; the caller counts its semantic payload operation.";
+  let missing = Flow::Close(block: no_index);
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if held.live {
+    let payload = slot_read::<Flow>(pages: &sequence^.payloads, slot: slot, span: sequence^.span, missing: missing);
+    return payload;
+  }
+  return missing;
+}
+
+fn direct_slot(sequence: &EntrySequence, rank: u64, visits: &BoundaryVisits) -> slot: u32 reads(sequence.nodes), reads(sequence.root), reads(sequence.span), writes(visits) {
+  doc "Selects one direct stable slot by a transient rank, opening only index metadata.";
+  let cursor = sequence^.root;
+  let remaining = rank;
+  for (level in 0_u64..64_u64) {
+    let held = boundary_node(sequence: sequence, slot: cursor, visits: visits);
+    if held.live {
+    } else {
+      return no_index;
+    }
+    let left = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+    if remaining < left.total_count {
+      set cursor = held.left;
+    } else if remaining == left.total_count {
+      return cursor;
+    } else {
+      let preceding = left.total_count +sat 1_u64;
+      set remaining = remaining -sat preceding;
+      set cursor = held.right;
+    }
+  }
+  return no_index;
+}
+
+fn range_output(sequence: &EntrySequence, root: u32, from: u64, until: u64, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
+  doc "Reduces a direct rank interval using cached subtrees, with no payload reads. Only the two interval boundary paths are opened.";
+  let empty = empty_output();
+  if from >= until {
+    return empty;
+  }
+  let node = boundary_node(sequence: sequence, slot: root, visits: visits);
+  if node.live {
+  } else {
+    return empty;
+  }
+  if from >= node.total_count {
+    return empty;
+  }
+  let total_field = False();
+  let own_field = True();
+  if from == 0_u64 {
+    if until >= node.total_count {
+      let total = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+      return total;
+    }
+  }
+  let left = boundary_node(sequence: sequence, slot: node.left, visits: visits);
+  let prefix = range_output(sequence: sequence, root: node.left, from: from, until: until, visits: visits);
+  let through = prefix;
+  if from <= left.total_count {
+    if left.total_count < until {
+      let own = boundary_output(sequence: sequence, slot: root, own: own_field, visits: visits);
+      let joined = join_output(left: &prefix, right: &own);
+      set through = joined;
+    }
+  }
+  let after = left.total_count +sat 1_u64;
+  let right_from = from -sat after;
+  let right_until = until -sat after;
+  let suffix = range_output(sequence: sequence, root: node.right, from: right_from, until: right_until, visits: visits);
+  let output = join_output(left: &through, right: &suffix);
+  return output;
+}
+
+fn splice_edges_equal(first: SequenceOutput, second: SequenceOutput) -> same: Bool pure {
+  doc "The existing step-4 propagation requires unchanged exposed struts and solid content; height and baseline may change.";
+  if first.through {
+    return False();
+  }
+  if second.through {
+    return False();
+  }
+  if first.leading_positive != second.leading_positive {
+    return False();
+  }
+  if first.leading_negative != second.leading_negative {
+    return False();
+  }
+  if first.trailing_positive != second.trailing_positive {
+    return False();
+  }
+  if first.trailing_negative != second.trailing_negative {
+    return False();
+  }
+  return True();
+}
+
+fn splice_edge(prefix: SequenceOutput, own: SequenceOutput) -> origin: i64 pure {
+  doc "Resolves the preceding collapsing edge from both extrema. A leading through prefix shares the owner's first resolved edge.";
+  if prefix.through {
+    return 0_i64;
+  }
+  let positive = imax(prefix.trailing_positive, own.leading_positive);
+  let negative = imin(prefix.trailing_negative, own.leading_negative);
+  let wide_positive = cvt::<i32, i64>(positive);
+  let wide_negative = cvt::<i32, i64>(negative);
+  let gap = wide_positive +sat wide_negative;
+  let origin = prefix.advance +sat gap;
+  return origin;
+}
+
+fn relocate_handle(handle: EntryHandle, block_base: u32, owner: u32, slot: u32) -> made: EntryHandle pure {
+  doc "Rebases only private handles; retained handles and absent sentinels are unchanged.";
+  if handle.slot == no_index {
+    return handle;
+  }
+  if handle.owner == no_index {
+    return EntryHandle(owner: owner, slot: slot);
+  }
+  let parent = handle.owner +sat block_base;
+  return EntryHandle(owner: parent, slot: handle.slot);
+}
+
+fn relocate_output(output: SequenceOutput, block_base: u32, owner: u32, slot: u32) -> made: SequenceOutput pure {
+  doc "Rebases the four handles in one private transfer without changing its geometry or algebra.";
+  let made = output;
+  let first = relocate_handle(handle: output.first_line, block_base: block_base, owner: owner, slot: slot);
+  let last = relocate_handle(handle: output.last_line, block_base: block_base, owner: owner, slot: slot);
+  let first_float = relocate_handle(handle: output.first_float, block_base: block_base, owner: owner, slot: slot);
+  let last_float = relocate_handle(handle: output.last_float, block_base: block_base, owner: owner, slot: slot);
+  set made.first_line = first;
+  set made.last_line = last;
+  set made.first_float = first_float;
+  set made.last_float = last_float;
+  return made;
+}
+
+fn relocate_flow(item: Flow, blocks: u32, paragraphs: u32, children: u32) -> made: Flow pure {
+  doc "Rebases one private payload reference into its context-wide stable pool.";
+  match item {
+    Open(block: b) => {
+      let at = b +sat blocks;
+      return Flow::Open(block: at);
+    }
+    Close(block: b) => {
+      let at = b +sat blocks;
+      return Flow::Close(block: at);
+    }
+    Text(paragraph: p) => {
+      let at = p +sat paragraphs;
+      return Flow::Text(paragraph: at);
+    }
+    Child(context: c) => {
+      let at = c +sat children;
+      return Flow::Child(context: at);
+    }
+    Float(context: c) => {
+      let at = c +sat children;
+      return Flow::Float(context: at);
+    }
+    Out(context: c) => {
+      let at = c +sat children;
+      return Flow::Out(context: at);
+    }
+  }
+}
+
+fn relocate_payloads(pages: &SlotPages<Flow>, blocks: u32, paragraphs: u32, children: u32) -> result: unit writes(pages) {
+  doc "Rebases independent cells of private entry pages, never visiting retained pages.";
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (at in 0_u64..count) {
+        let remapped = relocate_flow(item: values^.inner[at], blocks: blocks, paragraphs: paragraphs, children: children);
+        set values^.inner[at] = remapped;
+      }
+    }
+    Fork(left: left, right: right) => {
+      relocate_payloads(pages: &left^.inner, blocks: blocks, paragraphs: paragraphs, children: children);
+      relocate_payloads(pages: &right^.inner, blocks: blocks, paragraphs: paragraphs, children: children);
+    }
+  }
+  return unit;
+}
+
+fn relocate_nodes(pages: &SlotPages<SequenceNode>, blocks: u32, owner: u32, slot: u32) -> result: unit writes(pages) {
+  doc "Rebases independent private summaries; AVL topology remains owner-local.";
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: values) => {
+      let count = values^.inner.len;
+      for (at in 0_u64..count) {
+        let own = relocate_output(output: values^.inner[at].own, block_base: blocks, owner: owner, slot: slot);
+        let total = relocate_output(output: values^.inner[at].total, block_base: blocks, owner: owner, slot: slot);
+        set values^.inner[at].own = own;
+        set values^.inner[at].total = total;
+      }
+    }
+    Fork(left: left, right: right) => {
+      relocate_nodes(pages: &left^.inner, blocks: blocks, owner: owner, slot: slot);
+      relocate_nodes(pages: &right^.inner, blocks: blocks, owner: owner, slot: slot);
+    }
+  }
+  return unit;
+}

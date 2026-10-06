@@ -1,0 +1,584 @@
+alias atom_find = pkg::base::atom::atom_find;
+alias AtomTable = pkg::base::atom::AtomTable;
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias NodeId = pkg::dom::NodeId;
+alias Styles = pkg::style::Styles;
+alias Traversal = pkg::style::Traversal;
+
+struct SpliceOwner {
+  doc "A DOM parent's single stable block owner in a live formatting context.";
+  serial: u32;
+  block: u32;
+}
+
+struct SpliceInput {
+  doc "Copied owner inputs and stable seam identities; no retained references cross private construction.";
+  owner: u32;
+  before: u32;
+  removed: u32;
+  allocated: u32;
+  style: StyleRef;
+  width: i32;
+  left: i32;
+  local_left: i64;
+  first_edge: i64;
+  basis_height: i32;
+  blocks: u32;
+  paragraphs: u32;
+  children: u32;
+}
+
+struct SplicePlan {
+  doc "A validated owner replacement, private direct-origin writes, and its projected size change. Publication consumes this plan once.";
+  output: SequenceOutput;
+  delta: i32;
+  moves: Box<Array<SpliceMove>>;
+  inserted_y: i64;
+}
+
+fn splice_owner(layout: &Layout, node: NodeId) -> made: SpliceOwner reads(layout) {
+  doc "Resolves a DOM parent through exact context and block style uses, rejecting a parent represented by multiple block uses.";
+  let at = cvt::<u32, u64>(node.index);
+  let context_slot = route_read::<u32>(table: &layout^.context_of, at: at);
+  if context_slot != no_index {
+    return SpliceOwner(serial: context_slot, block: no_index);
+  }
+  let head = route_read::<StyleUse>(table: &layout^.uses, at: at);
+  let cursor = head.head;
+  let found = SpliceOwner(serial: no_index, block: no_index);
+  let limit = layout^.routes.len;
+  for (step in 0_u64..limit) {
+    if cursor == no_index {
+      return found;
+    }
+    let index = cvt::<u32, u64>(cursor);
+    let route = route_read::<StyleRoute>(table: &layout^.routes, at: index);
+    if route.block != no_index {
+      if found.serial != no_index {
+        return SpliceOwner(serial: no_index, block: no_index);
+      }
+      set found = SpliceOwner(serial: route.serial, block: route.block);
+    }
+    set cursor = route.next;
+  }
+  return SpliceOwner(serial: no_index, block: no_index);
+}
+
+fn splice_source(layout: &Layout, node: Option<NodeId>, serial: u32) -> made: Flow reads(layout) {
+  doc "Resolves a sibling or removed node to one direct block, paragraph or child-context payload, using stable directories only.";
+  let absent = Flow::Close(block: no_index);
+  let source = match node {
+    Some(value: present) => {
+      give present;
+    }
+    None() => {
+      return absent;
+    }
+  }
+  let at = cvt::<u32, u64>(source.index);
+  let text = route_read::<TextUnit>(table: &layout^.text_units, at: at);
+  if text.serial == serial {
+    return Flow::Text(paragraph: text.paragraph);
+  }
+  let owner = splice_owner(layout: layout, node: source);
+  if owner.serial == serial {
+    if owner.block != no_index {
+      return Flow::Open(block: owner.block);
+    }
+  }
+  if owner.block == no_index {
+    let directory = cvt::<u32, u64>(owner.serial);
+    let path = route_read::<ContextPath>(table: &layout^.paths, at: directory);
+    if path.live {
+      if path.parent == serial {
+        return Flow::Child(context: path.child);
+      }
+    }
+  }
+  return absent;
+}
+
+fn splice_handle(context: &Context, item: Flow, visits: &BoundaryVisits) -> made: EntryHandle reads(context), writes(visits) {
+  doc "Opens one routed payload and returns its stable owner/entry pair; malformed or non-flow sources cannot alias an entry.";
+  set visits^.entries = visits^.entries +sat 1_u64;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set visits^.blocks = visits^.blocks +sat 1_u64;
+        return EntryHandle(owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot);
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        return EntryHandle(owner: context^.paragraphs.inner[at].block, slot: context^.paragraphs.inner[at].entry_slot);
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        return EntryHandle(owner: context^.children.inner[at].block, slot: context^.children.inner[at].entry_slot);
+      }
+    }
+    Close(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  let absent = absent_handle();
+  return absent;
+}
+
+fn splice_boundary(context: &Context, item: Flow, removing: Bool, visits: &BoundaryVisits) -> reason: u32 reads(context), writes(visits) {
+  doc "Accepts complete block entries and transparent lineless whitespace, refusing mixed inline boundaries and non-neutral removals.";
+  set visits^.entries = visits^.entries +sat 1_u64;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set visits^.blocks = visits^.blocks +sat 1_u64;
+        if removing {
+          if context^.blocks.inner[at].neutral {
+          } else {
+            return 5_u32;
+          }
+        }
+        return 0_u32;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        if removing {
+          if context^.children.inner[at].neutral {
+          } else {
+            return 5_u32;
+          }
+        }
+        return 0_u32;
+      }
+    }
+    Text(paragraph: p) => {
+      if removing {
+        return 3_u32;
+      }
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        let lines = context^.paragraphs.inner[at].lines.inner.len;
+        let marks = context^.paragraphs.inner[at].marks.inner.len;
+        let no_lines = lines == 0_u64;
+        let no_fragments = context^.paragraphs.inner[at].fragments.inner.len == 0_u64;
+        let empty = band(no_lines, no_fragments);
+        if empty {
+          for (m in 0_u64..marks) {
+            let mark = context^.paragraphs.inner[at].marks.inner[m];
+            match mark {
+              Node(..) => {
+              }
+              Open(..) => {
+                return 3_u32;
+              }
+              Close(..) => {
+                return 3_u32;
+              }
+              Atomic(..) => {
+                return 3_u32;
+              }
+            }
+          }
+          return 0_u32;
+        }
+      }
+    }
+    Close(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return 3_u32;
+}
+
+fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVisits) -> reason: u32 reads(context), reads(styles), writes(visits) {
+  doc "Checks step-4's ordinary-context requirements without changing retained marks or geometry.";
+  if context^.kind != ctx_flow {
+    return 2_u32;
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  if frame.columned {
+    return 2_u32;
+  }
+  if context^.local_geometry {
+  } else {
+    return 7_u32;
+  }
+  if context^.definite_free {
+  } else {
+    return 7_u32;
+  }
+  let intrinsic = bor(context^.intrinsic_known, context^.intrinsic_held);
+  let dirty = bor(context^.dirty, context^.restyled);
+  let unavailable = bor(intrinsic, dirty);
+  if unavailable {
+    return 7_u32;
+  }
+  if context^.splits.inner.len > 0_u64 {
+    return 3_u32;
+  }
+  let owns = owns_fragment(style: context^.style);
+  let allowed = if owns {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  }
+  if context^.fragments.inner.len > allowed {
+    return 7_u32;
+  }
+  let total_field = False();
+  let output = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
+  if output.ordinary {
+  } else {
+    return 7_u32;
+  }
+  if output.through {
+    return 7_u32;
+  }
+  if output.travel >= 67108864_i64 {
+    return 7_u32;
+  }
+  if frame.content_top < 0_i32 {
+    return 7_u32;
+  }
+  if frame.content_top >= 67108864_i32 {
+    return 7_u32;
+  }
+  return 0_u32;
+}
+
+fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, before: Flow, removed: Flow, ending: Bool, removing: Bool, styles: &Styles, visits: &BoundaryVisits) -> result: Result<SpliceInput, u32> reads(context), reads(steps), reads(styles), writes(visits) {
+  doc "One checked descent resolves all owner inputs and the two stable seam handles before private construction.";
+  let ready = splice_context_ready(context: context, styles: styles, visits: visits);
+  if ready != 0_u32 {
+    return Err<SpliceInput, u32>(error: ready);
+  }
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      if context^.slot == route.parent {
+        if context^.children.inner[child].slot == route.slot {
+          let next = depth +sat 1_u64;
+          let found = splice_inputs(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, before: before, removed: removed, ending: ending, removing: removing, styles: styles, visits: visits);
+          return move found;
+        }
+      }
+    }
+    return Err<SpliceInput, u32>(error: 1_u32);
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let root_style = context^.style;
+  let wide_left = cvt::<i32, i64>(frame.content_left);
+  let wide_top = cvt::<i32, i64>(frame.content_top);
+  let blocks = cvt.wrap::<u64, u32>(context^.blocks.inner.len);
+  let paragraphs = cvt.wrap::<u64, u32>(context^.paragraphs.inner.len);
+  let children = cvt.wrap::<u64, u32>(context^.children.inner.len);
+  let input = SpliceInput(owner: owner, before: no_index, removed: no_index, allocated: context^.entries.allocated, style: root_style, width: frame.flow_width, left: 0_i32, local_left: wide_left, first_edge: wide_top, basis_height: frame.definite, blocks: blocks, paragraphs: paragraphs, children: children);
+  let total_field = False();
+  let total = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
+  if owner != no_index {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      set visits^.blocks = visits^.blocks +sat 1_u64;
+      let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
+      let output = context^.blocks.inner[at].output;
+      set input.style = snapshot.style;
+      set input.width = snapshot.content_width;
+      set input.left = snapshot.content_left;
+      let local = snapshot.content_left -sat snapshot.inner_x;
+      let wide_local = cvt::<i32, i64>(local);
+      set input.local_left = wide_local;
+      let top = cvt::<i32, i64>(output.top_frame);
+      set input.first_edge = top;
+      set input.allocated = context^.blocks.inner[at].entries.allocated;
+      let owned_total = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: context^.blocks.inner[at].entries.root, own: total_field, visits: visits);
+      set total = owned_total;
+      if output.top_frame == 0_i32 {
+        set input.first_edge = 0_i64;
+      } else {
+        let margin = total.leading_positive +sat total.leading_negative;
+        let wide_margin = cvt::<i32, i64>(margin);
+        set input.first_edge = input.first_edge +sat wide_margin;
+      }
+    } else {
+      return Err<SpliceInput, u32>(error: 1_u32);
+    }
+  } else {
+    let margin = total.leading_positive +sat total.leading_negative;
+    let wide_margin = cvt::<i32, i64>(margin);
+    set input.first_edge = input.first_edge +sat wide_margin;
+  }
+  if ending {
+  } else {
+    let target = splice_handle(context: context, item: before, visits: visits);
+    if target.owner != owner {
+      return Err<SpliceInput, u32>(error: 3_u32);
+    }
+    if target.slot == no_index {
+      return Err<SpliceInput, u32>(error: 3_u32);
+    }
+    set input.before = target.slot;
+  }
+  if removing {
+    let target = splice_handle(context: context, item: removed, visits: visits);
+    if target.owner != owner {
+      return Err<SpliceInput, u32>(error: 3_u32);
+    }
+    if target.slot == no_index {
+      return Err<SpliceInput, u32>(error: 3_u32);
+    }
+    let reason = splice_boundary(context: context, item: removed, removing: removing, visits: visits);
+    if reason != 0_u32 {
+      return Err<SpliceInput, u32>(error: reason);
+    }
+    set input.removed = target.slot;
+  }
+  return Ok<SpliceInput, u32>(value: input);
+}
+
+fn build_splice(document: &Document, styles: &Styles, atoms: &AtomTable, node: NodeId, input: SpliceInput, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, skipped_nodes: &Box<Slots<u32>>) -> result: Result<Context, LayoutError> reads(document), reads(styles), reads(atoms), reads(fonts), reads(picks), writes(skipped_nodes) {
+  doc "Builds only the inserted subtree in private storage. Child contexts and paragraph preparation retain the ordinary independent counted loops; the document walk orders only construction and counter state.";
+  let counters = box_slots_new::<Counter>(capacity: 0_u64);
+  let skipped = box_slots_new::<u32>(capacity: 0_u64);
+  let list_item = match atom_find(table: atoms, name: &list_item_word[0_u64..list_item_word.len]) {
+    Some(value: found) => {
+      give found.index;
+    }
+    None() => {
+      give no_index;
+    }
+  }
+  let walk = Walk(effects: 0_u64, counters: move counters, quote_depth: 0_i32, depth: 0_u64, list_item: list_item, skipped: move skipped);
+  let style = anonymous_of(style: input.style);
+  let fresh = new_context(kind: ctx_flow, style: style);
+  let open = new_open(style: style);
+  let built = propagate walk_element(document: document, styles: styles, atoms: atoms, walk: &walk, node: node, context: &fresh, open: &open);
+  let closed = propagate end_paragraph(context: &fresh, open: &open);
+  let neutral = walk.effects == 0_u64;
+  set fresh.neutral = neutral;
+  finish_tree_sequences(context: &fresh);
+  let no = False();
+  let space = Space(available: input.width, basis_width: input.width, basis_height: input.basis_height, forced_width: input.width, forced_height: input.basis_height, shrink: no);
+  set fresh.space = space;
+  let prepared = prepare_context(context: &fresh, document: document, styles: styles, fonts: fonts, picks: picks);
+  if prepared {
+  } else {
+    let failure = LayoutError::Text();
+    return Err<Context, LayoutError>(error: failure);
+  }
+  lay_out_context(context: &fresh, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  forget_splice_points(context: &fresh);
+  swap(first: skipped_nodes, second: &walk.skipped);
+  return Ok<Context, LayoutError>(value: move fresh);
+}
+
+fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[u32], parent: NodeId, before: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, references_stable: Bool, fonts: &FontSet, picks: &FontPicks) -> result: Result<u32, LayoutError> reads(document), reads(styles), reads(traversal), reads(atoms), reads(changed), reads(fonts), reads(picks), writes(layout) {
+  doc "Attempts a neutral complete-block seam transaction. Zero means published locally; codes 1 owner/route, 2 container, 3 inline seam, 4 generated references, 5 counters/quotes, 6 retained style frontier, 7 boundary dependency, and 8 storage ceiling mean no retained geometry or routing changed and the caller must use structure_changed. Private construction errors also leave retained state untouched.";
+  if references_stable {
+  } else {
+    return Ok<u32, LayoutError>(value: 4_u32);
+  }
+  if document^.nodes.inner.len > item_ceiling {
+    return Ok<u32, LayoutError>(value: 8_u32);
+  }
+  let parent_style = element_ref(element: parent.index);
+  let parent_group = box_of(styles: styles, style: parent_style);
+  if parent_group.display == display_contents {
+    return Ok<u32, LayoutError>(value: 1_u32);
+  }
+  let owner = splice_owner(layout: layout, node: parent);
+  if owner.serial == no_index {
+    return Ok<u32, LayoutError>(value: 1_u32);
+  }
+  let removing = match removed {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give False();
+    }
+  }
+  let inserting = match inserted {
+    Some(..) => {
+      give True();
+    }
+    None() => {
+      give False();
+    }
+  }
+  let same_kind = eeq(removing, inserting);
+  if same_kind {
+    return Ok<u32, LayoutError>(value: 1_u32);
+  }
+  let changes = changed^.len;
+  for (k in 0_u64..changes) {
+    let bare = iand(changed^[k], 2147483647_u32);
+    let at = cvt::<u32, u64>(bare);
+    if at < traversal^.elements.inner.len {
+      let node = traversal^.elements.inner[at];
+      let within = match inserted {
+        Some(value: root) => {
+          let index = cvt::<u32, u64>(node.index);
+          let ancestor = cvt::<u32, u64>(root.index);
+          let inside = inside_element(document: document, node: index, element: ancestor);
+          give inside;
+        }
+        None() => {
+          give False();
+        }
+      }
+      if within {
+      } else {
+        return Ok<u32, LayoutError>(value: 6_u32);
+      }
+    } else {
+      return Ok<u32, LayoutError>(value: 1_u32);
+    }
+  }
+  let steps = propagate path_steps(layout: layout, serial: owner.serial);
+  let depth = steps.inner.len;
+  let ending = match before {
+    Some(..) => {
+      give False();
+    }
+    None() => {
+      give True();
+    }
+  }
+  let before_item = splice_source(layout: layout, node: before, serial: owner.serial);
+  let removed_item = splice_source(layout: layout, node: removed, serial: owner.serial);
+  let visits = no_boundary_visits();
+  let input = match splice_inputs(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: owner.block, before: before_item, removed: removed_item, ending: ending, removing: removing, styles: styles, visits: &visits) {
+    Ok(value: found) => {
+      give found;
+    }
+    Err(error: reason) => {
+      return Ok<u32, LayoutError>(value: reason);
+    }
+  }
+  let private_style = anonymous_of(style: input.style);
+  let skipped_nodes = box_slots_new::<u32>(capacity: 0_u64);
+  let fresh = match inserted {
+    Some(value: node) => {
+      let built = propagate build_splice(document: document, styles: styles, atoms: atoms, node: node, input: input, fonts: fonts, picks: picks, viewport: layout^.viewport, skipped_nodes: &skipped_nodes);
+      give move built;
+    }
+    None() => {
+      let empty = new_context(kind: ctx_flow, style: private_style);
+      set empty.definite_free = True();
+      give move empty;
+    }
+  }
+  let added = empty_output();
+  let item = Flow::Close(block: no_index);
+  if inserting {
+    if fresh.neutral {
+    } else {
+      return Ok<u32, LayoutError>(value: 5_u32);
+    }
+    let total_field = False();
+    let output = boundary_output(sequence: &fresh.entries, slot: fresh.entries.root, own: total_field, visits: &visits);
+    if output.count != 1_u64 {
+      return Ok<u32, LayoutError>(value: 3_u32);
+    }
+    if output.through {
+      return Ok<u32, LayoutError>(value: 7_u32);
+    }
+    let first = splice_payload(sequence: &fresh.entries, slot: fresh.entries.root, visits: &visits);
+    let reason = splice_boundary(context: &fresh, item: first, removing: removing, visits: &visits);
+    if reason != 0_u32 {
+      return Ok<u32, LayoutError>(value: reason);
+    }
+    let remapped_output = relocate_output(output: output, block_base: input.blocks, owner: input.owner, slot: input.allocated);
+    set added = remapped_output;
+    let remapped_item = relocate_flow(item: first, blocks: input.blocks, paragraphs: input.paragraphs, children: input.children);
+    set item = remapped_item;
+  }
+  let new_blocks = layout_pool_fits(base: input.blocks, added: fresh.blocks.inner.len);
+  let new_paragraphs = layout_pool_fits(base: input.paragraphs, added: fresh.paragraphs.inner.len);
+  let new_children = layout_pool_fits(base: input.children, added: fresh.children.inner.len);
+  let first_pools = band(new_blocks, new_paragraphs);
+  let fits = band(first_pools, new_children);
+  if fits {
+  } else {
+    return Ok<u32, LayoutError>(value: 8_u32);
+  }
+  let plan = match splice_plan_at(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, input: input, added: added, removing: removing, visits: &visits) {
+    Ok(value: found) => {
+      give move found;
+    }
+    Err(error: reason) => {
+      return Ok<u32, LayoutError>(value: reason);
+    }
+  }
+  let ready = splice_path_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: input.owner, delta: plan.delta, styles: styles, visits: &visits);
+  if ready {
+  } else {
+    return Ok<u32, LayoutError>(value: 7_u32);
+  }
+  let root = if 0_u64 < traversal^.elements.inner.len {
+    give traversal^.elements.inner[0_u64].index;
+  } else {
+    give no_index;
+  }
+  let skipped_count = skipped_nodes.inner.len;
+  let patch = propagate splice_routes(fresh: &fresh, input: input, serial: owner.serial, document: document, node: inserted, root: root, route_base: layout^.routes.len, path_base: layout^.paths.len, skipped: &skipped_nodes.inner[0_u64..skipped_count]);
+  let removed_nodes = box_slots_new::<u32>(capacity: 0_u64);
+  match removed {
+    Some(value: node) => {
+      let listed = propagate splice_dom_nodes(document: document, node: node, nodes: &removed_nodes);
+    }
+    None() => {
+    }
+  }
+  let (private_contexts, added_paragraphs) = count_tree(context: &fresh);
+  let added_contexts = private_contexts -sat 1_u64;
+  relocate_splice(fresh: &fresh, input: input, y: plan.inserted_y);
+  let (lost_contexts, lost_paragraphs, published_work) = publish_splice_at(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, input: input, fresh: &fresh, item: item, added: added, plan: &plan, removed: removed_item, removing: removing, paths: &layout^.paths, styles: styles, document: document, fonts: fonts, picks: picks, viewport: layout^.viewport);
+  let removed_count = removed_nodes.inner.len;
+  publish_splice_routes(layout: layout, patch: &patch, removed_nodes: &removed_nodes.inner[0_u64..removed_count]);
+  let kept_contexts = layout^.contexts -sat lost_contexts;
+  let kept_paragraphs = layout^.paragraphs -sat lost_paragraphs;
+  set layout^.contexts = kept_contexts +sat added_contexts;
+  set layout^.paragraphs = kept_paragraphs +sat added_paragraphs;
+  let work = add_boundary_visits(first: visits, second: published_work);
+  let contexts = added_contexts +sat depth;
+  let touched = contexts +sat 1_u64;
+  let counts = UpdateCounts(prepared: added_paragraphs, work: work, contexts: touched, paragraphs: added_paragraphs, held_entries: 0_u64, entries: added.events);
+  set layout^.pending_structure = counts;
+  set layout^.last_structure = StructureCounts(contexts: added_contexts, paragraphs: added_paragraphs, reused: 0_u64);
+  return Ok<u32, LayoutError>(value: 0_u32);
+}
+
+fn layout_pool_fits(base: u32, added: u64) -> fits: Bool pure {
+  doc "Checks context-wide append-only payload capacity before any publication.";
+  let wide = cvt::<u32, u64>(base);
+  let total = wide +sat added;
+  let fits = total <= item_ceiling;
+  return fits;
+}
+
+fn forget_splice_points(context: &Context) -> result: unit writes(context) {
+  doc "Neutral construction needs no counter input, but its synthetic checkpoint must never seed a later stateful rebuild. Q86 ascends to the nearest exact enclosing checkpoint instead.";
+  set context^.walk_exact = False();
+  let children = context^.children.inner.len;
+  for (at in 0_u64..children) {
+    forget_splice_points(context: &context^.children.inner[at]);
+  }
+  return unit;
+}

@@ -1,0 +1,364 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+
+fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: SpliceInput, added: SequenceOutput, removing: Bool, visits: &BoundaryVisits) -> result: Result<SplicePlan, u32> reads(context), reads(sequence), writes(visits) {
+  doc "Validates both complete-entry seams and computes the replacement transfer and direct suffix moves privately. Every new origin composes the preceding collapsing edge from its positive and negative extrema.";
+  let selected = if removing {
+    give input.removed;
+  } else {
+    give input.before;
+  }
+  if selected != no_index {
+    let target = boundary_node(sequence: sequence, slot: selected, visits: visits);
+    if target.live {
+    } else {
+      return Err<SplicePlan, u32>(error: 1_u32);
+    }
+  }
+  if removing {
+  } else if sequence^.allocated >= 1073741824_u32 {
+    return Err<SplicePlan, u32>(error: 8_u32);
+  }
+  let rank = boundary_rank(sequence: sequence, slot: selected, visits: visits);
+  let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+  let after = if removing {
+    give rank +sat 1_u64;
+  } else {
+    give rank;
+  }
+  let no = False();
+  if rank > 0_u64 {
+    let previous = rank - 1_u64;
+    let preceding_slot = direct_slot(sequence: sequence, rank: previous, visits: visits);
+    let preceding_item = splice_payload(sequence: sequence, slot: preceding_slot, visits: visits);
+    let reason = splice_boundary(context: context, item: preceding_item, removing: no, visits: visits);
+    if reason != 0_u32 {
+      return Err<SplicePlan, u32>(error: reason);
+    }
+  }
+  if after < root.total_count {
+    let following_slot = direct_slot(sequence: sequence, rank: after, visits: visits);
+    let following_item = splice_payload(sequence: sequence, slot: following_slot, visits: visits);
+    let reason = splice_boundary(context: context, item: following_item, removing: no, visits: visits);
+    if reason != 0_u32 {
+      return Err<SplicePlan, u32>(error: reason);
+    }
+  }
+  let total_field = False();
+  let old = boundary_output(sequence: sequence, slot: sequence^.root, own: total_field, visits: visits);
+  let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
+  let suffix = range_output(sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
+  let joined = join_output(left: &prefix, right: &added);
+  let output = join_output(left: &joined, right: &suffix);
+  let same_edges = splice_edges_equal(first: old, second: output);
+  let ordinary = band(old.ordinary, output.ordinary);
+  let supported = band(same_edges, ordinary);
+  if supported {
+  } else {
+    return Err<SplicePlan, u32>(error: 7_u32);
+  }
+  if output.travel >= 67108864_i64 {
+    return Err<SplicePlan, u32>(error: 7_u32);
+  }
+  let old_lines = old.last_line.slot != no_index;
+  let new_lines = output.last_line.slot != no_index;
+  let same_line_kind = eeq(old_lines, new_lines);
+  if same_line_kind {
+  } else {
+    return Err<SplicePlan, u32>(error: 7_u32);
+  }
+  let wide_delta = output.advance -sat old.advance;
+  let delta = geometry_narrow(value: wide_delta);
+  let added_edge = splice_edge(prefix: prefix, own: added);
+  let inserted_y = input.first_edge +sat added_edge;
+  let count = root.total_count -sat after;
+  if count > item_ceiling {
+    return Err<SplicePlan, u32>(error: 8_u32);
+  }
+  let empty_item = Flow::Close(block: no_index);
+  let empty_move = BoundaryMove(item: empty_item, delta: 0_i64);
+  let empty_visits = no_boundary_visits();
+  let empty_result = SpliceMove(translation: empty_move, visits: empty_visits, supported: no);
+  let moves = box_array_filled::<SpliceMove>(count: count, value: empty_result);
+  for (at in 0_u64..count) {
+    let current_rank = after +sat at;
+    let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined);
+    set moves.inner[at] = movement;
+  }
+  let (movement_visits, movements_supported) = splice_moves_total(moves: &moves.inner[0_u64..count]);
+  let combined = add_boundary_visits(first: visits^, second: movement_visits);
+  set visits^ = combined;
+  if movements_supported {
+  } else {
+    return Err<SplicePlan, u32>(error: 7_u32);
+  }
+  let plan = SplicePlan(output: output, delta: delta, moves: move moves, inserted_y: inserted_y);
+  return Ok<SplicePlan, u32>(value: move plan);
+}
+
+fn splice_plan_at(context: &Context, steps: &[ContextStep], depth: u64, input: SpliceInput, added: SequenceOutput, removing: Bool, visits: &BoundaryVisits) -> result: Result<SplicePlan, u32> reads(context), reads(steps), writes(visits) {
+  doc "Shares one checked path descent for private owner-sequence planning.";
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      if context^.slot == route.parent {
+        if context^.children.inner[child].slot == route.slot {
+          let next = depth +sat 1_u64;
+          let found = splice_plan_at(context: &context^.children.inner[child], steps: steps, depth: next, input: input, added: added, removing: removing, visits: visits);
+          return move found;
+        }
+      }
+    }
+    return Err<SplicePlan, u32>(error: 1_u32);
+  }
+  if input.owner == no_index {
+    let found = splice_sequence_plan(context: context, sequence: &context^.entries, input: input, added: added, removing: removing, visits: visits);
+    return move found;
+  }
+  let owner = cvt::<u32, u64>(input.owner);
+  if owner < context^.blocks.inner.len {
+    let found = splice_sequence_plan(context: context, sequence: &context^.blocks.inner[owner].entries, input: input, added: added, removing: removing, visits: visits);
+    return move found;
+  }
+  return Err<SplicePlan, u32>(error: 1_u32);
+}
+
+fn splice_block_path(context: &Context, styles: &Styles, owner: u32, delta: i32, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(styles), writes(visits) {
+  doc "Preflights ordinary solid ancestors without writing retained counters. Each ancestor depends only on its own width and the propagated size delta.";
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let cursor = owner;
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    if cursor == no_index {
+      return True();
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return False();
+    }
+    set visits^.blocks = visits^.blocks +sat 1_u64;
+    let measured = context^.blocks.inner[at].output;
+    let output = context^.blocks.inner[at].boundary;
+    let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
+    if measured.valid {
+    } else {
+      return False();
+    }
+    if output.ordinary {
+    } else {
+      return False();
+    }
+    if output.through {
+      return False();
+    }
+    let yes = True();
+    let grows = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: frame.definite, lines: yes);
+    let width_kept = snapshot_keeps_width(block: snapshot, styles: styles);
+    let ready = band(grows, width_kept);
+    if ready {
+    } else {
+      return False();
+    }
+    set cursor = snapshot.parent;
+  }
+  return False();
+}
+
+fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, delta: i32, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(steps), reads(styles), writes(visits) {
+  doc "Checks every context and block ancestor before publication. Context constraints may reduce the propagated height delta, but cannot introduce a width, float or intrinsic dependency on this path.";
+  let reason = splice_context_ready(context: context, styles: styles, visits: visits);
+  if reason != 0_u32 {
+    return False();
+  }
+  if depth >= steps^.len {
+    let ready = splice_block_path(context: context, styles: styles, owner: owner, delta: delta, visits: visits);
+    return ready;
+  }
+  let route = steps^[depth];
+  let child = cvt::<u32, u64>(route.child);
+  if child < context^.children.inner.len {
+  } else {
+    return False();
+  }
+  if context^.slot != route.parent {
+    return False();
+  }
+  if context^.children.inner[child].slot != route.slot {
+    return False();
+  }
+  let parent = context^.children.inner[child].block;
+  let slot = context^.children.inner[child].entry_slot;
+  if slot == no_index {
+    return False();
+  }
+  let ready = splice_block_path(context: context, styles: styles, owner: parent, delta: delta, visits: visits);
+  if ready {
+  } else {
+    return False();
+  }
+  let next = depth +sat 1_u64;
+  let below = splice_path_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, delta: delta, styles: styles, visits: visits);
+  return below;
+}
+
+fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Settles a published root through step 4's existing finish operation; legacy natural-position scratch is invalidated for the next reference fallback.";
+  let total_field = False();
+  let after = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  let wide_baseline = after.last_baseline -sat old_root.last_baseline;
+  let baseline_delta = geometry_narrow(value: wide_baseline);
+  if context^.has_baseline {
+    set context^.baseline = context^.baseline +sat baseline_delta;
+  }
+  let no_events = slots_new::<Flow, 0>();
+  let (moved, counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: delta);
+  set context^.boundary_dirty = True();
+  return unit;
+}
+
+fn commit_splice_sequence(sequence: &EntrySequence, input: SpliceInput, item: Flow, added: SequenceOutput, removing: Bool, visits: &BoundaryVisits) -> result: unit writes(sequence), writes(visits) {
+  doc "Publishes one preflighted AVL mutation. The only recoverable insert failures, capacity and stale before-slot, were checked before any retained write.";
+  if removing {
+    remove(sequence: sequence, slot: input.removed, visits: visits);
+  } else {
+    let inserted = insert_before(sequence: sequence, before: input.before, item: item, output: added, visits: visits);
+  }
+  return unit;
+}
+
+fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input: SpliceInput, fresh: &Context, item: Flow, added: SequenceOutput, plan: &SplicePlan, removed: Flow, removing: Bool, paths: &RouteTable<ContextPath>, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (removed_contexts: u64, removed_paragraphs: u64, work: BoundaryVisits) reads(steps), reads(plan), reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(fresh), writes(paths) {
+  doc "Publishes at the checked target, then propagates only along the enclosing context chain using step 4's boundary path. The preflight guarantees every branch before this infallible publication.";
+  let empty_visits = no_boundary_visits();
+  set context^.boundary_visits = empty_visits;
+  let total_field = False();
+  let old_root = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      let before = before_of(context: &context^.children.inner[child]);
+      let next = depth +sat 1_u64;
+      let (lost_contexts, lost_paragraphs, below) = publish_splice_at(context: &context^.children.inner[child], steps: steps, depth: next, input: input, fresh: fresh, item: item, added: added, plan: plan, removed: removed, removing: removing, paths: paths, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+      if child < context^.children.inner.len {
+        let output = context_entry_output(child: &context^.children.inner[child], styles: styles);
+        let delta = context^.children.inner[child].height -sat before.height;
+        let owner = context^.children.inner[child].block;
+        let slot = context^.children.inner[child].entry_slot;
+        propagate_boundary(context: context, owner: owner, slot: slot, output: output, delta: delta);
+        splice_finish(context: context, old_root: old_root, delta: delta, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+        let work = add_boundary_visits(first: below, second: context^.boundary_visits);
+        return lost_contexts, lost_paragraphs, work;
+      }
+    }
+    return 0_u64, 0_u64, empty_visits;
+  }
+  let retired = box_slots_new::<Flow>(capacity: 0_u64);
+  if removing {
+    removed_entries(context: context, item: removed, items: &retired, visits: &context^.boundary_visits);
+  }
+  if input.owner == no_index {
+    commit_splice_sequence(sequence: &context^.entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
+  } else {
+    let at = cvt::<u32, u64>(input.owner);
+    if at < context^.blocks.inner.len {
+      commit_splice_sequence(sequence: &context^.blocks.inner[at].entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
+    }
+  }
+  publish_splice_payloads(context: context, fresh: fresh);
+  let retired_count = retired.inner.len;
+  let (lost_contexts, lost_paragraphs) = retire_splice_payloads(context: context, items: &retired.inner[0_u64..retired_count], paths: paths);
+  let moves = plan^.moves.inner.len;
+  for (at in 0_u64..moves) {
+    apply_boundary_move(context: context, translation: plan^.moves.inner[at].translation);
+  }
+  if input.owner != no_index {
+    let owner = cvt::<u32, u64>(input.owner);
+    if owner < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      let measured = context^.blocks.inner[owner].output;
+      let output = lift_block_output(inside: &plan^.output, measured: measured);
+      let height = measured.height +sat plan^.delta;
+      set context^.blocks.inner[owner].height = height;
+      set context^.blocks.inner[owner].output.height = height;
+      set context^.blocks.inner[owner].boundary = output;
+      let parent = context^.blocks.inner[owner].parent;
+      let slot = context^.blocks.inner[owner].entry_slot;
+      propagate_boundary(context: context, owner: parent, slot: slot, output: output, delta: plan^.delta);
+    }
+  }
+  splice_finish(context: context, old_root: old_root, delta: plan^.delta, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  return lost_contexts, lost_paragraphs, context^.boundary_visits;
+}
+
+struct SpliceMove {
+  doc "One independent suffix computation and its local physical-visit counters; the publication loop consumes only its direct-origin write.";
+  translation: BoundaryMove;
+  visits: BoundaryVisits;
+  supported: Bool;
+}
+
+fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput) -> made: SpliceMove reads(sequence) {
+  doc "Computes one direct sibling's new entering edge independently from cached prefixes. Duplicated logarithmic metadata reads avoid ordering sibling computations.";
+  let visits = no_boundary_visits();
+  let slot = direct_slot(sequence: sequence, rank: rank, visits: &visits);
+  let item = splice_payload(sequence: sequence, slot: slot, visits: &visits);
+  set visits.entries = visits.entries +sat 1_u64;
+  let own_field = True();
+  let own = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: &visits);
+  let supported = True();
+  if own.through {
+    let text = match item {
+      Text(..) => {
+        give True();
+      }
+      Open(..) => {
+        give False();
+      }
+      Child(..) => {
+        give False();
+      }
+      Close(..) => {
+        give False();
+      }
+      Float(..) => {
+        give False();
+      }
+      Out(..) => {
+        give False();
+      }
+    }
+    set supported = text;
+  }
+  let between = range_output(sequence: sequence, root: sequence^.root, from: after, until: rank, visits: &visits);
+  let previous = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: &visits);
+  let preceding = join_output(left: &joined, right: &between);
+  let old_y = splice_edge(prefix: previous, own: own);
+  let new_y = splice_edge(prefix: preceding, own: own);
+  let move_y = new_y -sat old_y;
+  let translation = BoundaryMove(item: item, delta: move_y);
+  return SpliceMove(translation: translation, visits: visits, supported: supported);
+}
+
+fn splice_moves_total(moves: &[SpliceMove]) -> (visits: BoundaryVisits, supported: Bool) reads(moves) {
+  doc "Combines independent suffix results by a balanced reduction; neither geometry computation nor diagnostic aggregation imposes sibling order.";
+  let count = moves^.len;
+  if count == 0_u64 {
+    let empty = no_boundary_visits();
+    let yes = True();
+    return empty, yes;
+  }
+  if count == 1_u64 {
+    let single = moves^[0_u64];
+    return single.visits, single.supported;
+  }
+  let middle = count / 2_u64;
+  let (left_visits, left_supported) = splice_moves_total(moves: &moves^[0_u64..middle]);
+  let (right_visits, right_supported) = splice_moves_total(moves: &moves^[middle..count]);
+  let combined = add_boundary_visits(first: left_visits, second: right_visits);
+  let supported = band(left_supported, right_supported);
+  return combined, supported;
+}

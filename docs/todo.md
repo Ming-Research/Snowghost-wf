@@ -274,20 +274,34 @@ example apart from the renderer code that exposed it
   timing have no additional evidence from this implementation session.
 
 
-- **M2 context-route publication still copies dense metadata.**
-  `renderer/layout/structure.wf:structure_changed` retains stable context
-  slots and visits context payloads only along the replacement path and
-  inside the replaced/new subtree, but copies the directory, NodeId-indexed
-  text/context lookup arrays and retained style routes. Context slots append
-  without reuse, leaving tombstones until a full build. Impact: routing
-  work and storage grow with the session, so part 1c is identity correctness,
-  not local splice or bounded-memory evidence. Change: paged route/NodeId
-  storage and targeted use unlink/publication, with checked generations if
-  slots are reused. Reopen in M2 steps 3 and 5; validate retained/new text
-  and style edits after repeated insert/delete, assert stale routes refuse,
-  and count metadata visits and allocations inside the measured edit.
-  Part 1c's compile, byte-identical full dumps and edit-prefix comparisons
-  remain for the primary agent's CI; no local execution was authorized.
+- **M2 fallback routing and append-only storage still grow with the session.**
+  Step 5 gives text/style/context lookup tables paged storage and publishes
+  only the inserted/removed subtree's routes on the neutral splice path.
+  `structure_changed` still copies logical directories and retained routes
+  on fallback. Context, route and payload slots append without reuse;
+  context-wide `Box<Slots<...>>` payload growth can copy retained storage
+  (Q122 remains open in Whitefoot). Impact: this is not bounded-memory or
+  complete physical-work evidence. Change: resolve Q122 before migrating
+  payload pools, then reclaim retired slots with checked generations if
+  session measurements justify reuse. Reopen with step-5 CI: repeat edits,
+  test retained/new text and styles, check tombstones and measure allocations
+  and full-build cost. No compile, runtime or performance result is supplied
+  by the source-only step-5 implementation.
+
+- **M2 splice frontier and instrumentation remain narrower than final locality.**
+  `structure_splice` refuses changed retained styles (reason 6), changing
+  exposed margin struts, float/intrinsic/definite-height dependencies and
+  other nonordinary boundary state (reason 7). These take the existing
+  context rebuild; they are not successful local splices. New boundary
+  counters cover splice metadata, direct payload operations and AVL repair,
+  but not route-page allocation, private preparation or legacy fallback
+  internals. Impact: green dump comparisons alone cannot establish M2's
+  locality or zero-fallback E1 criterion. Change: extend the step-4 frontier
+  and boundary contract for seams the timed scripts require, add physical
+  route/allocation and earlier-leaf/descendant sentinels, and inspect compiler
+  loop certification for suffix computations and publication scatters.
+  Reopen in step-5 CI with the documented mutations and seq/par runs; defer
+  any locality or performance completion claim until that evidence exists.
 
 
 - **Child-context publication still follows payload-slot order.**

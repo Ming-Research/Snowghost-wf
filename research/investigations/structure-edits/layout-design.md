@@ -6,8 +6,7 @@ This is the layout design and sizing investigation for M2, based on
 `7ee44119358d7b08dc90555ebe7b9275be478bed`, with Whitefoot pinned at
 `f949e676acfa811f96b21afd07f02c06dcd14b51`. It proposes no rendering change.
 Q109 already approves nested flow entries per block; Q104 reopens Q70's
-context-relative suffix move. The implementation is staged below; Q114 A is owner-approved; Q115 below remains an open
-recommendation.
+context-relative suffix move. The implementation is staged below; Q114 A and the neutral complete-block seam Q115 A are owner-approved.
 
 Recommend nested blocks with stable local entry slots, an owner-local
 order/summary index, and a counter-neutral block splice. ecma262's tested
@@ -460,8 +459,8 @@ evidence that Snowghost beats Chromium.
 Choose A, as Q109 directs. Expose a virtual flat iterator for comparison
 with the current walker during migration; do not retain B's additional
 global order representation on every edit. The owner approved local stable slots, an order/summary index and boundary
-outputs (Q114 A). The initial splice's safe scope with explicit fallbacks
-(Q115) remains proposed. Approval does not establish implementation or
+outputs (Q114 A). The owner also approved the initial neutral complete-block seam with explicit
+fallbacks (Q115 A). Approval does not establish implementation or
 measured locality.
 
 ### Ownership and lookup
@@ -684,8 +683,8 @@ Step 1 has paragraph-owned pieces, explicit flow-order/parent queries,
 append-only context identities with checked routes, and explicit paragraph
 style uses. Context rebuilding retires only its subtree and publishes its
 replacement without renumbering retained contexts; dense routing metadata
-copies remain migration support. Stable entry handles, paged route growth
-and local splice publication remain unimplemented. Step 1 is the compiled input to step 2; its validation evidence remains
+copies remain migration support. Stable entry handles arrived in step 3; paged route growth and the neutral
+splice now have the step-5 source described below. Step 1 is the compiled input to step 2; its validation evidence remains
 with the primary agent, and is not a step-2 validation result.
 The step-3 source removes `Context.flow`: each block and the context root
 own an `EntrySequence`. Its stable direct-entry slots and AVL metadata use
@@ -724,11 +723,11 @@ The builder collects direct entries in per-owner pending lists, then seals
 each closed block and context into a balanced sequence in bulk. Typed block, paragraph and
 child-context payload pools remain context-owned migration storage: the
 paged entries contain handles into those pools, not the heavy payloads.
-Physical typed-payload ownership and local route publication remain open;
+Physical typed-payload ownership remains open; step 5 supplies local route publication;
 this source does not claim the complete step-3 ownership contract or M2
 locality. Step 4 has an unvalidated ordinary-path implementation; its wider
-dirty frontier and parallel scatter remain incomplete. Steps 5 onward remain
-unimplemented. Each step lands with
+dirty frontier and parallel scatter remain incomplete. Step 5 now has the source-only neutral splice described below; compilation,
+identity, mutations and performance remain for CI. Step 6 remains unimplemented. Each step lands with
 the full-build and incremental paths producing exactly the same dump,
 including fragment order; a partial performance improvement never permits
 a rendering difference. Line ranges are estimates of changed/added source
@@ -741,7 +740,7 @@ No Whitefoot implementation change is included in the estimates.
 | 2. Make geometry owner-relative | 900–1,500: `flow`, `update`, `columns`, `table`, `flex`, `grid`, `inline`, `module.wfm`, dump checks. Centralize normal/visual/context coordinate conversions; table content origin; anchored fragments/naturals/baselines. Initially stack through the full reference walker and convert resolved outputs. | Byte-identical full dumps, seq and par, including negative margins, relative ancestors, positioned/fixed children, table alignment, split inlines and columns. Add extreme/saturated coordinate cases. Measure placement separately. | Omit one ancestor origin, apply relative displacement twice, shift every nested table descendant, apply a column map before accumulation, or reassociate a saturating sum. Each case must produce a dump difference. |
 | 3. Replace flat ownership with nested indexed sequences | 1,250–2,050: `build`, `flow`, `prep`, `structure`, `style_update`, `update`, `module.wfm`; small item-iterator adapters in `flex`, `grid`, `table`, `columns`. Owner-local balanced order/summary indexes and paged payload slots; stop retaining or rebuilding the flat stream on successful edits. | Same full-build outputs and edit-prefix checks; assert live unit totals against an independent walk; inspect the compiler's certified loops for sibling preparation and child layout. Full-build time is compared with the frozen M1/base source under the same pin, not just with step 2. | Reverse equal-order siblings, treat a float as block-contained, or leave a retained flat-stream rebuild on the edit path. Rendering catches the first two; physical-work counts and a wide/deep synthetic scaling case catch the last. |
 | 4. Block outputs and bounded propagation | 800–1,400: `flow`, `update`, `columns` consumers and focused cases. Ordinary margin transfer composition/prefix; float influence replay; dirty-child frontier; translate only direct clean siblings. Font-size and text edits use this path before a structural splice does. | Generate small margin/empty/marker configurations with varied entering struts and compare the transfer composition with the original entry machine; independently retain Chromium rectangle cases. Every edit remains byte-identical to a fresh build. Report W, A, L, D, F and actual visits, including cached index nodes used to recover prefix state; no earlier entry leaf may be consumed. | Collapse a strut to one scalar, clear an incoming float at a block boundary, stop on equal height with a changed baseline, omit an ancestor-height update, or scan an unchanged descendant. Geometry cases catch state mistakes; instrumented earlier-leaf and unchanged-descendant sentinels catch extra work. |
-| 5. Publish a flow-range splice | 650–1,100: `structure`, `build`, routing/marking helpers, `oracle/layout/edit`, focused scripts. Private subtree build, local sequence swap, seam validation, targeted routing and count deltas, insert and removal. | Three pages' block scripts, `research/investigations/incremental-layout/scripts/block-case.html` and its `.edits` script, focused counter / `:nth-*` / `+` / `~` / float / collapsing-margin / split-inline cases. Compare every prefix with full build and serialized-source reparse, seq and par. Assert an explained refusal leaves the retained tree untouched. After each removal edit, issue another text/font-size edit to catch stale routes. | Disable the structural style frontier, fail to restack P's later siblings, skip a route tombstone/generation check after slot reuse, ignore outgoing counter state, or publish before seam validation. Each mutation must fail; an unexplained `inc refused` is not success. |
+| 5. Publish a flow-range splice | Source-only implementation (the original 650–1,100-line estimate was exceeded): `structure`, `build`, routing/marking helpers, `oracle/layout/edit`, focused scripts. Private subtree build, local sequence swap, seam validation, targeted routing and count deltas, insert and removal. | Three pages' block scripts, `research/investigations/incremental-layout/scripts/block-case.html` and its `.edits` script, focused counter / `:nth-*` / `+` / `~` / float / collapsing-margin / split-inline cases. Compare every prefix with full build and serialized-source reparse, seq and par. Assert an explained refusal leaves the retained tree untouched. After each removal edit, issue another text/font-size edit to catch stale routes. | Disable the structural style frontier, fail to restack P's later siblings, skip a route tombstone/generation check after slot reuse, ignore outgoing counter state, or publish before seam validation. Each mutation must fail; an unexplained `inc refused` is not success. |
 | 6. End-to-end sizing and deletion of migration support | 150–300: oracle counts, harness/reporting, research/tree record; remove the temporary flat adapter and this probe when replaced. | E2's whole-edit costs at seq and par-4 on the same E1 captures/scripts; no fallback in a claimed local block edit, all current edit kinds no worse than M1, final full style/layout within M2's 5% envelope. Pair before/after same-source toggles for the specific optimization being attributed, and record the pin and driver hashes. | Force one whole-context route rebuild, disable subtree skipping, or omit placement when claiming paint cost. The locality/performance checks must reject these. If the measured distributions cannot distinguish a change, collect a longer paired sample rather than claim a win. |
 
 At every step, the fresh-build comparator bypasses retained state. Also
@@ -897,6 +896,146 @@ for (extra_at in 0_u64..extra_count) {
   set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
 }
 ```
+
+### Step-5 source and CI falsifiers
+
+The source adds `structure_splice` before Q86's `structure_changed`. The
+private builder consumes the owning block's content width, style and
+containing-height input. Its synthetic counter checkpoint is explicitly
+inexact: a later non-neutral edit rebuilds from the nearest exact enclosing
+checkpoint, retaining Q86's outgoing-state refusal. Neutrality records
+counter writes/readers, implicit list increments and quote operations during
+normal construction; it is not inferred from the inserted tag name.
+
+`splice_inputs` resolves stable owner and seam routes without retained
+mutation. `splice_sequence_plan` composes cached prefix/suffix transfers,
+including both extrema of the preceding margin edge. It validates the
+step-4 ordinary path and privately computes each direct later sibling's
+translation. `splice_routes` constructs the inserted subtree's text/use
+and context-directory records; removal collects only the removed subtree.
+Publication appends private payloads to the unchanged context-wide stable
+pools, calls the existing AVL `insert_before`/`remove`, publishes/tombstones
+only affected routes, settles the owner and propagates step-4 boundaries.
+Live context/paragraph totals use added-minus-removed counts. Removed
+paragraph/context slots remain tombstones and are excluded from preparation,
+placement and independent live-count comparisons.
+
+All recoverable construction and capacity failures precede publication.
+The mutable AVL and route helpers allocate their pages during the commit
+phase after validation; this is not a persistent tree prepared and swapped
+in one pointer write. Whitefoot allocation exhaustion is not a recoverable
+layout result. CI must establish the proof obligations before this source
+is described as an executable transaction.
+
+The oracle emits `structure path N splice S reason R` in addition to its
+existing structural and physical boundary counters. `inctime.py` accepts
+complete legacy logs without these rows; when any appears it requires one
+for every structural operation, with `S=1` exactly when `R=0`, and compares
+these fields across timing runs. The reason namespace is separate from
+step 4's `boundary_reason`:
+
+| R | Meaning and disposition |
+|---|---|
+| 0 | Published local splice. |
+| 1 | Missing/ambiguous stable owner or route, including a `display:contents` parent. |
+| 2 | Non-flow or multi-column context on the owner path. |
+| 3 | Mixed inline seam, non-block inserted range, split inline state or mismatched direct owner. |
+| 4 | Generated/pseudo references were not retained by the style delta. |
+| 5 | Counter/quote read or write dependency, including implicit list state. |
+| 6 | The structural style frontier also changes retained content; Q86 consumes the whole frontier. |
+| 7 | Unsupported step-4 boundary: float/intrinsic/definite-height dependency, through block, changed exposed strut, numeric bound or unavailable cached geometry. |
+| 8 | Preflighted entry, payload or DOM storage ceiling. |
+| 9 | Private construction returned a layout error, including route/path construction ceilings; emitted by the oracle. |
+
+Every nonzero result takes the existing reconstruction route and is not
+local-splice evidence. The fast path currently requires unchanged exposed
+leading/trailing margin pairs and solid old/new owner outputs; accepting a
+complete-block seam alone does not establish these further conditions.
+An ordinary inserted block may contain independently laid-out child
+contexts, but a container-specific algorithm on the propagation path falls
+back. No E1 or whole-M2 completion is claimed.
+
+Dependencies: private paragraph preparation and child layout retain their
+independent counted loops. Each later sibling computes its origin from
+cached prefixes independently (duplicated logarithmic metadata reads),
+and its diagnostic totals use a balanced reduction. The builder's source
+walk retains its existing document-order dependency for paragraph assembly
+and state validation. Stable-slot allocation, route installation and direct
+payload writes belong to ordered publication; enclosing boundary propagation
+follows the ancestor chain. Context-wide pool growth and indirect publication
+scatter remain Q122/CI limitations, not a claim of certified parallel writes.
+
+`block-case.html` is unchanged. The script preserves its original operations
+and adds repeated insertion before old sibling 17 (new blocks 53 and 55),
+removal of new block 53 and pre-existing block 15, then insertions 57 and 59
+and removals 57 and 55. Each new structural operation is followed by text
+insert/delete and font-size class add/remove on retained block 17/text 18
+and a surviving new block/text. Before inserting 57, block 55 gets a 37px
+bottom margin: the new paragraph's top margin must collapse with that edge.
+These appended ordinary `.box` operations are expected to report reason 0;
+every prefix must match fresh full layout, including live totals. Earlier
+mixed-inline, counter and constrained-owner operations retain explained
+fallbacks; Q86 may still refuse a changed outgoing counter state. CI must
+check those reasons explicitly rather than require every old negative case
+to be a local splice. The script's source NodeIds include all original
+whitespace nodes and the doctype; no original NodeId is renumbered. A final
+negative case adds a zero-margin paragraph 61/text 62 after mixed box 20's
+inline run, then removes it, with the same retained/new probes. Both
+structural operations must report reason 3; zero margins prevent the
+exposed-strut guard from masking the seam-validation mutation.
+
+Apply each mutation separately and restore the source afterwards. These are
+specified falsifiers, **not run results**; all compilation and mutation runs
+belong to the primary agent's CI:
+
+1. **Skip seam validation.** In `splice_sequence_plan`, replace both exact
+   calls `let reason = splice_boundary(context: context, item: preceding_item, removing: no, visits: visits);`
+   and `let reason = splice_boundary(context: context, item: following_item, removing: no, visits: visits);`
+   with `let reason = 0_u32;`. In a mixed-inline flow with an existing
+   line-bearing paragraph on either side, insertion must remain a reason-3
+   fallback, never reason 0. Use the final `.mixed-seam` append case as well as the existing
+   before-span case: the latter can refuse earlier at route resolution and
+   by itself does not falsify this guard. Compare every
+   prefix with fresh layout; assert the path independently of dump equality.
+2. **Omit the preceding collapsing edge.** In `splice_sequence.wf:splice_edge`,
+   replace `let gap = wide_positive +sat wide_negative;` with
+   `let gap = 0_i64;`. The insertion after block 55's 37px bottom margin
+   must differ from fresh layout. Include a mixed-sign margin fixture so
+   preserving only a net scalar cannot pass accidentally.
+3. **Do not translate later siblings.** In `splice_boundary.wf:splice_move`,
+   replace `let move_y = new_y -sat old_y;` with `let move_y = 0_i64;`.
+   Both repeated insertions before old sibling 17 must differ from fresh
+   layout at that sibling, without translating its descendants individually.
+4. **Do not update live counts.** In `structure_splice`, replace
+   `set layout^.paragraphs = kept_paragraphs +sat added_paragraphs;` with
+   `set layout^.paragraphs = kept_paragraphs;`. Insertions must fail the
+   oracle's incremental-versus-full live-count comparison even if hashes
+   agree. Separately replace
+   `let kept_paragraphs = layout^.paragraphs -sat lost_paragraphs;` with
+   `let kept_paragraphs = layout^.paragraphs;`; removals must fail it.
+5. **Lose new text routes.** In `publish_splice_routes`, replace
+   `route_write::<TextUnit>(table: &layout^.text_units, at: at, value: text);`
+   with `route_write::<TextUnit>(table: &layout^.text_units, at: at, value: absent_text);`.
+   The first new-text edit after insertion must refuse or differ. Keep
+   `absent_text` as the already declared tombstone value in this function.
+6. **Treat a synthetic checkpoint as exact.** In `forget_splice_points`,
+   replace `set context^.walk_exact = False();` with
+   `set context^.walk_exact = True();`. Insert a neutral context after an
+   earlier counter setter, then introduce a counter reader inside it;
+   comparison with a full rebuild must catch the invented counter input.
+7. **Drop a path record.** Remove one `structure path` row from an otherwise
+   complete new-format log, or change a reason-0 row to `splice 0 reason 0`.
+   `inctime.py --check` must reject the malformed/incomplete log.
+
+CI must additionally exercise `:nth-*`, `+` and `~` retained style changes
+(reason 6), exact-checkpoint counter/quote refusals, removal of a pre-existing
+child context, saturation/float/fragment fallbacks, and independent seq/par
+identity. Source review cannot certify effect rows, OP-4 bounds after pool
+mutation, AVL slot invariants, loop parallelism or mutation effectiveness.
+Boundary visits cover checked splice index reads and AVL repair but remain
+step-4 counters, not an allocation or whole-builder census; fallback attempts
+and route-page visits require fuller instrumentation before locality claims.
+The maintained TODO carries those limits and the full-build route-cost risk.
 
 ### Full-build regression repair
 
@@ -1112,7 +1251,7 @@ edit can satisfy the final locality criterion.
 
 ## Risks and owner questions
 
-Q104, Q109 and Q114 A are approved directions. Q115 remains open.
+Q104, Q109, Q114 A and Q115 A are approved directions.
 The descriptions below distinguish the approved contract from implementation
 and measurement still needed.
 
@@ -1132,7 +1271,7 @@ and measurement still needed.
   descendants may be skipped at all. Their exact minimal fields and
   compiler proof must be established in step 4, not assumed from this
   sizing run.
-- **Q115 — a neutral complete-block seam first (recommended).** Counter
+- **Q115 A — a neutral complete-block seam first (approved).** Counter
   changes, split-inline boundary changes and container-wide algorithms
   keep the existing correct rebuild route. The alternative is to implement
   every builder state transition before the first local block splice,
@@ -1253,7 +1392,6 @@ are recorded in `docs/todo.md` with impact, proposed counters and reopening
 condition. No language gap was demonstrated or filed. The proposed nested
 types, distinct-slot traversal, summary coverage, full-build allocation
 cost, parallel speed and actual E1 splice latency remain unverified.
-Q114 A, Q104 and Q109 are approved inputs; Q115 remains an open
-recommendation. Step-3 source has not been compiled or executed in this
+Q114 A, Q104, Q109 and Q115 A are approved inputs. Step-3 source has not been compiled or executed in this
 implementation session; the primary agent owns CI validation. No approval log entry or readiness claim is made. Delivery is a
 local branch commit only, as requested; there is no push or PR update.
