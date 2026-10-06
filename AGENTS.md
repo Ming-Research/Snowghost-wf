@@ -67,10 +67,10 @@ speed decides only between candidates of equal dependencies.
 ## Whitefoot
 
 Snowghost follows [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md)
-for the pin, experiment pins, Whitefoot gaps and upgrades. When an upgrade
-changes the compiler's code generation, its PR compares the renderer's
-full-build and per-edit costs before and after on the same source and
-machine.
+for the pin, experiment pins, Whitefoot gaps and upgrades. Its benchmarks
+for an upgrade's comparison are the renderer's full-build and per-edit
+costs: `.github/workflows/time-14900k.yml` with `BUILDS` naming the base
+and the upgrade branch, `FULL=1` and every E1 edit kind.
 
 ## Reports
 
