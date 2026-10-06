@@ -160,6 +160,19 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **M2's full build is 10 to 30 percent slower than step 2.** After three
+  repair rounds of step 3's entry sequences
+  ([runs](../research/investigations/structure-edits/runs/full-14900k.txt),
+  third round), full layout is 10 and 14 percent slower than step 2
+  sequentially and 26 and 30 percent at four workers on html5 and ecma262;
+  the box build's per-owner sequences and the extra allocation are the
+  largest identified parts. M2's criterion 4 (full build within 5 percent
+  of M1) is unmet. Change: once step 5 settles the splice's representation,
+  profile again and cut per-owner allocation (for example pages shared by
+  small owners) and the four-worker gap. Reopen before M2 is reported
+  complete; validate on the 14900K workflow with the same source and
+  toolchain, interleaved, with a twin of the base.
+
 - **M2 step 4 has a narrower update frontier than its final contract.**
   `boundary.wf` handles one marked paragraph or child context recursively,
   and one restyled block on its ancestor path. Multiple marked paragraphs
