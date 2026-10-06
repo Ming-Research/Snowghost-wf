@@ -6,7 +6,16 @@ This is the layout design and sizing investigation for M2, based on
 `7ee44119358d7b08dc90555ebe7b9275be478bed`, with Whitefoot pinned at
 `f949e676acfa811f96b21afd07f02c06dcd14b51`. It proposes no rendering change.
 Q109 already approves nested flow entries per block; Q104 reopens Q70's
-context-relative suffix move. The implementation remains future work.
+context-relative suffix move. The implementation remains future work; Q112 and Q113 below are open
+recommendations.
+
+Recommend nested blocks with stable local entry slots, an owner-local
+order/summary index, and a counter-neutral block splice. ecma262's tested
+parent paths contain at most 208 direct entries inside a context of
+112,817 entries; html5 still has a 6,648-entry sibling run. Parent-relative
+origins remove descendant translations, while the index avoids copying
+earlier entries. Whole-layout edit speed and full-build cost remain to be
+measured in the implementation.
 
 Before collecting the measurements: count each context's flow entries,
 each block's direct entries and block children, and block depth. Compare
@@ -65,7 +74,7 @@ space. DOM child count is therefore not the flow sibling count.
 | Flex/grid sequences preserve document order among equal `order` values, while child storage is indexed independently; flex natural height reads every descendant extent in context coordinates. | `flex.wf:intrinsic_flex`, `flex_collect`, `flex_content_height`, `flex_position`, `lay_out_flex`; `grid.wf:grid_collect`, `grid_first_baseline`, `grid_finish_child`, `lay_out_grid`. | Keep a direct item sequence and stable child handles; convert extent reads or expose an equivalent subtree extent. Do not treat nesting as a reason to change item ordering, track algorithms or baseline rules. |
 | Column units are in one-column context coordinates; avoid regions skip their descendants, and table children expose rows. | `columns.wf:collect_units`, `balanced_height`, `fragment_columns`; `flow.wf:place_rect`, `place_fragment`. | Accumulate block origins while collecting units, apply the column map only after coordinate accumulation. Rebalancing may reach the whole multicol context; it is not a plain sibling-translation edit. |
 | Placement turns retained geometry into viewport rectangles; the dump groups them while preserving each owner's fragment order. | `flow.wf:place_context`, `place_boxes`; `renderer/oracle/layout/layout.wf:write_dump`, `put_rects`, `lay_out_page`; `renderer/oracle/layout/edit.wf:run_edits`, `finish_style_edit`. | One traversal carries accumulated origins, O(output), instead of an O(depth) ancestor sum for each rectangle. Keep fragment order, fixed origin and column ownership. Placement/dump are excluded from E1's layout timing and must be measured separately before paint. |
-| Work counters currently mix restacked entries with translated suffix entries, and are not a complete count of everything visited. | `module.wfm:UpdateCounts`, `StructureCounts`; `update.wf:restack_flow`, `update_in_place`, `update_counts`; `structure.wf:structure_counts`; `renderer/oracle/layout/edit.wf` reporting and `incremental-layout/scripts/inctime.py`. | Preserve existing report meaning during migration; add separate physical visits, subtree skips, translated direct entries, rebuilt units, routing patches and fallback reason. `restack_flow` currently computes a suffix length even when no delta moves it; it also reports one paragraph for a block range. These are not valid locality proofs. |
+| Work counters currently mix restacked entries with translated suffix entries, and are not a complete count of everything visited. | `module.wfm:UpdateCounts`, `StructureCounts`; `update.wf:restack_flow`, `update_in_place`, `update_counts`; `structure.wf:structure_counts`; `renderer/oracle/layout/edit.wf` reporting and `research/investigations/incremental-layout/scripts/inctime.py`. | Preserve existing report meaning during migration; add separate physical visits, subtree skips, translated direct entries, rebuilt units, routing patches and fallback reason. `restack_flow` currently computes a suffix length even when no delta moves it; it also reports one paragraph for a block range. These are not valid locality proofs. |
 | Saturating i32 layout arithmetic and f32 publication have a specific evaluation order. | `flow.wf:stack_flow`, `place_context`, `place_rect`; `inline.wf:px_of`; `module.wfm:lay_out` (Q54). | Reassociating parent sums can change saturated results. Relative differences need a wider temporary; preserve existing rounding and saturations, or use a checked full-context compatibility path for overflow cases. Never weaken byte identity to a tolerance. |
 
 The pre-investigation `Fragment` comment called every fragment context-relative,
@@ -81,8 +90,10 @@ sequence. Let `S = sum(s_i)` along the propagation path, `W` the subtree
 whose widths or inherited layout styles actually change, and `F` the extra
 entries reached by changed exclusions/clearance or an unsettled margin
 boundary. `F` can be the rest of the BFC. `R` counts affected routing/style
-uses and `G` affected split-fragment endpoints. These are work counts, not
-nanoseconds. A wide parent can make `S` page-sized; nesting is not a bound
+uses and `G` affected split-fragment endpoints. Let `A <= S` count direct
+entries actually reached: the later sibling ranges plus entries in the
+explicit style/semantic frontier. Let `L = sum(log(s_i + 1))` count local
+sequence-index paths. These are work counts, not nanoseconds. A wide parent can make `S` page-sized; nesting is not a bound
 on sibling count. Removing `E` includes O(E) destruction and route removal.
 
 For all candidates, shaping one paragraph depends on that paragraph's
@@ -103,15 +114,26 @@ appears once, rather than Open + all descendants + Close. Normal origins
 and visual displacements are relative to the owning block. The BFC still
 owns the exclusion domain; nesting does not establish a new BFC.
 
-For the first implementation, direct sequence storage may be a local
-`Slots<EntryId>` rebuilt on insertion, O(s_parent), with payload ownership
-moved only when that local storage grows. Store order rank on the local
-entry; only P's ranks change. Sibling loops write each owned payload
-independently. Stable holes need a local free list or generation check;
-never use a context-wide next-ID counter in parallel construction. A
-block's path is its parent link plus its parent's stable child slot.
-Paragraphs and contexts use the same ownership rule. Array growth outside
-this local scope is addressed under the splice contract below.
+For the final splice, use an owner-local balanced sequence whose stable
+leaves name entries and whose internal nodes cache subtree counts and
+ordinary boundary-transfer summaries. Insertion allocates new leaves and
+changes only O(log s_parent) index ancestors; no earlier entry leaf or
+payload is read or copied. Prefix state is queried from cached internal
+summaries. Growing payload storage uses stable pages and a bounded-depth
+page directory, not a replacement array containing every old child. The
+sequence's rank is queried when needed, never stored on every entry.
+Sibling calculations remain independent; expose disjoint owned children
+or a compiler-proved distinct-slot traversal, not a serial handle scatter.
+A block's path is its parent link plus its parent's stable child slot.
+Paragraphs and contexts use the same ownership rule. Full construction
+assigns slots from known local counts, without a context-wide next-ID
+counter; edit publication reserves only its owner's new slots.
+
+A local `Slots<EntryId>` rebuilt on insertion is a simpler migration
+reference, costing O(s_parent) handle copies even with no geometry work.
+It **cannot pass M2 locality** because it copies earlier entries. The
+balanced local sequence is therefore required for the final splice,
+independently of whether html5 needs lazy range origins for speed.
 
 - **Full build:** structural classification + inherited width inputs ->
   independent descendant construction/preparation -> subtree boundary
@@ -134,28 +156,29 @@ this local scope is addressed under the splice contract below.
   changed outputs up D ancestors. Other marked siblings' preparation is
   independent of E. At each ancestor, unchanged subtrees retain their
   contents; equal boundary inputs modulo translation permit one origin
-  update each. Work O(E + T + S + F + R + G), with possible whole-container
+  update each. Work O(E + T + A + L + F + R + G), with possible whole-container
   work for the named fallbacks. Ordinary span is E's dependency depth +
   text work + sum(log(s_i + 1)) + D; an exclusion chain adds its actual
   dependent work. This is **not** O(D) total work.
 - **One block's font size:** changed style uses -> independent preparation
   of the affected paragraphs, and width propagation through W -> affected
   boundary outputs -> the same ancestor propagation and sibling maps.
-  Work O(W + T + S + F + R + G). Font-unit advances may be rescaled where
+  Work O(W + T + A + L + F + R + G). Font-unit advances may be rescaled where
   the current reshape key allows it. No new global shaping cache.
 - **Text edit:** stable text route -> patch that paragraph's owned piece ->
   prepare/shape/break that paragraph -> compare its output -> propagate
   only if boundary outputs change. Work O(T + D) when outputs hold,
-  otherwise O(T + S + D + F + G). Text/whitespace changes that create or
+  otherwise O(T + A + L + D + F + G). Text/whitespace changes that create or
   destroy a paragraph enter boundary repair; they are not assumed to keep
   the box tree. The chain is the paragraph's text work followed by the
   ancestors; unrelated paragraphs have no dependency on it.
 
-A local sequence rebuild copies handles, not subtree payloads. It introduces
-no dependency between sibling calculations: fill each destination slot by
-its known old/new rank, then publish the completed sequence once. Prefix
-placement is a data dependency, but a left-to-right loop through an entire
-float-free sequence is not the shortest implementation of that dependency.
+Sequence publication waits for new leaves and changed index ancestors,
+not for a walk over the old prefix. Count index-node visits separately and
+require an instrumented earlier-entry sentinel to stay untouched; calling
+an earlier handle copy "metadata" is not a locality exemption. Prefix
+placement is a data dependency, but a left-to-right loop through a whole
+float-free sequence is not its shortest implementation.
 
 ### B. Flat flow in chunks, parent-relative block origins, subtree skips
 
@@ -163,7 +186,8 @@ Retain a flattened Open/Close/Text/Child stream, but store entries and
 payloads in stable chunks. Blocks keep parent, matching-close and next-sibling
 handles. Paragraph pieces move to per-paragraph storage just as in A;
 leaving them in one shifting array would invalidate the claimed edit cost.
-A rank tree over chunks supports insertion without context-wide memmove.
+A global rank tree with stable entry leaves supports insertion without
+context-wide memmove; chunks own payloads, not shifting order ranks.
 Each block also needs a direct-child directory or equivalent skip index:
 walking a singly linked sibling list merely to translate siblings would
 add a serial O(s_i) chain that the translation does not need.
@@ -174,25 +198,28 @@ add a serial O(s_i) chain that the translation does not need.
   directory adds a gather/index phase; it is a representation dependency,
   not a CSS dependency. Work O(all units + text), span of A plus the chunk
   index construction. A single shared append cursor is not recommended.
-- **Insertion:** build E -> splice the containing chunk(s), O(E + chunk
-  size + log(number of chunks)) -> repair matching-boundary and direct-child
-  handles on the D path -> A's boundary propagation. Work O(E + T + S + F +
-  R + G + chunk size + log(chunks)); unchanged sibling subtrees skip in
-  O(1) each. The chunk rank update is an additional dependent path.
+- **Insertion:** build E -> add stable entry leaves to the global order
+  index, O(E + log(flow entries)) -> repair matching-boundary and direct-child
+  handles on the D path -> A's boundary propagation. Work O(E + T + A + L +
+  F + R + G + log(flow entries)); unchanged sibling subtrees skip in O(1)
+  each. The global rank update is an additional dependent path. Copying an
+  old chunk's earlier entry handles is ineligible under the same locality
+  rule as A's migration vector.
 - **Font-size change:** W's affected entries/payloads -> prepare/break ->
   the same boundary propagation as A, skipping unchanged subtrees by their
-  matching-close handles. Work O(W + T + S + F + R + G); no index splice
+  matching-close handles. Work O(W + T + A + L + F + R + G); no index splice
   unless generated box topology changes.
 - **Text edit:** direct stable paragraph/piece handle -> text work -> the
   same cutoff/propagation as A. O(T + D) for an unchanged output, otherwise
-  O(T + S + D + F + G). Paragraph order must come from the chunk sequence,
+  O(T + A + L + D + F + G). Paragraph order must come from the chunk sequence,
   not the stable payload arena's slot order.
 
 B is viable, and with a direct-child directory it can have the same
 geometric dependency graph as A. It retains a second order representation
 and needs disjoint-scatter proofs when a loop writes payloads reached
-through flat handles. A's owned children expose those writes directly to
-Whitefoot. If B drops that directory or uses flat-array splicing, it adds a
+through flat handles. A's local owners narrow that proof to sibling-owned storage; its new
+page/index traversal must still be proved at the pin. No measurement here
+claims the proposed traversal already compiles. If B drops that directory or uses flat-array splicing, it adds a
 pointer-chasing chain or O(context entries) copying and is rejected for
 M2. The compiler's inability to carry a distinct-index fact between passes
 is already recorded in `docs/todo.md`; do not hide that cost in a new
@@ -210,12 +237,228 @@ that Q104 reopens. A flat parent-relative array without stable splicing
 removes the translation cost but still has the same page-sized insertion
 copy and renumbering cost.
 
+## Sizing observations (2026-10-05, Apple M1 Pro)
+
+The preregistered criterion above was committed as `c0846b3` before the
+measurements. The diagnostic source is
+`e468312e7c53f826a2d2ea85e0c257c9d42736fe`, compiled sequentially with the
+specified Whitefoot `f949e676acfa811f96b21afd07f02c06dcd14b51` compiler,
+function fragments and the shared cache. The preserved confirmation driver SHA-256 is
+`bc51558e163d7d95fa37cdc2865c6359893424973ef5a2632c696916e0524c05`.
+It was rebuilt from the same source after the fault-injection checks; the
+confirmation measurements below use that preserved binary.
+Host: Apple M1 Pro, 8 CPU cores, 32 GiB, macOS 26.6.2 (25G83); viewport
+1280 × 720, repository UA stylesheet, local fonts, no scripts. The
+shared host build lock and 12,000 MB / 900 s guard covered each run. Other
+worktrees also used that lock; these are short sizing observations, not a
+controlled end-to-end engine comparison.
+
+The diagnostic lives in `renderer/layout/probe.wf`, called only by
+`renderer/oracle/layout/probe.wf` through the `probe` oracle mode. Remove
+both files and that interface/mode when the physical counters in step 6
+replace them. No ordinary layout path calls the probe. `probe REPS PAGE UA
+[sheet mappings...]` uses the same parsing, styles, fonts and viewport as
+`dump`. Each repetition builds a fresh layout. It emits one row for every
+context and every block, including a synthetic root sequence per context.
+The first field is the repetition, followed by:
+
+- Context: `0 serial owner kind context_depth flow_entries blocks paragraphs
+  child_contexts stack_ns`.
+- Block: `1 context_serial block_index owner local_depth direct_blocks
+  direct_entries flow_open subtree_flow_span parent_block`.
+- Clock calibration: `2 sample 0 0 0 0 0 0 0 empty_pair_ns`.
+
+`4294967295` is the synthetic root/no-parent sentinel. Serials are census
+identities only. A direct entry counts one Open for an immediate block,
+one Text/Child/Float/Out, and no Close; it never includes that child's
+descendants. Local block depth starts at 1 under its context; context
+depth starts at 0. These two distributions are separate, not an assertion
+that their quantiles can be added. All quantiles below are nearest-rank.
+
+### Counts and the actual edit parents
+
+| Census | apollo11 | html5 | ecma262 |
+|---|---:|---:|---:|
+| Contexts, including empty/non-flow | 1,113 | 13,843 | 10,217 |
+| Contexts with flow entries | 980 | 13,408 | 10,036 |
+| All flow entries | 5,675 | 117,924 | 128,718 |
+| Non-BFC blocks | 1,262 | 28,044 | 34,302 |
+| Paragraphs | 2,569 | 60,868 | 57,514 |
+| Flow/context, nonempty: p50 / p90 / p99 / max | 1 / 7 / 16 / 1,190 | 1 / 1 / 1 / 104,321 | 1 / 2 / 12 / 112,817 |
+| Direct entries/block: p50 / p90 / p99 / max | 1 / 3 / 17 / 594 | 1 / 4 / 26 / 6,648 | 1 / 5 / 19 / 219 |
+| Direct block children/block: p50 / p90 / p99 / max | 0 / 1 / 8 / 297 | 0 / 2 / 13 / 3,432 | 0 / 3 / 11 / 108 |
+| Sibling entries seen by each block: p50 / p90 / p99 / max | 10 / 593 / 593 / 593 | 17 / 6,647 / 6,647 / 6,647 | 6 / 38 / 172 / 218 |
+| Local block depth: p50 / p90 / p99 / max | 2 / 7 / 9 / 11 | 4 / 7 / 11 / 26 | 5 / 9 / 13 / 23 |
+| Context depth: p50 / p90 / p99 / max | 8 / 9 / 13 / 14 | 3 / 4 / 4 / 4 | 4 / 6 / 7 / 8 |
+
+The sibling row samples **blocks**, so a wide parent's many children each
+see the same large sibling count. The direct-entry row samples **parents**.
+Confusing them would hide the broad parents that dominate edit work.
+The largest contexts have census `(serial, owner)` `(815,10244)`, `(1,2)`
+and `(91,21173)`. Apollo's edit-dominant context is instead `(349,2044)`:
+1,014 entries, 243 blocks and 420 paragraphs. The observed ecma262 maximum
+is 112,817, not the approximate 118,000 in the task; this report uses the
+count actually produced by the pinned source and captured inputs.
+
+| Local block depth histogram | apollo11 | html5 | ecma262 |
+|---|---:|---:|---:|
+| 1 | 218 | 58 | 1,075 |
+| 2 | 443 | 3,432 | 612 |
+| 3–4 | 223 | 14,854 | 8,141 |
+| 5–8 | 338 | 8,265 | 20,861 |
+| 9–16 | 40 | 1,415 | 3,539 |
+| 17–26 | 0 | 20 | 74 |
+
+Resolve the existing E1/X5 block-script B parents through the independently
+regenerated node listing to their owning block or context root. Count all
+direct entries along that block's ancestor path **inside its owning
+context**, including the context root sequence. Call this `S_C`. It is a
+conservative scan/copy ceiling for that path: it includes entries before
+the edit; it excludes outer contexts, additional float influence and style
+frontier changes. It sizes a conservative direct-run scan, not the
+recommended index's actual leaf visits; earlier leaves remain untouched.
+It is not measured replay work. All script parents
+resolved exactly to their own block/context owner, without an ancestor
+substitution. B/X pairs return to the original structural shape.
+
+| Existing forward B edits | apollo11 | html5 | ecma262 |
+|---|---:|---:|---:|
+| Insertions sampled (inverse removals use the same seams) | 30 | 30 | 10 |
+| Direct entries at insertion parent: median / max | 14 / 41 | 7 / 6,648 | 7 / 15 |
+| `S_C`: p50 / p90 / max | 49 / 74 / 74 | 6,716 / 6,898 / 7,080 | 149 / 200 / 208 |
+| Owning-context flow sizes reached | 3; 1,014 | 104,321 | 9; 17; 112,817 |
+
+For the main contexts, the maximum `S_C` is about 7.3%, 6.8% and 0.18% of
+its flat flow size, respectively. These ratios compare conservative work
+counts, not a speedup prediction. They support nesting strongly for
+ecma262. html5 retains a 6,648-entry run at the body, even for many deeply
+nested edits. The local sequence already needs a prefix-summary index for locality;
+first retain independent origin writes over the affected later run. If
+that measured cost breaks the budget, add lazy range offsets to the index. That tree buys O(log s) path updates for an
+ordinary range translation, with additional retained summaries and lazy
+origin reads. It must not introduce a single shared writer for otherwise
+independent subtrees. Adding lazy origins globally now has no measured cost basis; the order
+and summary index itself is mandatory to avoid touching earlier leaves.
+
+A binary local sequence index would have 4,413 / 89,880 / 94,416 entry
+leaves and 2,214 / 48,429 / 50,078 internal nodes respectively, computed
+as `sum(max(direct_entries - 1, 0))` over blocks plus context roots. These
+are representation counts, not allocated bytes or timings: a packed
+multiway index may use fewer nodes. They make the memory/full-build risk
+concrete; the index should not allocate a separate heavyweight object for
+every single-entry sequence. Its fanout is an implementation measurement
+within the same dependency graph, not permission to scan preceding leaves.
+
+### Isolated full-plan stacking time
+
+The initial six-block fixture took 0.50 s wall, and `flow-cases.html` 0.07 s;
+the real-page one-repetition pilot took 0.45 / 2.31 / 3.40 s wall. This sized
+a three-repetition run (0.96 / 5.72 / 8.25 s wall). After fault injections
+rebuilt the driver, a confirmation run retained and hashed that binary
+and repeated three times (1.30 / 5.57 / 7.75 s wall). The table reports all
+three confirmation samples, without warm-up removal or best-run choice.
+Counts were identical in all six repetitions.
+
+| Timed interval, milliseconds | apollo11 | html5 | ecma262 |
+|---|---|---|---|
+| Sum of one stack pass per nonempty flow context | 1.753 / 1.735 / 1.751 | 5.201 / 6.276 / 6.343 | 5.602 / 6.348 / 6.470 |
+| Largest flow context only | .032 / .031 / .032 | 3.371 / 4.473 / 4.345 | 4.189 / 4.912 / 5.027 |
+| Apollo's edit-dominant context only | 1.409 / 1.406 / 1.413 | — | — |
+| Number of timed flow contexts | 810 | 13,408 | 9,212 |
+
+The preceding run's summed samples were 1.815 / 1.869 / 1.851 ms,
+5.417 / 6.426 / 6.762 ms and 5.769 / 6.649 / 6.801 ms respectively.
+They support the same sizing conclusion; the confirmation was to preserve
+measurement-binary identity, not to select a faster run.
+
+These are **one full-plan stacking pass at each context's final space**,
+not the accumulated stacking time inside an integrated full build, which
+may visit a child again during sizing. Inputs are prepared and the
+context fully laid out before the interval; `naturals` is then emptied so
+its allocation/initialization is included. The interval includes whatever
+float fix-up `stack_flow` invokes, including dependent child/paragraph
+work; it excludes the preceding width preparation, child layout and
+speculative line breaking, and subsequent splits, columns, positioned
+layout and placement. Apollo's timing is therefore not proportional to
+its flow count. The probe checks the pass's resulting height, baseline and
+flow end, then restores full layout and compares every placed rectangle.
+
+`std::time` reaches `clock_gettime(CLOCK_MONOTONIC)` through pinned
+`compiler/src/backend/completion/file_posix.c:wf_file_monotonic_ns_host`.
+Observed values are quantized in 1,000 ns increments; the empty-pair
+samples have median 0 ns and maximum 1,000 ns. Zero does not mean zero
+work. Summing thousands of sub-microsecond context intervals is coarse;
+the large-context intervals are the more useful evidence. The repeated
+large-context passes vary by roughly 20–35%; no conclusion here depends on a
+small timing difference, so a longer run would not choose between the
+unimplemented candidates. The result is sufficient to reject a full
+stacking pass as ecma262's 115 us edit path.
+
+Dividing the **entire** historical E1 budget by max `S_C` gives generous
+ceilings of 3.99 us, 0.432 us and 0.553 us per visited direct entry. These
+are arithmetic limits, not estimated processing times: construction,
+styles, text preparation, ancestor contexts, floats and publication also
+consume the same budget. In particular, do not extrapolate 208 entries
+from the 112,817-entry stack time and call it an achieved M2 latency.
+The 16/239/259 ms layout-stage figures in
+[`DESIGN.md`, Where the cost is now](DESIGN.md#where-the-cost-is-now)
+include much more work than this interval; this experiment does not attribute their difference to stacking.
+
+### Reproduction and input identity
+
+From the worktree root, after the task's locked/guarded compiler command:
+
+```sh
+build/layout_oracle_seq probe 3 build/research/concurrency/apollo11.html renderer/style/ua.css \
+  'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' \
+  'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css'
+build/layout_oracle_seq probe 3 build/research/concurrency/html5.html renderer/style/ua.css
+build/layout_oracle_seq probe 3 build/research/concurrency/ecma262.html renderer/style/ua.css \
+  assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css \
+  assets/css/print.css=build/research/concurrency/ecma262-print.css
+```
+
+Run measurements under the host lock/guard, as for compilation. These
+commands emit all per-context/per-block counts rather than only the table.
+For each repetition, sum tag-0 column `stack_ns`; select the same census
+serial for a context interval. For counts use one repetition, ignore tag 2,
+and include the synthetic root when summing direct entries. The following
+independent identities held for every context on all three pages:
+`sum(direct_entries) + blocks == flow_entries`,
+`sum(direct_blocks) == blocks`, and globally
+`sum(child_contexts) == contexts - 1`.
+
+Inputs were copied as regular files, not symlinked. Apollo uses the E1
+step-4b supplementary capture (`engine-comparison`'s `apollo-supplement`),
+not an assertion that the unavailable original capture was recovered.
+All three freshly generated node listings exactly matched the listings
+used by the existing scripts. SHA-256 identities:
+
+| Input under `build/` | SHA-256 |
+|---|---|
+| `research/concurrency/apollo11.html` | `26ad3f9e6f81d685e848ceb43dec17b3b5fcc81c2896a8182599662decd65169` |
+| `research/concurrency/apollo11-modules.css` | `cc2e64f8f1706af7f505ec69b6c9807cb05a743f7887ccbf8c7e104e1f41a9f8` |
+| `research/concurrency/apollo11-site.css` | `3f439934c51c220c4b92072d4dec2219920cef1bbafb58eda32a7161df7b9d0c` |
+| `research/concurrency/html5.html` | `f0466f5a8c8099935a9394607abcd4bbbb3b41384a14b3f906eea80a521fe06e` |
+| `research/concurrency/ecma262.html` | `e2b29c85f37b8ded51873ce385b6573a35cbc26b467c21c14f8184f3bab5aa26` |
+| `research/concurrency/ecma262-ecmarkup.css` | `8bef2688107197ac28abe81b62a61100904cec548e223d03a10ac7ea7b6b2fc7` |
+| `research/concurrency/ecma262-print.css` | `e80f1880ab96cb3418cddbcd7a529aa6e474113f4a87c2555d079f84fc09c53f` |
+| `x5/scripts/apollo11-block.edits` | `1c2503a8240268b3172121e64dfdbffce25cd0939c488f069a11e107088e4573` |
+| `x5/scripts/html5-block.edits` | `b7d1e894ce50aa6e20eec702ff987137c476b61ea2b8b2b9593b7c17f09b771c` |
+| `x5/scripts/ecma262-block.edits` | `e401d4b06cd9ecc7aec00096220f2f91130aac1cdde3303572786cf535f55b1f` |
+
+The historical Chromium comparator is 141.0.7390.37 / Playwright build
+1194, viewport 1280 × 720, scripts disabled, as recorded in E1. Chromium
+was not rerun here. This is a source/representation sizing study, not new
+evidence that Snowghost beats Chromium.
+
 ## Recommended contract
 
-Choose A, as Q109 directs. Use B as a differential iterator during the
-migration, not a second retained order updated on every edit. The new
+Choose A, as Q109 directs. Expose a virtual flat iterator for comparison
+with the current walker during migration; do not retain B's additional
+global order representation on every edit. The new
 material choices are proposed here, not already implemented or owner
-approved: local stable slots and boundary outputs (Q112), and the initial
+approved: local stable slots, order/summary index and boundary outputs (Q112), and the initial
 splice's safe scope with explicit fallbacks (Q113).
 
 ### Ownership and lookup
@@ -226,16 +469,16 @@ Whitefoot source to compile:
 ```
 FlowBlock = style, parent_route, local_depth,
             normal_origin, own_relative_shift, used_size, width_inputs,
-            slots<Block | Paragraph | Context>, sequence<EntryId>,
+            paged_slots<Block | Paragraph | Context>, indexed_sequence<EntryId>,
             boundary_output, dirty_children, local_split_fragments
 Paragraph = existing shaped/line data + owned contiguous Piece storage
-EntryId   = owner-local stable slot + generation (if slots are reused)
+EntryId   = owner-local stable slot + checked generation
 Route     = owning block/context route + stable slot
 TextUse   = paragraph route + local piece range
 StyleUse  = owning block/subtree route and explicit paragraph uses
 ```
 
-The sketch can use separate typed Slots arrays and a tagged sequence, to
+The sketch can use separate typed slot pages and a tagged sequence, to
 keep existing counted-loop preparation and child-context layout forms;
 it need not force all payloads into one large enum. Nothing persists a
 preorder integer as identity. Ancestor intersection aligns depths and
@@ -251,18 +494,36 @@ but appended serials must remain valid without reindexing old paths. New
 routes are allocated within their new subtree and published in disjoint
 slots. Use chunked growth for NodeId-indexed `text_units`/`uses` and route
 pages so one added node does not allocate and initialize an array as large
-as the DOM; page-directory growth must also be amortized/reserved outside
-the measured edit, or represented by a shallow radix directory. A table
+as the DOM. Use a fixed-fanout shallow radix directory so growth touches
+only new pages and their directory paths, and include that allocation
+inside the measured edit. Do not depend on an untimed reservation to hide
+a whole-directory copy. A table
 shared by all elements is not a shared **mutation chain**: independently
 known NodeIds write disjoint slots. If that independence cannot be proved
 at the pin, resolve the minimal Whitefoot proof gap before replacing it by
 a serialized global writer. Do not import Q111's style-slot identity as a
 layout order.
 
-After deletion, clear only removed routes and uses. Reuse requires a
-checked generation or never-reused slots until compaction. Compaction is
-an explicit full rebuild, off this edit path; it updates every holder
-atomically. Existing `docs/todo.md` session-growth work owns its policy.
+After deletion, clear only removed routes and uses. Reuse a local slot
+only after incrementing its checked generation, so an old route cannot
+alias a new entry; exhaustion refuses before publication. Reserve a batch
+of free/new slots in one owner operation, then initialize them independently.
+Use pages so that growth copies no earlier live payload. Compaction is an
+explicit full rebuild, off this edit path; it updates every holder atomically.
+Existing `docs/todo.md` session-growth work owns its policy.
+
+The sequence interface needs `insert_before(stable_entry, new_range)`,
+`remove(range)`, `prefix_output(before_entry)` and `visit_later(range)`.
+Its internal-node summaries include count, first/last line handles and the
+ordinary margin transfer, or an explicit unsupported-state flag. Insertion
+updates aggregates on the index path without opening a preceding leaf;
+rotation/rebalancing moves index links, not payloads or all stored ranks.
+Boundary-state changes update the same path. `visit_later` descends only
+intersecting subtrees and exposes independent owned child regions. Validate
+that traversal's proof at the pin before changing all payload types; a
+missing distinct-slot proof is a Whitefoot gap, not license to serialize
+unrelated writes. Local index nodes and payload pages are block-owned, so
+there is no context-wide order index shared by unrelated blocks.
 
 ### Geometry and boundary outputs
 
@@ -297,6 +558,35 @@ The summary must retain both ends and the through flag: a single collapsed
 margin value loses information (`max(10, 5) + min(-4, 0)` cannot be recovered
 from the sum 6 alone). A resolved child's internal origins are independent
 of the absolute origin at which that prefix places it.
+
+A concrete ordinary transfer can be represented as either `Through(a)` or
+`Solid(l, h, t)`, where a strut is a positive/negative pair, `join` takes
+componentwise max/min, and `value` adds the pair. For entering state
+`(y, m)`, Through returns `(y, join(m,a))`; Solid returns
+`(y + value(join(m,l)) + h, t)`. Here `h` is the advance between the first
+and last resolved edges, not a border height with external margins added.
+Composition in document order is:
+
+| Left then right | Composed transfer |
+|---|---|
+| `Through(a); Through(b)` | `Through(join(a,b))` |
+| `Through(a); Solid(l,h,t)` | `Solid(join(a,l),h,t)` |
+| `Solid(l,h,t); Through(a)` | `Solid(l,h,join(t,a))` |
+| `Solid(l1,h1,t1); Solid(l2,h2,t2)` | `Solid(l1,h1 + value(join(t1,l2)) + h2,t2)` |
+
+This is a fixed-size associative representation of those transfers when
+arithmetic does not saturate. Use a balanced reduction and down-sweep to
+obtain the entering state at each direct entry; independent entry origins
+then follow. Cache the first resolved-edge handle plus internal min/max
+extents and first/last line handles relative to that edge, so negative
+margins and baselines do not make final cursor equal final content extent.
+Through-only blocks defer their unresolved origin to the eventual resolved
+edge instead of forcing that edge early. The old Open/Close rules determine
+which edges can be represented this way; a border, padding, marker or
+height constraint must not be silently classified as Through. This gives
+the implementer an explicit algebra to test, not permission to change
+those classifications. Step 4's varied-entering-state comparison is the
+acceptance test for lifting nested block outputs into these transfers.
 
 This bounded summary is only for the translation-invariant ordinary case.
 A changed height clamp, unresolved ancestor edge, clear against floats,
@@ -355,8 +645,8 @@ numeric condition applying to every page, not a workload special case.
    input from the nearest recorded scope boundary or refuse. Lay out child
    contexts and prepare paragraphs independently where their inputs permit.
    A failed allocation or unsupported state leaves the old layout intact.
-4. Allocate the replacement local sequence and changed route/use pages;
-   stitch E in (or remove it). Publish only after all construction and
+4. Allocate new entry leaves, the changed local sequence-index path and
+   changed route/use pages; stitch E in (or remove it). Publish only after all construction and
    validation succeeds. Unchanged paragraphs keep their existing shaped
    payload by ownership; there is no `reuse_prepared` search/swap over C.
 5. Recompute from the earliest changed boundary (including a preceding
@@ -396,11 +686,11 @@ No Whitefoot implementation change is included in the estimates.
 
 | Step | Change and estimated lines touched | Check | Required falsifier |
 |---|---|---|---|
-| 1. Decouple identity from order | 700–1,100: `module.wfm`, `build`, `prep`, `structure`, `style_update`, `update`. Paragraph-owned pieces; stable owner/entry/context slots and routes; explicit order queries. Keep the current flat walker through an adapter. | Full dumps on all three pages and five focused layout pages; every prefix of existing text, font-size and block scripts compared with a fresh full build; repeated insert/delete before one sibling, plus a style edit and a text edit after each splice. | Retain numeric-slot ancestry, omit one text/use route repair, or let a newly appended paragraph use numeric predecessor order. Each must fail its focused case. Mutation of the last piece's range must fail a multi-piece paragraph case. |
+| 1. Decouple identity from order | 700–1,100: `module.wfm`, `build`, `prep`, `structure`, `style_update`, `update`. Paragraph-owned pieces; stable owner/entry/context slots and routes; explicit order queries. Keep the current flat walker through an adapter; temporary vectors are not locality evidence. | Full dumps on all three pages and five focused layout pages; every prefix of existing text, font-size and block scripts compared with a fresh full build; repeated insert/delete before one sibling, plus a style edit and a text edit after each splice. | Retain numeric-slot ancestry, omit one text/use route repair, or let a newly appended paragraph use numeric predecessor order. Each must fail its focused case. Mutation of the last piece's range must fail a multi-piece paragraph case. |
 | 2. Make geometry owner-relative | 900–1,500: `flow`, `update`, `columns`, `table`, `flex`, `grid`, `inline`, `module.wfm`, dump checks. Centralize normal/visual/context coordinate conversions; table content origin; anchored fragments/naturals/baselines. Initially stack through the full reference walker and convert resolved outputs. | Byte-identical full dumps, seq and par, including negative margins, relative ancestors, positioned/fixed children, table alignment, split inlines and columns. Add extreme/saturated coordinate cases. Measure placement separately. | Omit one ancestor origin, apply relative displacement twice, shift every nested table descendant, apply a column map before accumulation, or reassociate a saturating sum. Each case must produce a dump difference. |
-| 3. Replace flat ownership with nested direct sequences | 1,000–1,700: `build`, `flow`, `prep`, `structure`, `style_update`, `update`, `module.wfm`; small item-iterator adapters in `flex`, `grid`, `table`, `columns`. Stop retaining or rebuilding the flat stream on successful edits. | Same full-build outputs and edit-prefix checks; assert live unit totals against an independent walk; inspect the compiler's certified loops for sibling preparation and child layout. Full-build time is compared with the frozen M1/base source under the same pin, not just with step 2. | Reverse equal-order siblings, treat a float as block-contained, or leave a retained flat-stream rebuild on the edit path. Rendering catches the first two; physical-work counts and a wide/deep synthetic scaling case catch the last. |
-| 4. Block outputs and bounded propagation | 800–1,400: `flow`, `update`, `columns` consumers and focused cases. Ordinary margin transfer composition/prefix; float influence replay; dirty-child frontier; translate only direct clean siblings. Font-size and text edits use this path before a structural splice does. | Generate small margin/empty/marker configurations with varied entering struts and compare the transfer composition with the original entry machine; independently retain Chromium rectangle cases. Every edit remains byte-identical to a fresh build. Report W, S, D, F and actual visits, including the prefix used to recover state. | Collapse a strut to one scalar, clear an incoming float at a block boundary, stop on equal height with a changed baseline, omit an ancestor-height update, or scan an unchanged descendant. Geometry cases catch state mistakes; an instrumented sentinel counter catches extra work. |
-| 5. Publish a flow-range splice | 650–1,100: `structure`, `build`, routing/marking helpers, `oracle/layout/edit`, focused scripts. Private subtree build, local sequence swap, seam validation, targeted routing and count deltas, insert and removal. | Three pages' block scripts, `incremental-layout/scripts/block-case`, focused counter / `:nth-*` / `+` / `~` / float / collapsing-margin / split-inline cases. Compare every prefix with full build and serialized-source reparse, seq and par. Assert an explained refusal leaves the retained tree untouched. After each removal edit, issue another text/font-size edit to catch stale routes. | Disable the structural style frontier, fail to restack P's later siblings, skip a route tombstone, ignore outgoing counter state, or publish before seam validation. Each mutation must fail; an unexplained `inc refused` is not success. |
+| 3. Replace flat ownership with nested indexed sequences | 1,250–2,050: `build`, `flow`, `prep`, `structure`, `style_update`, `update`, `module.wfm`; small item-iterator adapters in `flex`, `grid`, `table`, `columns`. Owner-local balanced order/summary indexes and paged payload slots; stop retaining or rebuilding the flat stream on successful edits. | Same full-build outputs and edit-prefix checks; assert live unit totals against an independent walk; inspect the compiler's certified loops for sibling preparation and child layout. Full-build time is compared with the frozen M1/base source under the same pin, not just with step 2. | Reverse equal-order siblings, treat a float as block-contained, or leave a retained flat-stream rebuild on the edit path. Rendering catches the first two; physical-work counts and a wide/deep synthetic scaling case catch the last. |
+| 4. Block outputs and bounded propagation | 800–1,400: `flow`, `update`, `columns` consumers and focused cases. Ordinary margin transfer composition/prefix; float influence replay; dirty-child frontier; translate only direct clean siblings. Font-size and text edits use this path before a structural splice does. | Generate small margin/empty/marker configurations with varied entering struts and compare the transfer composition with the original entry machine; independently retain Chromium rectangle cases. Every edit remains byte-identical to a fresh build. Report W, A, L, D, F and actual visits, including cached index nodes used to recover prefix state; no earlier entry leaf may be consumed. | Collapse a strut to one scalar, clear an incoming float at a block boundary, stop on equal height with a changed baseline, omit an ancestor-height update, or scan an unchanged descendant. Geometry cases catch state mistakes; instrumented earlier-leaf and unchanged-descendant sentinels catch extra work. |
+| 5. Publish a flow-range splice | 650–1,100: `structure`, `build`, routing/marking helpers, `oracle/layout/edit`, focused scripts. Private subtree build, local sequence swap, seam validation, targeted routing and count deltas, insert and removal. | Three pages' block scripts, `research/investigations/incremental-layout/scripts/block-case.html` and its `.edits` script, focused counter / `:nth-*` / `+` / `~` / float / collapsing-margin / split-inline cases. Compare every prefix with full build and serialized-source reparse, seq and par. Assert an explained refusal leaves the retained tree untouched. After each removal edit, issue another text/font-size edit to catch stale routes. | Disable the structural style frontier, fail to restack P's later siblings, skip a route tombstone/generation check after slot reuse, ignore outgoing counter state, or publish before seam validation. Each mutation must fail; an unexplained `inc refused` is not success. |
 | 6. End-to-end sizing and deletion of migration support | 150–300: oracle counts, harness/reporting, research/tree record; remove the temporary flat adapter and this probe when replaced. | E2's whole-edit costs at seq and par-4 on the same E1 captures/scripts; no fallback in a claimed local block edit, all current edit kinds no worse than M1, final full style/layout within M2's 5% envelope. Pair before/after same-source toggles for the specific optimization being attributed, and record the pin and driver hashes. | Force one whole-context route rebuild, disable subtree skipping, or omit placement when claiming paint cost. The locality/performance checks must reject these. If the measured distributions cannot distinguish a change, collect a longer paired sample rather than claim a win. |
 
 At every step, the fresh-build comparator bypasses retained state. Also
@@ -428,11 +718,13 @@ this research does not claim implementation approval for them.
 
 - **Q112 — stable local slots and block boundary outputs (recommended).**
   This gives owned, independently writable siblings and removes every
-  insertion-sensitive rank from retained identity. Local sequence arrays
-  cost O(s_parent) handle copying; alternative chunk/rank trees avoid that
-  for very wide parents but add indexing to all readers. Start with the
-  local representation only if the census/E1 path sizes support it; reopen
-  before accepting an edit that still scales with a large sibling run.
+  insertion-sensitive rank from retained identity. A local array costs
+  O(s_parent) copies, including earlier handles, and cannot pass the existing
+  M2 locality criterion. Recommend a balanced local order/summary index
+  with stable leaves and paged payload slots; its extra allocations and
+  lookup cost must meet the full-build envelope. A flat global order index
+  needs a second local-child index for the same dependency graph. Lazy
+  range origins remain conditional on measured wide-suffix cost.
   Retain the ordinary margin transfer/prefix contract so a convenience
   left-to-right loop does not become the architectural dependency chain.
   Boundary outputs differ from the refused arbitrary stacking snapshots:
@@ -481,9 +773,83 @@ this research does not claim implementation approval for them.
 - **Full-build regression and memory.** Recommendation: separately
   measure allocation count, peak live bytes, paragraph preparation, stack,
   and placement before accepting the nested representation. Per-block
-  vectors/outputs may cost more than today's packed arrays. A's dependency
+  indexes/pages/outputs may cost more than today's packed arrays. A's dependency
   advantage does not establish its sequential speed or M2's 5% condition.
 - **Reported work.** Recommendation: implement the physical counters in
   step 4 and retain historical columns only for comparison. The existing
   discrepancy is recorded in `docs/todo.md`; it must not be used to pass a
   locality gate.
+
+## Validation and remaining uncertainty
+
+Renderer validation used the source at
+`e468312e7c53f826a2d2ea85e0c257c9d42736fe`; subsequent changes only refine
+this research record and its governing design prose. The provided compiler
+and checked-out/pinned Whitefoot revision agreed, and the compiler's
+SHA-256 remained
+`a589b9ad3adf7e6508f03ada519e5d5565399e0e420472d2e4d05bd405fdda7f`.
+No Whitefoot source or pin changed.
+
+- The task's exact compiler invocation, from `renderer/` under its supplied
+  lock/guard with the shared cache and `--fragments function`, compiled the
+  new `layout_oracle` entry successfully. The only executable additions
+  are the removable census/timing probe, its declared interface/dependency,
+  and the oracle mode dispatch; ordinary layout functions are unchanged.
+- A hand-derived fixture with body containing `div(p(A),p(B))` and
+  `div(p(C))`, plus the normal html/head/title structure, has 2 contexts,
+  16 flow entries, 6 non-BFC blocks and 3 paragraphs. Every reported owner,
+  parent, direct count, depth, open index and subtree span matched the
+  hand enumeration. Its checker rejected 111 individually changed fields,
+  missing/extra rows and changed row order. This expectation comes from
+  the fixture structure, not the census algorithm's own output.
+- The probe passed its stack-height, baseline, flow-end and every-rectangle
+  comparison on the fixture, `flow-cases.html` and every real-page
+  repetition. Ten temporary source faults each compiled and made the
+  fixture exit 2: a wrong stack height, baseline or flow end; wrong placed
+  count, kind, owner, x, y, width or height. The source was restored and
+  rebuilt. A failed temporary float-operator spelling was corrected before
+  counting the four coordinate mutations as tested.
+- Ordinary `dump 1` output is byte-identical to the supplied pre-probe
+  driver on the five existing flow/table/flex/grid/column case pages and
+  all three real pages: 1,249,058 / 12,538,869 / 19,024,863 bytes for
+  apollo11/html5/ecma262. This is preservation evidence, not an independent
+  claim of CSS correctness or a reconstruction of that supplied driver's
+  exact build provenance.
+- From the worktree root,
+  `sh research/investigations/incremental-layout/run.sh inc seq PAGE block`
+  passed 60/60 apollo11 edits, 60/60 html5 and 20/20 ecma262, with zero
+  differences or refusals. The sampled apollo11 run took 19.06 s wall;
+  html5/ecma262 then took 121.22 / 59.07 s. These runs validate unchanged
+  existing edit behavior; they do not exercise the proposed splice.
+- `make -o compiler check WHITEFOOTC=<provided pinned compiler>
+  CACHE=<shared cache>` passed renderer module checks, the DOM self-test
+  and design lint in 9.51 s. The compiler prerequisite was deliberately
+  satisfied by the supplied, hash-verified pinned binary; this is not a
+  claim that the compiler was rebuilt or that an unmodified `make check`
+  ran. Design lint's 21 tests passed. The exact final prose is also checked
+  separately with `make design-lint` and `git diff --check`.
+
+The separate read-only reviewer (GPT-6.1-sol; A, D, C, R, M and V, including
+G1–G3 and DC1–DC4; T not applicable) checked the diff from `7ee4411`, source
+callers, tree ancestors and actual logs without rerunning green suites.
+The review exposed stale whole-context/whole-walk/preorder clauses and the
+old O(1)-per-ancestor claim; the governing prose now distinguishes the
+reference path from M2 and uses the direct-sibling bound. It also exposed
+that copying a whole local sequence still touches earlier entries. The
+recommendation now requires the stable local order/summary index before a
+splice can pass the unchanged locality criterion. Initial vectors are
+explicitly migration-only. The reviewer confirmed that resolution of the
+locality finding. The original measurement binary had not been preserved;
+a confirmation run now has the preserved, directly verified hash above.
+Final block-script and gate results completed after the review and are
+reported directly here.
+
+Found along the way: the misleading all-context-relative `Fragment`
+comment is corrected; misleading `UpdateCounts` physical-work semantics
+are recorded in `docs/todo.md` with impact, proposed counters and reopening
+condition. No language gap was demonstrated or filed. The proposed nested
+types, distinct-slot traversal, summary coverage, full-build allocation
+cost, parallel speed and actual E1 splice latency remain unverified.
+Q112 and Q113 are open recommendations; Q104 and Q109 are approved
+inputs. No approval log entry or readiness claim is made. Delivery is a
+local branch commit only, as requested; there is no push or PR update.

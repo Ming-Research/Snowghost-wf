@@ -87,7 +87,11 @@ depends on:
 So the true chain is: E's subtree, P's later children, then P's ancestors
 up to the context. Every later block of the context only moves. In a flat
 flow with positions relative to the context, that move is O(suffix). With
-positions relative to the parent block, it is O(1) per ancestor.
+positions relative to the parent block, each unaffected sibling subtree
+moves in O(1), but the update still visits the affected direct sibling
+ranges along the ancestor path, plus any margin/float influence. It is not
+O(1) per ancestor. The concrete representation, dependency bounds, census
+and stack-pass measurements are in [the layout design](layout-design.md).
 
 ## Candidates
 
