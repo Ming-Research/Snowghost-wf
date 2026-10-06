@@ -238,18 +238,40 @@ set the direction of the work (design-tree skill, "Before starting").
   coarse set and accept the cost (rejected by the target). Bounding a
   reach by its count of `+` hops (C) waits for step 2's measured cost
   (`docs/todo.md`).
-- **Q114**, open: the nested flow's identity and order (steps 3 and 4). See
+- **Q114**, approved (A) on 2026-10-06: the nested flow's identity and order (steps 3 and 4). See
   [the layout design](layout-design.md#recommended-contract). Recommended:
   each block owns its entries in stable local slots with a block-local
   balanced order and summary index, stores its boundary outputs (size,
   baselines, margin struts, float exports) and an insertion translates only
   the direct later siblings, instead of a plain local array, whose insertion
   copies the earlier entries too, or a flat flow with a second subtree index.
-- **Q115**, open: the first splice's scope. Recommended: a complete
+- **Q115**, approved (A) on 2026-10-06: the first splice's scope. Recommended: a complete
   block-level seam with no counter, quote or inline run crossing it first,
   every other seam keeping today's rebuild as a counted fallback, and no
   fallback allowed on a timed E1 block edit, instead of supporting every
   builder state before the first local splice.
+
+The completion review of steps 1 and 2 (a separate read-only agent, at
+8e69668) found three things, each fixed before the steps merged:
+- **An :nth-child of-clause hid its structural features.** The clause's
+  alternatives were never queued for nested_reaches, so with
+  `#ofempty > div:nth-child(1 of :empty)` an insertion into the first div
+  changed which div matched and neither was rematched. They are now queued
+  with reach_around; `:empty` inside a clause becomes a parent reach beyond
+  the edit's parent, which `structural_restyle` answers with a full restyle.
+  `scripts/structure-case` holds the case, and the reach check fails on it
+  at 8e69668.
+- **Slot initialization ordered siblings.** Each new element appended to
+  every shared row store before the next, an order the insertion does not
+  need. Rows now grow once by the subtree's size, the order maps are written
+  by the one sequential scatter (distinct NodeIds Whitefoot cannot yet prove
+  distinct; docs/todo.md), and each new element fills its own rows, its
+  depth taken from its steps up to the subtree's root.
+- **Criterion 4 was measured against the wrong base.** The full-build
+  comparison in runs/slots.txt used the 7ee4411 binaries rather than M1, did
+  not time the parallel style stage, and its html5 par-4 layout change is
+  1.95 percent, not within 1.5. The full build is measured again against M1
+  on the 14900K runner (runs/full-14900k.txt).
 
 ## Step 1 and 2 in detail: stable slots and the insertion restyle
 

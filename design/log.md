@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-06 Keep style slots stable across structural edits and bound the insertion restyle
+
+Nodes: pipeline/style
+
+Owner-approved: The owner approved Q108, Q110, Q111 and Q113 during M2's work on 2026-10-05 and 2026-10-06, as research/investigations/structure-edits/DESIGN.md records under Decisions; on 2026-10-06, before the night's work, the owner wrote in Chinese that all the cards were agreed, among them the card asking leave to write this entry and merge M2's style steps once the completion review's findings were fixed and CI passed (Q119).
+
+Summary: The style tree records two decisions of M2 steps 1 and 2. The kept style state's rows are stable slots: an insertion appends its elements' rows, a removal leaves holes the passes skip, and an edit takes depths from parents instead of building the traversal again (Q108, Q111), so no existing row moves and the full build keeps its order and parallel loops. An insertion or removal rematches, besides the inserted subtree, only the elements a structural reverse index names by their place around the edit point and the ancestor features their rules need (Q110, Q113), which on html5 brought one insertion's set from 58,230 elements to 548. The grounds are research/investigations/structure-edits/DESIGN.md, runs/structure-check.txt and runs/slots.txt.
+
 ## 2026-10-05 Keep the style stage across edits
 
 Nodes: pipeline/style, pipeline/layout
