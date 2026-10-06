@@ -91,7 +91,7 @@ Source: [references and evidence](../AGENTS.md#references-and-evidence).
   interfaces as written. An interface, contract or effect row changed only
   with the architecture's approval, and none was weakened to let a body pass.
 - [ ] **C5 — Architectural fit.** Apply
-  [G3](../design/skill/SKILL.md#design-checks) to structural choices, and
+  [G3](../design/skill/SKILL.md#review-checks) to structural choices, and
   check that the assessment happened when the choice was made.
 
 ## T. Checks and the pin — changes to tests, the Makefile, `.github/`, `whitefoot.pin` or a submodule
@@ -138,7 +138,7 @@ made a material choice elsewhere.
 - [ ] **M1 — Design checks.** Apply the design checks G1–G3 and
   correspondence checks DC1–DC4 (the owner-wide instructions' review checks,
   also in
-  [`design/skill/SKILL.md`](../design/skill/SKILL.md#design-correspondence-review-dcr))
+  [`design/skill/SKILL.md`](../design/skill/SKILL.md#review-checks))
   and `make design-lint` to the reviewed scope, and include the actual
   results.
 

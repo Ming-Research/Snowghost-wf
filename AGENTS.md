@@ -153,5 +153,4 @@ Whitefoot gap filed.
 `README.md` introduces and navigates; this file holds the goal and project
 rules; `design/` the decisions and their log; `docs/review-checklist.md` the
 review items; `docs/todo.md` open defects and Whitefoot requirements until
-resolved; `research/investigations/` questions, experiments and results; the
-PR description the current change. None narrates editing history.
+resolved; `research/investigations/` questions, experiments and results.
