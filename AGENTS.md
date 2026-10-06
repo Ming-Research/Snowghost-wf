@@ -52,6 +52,7 @@ speed decides only between candidates of equal dependencies.
   `research/investigations/<name>/`, which writes, before measuring, the
   question, the comparison that could answer it either way and the result
   that would reject the proposal; its surviving decision goes to the tree.
+  Research is not an implied implementation requirement.
   An agent writer trial records the model, prompt, context, turns and time of
   each run, and keeps apart expressibility, the agent's success with the
   supplied help, composition and cost.
@@ -81,7 +82,7 @@ with its subdirectory, found by the Makefile. Change log: `design/log.md`.
 Research record: `research/investigations/`. Maintained TODO: `docs/todo.md`,
 which also holds Whitefoot requirements. Form and readiness checks:
 `make design-lint` and `make design-ready`, running `lint.py` from the
-`design/skill/` submodule of Design-skill.
+`design/skill/` submodule of Design-skill, which Snowghost never edits.
 
 ## Agent roles
 
@@ -89,15 +90,15 @@ which also holds Whitefoot requirements. Form and readiness checks:
   module graph, the Whitefoot module interfaces (`.wfm`) with their contracts
   and effect rows, and the format the renderer and the shell exchange.
 - Implementer agents write module bodies (`.wf`) against those interfaces,
-  and the shell's Rust components against that format. An implementer that
-  finds an interface or the format insufficient reports the gap to the
-  primary agent with a minimal example instead of editing it.
+  and the shell's Rust components against that format, in parallel. An
+  implementer that finds an interface or the format insufficient reports the
+  gap to the primary agent with a minimal example instead of editing it.
 
 ## Merge rules
 
-1. Work-branch changes need no approval. A PR becomes ready only after the
-   owner has approved every decision it needs, recorded in `design/log.md`
-   and checked by `make design-ready`.
+1. Work-branch changes need no approval beyond what the owner-wide
+   instructions require. A PR becomes ready only after the owner has approved
+   every decision it needs, recorded in `design/log.md`.
 2. Every merge into `main` requires owner approval of the exact revision.
 3. The exact revision merged into `main` passes `make check` first.
 4. A change that moves `whitefoot.pin` or the `whitefoot-kit/` or
@@ -118,17 +119,17 @@ stacked, each on the branch of the one before it.
   git, Python 3, curl, `/usr/bin/clang`, LLD on Linux and the `design/skill`
   and `whitefoot-kit` submodules; `make check WHITEFOOTC=<path>` uses another
   compiler.
-- `make design-ready` and `make pin-ready`, in CI on ready PRs and `main`:
-  every tree change is approved in the log, and the pin names no experiment
-  release.
+- `make design-ready` and `make pin-ready`, before marking ready and in CI on
+  ready PRs and `main`: every tree change is approved in the log, and the pin
+  names no experiment release.
 - The oracles are the `make oracle-*` targets, outside `make check`.
 
 ## Review
 
 A change that edits `design/` or the renderer-shell format, adds or changes a
 module interface, or changes more code than a small fix gets the owner-wide
-completion review, by a separate read-only agent with the prompt and groups
-in [docs/review-checklist.md](docs/review-checklist.md#how-to-review); other
+completion review, with the prompt and groups in
+[docs/review-checklist.md](docs/review-checklist.md#how-to-review); other
 changes need only the checks. The review's scope and fixed findings go in the
 PR's review section.
 

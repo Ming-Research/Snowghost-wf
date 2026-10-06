@@ -133,8 +133,8 @@ Most of the code is written by coding agents and reviewed by the project's
 owner.
 - [`AGENTS.md`](AGENTS.md) holds the goal, the priorities and the project's
   rules, including the approval and merge rules.
-- Every choice between viable alternatives lands in the design tree and is
-  approved by the owner before it reaches `main`.
+- Every design decision lands in the design tree and is approved by the
+  owner before it reaches `main`.
 - An investigation under `research/investigations/` writes its question and
   the result that would reject it before it measures.
 

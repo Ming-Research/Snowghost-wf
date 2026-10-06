@@ -1,8 +1,7 @@
 # Known defects and follow-up work
 
-Items the work has found and not yet done, each with its impact, the change
-that would address it and when to reopen it, as the owner-wide instructions
-ask. Remove an item in the change that resolves it.
+Items the work has found and not yet done. Remove an item in the change that
+resolves it.
 
 ## Whitefoot requirements
 
