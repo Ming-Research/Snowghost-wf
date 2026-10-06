@@ -218,3 +218,49 @@ set the direction of the work (design-tree skill, "Before starting").
   approved.
 - **Q110**, a structural reverse index for `:nth-*`, `+` and `~`, with P's
   positions recomputed: approved.
+
+## Step 1 and 2 in detail: stable slots and the insertion restyle
+
+**Index spaces today.** The style state has two kinds of arrays.
+
+- Per element, indexed by preorder position 0..E: the traversal's
+  elements, parents, depths, `Styles.elements`, the pseudo flags and marks.
+- Per styled node, 0..N: the cascade's winners and kinds, and the inherited
+  and reset arrays. There the E elements come first and the N - E
+  pseudo-elements after them (13,368 on ecma262). Code tests `n <
+  element_count` for "is an element".
+
+**Slots (Q111).** The full build keeps both spaces exactly as they are. An
+insertion of a subtree with m elements and q pseudo-elements appends:
+
+- m element slots E, E+1, ... to every per-element array: the traversal's
+  elements, parents (parent slot) and depths (parent depth + 1), and the
+  order map entries for the new NodeIds;
+- m + q node slots N, N+1, ... to every per-node array;
+- an element-to-node map for appended elements only. An element below E is
+  its own node; above, the map gives its node. A kind test replaces
+  `n < element_count`.
+
+A removal marks the subtree's element slots empty: the order map entry and
+the traversal's element entry name none, and they are skipped wherever a
+pass lists elements. The layout reaches styles through the order map, as it
+does today.
+
+**Pseudo-element order.** `Styles.pseudos` is sorted by element and found by
+binary search (`rank_in`). Appended elements' pseudo-elements go to a second
+sparse list searched the same way, until the next full build merges them.
+
+**The insertion restyle (step 2).**
+
+1. Insert into the DOM and append the new subtree's slots (above).
+2. Find the restyle set: every new element, plus
+   `structural_restyle(parent)` mapped from NodeIds to slots. Use Astra's
+   `structure` oracle to check that the set is complete.
+3. Rematch the set; run the levels from the shallowest depth, children
+   queued as Q91's frontier does; intern into the kept tables.
+4. Hand layout the changed list. Its structural path stays as it is until
+   step 4.
+
+Expected effect: the style part of a block edit drops from the full stage
+(114, 476 and 937 ms) to the set's size, while layout's structure + update
+(16, 239 and 259 ms) remains for steps 3 and 4.
