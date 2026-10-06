@@ -1,0 +1,179 @@
+# E1's per-edit timing of Snowghost and Chromium on the owner's i9-14900K
+# runner (research/investigations/engine-comparison). Every engine runs on
+# the same machine with the same 47 font files. The runner has no sudo, so
+# Chromium's libraries and the fonts are unpacked from their Ubuntu packages
+# into ~/snowghost-deps, and apollo11 is captured once into ~/snowghost-data
+# (Wikimedia serves no revision-stable bytes; concurrency/run.sh). The
+# parameters are the env block below; a branch that changes them can add a
+# push trigger for itself while it runs them.
+name: time-14900k
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: time-14900k
+  cancel-in-progress: false
+
+env:
+  # name=ref: each build is compiled from its own checkout of ref.
+  BUILDS: "m1=origin/main m2=origin/research/structure-edits"
+  # The names avoid PAGES, MODES and RUNS, which the run.sh scripts read.
+  PAGE_LIST: "ecma262 html5 apollo11"
+  EDIT_KINDS: "word sentence colour fontsize rootfont block"
+  # seq, or par4: the --par build at WF_WORKERS=4.
+  EDIT_MODES: "seq par4"
+  EDIT_RUNS: "3"
+  CHROMIUM: "1"
+  # 1 also times every build's full style and layout stages (style/run.sh
+  # time and layout/run.sh time, best of five, par at four workers).
+  FULL: "1"
+
+jobs:
+  time:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Chromium, its libraries and the fonts, without sudo
+        run: |
+          set -euo pipefail
+          deps=$HOME/snowghost-deps
+          mkdir -p "$deps/debs"
+          cd "$deps/debs"
+          fonts="fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol"
+          libs="libasound2t64 libatk-bridge2.0-0t64 libatk1.0-0t64 libatspi2.0-0t64 libcairo2 libcups2t64 libdbus-1-3 libdrm2 libgbm1 libglib2.0-0t64 libnspr4 libnss3 libpango-1.0-0 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxkbcommon0 libxrandr2 libfontconfig1 libfreetype6"
+          wanted=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances $libs | grep -E '^[a-z0-9]' | sort -u)
+          for p in $fonts; do
+            ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || echo "not downloadable: $p"
+          done
+          for p in $wanted; do
+            if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then continue; fi
+            ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || echo "not downloadable: $p"
+          done
+          for d in *.deb; do dpkg -x "$d" "$deps/root"; done
+          npx -y playwright@1.56.0 install chromium >/dev/null
+          chrome=$(ls -d "$HOME"/.cache/ms-playwright/chromium-1194/chrome-linux*/chrome)
+          lib="$deps/root/usr/lib/x86_64-linux-gnu:$deps/root/lib/x86_64-linux-gnu"
+          if LD_LIBRARY_PATH=$lib ldd "$chrome" | grep 'not found'; then exit 1; fi
+          echo "CHROME=$chrome" >> "$GITHUB_ENV"
+          echo "CHROME_LIBS=$lib" >> "$GITHUB_ENV"
+          echo "DEPS=$deps" >> "$GITHUB_ENV"
+          LD_LIBRARY_PATH=$lib "$chrome" --version
+
+      - name: Pages
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          sh research/investigations/concurrency/run.sh fetch || true
+          for f in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -f "$data/$f"; done
+          capture=$HOME/snowghost-data/apollo11-capture-1
+          if [ ! -f "$capture/SHA256SUMS" ]; then
+            mkdir -p "$capture"
+            sh research/investigations/concurrency/run.sh fetch 2>/dev/null || true
+            sed -n 's/^\(apollo11[^ ]*\) \([^ ]*\) .*/\1 \2/p' research/investigations/concurrency/run.sh | while read -r name url; do
+              curl -fsSL --retry 3 -o "$capture/$name" "$url"
+            done
+            (cd "$capture" && sha256sum apollo11* > SHA256SUMS)
+          fi
+          (cd "$capture" && sha256sum -c SHA256SUMS)
+          cp "$capture"/apollo11* "$data/"
+          rm -f "$data"/*.unverified
+          echo "pages:"; (cd "$data" && sha256sum ecma262* html5.html apollo11*)
+
+      - name: Build the drivers
+        run: |
+          set -euo pipefail
+          git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+          mkdir -p build/drivers "$HOME/snowghost-data/wf-cache"
+          for pair in $BUILDS; do
+            name=${pair%%=*} ref=${pair#*=}
+            tree=build/trees/$name
+            rm -rf "$tree"; git worktree prune
+            git worktree add -q --detach "$tree" "$ref"
+            (cd "$tree" && git submodule update -q --init whitefoot-kit design/skill 2>/dev/null || git submodule update -q --init)
+            make -s -C "$tree" compiler
+            wfc=$(realpath "$(ls "$tree"/build/whitefoot/*/whitefootc | head -1)")
+            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/drivers/$name-seq")
+            (cd "$tree/renderer" && "$wfc" --cache "$HOME/snowghost-data/wf-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/drivers/$name-par")
+            echo "$name $ref $(git -C "$tree" rev-parse --short HEAD) $(cat "$tree/whitefoot.pin") seq $(sha256sum < build/drivers/$name-seq | cut -c1-16) par $(sha256sum < build/drivers/$name-par | cut -c1-16)"
+          done
+
+      - name: Fonts and edit scripts
+        run: |
+          set -euo pipefail
+          make -s oracle-fonts FONT_ROOT="$DEPS/root"
+          ls build/fonts | wc -l
+          first=${BUILDS%% *}; first=${first%%=*}
+          cp "build/drivers/$first-seq" build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare $PAGE_LIST
+          wc -l build/x5/scripts/*.edits
+
+      - name: Time Snowghost
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          for pair in $BUILDS; do
+            name=${pair%%=*}
+            cp "build/drivers/$name-seq" build/layout_oracle_seq
+            cp "build/drivers/$name-par" build/layout_oracle_par
+            for mode in $EDIT_MODES; do
+              for page in $PAGE_LIST; do
+                for kind in $EDIT_KINDS; do
+                  rm -rf build/x5/time
+                  if [ "$mode" = par4 ]; then
+                    ALONE=1 WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh time par "$page" "$kind" "$EDIT_RUNS" | tee "results/$name-$mode-$page-$kind.txt"
+                  else
+                    ALONE=1 sh research/investigations/incremental-layout/run.sh time seq "$page" "$kind" "$EDIT_RUNS" | tee "results/$name-$mode-$page-$kind.txt"
+                  fi
+                  mkdir -p "results/raw/$name-$mode" && cp build/x5/time/* "results/raw/$name-$mode/"
+                done
+              done
+            done
+          done
+
+      - name: Time Chromium
+        if: env.CHROMIUM == '1'
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          printf '<?xml version="1.0"?>\n<fontconfig><dir>%s</dir><cachedir>%s</cachedir></fontconfig>\n' "$GITHUB_WORKSPACE/build/fonts" "$DEPS/fc-cache" > "$DEPS/fonts.conf"
+          export FONTCONFIG_FILE=$DEPS/fonts.conf LD_LIBRARY_PATH=$CHROME_LIBS CHROME_ARGS=--no-sandbox
+          for page in $PAGE_LIST; do
+            case $page in
+              ecma262) sheets="assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css assets/css/print.css=$data/ecma262-print.css" ;;
+              html5) sheets="" ;;
+              apollo11) sheets="wikibase.client.init&only=styles&skin=vector-2022=$data/apollo11-modules.css modules=site.styles&only=styles&skin=vector-2022=$data/apollo11-site.css" ;;
+            esac
+            for kind in $EDIT_KINDS; do
+              node research/investigations/engine-comparison/chromium.mjs "$data/$page.html" "build/x5/$page.nodes" "build/x5/scripts/$page-$kind.edits" $sheets | tee "results/chromium-$page-$kind.txt" | tail -2
+            done
+          done
+
+      - name: Time the full stages
+        if: env.FULL == '1'
+        run: |
+          set -euo pipefail
+          for pair in $BUILDS; do
+            name=${pair%%=*}
+            tree=build/trees/$name
+            mkdir -p "$tree/build/research" && rm -rf "$tree/build/research/concurrency" "$tree/build/fonts"
+            cp -R build/research/concurrency "$tree/build/research/"
+            cp -R build/fonts "$tree/build/fonts"
+            (cd "$tree" && WORKERS=4 sh research/investigations/style/run.sh time) | tee "results/full-style-$name.txt"
+            (cd "$tree" && WORKERS=4 sh research/investigations/layout/run.sh time) | tee "results/full-layout-$name.txt"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: time-14900k-${{ github.run_id }}
+          path: results/
