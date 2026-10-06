@@ -58,8 +58,8 @@ Source: [repository hygiene](../AGENTS.md#repository-structure-and-hygiene).
   collection path; documented commands name existing targets. Moves and
   deletions update affected links and wiring.
 - [ ] **A4 — Artifact hygiene.** No scratch output, personal path, credential
-  or machine-local setup in the diff. Artifacts use English. No edit to a
-  file under `whitefoot/`; the only permitted change there is the pin.
+  or machine-local setup in the diff. Artifacts use English. The only change
+  to Whitefoot is a moved `whitefoot.pin`.
 
 ## D. Documentation — changed Markdown, comments or examples
 
@@ -96,7 +96,7 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
   [G3](../design/skill/SKILL.md#design-checks) to structural choices, and
   check that the assessment happened when the choice was made.
 
-## T. Checks and the pin — changes to tests, the Makefile, `.github/` or `whitefoot/`
+## T. Checks and the pin — changes to tests, the Makefile, `.github/` or `whitefoot.pin`
 
 - [ ] **T1 — Preserved checks.** Every removed, skipped, narrowed or weakened
   test or check has a technical reason consistent with the requested change.
@@ -104,9 +104,10 @@ Source: [code and tests](../AGENTS.md#code-and-tests).
   shows that a representative wrong result is detected.
 - [ ] **T3 — Local and CI correspondence.** CI runs the same Makefile targets
   as local `make check`; changed selection adds no omission or extra check.
-- [ ] **T4 — The pin.** A moved `whitefoot/` pin names the adopted Whitefoot
+- [ ] **T4 — The pin.** A moved `whitefoot.pin` names the adopted Whitefoot
   revisions and why; a revision bound for `main` pins a commit on
-  Whitefoot's `main`, and Snowghost's checks pass with it.
+  Whitefoot's `main` that has a compiler release, and Snowghost's checks pass
+  with it.
 
 ## R. Decisions — changed choices, premises or evidence
 

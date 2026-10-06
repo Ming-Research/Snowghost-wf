@@ -7,7 +7,7 @@ NODE ?= node
 # Every path is relative to this Makefile, so each target works from any
 # working directory.
 ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
-WHITEFOOT := $(ROOT)/whitefoot
+BUILD := $(ROOT)/build
 
 # The live design trees: every root node file directly under design/ except
 # the log, so a tree is linted in the same change that adds it.
@@ -26,16 +26,56 @@ DESIGN_REVIEW_BASE ?= origin/main
 
 check: compiler renderer dom-selftest design-lint
 
-# Builds the pinned compiler with Whitefoot's own build target, which
-# leaves it at whitefoot/compiler/target/gate/whitefootc.
-compiler:
-	@test -f $(WHITEFOOT)/compiler/Cargo.toml || { \
-		echo "the whitefoot submodule is not checked out: git submodule update --init" >&2; \
-		exit 1; }
-	@$(MAKE) --no-print-directory -C $(WHITEFOOT)/compiler build
+# The renderer builds with the Whitefoot compiler release that whitefoot.pin
+# names in its one line, release = wf-<12 hex digits of a Whitefoot commit>
+# (AGENTS.md, rule 4), downloaded once into build/whitefoot/<tag>/ and checked
+# against the release's SHA256SUMS and manifest. A pin whose release has expired gets it
+# again with the command the error prints. WHITEFOOTC=<path> builds with
+# another compiler instead, such as one built from an unmerged Whitefoot
+# change; CI uses only the release.
+WHITEFOOT_TAG := $(lastword $(shell cat $(ROOT)/whitefoot.pin))
+WHITEFOOT_COMMIT := $(patsubst wf-%,%,$(WHITEFOOT_TAG))
+WHITEFOOT_RELEASE := $(BUILD)/whitefoot/$(WHITEFOOT_TAG)
+WHITEFOOTC ?= $(WHITEFOOT_RELEASE)/whitefootc
+SHA256 := $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
 
-WHITEFOOTC := $(WHITEFOOT)/compiler/target/gate/whitefootc
-BUILD := $(ROOT)/build
+compiler:
+ifeq ($(origin WHITEFOOTC),file)
+	@set -e; \
+	if [ "$$(wc -l < '$(ROOT)/whitefoot.pin')" -ne 1 ] || \
+		! grep -qxE 'release = wf-[0-9a-f]{12}' '$(ROOT)/whitefoot.pin'; then \
+		echo "whitefoot.pin must hold one line: release = wf-<12 hex digits>" >&2; exit 1; \
+	fi; \
+	if [ ! -x '$(WHITEFOOTC)' ]; then \
+		case "$$(uname -s)-$$(uname -m)" in \
+			Linux-x86_64) platform=linux-x86_64 ;; \
+			Darwin-arm64) platform=macos-arm64 ;; \
+			*) echo "Whitefoot releases no compiler for $$(uname -s)-$$(uname -m); build one and pass WHITEFOOTC=" >&2; exit 1 ;; \
+		esac; \
+		url=https://github.com/Ming-Research/Whitefoot/releases/download/$(WHITEFOOT_TAG); \
+		partial='$(WHITEFOOT_RELEASE).partial'; rm -rf "$$partial"; mkdir -p "$$partial"; \
+		for asset in SHA256SUMS whitefoot-release.json whitefootc-$$platform.tar.gz; do \
+			if ! curl -fsSL --retry 3 -o "$$partial/$$asset" "$$url/$$asset"; then \
+				echo "cannot download $$asset of Whitefoot release $(WHITEFOOT_TAG); if it expired, publish it again:" >&2; \
+				echo "  gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=$(WHITEFOOT_COMMIT)" >&2; \
+				exit 1; \
+			fi; \
+		done; \
+		grep -E "  \*?(whitefoot-release\.json|whitefootc-$$platform\.tar\.gz)$$" "$$partial/SHA256SUMS" > "$$partial/checked"; \
+		test "$$(wc -l < "$$partial/checked")" -eq 2; \
+		(cd "$$partial" && $(SHA256) -c checked > /dev/null); \
+		if ! $(PY) -c 'import json, sys; m = json.load(open(sys.argv[1])); sys.exit(m["tag"] != sys.argv[2] or not m["commit"].startswith(sys.argv[3]))' \
+			"$$partial/whitefoot-release.json" '$(WHITEFOOT_TAG)' '$(WHITEFOOT_COMMIT)'; then \
+			echo "Whitefoot release $(WHITEFOOT_TAG)'s manifest names another release or commit" >&2; exit 1; \
+		fi; \
+		tar -xzf "$$partial/whitefootc-$$platform.tar.gz" -C "$$partial" whitefootc; \
+		test -x "$$partial/whitefootc"; \
+		rm -rf '$(WHITEFOOT_RELEASE)'; mv "$$partial" '$(WHITEFOOT_RELEASE)'; \
+	fi
+else
+	@test -x '$(WHITEFOOTC)' || { echo "WHITEFOOTC=$(WHITEFOOTC) is not an executable" >&2; exit 1; }
+endif
+
 # Every renderer build and check reuses the compiler's cache of module
 # verdicts, function proofs and compiled code (whitefootc --cache), with code
 # cached per function (--fragments function), so an edit is checked and

@@ -107,21 +107,21 @@ Correctness is judged by oracles independent of Snowghost:
 | `design/skill/` | The [design-tree skill](https://github.com/Ming-Research/Design-skill), as a submodule |
 | `research/investigations/` | One directory per question: its design, experiments, measurements and rejected alternatives |
 | `docs/` | The review checklist, and the TODO of known defects and Whitefoot requirements |
-| `whitefoot/` | The pinned Whitefoot compiler and specification, as a submodule |
+| `whitefoot.pin` | The Whitefoot compiler release the renderer builds with, `release = wf-<12 hex digits of its commit>` |
 
 ## Building and checking
 
 ```sh
 git clone --recurse-submodules https://github.com/Ming-Research/Snowghost-wf.git
 cd Snowghost-wf
-cargo fetch --locked --manifest-path whitefoot/compiler/Cargo.toml
 make check
 ```
 
-`make check` builds the pinned Whitefoot compiler, builds the renderer, runs
-the document arena's self-test and lints the design tree. It needs Git,
-Python 3 and Rust stable at least at the `rust-version` in
-`whitefoot/compiler/Cargo.toml`. CI runs it on every push.
+`make check` downloads the Whitefoot compiler release that `whitefoot.pin`
+names, builds the renderer, runs the
+document arena's self-test and lints the design tree. It runs on Linux
+x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
+`/usr/bin/clang` and, on Linux, LLD. CI runs it on every push.
 
 The oracles are separate `make oracle-*` targets. They need network access
 for their test suites and, for the Chromium oracles, Node.js and Playwright.
