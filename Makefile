@@ -59,7 +59,7 @@ ifeq ($(origin WHITEFOOTC),file)
 		for asset in SHA256SUMS whitefoot-release.json whitefootc-$$platform.tar.gz; do \
 			if ! curl -fsSL --retry 3 -o "$$partial/$$asset" "$$url/$$asset"; then \
 				echo "cannot download $$asset of Whitefoot release $(WHITEFOOT_TAG); if it expired, publish it again:" >&2; \
-				echo "  gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=$(WHITEFOOT_COMMIT)" >&2; \
+				echo "  gh workflow run compiler-release.yml -R Ming-Research/Whitefoot -f commit=$(WHITEFOOT_COMMIT)$(if $(findstring wf-exp-,$(WHITEFOOT_TAG)), -f experiment=true)" >&2; \
 				exit 1; \
 			fi; \
 		done; \
