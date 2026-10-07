@@ -1082,8 +1082,26 @@ or dump mismatch. Their missing summaries were a harness defect: `inc`
 read filtered hash output after `edit` had removed diagnostic rows.
 These are fallback results, not E2 local-splice evidence. A diagnostic CI
 copy assigns distinct nonzero codes to the existing context guard exits
-to identify the unsupported boundary condition without changing which
-route executes; its results are pending.
+without changing which route executes. Run
+[37556900282](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37556900282)
+at `0fe4965` reports diagnostic reason 77 for every ecma262 edit 1–20 and
+every html5 edit 1–60. That exit is exactly
+`output.travel >= 67108864_i64` in `splice_context_ready`; earlier guards
+for context kind, columns, geometry, definite height, intrinsic/dirty state,
+splits/fragments and nonordinary/through output have passed at the rejecting
+context. Both insertions and removals therefore attempt the splice and take
+the Q86 reconstruction path under public reason 7. None is an incremental
+refusal or dump mismatch.
+
+The bound is the current admission condition for unsaturated ordinary
+transfer arithmetic, including baseline excursions. Crossing its conservative
+sum does not demonstrate actual coordinate overflow, nor does this trace
+show that all subsequent checks would pass if it were relaxed. Removing or
+raising it without a replacement exactness argument would weaken a safety
+condition. These 80 required fallbacks are retained under the current
+contract; `docs/todo.md` records the missing arithmetic certificate needed
+before the unchanged E2 zero-fallback criterion can be met. No claim of local
+page block edits or step-6 acceptance follows from identity alone.
 
 The repair reuses `visit_child` and the same class reach subject keys for
 stable-slot traversals, resolving only selected NodeIds through the existing
@@ -1119,9 +1137,42 @@ counter-sensitive failure the fixture requires, before any wrong layout can
 publish. The temporary `style refusal` diagnostic used to locate the ten class
 failures is removed after that audit: it was not part of the raw-log grammar
 and made the class mutation stop before checking its actual refused edit.
-The restored diagnostic-free oracle must make the class fixture fail on
-`expected inc same, got refused`. Full seq/par and final mutation-matrix
-results remain pending.
+The restored diagnostic-free oracle makes the class fixture fail on
+`edit 2: expected inc same, got refused`. Final mutation run
+[37558813498](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37558813498)
+at `b13fac3` passes all 17 mutations and the check-machinery job. Its direct
+new-text probe fails at edit 2 with `inc DIFF`; the original block-case now
+also detects the missing text route with four differences, because class
+resynchronization no longer repairs it. Its synthetic checkpoint reader
+fails at edit 2 with `inc refused`; both fixtures pass unmutated in the same
+jobs. The gate also passes at that revision in
+[37558813441](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37558813441).
+Full oracle run
+[37557227954](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37557227954)
+at `c3b29cd` passes full-build dumps against the base, all six edit kinds on
+both pages in seq/par, all three added fixtures in both builds, and the
+existing case checks. Block-case has 100 matching edits, zero differences
+and exactly two refusals in each build. Page block edits have 20/20 and
+60/60 matching results and zero refusals in both builds, while still taking
+the reason-7 fallback described above. Changes from that runtime revision
+to `b13fac3` only repair the workflow's handler-probe extraction, retire
+temporary class-refusal output and record evidence; renderer/style and
+layout behavior are unchanged. Final mutation and gate runs validate that
+retirement without repeating the full oracle.
+
+The separate read-only GPT-6 completion review covered `49c138a..20521be`
+and the then-dirty fixtures, checklist groups A/D/C/T/R/M/V and design checks
+G1–G3/DC1–DC4, with limited follow-ups through `b13fac3` and the page audit.
+It read changed artifacts, direct consumers and pipeline/layout/style nodes,
+and inspected actual CI logs without compiling or rerunning suites. Its
+findings are fixed: expected boundary-assertion exits count as mutation
+detection while unrelated errors remain fatal; stable-slot mapping writes
+disjoint indices; the handler probe extracts complete physical lines; and
+temporary class diagnostics no longer mask the actual refused-edit check.
+The arithmetic fallback limit is explicitly deferred in the maintained TODO.
+No design decision, module interface, Whitefoot pin or submodule changed, and
+no new Whitefoot gap was demonstrated. The task prohibits PR edits, so this
+research record and the completion report carry its review/evidence record.
 
 CI must additionally exercise `:nth-*`, `+` and `~` retained style changes
 (reason 6), exact-checkpoint counter/quote refusals, removal of a pre-existing

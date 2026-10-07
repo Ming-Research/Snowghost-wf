@@ -189,6 +189,23 @@ example apart from the renderer code that exposed it
   step 5 uses this path. Require every edit prefix to equal a fresh build,
   with zero unexplained fallback on the claimed ordinary workloads.
 
+- **M2 page block edits exceed the splice arithmetic admission bound.**
+  CI run 37556900282 at `0fe4965` identifies the exact
+  `output.travel >= 67108864_i64` guard for ecma262 block edits 1–20 and
+  html5 edits 1–60; all attempt `structure_splice`, then reconstruct under
+  reason 7 and match full rebuilds. Impact: none of these timed block edits
+  establishes E2 locality or step-6 zero-fallback acceptance. The conservative
+  travel sum includes baseline excursions; exceeding it does not establish
+  actual saturation. Change: derive and validate a tighter composable
+  arithmetic certificate, or bound only the affected transfer region while
+  preserving the exact reference arithmetic and parallel dependency graph.
+  Do not simply raise/remove the guard. Reopen before E2 or step-6 acceptance;
+  use the unchanged page scripts with zero fallbacks, varied entering struts,
+  near-limit positive/negative coordinates and baselines, seq/par rebuild
+  identity, and a deliberate unsafe-admission mutation. The current guard
+  remains required until its replacement has an exactness argument. Evidence:
+  [step-5 audit](../research/investigations/structure-edits/layout-design.md#step-5-source-and-ci-falsifiers).
+
 - **M2 step 4 needs parallel scatter and complete physical-work evidence.**
   AVL reduction repair is local, but `later_handles` appends to one temporary
   list and sibling payload writes still route through the context pools.
