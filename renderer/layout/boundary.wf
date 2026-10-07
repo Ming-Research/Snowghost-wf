@@ -1167,6 +1167,107 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
   return yes, combined;
 }
 
+struct ParagraphBefore {
+  doc "The scalar geometry before a speculative single-paragraph break. A failed same-output cutoff passes it to reference replay, which consumes the already broken lines without losing the old height or baseline.";
+  at: u64;
+  height: i32;
+  lines: u64;
+  baseline: i32;
+}
+
+fn stationary_paragraph(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks, before: Before) -> (handled: Bool, previous: ParagraphBefore) reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Cuts off a single paragraph edit whose height and first and last baseline outputs remain identical. Unrelated context barriers cannot affect a paragraph outside floats with unchanged width and no atomic or spanning fragments. Only its retained summary and ancestor reductions change; a changed geometric output leaves replay the original scalar geometry.";
+  let missing = ParagraphBefore(at: 18446744073709551615_u64, height: 0_i32, lines: 0_u64, baseline: 0_i32);
+  let no = False();
+  if context^.local_geometry {
+  } else {
+    return no, missing;
+  }
+  if context^.restyled {
+    return no, missing;
+  }
+  if context^.restyled_blocks != 0_u32 {
+    return no, missing;
+  }
+  if context^.marked_paragraphs != 1_u32 {
+    return no, missing;
+  }
+  if context^.marked_children != 0_u32 {
+    return no, missing;
+  }
+  let intrinsic = bor(context^.intrinsic_held, context^.intrinsic_known);
+  if intrinsic {
+    return no, missing;
+  }
+  if context^.space.shrink {
+    return no, missing;
+  }
+  let steady_space = same_space(first: context^.space, second: before.space);
+  if steady_space {
+  } else {
+    return no, missing;
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  if frame.columned {
+    return no, missing;
+  }
+  if context^.splits.inner.len != 0_u64 {
+    return no, missing;
+  }
+  let at = cvt::<u32, u64>(context^.marked_paragraph);
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return no, missing;
+  }
+  if context^.paragraphs.inner[at].beside {
+    return no, missing;
+  }
+  if context^.paragraphs.inner[at].atomics.inner.len != 0_u64 {
+    return no, missing;
+  }
+  let old_lines = context^.paragraphs.inner[at].lines.inner.len;
+  if old_lines == 0_u64 {
+    return no, missing;
+  }
+  let old_height = context^.paragraphs.inner[at].height;
+  if old_height <= 0_i32 {
+    return no, missing;
+  }
+  let old_base = last_line_baseline(paragraph: &context^.paragraphs.inner[at]);
+  let previous = ParagraphBefore(at: at, height: old_height, lines: old_lines, baseline: old_base);
+  let old_output = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+  let children = context^.children.inner.len;
+  let empty = box_slots_new::<Exclusion>(capacity: 0_u64);
+  break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, exclusions: &empty.inner[0_u64..0_u64], origin_y: 0_i32);
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return no, previous;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 2_u64;
+  let output = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+  if output.through {
+    return no, previous;
+  }
+  if output.advance != old_output.advance {
+    return no, previous;
+  }
+  if output.first_baseline != old_output.first_baseline {
+    return no, previous;
+  }
+  if output.last_baseline != old_output.last_baseline {
+    return no, previous;
+  }
+  let owner = context^.paragraphs.inner[at].block;
+  let slot = context^.paragraphs.inner[at].entry_slot;
+  propagate_boundary(context: context, owner: owner, slot: slot, output: output, delta: 0_i32);
+  clear_marks(context: context);
+  set context^.dirty = False();
+  set context^.boundary_visits.fallbacks = 0_u64;
+  set context^.boundary_visits.reason = 0_u32;
+  let yes = True();
+  return yes, previous;
+}
+
 fn boundary_counts(layout: &Layout) -> (entries: u64, blocks: u64, indexes: u64, fallbacks: u64, reason: u32) reads(layout) {
   doc "Boundary-path visits from contexts actually updated in the last edit; a fallback disqualifies a bounded-work claim and reference work is not included.";
   let visits = layout^.last_update.work;

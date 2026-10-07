@@ -49,3 +49,27 @@ new retained cache or validity state; it uses the existing bridge-invalidating
 conditions. CI identity, mixed edit fixtures and saturation falsifiers must
 validate this invariant before acceptance. These changes do not yet remove
 boundary publication or the final encoding pass.
+
+## Earlier same-output cutoff under test
+
+The existing reference in-place update already stops when a paragraph's
+outward geometry is unchanged. Run that observation before the compatibility
+passes for one marked, positive-height paragraph with unchanged context space,
+no intrinsic demand, no shrink-to-fit width, no block restyle, no overlapping
+float, no atomic inline and no spanning fragment. The new break must preserve
+height and first and last baseline offsets and remain nonempty. The paragraph
+keeps its origin and all margins, exclusions and ancestor dimensions then have
+the same inputs. Changes to intrinsic contributions and certificate travel
+still repair the paragraph's summary and each affected ancestor reduction.
+Unrelated context barriers cannot create a dependency on unchanged geometry.
+
+This removes event materialization, both coordinate conversions and full
+boundary publication from those edits. The successful path neither moves
+origins nor invalidates reference scratch. If the output changes, pass the old
+scalar height, line count and baseline to reference replay and reuse the new
+lines; do not compare the new height with itself or force a full restart.
+The existing X5 edit/rebuild oracle is the independent geometry check.
+The stationary-output mutation suppresses the three equality guards and must
+be detected by the existing incremental fixtures. The timing comparison must
+show reduced boundary fallbacks and the expected per-edit cost; source shape
+alone is not acceptance evidence.
