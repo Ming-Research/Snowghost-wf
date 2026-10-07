@@ -81,3 +81,25 @@ Revision `fba0c4f0cfef71764952932ec6abd4c7025580f5` established:
 The runner now expects the observed rejections of the **unmodified** source
 artifacts. This is a recorded falsification of their validity claim, not a
 changed language expectation. Each repair is separately named and compiled.
+
+## Repaired controls (CI 37562645431)
+
+Revision `940889c631021220516e0d9e958a79c35f5edfce`: renaming `checked` alone
+lets both original W3 algorithms compile and pass their supplied output checks
+in both modes. Both consumers in each program are certified. Beta W1 likewise
+compiles/runs after snapshotting `left.total_count` before its comparisons and
+exact subtractions. None of these repairs is applied to the original probes.
+C1's output-check harness needed its directory-length guard after the two writing
+calls, whose broad effect rows invalidate the previous length fact.
+
+All four original fences were compared byte-for-byte with the supplied inputs.
+The 81 extracted W1 dependency records were independently compared and hashed
+against their recorded Snowghost commit. Only the module-only `public` prefix
+on LayoutError is omitted in the standalone source bundles. Their larger file
+sizes are the cost of retaining the genuine AVL/library dependencies.
+
+The CI driver checks a nonempty explicit inventory, exact selected loop verdicts,
+expected rule plus diagnostic detail, and runtime exit/stdout/stderr. Its static
+self-check deliberately substitutes a missing input/ledger, a denied loop, a
+wrong rule, a timeout, an accepted negative, and wrong runtime output. All must
+be detected; no Whitefoot compilation is part of that self-check.
