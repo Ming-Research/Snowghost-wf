@@ -1,0 +1,184 @@
+alias Styles = pkg::style::Styles;
+
+fn shift_motion(output: SequenceOutput, delta: i64) -> made: SequenceOutput pure {
+  doc "Translates owner-relative observed bounds, preserving the empty-range sentinels.";
+  let made = output;
+  if output.natural_floor != 9223372036854775807_i64 {
+    set made.natural_floor = output.natural_floor +sat delta;
+  }
+  if output.float_reach != -9223372036854775807_i64 {
+    set made.float_reach = output.float_reach +sat delta;
+  }
+  return made;
+}
+
+fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: SequenceOutput reads(context), reads(styles) {
+  doc "Reads one reference event's natural position and float margin bottom into its owner's normal coordinate space. Full publication calls this only after the stacking pass has refreshed naturals.";
+  let output = empty_output();
+  let owner = no_index;
+  let rank = no_index;
+  let floating = no_index;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set owner = context^.blocks.inner[at].parent;
+        set rank = context^.blocks.inner[at].flow_at;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set owner = context^.paragraphs.inner[at].block;
+        set rank = context^.paragraphs.inner[at].flow_at;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        set owner = context^.children.inner[at].block;
+        set rank = context^.children.inner[at].flow_at;
+      }
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      if at < context^.children.inner.len {
+        set owner = context^.children.inner[at].block;
+        set rank = context^.children.inner[at].flow_at;
+        set floating = f;
+      }
+    }
+    Out(..) => {
+      return output;
+    }
+    Close(..) => {
+      return output;
+    }
+  }
+  let origin = block_origin(context: context, block: owner);
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let top = cvt::<i32, i64>(frame.content_top);
+  let at_rank = cvt::<u32, u64>(rank);
+  if at_rank < context^.naturals.inner.len {
+    let natural = context^.naturals.inner[at_rank];
+    if natural != 2147483647_i32 {
+      let wide = cvt::<i32, i64>(natural);
+      let absolute = wide +sat top;
+      set output.natural_floor = absolute -sat origin.y;
+    }
+  } else {
+    set output.motion_known = False();
+  }
+  let float_at = cvt::<u32, u64>(floating);
+  if float_at < context^.children.inner.len {
+    let child = &context^.children.inner[float_at];
+    let normal = cvt::<i32, i64>(child^.normal_y);
+    let height = cvt::<i32, i64>(child^.height);
+    let margin = cvt::<i32, i64>(child^.margin_bottom);
+    let bottom = normal +sat height;
+    let outer = bottom +sat margin;
+    set output.float_reach = outer -sat origin.y;
+  }
+  return output;
+}
+
+fn sequence_motion_shift(sequence: &EntrySequence, slot: u32, delta: i64, visits: &BoundaryVisits) -> result: unit writes(sequence), writes(visits) {
+  doc "Repairs a direct translated entry's cached bounds without opening its descendants; only AVL ancestors read the changed bounds.";
+  let own_field = True();
+  let before = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
+  let after = shift_motion(output: before, delta: delta);
+  boundary_set(sequence: sequence, slot: slot, output: after, visits: visits);
+  return unit;
+}
+
+fn inherited_float_reach(context: &Context, owner: u32, visits: &BoundaryVisits) -> reach: i64 reads(context), writes(visits) {
+  doc "Collects only prefix reductions on the enclosing owner chain. Their floats are unchanged by an edit inside the owner; coordinates are lifted through normal block origins.";
+  let cursor = owner;
+  let reach = -9223372036854775807_i64;
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    if cursor == no_index {
+      return reach;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return 9223372036854775807_i64;
+    }
+    let parent = context^.blocks.inner[at].parent;
+    let slot = context^.blocks.inner[at].entry_slot;
+    let prefix = owner_prefix(context: context, owner: parent, slot: slot, visits: visits);
+    let origin = block_origin(context: context, block: parent);
+    let lifted = shift_motion(output: prefix, delta: origin.y);
+    set reach = imax(reach, lifted.float_reach);
+    set cursor = parent;
+  }
+  return 9223372036854775807_i64;
+}
+
+fn owner_prefix(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> made: SequenceOutput reads(context), writes(visits) {
+  doc "Reads the metadata prefix before one stable entry in its owning sequence.";
+  if owner == no_index {
+    let rank = boundary_rank(sequence: &context^.entries, slot: slot, visits: visits);
+    let prefix = range_output(sequence: &context^.entries, root: context^.entries.root, from: 0_u64, until: rank, visits: visits);
+    return prefix;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let sequence = &context^.blocks.inner[at].entries;
+    let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+    let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
+    return prefix;
+  }
+  let invalid = empty_output();
+  set invalid.motion_known = False();
+  return invalid;
+}
+
+fn motion_above(reach: i64, floor: i64, delta: i64) -> safe: Bool pure {
+  doc "Requires unchanged earlier floats to end before every old and new natural suffix position, including negative-margin re-entry.";
+  if reach == -9223372036854775807_i64 {
+    return True();
+  }
+  if floor == 9223372036854775807_i64 {
+    return True();
+  }
+  if reach > floor {
+    return False();
+  }
+  let proposed = floor +sat delta;
+  let safe = reach <= proposed;
+  return safe;
+}
+
+
+fn splice_payload_y(context: &Context, item: Flow) -> y: i64 reads(context) {
+  doc "The direct entry's normal origin in its owning sequence, used to rebase a privately built entry's motion bounds.";
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        return context^.blocks.inner[at].y;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        return context^.paragraphs.inner[at].top;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        return context^.children.inner[at].anchor.y;
+      }
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
+  }
+  return 0_i64;
+}

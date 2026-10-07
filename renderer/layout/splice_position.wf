@@ -1,0 +1,125 @@
+alias Document = pkg::dom::Document;
+alias FontPicks = pkg::layout::text::FontPicks;
+alias FontSet = pkg::layout::text::FontSet;
+alias Styles = pkg::style::Styles;
+
+struct SplicePosition {
+  doc "A positioned child's independent settlement inputs, captured after flow anchors and containing-block dimensions have settled; no reference to mutable sibling state is retained.";
+  active: Bool;
+  owner: Origin;
+  normal: Position;
+  visual: Position;
+  anchor_found: Bool;
+  anchor_left: i32;
+  anchor_top: i32;
+  anchor_width: i32;
+  anchor_height: i32;
+}
+
+fn empty_splice_position() -> made: SplicePosition pure {
+  doc "A plan for an absent or in-flow child.";
+  let no = False();
+  let origin = zero_origin();
+  let point = Position(x: 0_i32, y: 0_i32);
+  return SplicePosition(active: no, owner: origin, normal: point, visual: point, anchor_found: no, anchor_left: 0_i32, anchor_top: 0_i32, anchor_width: 0_i32, anchor_height: 0_i32);
+}
+
+fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: SplicePosition reads(context), reads(styles) {
+  doc "Reads only one child and its block ancestry. Its accumulated anchor preserves static-position axes after a direct or enclosing-block move; the final containing block supplies explicit-inset axes.";
+  if at < context^.children.inner.len {
+  } else {
+    return empty_splice_position();
+  }
+  if context^.children.inner[at].retired {
+    return empty_splice_position();
+  }
+  let out = positioned(styles: styles, context: &context^.children.inner[at]);
+  if out {
+  } else {
+    return empty_splice_position();
+  }
+  let block = context^.children.inner[at].block;
+  let owner = block_origin(context: context, block: block);
+  let basis = if context^.children.inner[at].viewport_origin {
+    give zero_origin();
+  } else {
+    give owner;
+  }
+  let accumulated = origin_accumulate(owner: basis, local: context^.children.inner[at].anchor);
+  let normal = origin_normal(value: accumulated);
+  let visual = origin_visual(value: accumulated);
+  let moved_normal = content_position(value: normal, dx: context^.content_dx, dy: context^.content_dy);
+  let moved_visual = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+  let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
+  let yes = True();
+  return SplicePosition(active: yes, owner: owner, normal: moved_normal, visual: moved_visual, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
+}
+
+fn splice_position_child(child: &Context, plan: SplicePosition, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, border: Edges, parent_width: i32, parent_height: i32, content_dx: i32, content_dy: i32) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
+  doc "Settles one positioned anchor with the shared full-layout arithmetic. A changed containing-block space uses the existing incremental child layout; retained descendants are never individually translated. Final coordinates return to the child's block-relative anchor, or viewport-relative anchor for a fully explicit fixed box.";
+  if plan.active {
+  } else {
+    return no_updates();
+  }
+  set child^.normal_x = plan.normal.x;
+  set child^.normal_y = plan.normal.y;
+  set child^.x = plan.visual.x;
+  set child^.y = plan.visual.y;
+  let yes = True();
+  let counts = position_one(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, parent_width: parent_width, parent_height: parent_height, updating: yes, anchor_found: plan.anchor_found, anchor_left: plan.anchor_left, anchor_top: plan.anchor_top, anchor_width: plan.anchor_width, anchor_height: plan.anchor_height);
+  let owner = if child^.viewport_origin {
+    give zero_origin();
+  } else {
+    give plan.owner;
+  }
+  let normal_x = child^.normal_x -sat content_dx;
+  let normal_y = child^.normal_y -sat content_dy;
+  let visual_x = child^.x -sat content_dx;
+  let visual_y = child^.y -sat content_dy;
+  let absolute = origin_from_resolved(nx: normal_x, ny: normal_y, vx: visual_x, vy: visual_y);
+  set child^.anchor = origin_relative(value: absolute, owner: owner);
+  return counts;
+}
+
+fn splice_position(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Settles direct positioned children after a local flow splice without materializing flow events or converting the context's geometry. Independent read-only plans precede independent per-child writes; a containing-block size must settle before either phase. The final reduction combines only work counts.";
+  let count = context^.children.inner.len;
+  let blank = empty_splice_position();
+  let plans = box_array_filled::<SplicePosition>(count: count, value: blank);
+  for (at in 0_u64..count) {
+    let plan = splice_position_plan(context: context, styles: styles, at: at);
+    set plans.inner[at] = plan;
+  }
+  let border = border_edges(styles: styles, style: context^.style);
+  let parent_width = context^.width;
+  let parent_height = context^.height;
+  let content_dx = context^.content_dx;
+  let content_dy = context^.content_dy;
+  let empty = no_updates();
+  let results = box_array_filled::<UpdateCounts>(count: count, value: empty);
+  if count <= context^.children.inner.len {
+    for (at in 0_u64..count) {
+      let counted = splice_position_child(child: &context^.children.inner[at], plan: plans.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, parent_width: parent_width, parent_height: parent_height, content_dx: content_dx, content_dy: content_dy);
+      set results.inner[at] = counted;
+    }
+  }
+  let total = sum_counts(results: &results);
+  return total;
+}
+
+fn splice_move_atomics(context: &Context, paragraph: u64, delta: i64) -> result: unit reads(context.paragraphs.inner), writes(context.children.inner) {
+  doc "Moves only the atomic child anchors named by a directly translated paragraph. Each atomic belongs to one paragraph and is emitted once by its line's consumed object mark; a translated block already moves these anchors through ownership and never calls this helper. Indirect stable child slots retain the existing scatter proof boundary.";
+  if paragraph < context^.paragraphs.inner.len {
+  } else {
+    return unit;
+  }
+  let count = context^.paragraphs.inner[paragraph].atomics.inner.len;
+  for (at in 0_u64..count) {
+    let atomic_item = context^.paragraphs.inner[paragraph].atomics.inner[at];
+    let child = cvt::<u32, u64>(atomic_item.context);
+    if child < context^.children.inner.len {
+      set context^.children.inner[child].anchor.y = context^.children.inner[child].anchor.y +sat delta;
+    }
+  }
+  return unit;
+}

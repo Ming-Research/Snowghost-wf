@@ -23,7 +23,7 @@ fn add_boundary_visits(first: BoundaryVisits, second: BoundaryVisits) -> made: B
 fn empty_block_output() -> made: BlockOutput pure {
   doc "An unpublished block boundary cannot authorize a cutoff.";
   let no = False();
-  let empty = BlockOutput(valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no);
+  let empty = BlockOutput(valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: no);
   return empty;
 }
 
@@ -84,6 +84,7 @@ fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragra
   doc "The paragraph's transfer and first/last baseline offsets; a lineless paragraph contributes the identity strut but remains a live entry.";
   let output = margin_output(margin: 0_i32);
   set output.events = 1_u64;
+  set output.motion_known = False();
   set output.min_content = paragraph^.min_content;
   set output.max_content = paragraph^.max_content;
   let count = paragraph^.lines.inner.len;
@@ -145,6 +146,13 @@ fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: Se
   let output = join_output(left: &closed, right: &trailing);
   set output.count = 1_u64;
   set output.events = inside^.events +sat 2_u64;
+  let interior_floor = imin(inside^.natural_floor, measured.natural);
+  set output.natural_floor = interior_floor;
+  let shifted = shift_motion(output: output, delta: measured.offset);
+  set output.natural_floor = shifted.natural_floor;
+  set output.float_reach = shifted.float_reach;
+  let known = band(inside^.motion_known, measured.motion_known);
+  set output.motion_known = known;
   return output;
 }
 
@@ -162,7 +170,7 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
   let specified = specified_height(styles: styles, style: held.style, basis: basis_height, frame: frame);
   let (minimum, maximum) = height_limits(styles: styles, style: held.style, basis: basis_height, frame: frame);
   let yes = True();
-  let measured = BlockOutput(valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: basis_height, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats);
+  let measured = BlockOutput(valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: basis_height, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: yes);
   let output = lift_block_output(inside: inside, measured: measured);
   let reason = inside^.barriers;
   if incoming_floats {
@@ -249,6 +257,10 @@ fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destin
     Close(..) => {
     }
   }
+  let motion = entry_motion(context: context, item: item, styles: styles);
+  set own.natural_floor = motion.natural_floor;
+  set own.float_reach = motion.float_reach;
+  set own.motion_known = motion.motion_known;
   set destination^.own = own;
   return unit;
 }
@@ -295,6 +307,22 @@ fn reduce_sequence(context: &Context, sequence: &EntrySequence, root: u32, style
           let (transfer, size) = block_output(block: block, styles: styles, inside: &inside, basis_height: basis_height);
           set own = transfer;
           set measured = size;
+          let origin = block_origin(context: context, block: b);
+          let parent_origin = block_origin(context: context, block: block^.parent);
+          let offset = origin.y -sat parent_origin.y;
+          let observed = destination^[before].own;
+          set measured.offset = offset;
+          let natural = if observed.natural_floor == 9223372036854775807_i64 {
+            give observed.natural_floor;
+          } else {
+            give observed.natural_floor -sat offset;
+          }
+          set measured.natural = natural;
+          set measured.motion_known = observed.motion_known;
+          let lifted_motion = lift_block_output(inside: &inside, measured: measured);
+          set own.natural_floor = lifted_motion.natural_floor;
+          set own.float_reach = lifted_motion.float_reach;
+          set own.motion_known = lifted_motion.motion_known;
         }
       }
     }
@@ -485,6 +513,7 @@ fn context_size_output(child: &Context, styles: &Styles, height: i32, baseline: 
   let output = join_output(left: &opened, right: &trailing);
   set output.count = 1_u64;
   set output.events = 1_u64;
+  set output.motion_known = False();
   set output.min_content = child^.min_content;
   set output.max_content = child^.max_content;
   let travel = baseline_travel(output: &output);
@@ -658,9 +687,18 @@ fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
   return rank;
 }
 
-fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> reads(sequence.payloads), reads(sequence.root), reads(sequence.span), writes(sequence.nodes), writes(visits) {
+fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> writes(sequence), writes(visits) {
   doc "Repairs the balanced reduction, then down-sweeps only the intersecting direct suffix. Since the changed solid entry preserves its struts, every later entering state changes by delta. Earlier entries are skipped using cached counts; equal-height baseline edits make no sibling list.";
-  boundary_set(sequence: sequence, slot: slot, output: output, visits: visits);
+  let own_field = True();
+  let previous = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
+  let replacement = output;
+  if output.motion_known {
+  } else {
+    set replacement.natural_floor = previous.natural_floor;
+    set replacement.float_reach = previous.float_reach;
+    set replacement.motion_known = previous.motion_known;
+  }
+  boundary_set(sequence: sequence, slot: slot, output: replacement, visits: visits);
   let moves = box_slots_new::<BoundaryMove>(capacity: 0_u64);
   if delta != 0_i64 {
     let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
@@ -673,6 +711,7 @@ fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: Sequenc
       let missing = Flow::Close(block: no_index);
       let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: handle.slot, span: sequence^.span, missing: missing);
       set visits^.entries = visits^.entries +sat 1_u64;
+      sequence_motion_shift(sequence: sequence, slot: handle.slot, delta: delta, visits: visits);
       let translation = BoundaryMove(item: item, delta: delta);
       let kept = push_item::<BoundaryMove>(cell: &moves, value: translation, ceiling: item_ceiling);
     }
@@ -688,6 +727,9 @@ fn apply_boundary_move(context: &Context, translation: BoundaryMove) -> result: 
       if at < context^.blocks.inner.len {
         set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
         set context^.blocks.inner[at].y = context^.blocks.inner[at].y +sat translation.delta;
+        set context^.blocks.inner[at].output.offset = context^.blocks.inner[at].output.offset +sat translation.delta;
+        let shifted = shift_motion(output: context^.blocks.inner[at].boundary, delta: translation.delta);
+        set context^.blocks.inner[at].boundary = shifted;
       }
     }
     Text(paragraph: p) => {
@@ -695,6 +737,7 @@ fn apply_boundary_move(context: &Context, translation: BoundaryMove) -> result: 
       if paragraph_at < context^.paragraphs.inner.len {
         if context^.paragraphs.inner[paragraph_at].lines.inner.len > 0_u64 {
           set context^.paragraphs.inner[paragraph_at].top = context^.paragraphs.inner[paragraph_at].top +sat translation.delta;
+          splice_move_atomics(context: context, paragraph: paragraph_at, delta: translation.delta);
         }
       }
     }
@@ -706,7 +749,11 @@ fn apply_boundary_move(context: &Context, translation: BoundaryMove) -> result: 
     }
     Float(..) => {
     }
-    Out(..) => {
+    Out(context: c) => {
+      let out_at = cvt::<u32, u64>(c);
+      if out_at < context^.children.inner.len {
+        set context^.children.inner[out_at].anchor.y = context^.children.inner[out_at].anchor.y +sat translation.delta;
+      }
     }
     Close(..) => {
     }

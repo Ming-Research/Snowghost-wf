@@ -83,21 +83,27 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let empty_item = Flow::Close(block: no_index);
   let empty_move = BoundaryMove(item: empty_item, delta: 0_i64);
   let empty_visits = no_boundary_visits();
-  let empty_result = SpliceMove(translation: empty_move, visits: empty_visits, supported: no);
+  let empty_result = SpliceMove(translation: empty_move, slot: no_index, output: added, visits: empty_visits, supported: no);
   let moves = box_array_filled::<SpliceMove>(count: count, value: empty_result);
   for (at in 0_u64..count) {
     let current_rank = after +sat at;
     let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined);
     set moves.inner[at] = movement;
   }
-  let (movement_visits, movements_supported) = splice_moves_total(moves: &moves.inner[0_u64..count]);
+  let (movement_visits, movements_supported, moved_output) = splice_moves_total(moves: &moves.inner[0_u64..count]);
   let combined = add_boundary_visits(first: visits^, second: movement_visits);
   set visits^ = combined;
   if movements_supported {
   } else {
     return Err<SplicePlan, u32>(error: 7_u32);
   }
-  let plan = SplicePlan(output: output, delta: delta, moves: move moves, inserted_y: inserted_y);
+  let placed_added = shift_motion(output: added, delta: inserted_y);
+  let motion_prefix = join_output(left: &prefix, right: &placed_added);
+  let motion_total = join_output(left: &motion_prefix, right: &moved_output);
+  set output.natural_floor = motion_total.natural_floor;
+  set output.float_reach = motion_total.float_reach;
+  set output.motion_known = motion_total.motion_known;
+  let plan = SplicePlan(output: output, added: placed_added, delta: delta, moves: move moves, inserted_y: inserted_y);
   return Ok<SplicePlan, u32>(value: move plan);
 }
 
@@ -298,11 +304,11 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
     removed_entries(context: context, item: removed, items: &retired, visits: &context^.boundary_visits);
   }
   if input.owner == no_index {
-    commit_splice_sequence(sequence: &context^.entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
+    commit_splice_sequence(sequence: &context^.entries, input: input, item: item, added: plan^.added, removing: removing, visits: &context^.boundary_visits);
   } else {
     let at = cvt::<u32, u64>(input.owner);
     if at < context^.blocks.inner.len {
-      commit_splice_sequence(sequence: &context^.blocks.inner[at].entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
+      commit_splice_sequence(sequence: &context^.blocks.inner[at].entries, input: input, item: item, added: plan^.added, removing: removing, visits: &context^.boundary_visits);
     }
   }
   publish_splice_payloads(context: context, fresh: fresh);
@@ -310,7 +316,16 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
   let (lost_contexts, lost_paragraphs) = retire_splice_payloads(context: context, items: &retired.inner[0_u64..retired_count], paths: paths);
   let moves = plan^.moves.inner.len;
   for (at in 0_u64..moves) {
-    apply_boundary_move(context: context, translation: plan^.moves.inner[at].translation);
+    let movement = plan^.moves.inner[at];
+    if input.owner == no_index {
+      boundary_set(sequence: &context^.entries, slot: movement.slot, output: movement.output, visits: &context^.boundary_visits);
+    } else {
+      let owner_at = cvt::<u32, u64>(input.owner);
+      if owner_at < context^.blocks.inner.len {
+        boundary_set(sequence: &context^.blocks.inner[owner_at].entries, slot: movement.slot, output: movement.output, visits: &context^.boundary_visits);
+      }
+    }
+    apply_boundary_move(context: context, translation: movement.translation);
   }
   if input.owner != no_index {
     let owner = cvt::<u32, u64>(input.owner);
@@ -334,6 +349,8 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
 struct SpliceMove {
   doc "One independent suffix computation and its local physical-visit counters; the publication loop consumes only its direct-origin write.";
   translation: BoundaryMove;
+  slot: u32;
+  output: SequenceOutput;
   visits: BoundaryVisits;
   supported: Bool;
 }
@@ -377,25 +394,28 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
   let new_y = splice_edge(prefix: preceding, own: own);
   let move_y = new_y -sat old_y;
   let translation = BoundaryMove(item: item, delta: move_y);
-  return SpliceMove(translation: translation, visits: visits, supported: supported);
+  let output = shift_motion(output: own, delta: move_y);
+  return SpliceMove(translation: translation, slot: slot, output: output, visits: visits, supported: supported);
 }
 
-fn splice_moves_total(moves: &[SpliceMove]) -> (visits: BoundaryVisits, supported: Bool) reads(moves) {
+fn splice_moves_total(moves: &[SpliceMove]) -> (visits: BoundaryVisits, supported: Bool, output: SequenceOutput) reads(moves) {
   doc "Combines independent suffix results by a balanced reduction; neither geometry computation nor diagnostic aggregation imposes sibling order.";
   let count = moves^.len;
   if count == 0_u64 {
     let empty = no_boundary_visits();
     let yes = True();
-    return empty, yes;
+    let output = empty_output();
+    return empty, yes, output;
   }
   if count == 1_u64 {
     let single = moves^[0_u64];
-    return single.visits, single.supported;
+    return single.visits, single.supported, single.output;
   }
   let middle = count / 2_u64;
-  let (left_visits, left_supported) = splice_moves_total(moves: &moves^[0_u64..middle]);
-  let (right_visits, right_supported) = splice_moves_total(moves: &moves^[middle..count]);
+  let (left_visits, left_supported, left_output) = splice_moves_total(moves: &moves^[0_u64..middle]);
+  let (right_visits, right_supported, right_output) = splice_moves_total(moves: &moves^[middle..count]);
   let combined = add_boundary_visits(first: left_visits, second: right_visits);
   let supported = band(left_supported, right_supported);
-  return combined, supported;
+  let output = join_output(left: &left_output, right: &right_output);
+  return combined, supported, output;
 }
