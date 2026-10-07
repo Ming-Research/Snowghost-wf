@@ -1039,15 +1039,38 @@ otherwise complete two-edit insertion/removal log and a passing restored log.
 `splice-route-case.edits` uses `block-case.html` and probes text 44 immediately
 after inserting block 43 before old sibling 17, before any retained-text or
 style edit can cause resynchronization. `checkpoint-case.html` puts a counter
-reset to 777 on the body and makes direct paragraph children of its section
+reset of `list-item` to 777 on the body and makes direct paragraph children of its section
 independent contexts. `checkpoint-case.sh` resolves the section and new-node
 IDs from the driver's node listing, then inserts a neutral context and a
-counter-reading paragraph inside it. A genuine enclosing checkpoint must
-provide 777 to the reader; the synthetic empty checkpoint cannot. Three
-digits distinguish its geometry from the synthetic checkpoint's zero even
-with tabular digits. Both fixtures
+list-item paragraph with an inside decimal marker inside it. This introduces
+a counter reader without changing pseudo membership or generated-text
+references, which the style/Q86 fallback currently refuses independently.
+A genuine enclosing checkpoint produces marker 778; the synthetic empty
+checkpoint produces 1. Three digits distinguish their geometry even with
+tabular digits. Both fixtures
 are consumed by the step-5 oracle job and the mutation matrix. These are
 validation fixtures, not measured results.
+
+The refusal audit at `63bc857` found two expected Q86 refusals, edits 5 and 6:
+inserting/removing paragraph 47 inside counter box 27 changes the outgoing
+`c` value consumed by the following box. The other ten refusals were edits
+14, 23, 32, 41, 51, 60, 69, 78, 88 and 97, all `C 17 splice-font`. They
+were class-frontier defects: `class_restyle` promoted every stale traversal
+to a full request, and `rebuild_all` returned a structural refusal instead
+of computing on stable slots. The resulting full resynchronization restored
+new text routes before the original script probed texts 54, 56, 58, 60 and
+62. No second route publisher runs on a successful local splice.
+
+The repair reuses `visit_child` and the same class reach subject keys for
+stable-slot traversals, resolving only selected NodeIds through the existing
+order map. DOM links supply enumeration dependencies; inherited computation
+keeps the existing depth frontier. The public `RestyleSet` already permits
+stable slots in any order, so no interface or representation changes.
+The existing preorder path remains valid until the first structural edit.
+`splice-style-case.edits` checks descendant, following-sibling and
+following-sibling-descendant reaches across insertion and removal. The
+`stale-class-frontier` mutation restores the stale-traversal promotion and
+must make these probes refuse. CI validation of this repair is pending.
 
 CI must additionally exercise `:nth-*`, `+` and `~` retained style changes
 (reason 6), exact-checkpoint counter/quote refusals, removal of a pre-existing
