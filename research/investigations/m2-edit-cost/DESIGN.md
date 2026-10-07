@@ -1001,3 +1001,27 @@ while its baseline has every edit `inc same`; the earlier undetected fault's
 coverage obligation is therefore resolved for the current dense admission.
 The sentinel mutant also passes its detection job. Full final validation
 and the same-host timing result remain outstanding at this record.
+
+
+Inspection also traces the positive scheduling budget unchanged through the
+left, right and nested-Open recursive paths in this 3ec4bb4 binary. The
+left call passes the incoming stack argument again; the payload path passes
+it in r8 and the right call restores it as the next stack argument. The
+nested-Open payload passes that incoming r8 value to the next suffix call.
+Together with the single-query thunk, this supports repeated fine-grained
+task creation as a Whitefoot defect on this reproducer. It does not assign
+this one site an exclusive fraction of the slowdown or establish a remedy.
+
+
+## Slow font-size pair question
+
+The 49981d1 acceptance run still has ecma262 font-size edits 3/4 near 10 ms
+with only 12 held entries and 41 published entries, while edits 1/2 fall to
+1.3–1.9 ms. Edits 19/20 also remain near 10 ms. The first-pair profile cannot
+explain these slower paths. Reuse the built 499 driver to profile 200 repeated
+round trips for pairs 3/4 and 19/20 separately, with style setup once. The
+question is whether an uncounted full-context pass remains, rather than
+assuming the cost belongs to necessary descendant scratch translation.
+Perf plus the caller's source must identify that pass before a further repair
+or an owner decision; low held counts alone cannot attribute it. Remove this
+one-use profile job after collecting its evidence.
