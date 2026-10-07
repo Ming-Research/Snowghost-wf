@@ -73,6 +73,12 @@ jobs:
           github-token: ${{ github.token }}
           pattern: driver-*
           path: build/historical
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37624162286
+          github-token: ${{ github.token }}
+          name: driver-head
+          path: build/drivers/driver-prior
       - name: Select already built historical controls
         run: |
           set -euo pipefail
@@ -80,8 +86,8 @@ jobs:
             cp -R build/historical/driver-$name build/drivers/
           done
           cp -R build/historical/driver-head build/drivers/driver-twin
-          names="main base twin head"
-          if ${{ contains(github.event.head_commit.message, '[bisect]') }}; then names="main s1c s2 s3a m2 base twin head"; fi
+          names="main base twin prior head"
+          if ${{ contains(github.event.head_commit.message, '[bisect]') }}; then names="main s1c s2 s3a m2 base twin prior head"; fi
           echo "BUILD_NAMES=$names" >> "$GITHUB_ENV"
       - name: Fonts and perf
         run: |
@@ -134,6 +140,20 @@ jobs:
             perf report -i build/evidence/$name.perf.data --stdio --no-children --percent-limit 0.5 > build/evidence/$name-perf-self.txt
             perf report -i build/evidence/$name.perf.data --stdio --children --percent-limit 1 > build/evidence/$name-perf-callers.txt
           done
+      - name: Profiles of the first font-size round trip at head
+        run: |
+          set -euo pipefail
+          for page in ecma262 html5; do
+            script="build/evidence/head-$page-fontsize-profile.edits"
+            python3 -c 'import pathlib,sys; rows=pathlib.Path(sys.argv[1]).read_text().splitlines(True); setup=[r for r in rows if r.startswith("S ")]; edits=[r for r in rows if not r.startswith("S ")]; assert edits[0].startswith("C ") and edits[1].startswith("K "); pathlib.Path(sys.argv[2]).write_text("".join(setup+edits[:2]*100))' "build/x5/scripts/$page-fontsize.edits" "$script"
+            sheets=(renderer/style/ua.css)
+            if [ "$page" = ecma262 ]; then
+              sheets+=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css)
+            fi
+            perf record -F 999 --call-graph dwarf -o "build/evidence/head-$page-fontsize.perf.data" -- build/drivers/driver-head/layout_oracle_seq edittime "$script" "build/research/concurrency/$page.html" "${sheets[@]}" > "build/evidence/head-$page-fontsize-profile.raw"
+            perf report -i "build/evidence/head-$page-fontsize.perf.data" --stdio --no-children --percent-limit 0.5 > "build/evidence/head-$page-fontsize-perf-self.txt"
+            perf report -i "build/evidence/head-$page-fontsize.perf.data" --stdio --children --percent-limit 1 > "build/evidence/head-$page-fontsize-perf-callers.txt"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -142,56 +162,3 @@ jobs:
             build/evidence/
             build/x5/scripts/
             build/drivers/driver-*/revision.txt
-
-  font-profile:
-    if: contains(github.event.head_commit.message, '[font-profile]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: actions/download-artifact@v4
-        with:
-          run-id: 37624162286
-          github-token: ${{ github.token }}
-          name: driver-head
-          path: build
-      - uses: actions/download-artifact@v4
-        with:
-          run-id: 37624162286
-          github-token: ${{ github.token }}
-          name: edit-cost-evidence
-          path: build/reference
-      - name: Profile the unchanged font-size scripts with the built head
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
-          sudo sysctl kernel.perf_event_paranoid=-1
-          chmod +x build/layout_oracle_seq
-          sh research/investigations/concurrency/run.sh fetch || true
-          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -s "build/research/concurrency/$file"; done
-          make -s oracle-fonts
-          mkdir -p build/font-profile
-          cp build/revision.txt build/font-profile/
-          uname -a > build/font-profile/machine.txt
-          lscpu >> build/font-profile/machine.txt
-          for page in ecma262 html5; do
-            script="build/reference/x5/scripts/$page-fontsize.edits"
-            cp "$script" build/font-profile/
-            repeated="build/font-profile/$page-repeated.edits"
-            python3 -c 'import pathlib,sys; rows=pathlib.Path(sys.argv[1]).read_text().splitlines(True); setup=[r for r in rows if r.startswith("S ")]; edits=[r for r in rows if not r.startswith("S ")]; pathlib.Path(sys.argv[2]).write_text("".join(setup+edits*10))' "$script" "$repeated"
-            sheets=(renderer/style/ua.css)
-            if [ "$page" = ecma262 ]; then
-              sheets+=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css)
-            fi
-            perf record -F 999 --call-graph dwarf -o "build/font-profile/$page.perf.data" -- build/layout_oracle_seq edittime "$repeated" "build/research/concurrency/$page.html" "${sheets[@]}" > "build/font-profile/$page.raw"
-            perf report -i "build/font-profile/$page.perf.data" --stdio --no-children --percent-limit 0.5 > "build/font-profile/$page-self.txt"
-            perf report -i "build/font-profile/$page.perf.data" --stdio --children --percent-limit 1 > "build/font-profile/$page-callers.txt"
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: font-profile-evidence
-          path: build/font-profile/

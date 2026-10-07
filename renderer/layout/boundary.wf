@@ -527,10 +527,9 @@ fn publish_boundaries(context: &Context, events: &[Flow], styles: &Styles, basis
   return unit;
 }
 
-fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
-  doc "Publishes one settled reference payload while local geometry is decoded. Nested sequence totals must already be current for Open. Repairs only semantic index ancestors; reference geometry, height and sibling displacement are already settled by the caller. Counters cover directly opened payloads, owner blocks and AVL metadata, excluding shared transfer preparation and earlier reference replay.";
+fn reference_item_output(context: &Context, item: Flow, styles: &Styles, basis_height: i32) -> made: SequenceOutput reads(styles), writes(context) {
+  doc "Publishes one settled reference payload while local geometry is decoded. Nested sequence totals must already be current for Open. Returns the own transfer without repairing an index; reference geometry, height and sibling displacement are already settled by the caller. Counters cover directly opened payloads, owner blocks and AVL metadata, excluding shared transfer preparation and earlier reference replay.";
   let owner = no_index;
-  let slot = no_index;
   let own = empty_output();
   let nested = False();
   match item {
@@ -540,7 +539,6 @@ fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_
       if at < context^.blocks.inner.len {
         set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
         set owner = context^.blocks.inner[at].parent;
-        set slot = context^.blocks.inner[at].entry_slot;
         let root = context^.blocks.inner[at].entries.root;
         let total_field = False();
         let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
@@ -566,51 +564,43 @@ fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_
         set context^.blocks.inner[at].boundary = own;
         set context^.blocks.inner[at].output = measured;
       } else {
-        return unit;
+        return own;
       }
     }
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
       if at < context^.paragraphs.inner.len {
         set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
-        set owner = context^.paragraphs.inner[at].block;
-        set slot = context^.paragraphs.inner[at].entry_slot;
       } else {
-        return unit;
+        return own;
       }
     }
     Child(context: c) => {
       let at = cvt::<u32, u64>(c);
       if at < context^.children.inner.len {
         set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
-        set owner = context^.children.inner[at].block;
-        set slot = context^.children.inner[at].entry_slot;
       } else {
-        return unit;
+        return own;
       }
     }
     Float(context: f) => {
       let at = cvt::<u32, u64>(f);
       if at < context^.children.inner.len {
         set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
-        set owner = context^.children.inner[at].block;
-        set slot = context^.children.inner[at].entry_slot;
       } else {
-        return unit;
+        return own;
       }
     }
     Out(context: o) => {
       let at = cvt::<u32, u64>(o);
       if at < context^.children.inner.len {
         set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
-        set owner = context^.children.inner[at].block;
-        set slot = context^.children.inner[at].entry_slot;
       } else {
-        return unit;
+        return own;
       }
     }
     Close(..) => {
-      return unit;
+      return own;
     }
   }
   if nested {
@@ -620,6 +610,51 @@ fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_
     let prepared = BoundaryReduction(own: empty, total: empty, block: no_block);
     prepare_boundary_entry(context: context, item: item, styles: styles, destination: &prepared);
     set own = prepared.own;
+  }
+  return own;
+}
+
+fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "Publishes one settled reference transfer and repairs its owning AVL path. Shared output preparation also serves the batch suffix publisher, which joins each intersected node only once.";
+  let own = reference_item_output(context: context, item: item, styles: styles, basis_height: basis_height);
+  let owner = no_index;
+  let slot = no_index;
+  let child = no_index;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        set owner = context^.blocks.inner[at].parent;
+        set slot = context^.blocks.inner[at].entry_slot;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        set owner = context^.paragraphs.inner[at].block;
+        set slot = context^.paragraphs.inner[at].entry_slot;
+      }
+    }
+    Child(context: c) => {
+      set child = c;
+    }
+    Float(context: f) => {
+      set child = f;
+    }
+    Out(context: o) => {
+      set child = o;
+    }
+    Close(..) => {
+      return unit;
+    }
+  }
+  let child_at = cvt::<u32, u64>(child);
+  if child_at < context^.children.inner.len {
+    set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+    set owner = context^.children.inner[child_at].block;
+    set slot = context^.children.inner[child_at].entry_slot;
   }
   if owner == no_index {
     boundary_set(sequence: &context^.entries, slot: slot, output: own, visits: &context^.boundary_visits);
@@ -631,6 +666,57 @@ fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_
     }
   }
   return unit;
+}
+
+fn translated_reference_output(context: &Context, item: Flow, previous: SequenceOutput, delta: i64, styles: &Styles, basis_height: i32) -> made: SequenceOutput reads(styles), writes(context) {
+  doc "Reuses an intact suffix entry after certified exact reference translation and origin encoding with local_geometry False. An active owner may also have moved: Open derives its relative displacement from the encoded origin, while plain paragraphs and children refresh observed motion. Floats, positioned children and atomic paragraphs reprepare position-dependent travel; no index ancestor is repaired here.";
+  let motion_only = False();
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        let new_offset = context^.blocks.inner[at].y;
+        let old_offset = context^.blocks.inner[at].output.offset;
+        let relative_delta = new_offset -sat old_offset;
+        let shifted = shift_motion(output: previous, delta: relative_delta);
+        set context^.blocks.inner[at].output.offset = new_offset;
+        set context^.blocks.inner[at].output.basis_height = basis_height;
+        set context^.blocks.inner[at].boundary = shifted;
+        return shifted;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        if context^.paragraphs.inner[at].atomics.inner.len == 0_u64 {
+          set motion_only = True();
+        }
+      }
+    }
+    Child(..) => {
+      set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      set motion_only = True();
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+      return previous;
+    }
+  }
+  if motion_only {
+    let observed = entry_motion(context: context, item: item, styles: styles);
+    let refreshed = previous;
+    set refreshed.natural_floor = observed.natural_floor;
+    set refreshed.float_reach = observed.float_reach;
+    set refreshed.motion_known = observed.motion_known;
+    return refreshed;
+  }
+  let prepared = reference_item_output(context: context, item: item, styles: styles, basis_height: basis_height);
+  return prepared;
 }
 
 fn publish_reference_ancestors(context: &Context, owner: u32, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {

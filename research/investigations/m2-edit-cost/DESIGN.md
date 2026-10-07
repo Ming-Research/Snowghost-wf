@@ -712,3 +712,60 @@ Both new scoped faults are detected in
 omitting origin encoding makes the baseline fixture's two font edits differ,
 and omitting suffix publication makes positioned-isolated edit 20 differ.
 The corresponding unmutated fixtures match rebuilds.
+
+
+## Batch suffix repair question
+
+Can the remaining suffix work preserve the existing geometry authority while
+removing overlapping index repairs and repeated transfer construction? The
+scoped publisher currently calls `boundary_set` per direct entry, repeatedly
+recomputing the same ancestor totals and rereading unchanged block styles.
+Traverse only the suffix of the retained AVL, store changed own transfers,
+and join each intersected total once in its existing left-own-right
+association. An intact translated block keeps its nested transfer; its new
+encoded offset determines the exact motion shift even if its active parent
+moved. Plain Text/Child retain their semantic transfer and refresh motion
+observations. Float, Out and atomic Text reprepare position-dependent travel.
+The old-root numeric certificate must stay strictly below the natural-position
+sentinel, not merely avoid overflow. Equality falls back to exact publication.
+
+Suffix scratch translation still has to refresh every affected descendant:
+`geometry_update_reference` and subsequent recovery/convergence readers rely
+on globally current resolved coordinates. Fuse cursor and payload reads and
+pass child cursors into recursion, removing redundant liveness lookups without
+changing those writes. A single-page owner still pays dispatch and pointer
+access costs; do not describe every lookup as a logarithmic page descent.
+A transient physical-page scatter buffer was examined but deferred: the
+compiler proof of disjoint rank-indexed destinations is not established, and
+serial discovery would add an order to independent writes.
+
+The comparison is 0430437 versus the batch/fusion implementation on the same
+hosted main/base/twin scripts. Any incremental/rebuild difference rejects the
+repair. Failure of the 2x medians rejects its performance sufficiency. Existing
+scoped-origin and scoped-suffix faults must remain independently detected.
+The started full mutation run at b7601bc was superseded before completion;
+its saved partial results are not a full-suite pass. Complete validation is
+required at the resulting source.
+
+
+The 0430437 font profile in
+[37627595356](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37627595356)
+uses the unchanged first setup followed by ten copies of the acceptance edit
+commands, in one process. Both profiles lost zero samples. Whole-process self
+samples on html5 include `reference_owner_cursor` 6.82%,
+`translate_reference_payload` 6.10%, `boundary_set` 5.69%, `sequence_select`
+3.57% and `join_output` 3.02%. Ecma262 includes `reference_owner_cursor`
+2.73%, `translate_reference_payload` 2.58% and `sequence_select` 1.96%; its
+six full-reference edits per twenty also retain substantial full reduction
+and preparation. Startup and those expensive full edits prevent interpreting
+these as percentages of the median edit. Subsequent timing artifacts profile
+the first font-size round trip separately (100 repetitions, one setup), so
+that a converged edit's remaining path can be inspected without mixing in
+those full-reference edits. The one-use download/profile job is removed.
+
+Virtual child classification also stops descending from the context root for
+every recorded child rank. Existing `(block, entry_slot)` handles name its
+live entry directly; kind and child-index checks still exclude atomic and
+retired candidates. Full passes keep their existing shared array access.
+This removes a new lookup dependency from float recovery and positioned-child
+classification, without introducing retained state or a candidate cache.
