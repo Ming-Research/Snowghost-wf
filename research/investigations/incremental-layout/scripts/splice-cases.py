@@ -85,7 +85,8 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture = Path(__file__).with_name(args.kind + '-case.html')
+    fixture = Path(__file__).resolve().with_name(args.kind + '-case.html')
+    fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')
     with nodes.open('w') as output:
         subprocess.run([args.driver, 'nodes', '0', str(fixture),
