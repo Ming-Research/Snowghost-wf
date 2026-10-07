@@ -14,7 +14,7 @@ struct RoutePatch {
 }
 
 fn sparse_routes<T: copy>(length: u64, missing: T) -> made: RouteTable<T> pure {
-  doc "Reserves identities without allocating payload pages; writes may extend an optional-pointer directory across absent pages.";
+  doc "Reserves the published high-water mark without element pages; later writes initialize the missing prefix in built-in Paged storage.";
   let pages = box_paged_new::<T>(capacity: 0_u64);
   let made = RouteTable<T>(pages: move pages, len: length, span: 1073741824_u32, missing: missing);
   return move made;
@@ -274,8 +274,8 @@ fn publish_splice_payloads(context: &Context, fresh: &Context) -> result: unit w
   return unit;
 }
 
-fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visits: &BoundaryVisits) -> result: unit reads(context.blocks.inner), reads(context.storage), writes(items), writes(visits) {
-  doc "Collects only a removed entry's owned flow subtree. Child contexts are retired as whole owned trees, so their payload slots need no rebasing.";
+fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visits: &BoundaryVisits) -> result: unit reads(context.blocks.inner), writes(context.storage), writes(items), writes(visits) {
+  doc "Collects the removed subtree and tombstones each already-read nested entry slot, without a second AVL traversal. Child contexts retire as whole owned trees.";
   let pushed = push_item::<Flow>(cell: items, value: item, ceiling: item_ceiling);
   set visits^.entries = visits^.entries +sat 1_u64;
   match item {
@@ -289,6 +289,10 @@ fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visi
         let count = handles.inner.len;
         for (k in 0_u64..count) {
           let nested = splice_payload(storage: &context^.storage, sequence: sequence, slot: handles.inner[k].slot, visits: visits);
+          let retired_slot = cvt::<u32, u64>(handles.inner[k].slot);
+          if retired_slot < context^.storage.links.inner.len {
+            set context^.storage.links.inner[retired_slot].live = False();
+          }
           removed_entries(context: context, item: nested, items: items, visits: visits);
         }
       }
@@ -307,8 +311,8 @@ fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visi
   return unit;
 }
 
-fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.storage.links.inner), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
-  doc "Drops removed payloads, tombstones their context routes and retires each removed owner's pooled AVL nodes. Counts are subtree deltas, never a retained-root census.";
+fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
+  doc "Drops removed payloads and tombstones their context routes after entry collection retired their pooled AVL nodes. Counts are subtree deltas, never a retained-root census.";
   let contexts = 0_u64;
   let paragraphs = 0_u64;
   let count = items^.len;
@@ -318,8 +322,6 @@ fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<
       Open(block: b) => {
         let at = cvt::<u32, u64>(b);
         if at < context^.blocks.inner.len {
-          let root = context^.blocks.inner[at].entries.root;
-          retire_sequence_links(links: &context^.storage.links, root: root);
           let sequence = new_sequence();
           set context^.blocks.inner[at].entries = move sequence;
           set context^.blocks.inner[at].entry_slot = no_index;

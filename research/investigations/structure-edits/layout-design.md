@@ -1703,7 +1703,7 @@ while an owner with one entry consumes one initialized element in each pool.
 This preserves the separation of topology, payload and transfer access paths.
 
 The document-order builder records local pending entries and completed spans.
-After the walk, `seal_context` assigns disjoint prefix ranges to owners,
+After the walk, `seal_context_entries` assigns disjoint prefix ranges to owners,
 initializes pool slots, builds each AVL over disjoint `&Run<SequenceCursor>`
 halves, publishes payloads by flat slot and rebases payload entry handles once.
 The prefix assignment and `place_back` initialization have a length-allocation
@@ -1761,3 +1761,40 @@ Source line counts are compared with the same task base. These are required
 observations, not results claimed before the runs finish. Any newly exposed
 compiler refusal or defect receives a minimal example and a maintained TODO;
 renderer semantics are not changed to hide it.
+
+#### Built-in probe and growth evidence
+
+The probe source is [`c1-paged.wf`](../storage-layout/probes/c1-paged.wf),
+compared with the unchanged native C1 source from `research/storage-mocks`.
+[CI run 37578945082](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37578945082)
+at `4318d728acbeab569ea8178612b53e980c023c2b` passed the probe's sequential and
+four-worker literal checks before the superseded layout-ledger build was
+cancelled. The probe is unchanged in the renderer validation revision.
+The `paged-c1-evidence` artifact preserves both ledgers and emitted LLVM.
+
+| Probe operation | Native directory | Built-in Paged | Reason |
+|---|---|---|---|
+| Flat slot writes | Denied | Permitted | Paged indexing is one affine element; native quotient/remainder addressing is not certified. |
+| Outer page loop | Permitted | Permitted | Independent page references. |
+| Inner page loop | Permitted | Permitted | Independent contiguous elements. |
+| Initialization | Denied | Denied | Every placement changes the shared window length. |
+| Literal validation | Denied | Denied | Returning an error leaves the loop. |
+
+The full emitted [`paged-c1.ll`](runs/paged-c1.ll) has SHA-256
+`c052d9cdac41ac359c5c9267d57360e09226bc637a6423ada2fc765eed96f8fd`.
+In `wf_grow_paged$instance$ed4950029184679a`, the only `memmove` copies
+`ceil(old_capacity / 256) * 8` bytes from the old directory to the new one.
+The remaining allocation loop allocates full `256 * 16 = 4096` byte pages
+and stores their pointers; it does not load or copy an old element page.
+For the probe's growth from capacity 1 to 1024 this is an 8-byte directory
+copy and three new 4096-byte pages. The constructor requests a 32-byte cell,
+an 8-byte directory and a full 4096-byte page even for capacity 1: 4136 bytes
+before allocator overhead. This confirms the full-first-page premise behind
+context-wide entry pooling. It is allocation evidence, not a timing result.
+
+The completion review found that a separate retirement traversal read pooled
+AVL metadata without counting it. Removal now tombstones each known nested
+slot immediately after the existing counted payload read, using the already
+collected handles; the extra traversal is removed. The review also removed
+the unused page-callback environment and corrected obsolete representation
+descriptions. These are repairs within the selected pooling direction.
