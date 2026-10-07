@@ -25,6 +25,8 @@ jobs:
           make -s compiler oracle-fonts
           wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
           (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+      - name: Small arithmetic fixture before the page batch
+        run: python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_oracle_seq build/near-limit-step5
       - name: Structural path diagnostics
         run: |
           set -euo pipefail
@@ -65,7 +67,7 @@ jobs:
           start = source.index('fn splice_context_ready(')
           end = source.index('\nfn splice_inputs(', start)
           body = source[start:end]
-          reasons = ['local geometry', 'definite height', 'intrinsic or dirty', 'context fragments', 'nonordinary root transfer', 'through root transfer', 'travel bound', 'negative content top', 'content top bound']
+          reasons = ['local geometry', 'definite height', 'intrinsic or dirty', 'context fragments', 'nonordinary root transfer', 'through root transfer', 'origin and travel bound']
           assert body.count('return 7_u32;') == len(reasons)
           for code, reason in enumerate(reasons, 71):
               replacement = f'return {code}_u32;'
@@ -89,6 +91,7 @@ jobs:
         with:
           name: step5-diagnostics
           path: |
+            build/near-limit-step5/
             build/block-case.raw
             build/splice-route-case.raw
             build/splice-style-case.raw
@@ -185,6 +188,21 @@ jobs:
             sh research/investigations/incremental-layout/run.sh inc seq "$page" $KINDS
             WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh inc par "$page" $KINDS
             sh research/investigations/incremental-layout/run.sh same "$page" $KINDS
+            for build in seq par; do
+              python3 - "build/x5/out/$page-block.$build.txt.raw" <<'PYEOF'
+          import re
+          import sys
+          from pathlib import Path
+          source = Path(sys.argv[1]).read_text()
+          paths = re.findall(r'^structure path (\d+) splice ([01]) reason (\d+)$', source, re.M)
+          assert paths and all(local == '1' and reason == '0' for _, local, reason in paths), paths
+          print(sys.argv[1], len(paths), 'local splices, zero fallbacks')
+          for bad in ('', source.replace('splice 1 reason 0', 'splice 0 reason 7')):
+              bad_paths = re.findall(r'^structure path (\d+) splice ([01]) reason (\d+)$', bad, re.M)
+              assert not (bad_paths and all(local == '1' and reason == '0' for _, local, reason in bad_paths))
+          print('detected missing paths and a page fallback')
+          PYEOF
+            done
           done
           s=research/investigations/incremental-layout/scripts
           sh "$s/checkpoint-case.sh" build/layout_oracle_seq build/checkpoint-case.edits
@@ -198,6 +216,9 @@ jobs:
               echo "$name ($build): every edit matches its full rebuild"
               grep -E 'structure path| inc (same|DIFF|refused)$' "build/$name.$build.raw"
             done
+          done
+          for build in seq par; do
+            WF_WORKERS=4 python3 "$s/near-limit.py" build/layout_oracle_$build "build/near-limit-$build"
           done
           for case in block-case:2 style-case:6; do
             name=${case%%:*} allowed=${case#*:}
@@ -233,3 +254,11 @@ jobs:
             test "$differs" -eq 0
             test "$same" -eq 8
           done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m2-arithmetic-oracles
+          path: |
+            build/near-limit-*/
+            build/*.raw
+            build/x5/out/*.raw
