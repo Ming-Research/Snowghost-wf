@@ -110,7 +110,10 @@ pairs require identity without prescribing a structural path.
 
 
 The line-lifetime case keeps a long paragraph insertion in place through
-the subsequent block removal, then restores the text. Its later ordinary
+the subsequent block removal, then restores the text. A preceding wrapping
+round trip first settles reference scratch after the structural edit, so the
+held insertion exercises reference translation even when short edits stop at
+unchanged outputs. Its later ordinary
 wrapper begins with a split head, so the leading empty fragment reads
 Split.line at the wrapper opening; block removal still requires a local splice.
 
@@ -338,6 +341,7 @@ def generate(tree, kind):
             else:
                 text_pair(lines, node)
         if case == 'transfer-line-lifetime':
+            wrapping_pair(lines, probe['node'])
             held_text = 'Retained anonymous text grows before the split head. ' * 12
             lines.append('T %d 0 %s' % (probe['node'], held_text))
         lines.append('X %d' % created)

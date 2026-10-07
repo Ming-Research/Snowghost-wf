@@ -1367,3 +1367,19 @@ measurement job; the failed-job retry API returned HTTP 500. A temporary
 `[timing-reuse]` path runs the unchanged measurement against those four
 artifacts, preserving their revision records. It is removed after the
 measurement completes. Renderer source remains the merge commit's source.
+
+
+The union mutation run exposed a fixture-reachability change:
+`no-split-line-refresh` compiled but was not detected at b92cde9. The
+line-lifetime fixture inserted a block, made short edits, then grew its probe
+paragraph. The new stationary cutoff preserves `boundary_dirty` through
+those short edits, so the first growth must settle the reference bridge;
+it no longer exercises the mutation's in-place translation call. Add a
+wrapping round trip before the held insertion to settle that bridge and
+exercise consecutive reference updates. Keep the mutation and fixture HTML
+unchanged, and require the extended unmutated script in both seq and par.
+The original missed result remains a failed acceptance result until the
+focused rerun detects the same mutation. Eight other jobs never acquired a
+runner; `[falsify-retry]` selects those eight and the repaired fixture, while
+`[falsify]` still selects all 44. This temporary selection is removed after
+successful recovery.
