@@ -1492,3 +1492,33 @@ pairs retain the excess visit counts or if medians do not improve beyond
 control spread. This does not assume that the ECMA reference cost has the
 same cause. The short profile of the prior drivers remains independent;
 its one-use job is removed from the next workflow revision.
+
+
+### Narrow block-origin reads
+
+[The diagnostic profile](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37663712628)
+uses the existing 7a1fc758 and edit-cost drivers on hosted Ubuntu 24.04,
+AMD EPYC 9V74, four CPUs, wf-0b7f5c5b9854 and perf 6.17.13; no samples were
+lost. In the ECMA sequential head process, fragment_endpoint has 7.71% self
+samples, fragment_certificates 6.68%, anchored_context_fragment 2.37%, and
+block_snapshot 6.38% (below the 0.5% display cutoff in edit-cost). These are
+whole-process sampled shares with startup, not exclusive edit-cost shares.
+The remaining dense reference translation is prominent on both sides:
+26.82% at head and 32.17% at edit-cost.
+
+block_origin calls the 20-field BlockSnapshot helper although an origin
+needs only five local fields or four reference fields, with no intervening
+mutation. That snapshot belongs to the reference walker. Read the needed
+scalars directly in each branch, preserving the bounds guard, parent walk,
+Origin operations, effects and saturation order. This is an interface-use
+repair, not a compiler workaround: child/paragraph origin helpers already
+use direct scalar reads. If the compiler refuses this ordinary form, stop
+for the owner instead of changing the spelling to hide a language gap.
+
+Measure this against the positioned-publication repair as same-source prior,
+with edit-cost and its twin controls. The hypothesis is that removing the
+unneeded copied fields reduces the profiled block_snapshot cost and the
+sentence medians; reject a speed claim if the comparison does not distinguish
+it from control spread. Complete fragment certification stays in place.
+The superseded correctness runs are replaced by the full unchanged oracle
+and 44-mutation matrices on this renderer; their cancellation is not a pass.
