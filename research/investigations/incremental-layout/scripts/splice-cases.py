@@ -21,7 +21,11 @@ The fixed-height positioned cases isolate static-anchor displacement from
 containing-block resizing. The growing case changes both percentage height
 and top/bottom stretch; nested anchors expose translating descendants twice;
 the atomic cases move inline-blocks with their paragraphs, including opposing
-vertical margins whose offsets must not be hidden by anchor cancellation. The row stretch
+vertical margins whose offsets must not be hidden by anchor cancellation. The
+first-anchor case starts with no out-of-flow children:
+only the inserted unclassed paragraph generates an absolute ::before box.
+Its explicit offsets must be settled against the retained section's containing
+block when the splice first introduces positioned content. The row stretch
 case changes the sibling's height and its child's percentage height. Column
 grow/shrink change free space through the edited item's auto flex basis.
 Column wrap crosses the fixed main extent after insertion, changing which
@@ -43,10 +47,10 @@ a Text/atomic, Float or Out entry in the enclosing flow. Each structural
 edit is expected to refuse before publication with reason 2 and still match
 its full rebuild; later text edits verify retained route correctness. The
 <output>.paths sidecar records these three cases' required structural
-fallbacks and the intrinsic-position case's required successful splices,
+fallbacks and the intrinsic-position and first-anchor cases' required successful splices,
 using the generated commands' operation numbers. --check-paths
 checks each required row exactly once; inctime.py separately validates the
-complete protocol and identity. Other fixture kinds have empty sidecars.
+complete protocol and identity. Transfer fixtures have an empty sidecar.
 
 The transfer fixture isolates eight cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, an owner at
@@ -80,7 +84,7 @@ from edits import Tree
 CASES = {
     'positioned': ('positioned-auto', 'positioned-growing', 'positioned-fixed',
                    'positioned-nested', 'positioned-atomic',
-                   'positioned-atomic-cancel'),
+                   'positioned-atomic-cancel', 'positioned-first-anchor'),
     'transfer': ('transfer-clear-reentry', 'transfer-clear-expired',
                  'transfer-float-expired', 'transfer-marker-lined',
                  'transfer-fixed-sibling', 'transfer-minimum-sibling',
@@ -93,8 +97,22 @@ CASES = {
 }
 
 
-OWNER_FALLBACK_CASES = frozenset(('flex-inline-owner', 'flex-float-owner',
-                                  'flex-positioned-owner'))
+
+EXPECTED_PATHS = {
+    'flex-inline-owner': (0, 2),
+    'flex-float-owner': (0, 2),
+    'flex-positioned-owner': (0, 2),
+    'flex-intrinsic-position': (1, 0),
+    'positioned-first-anchor': (1, 0),
+}
+
+
+def record_path(paths, case, number):
+    """Record the selected case's required result at its structural operation."""
+    if case in EXPECTED_PATHS:
+        splice, reason = EXPECTED_PATHS[case]
+        paths.append('structure path %d splice %d reason %d' %
+                     (number, splice, reason))
 
 
 def check_paths(expected_path, raw_path):
@@ -146,20 +164,15 @@ def generate(tree, kind):
         created = tree.arena + 2 * number
         lines.append('B %d %d Inserted block.' %
                      (paragraph['parent'], paragraph['node']))
-        if case in OWNER_FALLBACK_CASES:
-            paths.append('structure path %d splice 0 reason 2' % len(lines))
+        record_path(paths, case, len(lines))
         if case == 'flex-intrinsic-position':
-            paths.append('structure path %d splice 1 reason 0' % len(lines))
             after_insert = (probe['node'],)
         else:
             after_insert = (retained['node'], created + 1, probe['node'])
         for node in after_insert:
             text_pair(lines, node)
         lines.append('X %d' % created)
-        if case in OWNER_FALLBACK_CASES:
-            paths.append('structure path %d splice 0 reason 2' % len(lines))
-        if case == 'flex-intrinsic-position':
-            paths.append('structure path %d splice 1 reason 0' % len(lines))
+        record_path(paths, case, len(lines))
         for node in (retained['node'], probe['node']):
             text_pair(lines, node)
     return '\n'.join(lines) + '\n', ''.join(line + '\n' for line in paths)

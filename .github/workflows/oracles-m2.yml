@@ -32,8 +32,38 @@ jobs:
           for kind in positioned flex transfer; do
             python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "build/$kind-case.edits"
             time build/layout_oracle_seq edit "build/$kind-case.edits" "$s/$kind-case.html" renderer/style/ua.css > "build/$kind-case.raw"
-            python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.raw"
-            python3 "$s/splice-cases.py" --check-paths "build/$kind-case.edits.paths" "build/$kind-case.raw"
+            fixture_status=0
+            if python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.raw"; then
+              if python3 "$s/splice-cases.py" --check-paths "build/$kind-case.edits.paths" "build/$kind-case.raw"; then
+                :
+              else
+                fixture_status=$?
+              fi
+            else
+              fixture_status=$?
+            fi
+            if [ "$fixture_status" -ne 0 ]; then
+              python3 - "$kind" <<'PYEOF' || true
+          import re
+          import sys
+          from pathlib import Path
+          kind = sys.argv[1]
+          raw = Path(f'build/{kind}-case.raw').read_text()
+          numbers = sorted(set(map(int, re.findall(r'^edit (\d+) hash [0-9a-f]{16} bytes \d+ inc DIFF$', raw, re.M))))
+          debug = Path(f'build/{kind}-case.debug.edits')
+          debug.unlink(missing_ok=True)
+          if numbers:
+              edits = Path(f'build/{kind}-case.edits').read_text()
+              debug.write_text(''.join(f'P {number}\n' for number in numbers) + edits)
+              print(kind, 'capture differing edits', numbers)
+          else:
+              print(kind, 'no inc DIFF rows; original raw preserves the failing paths or protocol')
+          PYEOF
+              if [ -f "build/$kind-case.debug.edits" ]; then
+                build/layout_oracle_seq edit "build/$kind-case.debug.edits" "$s/$kind-case.html" renderer/style/ua.css > "build/$kind-case.debug.raw" 2> "build/$kind-case.debug.err" || true
+              fi
+              exit "$fixture_status"
+            fi
             grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.raw"
           done
       - name: Small arithmetic fixture before the page batch

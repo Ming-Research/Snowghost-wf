@@ -2047,3 +2047,17 @@ payloads with logical OR. Insertion can introduce the first positioned child
 in a context, and final settlement must visit it against the retained
 containing block. Retaining true after removal is conservative: the child
 loop skips retired entries.
+
+
+The retained-margin falsifier has a dedicated `flex-intrinsic-position`
+case. A fixed-width item's automatic minimum invokes intrinsic measurement;
+an absolute descendant has an explicit left inset and percentage left
+margin. Text edits in the sibling item leave the first item's retained
+margin state untouched before block removal. The rejected intrinsic side
+effect would make the positioned descendant read a zero-basis margin at
+removal (predicted x=7px instead of x=25px). Both structural operations must
+use the local path, so a fallback cannot make this detection claim.
+`positioned-first-anchor` inserts a paragraph with an absolute generated
+`::before` into an isolated context whose existing paragraphs suppress that
+pseudo. Its two structural operations also require the local path, testing
+publication of the first `has_out` state.
