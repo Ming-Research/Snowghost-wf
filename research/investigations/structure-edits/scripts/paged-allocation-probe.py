@@ -7,6 +7,35 @@ import re
 import sys
 from pathlib import Path
 
+if sys.argv[1] == '--summarize':
+    from collections import Counter
+    evidence = Path(sys.argv[2])
+    lines = (evidence / 'allocation-html5.txt').read_text().splitlines()
+    assert lines[-1].startswith('layout elements '), 'missing completed-build row'
+    rows = [tuple(map(int, line.split())) for line in lines[:-1]]
+    assert all(len(row) == 4 and 0 <= row[0] < 7 for row in rows)
+    names = ['SequenceNode', 'Flow', 'TextUnit', 'StyleUse', 'StyleRoute', 'u32', 'ContextPath']
+    assert {row[0] for row in rows} == set(range(7)), 'missing store type'
+    assert [(r[2], r[3]) for r in rows if r[0] == 0] == [(r[2], r[3]) for r in rows if r[0] == 1]
+    print('Measured base stores (one proposed Paged per store):', len(rows))
+    for kind, name in enumerate(names):
+        ir = (evidence / 'allocation-base' / (name + '.wf.ll')).read_text()
+        match = re.search(r'page.size:\n.*?@llvm.umul.with.overflow.i64\(i64 (\d+), i64 (\d+)\)', ir, re.S)
+        assert match, name
+        native, stride = map(int, match.groups())
+        selected = [r for r in rows if r[0] == kind]
+        assert all(r[1] == native for r in selected), (name, 'runtime/IR geometry mismatch')
+        first_cells = sum(r[2] for r in selected)
+        capacities = [r[2] + (r[3] - 1) * 64 for r in selected]
+        native_pages = sum((c + native - 1) // native for c in capacities)
+        print(name, 'stores', len(selected), 'B', native, 'stride', stride,
+              'native_first_bytes', len(selected) * native * stride,
+              'base_first_data_bytes', first_cells * stride,
+              'native_all_page_bytes', native_pages * native * stride,
+              'base_all_page_data_bytes', sum(capacities) * stride,
+              'base_first_width_histogram', dict(sorted(Counter(r[2] for r in selected).items())))
+    sys.exit(0)
+
 root = Path(sys.argv[1])
 layout = root / 'renderer/layout'
 module = (layout / 'module.wfm').read_text()
@@ -104,14 +133,13 @@ def zero_value(typ, statements):
 for typ in types:
     statements = []
     value = zero_value(typ, statements)
-    initializers = '\n'.join(statements)
+    initializers = ''.join(line + '\n' for line in statements)
     probe='\n\n'.join(declarations) + f'''
 
 fn main() -> result: unit pure {{
   doc "Exposes this element type's actual native page allocation in compiler IR.";
   let storage = box_paged_new::<{typ}>(capacity: 1_u64);
-{initializers}
-  let baseline = box_array_filled::<{typ}>(count: 4_u64, value: {value});
+{initializers}  let baseline = box_array_filled::<{typ}>(count: 4_u64, value: {value});
   return unit;
 }}
 '''

@@ -9,6 +9,33 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
+- **Q2: guarded append loses an enum-payload reference fact after growth or
+  at a loop boundary.** At pinned Whitefoot `496186df5346`, this fragment
+  inside `Pages(storage: values)` is rejected with FN-8 at `place_back`,
+  despite the immediately enclosing guard:
+
+  ```whitefoot
+  if values^.inner.cap < required {
+    grow_paged(cell: values, capacity: required);
+  }
+  if values^.inner.len < values^.inner.cap {
+    place_back(window: &values^.inner, value: 0_u64);
+  }
+  ```
+
+  The complete generated cases are wired through
+  `research/investigations/structure-edits/scripts/paged-guard-probe.py` to
+  layout-check. [CI 37641936463](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641936463)
+  accepts the no-growth/no-loop case for both Paged and Slots; adding either
+  growth or the append loop rejects the fresh guard for both shapes.
+  Snowghost's new `page_ensure` is blocked by the same diagnostic. Proposed
+  fix: preserve the identity of enum-payload reference paths when fresh
+  range facts cross growth and loop processing; the compiler's exact cause
+  remains unverified. Validate all eight positive cases and negative cases
+  with absent or reversed guards, then the renderer's ordinary CI and
+  oracles. Reopen when the owner authorizes a corrected Whitefoot experiment
+  release; no alternate spelling or storage representation is adopted here.
+
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
   Fork(left: Box<Pages>, right: Box<Pages>); }`, and functions that change

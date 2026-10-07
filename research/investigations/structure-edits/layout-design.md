@@ -1223,6 +1223,17 @@ not a fallback for an unsuccessful built-in store. Validation uses layout-check,
 check, one requested oracles run and one requested falsify run; a CI census
 must report native lengths, actual first-page bytes and html5 store counts.
 
+The first implementation at `73f2454` is blocked by a guarded append
+rejection. The independent diagnostic at `2e5392a`,
+[CI 37641936463](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641936463),
+accepts guarded enum-payload appends for both Paged and Slots without growth
+or a loop, and rejects all six variants adding growth or a loop with FN-8.
+The same guard is present in every case. This is a compiler acceptance
+finding, not permission to extract another renderer helper or change storage;
+Q2 in `docs/todo.md` records the proposed Whitefoot work. No equivalence,
+mutation-success or runtime Paged-store count is claimed while compilation
+is blocked. The base census and native allocation IR are independent evidence.
+
 ### Two-level page experiment
 
 The experiment starts at `2d706ba252c80336ba1926c3d77054714046586d`.
