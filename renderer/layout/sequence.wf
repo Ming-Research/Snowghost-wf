@@ -128,7 +128,7 @@ fn new_entry_storage(count: u64) -> made: EntryStorage pure {
   doc "Allocates each field group once per context, with no allocation per small owner.";
   let missing = Flow::Close(block: no_index);
   let cursor = vacant_cursor();
-  let output = empty_output();
+  let output = pending_output(events: 0_u64);
   let payloads = new_pages::<Flow>(count: count, missing: missing);
   let links = new_pages::<SequenceCursor>(count: count, missing: cursor);
   let own = new_pages::<SequenceOutput>(count: count, missing: output);
@@ -139,7 +139,7 @@ fn new_entry_storage(count: u64) -> made: EntryStorage pure {
 fn new_sequence() -> made: EntrySequence pure {
   doc "An empty owner retains only its AVL root and a lazy construction list; final entry storage belongs to the context.";
   let pending = None<Box<Slots<PendingEntry>>>();
-  return EntrySequence(base: 0_u32, root: no_index, allocated: 0_u32, span: 1073741824_u32, pending: move pending, pending_events: 0_u64);
+  return EntrySequence(base: 0_u32, root: no_index, allocated: 0_u32, span: no_index, pending: move pending, pending_events: 0_u64);
 }
 
 fn sequence_node(storage: &EntryStorage, sequence: &EntrySequence, slot: u32) -> made: SequenceCursor reads(storage.links), reads(sequence.span) {
@@ -313,7 +313,7 @@ fn pending_close(sequence: &EntrySequence, slot: u32, events: u64) -> result: un
 
 fn sequence_reserve(sequence: &EntrySequence) -> result: unit writes(sequence.span) {
   doc "Admits the stable slot address space; page allocation occurs only for the inserted slot.";
-  set sequence^.span = 1073741824_u32;
+  set sequence^.span = no_index;
   return unit;
 }
 
@@ -574,7 +574,7 @@ fn sequence_insert_at(storage: &EntryStorage, sequence: &EntrySequence, root: u3
 
 fn insert_before(storage: &EntryStorage, sequence: &EntrySequence, before: u32, item: Flow, output: SequenceOutput, visits: &BoundaryVisits) -> result: Result<u32, LayoutError> writes(sequence), writes(visits), writes(storage) {
   doc "Inserts one new direct entry before a live stable slot, or at end for no_index. A range is a batch of these operations in source order. Earlier payload slots are neither read nor copied.";
-  if storage^.payloads.inner.len >= 1073741824_u64 {
+  if storage^.payloads.inner.len >= 4294967295_u64 {
     let failure = too_large::<u32>();
     return failure;
   }
@@ -594,9 +594,9 @@ fn insert_before(storage: &EntryStorage, sequence: &EntrySequence, before: u32, 
   slot_write::<Flow>(pages: &storage^.payloads, slot: fresh, span: sequence^.span, value: item, missing: missing);
   let yes = True();
   let links = SequenceCursor(left: no_index, right: no_index, parent: no_index, height: 1_u32, live: yes, own_events: output.events, total_events: output.events, total_count: output.count);
-  let held_links = paged_push_item::<SequenceCursor>(cell: &storage^.links, value: links, ceiling: item_ceiling);
-  let held_own = paged_push_item::<SequenceOutput>(cell: &storage^.own, value: output, ceiling: item_ceiling);
-  let held_total = paged_push_item::<SequenceOutput>(cell: &storage^.total, value: output, ceiling: item_ceiling);
+  let held_links = paged_push_item::<SequenceCursor>(cell: &storage^.links, value: links, ceiling: 4294967295_u64);
+  let held_own = paged_push_item::<SequenceOutput>(cell: &storage^.own, value: output, ceiling: 4294967295_u64);
+  let held_total = paged_push_item::<SequenceOutput>(cell: &storage^.total, value: output, ceiling: 4294967295_u64);
   let old_root = sequence^.root;
   let inserted = sequence_insert_at(storage: storage, sequence: sequence, root: old_root, rank: rank, added: fresh, parent: no_index, visits: visits);
   set sequence^.root = inserted;
@@ -946,7 +946,7 @@ fn initial_slot(bases: &[u32], owner: u32, slot: u32) -> made: u32 reads(bases) 
   return no_index;
 }
 
-fn seal_context_entries(context: &Context) -> result: unit writes(context) {
+fn seal_context_entries(context: &Context) -> result: Result<unit, LayoutError> writes(context) {
   doc "Assigns prefix ranges once, seals the owner AVL trees, and publishes global stable entry handles by flat payload slot.";
   let total = pending_count(sequence: &context^.entries);
   let root_count = flow_index(at: total);
@@ -954,6 +954,9 @@ fn seal_context_entries(context: &Context) -> result: unit writes(context) {
   let blocks = context^.blocks.inner.len;
   let bases = box_array_filled::<u32>(count: blocks, value: 0_u32);
   for (s in 0_u64..blocks) {
+    if total > 4294967295_u64 {
+      return too_large::<unit>();
+    }
     let base = flow_index(at: total);
     let count = pending_count(sequence: &context^.blocks.inner[s].entries);
     let allocated = flow_index(at: count);
@@ -961,6 +964,9 @@ fn seal_context_entries(context: &Context) -> result: unit writes(context) {
     set context^.blocks.inner[s].entries.base = base;
     set context^.blocks.inner[s].entries.allocated = allocated;
     set total = total +sat count;
+  }
+  if total > 4294967295_u64 {
+    return too_large::<unit>();
   }
   let storage = new_entry_storage(count: total);
   set context^.storage = move storage;
@@ -984,7 +990,7 @@ fn seal_context_entries(context: &Context) -> result: unit writes(context) {
     let slot = initial_slot(bases: &bases.inner[0_u64..blocks], owner: context^.children.inner[s].block, slot: context^.children.inner[s].entry_slot);
     set context^.children.inner[s].entry_slot = slot;
   }
-  return unit;
+  return Ok<unit, LayoutError>(value: unit);
 }
 
 fn publish_entry_pool<T: copy>(target: &Box<Paged<T>>, source: &Box<Paged<T>>, missing: T) -> result: unit reads(source), writes(target) {
@@ -992,7 +998,7 @@ fn publish_entry_pool<T: copy>(target: &Box<Paged<T>>, source: &Box<Paged<T>>, m
   let base = target^.inner.len;
   let count = source^.inner.len;
   for (s in 0_u64..count) {
-    let kept = paged_push_item::<T>(cell: target, value: missing, ceiling: item_ceiling);
+    let kept = paged_push_item::<T>(cell: target, value: missing, ceiling: 4294967295_u64);
   }
   let end = base +sat count;
   if base <= end {

@@ -121,6 +121,10 @@ fn publish_splice_routes(layout: &Layout, patch: &RoutePatch, removed_nodes: &[u
 fn relocate_splice(fresh: &Context, input: SpliceInput, y: i64) -> result: unit writes(fresh) {
   doc "Rebases private payloads once into final stable slots. Independent paragraphs, blocks and child contexts retain their internal origins; only the inserted root anchor receives its owner's offset.";
   relocate_storage(storage: &fresh^.storage, input: input);
+  let root = cvt::<u32, u64>(fresh^.entries.root);
+  if root < fresh^.storage.links.inner.len {
+    set fresh^.storage.links.inner[root].live = False();
+  }
   let entry_base = input.allocated +sat 1_u32;
   let blocks = fresh^.blocks.inner.len;
   for (at in 0_u64..blocks) {
@@ -303,8 +307,8 @@ fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visi
   return unit;
 }
 
-fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
-  doc "Drops only removed payloads and tombstones their context routes. Counts are subtree deltas, never a retained-root census.";
+fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.storage.links.inner), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
+  doc "Drops removed payloads, tombstones their context routes and retires each removed owner's pooled AVL nodes. Counts are subtree deltas, never a retained-root census.";
   let contexts = 0_u64;
   let paragraphs = 0_u64;
   let count = items^.len;
@@ -314,6 +318,8 @@ fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<
       Open(block: b) => {
         let at = cvt::<u32, u64>(b);
         if at < context^.blocks.inner.len {
+          let root = context^.blocks.inner[at].entries.root;
+          retire_sequence_links(links: &context^.storage.links, root: root);
           let sequence = new_sequence();
           set context^.blocks.inner[at].entries = move sequence;
           set context^.blocks.inner[at].entry_slot = no_index;
