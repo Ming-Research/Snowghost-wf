@@ -57,7 +57,7 @@ outward geometry is unchanged. Run that observation before the compatibility
 passes for one marked, positive-height paragraph with unchanged context space,
 no intrinsic demand, no shrink-to-fit width, no block restyle, no overlapping
 float, no atomic inline and no spanning fragment. The new break must preserve
-height and first and last baseline offsets and remain nonempty. The paragraph
+height and last baseline offset and remain nonempty. The paragraph
 keeps its origin and all margins, exclusions and ancestor dimensions then have
 the same inputs. Changes to intrinsic contributions and certificate travel
 still repair the paragraph's summary and each affected ancestor reduction.
@@ -69,8 +69,8 @@ origins nor invalidates reference scratch. If the output changes, pass the old
 scalar height, line count and baseline to reference replay and reuse the new
 lines; do not compare the new height with itself or force a full restart.
 The existing X5 edit/rebuild oracle is the independent geometry check.
-The stationary-output mutation suppresses the three equality guards and must
-be detected by the existing incremental fixtures. The timing comparison must
+Independent stationary-height and stationary-baseline mutations suppress one
+equality guard each and must be detected by incremental fixtures. The timing comparison must
 show reduced boundary fallbacks and the expected per-edit cost; source shape
 alone is not acceptance evidence.
 
@@ -110,7 +110,7 @@ The edit-cost script kind reuses transfer-case.html without changing its
 rendered fixture. Short and height-changing round trips exercise relative
 siblings, expired floats, negative-margin float re-entry, constrained siblings
 and outside markers. Both the identity oracle and mutation workflow consume
-these scripts; removing a stationary-output guard must produce a real rebuild
+these scripts; removing a stationary guard must produce a real rebuild
 difference, not an unrelated compiler rejection.
 
 The first historical driver build run completed all seven builds, but its
@@ -139,3 +139,23 @@ same old/proposed suffix-motion certificate before this translation as the
 retained boundary path. A refusal re-stacks the affected range with float
 state, because clearance must be recomputed; it does not authorize a constant
 delta for that suffix. The edit-11 dump comparison must establish the repair.
+
+## Review refinements
+
+The first-baseline equality guard was redundant: the fresh paragraph summary
+already propagates that field through `same_transfer`; the context's retained
+baseline follows its last line. Table consumers read the actual first line,
+which has been rebroken, and grid consumers read context baselines. Remove
+that guard, retaining fresh summary propagation and the independently required
+height and last-baseline guards. The edit-baseline script uses the unchanged
+style fixture: downward inline vertical alignment is intended to change height
+without moving the baseline, and a larger font at fixed line height is intended
+to move the baseline without changing height. Separate mutations test those
+conditions; their detection, including unmutated identity, remains required.
+The `[stationary]` tag runs just these two diagnostic mutations; `[falsify]`
+retains the entire matrix.
+
+The auxiliary base fixture initially reused the timing compiler artifact.
+Review correctly rejected that compiler-confounded attribution. The corrected
+oracle job builds revision 9e1561ac with the same correctness compiler and
+Ubuntu clang as the head fixture; only the timing workflow uses wf-0b7f5c5b9854.
