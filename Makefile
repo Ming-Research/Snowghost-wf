@@ -18,13 +18,13 @@ DESIGN_TREES := $(filter-out log,$(basename $(notdir $(wildcard $(ROOT)/design/*
 DESIGN_REVIEW_BASE ?= origin/main
 
 .PHONY: check renderer design-lint design-ready \
-	static-atoms dom-selftest \
+	static-atoms static-atoms-check dom-selftest \
 	oracle-data oracle-line-break oracle-css oracle-css-rules oracle-css-color oracle-css-selectors oracle-html-tokenizer oracle-html-tree \
 	oracle-png oracle-png-speed \
 	oracle-normalization oracle-idna oracle-url oracle-font-face oracle-font-shape oracle-text-properties \
 	oracle-style-dump oracle-style oracle-layout-dump oracle-layout oracle-fonts oracle-text
 
-check: compiler renderer dom-selftest design-lint
+check: compiler renderer static-atoms-check dom-selftest design-lint
 
 # The renderer builds with the Whitefoot compiler release whitefoot.pin
 # names, which Whitefoot-kit's whitefoot.mk downloads and checks; it defines
@@ -56,6 +56,12 @@ renderer: compiler
 static-atoms: $(BUILD)/static_atoms
 	@cd $(ROOT)/renderer && $< < tools/static_atoms/names.txt > $(BUILD)/static_atoms.wfm
 	@mv $(BUILD)/static_atoms.wfm $(ROOT)/renderer/base/static_atoms/module.wfm
+
+# Fails when the checked-in static atoms record differs from what the
+# generator makes of names.txt; run `make static-atoms` after editing it.
+static-atoms-check: $(BUILD)/static_atoms
+	@cd $(ROOT)/renderer && $< < tools/static_atoms/names.txt | cmp -s - base/static_atoms/module.wfm || { \
+		echo "renderer/base/static_atoms/module.wfm is stale: run make static-atoms" >&2; exit 1; }
 
 # Builds the document arena and atom self-test and runs it; it exits with 0
 # only when every check passes.

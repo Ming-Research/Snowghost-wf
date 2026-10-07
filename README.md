@@ -119,8 +119,8 @@ make check
 ```
 
 `make check` downloads the Whitefoot compiler release that `whitefoot.pin`
-names, builds the renderer, runs the
-document arena's self-test and lints the design tree. It runs on Linux
+names, builds the renderer, checks that the static atoms record matches its
+name list, runs the document arena's self-test and lints the design tree. It runs on Linux
 x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
 `/usr/bin/clang` and, on Linux, LLD. CI runs it on every push.
 

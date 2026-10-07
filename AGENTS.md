@@ -56,7 +56,8 @@ speed decides only between candidates of equal dependencies.
 
 - `make check`, the gate, in CI on every push: downloads the compiler release
   `whitefoot.pin` names (Whitefoot-kit's `whitefoot.mk`), builds the renderer,
-  runs the document arena's self-test and `make design-lint`. It needs git,
+  checks that the static atoms record matches its name list, runs the
+  document arena's self-test and `make design-lint`. It needs git,
   Python 3, curl, `/usr/bin/clang`, LLD on Linux and the `design/skill` and
   `whitefoot-kit` submodules; `make check WHITEFOOTC=<path>` uses another
   compiler.
