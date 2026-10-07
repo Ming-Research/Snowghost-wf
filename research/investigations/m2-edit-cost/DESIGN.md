@@ -1325,8 +1325,8 @@ edit-cost twin and the merge head with wf-0b7f5c5b9854, then interleaves two
 rounds on one hosted runner. Word, sentence, font-size and block scripts use
 identical page bytes and inputs. A correctness difference, missed mutation,
 nonlocal page block edit or timing regression rejects the integration.
-Hosted timings satisfy the requested comparison; they are not precise
-hardware measurements. Q134's remaining fragment reconstruction work stays
+These requested hosted comparisons are diagnostic performance evidence,
+not precise hardware measurements. Q134's remaining fragment reconstruction work stays
 outside this integration.
 
 Conflict resolution preserves these contracts:
@@ -1522,3 +1522,24 @@ sentence medians; reject a speed claim if the comparison does not distinguish
 it from control spread. Complete fragment certification stays in place.
 The superseded correctness runs are replaced by the full unchanged oracle
 and 44-mutation matrices on this renderer; their cancellation is not a pass.
+
+
+### Resolved reference endpoints
+
+The same profile identifies fragment_endpoint itself (7.71% self samples),
+whose reference-mode branch builds an Origin from resolved i32 coordinates,
+then immediately converts that Origin back to normal and visual coordinates.
+For any i32 n and v, the widened difference v-n fits i64, the sum n+(v-n)
+is exactly v, and narrowing returns the original i32 value, including both
+extrema. Read the already-resolved normal_y and visual y directly in this
+branch, preserving normal +sat content_dy, visual +sat content_dy, then
+visual top +sat height in that order. The owner-relative branch, bounds
+checks, invalid Flow result and every certificate comparison remain intact.
+
+This is the edit-cost line's existing removal of a needless coordinate round
+trip, not an elision of validity checks. Compare against 4dd3850 as the
+same-source prior, with unchanged main/edit-cost/twin controls and the full
+correctness matrices. Reject a speed claim if medians do not separate from
+the controls' spread; do not infer that the remaining full fragment scan is
+bounded or that Q134 has been settled. The maintained TODO now distinguishes
+the earlier missing endpoint identities from the merged retained anchors.

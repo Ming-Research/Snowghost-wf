@@ -318,18 +318,24 @@ example apart from the renderer code that exposed it
   entries but cost about 10 ms. A repeated-pair profile exposes virtual
   sequence selection, shows_owner and split_fragments_with_empty; source
   rebuilds every split rectangle when the existing reuse certificate fails.
-  Fragment stores a DOM owner and context rectangle but no unique run or
-  endpoint dependency. Removing the top guard is unsafe for collapsing
-  ancestors and coordinate/flow order differ under negative margins.
+  At that revision Fragment stored a DOM owner and context rectangle but no
+  unique run or endpoint dependency. Removing the top guard is unsafe for
+  collapsing ancestors and coordinate/flow order differs under negative
+  margins. The merged splice extension now retains stable FragmentAnchor
+  endpoints and Split.line offsets; its full post-reference certificate
+  still visits every split and fragment, including after a scoped update
+  ([integration profile](../research/investigations/m2-edit-cost/DESIGN.md#narrow-block-origin-reads)).
   [Evidence and open Q2](../research/investigations/m2-edit-cost/DESIGN.md#slow-font-size-profile-result).
   Earlier timing-only probing attributed about 0.8 ms of a 1.1–1.5 ms
-  sfontsize edit to this pass on #spec-container
+  font-size edit to this pass on #spec-container
   ([earlier evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt));
   that work proposed retaining sorted structural keys and closing flags.
-  M2 now additionally needs a bounded link from those keys to emitted runs.
-  Change: choose stable run/end-point identities with owner-relative anchors,
-  or a retained dependency index for the flat rectangles; a transient full
-  scan does not remove the unrelated context dependency. Validate split and
+  M2 still needs a bounded link from changed endpoints to emitted runs.
+  Change: settle the dependency/invalidation contract for bounded repair of
+  the retained endpoint anchors and split/empty output, or an index of the
+  flat rectangles; merely repeating a transient full scan does not remove
+  the unrelated context dependency. Owner item Q134 remains open; its earlier
+  missing-identity grounds must now account for the retained anchors. Validate split and
   empty fragment order, moved ancestor endpoints, negative margins, relative
   positioning, saturation, insert/remove lifetimes, all X5 identities and
   falsifiers, then repeat same-host text/font-size acceptance. Reopen after
