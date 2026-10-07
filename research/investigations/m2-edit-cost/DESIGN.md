@@ -56,7 +56,7 @@ The existing reference in-place update already stops when a paragraph's
 outward geometry is unchanged. Run that observation before the compatibility
 passes for one marked, positive-height paragraph with unchanged context space,
 no intrinsic demand, no shrink-to-fit width, no block restyle, no overlapping
-float, no atomic inline and no spanning fragment. The new break must preserve
+float and no atomic inline. The new break must preserve
 height and last baseline offset and remain nonempty. The paragraph
 keeps its origin and all margins, exclusions and ancestor dimensions then have
 the same inputs. Changes to intrinsic contributions and certificate travel
@@ -481,8 +481,8 @@ interior fragments belong to its independent context; parent paragraphs and
 block styles are unmarked. Remove the whole-parent split-list exclusion from
 the child equality observation. No parent fragment is rewritten or scanned
 on success. A changed output still carries its original Before to reference
-replay. The paragraph cutoff retains its split exclusion because rebreaking
-a paragraph can alter its own inline-fragment geometry. This removes an
+replay. The paragraph exclusion is examined separately below: its own fragments
+are rebroken, while parent split fragments consume only boundary inputs. This removes an
 unrelated-fragment dependency rather than extending changed-geometry admission.
 The same hosted scripts, complete identity checks and mutations must validate
 the result; the successful probe alone does not establish the timing target.
@@ -557,3 +557,30 @@ rather than reference update/publication rejects the proposed remaining-cost
 attribution. These whole-process profiles include initial construction; caller
 stacks must distinguish update work before making an edit-specific claim.
 Remove the one-use job after saving its evidence.
+
+## Paragraph split cutoff
+
+The same-host dcc16f5 comparison
+[37614591316](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37614591316)
+confirms the child-split repair on the traced pair: ecma262 word edits 1/2
+fall to 318/240 us in sequential round 1, and edits 11/12 take 155/103 us.
+The median remains 72372/74397 us versus main's 96/96: most edits change a
+paragraph directly in the large context and retain its separate split refusal.
+The child repair therefore removes a real dependency but does not meet the
+page-level target.
+
+Parent split rectangles consume block/child extents and margins, paragraph
+line presence, and Open/Close owner identities from retained Begin/End pieces.
+Text offsets do not participate in that ownership test. Rebreaking a nonempty
+paragraph with unchanged height leaves the stacking cursor, cleared margins
+and subsequent Split.line inputs unchanged; its last baseline also remains
+unchanged. `break_paragraph` refreshes the paragraph's own fragments, which
+parent split rectangles do not consume. Remove the context-wide split
+exclusion from this same-output path too.
+
+Changed-height or changed-baseline paragraphs still refuse `moved_paragraph`
+when the context has splits: put that guard there explicitly, preserving the
+previous changed-output scope now that a broken snapshot can reach it. No
+fragment scan, new retained cache or broader movement certificate is added.
+The forthcoming same-script timing and identity/mutation runs must establish
+the effect of this separate repair.
