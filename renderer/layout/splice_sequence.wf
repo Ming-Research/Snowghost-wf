@@ -207,3 +207,61 @@ fn relocate_nodes(pages: &SlotPages<SequenceNode>, blocks: u32, owner: u32, slot
   }
   return unit;
 }
+
+fn preview_sequence(sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence), writes(visits) {
+  doc "Composes a private replacement using the two cached rank ranges; retained index and payload pages remain untouched.";
+  let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+  let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+  let after = rank +sat 1_u64;
+  let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
+  let suffix = range_output(sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
+  let joined = join_output(left: &prefix, right: &output);
+  let made = join_output(left: &joined, right: &suffix);
+  return made;
+}
+
+fn preview_boundary(context: &Context, owner: u32, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), writes(visits) {
+  doc "Previews a changed entry through only its block ancestor chain, using the same lift as publication.";
+  let cursor = owner;
+  let changed = slot;
+  let outgoing = output;
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    if cursor == no_index {
+      let root = preview_sequence(sequence: &context^.entries, slot: changed, output: outgoing, visits: visits);
+      return root;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      let invalid = pending_output(events: 0_u64);
+      return invalid;
+    }
+    set visits^.blocks = visits^.blocks +sat 1_u64;
+    let block = &context^.blocks.inner[at];
+    let inside = preview_sequence(sequence: &block^.entries, slot: changed, output: outgoing, visits: visits);
+    let lifted = lift_block_output(inside: &inside, measured: block^.output);
+    set outgoing = lifted;
+    set changed = block^.entry_slot;
+    set cursor = block^.parent;
+  }
+  let invalid = pending_output(events: 0_u64);
+  return invalid;
+}
+
+fn preview_owner(context: &Context, owner: u32, inside: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), writes(visits) {
+  doc "Starts a splice preview from the already composed owner sequence, then shares replacement preflight with ordinary boundary updates.";
+  if owner == no_index {
+    return inside;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    set visits^.blocks = visits^.blocks +sat 1_u64;
+    let block = &context^.blocks.inner[at];
+    let lifted = lift_block_output(inside: &inside, measured: block^.output);
+    let root = preview_boundary(context: context, owner: block^.parent, slot: block^.entry_slot, output: lifted, visits: visits);
+    return root;
+  }
+  let invalid = pending_output(events: 0_u64);
+  return invalid;
+}

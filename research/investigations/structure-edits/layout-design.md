@@ -629,6 +629,69 @@ resolved outputs as exact wider parent differences. Keep this compatibility
 path until saturation cases prove a replacement byte-identical. It is a
 numeric condition applying to every page, not a workload special case.
 
+### Origin-aware ordinary arithmetic certificate
+
+Question: can the fixed 2^26/2^27/2^28 admission limits be replaced by
+an origin-dependent certificate without changing the reference result?
+The comparison is incremental versus full sequential rebuild, plus seq/par
+identity, on every X5 edit and on near-limit signed-margin/baseline cases.
+A mismatch, a missed counted refusal when an intermediate would saturate,
+or an undetected unsafe-admission mutation rejects this proposal. This is
+an arithmetic correctness change, not a performance claim.
+
+Let M = 2147483647 layout units. For a context, O is its actual
+`flow_frame.content_top`, and T is the sum of absolute elementary vertical
+terms in its ordinary root transfer. A margin contributes its absolute
+value; a solid contributes its absolute height; a paragraph also contributes
+the absolute top and baseline components of its first and last lines,
+separately (the absolute value of their sum would hide cancellation).
+A child context contributes its measured border height, external margins,
+and both exposed baseline excursions. Its contents have their own coordinate
+space and are certified separately when changed. Joins add T; block lifting
+adds margins and top/bottom frames. Max/min collapsing struts select existing
+terms and cannot enlarge this sum.
+
+Admission for an update requires **|O| + T_old + T_new <= M**. This certifies
+both reference runs and leaves the necessary room for differences between
+them, not just each final cursor. All certificate arithmetic is i64 with
+saturating positive sums: overflow rejects rather than wrapping. Index
+summaries have no placement origin; their `ordinary` flag requires T <= M
+(the necessary zero-origin condition), and publication performs the stronger
+check with the real O. Semantic barriers remain independent of this numeric
+condition. For a splice, privately compose the candidate owner sequence,
+lift through its block ancestors, and then preview enclosing context sizes
+and baselines bottom-up. Check each context's old and proposed root, rather
+than assuming a safe old root makes a growing ancestor safe. A text update
+uses the same block-ancestor preview. The dependency chain is exactly the
+existing ancestor propagation; sibling prefixes remain independent cached
+reductions, with no descendant geometry walk.
+
+The reference audit (`renderer/layout/flow.wf:stack_flow`, `boundary.wf`,
+`geometry.wf`, `box.wf:used_height`, `update.wf:finish_in_place`) is:
+
+| Ordinary position step | Coverage or retained exclusion |
+|---|---|
+| `pending_margin`: positive + negative; `add_margin`: max/min; cursor + pending margin, including preliminary line positions and final flow end | Each selected margin is charged once per settled edge by its source term. The extrema have opposite signs, so adding the pair cannot overflow. Prefix absolute sums bound every cursor. |
+| Open: border.top + padding.top, cursor + collapsed margin, then y + top_frame; `resolve_open` copies y into pending ancestors | Nonnegative frame components are charged by their sum; a saturated frame itself cannot pass the combined bound. No operation on y other than addition/copy. |
+| Close: optional cursor + trailing strut, top + top_frame + marker, max(flow_end, marker_end), content_end - top, + bottom_frame, top + height | Markers and constrained block heights remain excluded. For an ordinary auto block, the difference cancels its common prefix and is bounded by the terms inside it. `snapshot_grows` retains the lower-frame clamp check on changed ancestors; already ordinary sibling interiors are unchanged. Nonnegative top/bottom frames are charged by lifting. |
+| Text: cursor + pending strut; y + paragraph.height; line.top + line.baseline; y + line_base; content_top + that value | Travel charges absolute height and the individual first/last baseline components, so cancellation cannot hide a saturated intermediate. Line breaking, glyph placement and its rounding run unchanged on the paragraph before this certificate. Atomic inlines and float-dependent paragraphs stay excluded. |
+| Child: max(cursor + strut, clear_floor), y + child.height, y + child.baseline; content_top + y or baseline | Clearance and parent floats remain excluded. The no-clear floor is -M: T <= M makes it inert. Child height and baseline are measured atoms. Its anchor is this very content_top + y, not an additional uncounted displacement. |
+| Block/paragraph/child normal versus visual positions: y + dy (+ own_dy), then content_top + y | Nonstatic blocks and child entries remain excluded, so all those relative offsets are zero. The context's own external placement is applied separately by the existing placement walk. |
+| Horizontal widths, percentage resolution, specified heights, line shaping, division/rounding | These are not reassociated functions of the vertical cursor. They are evaluated by the same helpers with unchanged width/percentage inputs; changed child/paragraph results are measured before composition. Width changes, intrinsic dependencies, columns, splits, positioned entries, clearance, floats and unsupported height constraints keep their existing refusal paths. |
+| `content_raw`/`flow_end`, context baseline, ancestor block heights, and direct sibling origin updates | Old and new reference values are bounded as above. Their i32 differences are bounded by T_old + T_new; the common O cancels. Adding the exact difference gives the certified new value. `used_height` then performs the same frame additions and clamps in the same order as full layout; it is not reassociated, even if that final size clamps. Its resulting child height is certified as an atom in the enclosing context. |
+| `origin_from_resolved`, `origin_relative`, `origin_accumulate`, `geometry_narrow`, dump/paint | Parent differences and reconstruction use i64. Telescoping reconstructs the certified reference i32 context-local origins exactly; the legacy narrowing and subsequent placement/float conversion order are unchanged. Child internals and fragment offsets are neither translated individually nor reassociated with the external anchor. |
+
+Thus every reassociated ordinary reference position is O plus a prefix
+of counted terms, or a difference of two prefixes whose common part
+cancels. All intermediate additions/subtractions lie in [-M, M]; max/min
+only select such values. In this domain saturating i32 operations equal
+integer operations, the transfer algebra is associative, and index-order
+composition equals the sequential reference. The symmetric bound deliberately
+leaves i32's extra negative endpoint unused. It is sufficient, not necessary:
+some safe large/cancelling pages may still replay. Cases outside the audit
+continue through the reference walker; no claim is made about reassociating
+arbitrary saturation, clearance, relative displacement or percentage layout.
+
 ### The splice transaction
 
 1. Receive the changed DOM parent, before-sibling or end marker, inserted /

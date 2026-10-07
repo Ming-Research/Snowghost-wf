@@ -59,7 +59,10 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   } else {
     return Err<SplicePlan, u32>(error: 7_u32);
   }
-  if output.travel >= 67108864_i64 {
+  let budget = old.travel +sat output.travel;
+  let bounded = transfer_fits(origin: input.first_edge, travel: budget);
+  if bounded {
+  } else {
     return Err<SplicePlan, u32>(error: 7_u32);
   }
   let old_lines = old.last_line.slot != no_index;
@@ -168,41 +171,75 @@ fn splice_block_path(context: &Context, styles: &Styles, owner: u32, delta: i32,
   return False();
 }
 
-fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, delta: i32, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(steps), reads(styles), writes(visits) {
-  doc "Checks every context and block ancestor before publication. Context constraints may reduce the propagated height delta, but cannot introduce a width, float or intrinsic dependency on this path.";
+fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, output: SequenceOutput, delta: i32, styles: &Styles, visits: &BoundaryVisits) -> (ready: Bool, height: i32, baseline: i32) reads(context), reads(steps), reads(styles), writes(visits) {
+  doc "Previews the actual proposed root at each enclosing context before publication. Child results depend only on the changed descendant; each parent's size clamp is evaluated in the reference order.";
+  let no = False();
   let reason = splice_context_ready(context: context, styles: styles, visits: visits);
   if reason != 0_u32 {
-    return False();
+    return no, 0_i32, 0_i32;
   }
-  if depth >= steps^.len {
-    let ready = splice_block_path(context: context, styles: styles, owner: owner, delta: delta, visits: visits);
-    return ready;
-  }
-  let route = steps^[depth];
-  let child = cvt::<u32, u64>(route.child);
-  if child < context^.children.inner.len {
+  let proposed = output;
+  let change = delta;
+  let parent = owner;
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+    } else {
+      return no, 0_i32, 0_i32;
+    }
+    if context^.slot != route.parent {
+      return no, 0_i32, 0_i32;
+    }
+    if context^.children.inner[child].slot != route.slot {
+      return no, 0_i32, 0_i32;
+    }
+    let next = depth +sat 1_u64;
+    let (below, child_height, child_baseline) = splice_path_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, output: output, delta: delta, styles: styles, visits: visits);
+    if below {
+    } else {
+      return no, 0_i32, 0_i32;
+    }
+    let slot = context^.children.inner[child].entry_slot;
+    if slot == no_index {
+      return no, 0_i32, 0_i32;
+    }
+    set parent = context^.children.inner[child].block;
+    set change = child_height -sat context^.children.inner[child].height;
+    let child_output = context_size_output(child: &context^.children.inner[child], styles: styles, height: child_height, baseline: child_baseline);
+    let root_output = preview_boundary(context: context, owner: parent, slot: slot, output: child_output, visits: visits);
+    set proposed = root_output;
   } else {
-    return False();
+    let root_output = preview_owner(context: context, owner: owner, inside: output, visits: visits);
+    set proposed = root_output;
   }
-  if context^.slot != route.parent {
-    return False();
-  }
-  if context^.children.inner[child].slot != route.slot {
-    return False();
-  }
-  let parent = context^.children.inner[child].block;
-  let slot = context^.children.inner[child].entry_slot;
-  if slot == no_index {
-    return False();
-  }
-  let ready = splice_block_path(context: context, styles: styles, owner: parent, delta: delta, visits: visits);
-  if ready {
+  let path = splice_block_path(context: context, styles: styles, owner: parent, delta: change, visits: visits);
+  if path {
   } else {
-    return False();
+    return no, 0_i32, 0_i32;
   }
-  let next = depth +sat 1_u64;
-  let below = splice_path_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, delta: delta, styles: styles, visits: visits);
-  return below;
+  if proposed.ordinary {
+  } else {
+    return no, 0_i32, 0_i32;
+  }
+  let total_field = False();
+  let old = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let origin = cvt::<i32, i64>(frame.content_top);
+  let budget = old.travel +sat proposed.travel;
+  let bounded = transfer_fits(origin: origin, travel: budget);
+  if bounded {
+  } else {
+    return no, 0_i32, 0_i32;
+  }
+  let raw = context^.content_raw +sat change;
+  let content = imax(raw, 0_i32);
+  let height = used_height(context: context, styles: styles, content: content);
+  let wide_delta = proposed.last_baseline -sat old.last_baseline;
+  let baseline_delta = geometry_narrow(value: wide_delta);
+  let baseline = context^.baseline +sat baseline_delta;
+  let yes = True();
+  return yes, height, baseline;
 }
 
 fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
