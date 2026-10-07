@@ -161,9 +161,7 @@ height and last-baseline guards. The edit-baseline script uses the unchanged
 style fixture: downward inline vertical alignment is intended to change height
 without moving the baseline, and a larger font at fixed line height is intended
 to move the baseline without changing height. Separate mutations test those
-conditions; a flex parent makes a changed context baseline observable, while
-a relative generated block keeps the tested context outside the ordinary-root
-path. Their detection, including unmutated identity, remains required.
+conditions. Their detection, including unmutated identity, remains required.
 The `[stationary]` tag runs just these two diagnostic mutations; `[falsify]`
 takes precedence and retains the entire matrix.
 
@@ -231,3 +229,93 @@ The direct child-entry certificate call exposed the same overly broad read
 contract as the paragraph call; its actual reads are children, blocks and
 entries, disjoint from boundary visit counters. Narrow that contract without
 changing its body or the call.
+
+## Historical hosted evidence
+
+[Comparison 37600571595](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37600571595)
+ran all builds on one hosted Ubuntu 24.04 AMD EPYC 7763 runner, with
+wf-0b7f5c5b9854, clang 22, function fragments, identical main-generated
+scripts, sequential and four-worker drivers, and two forward/reverse rounds.
+Each number below is X5's median microseconds per edit in one process; paired
+numbers are sequential rounds 1/2. The driver artifacts were built in
+[37596011168](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37596011168),
+except this comparison's head. The `edit-cost-evidence` artifact keeps raw
+per-edit counters, summary files, driver revision records, scripts and perf.
+
+| Build | ecma262 word | ecma262 sentence | ecma262 font-size | html5 word | html5 sentence | html5 font-size |
+|---|---:|---:|---:|---:|---:|---:|
+| main 02855399257b | 100/102 | 234/238 | 1874/1935 | 75/73 | 232/229 | 778/796 |
+| step 1c 31725c882ed9 | 110/109 | 286/285 | 1665/1409 | 74/77 | 245/236 | 840/931 |
+| step 2 0e2a0931f630 | 2636/2157 | 7969/4940 | 10093/7374 | 2111/1462 | 4646/3605 | 6400/4212 |
+| step 3a db5d98c8675a | 5301/5558 | 12288/13930 | 177420/178663 | 2892/3724 | 33291/31951 | 41838/39700 |
+| M2 2d706ba252c8 | 58491/60717 | 65029/69102 | 70686/73509 | 52318/53324 | 58494/57761 | 60461/59943 |
+| branch base 9e1561ac4459 | 80778/81315 | 89521/91336 | 92093/96689 | 72655/72914 | 77611/78695 | 80213/81920 |
+| same-renderer twin fa27cd08cd4e | 80749/80086 | 88330/88911 | 90455/92311 | 70899/73237 | 76246/78969 | 80177/82376 |
+| intermediate a5114b9e91a0 | 78058/78241 | 78072/76010 | 80128/79805 | 80/79 | 556/565 | 72349/71559 |
+
+The base and twin have identical renderer trees. Their spread is far smaller
+than the regressions; the step-2 spread limits close comparisons, not the
+conclusion that the jump exists. These are hosted observations, not a precise
+14900K attribution or evidence of final acceptance.
+
+Across both modes and rounds, each adjacent pair main/1c, 1c/2 and 2/3a has
+identical `(prepared, contexts, paragraphs, held_entries, entries)` on all
+960 compared edit records (three kinds, two pages). The bridge work is absent
+from these legacy counters. For ecma262 word edit 1 in sequential round 1,
+1c, 2 and 3a all report `(1,6,1,0,0)`, despite taking 314, 3744 and 6160 us.
+M2 reports `(1,6,1,0,2)` plus boundary entries 7, blocks 3, indexes 6,
+fallbacks 3, reason 9, at 56591 us. Every M2 ecma262 word edit falls back.
+Thus a counted increase in broken paragraphs cannot explain either jump;
+fallback counters establish the compatibility path, but do not mean each
+fallback stacks from the context start.
+
+Perf used the sequential driver and ten concatenated copies of the same word
+script in one process, 999 Hz task-clock sampling with DWARF call graphs.
+It includes startup/full layout as well as 200 edits. Percentages below are
+whole-process self samples, not edit-only percentages. Some stacks are
+truncated or contain unresolved addresses; the saved callers are supporting
+evidence, not a complete dynamic dependency graph.
+
+- Step 2: `geometry_reference` 8.44%, `geometry_snapshot` 5.20%,
+  `geometry_owned` 3.19%. Source comparison adds unconditional reference
+  decoding and owned encoding around `update_flow_reference`, even when its
+  inner update stops unchanged. The coordinate bridge explains the new
+  whole-context dependency in the first jump.
+- Step 3a: `sequence_select` 4.31% and a `slot_read` specialization 3.90%;
+  an unresolved libc symbol accounts for 24.12%, with 23.68% shown under that
+  slot-read chain. Do not identify that address as a specific libc routine.
+  Indexed event selection adds traversal/copy work to compatibility walks.
+- M2: `reduce_sequence` 16.63%, `prepare_boundary_entry` 9.77%, `fill_flow`
+  8.05%, `store_reduction` 7.64%, another slot-read specialization 6.72%,
+  `border_edges` 6.32%. The fallback source materializes one event array,
+  decodes geometry, runs reference update, publishes every boundary output
+  and encodes geometry. The full-build repair rounds reduced repeated work
+  within a pass, but left these full-context passes around a local edit.
+  This is the principal remaining mechanism in the second jump; the data
+  does not attribute a separate number to every intermediate repair commit.
+- At a5114b9, `reduce_sequence` 11.44%, `fill_flow` 7.81% and
+  `prepare_boundary_entry` 7.70% remain. Its html5 word result improves with
+  the cutoff, while ecma262's unchanged ancestor outputs still take the
+  compatibility path. That falsifies acceptance of paragraph-only cutoffs
+  and motivates the child cutoff above.
+
+[Comparison 37604057495](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37604057495)
+on intermediate f01823a confirms that this stage is insufficient: sequential
+rounds give ecma262 word 75156/74433 versus main 105/101, sentence 76387/75261
+versus 241/244, font-size 77253/78170 versus 1168/1851; html5 word 84/80
+versus 74/74, sentence 718/550 versus 220/236, font-size 70504/71670 versus
+691/732. Final acceptance must use the later child-cutoff revision's run.
+
+## Baseline falsifier dependency
+
+The flex version of edit-baseline did not detect the isolated baseline mutant
+in [37604546184](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37604546184).
+Source inspection explains a false premise: flex requests intrinsic sizes,
+which deliberately excludes the stationary probe. The revised script makes
+the unchanged fixture's target paragraph a flow-root inside a fixed-width
+inline-block, with a generated inline sibling observing its baseline. Only
+the edited `em` supplies nonzero line metrics; surrounding zero-sized text
+cannot contribute a competing strut. A 16-to-24px font change at fixed 40px
+line height can then distinguish baseline from height without intrinsic
+measurement. The old script is superseded because it did not exercise the
+guard it claimed to test, not because the expected identity changed.
