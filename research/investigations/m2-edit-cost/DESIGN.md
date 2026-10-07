@@ -1251,9 +1251,9 @@ sequential/parallel comparisons. The full-build comparison used
 ddfd63d0755e51f7c2972e0bb43b0c5d88fe30c7 as its reference. The sequential
 real-page dumps were compared byte-for-byte with that reference. The layout
 cases and saturation case also had explicit base/seq/par byte comparisons.
-Real-page seq/par equality uses X5's hash, length and edit-result records;
-no separate full-page seq/par byte comparison is claimed. Case HTML files
-are unchanged from the branch base.
+That run's real-page seq/par equality uses X5's hash, length and edit-result
+records; the subsequent direct full-page byte comparison is recorded below.
+Case HTML files are unchanged from the branch base.
 
 The workflow remains red at only the two inherited page-block zero-fallback
 gates. Final-source raw output retains ecma262's twenty reason-3 nonlocal
@@ -1301,3 +1301,14 @@ A one-use job reuses the already-built final correctness drivers from
 is rejected. This validates the additional comparison without recompiling
 or rerunning the green mutation or page-edit suites. Remove the one-use job
 after its result; keep the ordinary oracle comparison wired.
+
+
+[Direct page bytes 37650440610](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37650440610)
+passed using the already-built 7ab2bd5 correctness drivers from the completed
+oracle run. ECMA's sequential/four-worker dumps are byte-identical at
+19,024,863 bytes, and HTML's at 12,538,869 bytes. Both deliberately altered
+dumps were rejected. Together with the earlier sequential/base comparisons,
+this establishes explicit full-page byte identity among base, sequential and
+parallel builds. The one-use reuse job is removed; the direct page comparison
+stays in oracles-m2's full-build step for subsequent runs. No renderer,
+expected dump, case page or mutation was changed for this check.
