@@ -13,19 +13,25 @@ semantic cases may use their counted structural fallback.
 Each ordinary case inserts a paragraph before its retained marker, edits retained,
 new and dependent text, removes the paragraph, then edits the retained and
 dependent text again. Insert/delete text pairs restore the original text.
-The document is restored before the next case, so cases do not depend on
-one another's geometry. Within a case the edits are ordered because each
-operation consumes the preceding retained layout and its published routes.
+Each case owns a separate section. Ordinary insertion/removal restores it;
+the two generated-removal cases permanently delete their dedicated payload
+before that sequence. No later case reads a prior case's geometry. Within a
+case the edits are ordered because each operation consumes the preceding retained layout and its published routes.
 
 The fixed-height positioned cases isolate static-anchor displacement from
 containing-block resizing. The growing case changes both percentage height
 and top/bottom stretch; nested anchors expose translating descendants twice;
 the atomic cases move inline-blocks with their paragraphs, including opposing
 vertical margins whose offsets must not be hidden by anchor cancellation. The
-first-anchor case starts with no out-of-flow children:
-only the inserted unclassed paragraph generates an absolute ::before box.
-Its explicit offsets must be settled against the retained section's containing
-block when the splice first introduces positioned content. The row stretch
+generated-removal cases first remove a pre-existing paragraph whose class
+creates an absolute or inline-block ::before box, then use the ordinary
+insertion/removal sequence. Only the pre-existing paragraph has that class,
+so inserted paragraphs remain reference-neutral. Each structural operation
+requires a local splice; removal must retire the positioned or atomic child
+context and its counts. Every edit still requires full-rebuild identity.
+These cases do not verify local introduction of the first positioned child:
+publication of has_out by logical OR remains source-reviewed until a neutral
+insertion exercises it. The row stretch
 case changes the sibling's height and its child's percentage height. Column
 grow/shrink change free space through the edited item's auto flex basis.
 Column wrap crosses the fixed main extent after insertion, changing which
@@ -47,7 +53,8 @@ a Text/atomic, Float or Out entry in the enclosing flow. Each structural
 edit is expected to refuse before publication with reason 2 and still match
 its full rebuild; later text edits verify retained route correctness. The
 <output>.paths sidecar records these three cases' required structural
-fallbacks and the intrinsic-position and first-anchor cases' required successful splices,
+fallbacks and the intrinsic-position and generated-removal cases' successful
+splices, including the initial removal of a pre-existing generated child,
 using the generated commands' operation numbers. --check-paths
 checks each required row exactly once; inctime.py separately validates the
 complete protocol and identity. The transfer sidecar requires the later-float
@@ -89,7 +96,8 @@ from edits import Tree
 CASES = {
     'positioned': ('positioned-auto', 'positioned-growing', 'positioned-fixed',
                    'positioned-nested', 'positioned-atomic',
-                   'positioned-atomic-cancel', 'positioned-first-anchor'),
+                   'positioned-atomic-cancel', 'positioned-generated-removal',
+                   'positioned-atomic-removal'),
     'transfer': ('transfer-clear-reentry', 'transfer-clear-expired',
                  'transfer-float-expired', 'transfer-marker-lined',
                  'transfer-fixed-sibling', 'transfer-minimum-sibling',
@@ -109,7 +117,8 @@ EXPECTED_PATHS = {
     'flex-float-owner': (0, 2),
     'flex-positioned-owner': (0, 2),
     'flex-intrinsic-position': (1, 0),
-    'positioned-first-anchor': (1, 0),
+    'positioned-generated-removal': (1, 0),
+    'positioned-atomic-removal': (1, 0),
     'transfer-later-float': (1, 0),
 }
 
@@ -168,6 +177,15 @@ def generate(tree, kind):
         paragraph = tree.by_node[retained['parent']]
         if paragraph['name'] != 'p' or paragraph['parent'] is None:
             raise ValueError(case + ': retained marker must be a paragraph child')
+        if case in ('positioned-generated-removal', 'positioned-atomic-removal'):
+            removed = marker(tree, case, 'remove')
+            removal = tree.by_node[removed['parent']]
+            if removal['name'] != 'p' or removal['parent'] != paragraph['parent']:
+                raise ValueError(case + ': removal marker must be a sibling paragraph')
+            lines.append('X %d' % removal['node'])
+            record_path(paths, case, len(lines))
+            for node in (retained['node'], probe['node']):
+                text_pair(lines, node)
         created = tree.arena + 2 * number
         lines.append('B %d %d Inserted block.' %
                      (paragraph['parent'], paragraph['node']))

@@ -164,7 +164,7 @@ jobs:
                   assert ('detected:' in result.stdout) == (expected == 0), (name, result.stdout)
                   print(name, 'classified as', expected)
           PYEOF
-      - name: Flex owner path expectations reject every wrong row
+      - name: Fixture path expectations reject every wrong row
         run: |
           python3 -B - <<'PYEOF'
           import importlib.util
@@ -179,65 +179,89 @@ jobs:
           spec = importlib.util.spec_from_file_location('splice_cases', scripts / 'splice-cases.py')
           fixture = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(fixture)
-          texts, elements = [], {}
-          for index, case in enumerate(fixture.CASES['flex'], 1):
-              base = index * 10
-              texts.extend((dict(node=base + 1, parent=base + 2, data=('M2 retained %s.' % case).encode()),
-                            dict(node=base + 3, parent=base + 4, data=('M2 probe %s.' % case).encode())))
-              elements[base + 2] = dict(name='p', parent=base + 5, node=base + 2)
-          tree = SimpleNamespace(texts=texts, by_node=elements, arena=1000)
-          edits, paths = fixture.generate(tree, 'flex')
-          rows = paths.splitlines()
-          assert len(rows) == 2 * len(set(fixture.CASES['flex']) & fixture.EXPECTED_PATHS.keys())
-          commands = edits.splitlines()
-          for row in rows:
-              operation = int(row.split()[2])
-              assert commands[operation - 1][0] in ('B', 'X'), row
-          original = fixture.text_pair
-          def extra_pair(lines, node):
-              original(lines, node)
-              original(lines, node)
-          fixture.text_pair = extra_pair
-          longer_edits, longer_paths = fixture.generate(tree, 'flex')
-          assert longer_paths != paths
-          longer_commands = longer_edits.splitlines()
-          for row in longer_paths.splitlines():
-              operation = int(row.split()[2])
-              assert longer_commands[operation - 1][0] in ('B', 'X'), row
-          fixture.text_pair = original
-          with tempfile.TemporaryDirectory() as directory:
-              expected = Path(directory) / 'case.edits.paths'
-              raw = Path(directory) / 'case.raw'
-              expected.write_text(paths)
-              def check(content):
-                  raw.write_text(content)
-                  return subprocess.run([sys.executable, str(scripts / 'splice-cases.py'), '--check-paths', str(expected), str(raw)], capture_output=True, text=True)
-              good = check(paths)
-              assert good.returncode == 0, good.stderr
-              faults = {
-                  'missing required row': paths.replace(rows[0] + '\n', ''),
-                  'duplicate required row': paths + rows[0] + '\n',
-                  'wrong splice': paths.replace(rows[0], rows[0].replace('splice 0', 'splice 1')),
-                  'wrong reason': paths.replace(rows[0], rows[0].replace('reason 2', 'reason 7')),
-              }
+          def verify(kind):
+              texts, elements = [], {}
+              for index, case in enumerate(fixture.CASES[kind], 1):
+                  base = index * 10
+                  texts.extend((dict(node=base + 1, parent=base + 2, data=('M2 retained %s.' % case).encode()),
+                                dict(node=base + 3, parent=base + 4, data=('M2 probe %s.' % case).encode())))
+                  elements[base + 2] = dict(name='p', parent=base + 5, node=base + 2)
+                  if case in ('positioned-generated-removal', 'positioned-atomic-removal'):
+                      texts.append(dict(node=base + 6, parent=base + 7, data=('M2 remove %s.' % case).encode()))
+                      elements[base + 7] = dict(name='p', parent=base + 5, node=base + 7)
+              tree = SimpleNamespace(texts=texts, by_node=elements, arena=1000)
+              edits, paths = fixture.generate(tree, kind)
+              rows = paths.splitlines()
+              selected = set(fixture.CASES[kind]) & fixture.EXPECTED_PATHS.keys()
+              extra = len(selected & {'positioned-generated-removal', 'positioned-atomic-removal'})
+              assert len(rows) == 2 * len(selected) + extra
+              commands = edits.splitlines()
               for row in rows:
-                  fields = row.split()
-                  wrong_splice = str(1 - int(fields[4]))
-                  wrong_reason = str(int(fields[6]) + 1)
-                  for label, changed in [('splice', row.replace('splice ' + fields[4], 'splice ' + wrong_splice)), ('reason', row.replace('reason ' + fields[6], 'reason ' + wrong_reason))]:
-                      result = check(paths.replace(row, changed))
-                      assert result.returncode != 0 and 'expected exactly one' in result.stderr, (label, row, result)
-              for name, content in faults.items():
-                  result = check(content)
-                  assert result.returncode != 0 and 'expected exactly one' in result.stderr, (name, result)
-                  print('detected', name)
-              for invalid in (paths + rows[0] + '\n', 'malformed\n'):
-                  expected.write_text(invalid)
-                  result = check(paths)
-                  assert result.returncode != 0 and 'malformed or duplicate expectation' in result.stderr, result
-              expected.write_text('')
-              assert check('unrelated records are checked by inctime\n').returncode == 0
-          print('Required paths follow generated operation positions; good and empty expectations pass; every violated condition fails')
+                  operation = int(row.split()[2])
+                  assert commands[operation - 1][0] in ('B', 'X'), row
+              for case in selected & {'positioned-generated-removal', 'positioned-atomic-removal'}:
+                  removal = fixture.marker(tree, case, 'remove')
+                  target = tree.by_node[removal['parent']]
+                  operation = commands.index('X %d' % target['node']) + 1
+                  assert 'structure path %d splice 1 reason 0' % operation in rows
+                  for field, wrong in [('name', 'span'), ('parent', None)]:
+                      saved = target[field]
+                      target[field] = wrong
+                      try:
+                          fixture.generate(tree, kind)
+                      except ValueError as error:
+                          assert 'removal marker must be a sibling paragraph' in str(error)
+                      else:
+                          raise AssertionError('invalid removal target accepted: ' + field)
+                      finally:
+                          target[field] = saved
+              original = fixture.text_pair
+              def extra_pair(lines, node):
+                  original(lines, node)
+                  original(lines, node)
+              fixture.text_pair = extra_pair
+              longer_edits, longer_paths = fixture.generate(tree, kind)
+              assert longer_paths != paths
+              longer_commands = longer_edits.splitlines()
+              for row in longer_paths.splitlines():
+                  operation = int(row.split()[2])
+                  assert longer_commands[operation - 1][0] in ('B', 'X'), row
+              fixture.text_pair = original
+              with tempfile.TemporaryDirectory() as directory:
+                  expected = Path(directory) / 'case.edits.paths'
+                  raw = Path(directory) / 'case.raw'
+                  expected.write_text(paths)
+                  def check(content):
+                      raw.write_text(content)
+                      return subprocess.run([sys.executable, str(scripts / 'splice-cases.py'), '--check-paths', str(expected), str(raw)], capture_output=True, text=True)
+                  good = check(paths)
+                  assert good.returncode == 0, good.stderr
+                  faults = {
+                      'missing required row': paths.replace(rows[0] + '\n', ''),
+                      'duplicate required row': paths + rows[0] + '\n',
+                      'wrong splice': paths.replace(rows[0], rows[0].replace('splice ' + rows[0].split()[4], 'splice ' + str(1 - int(rows[0].split()[4])))),
+                      'wrong reason': paths.replace(rows[0], rows[0].replace('reason ' + rows[0].split()[6], 'reason ' + str(1 + int(rows[0].split()[6])))),
+                  }
+                  for row in rows:
+                      fields = row.split()
+                      wrong_splice = str(1 - int(fields[4]))
+                      wrong_reason = str(int(fields[6]) + 1)
+                      for label, changed in [('splice', row.replace('splice ' + fields[4], 'splice ' + wrong_splice)), ('reason', row.replace('reason ' + fields[6], 'reason ' + wrong_reason))]:
+                          result = check(paths.replace(row, changed))
+                          assert result.returncode != 0 and 'expected exactly one' in result.stderr, (label, row, result)
+                  for name, content in faults.items():
+                      result = check(content)
+                      assert result.returncode != 0 and 'expected exactly one' in result.stderr, (name, result)
+                      print('detected', name)
+                  for invalid in (paths + rows[0] + '\n', 'malformed\n'):
+                      expected.write_text(invalid)
+                      result = check(paths)
+                      assert result.returncode != 0 and 'malformed or duplicate expectation' in result.stderr, result
+                  expected.write_text('')
+                  assert check('unrelated records are checked by inctime\n').returncode == 0
+              print(kind, 'Required paths follow generated operation positions; good and empty expectations pass; every violated condition fails')
+          for kind in fixture.CASES:
+              verify(kind)
           PYEOF
   falsify:
     if: contains(github.event.head_commit.message, '[falsify]')

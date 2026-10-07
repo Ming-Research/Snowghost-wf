@@ -287,8 +287,49 @@ fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visi
   return unit;
 }
 
+fn retire_splice_child(child: &Context, paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) writes(child), writes(paths) {
+  doc "Retires one owned context subtree, tombstones its routes and replaces its stable slot with a vacant context. Counts describe only the removed live subtree.";
+  if child^.retired {
+    return 0_u64, 0_u64;
+  }
+  let (contexts, paragraphs) = count_tree(context: child);
+  retire_tree(context: child, paths: paths);
+  let style = child^.style;
+  let empty = new_context(kind: ctx_flow, style: style);
+  set empty.retired = True();
+  set child^ = move empty;
+  return contexts, paragraphs;
+}
+
+fn retire_splice_atomics(paragraph: &Paragraph, children: &[Context], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(paragraph), writes(children), writes(paths) {
+  doc "Retires the atomic contexts owned by a removed paragraph before its marks are dropped. add_object creates one child and one Object piece, and preparation emits one Atomic mark for that piece; these children have no separate flow entry.";
+  let contexts = 0_u64;
+  let paragraphs = 0_u64;
+  let marks = paragraph^.marks.inner.len;
+  for (m in 0_u64..marks) {
+    let mark = paragraph^.marks.inner[m];
+    match mark {
+      Atomic(context: c, ..) => {
+        let at = cvt::<u32, u64>(c);
+        if at < children^.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &children^[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Node(..) => {
+      }
+    }
+  }
+  return contexts, paragraphs;
+}
+
 fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<ContextPath>) -> (contexts: u64, paragraphs: u64) reads(items), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner), writes(paths) {
-  doc "Drops only removed payloads and tombstones their context routes. Counts are subtree deltas, never a retained-root census.";
+  doc "Drops only removed payloads and tombstones their context routes, including positioned, floated and paragraph-owned atomic contexts. Counts are subtree deltas, never a retained-root census.";
   let contexts = 0_u64;
   let paragraphs = 0_u64;
   let count = items^.len;
@@ -306,6 +347,10 @@ fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<
       Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
         if at < context^.paragraphs.inner.len {
+          let children = context^.children.inner.len;
+          let (removed_contexts, removed_paragraphs) = retire_splice_atomics(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
           let style = context^.paragraphs.inner[at].style;
           let empty = vacant_paragraph(style: style);
           set context^.paragraphs.inner[at] = move empty;
@@ -315,23 +360,28 @@ fn retire_splice_payloads(context: &Context, items: &[Flow], paths: &RouteTable<
       Child(context: c) => {
         let at = cvt::<u32, u64>(c);
         if at < context^.children.inner.len {
-          let (removed_contexts, removed_paragraphs) = count_tree(context: &context^.children.inner[at]);
-          retire_tree(context: &context^.children.inner[at], paths: paths);
-          if at < context^.children.inner.len {
-            let style = context^.children.inner[at].style;
-            let empty = new_context(kind: ctx_flow, style: style);
-            set empty.retired = True();
-            set context^.children.inner[at] = move empty;
-          }
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);
           set contexts = contexts +sat removed_contexts;
           set paragraphs = paragraphs +sat removed_paragraphs;
         }
       }
       Close(..) => {
       }
-      Float(..) => {
+      Float(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
       }
-      Out(..) => {
+      Out(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < context^.children.inner.len {
+          let (removed_contexts, removed_paragraphs) = retire_splice_child(child: &context^.children.inner[at], paths: paths);
+          set contexts = contexts +sat removed_contexts;
+          set paragraphs = paragraphs +sat removed_paragraphs;
+        }
       }
     }
   }

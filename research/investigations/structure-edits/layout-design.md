@@ -2057,10 +2057,28 @@ margin state untouched before block removal. The rejected intrinsic side
 effect would make the positioned descendant read a zero-basis margin at
 removal (predicted x=7px instead of x=25px). Both structural operations must
 use the local path, so a fallback cannot make this detection claim.
-`positioned-first-anchor` inserts a paragraph with an absolute generated
-`::before` into an isolated context whose existing paragraphs suppress that
-pseudo. Its two structural operations also require the local path, testing
-publication of the first `has_out` state.
+`positioned-generated-removal` first removes a pre-existing paragraph whose
+class creates an absolute generated `::before`; `positioned-atomic-removal`
+uses an inline-block generated child instead. Each then runs the ordinary
+block insertion/removal and subsequent text edits. Only the removed paragraph
+has the generating class, so inserted paragraphs remain reference-neutral.
+Every structural operation requires a local splice, and every edit requires
+full-rebuild identity including retained context/paragraph counts.
+These cases do not runtime-verify publication of the first `has_out` state;
+that logical-OR repair is source-reviewed only until a neutral insertion
+exercises it.
+
+CI [37598631869](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37598631869)
+at `8918b891312a8e79e9e4709da8206839e3649049` exposed the original fixture's
+incorrect insertion expectation: edit 73 took reason 4 and reported `inc refused`.
+Removal 80 took the local path but reported `inc DIFF` despite byte-identical
+printed geometry. The oracle also compares live context and paragraph counts;
+source inspection found `retire_splice_payloads` omitted `Out` retirement.
+The analogous atomic removal covers child contexts referenced by removed
+paragraph marks. The replacement fixture removes a pre-existing generated child instead of
+introducing unsupported pseudo membership. It preserves local-splice and
+identity requirements and leaves the pages' zero-fallback gate unchanged. The source repair
+must pass CI before either removal case is claimed as validated.
 
 #### Uniform later-float translation
 
@@ -2166,3 +2184,49 @@ trace does not distinguish an earlier unknown-motion rejection inside
 and the old cutoff facts, not the complete proposed-layout certificate.
 Uniform later-float movement remains subject to the separate argument and
 falsifiers above. No expected result was weakened to obtain this inventory.
+
+
+#### Private fragment publication boundary
+
+The private subtree's root is an anonymous flow context whose blocks and
+paragraphs are relocated into the retained owner. Its context-level split
+records and empty-inline fragments have no publication mapping in this
+splice. A complete outer block alone does not prove that its interior has no
+such records. Refuse a private root with splits (reason 3) or context-level
+fragments (reason 7) before publication; child contexts retain their own
+fragment lists and remain covered by their whole-context ownership. This
+closes an admission hole independently of admitting retained split groups.
+The paragraph-and-text `B` driver cannot construct nested block-in-inline
+content, so this boundary currently has source inspection rather than a
+driver regression. Future fragment insertion support must publish the
+corresponding ownership records before removing these guards.
+
+
+#### Retained split-fragment admission investigation
+
+Question: do the required structural seams occur after every dependency of
+their contexts' split and empty-inline fragments, or must the splice update
+spanning or later fragment endpoints? Compare the complete page edit sites
+with split open/close ranks and fragment-source ownership from the reference
+layout. A seam before any required dependency rejects an unchanged-prefix
+admission argument for that seam; it does not justify omitting the fragment.
+
+The unchanged-prefix candidate needs more than `split.close < seam`: the
+reference fragment builder reads the event immediately after each run's last
+close to decide whether to emit an empty trailing rectangle. Require that
+event too to remain before the seam. Every split endpoint, predecessor
+selector, inter-run gap and first-line state is then unchanged. Empty-inline
+fragments also need their source paragraphs retained in that prefix. A
+cached exclusive bound over these dependencies would admit suffix edits
+without scanning unaffected fragment geometry; their raw compatibility ranks
+would remain valid because the event insertion/removal occurs after them.
+An edit inside an enclosing independent Child changes no parent event count
+but still needs the same dependency test against that Child's rank.
+
+If a required seam fails this comparison, stable endpoint ownership and
+local dependency queries are needed: an edit may change inter-run joining,
+the `sibling_above` selector, adjacent inline marks, or the pending margin
+that determines `Split.line`. Translating a cached rectangle or line offset
+without proving those inputs unchanged is insufficient. Removing an ancestor
+of an endpoint must count as endpoint removal. The inventory, not a page
+name or benchmark path, determines which general argument must be built.
