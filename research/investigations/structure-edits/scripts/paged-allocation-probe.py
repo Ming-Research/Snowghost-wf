@@ -1,6 +1,6 @@
 """Inject a CI-only census into a detached base tree and create allocation IR probes.
 
-The oracles workflow consumes this experiment's diagnostic; remove with the
+The layout-check workflow consumes this experiment's diagnostic; remove with the
 Paged experiment. Production sources and helper callers are not instrumented.
 """
 import re
@@ -47,7 +47,7 @@ fn allocation_context(context: &Context, output: &Box<Slots<u64>>) -> result: un
   return unit;
 }
 
-public fn allocation_census(layout: &Layout) -> result: Box<Slots<u64>> reads(layout) {
+fn allocation_census(layout: &Layout) -> result: Box<Slots<u64>> reads(layout) {
   doc "Returns CI-only allocation rows after a complete build of the base tree.";
   let output = box_slots_new::<u64>(capacity: 0_u64);
   allocation_context(context: &layout^.root, output: &output);
@@ -80,12 +80,38 @@ for typ in ['EntryHandle', 'SequenceOutput', 'SequenceCursor'] + [t for t in typ
     match = re.search(r'^(?:struct|enum) ' + typ + r' \{.*?^\}', module, re.M | re.S)
     assert match, typ
     declarations.append(match.group())
+def zero_value(typ, statements):
+    if typ in ('u32', 'u64', 'i32', 'i64'):
+        return '0_' + typ
+    if typ == 'Bool':
+        expression = 'False()'
+    else:
+        declaration = next(d for d in declarations if re.match(r'(struct|enum) ' + typ + r' \{', d))
+        if declaration.startswith('enum '):
+            variant = re.search(r'^  (\w+)\((.*?)\);', declaration, re.M)
+            assert variant, typ
+            fields = re.findall(r'(\w+): (\w+)', variant.group(2))
+            constructor = typ + '::' + variant.group(1)
+        else:
+            fields = re.findall(r'^  (\w+): (\w+);', declaration, re.M)
+            constructor = typ
+        operands = [name + ': ' + zero_value(field_type, statements) for name, field_type in fields]
+        expression = constructor + '(' + ', '.join(operands) + ')'
+    name = 'zero_' + str(len(statements))
+    statements.append('  let ' + name + ' = ' + expression + ';')
+    return name
+
 for typ in types:
+    statements = []
+    value = zero_value(typ, statements)
+    initializers = '\n'.join(statements)
     probe='\n\n'.join(declarations) + f'''
 
 fn main() -> result: unit pure {{
   doc "Exposes this element type's actual native page allocation in compiler IR.";
   let storage = box_paged_new::<{typ}>(capacity: 1_u64);
+{initializers}
+  let baseline = box_array_filled::<{typ}>(count: 4_u64, value: {value});
   return unit;
 }}
 '''

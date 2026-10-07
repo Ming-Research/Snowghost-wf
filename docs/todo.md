@@ -165,6 +165,18 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Paged experiment retains outdated allocation prose in unchanged route callers.**
+  `renderer/layout/routes.wf` describes optional pointer pages and allocation
+  of only the requested sparse page. The owner-preserving built-in Paged
+  variant instead initializes a dense prefix; its `SlotPages` and
+  `RouteTable` definitions and the
+  [experiment record](../research/investigations/structure-edits/layout-design.md#built-in-paged-owner-preserving-variant)
+  state the current behavior. Deferred because this experiment explicitly
+  keeps every helper caller unchanged. No execution behavior depends on the
+  prose. Reopen when adopting or retiring the experiment: update these two
+  function docs to the selected store and verify against `page_ensure` and
+  the specification, without changing routing or publication behavior.
+
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences
   ([runs](../research/investigations/structure-edits/runs/full-14900k.txt),

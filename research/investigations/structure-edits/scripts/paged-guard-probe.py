@@ -27,7 +27,7 @@ for shape in ('Paged', 'Slots'):
   Pages(storage: Box<SHAPE<u64>>);
 }
 
-fn append(store: &Store, required: u64) -> result: unit writes(store) {
+fn probe_append(store: &Store, required: u64) -> result: unit writes(store) {
   doc "Checks a guarded append through an enum payload reference.";
   match store^ {
     Vacant() => {
@@ -42,7 +42,7 @@ fn main() -> result: unit pure {
   doc "Instantiates the guarded append without any other renderer code.";
   let values = CONSTRUCTOR::<u64>(capacity: 4_u64);
   let store = Store::Pages(storage: move values);
-  append(store: &store, required: 8_u64);
+  probe_append(store: &store, required: 8_u64);
   return unit;
 }
 '''.replace('SHAPE', shape).replace('CONSTRUCTOR', constructor).replace('GROWTH', growth).replace('STATEMENT', statement)

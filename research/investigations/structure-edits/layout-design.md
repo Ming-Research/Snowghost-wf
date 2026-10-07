@@ -1212,6 +1212,11 @@ instruction. This is an experimental storage choice, not a main-line adoption.
 The true dependencies remain the owner-local pending and length-update chains,
 the AVL ancestors, and child totals before their parent reduction. Native
 page publication has disjoint pages and cells, with read-only payload access.
+Initialization now appends each missing cell along the store's length-update
+chain, whereas the hand-written store filled independently allocated arrays
+after its pointer-prefix chain. Sparse holes likewise initialize payload
+cells rather than only None pointers. These mandatory built-in representation
+costs belong to the comparison and are not reasons to introduce shared stores.
 The shared-context alternative is outside the like-for-like comparison and
 would change ownership. The retained hand-written store is the comparison,
 not a fallback for an unsuccessful built-in store. Validation uses layout-check,
