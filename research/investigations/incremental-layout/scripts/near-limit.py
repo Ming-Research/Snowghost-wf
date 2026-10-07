@@ -64,6 +64,8 @@ def run(driver, directory, unsafe):
     cases = {
         'admitted': template.replace('33554000px', '4000000px').replace('-33552000px', '-1000000px'),
         'signed': template,
+        'positive': template.replace('height: 33554000px', 'height: 16px')
+            .replace('margin-top: -33552000px', 'margin-top: 33553000px'),
         'baseline': template.replace('overflow: hidden; height: 33554000px', 'overflow: visible; height: 16px')
             .replace('<div class="tower"></div>', '<div class="tower"><div style="display:flow-root;overflow:hidden;height:33553000px"></div><p>High baseline.</p></div>')
             .replace('<p class="return">Return text.</p>', ''),
@@ -75,6 +77,8 @@ def run(driver, directory, unsafe):
     for name, html in cases.items():
         page = directory / f'{name}.html'
         page.write_text(html)
+        dump = subprocess.check_output([driver, 'dump', '1', str(page), 'renderer/style/ua.css'], text=True)
+        (directory / f'{name}.dump').write_text(dump)
         nodes = directory / f'{name}.nodes'
         nodes.write_text(subprocess.check_output([driver, 'nodes', '0', str(page), 'renderer/style/ua.css'], text=True))
         tree = Tree(nodes)

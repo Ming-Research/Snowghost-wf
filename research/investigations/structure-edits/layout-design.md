@@ -679,7 +679,7 @@ The reference audit (`renderer/layout/flow.wf:stack_flow`, `boundary.wf`,
 | Block/paragraph/child normal versus visual positions: y + dy (+ own_dy), then content_top + y | Nonstatic blocks and child entries remain excluded, so all those relative offsets are zero. The context's own external placement is applied separately by the existing placement walk. |
 | Horizontal widths, percentage resolution, specified heights, line shaping, division/rounding | These are not reassociated functions of the vertical cursor. They are evaluated by the same helpers with unchanged width/percentage inputs; changed child/paragraph results are measured before composition. Width changes, intrinsic dependencies, columns, splits, positioned entries, clearance, floats and unsupported height constraints keep their existing refusal paths. |
 | `content_raw`/`flow_end`, context baseline, ancestor block heights, and direct sibling origin updates | Old and new reference values are bounded as above. Their i32 differences are bounded by T_old + T_new; the common O cancels. Adding the exact difference gives the certified new value. `used_height` then performs the same frame additions and clamps in the same order as full layout; it is not reassociated, even if that final size clamps. Its resulting child height is certified as an atom in the enclosing context. |
-| `origin_from_resolved`, `origin_relative`, `origin_accumulate`, `geometry_narrow`, dump/paint | Parent differences and reconstruction use i64. Telescoping reconstructs the certified reference i32 context-local origins exactly; the legacy narrowing and subsequent placement/float conversion order are unchanged. Child internals and fragment offsets are neither translated individually nor reassociated with the external anchor. |
+| `origin_from_resolved`, `origin_relative`, `origin_accumulate`, `geometry_narrow`, dump/paint | Parent differences and reconstruction use i64. Telescoping reconstructs the certified reference i32 context-local origins exactly; the legacy narrowing and subsequent placement/float conversion order are unchanged. Child internals and fragment offsets are neither translated individually nor reassociated with the external anchor. Table content offsets (`content_dy`) remain a separate addition after origin narrowing; a table ancestor still excludes structural splicing, and marked tables rebuild. |
 
 Thus every reassociated ordinary reference position is O plus a prefix
 of counted terms, or a difference of two prefixes whose common part
@@ -698,8 +698,8 @@ keeps generated variants, edits and raw logs under the output directory.
 Its admitted variant uses a 4,000,000 px independent block and a -1,000,000 px
 margin, exceeding the old limit while leaving room for both the owning and
 enclosing contexts' exposed baselines. Refusal variants use a 33,554,000 px
-block followed by a -33,552,000 px margin and a positive bottom margin, a
-small fixed-height child exposing a baseline near M, and a context content
+block followed by a -33,552,000 px margin and a positive bottom margin,
+a 33,553,000 px positive margin, a small fixed-height child exposing a baseline near M, and a context content
 origin near M. Each inserts/removes a block and grows/restores text; all
 edits must equal a full rebuild, structural refusal must report reason 7,
 and text refusals must be counted. The unsafe-admission mutation replaces
