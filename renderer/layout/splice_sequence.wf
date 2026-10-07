@@ -1,3 +1,12 @@
+struct PageRelocation {
+  doc "Scalar relocation inputs for private page callbacks; no borrowed storage is retained.";
+  blocks: u32;
+  paragraphs: u32;
+  children: u32;
+  owner: u32;
+  slot: u32;
+}
+
 fn splice_payload(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: Flow reads(sequence.nodes), reads(sequence.payloads), reads(sequence.span), writes(visits) {
   doc "Opens a direct payload with its live-slot check included in physical index visits; the caller counts its semantic payload operation.";
   let missing = Flow::Close(block: no_index);
@@ -166,44 +175,36 @@ fn relocate_flow(item: Flow, blocks: u32, paragraphs: u32, children: u32) -> mad
   }
 }
 
+fn relocate_payload_page(values: &[Flow], base: u64, env: &PageRelocation) -> result: unit reads(env), writes(values) {
+  doc "Rebases independent private payload cells before their first publication.";
+  for (at in 0_u64..values^.len) {
+    let remapped = relocate_flow(item: values^[at], blocks: env^.blocks, paragraphs: env^.paragraphs, children: env^.children);
+    set values^[at] = remapped;
+  }
+  return unit;
+}
+
 fn relocate_payloads(pages: &SlotPages<Flow>, blocks: u32, paragraphs: u32, children: u32) -> result: unit writes(pages) {
-  doc "Rebases independent cells of private entry pages, never visiting retained pages.";
-  match pages^ {
-    Vacant() => {
-    }
-    Page(values: values_held) => {
-      let count = values_held^.inner.len;
-      for (at in 0_u64..count) {
-        let remapped = relocate_flow(item: values_held^.inner[at], blocks: blocks, paragraphs: paragraphs, children: children);
-        set values_held^.inner[at] = remapped;
-      }
-    }
-    Fork(left: left_held, right: right_held) => {
-      relocate_payloads(pages: &left_held^.inner, blocks: blocks, paragraphs: paragraphs, children: children);
-      relocate_payloads(pages: &right_held^.inner, blocks: blocks, paragraphs: paragraphs, children: children);
-    }
+  doc "Rebases private fixed pages through the shared counted page operation; retained pages are never visited.";
+  let env = PageRelocation(blocks: blocks, paragraphs: paragraphs, children: children, owner: no_index, slot: no_index);
+  page_each::<Flow, PageRelocation, fn relocate_payload_page>(pages: pages, env: &env);
+  return unit;
+}
+
+fn relocate_node_page(values: &[SequenceNode], base: u64, env: &PageRelocation) -> result: unit reads(env), writes(values) {
+  doc "Rebases private transfer handles without changing owner-local AVL topology.";
+  for (at in 0_u64..values^.len) {
+    let own = relocate_output(output: values^[at].own, block_base: env^.blocks, owner: env^.owner, slot: env^.slot);
+    let total = relocate_output(output: values^[at].total, block_base: env^.blocks, owner: env^.owner, slot: env^.slot);
+    set values^[at].own = own;
+    set values^[at].total = total;
   }
   return unit;
 }
 
 fn relocate_nodes(pages: &SlotPages<SequenceNode>, blocks: u32, owner: u32, slot: u32) -> result: unit writes(pages) {
-  doc "Rebases independent private summaries; AVL topology remains owner-local.";
-  match pages^ {
-    Vacant() => {
-    }
-    Page(values: values_held) => {
-      let count = values_held^.inner.len;
-      for (at in 0_u64..count) {
-        let own = relocate_output(output: values_held^.inner[at].own, block_base: blocks, owner: owner, slot: slot);
-        let total = relocate_output(output: values_held^.inner[at].total, block_base: blocks, owner: owner, slot: slot);
-        set values_held^.inner[at].own = own;
-        set values_held^.inner[at].total = total;
-      }
-    }
-    Fork(left: left_held, right: right_held) => {
-      relocate_nodes(pages: &left_held^.inner, blocks: blocks, owner: owner, slot: slot);
-      relocate_nodes(pages: &right_held^.inner, blocks: blocks, owner: owner, slot: slot);
-    }
-  }
+  doc "Rebases private summaries through the shared counted page operation.";
+  let env = PageRelocation(blocks: blocks, paragraphs: 0_u32, children: 0_u32, owner: owner, slot: slot);
+  page_each::<SequenceNode, PageRelocation, fn relocate_node_page>(pages: pages, env: &env);
   return unit;
 }

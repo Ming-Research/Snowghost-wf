@@ -1184,6 +1184,59 @@ step-4 counters, not an allocation or whole-builder census; fallback attempts
 and route-page visits require fuller instrumentation before locality claims.
 The maintained TODO carries those limits and the full-build route-cost risk.
 
+### Two-level page experiment
+
+The experiment starts at `2d706ba252c80336ba1926c3d77054714046586d`.
+It asks whether constant-depth slot access improves full-build and per-edit
+cost against the recursive SlotPages directory while preserving Q114 A:
+insertion never copies an earlier published payload. Reject the representation
+if full-build dumps, incremental identity, splice/fallback rows, stable slots,
+tombstones, or field-narrow operations change. The primary agent owns paired
+14900K measurements; this branch makes no timing claim.
+
+The selected page width is 64: tens of thousands of entries need hundreds of
+pointers, while fixed-page padding is less than 64 cells per store. A first
+page of the smallest power of two covering the initial owner, clamped to
+4–64, prevents a one-entry owner allocating 64 large SequenceNodes. The choice
+is reasoned, not measured; reopen it if allocation, memory, or measured costs
+reject it. Larger pages reduce directory entries but increase small-growth
+padding; four-slot pages require sixteen times as many pointers at scale.
+
+`SlotPages` is either vacant or a first-page width and
+`Box<Slots<Option<Box<Array<T>>>>>`. Arrays enforce immutable page capacity.
+For first width F, s < F selects page 0 and offset s; otherwise page
+1 + (s - F) / 64 and offset (s - F) % 64. For F = 64 this is s / 64 and s % 64.
+The directory grows geometrically through the existing `push_item` helper;
+only optional pointers move. Sparse route patches allocate the requested
+page and initialize intervening pointer entries to None. This adds pointer
+prefix work to high sparse writes, but never initializes absent payloads.
+
+`page_read`, `page_edit`, and `page_each` take raw function-kind callbacks;
+field callbacks select links, own, total, payload, or relocation fields. Bulk
+boundary publication zips the payload and node directories with counted page
+and cell loops. Metadata and payload visit counters retain the same physical
+opening sites: directory steps were excluded before and remain excluded.
+No counter values are intentionally changed.
+
+The old median bulk builder required one contiguous final node array. It now
+writes a temporary array of small SequenceCursor values; independent page
+publication copies only those cursors into final cells. This is one additional
+allocation per nonempty owner and one cursor copy per initial entry, released
+at sealing. It preserves disjoint recursive halves and independent page/cell
+writes instead of introducing shared-directory writes between recursive
+siblings. It copies no earlier published payload. Pending payloads still
+publish once at owner sealing; transfers initialize in their final pages.
+This scratch and sparse pointer-prefix cost are included in the proposed
+full-build/per-edit comparison and must not be attributed to lookup alone.
+AVL order and summary recursion remains logarithmic; it is not a page-directory
+descent. The earlier regression-repair section describes the baseline, including
+its now-superseded owner-sized pages and absence of cursor scratch.
+
+Validation is through the branch's temporary CI workflows: layout-check,
+make check, oracles against the pinned base (full dumps and structural path
+rows), and all existing falsifiers. The Whitefoot pin and submodules remain
+unchanged. The experiment has no merge authorization or performance acceptance.
+
 ### Full-build regression repair
 
 The question is whether removing repeated nested rank descent, incremental

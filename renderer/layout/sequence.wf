@@ -141,35 +141,17 @@ fn new_sequence() -> made: EntrySequence pure {
   return move sequence;
 }
 
+fn cursor_field(value: &SequenceNode, env: &unit) -> made: SequenceCursor reads(value.links) {
+  doc "Reads topology and weights without opening either transfer field.";
+  return value^.links;
+}
+
 fn slot_cursor(pages: &SlotPages<SequenceNode>, slot: u32, span: u32) -> made: SequenceCursor reads(pages) {
-  doc "Reads only links, liveness and event weights at a metadata leaf; recursive directory returns never copy a SequenceNode.";
+  doc "Reads only the topology field through the shared fixed-depth access.";
   let missing = vacant_cursor();
-  if slot >= span {
-    return missing;
-  }
-  match pages^ {
-    Vacant() => {
-      return missing;
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        let made = page^.inner[at].links;
-        return made;
-      }
-      return missing;
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        let earlier = slot_cursor(pages: &left_page^.inner, slot: slot, span: half);
-        return earlier;
-      }
-      let later = slot - half;
-      let following = slot_cursor(pages: &right_page^.inner, slot: later, span: half);
-      return following;
-    }
-  }
+  let env = unit;
+  let made = page_read::<SequenceNode, unit, SequenceCursor, fn cursor_field>(pages: pages, slot: slot, span: span, env: &env, missing: missing);
+  return made;
 }
 
 fn sequence_node(sequence: &EntrySequence, slot: u32) -> made: SequenceCursor reads(sequence.nodes), reads(sequence.span) {
@@ -237,8 +219,8 @@ fn materialize_flow(context: &Context) -> made: Box<Array<Flow>> reads(context) 
   return move events;
 }
 
-fn bulk_nodes(pending: &[PendingEntry], nodes: &[SequenceNode], base: u64, parent: u32) -> (root: u32, height: u32, events: u64) reads(pending), writes(nodes) {
-  doc "Builds topology and event weights directly in final node storage. Median halves write disjoint slices; the parent waits only for their heights and event spans.";
+fn bulk_nodes(pending: &[PendingEntry], nodes: &[SequenceCursor], base: u64, parent: u32) -> (root: u32, height: u32, events: u64) reads(pending), writes(nodes) {
+  doc "Builds topology and event weights in transient cursor storage before independent page publication. Median halves write disjoint slices; the parent waits only for their heights and event spans.";
   let count = pending^.len;
   if count == 0_u64 {
     return no_index, 0_u32, 0_u64;
@@ -264,13 +246,35 @@ fn bulk_nodes(pending: &[PendingEntry], nodes: &[SequenceNode], base: u64, paren
   let yes = True();
   let node = SequenceCursor(left: left, right: right, parent: parent, height: height, live: yes, own_events: own_events, total_events: total_events, total_count: count);
   if middle < nodes^.len {
-    set nodes^[middle].links = node;
+    set nodes^[middle] = node;
   }
   return slot, height, total_events;
 }
 
+fn seal_payload_page(values: &[Flow], base: u64, env: &Box<Slots<PendingEntry>>) -> result: unit reads(env), writes(values) {
+  doc "Copies pending payloads into one final fixed page before publication.";
+  for (offset in 0_u64..values^.len) {
+    let at = base +sat offset;
+    if at < env^.inner.len {
+      set values^[offset] = env^.inner[at].item;
+    }
+  }
+  return unit;
+}
+
+fn seal_node_page(values: &[SequenceNode], base: u64, env: &Box<Array<SequenceCursor>>) -> result: unit reads(env), writes(values) {
+  doc "Publishes the independently built topology into one final fixed page; transfer fields remain initialized in place.";
+  for (offset in 0_u64..values^.len) {
+    let at = base +sat offset;
+    if at < env^.inner.len {
+      set values^[offset].links = env^.inner[at];
+    }
+  }
+  return unit;
+}
+
 fn finish_sequence(sequence: &EntrySequence) -> result: unit writes(sequence) {
-  doc "Publishes a pending list into two owner-sized pages and builds topology directly in the final index page, then releases pending scratch. Initial capacity is a power of two; later directory growth wraps this immutable-capacity leaf without copying it.";
+  doc "Seals a completed owner into fixed pages. A transient cursor array preserves disjoint median topology construction; counted page publication releases it and the pending list before return.";
   match sequence^.pending {
     None() => {
       return unit;
@@ -280,38 +284,21 @@ fn finish_sequence(sequence: &EntrySequence) -> result: unit writes(sequence) {
       if count == 0_u64 {
         return unit;
       }
-      let span = 4_u32;
-      for (level in 0_u64..28_u64) {
-        let width = cvt::<u32, u64>(span);
-        if count <= width {
-          break;
-        }
-        set span = span +sat span;
-      }
-      let page_width = cvt::<u32, u64>(span);
+      let missing_cursor = vacant_cursor();
+      let cursors = box_array_filled::<SequenceCursor>(count: count, value: missing_cursor);
+      let (root, height, events) = bulk_nodes(pending: &pending^.inner[0_u64..count], nodes: &cursors.inner[0_u64..count], base: 0_u64, parent: no_index);
       let missing_node = vacant_node();
-      let nodes = box_array_filled::<SequenceNode>(count: page_width, value: missing_node);
+      let nodes = new_pages::<SequenceNode>(count: count, missing: missing_node);
       let missing_payload = Flow::Close(block: no_index);
-      let payloads = box_array_filled::<Flow>(count: page_width, value: missing_payload);
-      if count > nodes.inner.len {
-        return unit;
-      }
-      let (root, height, events) = bulk_nodes(pending: &pending^.inner[0_u64..count], nodes: &nodes.inner[0_u64..count], base: 0_u64, parent: no_index);
-      for (at in 0_u64..count) {
-        if at < pending^.inner.len {
-          if at < payloads.inner.len {
-            set payloads.inner[at] = pending^.inner[at].item;
-          }
-        }
-      }
-      let payload_pages = SlotPages<Flow>::Page(values: move payloads);
-      let node_pages = SlotPages<SequenceNode>::Page(values: move nodes);
-      set sequence^.nodes = move node_pages;
-      set sequence^.payloads = move payload_pages;
+      let payloads = new_pages::<Flow>(count: count, missing: missing_payload);
+      page_each::<SequenceNode, Box<Array<SequenceCursor>>, fn seal_node_page>(pages: &nodes, env: &cursors);
+      page_each::<Flow, Box<Slots<PendingEntry>>, fn seal_payload_page>(pages: &payloads, env: pending);
+      set sequence^.nodes = move nodes;
+      set sequence^.payloads = move payloads;
       set sequence^.root = root;
       let allocated = flow_index(at: count);
       set sequence^.allocated = allocated;
-      set sequence^.span = span;
+      set sequence^.span = 1073741824_u32;
     }
   }
   let empty_pending = None<Box<Slots<PendingEntry>>>();
@@ -367,29 +354,9 @@ fn pending_close(sequence: &EntrySequence, slot: u32, events: u64) -> result: un
   return unit;
 }
 
-fn sequence_reserve(sequence: &EntrySequence) -> result: unit reads(sequence.allocated), writes(sequence.nodes), writes(sequence.payloads), writes(sequence.span) {
-  doc "Doubles the directory address space by wrapping its existing roots, without copying any payload or index page. The first small sequence allocates only one four-slot page per store.";
-  if sequence^.allocated < sequence^.span {
-    return unit;
-  }
-  if sequence^.span >= 1073741824_u32 {
-    return unit;
-  }
-  let old_nodes = SlotPages<SequenceNode>::Vacant();
-  let old_payloads = SlotPages<Flow>::Vacant();
-  swap(first: &old_nodes, second: &sequence^.nodes);
-  swap(first: &old_payloads, second: &sequence^.payloads);
-  let right_nodes = SlotPages<SequenceNode>::Vacant();
-  let right_payloads = SlotPages<Flow>::Vacant();
-  let node_left = box_new::<SlotPages<SequenceNode>>(value: move old_nodes);
-  let node_right = box_new::<SlotPages<SequenceNode>>(value: move right_nodes);
-  let payload_left = box_new::<SlotPages<Flow>>(value: move old_payloads);
-  let payload_right = box_new::<SlotPages<Flow>>(value: move right_payloads);
-  let nodes = SlotPages<SequenceNode>::Fork(left: move node_left, right: move node_right);
-  set sequence^.nodes = move nodes;
-  let payloads = SlotPages<Flow>::Fork(left: move payload_left, right: move payload_right);
-  set sequence^.payloads = move payloads;
-  set sequence^.span = sequence^.span +sat sequence^.span;
+fn sequence_reserve(sequence: &EntrySequence) -> result: unit writes(sequence.span) {
+  doc "Admits the stable slot address space; page allocation occurs only for the inserted slot.";
+  set sequence^.span = 1073741824_u32;
   return unit;
 }
 
@@ -432,107 +399,17 @@ fn visit_later(sequence: &EntrySequence, after: u32, owner: u32) -> made: Box<Sl
   return move handles;
 }
 
-fn slot_read<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, missing: T) -> value: T reads(pages) {
-  doc "Reads one stable slot through a bounded directory path; absent pages return the supplied vacant value.";
-  if slot >= span {
-    return missing;
-  }
-  match pages^ {
-    Vacant() => {
-      return missing;
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        return page^.inner[at];
-      }
-      return missing;
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        let value = slot_read::<T>(pages: &left_page^.inner, slot: slot, span: half, missing: missing);
-        return value;
-      }
-      let later = slot - half;
-      let value = slot_read::<T>(pages: &right_page^.inner, slot: later, span: half, missing: missing);
-      return value;
-    }
-  }
-}
 
-fn slot_write<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, value: T, missing: T) -> result: unit writes(pages) {
-  doc "Allocates only a missing directory path and its four-slot page, then writes one slot. Existing payload pages never move.";
-  if slot >= span {
-    return unit;
-  }
-  match pages^ {
-    Vacant() => {
-      if span <= 4_u32 {
-        let count = cvt::<u32, u64>(span);
-        let values = box_array_filled::<T>(count: count, value: missing);
-        let page = SlotPages<T>::Page(values: move values);
-        set pages^ = move page;
-      } else {
-        let empty_left = SlotPages<T>::Vacant();
-        let empty_right = SlotPages<T>::Vacant();
-        let new_left = box_new::<SlotPages<T>>(value: move empty_left);
-        let new_right = box_new::<SlotPages<T>>(value: move empty_right);
-        let fork = SlotPages<T>::Fork(left: move new_left, right: move new_right);
-        set pages^ = move fork;
-      }
-    }
-    Fork(..) => {
-    }
-    Page(..) => {
-    }
-  }
-  match pages^ {
-    Vacant() => {
-    }
-    Page(values: stored_page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < stored_page^.inner.len {
-        set stored_page^.inner[at] = value;
-      }
-    }
-    Fork(left: stored_left, right: stored_right) => {
-      let half = span / 2_u32;
-      if slot < half {
-        slot_write::<T>(pages: &stored_left^.inner, slot: slot, span: half, value: value, missing: missing);
-      } else {
-        let later = slot - half;
-        slot_write::<T>(pages: &stored_right^.inner, slot: later, span: half, value: value, missing: missing);
-      }
-    }
-  }
+
+fn cursor_store(value: &SequenceNode, env: &SequenceCursor) -> result: unit reads(env), writes(value.links) {
+  doc "Writes topology, including tombstones, without touching transfers.";
+  set value^.links = env^;
   return unit;
 }
 
 fn slot_links(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, node: SequenceCursor) -> result: unit writes(pages) {
-  doc "Writes an existing cell's topology only, including tombstoning; transfers never pass through this directory path.";
-  if slot >= span {
-    return unit;
-  }
-  match pages^ {
-    Vacant() => {
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        set page^.inner[at].links = node;
-      }
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        slot_links(pages: &left_page^.inner, slot: slot, span: half, node: node);
-      } else {
-        let later = slot - half;
-        slot_links(pages: &right_page^.inner, slot: later, span: half, node: node);
-      }
-    }
-  }
+  doc "Writes the topology field through the shared existing-cell access.";
+  page_edit::<SequenceNode, SequenceCursor, fn cursor_store>(pages: pages, slot: slot, span: span, env: &node);
   return unit;
 }
 
@@ -542,80 +419,59 @@ fn sequence_write(sequence: &EntrySequence, slot: u32, node: SequenceCursor) -> 
   return unit;
 }
 
-fn slot_output(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, own: Bool) -> made: SequenceOutput reads(pages) {
-  doc "Reads exactly one transfer at a live page leaf, taking its structural weights from topology during construction.";
-  if slot < span {
-    match pages^ {
-      Vacant() => {
-      }
-      Page(values: page) => {
-        let at = cvt::<u32, u64>(slot);
-        if at < page^.inner.len {
-          if page^.inner[at].links.live {
-            let output = if own {
-              give page^.inner[at].own;
-            } else {
-              give page^.inner[at].total;
-            }
-            if own {
-              set output.count = 1_u64;
-              set output.events = page^.inner[at].links.own_events;
-            } else {
-              set output.count = page^.inner[at].links.total_count;
-              set output.events = page^.inner[at].links.total_events;
-            }
-            return output;
-          }
-        }
-      }
-      Fork(left: left_page, right: right_page) => {
-        let half = span / 2_u32;
-        if slot < half {
-          let earlier = slot_output(pages: &left_page^.inner, slot: slot, span: half, own: own);
-          return earlier;
-        }
-        let later = slot - half;
-        let following = slot_output(pages: &right_page^.inner, slot: later, span: half, own: own);
-        return following;
-      }
+fn output_field(value: &SequenceNode, env: &Bool) -> made: SequenceOutput reads(value), reads(env) {
+  doc "Reads one live transfer and its structural weights, including during construction.";
+  if value^.links.live {
+    let output = if env^ {
+      give value^.own;
+    } else {
+      give value^.total;
     }
+    if env^ {
+      set output.count = 1_u64;
+      set output.events = value^.links.own_events;
+    } else {
+      set output.count = value^.links.total_count;
+      set output.events = value^.links.total_events;
+    }
+    return output;
   }
   let empty = empty_output();
   return empty;
 }
 
-fn slot_store_output(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, output: &SequenceOutput, own: Bool) -> result: unit reads(output), writes(pages) {
-  doc "Writes one transfer and its weights in an existing live cell, without copying topology or the other transfer.";
-  if slot >= span {
-    return unit;
+fn slot_output(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, own: Bool) -> made: SequenceOutput reads(pages) {
+  doc "Reads one transfer field through the shared fixed-depth access.";
+  let missing = empty_output();
+  let made = page_read::<SequenceNode, Bool, SequenceOutput, fn output_field>(pages: pages, slot: slot, span: span, env: &own, missing: missing);
+  return made;
+}
+
+fn own_store(value: &SequenceNode, env: &SequenceOutput) -> result: unit reads(env), writes(value) {
+  doc "Writes one live cell's own transfer and event weight, leaving its total transfer in place.";
+  if value^.links.live {
+    set value^.own = env^;
+    set value^.links.own_events = env^.events;
   }
-  match pages^ {
-    Vacant() => {
-    }
-    Page(values: page) => {
-      let at = cvt::<u32, u64>(slot);
-      if at < page^.inner.len {
-        if page^.inner[at].links.live {
-          if own {
-            set page^.inner[at].own = output^;
-            set page^.inner[at].links.own_events = output^.events;
-          } else {
-            set page^.inner[at].total = output^;
-            set page^.inner[at].links.total_events = output^.events;
-            set page^.inner[at].links.total_count = output^.count;
-          }
-        }
-      }
-    }
-    Fork(left: left_page, right: right_page) => {
-      let half = span / 2_u32;
-      if slot < half {
-        slot_store_output(pages: &left_page^.inner, slot: slot, span: half, output: output, own: own);
-      } else {
-        let later = slot - half;
-        slot_store_output(pages: &right_page^.inner, slot: later, span: half, output: output, own: own);
-      }
-    }
+  return unit;
+}
+
+fn total_store(value: &SequenceNode, env: &SequenceOutput) -> result: unit reads(env), writes(value) {
+  doc "Writes one live cell's total transfer and weights, leaving its own transfer in place.";
+  if value^.links.live {
+    set value^.total = env^;
+    set value^.links.total_events = env^.events;
+    set value^.links.total_count = env^.count;
+  }
+  return unit;
+}
+
+fn slot_store_output(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, output: &SequenceOutput, own: Bool) -> result: unit reads(output), writes(pages) {
+  doc "Selects the transfer writer for the shared existing-cell access.";
+  if own {
+    page_edit::<SequenceNode, SequenceOutput, fn own_store>(pages: pages, slot: slot, span: span, env: output);
+  } else {
+    page_edit::<SequenceNode, SequenceOutput, fn total_store>(pages: pages, slot: slot, span: span, env: output);
   }
   return unit;
 }
