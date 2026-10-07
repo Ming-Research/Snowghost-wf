@@ -1543,3 +1543,30 @@ correctness matrices. Reject a speed claim if medians do not separate from
 the controls' spread; do not infer that the remaining full fragment scan is
 bounded or that Q134 has been settled. The maintained TODO now distinguishes
 the earlier missing endpoint identities from the merged retained anchors.
+
+
+### Hosted package setup recovery
+
+The cancelled 7a1fc758 mutation job 112920626694 stopped in apt metadata
+setup: after repeated `Ign` records from azure.archive.ubuntu.com, its log
+has no progress between 17:51:56 and cancellation at 18:14:17 UTC. The same
+log shows successful InRelease downloads from archive.ubuntu.com. Several
+subsequent runners also remain in package setup rather than compilation or
+testing. Set the runner's existing /etc/apt/apt-mirrors.txt to Ubuntu's
+https://archive.ubuntu.com/ubuntu mirror and bound HTTPS metadata requests
+with retries. Preserve the Ubuntu suite, signed metadata, compiler release,
+font packages and every check. Timing no longer profiles, so its setup also
+stops installing unused perf tools. These changes address observed CI setup
+failure; no failed renderer output is reclassified or expected result changed.
+
+
+Reuse the successfully built drivers in one recovered timing job after the
+mirror repair: main 1fdb4050, edit-cost/twin 27c55096, exact certificate
+7a1fc758, positioned-charge cutoff c26a980e, narrow origins 4dd3850e and
+resolved endpoints bebd8c27. Interleave all seven in forward/reverse order
+on one hosted runner. Each adjacent source repair can then be compared under
+the same conditions, without rerunning a compiler or inheriting medians from
+a different host. Retain every revision record and the unchanged scripts.
+The temporary artifact-reuse path is removed after its evidence is collected;
+the maintained workflow returns to independent main/edit-cost/twin/head
+builds. Cancelled package-setup attempts provide no timing acceptance.
