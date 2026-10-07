@@ -138,10 +138,11 @@ fn repair_fragment_cell(context: &Context, styles: &Styles, content_left: i32, f
     set anchor^.margin = margin;
     set fragment^.y = bottom +sat margin;
   } else {
-    let has_line = split.line != no_line;
+    let resolved_line = split_reference_line(context: context, split: split);
+    let has_line = resolved_line != no_line;
     let use_line = band(anchor^.leading_line, has_line);
     if use_line {
-      set fragment^.y = split.line;
+      set fragment^.y = resolved_line;
       set anchor^.mode = 2_u8;
     } else {
       set fragment^.y = top;
@@ -212,9 +213,14 @@ fn repair_anchored_fragments(context: &Context, styles: &Styles, content_left: i
     return False();
   }
   let split_count = context^.splits.inner.len;
+  let split_from = split_lower_bound(splits: &context^.splits.inner[0_u64..split_count], rank: from);
+  let split_until = until +sat 1_u64;
+  let split_end = split_lower_bound(splits: &context^.splits.inner[0_u64..split_count], rank: split_until);
   let no_origins = slots_new::<Origin, 0>();
-  for (split_at in 0_u64..split_count) {
-    own_split_line(context: context, origins: &no_origins[0_u64..0_u64], split: &context^.splits.inner[split_at]);
+  if split_end <= split_count {
+    for (split_at in split_from..split_end) {
+      own_split_line(context: context, origins: &no_origins[0_u64..0_u64], split: &context^.splits.inner[split_at]);
+    }
   }
   let nodes = context^.fragment_ranges.inner.len;
   if nodes == 0_u64 {
@@ -272,4 +278,106 @@ fn fragment_range_certificates(context: &Context, from: u64, until: u64, ranges:
     return band(left, right);
   }
   return False();
+}
+
+fn split_lower_bound(splits: &[Split], rank: u64) -> found: u64 reads(splits) {
+  doc "Finds the first split opening at or after a reference rank. Admitted structural edits preserve split order and the bridge restores ranks before any reference reader.";
+  let low = 0_u64;
+  let high = splits^.len;
+  for (step in 0_u64..64_u64) {
+    if low >= high {
+      break;
+    }
+    let distance = high - low;
+    let half = distance / 2_u64;
+    let middle = low + half;
+    if middle < splits^.len {
+      let opening = cvt::<u32, u64>(splits^[middle].open);
+      if opening < rank {
+        set low = middle +sat 1_u64;
+      } else {
+        set high = middle;
+      }
+    }
+  }
+  return low;
+}
+
+fn split_reference_line(context: &Context, split: Split) -> line: i32 reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.content_dy) {
+  doc "Resolves a split's pending line in reference coordinates. A freshly stacked line remains raw until its head settles; an unchanged line reads its exact normal-origin offset. Sentinel identity is preserved.";
+  if split.line == no_line {
+    return no_line;
+  }
+  if split.line_dirty {
+    return split.line;
+  }
+  let none = slots_new::<Origin, 0>();
+  let (normal, top, bottom) = fragment_endpoint(context: context, origins: &none[0_u64..0_u64], item: split.opening);
+  let wide_normal = cvt::<i32, i64>(normal);
+  let wide_line = wide_normal +sat split.line_offset;
+  return geometry_narrow(value: wide_line);
+}
+
+fn retained_block_normal(context: &Context, block: u32) -> normal: i64 reads(context.blocks.inner) {
+  doc "Reads the old retained normal origin while the compatibility walker mutates resolved scratch. Publication has not begun, so parent-local origins still describe the pre-replay placement.";
+  let cursor = block;
+  let y = 0_i64;
+  let count = context^.blocks.inner.len;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      set y = context^.blocks.inner[at].y +sat y;
+      set cursor = context^.blocks.inner[at].parent;
+    } else {
+      return y;
+    }
+  }
+  return y;
+}
+
+fn retained_split_normal(context: &Context, item: Flow) -> normal: i32 reads(context.blocks.inner), reads(context.children.inner) {
+  doc "Resolves a split endpoint's pre-publication normal position for the exceptional saturating suffix repair.";
+  match item {
+    Open(block: b) => {
+      let normal = retained_block_normal(context: context, block: b);
+      return geometry_narrow(value: normal);
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let parent = retained_block_normal(context: context, block: context^.children.inner[at].block);
+        let normal = parent +sat context^.children.inner[at].anchor.y;
+        return geometry_narrow(value: normal);
+      }
+    }
+    Close(..) => {
+    }
+    Text(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return 0_i32;
+}
+
+fn shift_anchored_split_line(context: &Context, split: &Split, delta: i32) -> result: unit reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.content_dy), writes(split) {
+  doc "Preserves the reference line addition where exact-translation admission failed, then stores its exact offset against the new resolved head. This is numeric repair, not a new layout fallback.";
+  if split^.line == no_line {
+    return unit;
+  }
+  let old_normal = retained_split_normal(context: context, item: split^.opening);
+  let wide_old = cvt::<i32, i64>(old_normal);
+  let old_wide_line = wide_old +sat split^.line_offset;
+  let old_line = geometry_narrow(value: old_wide_line);
+  let shifted = old_line +sat delta;
+  let none = slots_new::<Origin, 0>();
+  let (new_normal, top, bottom) = fragment_endpoint(context: context, origins: &none[0_u64..0_u64], item: split^.opening);
+  let new_wide = cvt::<i32, i64>(new_normal);
+  let wide_shifted = cvt::<i32, i64>(shifted);
+  set split^.line = shifted;
+  set split^.line_offset = wide_shifted -sat new_wide;
+  set split^.line_dirty = False();
+  return unit;
 }
