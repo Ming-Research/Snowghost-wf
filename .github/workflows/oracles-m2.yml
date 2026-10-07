@@ -33,6 +33,7 @@ jobs:
             python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "build/$kind-case.edits"
             time build/layout_oracle_seq edit "build/$kind-case.edits" "$s/$kind-case.html" renderer/style/ua.css > "build/$kind-case.raw"
             python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.raw"
+            python3 "$s/splice-cases.py" --check-paths "build/$kind-case.edits.paths" "build/$kind-case.raw"
             grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.raw"
           done
       - name: Small arithmetic fixture before the page batch
@@ -66,41 +67,6 @@ jobs:
           test "$differs" -eq 0
           test "$refused" -le 2
           test "$same" -gt 0
-      - name: Locate boundary refusal guards
-        if: always() && contains(github.event.head_commit.message, '[trace]')
-        run: |
-          set -euo pipefail
-          python3 - <<'PYEOF'
-          from pathlib import Path
-          p = Path('renderer/layout/splice.wf')
-          source = p.read_text()
-          start = source.index('fn splice_context_ready(')
-          end = source.index('\nfn splice_inputs(', start)
-          body = source[start:end]
-          body = body.replace('return 2_u32;', 'let kind = cvt::<u8, u32>(context^.kind);\n    let diagnostic_kind = 200_u32 +sat kind;\n    return diagnostic_kind;', 1)
-          body = body.replace('return 2_u32;', 'return 210_u32;', 1)
-          print('200 + context kind; 210 columns')
-          reasons = ['local geometry', 'definite height', 'intrinsic or dirty', 'context fragments', 'nonordinary root transfer', 'through root transfer', 'origin and travel bound']
-          assert body.count('return 7_u32;') == len(reasons)
-          for code, reason in enumerate(reasons, 71):
-              replacement = f'return {code}_u32;'
-              if code == 75:
-                  replacement = 'let diagnostic = 750_u32 +sat output.barriers;\n    return diagnostic;'
-              body = body.replace('return 7_u32;', replacement, 1)
-              print(code, reason)
-          print('750 + barriers: 1 floats, 2 clearance, 3 constrained/marker block, 4 transfer mismatch, 5 positioned/atomic content')
-          p.write_text(source[:start] + body + source[end:])
-          PYEOF
-          sh research/investigations/concurrency/run.sh fetch || true
-          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
-          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
-          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_trace)
-          for page in ecma262 html5; do
-            sheets=()
-            if [ "$page" = ecma262 ]; then sheets=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css); fi
-            build/layout_trace edit "build/x5/scripts/$page-block.edits" "build/research/concurrency/$page.html" renderer/style/ua.css "${sheets[@]}" > "build/$page.trace.raw"
-            grep 'structure path' "build/$page.trace.raw"
-          done
       - name: Inventory individual semantic predicates
         if: always() && contains(github.event.head_commit.message, '[inventory]')
         run: |
@@ -269,10 +235,9 @@ jobs:
           printing = r'''
             if number == 1_u64 {
               let diagnostic = pkg::layout::splice_semantic_trace(layout: &kept^.layout, styles: &kept^.state.styles, parent: parent);
-              let label: Array<u8, 9> = "semantic ";
               let records = diagnostic.inner.len / 5_u64;
               for (record in 0_u64..records) {
-                put_text(buffer: report, text: &label[0_u64..9_u64]);
+                put_text(buffer: report, text: &semantic_trace_label[0_u64..9_u64]);
                 for (field in 0_u64..5_u64) {
                   let offset = record *sat 5_u64;
                   let index = offset +sat field;
@@ -288,7 +253,60 @@ jobs:
           Path('build/inventory.semantic.legend').write_text('Records: kind context payload-slot style-NodeId detail. Kind 0 owner (slot is owner block); 1 context kind; 2 maximum barrier; 3 atomic count; 4 positioned child; 5 block position; 10 specified>=0; 11 minimum>frame; 12 maximum>=0; 13 marker; 14 first-line slot; 15 last-line slot; 16 first-line owner; 17 last-line owner; 18 block flow rank; 19 parent block; 20 natural (slot is flow rank); 21 flow end; 22 float margin bottom in flow coordinates; 23 float flow rank; 24 float parent block; 25 reads_floats; 26 clear; 27 minimum; 28 maximum; 29 specified; 30 exported floats. Signed kinds 20,21,22,27,28,29 have 2147483648 added; subtract to decode. no_index is 4294967295. Inventories the selected owner context and every ancestor context before the first block edit.\n')
           target.write_text(source.lstrip("\n"))
           module.write_text(interface + "\n" + 'public fn splice_semantic_trace(layout: &Layout, styles: &Styles, parent: NodeId) -> made: Box<Slots<u64>> reads(layout), reads(styles) doc "Temporary constituent inventory injected only after ordinary checks; removed after the argument is established.";' + "\n")
-          oracle.write_text(body[:at] + printing.lstrip("\n") + body[at:])
+          updated = body[:at] + printing.lstrip("\n") + body[at:]
+          constant_anchor = 'const full_label:'
+          assert updated.count(constant_anchor) == 1
+          constant = 'const semantic_trace_label: Array<u8, 9> = "semantic ";'
+          oracle.write_text(updated.replace(constant_anchor, constant + "\n\n" + constant_anchor, 1))
+          import re
+          refusal_map = []
+          next_reason = 1000
+          for filename in ('renderer/layout/splice.wf', 'renderer/layout/splice_boundary.wf'):
+              target = Path(filename)
+              original = target.read_text()
+              lines = []
+              function = ''
+              path_guards = 0
+              for number, line in enumerate(original.splitlines(), 1):
+                  declaration = re.match(r'fn (\w+)\(', line)
+                  if declaration:
+                      function = declaration[1]
+                  if function == 'splice_path_ready' and line.strip() == 'return no, 0_i32, 0_i32, no;':
+                      indent = line[:len(line) - len(line.lstrip())]
+                      if path_guards == 0:
+                          assert lines[-1].strip() == 'if reason != 0_u32 {'
+                          refusal_map.append('forward %s:%d %s original-reason 7 preserves splice_context_ready source ID' % (filename, number, function))
+                          lines.append(indent + 'set visits^.reason = reason;')
+                      else:
+                          next_reason += 1
+                          refusal_map.append('%d %s:%d %s original-reason 7 Boolean guard' % (next_reason, filename, number, function))
+                          lines.extend((indent + 'if visits^.reason == 0_u32 {',
+                                        indent + '  set visits^.reason = %d_u32;' % next_reason,
+                                        indent + '}'))
+                      path_guards += 1
+                  if line.lstrip().startswith('return '):
+                      matches = list(re.finditer(r'(?P<prefix>return |(?:error|value): )(?P<reason>[1-9][0-9]*)_u32', line))
+                      assert len(matches) <= 1, (filename, number, line)
+                      if matches:
+                          match = matches[0]
+                          next_reason += 1
+                          refusal_map.append('%d %s:%d %s original-reason %s' % (next_reason, filename, number, function, match['reason']))
+                          line = line[:match.start('reason')] + str(next_reason) + line[match.end('reason'):]
+                  lines.append(line)
+              rewritten = '\n'.join(lines) + '\n'
+              if filename.endswith('/splice_boundary.wf'):
+                  assert path_guards > 0
+              if filename.endswith('/splice.wf'):
+                  pattern = r'(  if ready \{\n  \} else \{\n)(    return Ok<u32, LayoutError>\(value: [0-9]+_u32\);\n  \})'
+                  propagation = r'\1    if visits.reason != 0_u32 {\n      return Ok<u32, LayoutError>(value: visits.reason);\n    }\n\2'
+                  rewritten, count = re.subn(pattern, propagation, rewritten)
+                  assert count == 1, 'expected one path-ready refusal propagation'
+              assert rewritten != original
+              target.write_text(rewritten)
+          assert refusal_map
+          legend = 'Temporary refusal IDs; successful zero returns remain unchanged. Boolean child failures preserve the first recorded source reason.\n'
+          Path('build/refusals.semantic.map').write_text(legend + '\n'.join(refusal_map) + '\n')
+          print(legend + '\n'.join(refusal_map))
           PYEOF
           sh research/investigations/concurrency/run.sh fetch || true
           sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
@@ -320,7 +338,7 @@ jobs:
             build/checkpoint-case.*
             build/positioned-case.*
             build/flex-case.*
-            build/*.trace.raw
+            build/transfer-case.*
             build/*.semantic.*
             build/x5/scripts/*-block.edits
             build/x5/out/*-block.seq.txt.raw
@@ -473,6 +491,7 @@ jobs:
             for build in seq par; do
               WF_WORKERS=4 build/layout_oracle_$build edit "build/$kind-case.edits" "$s/$kind-case.html" renderer/style/ua.css > "build/$kind-case.$build.raw"
               python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.$build.raw"
+              python3 "$s/splice-cases.py" --check-paths "build/$kind-case.edits.paths" "build/$kind-case.$build.raw"
               grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.$build.raw"
             done
           done

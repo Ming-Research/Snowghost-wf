@@ -2001,3 +2001,49 @@ and the explicit reason-10 path is used. The float fixtures put the edited
 flow owner between the earlier float and later clearance, so the float-floor
 mutation reaches the outward certificate rather than an unrelated refusal
 of a float inside the edited sequence.
+
+
+The completion review also found that a positioned child's arithmetic charge
+must follow its settled height and anchor: percentage height in the growing
+containing-block fixture changes that charge. After independent anchor
+settlement, the splice refreshes each direct `Out` entry's charge and joins
+its owner ancestry with zero geometric delta. Leaf certificate writes depend on settled anchors, and ancestor reductions
+depend on their leaves. The current sequential AVL repairs retain the
+existing deferred scatter limitation; they neither move siblings nor reopen
+positioned descendants. This preserves the current-state certificate
+for a subsequent edit.
+
+
+An atomic inline's arithmetic charge uses its paragraph-relative normal and
+visual offsets, plus its height, rather than its current owner-relative
+anchor. Opposing vertical margins can leave a short line with a large atomic
+offset; a preceding tall block can initially cancel that offset. Removing
+the block destroys the cancellation, so retaining the old absolute anchor
+charge is unsound. The paragraph-relative offsets do not change when the
+paragraph translates. The ordinary flow certificate bounds the paragraph
+origin, and the triangle inequality adds the absolute normal offset, the
+absolute visual-minus-normal offset and absolute height to bound the atomic
+normal, visual and bottom coordinates. Rebreaking the paragraph rebuilds
+these offsets through the existing reference path; a direct paragraph move
+changes its anchor only. No ordering among atomic anchor writes is added.
+
+
+The old context-wide `definite_free` flag also includes out-of-flow
+percentage heights. Stage 1 settles those boxes again after the containing
+block grows, so that blanket refusal prevents its own supported case.
+Retain a separate `flow_definite_free` pre-pass fact for blocks, in-flow
+children and floats only. Those retained flow inputs must remain independent
+of the context's definite-height basis; atomic inline spaces already use an
+indefinite basis. Positioned inputs are excluded from this fact because
+`position_one` recomputes them from the settled containing block. Structural
+publication combines the old and inserted facts; local style updates that
+introduce any height dependency conservatively invalidate it until the
+reference pre-pass recomputes the fact. This changes admission, not the
+meaning of the existing update cutoff's `definite_free` flag.
+
+
+Publication also preserves `has_out` by combining retained and inserted
+payloads with logical OR. Insertion can introduce the first positioned child
+in a context, and final settlement must visit it against the retained
+containing block. Retaining true after removal is conservative: the child
+loop skips retired entries.
