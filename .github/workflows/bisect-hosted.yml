@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [main=02855399257b, base=9e1561a, head=HEAD]
+        build: [head=HEAD]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,8 +65,24 @@ jobs:
           submodules: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: driver-*
+          pattern: driver-head
           path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37596011168
+          github-token: ${{ github.token }}
+          pattern: driver-*
+          path: build/historical
+      - name: Select already built historical controls
+        run: |
+          set -euo pipefail
+          for name in main s1c s2 s3a m2 base; do
+            cp -R build/historical/driver-$name build/drivers/
+          done
+          cp -R build/historical/driver-head build/drivers/driver-twin
+          names="main base twin head"
+          if ${{ contains(github.event.head_commit.message, '[bisect]') }}; then names="main s1c s2 s3a m2 base twin head"; fi
+          echo "BUILD_NAMES=$names" >> "$GITHUB_ENV"
       - name: Fonts and perf
         run: |
           set -euo pipefail
@@ -80,7 +96,10 @@ jobs:
       - name: Shared pages and scripts
         run: |
           set -euo pipefail
-          sh research/investigations/concurrency/run.sh fetch >/dev/null 2>&1
+          sh research/investigations/concurrency/run.sh fetch || true
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do
+            test -s "build/research/concurrency/$file"
+          done
           make -s oracle-fonts
           cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
           sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
@@ -90,8 +109,8 @@ jobs:
           set -euo pipefail
           mkdir -p build/evidence
           for round in 1 2; do
-            names="main base head"
-            if [ "$round" = 2 ]; then names="head base main"; fi
+            names="$BUILD_NAMES"
+            if [ "$round" = 2 ]; then names=$(python3 -c 'import sys; print(" ".join(reversed(sys.argv[1:])))' $BUILD_NAMES); fi
             for name in $names; do
               cp build/drivers/driver-$name/layout_oracle_* build/
               for page in ecma262 html5; do
@@ -109,8 +128,9 @@ jobs:
       - name: Profiles of the same word script
         run: |
           set -euo pipefail
-          for name in main base head; do
-            perf record -F 499 --call-graph dwarf -o build/evidence/$name.perf.data -- build/drivers/driver-$name/layout_oracle_seq edittime build/x5/scripts/ecma262-word.edits build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > build/evidence/$name-profile.raw
+          for repeat in $(seq 1 10); do cat build/x5/scripts/ecma262-word.edits; done > build/evidence/profile-word.edits
+          for name in $BUILD_NAMES; do
+            perf record -F 999 --call-graph dwarf -o build/evidence/$name.perf.data -- build/drivers/driver-$name/layout_oracle_seq edittime build/evidence/profile-word.edits build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > build/evidence/$name-profile.raw
             perf report -i build/evidence/$name.perf.data --stdio --no-children --percent-limit 0.5 > build/evidence/$name-perf-self.txt
             perf report -i build/evidence/$name.perf.data --stdio --children --percent-limit 1 > build/evidence/$name-perf-callers.txt
           done

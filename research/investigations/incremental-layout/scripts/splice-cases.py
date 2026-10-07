@@ -51,6 +51,10 @@ moves a later sibling with a nonzero visual offset. These seven cases are
 candidates for certified translation; the governing argument owns their
 final splice/fallback classification. Identity is required for all eight.
 
+The edit-cost kind reuses the transfer page unchanged. It combines one-character
+round trips with height-changing sentence round trips across relative, expired
+float, negative-margin re-entry, constrained sibling and marker barriers.
+
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
 """
@@ -62,6 +66,9 @@ from edits import Tree
 
 
 CASES = {
+    'edit-cost': ('transfer-relative-sibling', 'transfer-clear-expired',
+                  'transfer-clear-reentry', 'transfer-maximum-sibling',
+                  'transfer-marker-lined'),
     'positioned': ('positioned-auto', 'positioned-growing', 'positioned-fixed',
                    'positioned-nested', 'positioned-atomic'),
     'transfer': ('transfer-clear-reentry', 'transfer-clear-expired',
@@ -93,6 +100,14 @@ def text_pair(lines, node):
 def generate(tree, kind):
     """Exercise each independent fixture and its text routes after both edits."""
     lines = []
+    if kind == 'edit-cost':
+        prefix = 'A longer sentence changes the paragraph height and following origins. ' * 5
+        for case in CASES[kind]:
+            node = marker(tree, case, 'retained')['node']
+            text_pair(lines, node)
+            lines.extend(('T %d 0 %s' % (node, prefix),
+                          'D %d 0 %d' % (node, len(prefix.encode()))))
+        return '\n'.join(lines) + '\n'
     for number, case in enumerate(CASES[kind]):
         retained = marker(tree, case, 'retained')
         probe = marker(tree, case, 'probe')
@@ -116,7 +131,8 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture = Path(__file__).resolve().with_name(args.kind + '-case.html')
+    fixture_kind = 'transfer' if args.kind == 'edit-cost' else args.kind
+    fixture = Path(__file__).resolve().with_name(fixture_kind + '-case.html')
     fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')
     with nodes.open('w') as output:

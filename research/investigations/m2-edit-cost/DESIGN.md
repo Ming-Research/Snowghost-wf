@@ -92,3 +92,32 @@ actual paragraph output and translate only direct siblings, eliminating the
 whole-context compatibility dependency for that case. On refusal, reference
 replay receives the original scalar geometry. This is a new consumer of the
 existing certificate, not evidence that every text or font-size edit is local.
+
+## Effect-contract inspection
+
+The first direct paragraph certificate call was rejected by EFF-5 because its
+`reads(context)` contract overlapped the separate write to
+`context.boundary_visits`. Inspection against pinned Whitefoot f949e676acfa,
+EFF-1, EFF-2 and EFF-5, found a Snowghost contract issue: the certificate and
+its callees read geometry, entry summaries and frame inputs, never the visit
+counter. Field effect paths already express those exact dependencies in the
+language. Narrow their rows and keep the natural direct call; do not copy the
+counter to temporary storage to circumvent the overlap. CI must establish that
+these narrower contracts cover every body access. No Whitefoot language change
+is proposed on this evidence.
+
+The edit-cost script kind reuses transfer-case.html without changing its
+rendered fixture. Short and height-changing round trips exercise relative
+siblings, expired floats, negative-margin float re-entry, constrained siblings
+and outside markers. Both the identity oracle and mutation workflow consume
+these scripts; removing a stationary-output guard must produce a real rebuild
+difference, not an unrelated compiler rejection.
+
+The first historical driver build run completed all seven builds, but its
+measurement stopped on the fetch command before timing. That fetch also asks
+for the unneeded, non-revision-stable Apollo 11 page. The repaired measurement
+retains the existing fetcher's SHA-256 checks, requires all four verified
+ECMAScript/HTML inputs, and reuses the completed driver artifacts from run
+37596011168. Every comparison still runs on one new hosted runner. Profiles
+repeat the shared word script ten times in one driver process at 999 Hz to
+separate edit work from one-time page construction.
