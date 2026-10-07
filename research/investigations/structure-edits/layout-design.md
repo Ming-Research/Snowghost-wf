@@ -692,6 +692,16 @@ some safe large/cancelling pages may still replay. Cases outside the audit
 continue through the reference walker; no claim is made about reassociating
 arbitrary saturation, clearance, relative displacement or percentage layout.
 
+A numeric refusal must force a complete reference stack, not fall through
+to the legacy delta or partial-stack shortcuts. The positive-margin fixture
+at `9dff281` (CI job 112607339534 in run 37563963179) exposed why: expanding
+text clamps the content total at M, and shrinking it cannot recover the
+reference total by subtracting the text delta from that clamped value.
+`boundary_update` now marks a failed old-origin/travel certificate for full
+stacking, as it already did after a failed post-recompute certificate. The
+fixture's fourth edit failed before this repair; the requirement remains
+exact rebuild identity, including when the retained path refuses.
+
 The CI fixture is `incremental-layout/scripts/near-limit-case.html`, driven
 by `near-limit.py DRIVER OUTPUT_DIR`. The script derives live node IDs and
 keeps generated variants, edits and raw logs under the output directory.
