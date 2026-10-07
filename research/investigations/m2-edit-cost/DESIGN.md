@@ -1025,3 +1025,114 @@ assuming the cost belongs to necessary descendant scratch translation.
 Perf plus the caller's source must identify that pass before a further repair
 or an owner decision; low held counts alone cannot attribute it. Remove this
 one-use profile job after collecting its evidence.
+
+
+## Ordinary batch and density result
+
+[37635938558](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37635938558)
+compares 49981d1 with main, prior 0430437, recent 3ec4bb4 and base/twin.
+Sequential medians in us, forward/reverse rounds:
+
+| Page/kind | main | recent 3ec4bb4 | head 49981d1 |
+|---|---:|---:|---:|
+| ecma262 word | 102 / 110 | 116 / 111 | 107 / 104 |
+| ecma262 sentence | 222 / 233 | 967 / 972 | 460 / 502 |
+| ecma262 fontsize | 1704 / 1668 | 12179 / 9514 | 10061 / 10033 |
+| html5 word | 76 / 74 | 78 / 78 | 78 / 80 |
+| html5 sentence | 226 / 224 | 711 / 583 | 417 / 354 |
+| html5 fontsize | 716 / 725 | 3320 / 2656 | 2182 / 2211 |
+
+Parallel main/head medians are ecma262 word 161/172 vs 189/174, sentence
+315/315 vs 563/545, fontsize 1859/2074 vs 9746/9714; html5 word 120/120
+vs 125/125, sentence 348/334 vs 432/397, fontsize 804/797 vs 2502/2380.
+Thus word and HTML sentence acceptance pass; ECMA sentence fails narrowly
+in sequential mode, and font-size still fails in both modes.
+
+The ordinary batch's discriminating observation holds: HTML sentence edits
+35/36 retain 199 boundary entries, 112 blocks and zero fallbacks, while index
+visits fall from 9487 to 1039 in both rounds. Their recent/head times are
+794/495 and 711/417 us in round one, 681/462 and 583/354 in round two.
+The density experiment also meets its prior retention criterion: ECMA
+sentence median improves over 10% in both rounds with no acceptance kind
+regressing over 10% in both rounds. This does not establish overall 2x.
+The ECMA font-size median still includes near-10-ms edits with small replay
+counts; the separate slow-pair profile investigates those before attributing
+them to an inherent dependency or proposing a new contract.
+
+
+## Slow font-size profile result
+
+[37639594393](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37639594393)
+reuses the 49981d1 timing driver on Ubuntu 24.04, AMD EPYC 7763, kernel
+6.17.0-1022-azure. Each isolated font-size pair runs 200 round trips after
+one style setup. Pair 3/4's 400-edit median is 9916 us; pair 19/20's is
+11680 us. Both profiles report zero lost samples. Pair 3 self samples are
+sequence_select 15.55%, nested_event 11.22%, shows_owner 5.26%, sequence_payload
+4.32%, margin_edges 4.17% and split_fragments_with_empty 2.36%. Pair 19 has
+the same pattern (14.20%, 11.39%, 5.11%, 3.65%, 3.92%, 1.91%). Startup is
+included and caller unwinding is incomplete, so these are not additive
+edit-only shares attributed to one stack.
+
+Source inspection ties shows_owner to full split-fragment reconstruction:
+restack_flow can reject fragment reuse after a small replay and invoke
+split_fragments_with_empty for the entire context. That routine sorts every
+split, builds a whole-flow closing bitmap, visits split endpoints through
+virtual sequence lookups and, when empty fragments cannot be retained, scans
+every event. The remaining near-10-ms paths therefore include unneeded
+whole-context fragment work, not merely changed paragraphs or suffix scratch.
+
+Removing the unchanged-top guard alone is unsound. An enclosing split run
+can start before the replay but move with a collapsing ancestor; its top
+and bottom can have different displacements. Negative margins and relative
+positioning also make visual rectangle order differ from flow order. A
+Fragment retains only kind, DOM owner and rectangle; one owner can have
+multiple coincident split runs, so owner/coordinate matching cannot identify
+which occurrence moved. Existing Split topology and output order may permit
+a transient correspondence, but reconstructing it by scanning every split
+and fragment still leaves the unrelated whole-context dependency. A bounded
+repair needs retained run identity/dependencies or owner-relative anchors.
+This is a representation choice, not a conclusion based on implementation
+size. The existing context-relative fragment node and provisional translation
+rule must be reconciled with whichever contract the owner chooses.
+
+## Owner ledger
+
+- Q1 — Open: resolve the observed Whitefoot cursor-task granularity defect.
+  Recommendation: investigate and fix compiler/runtime grain selection with
+  unchanged Snowghost source, rather than serialize independent queries or
+  force a worker count. The reproducer, emitted fork and unchanged recursive
+  budget are recorded above; the remedy and its benefit remain unverified.
+- Q2 — Open: choose the retained split/empty-fragment dependency representation
+  needed to eliminate the remaining whole-context rebuild. Recommendation:
+  stable run/end-point identities and owner-relative anchors, with spanning
+  runs retaining both endpoints; alternative: retain context rectangles and
+  add a maintained dependency/rank index. Either choice must preserve order,
+  negative margins, saturation, empty fragments and structural edit lifetimes.
+  Transient full scans and a fresh full event array are declined as final
+  repairs because they leave the unrelated O(context) work in place.
+
+No design node is changed before these direction-setting choices. The
+current timing criterion remains failed; no claim is made that either
+proposal already meets 2x or that the observed compiler site alone explains
+all remaining font-size cost.
+
+
+## Final local-width query repair
+
+Completion review identified one repair independent of Q2: prepare_local_widths
+resolved every split's virtual Open before write_local_split rejected ranks
+outside the affected range. The caller now applies the same inclusive range
+predicate before block_at_entry. Outside-range writes were already no-ops;
+inside-range behavior and the callee guards are unchanged. This removes
+unrelated weighted-sequence lookups but retains the flat split predicate
+scan. Existing block and font-size oracles exercise this path; the full
+oracles and same-host acceptance workflow run again for this source revision.
+The contribution to measured cost is unknown until that run completes.
+
+Q2 settles the outstanding fragment representation contract already suggested
+by the layout research; it does not newly discover the anchored direction.
+The current design node still specifies context-relative context fragments.
+No claim is made that 2x is impossible using current storage: a linear
+compatibility iterator might improve time while retaining unrelated whole-
+context reconstruction, and would leave the user's locality requirement
+incomplete. The blocking choice is how to remove that dependency correctly.

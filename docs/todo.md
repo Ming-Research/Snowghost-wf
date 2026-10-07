@@ -313,6 +313,23 @@ example apart from the renderer code that exposed it
   byte identity, logarithmic physical visit counts or speed from source alone.
 
 
+- **Split-fragment reconstruction remains whole-context after a small
+  font-size replay.** At 49981d1, ecma262 font-size edits 3/4 replay 12
+  entries but cost about 10 ms. A repeated-pair profile exposes virtual
+  sequence selection, shows_owner and split_fragments_with_empty; source
+  rebuilds every split rectangle when the existing reuse certificate fails.
+  Fragment stores a DOM owner and context rectangle but no unique run or
+  endpoint dependency. Removing the top guard is unsafe for collapsing
+  ancestors and coordinate/flow order differ under negative margins.
+  [Evidence and open Q2](../research/investigations/m2-edit-cost/DESIGN.md#slow-font-size-profile-result).
+  Change: choose stable run/end-point identities with owner-relative anchors,
+  or a retained dependency index for the flat rectangles; a transient full
+  scan does not remove the unrelated context dependency. Validate split and
+  empty fragment order, moved ancestor endpoints, negative margins, relative
+  positioning, saturation, insert/remove lifetimes, all X5 identities and
+  falsifiers, then repeat same-host text/font-size acceptance. Reopen after
+  the owner chooses the representation.
+
 - **M2 scoped reference publication needs complete validation and timing.**
   `renderer/layout/reference.wf` now carries a transient replay range,
   converged suffix displacement and separately updated child through the
