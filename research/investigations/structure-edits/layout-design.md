@@ -692,6 +692,22 @@ some safe large/cancelling pages may still replay. Cases outside the audit
 continue through the reference walker; no claim is made about reassociating
 arbitrary saturation, clearance, relative displacement or percentage layout.
 
+The CI fixture is `incremental-layout/scripts/near-limit-case.html`, driven
+by `near-limit.py DRIVER OUTPUT_DIR`. The script derives live node IDs and
+keeps generated variants, edits and raw logs under the output directory.
+Its admitted variant uses a 4,000,000 px independent block and a -1,000,000 px
+margin, exceeding the old limit while leaving room for both the owning and
+enclosing contexts' exposed baselines. Refusal variants use a 33,554,000 px
+block followed by a -33,552,000 px margin and a positive bottom margin, a
+small fixed-height child exposing a baseline near M, and a context content
+origin near M. Each inserts/removes a block and grows/restores text; all
+edits must equal a full rebuild, structural refusal must report reason 7,
+and text refusals must be counted. The unsafe-admission mutation replaces
+M in the shared certificate with 68719476735 and must produce an actual
+incremental/rebuild difference, not merely a changed path. Assertion probes
+independently remove path/count rows, change mode/reason and zero refusal
+counts, requiring each broken condition to fail.
+
 ### The splice transaction
 
 1. Receive the changed DOM parent, before-sibling or end marker, inserted /
@@ -1156,14 +1172,15 @@ context. Both insertions and removals therefore attempt the splice and take
 the Q86 reconstruction path under public reason 7. None is an incremental
 refusal or dump mismatch.
 
-The bound is the current admission condition for unsaturated ordinary
-transfer arithmetic, including baseline excursions. Crossing its conservative
+At `0fe4965` the fixed bound was the admission condition for unsaturated
+ordinary transfer arithmetic, including baseline excursions. Crossing its conservative
 sum does not demonstrate actual coordinate overflow, nor does this trace
 show that all subsequent checks would pass if it were relaxed. Removing or
 raising it without a replacement exactness argument would weaken a safety
-condition. These 80 required fallbacks are retained under the current
-contract; `docs/todo.md` records the missing arithmetic certificate needed
-before the unchanged E2 zero-fallback criterion can be met. No claim of local
+condition. That revision retained these 80 fallbacks. The
+[origin-aware certificate](#origin-aware-ordinary-arithmetic-certificate)
+replaces that numeric condition; its page runs must independently establish
+the unchanged E2 zero-fallback criterion. No claim of local
 page block edits or step-6 acceptance follows from identity alone.
 
 The repair reuses `visit_child` and the same class reach subject keys for
@@ -1232,7 +1249,9 @@ findings are fixed: expected boundary-assertion exits count as mutation
 detection while unrelated errors remain fatal; stable-slot mapping writes
 disjoint indices; the handler probe extracts complete physical lines; and
 temporary class diagnostics no longer mask the actual refused-edit check.
-The arithmetic fallback limit is explicitly deferred in the maintained TODO.
+That review deferred the arithmetic fallback limit; the later
+[origin-aware certificate](#origin-aware-ordinary-arithmetic-certificate)
+addresses it without changing the earlier audit results.
 No design decision, module interface, Whitefoot pin or submodule changed, and
 no new Whitefoot gap was demonstrated. The task prohibits PR edits, so this
 research record and the completion report carry its review/evidence record.

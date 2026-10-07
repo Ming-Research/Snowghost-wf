@@ -62,7 +62,7 @@ def run(driver, directory, unsafe):
     directory.mkdir(parents=True, exist_ok=True)
     template = (HERE / 'near-limit-case.html').read_text()
     cases = {
-        'admitted': template.replace('33554000px', '12000000px').replace('-33552000px', '-1000000px'),
+        'admitted': template.replace('33554000px', '4000000px').replace('-33552000px', '-1000000px'),
         'signed': template,
         'baseline': template.replace('overflow: hidden; height: 33554000px', 'overflow: visible; height: 16px')
             .replace('<div class="tower"></div>', '<div class="tower"><div style="display:flow-root;overflow:hidden;height:33553000px"></div><p>High baseline.</p></div>')
