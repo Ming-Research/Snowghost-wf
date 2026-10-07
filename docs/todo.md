@@ -79,18 +79,22 @@ example apart from the renderer code that exposed it
   (mbbill/Whitefoot#196). Change: a window created without clearing.
   Reopen when that lands, to move the pin and measure again.
 
-- **A counted loop that writes a fixed-stride window per iteration is not
-  split.** Minimal example: `for (u in 0_u64..n)` takes
-  `&ids^[u * 16_u64 .. u * 16_u64 + 16_u64]` and hands it to a function
-  that writes it; the windows of distinct `u` are disjoint, but `--par`
-  denies the loop as overlapping, so it runs serially
-  (`research/investigations/incremental/experiments/x12/program/x12/x12.wf`,
-  `record_all`). Impact: a per-unit log of recorded reads, the shape 3.3 of
-  the incremental research tree needs, cannot be written in parallel; at
-  ten edges per unit that costs well under 1 percent of the build today.
-  Change: admit a range write whose bounds are an affine function of the
-  loop index with a stride no smaller than its length. Reopen when a stage
-  records its reads per unit.
+- **Reading a written slice's length inside a strided-window loop denies
+  certification.** Minimal example: `for (u in 0_u64..n)` computes
+  `lo = u * 16_u64`, `hi = lo + 16_u64`, guards with `hi <= ids^.len`,
+  and passes `&ids^[lo..hi]` to a writing helper. At Whitefoot
+  `wf-f949e676acfa`, CI denies that loop but permits the same loop when
+  `ids^.len` is captured before it; the upstream runtime-stride helper case
+  is also permitted ([storage probe evidence](../research/investigations/storage-layout/README.md#first-complete-batch-ci-37562468051)).
+  Thus fixed-stride writes themselves are supported. The older
+  `research/investigations/incremental/experiments/x12/program/x12/x12.wf`
+  `record_all` still reads both written slices' lengths inside its loop.
+  Impact: its per-unit recorded-read windows can still lose certification;
+  their historical cost at ten edges per unit was below 1 percent of a build.
+  Change: distinguish immutable descriptor-length reads from element writes
+  in the parallel survey; callers can meanwhile capture the lengths before
+  the loop. Reopen when Whitefoot changes that survey or a stage adopts
+  recorded-read windows. The production experiment is not rewritten here.
 
 - **No host module shares memory between processes.** Whitefoot's host
   modules are a closed list of six (`std::time`, `std::io`, `std::text`,

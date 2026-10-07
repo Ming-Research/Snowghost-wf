@@ -44,7 +44,8 @@ exactly the manifest commit above. Relevant rules: OP-10, REF-1 through REF-4,
 FN-5/FN-6, RANGE-1 through RANGE-5, PAR-2, and STOR-7/STOR-8.
 
 Snowghost's maintained TODO at this base still describes stride-window denial.
-The investigation records its disposition after observing the compiler.
+The entry is qualified using the observed guarded/hoisted comparison below;
+its production experiment remains unchanged.
 
 ## Initial sample (CI 37562135575)
 
@@ -103,3 +104,64 @@ expected rule plus diagnostic detail, and runtime exit/stdout/stderr. Its static
 self-check deliberately substitutes a missing input/ledger, a denied loop, a
 wrong rule, a timeout, an accepted negative, and wrong runtime output. All must
 be detected; no Whitefoot compilation is part of that self-check.
+
+## Settled claims
+
+All fifteen probes have known outcomes in both sequential and `--par` builds in
+[CI 37563028392](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37563028392),
+revision `0e7c36441860219ceae95bc29aa2548d0ed81f83`. Nine programs compile and pass
+literal result checks; six are expected source rejections. The
+[retained transcript](runs/37563028392.txt) carries the exact diagnostic and
+selected ledger lines, compiler/run statuses, and generated growth functions.
+These results concern this Linux x86-64 release and these programs, not throughput
+or a promise that every admitted loop actually overlaps at this small runtime size.
+
+| Claim | Verdict | Evidence and qualification |
+| --- | --- | --- |
+| C1 | Partly | [Native pages](probes/c1-native-pages.wf) grow their directory from capacity 1 to 16 with fixed-capacity four-slot pages. The emitted grow instance copies only `len * sizeof(ptr)` bytes between pointer directories, then frees the old directory; it never dereferences a payload page. Twelve fields receive the expected changes and every cold field remains 99. The flat slot loop at line 35 is denied; `one_page` at line 49 and `by_page` at line 58 are permitted and split. |
+| C2 | Partly | [Fixed stride with in-loop length read](probes/c2-fixed-stride.wf), line 13, is denied. [The otherwise identical hoisted-length version](probes/c2-fixed-stride-hoisted.wf), line 14, is permitted. [The unchanged cited runtime-stride test](probes/c2-runtime-stride-reference.wf), line 19, is permitted. All three run correctly. [Removing the bounds proof](probes/c2-missing-bound-negative.wf) rejects with REF-4, which is separate from parallel eligibility. |
+| C3 | Partly | [Alpha W1](probes/c3-alpha-w1.wf) compiles/runs in its extracted original context. [Beta W1](probes/c3-beta-w1.wf) rejects with OP-2 at line 31. [Alpha W3](probes/c3-alpha-w3.wf) and [beta W3](probes/c3-beta-w3.wf) reject with FORM-3 because `checked` is reserved. The [alpha rename-only control](probes/c3-alpha-w3-renamed.wf) permits both consumers at lines 28/46; the [beta rename-only control](probes/c3-beta-w3-renamed.wf) permits both at 44/64. Both producers establish the fact once per two-pass call; neither consumer re-derives it. The [beta W1 scalar-snapshot control](probes/c3-beta-w1-snapshot.wf) also compiles/runs. W1 has dependent AVL walks, not scatter loops. |
+| C4 | Holds (expected rejection) | [Field inverse](probes/c4-field-inverse-negative.wf), line 7, rejects with `error[RANGE-1]: InvalidRangeClause`, `reason: a range term selects below an element`. |
+| C5 | Holds | [The callback helper](probes/c5-callback-pages.wf) compiles and changes its selected field from 41 to 42, also checking an absent page. [The changing callback](probes/c5-changing-callback-negative.wf), line 9, rejects with `error[FN-6]: PolymorphicRecursion`, `cycle: with_slot -> reenter -> with_slot`. |
+
+### What the results contradict or qualify
+
+- Alpha and beta's original `today.md` W3 validity assessments are false at the
+  supplied pin; so is beta's W1 assessment. The rename/snapshot controls establish
+  the intended behavior without concealing those original failures. Alpha's W1
+  assessment holds in its explicitly stated module context.
+- Alpha W7's `sixteen_per_row` reads the output length in its loop like the denied
+  C2 probe. Its claimed eligibility does not follow for that spelling in this
+  compiler. Both designs correctly identify the available stride rule and the
+  cited upstream positive case; neither supports dismissing the TODO's current
+  denial without the length-read qualification. The TODO now records this exact
+  distinction; its original `record_all` experiment is left unchanged.
+- Beta's native-page nonrelocation and direct-access alternative is confirmed.
+  Alpha's proposed S1 cannot be justified by nonrelocation and constant-depth
+  scalar access alone. This does not implement S1's cross-page range ABI or page
+  adoption, or beta's proposed sparse-cell and encapsulated proof interfaces.
+- Both agents correctly describe the field-inverse restriction and availability
+  of ordinary FN-5 callbacks. FN-6 limits their generalization: the finite callback
+  re-entry tested here is still refused. No result establishes that callbacks
+  remove every production descent duplication or that paging is faster.
+
+### Disposition and reproduction
+
+The maintained P10 TODO is qualified, not closed: the in-loop length-read denial
+is reproducible. The flat quotient/remainder page loop remains a documented proof
+limit, with a certified page-wise alternative. Rejected input programs remain
+untouched alongside separately named positive repairs. No production renderer
+change or new storage design is adopted. No Whitefoot issue was filed remotely;
+no pin or submodule revision moved.
+
+`make compiler` and then `python3 -B research/investigations/storage-layout/run.py`
+are invoked by the temporary workflow on this branch's pushes. The adjacent
+`--self-check` invocation compiles nothing and exercises the driver's failure
+recognition. The final expectation inventory additionally asserts all three
+C1 loop verdicts; it was checked against the retained thirty compiler outcomes.
+
+`w1-provenance.json` identifies every original dependency beside the probes' MIT
+notice. W1's supplied code is unchanged at the front of its file, followed by
+an independent literal-result entry point and original dependency definitions.
+The known rejection expectations document experimentally refuted source claims;
+no test requirement was weakened to call a rejected program valid.
