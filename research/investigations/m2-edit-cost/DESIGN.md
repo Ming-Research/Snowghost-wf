@@ -1358,15 +1358,15 @@ Two TODOs imported by edit-cost are already resolved by layout: retirement of
 atomic/positioned children and reason-10 diagnostic parsing. They are removed
 rather than reintroduced; the corresponding mutations and parser falsifiers
 remain wired. No Whitefoot pin, submodule or public module interface moves.
-Validation results and independent review will be recorded here after CI.
+The validation and independent review below distinguish the original merge
+from its subsequent certificate-evaluation repair.
 
 
 The first integration CI attempt built all four timing drivers successfully
 in run 37652852848, but GitHub failed the workflow without creating its
-measurement job; the failed-job retry API returned HTTP 500. A temporary
-`[timing-reuse]` path runs the unchanged measurement against those four
-artifacts, preserving their revision records. It is removed after the
-measurement completes. Renderer source remains the merge commit's source.
+measurement job; the failed-job retry API returned HTTP 500. Run 37655917502 recovered the unchanged measurement against those four
+artifacts, preserving their revision records. The temporary `[timing-reuse]`
+path is removed. That run measures the merge commit's renderer source.
 
 
 The union mutation run exposed a fixture-reachability change:
@@ -1378,11 +1378,14 @@ it no longer exercises the mutation's in-place translation call. Add a
 wrapping round trip before the held insertion to settle that bridge and
 exercise consecutive reference updates. Keep the mutation and fixture HTML
 unchanged, and require the extended unmutated script in both seq and par.
-The original missed result remains a failed acceptance result until the
-focused rerun detects the same mutation. Eight other jobs never acquired a
-runner; `[falsify-retry]` selects those eight and the repaired fixture, while
-`[falsify]` still selects all 44. This temporary selection is removed after
-successful recovery.
+Recovery run 37657083637 detects the unchanged mutation: required removal
+254 falls back with reason 3 in the mutant, while the unmutated seq/par
+scripts each return 276 `inc same` results and keep that removal at splice 1
+reason 0. Eight other original jobs never acquired a runner; the recovery
+reran those eight as well, completing all 44 distinct detections across the
+two runs. Its temporary `[falsify-retry]` selection is removed; `[falsify]`
+retains the complete union. The certificate repair receives its own full
+rerun rather than inheriting these earlier results.
 
 
 ### Exact fragment certification cost
@@ -1408,3 +1411,61 @@ The falsifier is unchanged full identity/mutation coverage plus a same-host
 comparison of edit-cost, the original merge, and this repair. Reject this
 cost hypothesis if sentence medians remain regressed; do not remove the
 certificate or weaken acceptance to make it pass.
+
+
+### Integration validation and review
+
+The merge commit is [b92cde9da43368d282b5ae3e44af029e65aec14a](https://github.com/Ming-Research/Snowghost-wf/commit/b92cde9da43368d282b5ae3e44af029e65aec14a),
+with layout 48cca69664663be40c1f6a524045bef160ca8981 as first parent and
+edit-cost 27c55096b75341ccff1b21f859736d9e85fa5dda as second parent.
+At that renderer revision:
+
+- [layout-check 37652852831](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37652852831)
+  and [check 37652852830](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37652852830)
+  pass.
+- [oracles 37652852837](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37652852837)
+  passes: native byte comparisons match the reference and seq/par page
+  dumps (ECMA262 19,024,863 bytes; HTML5 12,538,869), all six X5 edit kinds
+  return identical incremental/full results in both modes, and every page
+  block edit reports splice 1 reason 0 (20 ECMA262 and 60 HTML5 per mode).
+  Case and fixture identities also pass.
+- [falsify 37652852858](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37652852858)
+  failed with the missed split-line mutation described above and eight
+  runner-acquisition failures. [Recovery 37657083637](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37657083637)
+  at fixture-only repair 58c1886f353f2d3d0bc767c7c581469ec2a7bafc detects all
+  nine outstanding mutations, completing the 44-member union without any
+  changed expected result or removed mutation.
+
+A separate read-only GPT-6 Astra reviewer examined the complete diff from
+48cca696, changed sections and affected consumers, pipeline/layout design
+nodes and ancestors, and checklist groups A/D/C/T/R/M/V and G1–G3/DC1–DC4.
+It did not rerun passing suites. Its stale block-scope TODO finding is fixed;
+the imported atomic/positioned retirement and reason-10 TODOs already fixed
+by layout are removed. The missed split-line fixture is repaired and its
+recovery independently inspected. The reviewer found no additional semantic
+conflict in the exact certificate-evaluation rewrite, and verified that the
+workflow cleanup preserves all 44 mutations and all identity/path checks.
+Runtime and timing acceptance for each revision are stated separately below.
+
+All compilation and runtime experiments ran in hosted CI. Local checks were
+limited to source inspection, YAML/Python parsing, mutation/path machinery
+and whitespace. No design node, Whitefoot pin, submodule, public interface,
+fixture HTML or expected dump changed during the integration. No new
+Whitefoot gap was established. Q134 remains open; this integration does not
+choose its retained fragment representation.
+
+The five-driver comparison in run 37658778136 rejects the allocation-cost
+hypothesis: ECMA sentence seq is 878/854 us at 7a1fc758 versus edit-cost
+400/380 and its twin 384/390; HTML sentence par is 773/774 versus 325/312
+and 321/331. The original merge on that same host is 793/965 and 775/755,
+respectively. The temporary-array removal does not restore acceptance.
+
+Before attributing the regression or choosing a new dependency contract,
+profile the already-built head and edit-cost drivers on a single hosted
+runner. Repeat the unchanged, round-trip sentence script 300 times for ECMA
+seq and HTML par (6,000 and 18,000 edits). The completed ordinary batches
+bound this diagnostic at seconds of edit work, not an unmeasured long run.
+Compare fragment certification, split-line maintenance and remaining
+reference traversal symbols; if they are not prominent, reject the candidate
+attribution. Startup remains included and sampled shares are not edit-only
+causal percentages. This one-use profile job is removed after collection.
