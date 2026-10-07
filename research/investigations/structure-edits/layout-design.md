@@ -1908,7 +1908,13 @@ changed entry's metadata before the index ancestors that read it. Prefix
 queries, suffix queries and direct sibling motion calculations are
 independent. Publication continues the existing distinct-slot scatter;
 there is no descendant geometry walk. The arithmetic certificate includes
-old and proposed travel and visual excursions before translation.
+old and proposed travel and visual excursions before translation. Relative
+block displacement is charged at its owning block. Positioned, atomic and
+float anchors charge their owner-local normal and visual excursions plus
+height. A constrained or otherwise non-free block additionally charges its
+measured height, since its content transfer alone need not bound its used
+size. Those per-block semantic exclusions and extra charges remain in
+BlockOutput when a changed interior is lifted during later edits.
 
 
 Intrinsic measurement must also preserve retained inputs: `intrinsic_flow`
