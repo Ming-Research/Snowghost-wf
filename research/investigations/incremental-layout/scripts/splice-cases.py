@@ -1,11 +1,11 @@
 """Generate the positioned/flex splice fixtures' edits from driver node IDs.
 
-Run from the repository root:
-    python3 splice-cases.py DRIVER positioned|flex OUTPUT.edits
-    DRIVER edit OUTPUT.edits scripts/KIND-case.html renderer/style/ua.css
-    python3 scripts/inctime.py --check OUTPUT.edits OUTPUT.raw
-Here scripts is research/investigations/incremental-layout/scripts.
-The caller saves the edit command's stdout as OUTPUT.raw. The existing
+Run from the repository root with the CI-built driver and fonts available:
+    s=research/investigations/incremental-layout/scripts
+    python3 "$s/splice-cases.py" build/layout_oracle_seq positioned build/positioned-case.edits
+    build/layout_oracle_seq edit build/positioned-case.edits "$s/positioned-case.html" renderer/style/ua.css > build/positioned-case.raw
+    python3 "$s/inctime.py" --check build/positioned-case.edits build/positioned-case.raw
+Use flex in place of positioned for the flex fixture. The existing
 inctime.py requires every operation to match a full rebuild; unsupported
 semantic cases may use their counted structural fallback.
 

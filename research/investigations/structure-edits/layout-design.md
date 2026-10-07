@@ -1704,7 +1704,8 @@ why the distant `dd` is marked even when the earlier float may no longer
 reach it. It is not evidence that a float actually changes that edit's
 geometry. The stylesheet also has `dt { clear:left }`, and eight edited
 parent sites are list items. The existing blanket marker check rejects
-those independently of whether the marker creates a line.
+those with retained outside markers independently of whether the marker
+creates a line; their individual marker predicates were not inventoried.
 
 The first ecma262 target is in flow context slot 91, element NodeId 21173.
 Its inventory has 20,146 nonordinary block records with maximum barrier 3,
@@ -1741,7 +1742,9 @@ positioning that reads its new dimensions. These are the necessary orders;
 there is no justified descendant-by-descendant translation or sibling order.
 
 The missing premise is a valid transfer through the earlier-float,
-clearance and marker contributors identified above. Accepting `barriers ==
+clearance and barrier-3 contributors identified above. Barrier 3 conflates
+height constraints and marker state; the inventory did not record their
+individual predicates, so their exact division remains unverified. Accepting `barriers ==
 5` cannot establish it, and the requested positioned extension cannot by
 itself remove the first html5 owner's barrier 1.
 

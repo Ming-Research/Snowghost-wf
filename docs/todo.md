@@ -204,8 +204,9 @@ example apart from the renderer code that exposed it
   in CI [37578072578](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37578072578)
   at `4154340` found additional barriers hidden by the maximum reason 5:
   html5's first edited `dd` (NodeId 217487) itself has barrier 1 from the
-  earlier-float flag; its context also has clearance and marker contributors.
-  Ecma262's target flow also contains marker barriers, and two edit sites
+  earlier-float flag; its context also has clearance and barrier-3
+  (constrained or marker) contributors. Ecma262's target flow also contains
+  barrier-3 contributors, and two edit sites
   cross both an `emu-note` flex container and body flex. Impact: the two
   initially identified guards are not sufficient for page acceptance.
   Q129 awaits the owner's ruling on extending the transfer proof to expired
