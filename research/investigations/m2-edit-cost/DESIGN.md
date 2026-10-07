@@ -126,11 +126,18 @@ separate edit work from one-time page construction.
 
 Revision a5114b9 fails edit 11 of the new edit-cost fixture in
 [the step5 job](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37600571690/job/112723644402).
-That edit grows the retained paragraph before the negative-margin clearance
-sibling. The preceding ten edits pass. The unchanged base is being checked on
-the same script to distinguish a new certificate defect from an inherited
-reference-translation defect; the failure is not waived. Diagnostic workflow
-steps retain both dumps and the per-edit counters before returning failure.
+Edits 11 and 12 grow and shrink the retained paragraph before the
+negative-margin clearance sibling. The same correctness-pin base build at
+9e1561ac reproduces both differences in
+[run 37603504775](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37603504775).
+At a5114b9 both edits report `held_entries 7 entries 7 boundary_fallbacks 1
+boundary_reason 9`: the actual-output certificate refuses the case and the
+legacy reference translator then gives the wrong result. The base reports the
+same legacy work with reason 2. On growth, the clear sibling's rebuilt y is
+195 px; incremental translation places it at 225 px and adds 30 px to the
+section and every following section's position. This is an inherited defect,
+not a reason to waive the new fixture. Diagnostic steps retain both dumps and
+per-edit counters before returning failure.
 
 The reference in-place translation checks the changed paragraph and its block
 ancestors, but its old suffix loop translated a later clearance box even when
@@ -138,7 +145,10 @@ negative margins put that box back above an earlier float's bottom. Reuse the
 same old/proposed suffix-motion certificate before this translation as the
 retained boundary path. A refusal re-stacks the affected range with float
 state, because clearance must be recomputed; it does not authorize a constant
-delta for that suffix. The edit-11 dump comparison must establish the repair.
+delta for that suffix. Revision b99567f passes all 20 edit-cost edits, including both formerly failing
+edits, in the same-pin
+[step5 job](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37602550633/job/112730178244).
+That job also passes its inherited fixtures, arithmetic and structural checks.
 
 ## Review refinements
 
@@ -161,3 +171,51 @@ The auxiliary base fixture initially reused the timing compiler artifact.
 Review correctly rejected that compiler-confounded attribution. The corrected
 oracle job builds revision 9e1561ac with the same correctness compiler and
 Ubuntu clang as the head fixture; only the timing workflow uses wf-0b7f5c5b9854.
+
+## Scratch validity and unchanged geometry
+
+`geometry_owned` encodes resolved scratch without altering that scratch. A
+reference or full update therefore leaves both representations consistent.
+Retained origin mutations go through `apply_boundary_move`, splice publication
+or positioned/atomic settlement; their boundary/splice finish sets
+`boundary_dirty`. Table cell content adjustment records `content_dx` and
+`content_dy`. These are the writers that require decoding before reference
+replay. The new stationary path breaks lines and repairs summaries, but changes
+no origin, size, margin, float placement or last baseline; it creates no new
+scratch invalidation condition. Its summary travel may change, and later
+numeric certificates consume that fresh value rather than the old one.
+
+Nonordinary owners may contain an unrelated clearance, clamp or relative
+positioning barrier. With unchanged paragraph height, last baseline and width,
+their geometric inputs do not change. Fresh intrinsic and first-baseline
+summary fields still propagate; `same_transfer` does not stop their repair
+merely because the height delta is zero. This argument is narrower than
+admitting changed geometry through arbitrary barriers: that path requires the
+existing actual-output certificate, otherwise it replays.
+
+## Ancestor cutoff exposed by the first hosted comparison
+
+[Run 37600571595](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37600571595)
+shows that a5114b9 repairs html5 word medians (80/79 us versus main's 75/73),
+but ecma262 remains 78058/78241 us versus 100/102. Every ecma262 word edit
+still reports boundary reason 9. The profile's largest renderer self-costs
+include `reduce_sequence`, `fill_flow` and `prepare_boundary_entry`; the
+unchanged outward child still makes its large ancestors publish everything.
+The original equality check was behind the coordinate and publication bridge.
+
+Move same-output observation ahead of the blanket arithmetic admission. For a
+single marked independent in-flow child, with unchanged parent space and
+content-independent width and no intrinsic demand or other marked payload,
+update that child and compare its border size, margins and baseline. Equality
+removes all parent stacking dependencies; repair its summary without touching
+unrelated entries. Ordinary admitted roots keep their existing path. If child
+outputs differ, retain the old scalar `Before` alongside the already computed
+child, as the paragraph probe does; replay must neither recompute it needlessly
+nor compare the new output with itself. This introduces no retained cache.
+
+A paragraph equality observation likewise precedes the numeric root refusal:
+no translated origin or changed outward baseline means that the full root's
+travel bound is not needed for that observation. Changed outputs still need
+the existing certificate or reference replay. Timing and all identity/mutation
+checks must test this rearrangement; the first run is not acceptance evidence
+for the revised order.
