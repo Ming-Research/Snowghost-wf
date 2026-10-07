@@ -404,3 +404,9 @@ contexts can survive later edits, so first-edit records are the primary
 attribution and later records require comparison with the preceding trace.
 Base/head block scripts must also compare equal before the baseline result is
 called a same-script attribution.
+
+The diagnostic label is compile-time byte data. Pinned FORM-5 and CONST-2
+permit STRING only as a constant value, not a runtime let initializer; the
+injection now declares it as a named array constant, like the ordinary oracle
+labels. This corrects the diagnostic's declaration kind; no runtime string
+feature or compiler gap is claimed.

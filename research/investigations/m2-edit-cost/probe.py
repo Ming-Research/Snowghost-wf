@@ -86,10 +86,9 @@ end = body.index('\nfn ', start + 1)
 counts = body[start:end]
 extra = '''  let diagnostics = pkg::layout::probe_trace(layout: layout);
   let rows = diagnostics.inner.len / 8_u64;
-  let label = "probe ";
   for (row in 0_u64..rows) {
     put_byte(buffer: buffer, value: 10_u8);
-    put_text(buffer: buffer, text: &label[0_u64..6_u64]);
+    put_text(buffer: buffer, text: &probe_label[0_u64..6_u64]);
     for (field in 0_u64..8_u64) {
       let offset = row *sat 8_u64;
       let at = offset +sat field;
@@ -102,4 +101,4 @@ extra = '''  let diagnostics = pkg::layout::probe_trace(layout: layout);
 '''
 assert counts.count('  return unit;') == 1
 counts = counts.replace('  return unit;', extra + '  return unit;')
-oracle.write_text(body[:start] + counts + body[end:])
+oracle.write_text('const probe_label: Array<u8, 6> = \"probe \";\n\n' + body[:start] + counts + body[end:])
