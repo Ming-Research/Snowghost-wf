@@ -319,3 +319,17 @@ cannot contribute a competing strut. A 16-to-24px font change at fixed 40px
 line height can then distinguish baseline from height without intrinsic
 measurement. The old script is superseded because it did not exercise the
 guard it claimed to test, not because the expected identity changed.
+
+## Changed-probe arithmetic repair
+
+The early-probe revision f8bdfdc fails the existing positive near-limit case's
+fourth edit in [step5](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37607708835/job/112747170744).
+Its unchanged-output observation is valid without translating anything, but
+its changed-output handoff skipped the old arithmetic refusal's full-stack
+requirement. In this fixture, shrinking a paragraph after large positive
+margins cannot be implemented by subtracting a height delta from saturated
+intermediates. Keep the original and proposed root travel certificate on the
+changed-probe handoff; failure marks reference replay for full stacking.
+This reuses the existing arithmetic rule, leaving the equality cutoff before
+it. The existing near-limit positive case is the before-failing regression
+case; no expected result or refusal requirement is changed.
