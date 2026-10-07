@@ -376,3 +376,24 @@ reference fit on one line; at 2000px they wrapped separately and hid the
 baseline dependency. Requested dumps retain the geometry evidence. This
 separates the guard observations without changing either expected identity.
 The script generator also counts actual edits rather than S/P setup lines.
+
+## Review and validation record
+
+A separate read-only GPT-6 agent reviewed the complete base 9e1561ac through
+4c0fd567 diff, with targeted follow-ups through the cutoff, arithmetic and
+CI-partition changes. It covered checklist groups A/D/C/T/R/M/V and applicable
+G/DC checks, with no group skipped; it inspected source, Git/GitHub metadata
+and saved evidence, running no builds or green suites. Findings repaired:
+the baseline fixture's wrong compiler, combined rather than independent
+stationary mutations, diagnostic tag precedence over the full mutation tag,
+and the changed-child handoff made unreachable by the cleared dirty flag.
+The reviewer verified the recorded timing tables and all 960 per-pair counter
+comparisons against raw evidence. Cutoff soundness and latest runtime
+acceptance remain the implementer's responsibility, not a review approval.
+
+Revision 9888794 passes the unchanged near-limit case and all step-5 fixtures
+in [job 112750821583](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37608826240/job/112750821583),
+including positive edit 4 that failed before the saturation repair. The
+unpartitioned remainder of this run is superseded by 37609456167 on the same
+renderer source. General identity, final timings and the complete mutation
+matrix are not yet claimed passing.
