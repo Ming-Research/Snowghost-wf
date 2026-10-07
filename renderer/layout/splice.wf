@@ -208,6 +208,13 @@ fn splice_boundary(context: &Context, item: Flow, removing: Bool, visits: &Bound
 
 fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVisits) -> reason: u32 reads(context), reads(styles), writes(visits) {
   doc "Checks step-4's ordinary-context requirements without changing retained marks or geometry.";
+  if context^.kind == ctx_flex {
+    let ready = splice_container_ready(context: context);
+    if ready {
+      return 0_u32;
+    }
+    return 2_u32;
+  }
   if context^.kind != ctx_flow {
     return 2_u32;
   }
@@ -223,9 +230,7 @@ fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVis
   } else {
     return 7_u32;
   }
-  let intrinsic = bor(context^.intrinsic_known, context^.intrinsic_held);
-  let dirty = bor(context^.dirty, context^.restyled);
-  let unavailable = bor(intrinsic, dirty);
+  let unavailable = bor(context^.dirty, context^.restyled);
   if unavailable {
     return 7_u32;
   }
@@ -243,10 +248,6 @@ fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVis
   }
   let total_field = False();
   let output = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
-  if output.ordinary {
-  } else {
-    return 7_u32;
-  }
   if output.through {
     return 7_u32;
   }
@@ -280,6 +281,14 @@ fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u3
     return Err<SpliceInput, u32>(error: 1_u32);
   }
   let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  if context^.kind != ctx_flow {
+    return Err<SpliceInput, u32>(error: 2_u32);
+  }
+  let width_stable = splice_width_stable(context: context, styles: styles);
+  if width_stable {
+  } else {
+    return Err<SpliceInput, u32>(error: 7_u32);
+  }
   let root_style = context^.style;
   let wide_left = cvt::<i32, i64>(frame.content_left);
   let wide_top = cvt::<i32, i64>(frame.content_top);
@@ -386,7 +395,7 @@ fn build_splice(document: &Document, styles: &Styles, atoms: &AtomTable, node: N
 }
 
 fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[u32], parent: NodeId, before: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, references_stable: Bool, fonts: &FontSet, picks: &FontPicks) -> result: Result<u32, LayoutError> reads(document), reads(styles), reads(traversal), reads(atoms), reads(changed), reads(fonts), reads(picks), writes(layout) {
-  doc "Attempts a neutral complete-block seam transaction. Zero means published locally; codes 1 owner/route, 2 container, 3 inline seam, 4 generated references, 5 counters/quotes, 6 retained style frontier, 7 boundary dependency, and 8 storage ceiling mean no retained geometry or routing changed and the caller must use structure_changed. Private construction errors also leave retained state untouched.";
+  doc "Attempts a neutral complete-block seam transaction. Zero means published locally; codes 1 owner/route, 2 container, 3 inline seam, 4 generated references, 5 counters/quotes, 6 retained style frontier, 7 boundary dependency, 8 storage ceiling and 9 float suffix dependency refuse before retained geometry or routing changes. Reason 10 completes a published splice through reference layout after a flex output fails its outer certificate; the caller reconstructs from that complete current state. Private construction errors leave retained state untouched.";
   if references_stable {
   } else {
     return Ok<u32, LayoutError>(value: 4_u32);
@@ -527,7 +536,7 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
       return Ok<u32, LayoutError>(value: reason);
     }
   }
-  let (ready, preview_height, preview_baseline) = splice_path_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: input.owner, output: plan.output, delta: plan.delta, styles: styles, visits: &visits);
+  let (ready, preview_height, preview_baseline, deferred) = splice_path_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: input.owner, output: plan.output, delta: plan.delta, styles: styles, visits: &visits);
   if ready {
   } else {
     return Ok<u32, LayoutError>(value: 7_u32);
@@ -550,7 +559,7 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
   let (private_contexts, added_paragraphs) = count_tree(context: &fresh);
   let added_contexts = private_contexts -sat 1_u64;
   relocate_splice(fresh: &fresh, input: input, y: plan.inserted_y);
-  let (lost_contexts, lost_paragraphs, published_work) = publish_splice_at(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, input: input, fresh: &fresh, item: item, added: added, plan: &plan, removed: removed_item, removing: removing, paths: &layout^.paths, styles: styles, document: document, fonts: fonts, picks: picks, viewport: layout^.viewport);
+  let (lost_contexts, lost_paragraphs, published_work, extra_counts) = publish_splice_at(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, input: input, fresh: &fresh, item: item, added: added, plan: &plan, removed: removed_item, removing: removing, paths: &layout^.paths, styles: styles, document: document, fonts: fonts, picks: picks, viewport: layout^.viewport);
   let removed_count = removed_nodes.inner.len;
   publish_splice_routes(layout: layout, patch: &patch, removed_nodes: &removed_nodes.inner[0_u64..removed_count]);
   let kept_contexts = layout^.contexts -sat lost_contexts;
@@ -561,8 +570,12 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
   let contexts = added_contexts +sat depth;
   let touched = contexts +sat 1_u64;
   let counts = UpdateCounts(prepared: added_paragraphs, work: work, contexts: touched, paragraphs: added_paragraphs, held_entries: 0_u64, entries: added.events);
-  set layout^.pending_structure = counts;
+  let total_counts = add_counts(first: counts, second: extra_counts);
+  set layout^.pending_structure = total_counts;
   set layout^.last_structure = StructureCounts(contexts: added_contexts, paragraphs: added_paragraphs, reused: 0_u64);
+  if published_work.fallbacks > 0_u64 {
+    return Ok<u32, LayoutError>(value: 10_u32);
+  }
   return Ok<u32, LayoutError>(value: 0_u32);
 }
 

@@ -1920,3 +1920,47 @@ fixture holds final width constant while an edit forces an intrinsic query
 and then edits text beside a percentage-margin atomic child. This repair
 preserves the full intrinsic calculation and removes its unintended write;
 its behavioral detection remains a CI obligation.
+
+#### Settling a flex ancestor after publication
+
+The flex boundary cannot predict its final height and baseline from only the
+edited flow's height delta: line membership, free space, natural cross sizes
+and stretch jointly determine them. After publishing the already certified
+local flow splice, recompute the clean flex ancestor with the existing flex
+algorithm in update mode. Invalidate its own intrinsic contribution and
+parent-item cache; each child's retained preparation and interior remain
+subject to the input checks above. Stable child slots and routes are kept,
+and no box-tree construction occurs.
+
+Only this flex context crosses the reference-coordinate bridge. Its child
+contexts retain their owned geometry and are laid out again only when the
+algorithm requests another space or their contents changed. Preparation,
+final-size and stretch passes return per-child work counts in independent
+array slots; the reduction adds those counts, positioned-child work and the
+container's own pass. It must not describe enclosing-flow replay as a local
+splice: outward flow propagation consumes the actual flex output and must
+pass its own transfer certificate. A failed post-flex certificate remains
+an explicit counted refusal; the primary publication path owns recovery.
+A nested flex chain repeats this argument one ancestor at a time.
+
+
+#### Actual flex outputs and explicit post-publication refusal
+
+A flex container's new size is known only after its algorithm has resolved
+new item sizes and any changed interiors. Predicting it from the edited
+item's height alone is unsound for wrapping and stretch. The local owner is
+published first, then the flex container is recomputed, then enclosing flow
+certificates consume its actual outputs. An enclosing flow whose certificate
+passes translates only its direct suffix and ancestor boundary path.
+
+Proposed operational contract Q130: if that actual-output certificate fails,
+finish the affected container by its existing reference layout and report
+structural refusal reason 10. The existing reconstruction caller then starts
+from a complete, self-consistent layout of the current document; neutral
+insertion preserves the exact enclosing walk checkpoint. Reasons 1–9 still
+refuse before publication. This explicit refusal is excluded by the pages'
+zero-fallback gate. It avoids either pretending a whole enclosing flow replay
+is local or deep-copying retained subtrees solely to predict flex outputs.
+Every reference completion is counted; no performance claim includes it.
+The implementation recommendation proceeds within the approved stage-2
+scope, and remains proposed until owner review of the branch.
