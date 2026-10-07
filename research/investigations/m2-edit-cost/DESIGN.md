@@ -1383,3 +1383,28 @@ focused rerun detects the same mutation. Eight other jobs never acquired a
 runner; `[falsify-retry]` selects those eight and the repaired fixture, while
 `[falsify]` still selects all 44. This temporary selection is removed after
 successful recovery.
+
+
+### Exact fragment certification cost
+
+Hosted run 37655917502 measures merge renderer b92cde9 using the four
+successful driver artifacts. It rejects timing acceptance: ECMA sentence
+sequential medians are 782/829 us versus edit-cost 423/371 and its twin
+419/388; HTML sentence parallel medians are 760/768 versus edit-cost
+366/315 and its twin 309/324. The merge's added complete split/fragment
+recertification is a candidate source of this regression, not yet an
+isolated cause. Block medians are much lower: ECMA seq 100/99 us and HTML
+seq 739/741 us; full results will be tabulated at completion.
+
+Can the identical certificate cost less without changing representation,
+trust or scope? Each split offset reads its own line and settled block/child
+scratch, never another split; write independent offsets directly instead of
+allocating/copying an offset array. Evaluate the same complete fragment
+comparisons in a balanced read-only reduction instead of allocating a Bool
+array and reducing it in a second traversal. Both retain their original
+true dependencies and every failed comparison still rejects local fragment
+reuse. No comparison is skipped, and Q134's unrelated reconstruction remains.
+The falsifier is unchanged full identity/mutation coverage plus a same-host
+comparison of edit-cost, the original merge, and this repair. Reject this
+cost hypothesis if sentence medians remain regressed; do not remove the
+certificate or weaken acceptance to make it pass.

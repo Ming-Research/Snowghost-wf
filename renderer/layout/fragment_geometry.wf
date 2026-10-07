@@ -1,4 +1,4 @@
-fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (normal: i32, top: i32, bottom: i32) reads(context), reads(origins) {
+fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (normal: i32, top: i32, bottom: i32) reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.content_dy), reads(origins) {
   doc "Resolves a stable split head from a placement snapshot, preserving the reference visual-top then height saturation order. The context content adjustment is applied once before the extent.";
   match item {
     Open(block: b) => {
@@ -105,46 +105,26 @@ fn placed_context_fragment(context: &Context, origins: &[Origin], at: u64) -> ma
   return Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
 }
 
-fn fragment_certificates(values: &[Bool]) -> valid: Bool reads(values) {
-  doc "Conjoins independent representation checks through a balanced reduction, adding no ordered fragment traversal.";
-  let count = values^.len;
+fn own_split_line(context: &Context, origins: &[Origin], split: &Split) -> result: unit reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.content_dy), reads(origins), writes(split) {
+  doc "Publishes one split's exact line offset from its settled endpoint. Endpoint reads exclude every split, so independent split writes need no temporary offset array.";
+  let opening = split^.opening;
+  let (normal, top, bottom) = fragment_endpoint(context: context, origins: origins, item: opening);
+  let wide_line = cvt::<i32, i64>(split^.line);
+  let wide_normal = cvt::<i32, i64>(normal);
+  set split^.line_offset = wide_line -sat wide_normal;
+  return unit;
+}
+
+fn fragment_certificates(context: &Context, origins: &[Origin], first: u64, end: u64) -> valid: Bool reads(context), reads(origins) {
+  doc "Evaluates every raw-versus-anchor representation check through a balanced read-only reduction after split offsets settle, without allocating a check array. The comparison and its failure result are identical to full reference publication.";
+  let count = end -sat first;
   if count == 0_u64 {
     return True();
   }
   if count == 1_u64 {
-    return values^[0_u64];
-  }
-  let middle = count / 2_u64;
-  let first = fragment_certificates(values: &values^[0_u64..middle]);
-  let last = fragment_certificates(values: &values^[middle..count]);
-  return band(first, last);
-}
-
-fn own_fragment_geometry(context: &Context, origins: &[Origin]) -> result: unit reads(origins), writes(context) {
-  doc "Republishes Split.line offsets after every legacy reference path, then certifies each cached anchor against the actual raw rectangle. A failed representation check leaves raw output authoritative and blocks local structural reuse.";
-  let count = context^.splits.inner.len;
-  let offsets = box_array_filled::<i64>(count: count, value: 0_i64);
-  for (at in 0_u64..count) {
-    if at < context^.splits.inner.len {
-      let split = context^.splits.inner[at];
-      let (normal, top, bottom) = fragment_endpoint(context: context, origins: origins, item: split.opening);
-      let wide_line = cvt::<i32, i64>(split.line);
-      let wide_normal = cvt::<i32, i64>(normal);
-      set offsets.inner[at] = wide_line -sat wide_normal;
-    }
-  }
-  for (at in 0_u64..count) {
-    if at < context^.splits.inner.len {
-      set context^.splits.inner[at].line_offset = offsets.inner[at];
-    }
-  }
-  let fragments = context^.fragments.inner.len;
-  let no = False();
-  let checks = box_array_filled::<Bool>(count: fragments, value: no);
-  for (at in 0_u64..fragments) {
-    if at < context^.fragments.inner.len {
-      let raw = context^.fragments.inner[at];
-      let resolved = anchored_context_fragment(context: context, origins: origins, at: at);
+    if first < context^.fragments.inner.len {
+      let raw = context^.fragments.inner[first];
+      let resolved = anchored_context_fragment(context: context, origins: origins, at: first);
       let raw_x = raw.x +sat context^.content_dx;
       let raw_y = raw.y +sat context^.content_dy;
       let x_same = raw_x == resolved.x;
@@ -154,10 +134,25 @@ fn own_fragment_geometry(context: &Context, origins: &[Origin]) -> result: unit 
       let place_same = band(x_same, y_same);
       let size_same = band(width_same, height_same);
       let same = band(place_same, size_same);
-      set checks.inner[at] = same;
+      return same;
     }
+    return False();
   }
-  let matches = fragment_certificates(values: &checks.inner[0_u64..fragments]);
+  let half = count / 2_u64;
+  let middle = first +sat half;
+  let left = fragment_certificates(context: context, origins: origins, first: first, end: middle);
+  let right = fragment_certificates(context: context, origins: origins, first: middle, end: end);
+  return band(left, right);
+}
+
+fn own_fragment_geometry(context: &Context, origins: &[Origin]) -> result: unit reads(origins), writes(context) {
+  doc "Republishes Split.line offsets after every legacy reference path, then certifies each cached anchor against the actual raw rectangle. A failed representation check leaves raw output authoritative and blocks local structural reuse.";
+  let count = context^.splits.inner.len;
+  for (at in 0_u64..count) {
+    own_split_line(context: context, origins: origins, split: &context^.splits.inner[at]);
+  }
+  let fragments = context^.fragments.inner.len;
+  let matches = fragment_certificates(context: context, origins: origins, first: 0_u64, end: fragments);
   let aligned = context^.fragment_anchors.inner.len == fragments;
   let valid = band(matches, aligned);
   set context^.fragments_valid = valid;
