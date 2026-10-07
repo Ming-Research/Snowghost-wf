@@ -36,7 +36,7 @@ example apart from the renderer code that exposed it
   `f949e676acfa811f96b21afd07f02c06dcd14b51`, RANGE-1 admits integer-array
   elements but no field below an element or enum payload. PAR-2 therefore
   does not certify Snowghost's indirect translation and local-width writes
-  in `translate_after` and `prepare_local_widths`; their sibling writes
+  in `translate_reference_after` and `prepare_local_widths`; their sibling writes
   have no semantic dependency. This is a specification/source inspection
   finding, not a new compiler trial or timing result. The maintained
   `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
