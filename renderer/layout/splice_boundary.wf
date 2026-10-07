@@ -17,6 +17,16 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
       return Err<SplicePlan, u32>(error: 1_u32);
     }
   }
+  if added.floats > 0_u64 {
+    return Err<SplicePlan, u32>(error: 9_u32);
+  }
+  if removing {
+    let own_field = True();
+    let removed_output = boundary_output(sequence: sequence, slot: selected, own: own_field, visits: visits);
+    if removed_output.floats > 0_u64 {
+      return Err<SplicePlan, u32>(error: 9_u32);
+    }
+  }
   if removing {
   } else if sequence^.allocated >= 1073741824_u32 {
     return Err<SplicePlan, u32>(error: 8_u32);
@@ -87,7 +97,7 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let moves = box_array_filled::<SpliceMove>(count: count, value: empty_result);
   for (at in 0_u64..count) {
     let current_rank = after +sat at;
-    let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined);
+    let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined, expected_delta: wide_delta);
     set moves.inner[at] = movement;
   }
   let (movement_visits, movements_supported, moved_output) = splice_moves_total(moves: &moves.inner[0_u64..count]);
@@ -101,7 +111,8 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let motion_prefix = join_output(left: &prefix, right: &placed_added);
   let motion_total = join_output(left: &motion_prefix, right: &moved_output);
   let affected_new = join_output(left: &placed_added, right: &moved_output);
-  let motion_ready = motion_range_ready(context: context, owner: input.owner, prefix: prefix, suffix: suffix, proposed: affected_new, visits: visits);
+  let fixed_reach = stationary_float_reach(context: context, owner: input.owner, prefix: prefix, visits: visits);
+  let motion_ready = motion_range_ready(context: context, owner: input.owner, fixed_reach: fixed_reach, suffix: suffix, proposed: affected_new);
   if motion_ready {
   } else {
     return Err<SplicePlan, u32>(error: 9_u32);
@@ -109,7 +120,7 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   set output.natural_floor = motion_total.natural_floor;
   set output.float_reach = motion_total.float_reach;
   set output.motion_known = motion_total.motion_known;
-  let plan = SplicePlan(output: output, added: placed_added, delta: delta, moves: move moves, inserted_y: inserted_y);
+  let plan = SplicePlan(output: output, added: placed_added, delta: delta, fixed_reach: fixed_reach, moves: move moves, inserted_y: inserted_y);
   return Ok<SplicePlan, u32>(value: move plan);
 }
 
@@ -179,7 +190,7 @@ fn splice_block_path(context: &Context, styles: &Styles, owner: u32, delta: i32,
   return False();
 }
 
-fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, output: SequenceOutput, delta: i32, styles: &Styles, visits: &BoundaryVisits) -> (ready: Bool, height: i32, baseline: i32, deferred: Bool) reads(context), reads(steps), reads(styles), writes(visits) {
+fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, output: SequenceOutput, delta: i32, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> (ready: Bool, height: i32, baseline: i32, deferred: Bool) reads(context), reads(steps), reads(styles), writes(visits) {
   doc "Previews the actual proposed root at each enclosing context before publication. Child results depend only on the changed descendant; each parent's size clamp is evaluated in the reference order.";
   let no = False();
   let reason = splice_context_ready(context: context, styles: styles, visits: visits);
@@ -189,6 +200,7 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
   let proposed = output;
   let change = delta;
   let parent = owner;
+  let stationary = fixed_reach;
   if depth < steps^.len {
     let route = steps^[depth];
     let child = cvt::<u32, u64>(route.child);
@@ -203,7 +215,7 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
       return no, 0_i32, 0_i32, no;
     }
     let next = depth +sat 1_u64;
-    let (below, child_height, child_baseline, child_deferred) = splice_path_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, output: output, delta: delta, styles: styles, visits: visits);
+    let (below, child_height, child_baseline, child_deferred) = splice_path_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, output: output, delta: delta, fixed_reach: fixed_reach, styles: styles, visits: visits);
     if below {
     } else {
       return no, 0_i32, 0_i32, no;
@@ -220,8 +232,10 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
     }
     set parent = context^.children.inner[child].block;
     set change = child_height -sat context^.children.inner[child].height;
+    let own_reach = owner_stationary_reach(context: context, owner: parent, slot: slot, visits: visits);
+    set stationary = own_reach;
     let wide_change = cvt::<i32, i64>(change);
-    let immediate = owner_motion_ready(context: context, owner: parent, slot: slot, delta: wide_change, visits: visits);
+    let immediate = owner_motion_ready(context: context, owner: parent, slot: slot, delta: wide_change, fixed_reach: stationary, visits: visits);
     if immediate {
     } else {
       return no, 0_i32, 0_i32, no;
@@ -233,7 +247,7 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
     let root_output = preview_owner(context: context, owner: owner, inside: output, visits: visits);
     set proposed = root_output;
   }
-  let motion = outward_motion_ready(context: context, owner: parent, delta: change, styles: styles, visits: visits);
+  let motion = outward_motion_ready(context: context, owner: parent, delta: change, fixed_reach: stationary, styles: styles, visits: visits);
   if motion {
   } else {
     return no, 0_i32, 0_i32, no;
@@ -323,7 +337,8 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
         let owner = context^.children.inner[child].block;
         let slot = context^.children.inner[child].entry_slot;
         let checked_visits = no_boundary_visits();
-        let ready = actual_flow_ready(context: context, child: child, before: before, styles: styles, visits: &checked_visits);
+        let fixed_reach = owner_stationary_reach(context: context, owner: owner, slot: slot, visits: &checked_visits);
+        let ready = actual_flow_ready(context: context, child: child, before: before, fixed_reach: fixed_reach, styles: styles, visits: &checked_visits);
         let checked_work = add_boundary_visits(first: context^.boundary_visits, second: checked_visits);
         set context^.boundary_visits = checked_work;
         let local_counts = empty_counts;
@@ -402,8 +417,8 @@ struct SpliceMove {
   supported: Bool;
 }
 
-fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput) -> made: SpliceMove reads(sequence) {
-  doc "Computes one direct sibling's new entering edge independently from cached prefixes. Duplicated logarithmic metadata reads avoid ordering sibling computations.";
+fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput, expected_delta: i64) -> made: SpliceMove reads(sequence) {
+  doc "Computes one direct sibling's new entering edge independently from cached prefixes. Every placed flow or float entry must share the final delta, preserving moved exclusions; positioned and lineless entries do not constrain that equality. Duplicated logarithmic metadata reads avoid ordering sibling computations.";
   let visits = no_boundary_visits();
   let slot = direct_slot(sequence: sequence, rank: rank, visits: &visits);
   let item = splice_payload(sequence: sequence, slot: slot, visits: &visits);
@@ -426,7 +441,7 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
         give False();
       }
       Float(..) => {
-        give False();
+        give True();
       }
       Out(..) => {
         give True();
@@ -440,6 +455,31 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
   let old_y = splice_edge(prefix: previous, own: own);
   let new_y = splice_edge(prefix: preceding, own: own);
   let move_y = new_y -sat old_y;
+  let uniform_required = match item {
+    Out(..) => {
+      give False();
+    }
+    Text(..) => {
+      let solid = bnot(own.through);
+      give solid;
+    }
+    Open(..) => {
+      give True();
+    }
+    Child(..) => {
+      give True();
+    }
+    Float(..) => {
+      give True();
+    }
+    Close(..) => {
+      give False();
+    }
+  }
+  if uniform_required {
+    let uniform = move_y == expected_delta;
+    set supported = band(supported, uniform);
+  }
   let translation = BoundaryMove(item: item, delta: move_y);
   let output = shift_motion(output: own, delta: move_y);
   return SpliceMove(translation: translation, slot: slot, output: output, visits: visits, supported: supported);

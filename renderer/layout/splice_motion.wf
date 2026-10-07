@@ -13,7 +13,7 @@ fn shift_motion(output: SequenceOutput, delta: i64) -> made: SequenceOutput pure
 }
 
 fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: SequenceOutput reads(context), reads(styles) {
-  doc "Reads one reference event's natural position and float margin bottom into its owner's normal coordinate space. Full publication calls this only after the stacking pass has refreshed naturals.";
+  doc "Reads one reference event's natural position and float margin endpoints into its owner's normal coordinate space. Float arithmetic charges offsets from the natural cursor, invariant under uniform translation. Full publication calls this only after the stacking pass has refreshed naturals.";
   let output = empty_output();
   let owner = no_index;
   let rank = no_index;
@@ -53,8 +53,6 @@ fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: Sequenc
         set owner = context^.children.inner[at].block;
         set rank = context^.children.inner[at].flow_at;
         set floating = f;
-        let travel = child_motion_travel(context: context, at: at);
-        set output.travel = travel;
       }
     }
     Out(context: positioned_child) => {
@@ -73,11 +71,15 @@ fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: Sequenc
   let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
   let top = cvt::<i32, i64>(frame.content_top);
   let at_rank = cvt::<u32, u64>(rank);
+  let absolute_natural = 0_i64;
+  let natural_known = False();
   if at_rank < context^.naturals.inner.len {
     let natural = context^.naturals.inner[at_rank];
     if natural != 2147483647_i32 {
       let wide = cvt::<i32, i64>(natural);
       let absolute = wide +sat top;
+      set absolute_natural = absolute;
+      set natural_known = True();
       set output.natural_floor = absolute -sat origin.y;
     }
   } else {
@@ -87,11 +89,27 @@ fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: Sequenc
   if float_at < context^.children.inner.len {
     let child = &context^.children.inner[float_at];
     let normal = cvt::<i32, i64>(child^.normal_y);
+    let visual = cvt::<i32, i64>(child^.y);
     let height = cvt::<i32, i64>(child^.height);
-    let margin = cvt::<i32, i64>(child^.margin_bottom);
+    let margin_top = cvt::<i32, i64>(child^.margin_top);
+    let margin_bottom = cvt::<i32, i64>(child^.margin_bottom);
+    let first = normal -sat margin_top;
     let bottom = normal +sat height;
-    let outer = bottom +sat margin;
-    set output.float_reach = outer -sat origin.y;
+    let outer = bottom +sat margin_bottom;
+    let reach = imax(first, outer);
+    set output.float_reach = reach -sat origin.y;
+    let offset = normal -sat absolute_natural;
+    let relative = visual -sat normal;
+    let offset_travel = travel_absolute(value: offset);
+    let relative_travel = travel_absolute(value: relative);
+    let height_travel = travel_absolute(value: height);
+    let top_travel = travel_absolute(value: margin_top);
+    let bottom_travel = travel_absolute(value: margin_bottom);
+    let positions = offset_travel +sat relative_travel;
+    let box_travel = positions +sat height_travel;
+    let margins = top_travel +sat bottom_travel;
+    set output.travel = box_travel +sat margins;
+    set output.motion_known = natural_known;
   }
   return output;
 }
@@ -196,57 +214,63 @@ fn splice_payload_y(context: &Context, item: Flow) -> y: i64 reads(context) {
   return 0_i64;
 }
 
-fn motion_range_ready(context: &Context, owner: u32, prefix: SequenceOutput, suffix: SequenceOutput, proposed: SequenceOutput, visits: &BoundaryVisits) -> ready: Bool reads(context), writes(visits) {
-  doc "Certifies unchanged earlier floats against both suffix minima. A suffix float needs a separate moving-exclusion argument and is refused by this certificate.";
-  if suffix.floats > 0_u64 {
-    return False();
-  }
+fn stationary_float_reach(context: &Context, owner: u32, prefix: SequenceOutput, visits: &BoundaryVisits) -> reach: i64 reads(context), writes(visits) {
+  doc "Combines the seam's direct prefix with prefixes before its owner ancestors. Moved float exports inside a changed ancestor never enter this stationary reach.";
   let inherited = inherited_float_reach(context: context, owner: owner, visits: visits);
   let origin = block_origin(context: context, block: owner);
   let lifted_prefix = shift_motion(output: prefix, delta: origin.y);
   let reach = imax(inherited, lifted_prefix.float_reach);
-  if reach == -9223372036854775807_i64 {
-    return True();
-  }
+  return reach;
+}
+
+fn owner_stationary_reach(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> reach: i64 reads(context), writes(visits) {
+  doc "Computes stationary reach before an independent changed Child entry; that child exports no floats into this flow context.";
+  let prefix = owner_prefix(context: context, owner: owner, slot: slot, visits: visits);
+  let reach = stationary_float_reach(context: context, owner: owner, prefix: prefix, visits: visits);
+  return reach;
+}
+
+fn motion_range_ready(context: &Context, owner: u32, fixed_reach: i64, suffix: SequenceOutput, proposed: SequenceOutput) -> ready: Bool reads(context) {
+  doc "Certifies both suffix minima against the seam's stationary float reach. Existing suffix floats and flow share one certified translation, preserving their relative exclusion interactions.";
   let known = band(suffix.motion_known, proposed.motion_known);
   if known {
   } else {
     return False();
   }
+  let origin = block_origin(context: context, block: owner);
   let old = shift_motion(output: suffix, delta: origin.y);
   let fresh = shift_motion(output: proposed, delta: origin.y);
   let floor = imin(old.natural_floor, fresh.natural_floor);
-  let ready = motion_above(reach: reach, floor: floor, delta: 0_i64);
+  let ready = motion_above(reach: fixed_reach, floor: floor, delta: 0_i64);
   return ready;
 }
 
-fn sequence_motion_ready(context: &Context, sequence: &EntrySequence, owner: u32, slot: u32, delta: i64, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(sequence), writes(visits) {
-  doc "Checks the suffix after a changed entry, including that entry's unchanged float exports in the prefix. A deeper certificate established that none of those floats moved.";
+fn sequence_motion_ready(context: &Context, sequence: &EntrySequence, owner: u32, slot: u32, delta: i64, fixed_reach: i64, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(sequence), writes(visits) {
+  doc "Checks the suffix after a changed entry against the original seam's stationary reach, excluding the changed entry's moved float exports.";
   let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
   let after = rank +sat 1_u64;
   let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
-  let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: after, visits: visits);
   let suffix = range_output(sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
   let proposed = shift_motion(output: suffix, delta: delta);
-  let ready = motion_range_ready(context: context, owner: owner, prefix: prefix, suffix: suffix, proposed: proposed, visits: visits);
+  let ready = motion_range_ready(context: context, owner: owner, fixed_reach: fixed_reach, suffix: suffix, proposed: proposed);
   return ready;
 }
 
-fn owner_motion_ready(context: &Context, owner: u32, slot: u32, delta: i64, visits: &BoundaryVisits) -> ready: Bool reads(context), writes(visits) {
+fn owner_motion_ready(context: &Context, owner: u32, slot: u32, delta: i64, fixed_reach: i64, visits: &BoundaryVisits) -> ready: Bool reads(context), writes(visits) {
   doc "Routes one owner-local suffix certificate without materializing its entries.";
   if owner == no_index {
-    let ready = sequence_motion_ready(context: context, sequence: &context^.entries, owner: owner, slot: slot, delta: delta, visits: visits);
+    let ready = sequence_motion_ready(context: context, sequence: &context^.entries, owner: owner, slot: slot, delta: delta, fixed_reach: fixed_reach, visits: visits);
     return ready;
   }
   let at = cvt::<u32, u64>(owner);
   if at < context^.blocks.inner.len {
-    let ready = sequence_motion_ready(context: context, sequence: &context^.blocks.inner[at].entries, owner: owner, slot: slot, delta: delta, visits: visits);
+    let ready = sequence_motion_ready(context: context, sequence: &context^.blocks.inner[at].entries, owner: owner, slot: slot, delta: delta, fixed_reach: fixed_reach, visits: visits);
     return ready;
   }
   return False();
 }
 
-fn outward_motion_ready(context: &Context, owner: u32, delta: i32, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(styles), writes(visits) {
+fn outward_motion_ready(context: &Context, owner: u32, delta: i32, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(styles), writes(visits) {
   doc "Checks each direct suffix outside the changed owner and the context's float-containing flow end. Only the block ancestor chain is ordered.";
   let cursor = owner;
   let change = cvt::<i32, i64>(delta);
@@ -269,7 +293,7 @@ fn outward_motion_ready(context: &Context, owner: u32, delta: i32, styles: &Styl
     }
     let parent = context^.blocks.inner[at].parent;
     let slot = context^.blocks.inner[at].entry_slot;
-    let ready = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, visits: visits);
+    let ready = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, fixed_reach: fixed_reach, visits: visits);
     if ready {
     } else {
       return False();
@@ -322,7 +346,7 @@ fn splice_width_stable(context: &Context, styles: &Styles) -> ready: Bool reads(
   return fills;
 }
 
-fn actual_flow_ready(context: &Context, child: u64, before: Before, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(styles), writes(visits) {
+fn actual_flow_ready(context: &Context, child: u64, before: Before, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(styles), writes(visits) {
   doc "Checks local outward transfer against a child's actual recomputed output, including unchanged margin struts, float clearance and the old/new arithmetic budget.";
   if child < context^.children.inner.len {
   } else {
@@ -363,12 +387,12 @@ fn actual_flow_ready(context: &Context, child: u64, before: Before, styles: &Sty
     return False();
   }
   let change = cvt::<i32, i64>(delta);
-  let immediate = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, visits: visits);
+  let immediate = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, fixed_reach: fixed_reach, visits: visits);
   if immediate {
   } else {
     return False();
   }
-  let motion = outward_motion_ready(context: context, owner: parent, delta: delta, styles: styles, visits: visits);
+  let motion = outward_motion_ready(context: context, owner: parent, delta: delta, fixed_reach: fixed_reach, styles: styles, visits: visits);
   if motion {
   } else {
     return False();

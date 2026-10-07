@@ -2061,3 +2061,108 @@ use the local path, so a fallback cannot make this detection claim.
 `::before` into an isolated context whose existing paragraphs suppress that
 pseudo. Its two structural operations also require the local path, testing
 publication of the first `has_out` state.
+
+#### Uniform later-float translation
+
+The successful constituent inventory at `5738c2d` in CI
+[37597267424](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37597267424)
+finds a later float in html5's outward body suffix. The earlier certificate
+refuses it even though the old suffix minimum lies below neither earlier
+float. The comparison is a local splice against the unchanged full walker;
+any changed exclusion interaction or later negative-margin reentry rejects
+the proposed extension.
+
+Partition the context's float state at the structural seam. Floats in the
+seam prefix and prefixes of its owner ancestors are stationary. Floats in
+the affected suffixes translate by the same delta as the corresponding
+flow. Compute the stationary reach once from those prefixes, excluding the
+changed ancestor entry itself; passing its aggregate reach upward would
+mistakenly classify its already moved later floats as stationary. Require
+all direct in-flow suffix movements in the edited owner to share the final
+delta. Every outward suffix already receives that same delta.
+
+Certify both old and new suffix natural minima against the stationary reach,
+including inserted content and all negative margins. The reach includes
+both each float's margin bottom and margin top: the latter also bounds the
+reference float-placement floor when negative margins invert an exclusion.
+Stationary floats can then influence neither clearance, line width nor the
+placement floor in the moved region. Interactions among moved floats and
+moved flow preserve all relative coordinates and unchanged widths, so the
+reference exclusion queries and placements produce exactly their old result
+plus delta. The existing conservative root flow-end check still requires
+old and new flow ends to lie beyond every old float reach; cases failing it
+keep a counted refusal. This avoids claiming a new root-height clamp rule.
+
+A Float entry contributes no cursor or margin change; it retains its float
+exports and natural-position bound. Its anchor moves once, directly or by
+its containing block. Arithmetic charges its normal offset from the
+reference natural position, visual displacement, height and both vertical
+margins. This offset is invariant under the certified common translation;
+the flow certificate bounds the natural cursor separately. Independent
+suffix movements need no ordering. The owner-chain certificates and the
+existing shared AVL repairs keep their previously stated dependencies and
+scatter limitation. Falsifiers omit a moved float anchor and ignore the
+stationary suffix minimum; negative-margin fixtures must detect the latter.
+
+The edited block itself must neither introduce nor remove float exports.
+New or deleted exclusions change interactions rather than translating existing
+ones, so a positive float count in the inserted or removed transfer retains
+reason 9 until a separate argument covers it. The `transfer-later-float`
+fixture keeps an earlier expired float stationary, then moves a later float
+with opposing vertical margins and a following negatively margined clearance
+block. Its insertion and removal must both take the local path and equal the
+reference layout; omitting the direct float anchor movement must differ.
+
+
+#### Q129 constituent inventory at 5738c2d
+
+The temporary diagnostic driver at
+`5738c2df6a9071555de2fad184b5b5893eaffd86` completed its first-edit inventory
+in hosted CI [37597267424](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37597267424).
+The `step5-diagnostics` artifact owns the evidence: `ecma262.semantic.raw`,
+`html5.semantic.raw`, `inventory.semantic.legend`, `refusals.semantic.map`
+and `x5/{ecma262,html5}.nodes`. Semantic records name their context, payload
+slot, style NodeId and individual predicate; a maximum inherited barrier is
+not counted as an independent constraint. Signed values below are decoded
+layout units, not pixels.
+
+| Inventoried owner context | Blocks | Own outside markers | Markers with first and last line handles | Own specified/minimum/maximum-height predicates |
+| --- | ---: | ---: | ---: | ---: |
+| ecma262 context 91, element 21173 | 33,032 | 15,577 | 15,577 | 0 / 0 / 0 |
+| html5 context 1, element 2 | 27,987 | 4,235 | 4,235 | 0 / 0 / 0 |
+
+The corresponding ancestor contexts contain no additional block payloads.
+Of ecma262's 20,146 maximum-barrier-3 blocks, 15,485 have their own marker
+and 4,661 inherit the barrier; another 92 own markers are masked by barrier
+5. Of html5's 5,088 maximum-barrier-3 blocks, 4,168 have their own marker
+and 920 inherit it; another 67 own markers are masked by barrier 5. These
+observations resolve the constraint-versus-marker question for the retained
+contexts inventoried, not for every nested context or future edit. The
+unchanged first edit on each page matched its full rebuild.
+
+The source-site diagnostic reports ecma262 refusal 1015 at
+`splice.wf:243`, the `context.splits` guard in `splice_context_ready`.
+Its selected owner is block 30832, list-item NodeId 390174, in context 91.
+This run did not emit split contents or context fragments; their count,
+open/close ranks and geometric relation to the edit remain unverified.
+A follow-up inventory records those fields before any proposed admission.
+
+Html5 reports refusal 1056 at `splice_boundary.wf:239`, the false result of
+`outward_motion_ready`. Its owner chain is dd NodeId 217487 (block 25203),
+dl NodeId 217457 (25196), div NodeId 208450 (23942), then body NodeId 47
+(0). In body's direct suffix after that div, sibling div NodeId 264809
+(block 26493) exports the later float img NodeId 264840 (child 1910,
+flow rank 98475, margin bottom 68,752,020). The stationary earlier floats
+are NodeId 51 (rank 4, bottom 7,488) and NodeId 199934 (rank 84007, bottom
+58,990,350). The first edited seam before NodeId 217489 is rank 93746;
+its old natural position and the minimum of all later retained naturals are
+both 64,361,442. Neither earlier float reaches that old suffix, while the
+context flow end 73,738,639 lies beyond all three old float bottoms.
+
+The source at this revision refuses any suffix exporting a float, so that
+body suffix necessarily violates its certificate if reached. The Boolean
+trace does not distinguish an earlier unknown-motion rejection inside
+`outward_motion_ready`; the observations establish the later-float dependency
+and the old cutoff facts, not the complete proposed-layout certificate.
+Uniform later-float movement remains subject to the separate argument and
+falsifiers above. No expected result was weakened to obtain this inventory.

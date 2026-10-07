@@ -213,9 +213,19 @@ example apart from the renderer code that exposed it
   earlier floats, suffix natural-position minima and lined markers. A
   seam-only float-expiry test is unsound with later negative margins; retaining
   the existing counted reference path leaves the page gate blocked. The
-  positioned/flex fixtures are wired for identity; splice implementation and
-  the four requested mutation detections remain pending. Complete this work
-  before E2 or step-6 acceptance; require every unchanged page-script prefix
+  positioned and flex implementations now retain anchor dependencies and
+  pre-stretch measurements; the transfer extension also covers uniformly moved
+  later floats against stationary-prefix reach. In CI
+  [37597267424](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37597267424)
+  at `5738c2d`, all 72 positioned and 152 flex fixture edits matched rebuilds;
+  the fixture gate failed on the floated flex owner's refusal-code precedence,
+  repaired in the subsequent extension. The diagnostic first page edits still
+  refused: ecma262 at the split-inline context guard, html5 at the later-float
+  suffix guard. The constituent inventory found lined markers but no specified,
+  minimum or maximum height constraints in either edited context. Remaining:
+  validate later-float translation, argue and implement the required split-inline
+  dependencies, and run all mutation and final acceptance gates. Complete this
+  work before E2 or step-6 acceptance; require every unchanged page-script prefix
   to match a fresh build in seq/par and every block edit to report
   `splice 1 reason 0`. The zero-fallback assertion remains enabled.
 

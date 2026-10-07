@@ -50,9 +50,10 @@ its full rebuild; later text edits verify retained route correctness. The
 fallbacks and the intrinsic-position and first-anchor cases' required successful splices,
 using the generated commands' operation numbers. --check-paths
 checks each required row exactly once; inctime.py separately validates the
-complete protocol and identity. Transfer fixtures have an empty sidecar.
+complete protocol and identity. The transfer sidecar requires the later-float
+case to splice successfully.
 
-The transfer fixture isolates eight cases behind separate flow roots:
+The transfer fixture isolates nine cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, an owner at
 200px whose first line puts the seam at 220px, and a later -170px margin
 before clear:left. The later natural position is 70px before insertion and
@@ -67,7 +68,11 @@ specified/minimum/maximum height constraints in later siblings, whose
 interiors stay unchanged while their anchors move. transfer-relative-sibling
 moves a later sibling with a nonzero visual offset. These seven cases are
 candidates for certified translation; the governing argument owns their
-final splice/fallback classification. Identity is required for all eight.
+final splice/fallback classification. transfer-later-float moves a later
+float with nonzero vertical margins and a following clearing block together,
+after the earlier float has expired; both structural edits require a local
+splice. Omitting only the later float's direct anchor movement must change
+the retained dump. Identity is required for all nine.
 
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
@@ -88,7 +93,8 @@ CASES = {
     'transfer': ('transfer-clear-reentry', 'transfer-clear-expired',
                  'transfer-float-expired', 'transfer-marker-lined',
                  'transfer-fixed-sibling', 'transfer-minimum-sibling',
-                 'transfer-maximum-sibling', 'transfer-relative-sibling'),
+                 'transfer-maximum-sibling', 'transfer-relative-sibling',
+                 'transfer-later-float'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
@@ -104,6 +110,7 @@ EXPECTED_PATHS = {
     'flex-positioned-owner': (0, 2),
     'flex-intrinsic-position': (1, 0),
     'positioned-first-anchor': (1, 0),
+    'transfer-later-float': (1, 0),
 }
 
 

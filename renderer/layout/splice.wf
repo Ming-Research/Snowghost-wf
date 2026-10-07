@@ -31,10 +31,11 @@ struct SpliceInput {
 }
 
 struct SplicePlan {
-  doc "A validated owner replacement, private direct-origin writes, and its projected size change. Publication consumes this plan once.";
+  doc "A validated owner replacement, private direct-origin writes, its projected size change and the stationary float reach at the original seam. Publication consumes this plan once.";
   output: SequenceOutput;
   added: SequenceOutput;
   delta: i32;
+  fixed_reach: i64;
   moves: Box<Array<SpliceMove>>;
   inserted_y: i64;
 }
@@ -136,7 +137,7 @@ fn splice_handle(context: &Context, item: Flow, visits: &BoundaryVisits) -> made
 }
 
 fn splice_boundary(context: &Context, item: Flow, removing: Bool, visits: &BoundaryVisits) -> reason: u32 reads(context), writes(visits) {
-  doc "Accepts complete block entries and transparent lineless whitespace, refusing mixed inline boundaries and non-neutral removals.";
+  doc "Accepts complete block entries, retained float boundaries and transparent lineless whitespace, refusing mixed inline boundaries and non-neutral removals. Float movement is separately certified against stationary reach.";
   set visits^.entries = visits^.entries +sat 1_u64;
   match item {
     Open(block: b) => {
@@ -199,6 +200,11 @@ fn splice_boundary(context: &Context, item: Flow, removing: Bool, visits: &Bound
     Close(..) => {
     }
     Float(..) => {
+      if removing {
+        return 9_u32;
+      } else {
+        return 0_u32;
+      }
     }
     Out(..) => {
     }
@@ -266,7 +272,28 @@ fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVis
 }
 
 fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, before: Flow, removed: Flow, ending: Bool, removing: Bool, styles: &Styles, visits: &BoundaryVisits) -> result: Result<SpliceInput, u32> reads(context), reads(steps), reads(styles), writes(visits) {
-  doc "One checked descent resolves all owner inputs and the two stable seam handles before private construction.";
+  doc "One checked descent resolves all owner inputs and the two stable seam handles before private construction. A nonterminal route's identity and supported live entry class precede its context preflight: an atomic, floated or positioned route is reason 2 even when its otherwise empty parent has a Through transfer. Every supported parent and the target still pass the full context preflight; this precedence admits no additional cases.";
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+    } else {
+      return Err<SpliceInput, u32>(error: 1_u32);
+    }
+    if context^.slot != route.parent {
+      return Err<SpliceInput, u32>(error: 1_u32);
+    }
+    if context^.children.inner[child].slot != route.slot {
+      return Err<SpliceInput, u32>(error: 1_u32);
+    }
+    if context^.kind == ctx_flow {
+      let in_flow = splice_child_entry(context: context, child: child, visits: visits);
+      if in_flow {
+      } else {
+        return Err<SpliceInput, u32>(error: 2_u32);
+      }
+    }
+  }
   let ready = splice_context_ready(context: context, styles: styles, visits: visits);
   if ready != 0_u32 {
     return Err<SpliceInput, u32>(error: ready);
@@ -277,13 +304,6 @@ fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u3
     if child < context^.children.inner.len {
       if context^.slot == route.parent {
         if context^.children.inner[child].slot == route.slot {
-          if context^.kind == ctx_flow {
-            let in_flow = splice_child_entry(context: context, child: child, visits: visits);
-            if in_flow {
-            } else {
-              return Err<SpliceInput, u32>(error: 2_u32);
-            }
-          }
           let next = depth +sat 1_u64;
           let found = splice_inputs(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, before: before, removed: removed, ending: ending, removing: removing, styles: styles, visits: visits);
           return found;
@@ -544,7 +564,7 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
       return Ok<u32, LayoutError>(value: reason);
     }
   }
-  let (ready, preview_height, preview_baseline, deferred) = splice_path_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: input.owner, output: plan.output, delta: plan.delta, styles: styles, visits: &visits);
+  let (ready, preview_height, preview_baseline, deferred) = splice_path_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: input.owner, output: plan.output, delta: plan.delta, fixed_reach: plan.fixed_reach, styles: styles, visits: &visits);
   if ready {
   } else {
     return Ok<u32, LayoutError>(value: 7_u32);
