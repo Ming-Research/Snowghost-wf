@@ -1881,14 +1881,14 @@ without imposing sibling order. A translated direct entry shifts its two
 bounds by the same delta, repairs the index, and leaves descendant-local
 bounds unchanged. Empty minima/maxima keep explicit sentinel values.
 
-For this first certificate, a affected suffix containing floats is refused.
+For this first certificate, an affected suffix containing floats is refused.
 All preceding floats therefore remain fixed. Before publication, accumulate
 the preceding float maximum across the owner's ancestors, and require it
 not to exceed the affected suffix minimum in either the retained or the
 proposed position. Apply this at each outward boundary and to the flow end.
 The suffix minimum includes every nested Open, paragraph and child natural
 position, so a later negative margin that returns above the seam is covered.
-If clearance currently raises a affected entry, its pre-clearance natural
+If clearance currently raises an affected entry, its pre-clearance natural
 position lies below the prefix reach and this certificate refuses it.
 Inactive clearance leaves exactly the ordinary collapsing-margin transfer.
 
@@ -1909,3 +1909,14 @@ queries, suffix queries and direct sibling motion calculations are
 independent. Publication continues the existing distinct-slot scatter;
 there is no descendant geometry walk. The arithmetic certificate includes
 old and proposed travel and visual excursions before translation.
+
+
+Intrinsic measurement must also preserve retained inputs: `intrinsic_flow`
+previously wrote zero-basis horizontal margins into its live child contexts.
+A reused item interior need not run layout to restore those fields. The
+measurement now computes those same zero-basis contributions locally for
+flow children, floats and atomic inlines. The added `flex-intrinsic-margin`
+fixture holds final width constant while an edit forces an intrinsic query
+and then edits text beside a percentage-margin atomic child. This repair
+preserves the full intrinsic calculation and removes its unintended write;
+its behavioral detection remains a CI obligation.

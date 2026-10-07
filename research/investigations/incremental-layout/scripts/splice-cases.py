@@ -25,7 +25,11 @@ grow/shrink change free space through the edited item's auto flex basis.
 Column wrap crosses the fixed main extent after insertion, changing which
 items share a line. Percentage items exercise counted fallback when their
 dependencies are outside the splice argument. CI supplies the renderer;
-this generator never builds it.
+this generator never builds it. The intrinsic-margin case re-queries the
+edited item's intrinsic contributions while its used width stays fixed,
+then edits the paragraph beside a retained atomic inline with percentage
+margins; flow-root and floated children cover the other intrinsic margin
+readers without letting a query replace their used margins.
 
 The transfer fixture isolates eight cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, a seam at
@@ -62,7 +66,7 @@ CASES = {
                  'transfer-maximum-sibling', 'transfer-relative-sibling'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
-             'flex-percentage'),
+             'flex-percentage', 'flex-intrinsic-margin'),
 }
 
 
