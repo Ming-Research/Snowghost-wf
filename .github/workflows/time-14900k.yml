@@ -37,9 +37,10 @@ env:
   # 1 also times every build's full style and layout stages (style/run.sh
   # time and layout/run.sh time, par at four workers).
   FULL: ${{ inputs.full || '1' }}
-  # Rounds of the full-stage timing; each round times every build once in
-  # BUILDS order (one run each), so the builds interleave. Two names for one
-  # ref give the noise control.
+  # Rounds: above 1, each round times every build once in BUILDS order, the
+  # full stages with one run each and every edit script with one process run
+  # each, so the builds interleave. Two names for one ref give the noise
+  # control. A positive integer.
   ROUNDS: ${{ inputs.rounds || '1' }}
   # 0 only builds and keeps the drivers. A build's drivers are kept in
   # ~/snowghost-data/drivers under its commit and pin and reused from there,
@@ -111,6 +112,7 @@ jobs:
       - name: Build the drivers
         run: |
           set -euo pipefail
+          case "$ROUNDS" in ''|*[!0-9]*|0*) echo "ROUNDS must be a positive integer, not '$ROUNDS'" >&2; exit 1 ;; esac
           git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
           mkdir -p build/drivers "$HOME/snowghost-data/wf-cache"
           for pair in $BUILDS; do
@@ -159,21 +161,34 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p results
-          for pair in $BUILDS; do
-            name=${pair%%=*}
-            cp "build/drivers/$name-seq" build/layout_oracle_seq
-            cp "build/drivers/$name-par" build/layout_oracle_par
-            for mode in $EDIT_MODES; do
-              for page in $PAGE_LIST; do
-                for kind in $EDIT_KINDS; do
-                  rm -rf build/x5/time
-                  if [ "$mode" = par4 ]; then
-                    ALONE=1 WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh time par "$page" "$kind" "$EDIT_RUNS" | tee "results/$name-$mode-$page-$kind.txt"
-                  else
-                    ALONE=1 sh research/investigations/incremental-layout/run.sh time seq "$page" "$kind" "$EDIT_RUNS" | tee "results/$name-$mode-$page-$kind.txt"
-                  fi
-                  mkdir -p "results/raw/$name-$mode" && cp build/x5/time/* "results/raw/$name-$mode/"
-                done
+          # time_one NAME MODE PAGE KIND RUNS OUT: one build's edit script.
+          time_one() {
+            cp "build/drivers/$1-seq" build/layout_oracle_seq
+            cp "build/drivers/$1-par" build/layout_oracle_par
+            rm -rf build/x5/time
+            if [ "$2" = par4 ]; then
+              ALONE=1 WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh time par "$3" "$4" "$5" | tee "$6"
+            else
+              ALONE=1 sh research/investigations/incremental-layout/run.sh time seq "$3" "$4" "$5" | tee "$6"
+            fi
+            mkdir -p "results/raw/$1-$2" && cp build/x5/time/* "results/raw/$1-$2/"
+          }
+          for mode in $EDIT_MODES; do
+            for page in $PAGE_LIST; do
+              for kind in $EDIT_KINDS; do
+                if [ "$ROUNDS" -gt 1 ]; then
+                  for round in $(seq "$ROUNDS"); do
+                    for pair in $BUILDS; do
+                      name=${pair%%=*}
+                      time_one "$name" "$mode" "$page" "$kind" 1 "results/$name-$mode-$page-$kind-$round.txt"
+                    done
+                  done
+                else
+                  for pair in $BUILDS; do
+                    name=${pair%%=*}
+                    time_one "$name" "$mode" "$page" "$kind" "$EDIT_RUNS" "results/$name-$mode-$page-$kind.txt"
+                  done
+                fi
               done
             done
           done
@@ -211,7 +226,7 @@ jobs:
             cp research/investigations/layout/run.sh "$tree/research/investigations/layout/run.sh"
           done
           runs=5
-          [ "$ROUNDS" -gt 1 ] && runs=1
+          if [ "$ROUNDS" -gt 1 ]; then runs=1; fi
           for round in $(seq "$ROUNDS"); do
             for pair in $BUILDS; do
               name=${pair%%=*}
