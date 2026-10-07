@@ -665,3 +665,53 @@ jobs:
             build/*-case.edits*
             build/*-case.*.raw
             build/*-case.*.err
+
+  numeric-suffix:
+    if: contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[numeric]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Compiler and fonts
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_numeric_base)
+      - name: Unmutated identity and detector negative control
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          python3 "$s/split-limit.py" build/layout_numeric_base build/split-limit-base
+          if python3 "$s/split-limit.py" build/layout_numeric_base build/split-limit-negative --detect-omission > build/split-limit-negative.log 2> build/split-limit-negative.err; then
+            echo "unmutated boundary output was accepted as omission detection" >&2
+            exit 1
+          fi
+          grep -Fx 'AssertionError: omitted numeric suffix admission produced no high-origin difference' build/split-limit-negative.err
+      - name: Omit numeric admission and require its semantic consequence
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          path = Path('renderer/layout/reference.wf')
+          text = path.read_text()
+          old = '  let bounded = reference_suffix_fits(origin: wide_origin, travel: budget);'
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, '  let bounded = True();'))
+          PYEOF
+          (cd renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o ../build/layout_numeric_omitted)
+          python3 research/investigations/incremental-layout/scripts/split-limit.py build/layout_numeric_omitted build/split-limit-omitted --detect-omission
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: numeric-suffix-evidence
+          path: |
+            build/split-limit-*/
+            build/split-limit-negative.log
+            build/split-limit-negative.err
