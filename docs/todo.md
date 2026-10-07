@@ -189,22 +189,25 @@ example apart from the renderer code that exposed it
   step 5 uses this path. Require every edit prefix to equal a fresh build,
   with zero unexplained fallback on the claimed ordinary workloads.
 
-- **M2 page block edits exceed the splice arithmetic admission bound.**
-  CI run 37556900282 at `0fe4965` identifies the exact
-  `output.travel >= 67108864_i64` guard for ecma262 block edits 1–20 and
-  html5 edits 1–60; all attempt `structure_splice`, then reconstruct under
-  reason 7 and match full rebuilds. Impact: none of these timed block edits
-  establishes E2 locality or step-6 zero-fallback acceptance. The conservative
-  travel sum includes baseline excursions; exceeding it does not establish
-  actual saturation. Change: derive and validate a tighter composable
-  arithmetic certificate, or bound only the affected transfer region while
-  preserving the exact reference arithmetic and parallel dependency graph.
-  Do not simply raise/remove the guard. Reopen before E2 or step-6 acceptance;
-  use the unchanged page scripts with zero fallbacks, varied entering struts,
-  near-limit positive/negative coordinates and baselines, seq/par rebuild
-  identity, and a deliberate unsafe-admission mutation. The current guard
-  remains required until its replacement has an exactness argument. Evidence:
-  [step-5 audit](../research/investigations/structure-edits/layout-design.md#step-5-source-and-ci-falsifiers).
+- **M2 page block edits still meet semantic splice barriers.**
+  The fixed travel limits have been replaced by the
+  [origin-aware arithmetic certificate](../research/investigations/structure-edits/layout-design.md#origin-aware-ordinary-arithmetic-certificate).
+  CI run [37565331129](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37565331129)
+  at `66fdec5` reports ecma262 block edits 1–20 as `splice 0 reason 2`
+  and html5 edits 1–60 as `splice 0 reason 7`, all equal to full rebuilds.
+  The diagnostic copy isolates ecma262's non-flow context guard (kind 1,
+  flex; the pinned ecmarkup stylesheet makes the body flex), and html5's
+  nonordinary root transfer with barrier 5 (positioned or atomic content).
+  The old arithmetic guard hid these later refusals. Impact: neither page
+  establishes E2 locality or step-6 zero-fallback acceptance. The arithmetic
+  proof does not cover flex sizing/alignment or positioned/atomic transfer
+  propagation, so those guards remain. Change: establish a local propagation
+  contract across those semantic boundaries, or isolate the affected ordinary
+  region with a proof that preserves every dependent output. This needs a
+  design decision beyond the arithmetic repair. Reopen before E2 or step-6
+  acceptance; require the unchanged page scripts' every prefix to match a
+  fresh build in seq/par and every block edit to report `splice 1 reason 0`.
+  The zero-fallback CI assertion remains enabled.
 
 - **M2 step 4 needs parallel scatter and complete physical-work evidence.**
   AVL reduction repair is local, but `later_handles` appends to one temporary

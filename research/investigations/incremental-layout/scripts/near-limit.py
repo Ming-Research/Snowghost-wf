@@ -34,8 +34,8 @@ def require_refusal(raw):
 def check_machinery(raw, timed, local):
     require_paths(raw, local)
     for wrong in (re.sub(r'^structure path 1 .*\n', '', raw, flags=re.M),
-                  raw.replace('splice 1 reason 0', 'splice 0 reason 7') if local else
-                  raw.replace('splice 0 reason 7', 'splice 1 reason 0'),
+                  raw.replace('splice 1', 'splice 0') if local else
+                  raw.replace('splice 0', 'splice 1'),
                   raw.replace('reason 7', 'reason 6') if not local else
                   raw.replace('reason 0', 'reason 7')):
         try:

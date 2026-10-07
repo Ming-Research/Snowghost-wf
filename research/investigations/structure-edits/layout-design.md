@@ -655,9 +655,9 @@ Admission for an update requires **|O| + T_old + T_new <= M**. This certifies
 both reference runs and leaves the necessary room for differences between
 them, not just each final cursor. All certificate arithmetic is i64 with
 saturating positive sums: overflow rejects rather than wrapping. Index
-summaries have no placement origin; their `ordinary` flag requires T <= M
-(the necessary zero-origin condition), and publication performs the stronger
-check with the real O. Semantic barriers remain independent of this numeric
+summaries have no placement origin; each nonempty join clears `ordinary`
+when T > M (the necessary zero-origin condition). An identity join preserves
+its input, and publication always performs the stronger check with the real O. Semantic barriers remain independent of this numeric
 condition. For a splice, privately compose the candidate owner sequence,
 lift through its block ancestors, and then preview enclosing context sizes
 and baselines bottom-up. Check each context's old and proposed root, rather
@@ -717,6 +717,20 @@ M in the shared certificate with 68719476735 and must produce an actual
 incremental/rebuild difference, not merely a changed path. Assertion probes
 independently remove path/count rows, change mode/reason and zero refusal
 counts, requiring each broken condition to fail.
+
+Focused CI evidence at `66fdec5`, run
+[37565331129](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37565331129):
+all five near-limit variants' four edits equal their full rebuilds; the
+admitted variant's two structural edits splice locally, the other variants'
+structural edits refuse with reason 7, and their text refusals are counted.
+This includes the positive-margin inverse text edit that failed at `9dff281`.
+The page block edits also all equal their rebuilds, but none splices locally:
+ecma262 edits 1–20 now report reason 2, traced to the flex context guard;
+html5 edits 1–60 report reason 7, traced to the nonordinary root transfer's
+positioned/atomic barrier 5. These are semantic exclusions outside this
+argument, retained in `docs/todo.md`; changing the arithmetic certificate
+alone does not establish the pages' zero-fallback acceptance. This focused
+run does not establish full seq/par or unsafe-mutation validation.
 
 ### The splice transaction
 
