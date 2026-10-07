@@ -86,7 +86,7 @@ end = body.index('\nfn ', start + 1)
 counts = body[start:end]
 extra = '''  let diagnostics = pkg::layout::probe_trace(layout: layout);
   let rows = diagnostics.inner.len / 8_u64;
-  let label: Array<u8, 6> = "probe ";
+  let label = "probe ";
   for (row in 0_u64..rows) {
     put_byte(buffer: buffer, value: 10_u8);
     put_text(buffer: buffer, text: &label[0_u64..6_u64]);
