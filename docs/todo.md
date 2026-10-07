@@ -335,7 +335,11 @@ example apart from the renderer code that exposed it
   the retained endpoint anchors and split/empty output, or an index of the
   flat rectangles; merely repeating a transient full scan does not remove
   the unrelated context dependency. Owner item Q134 remains open; its earlier
-  missing-identity grounds must now account for the retained anchors. Validate split and
+  missing-identity grounds must now account for the retained anchors. The
+  [final integration comparison](../research/investigations/m2-edit-cost/DESIGN.md#final-hosted-comparison-and-remaining-acceptance-failure)
+  still fails ECMA sentence acceptance after local repairs; Q135 asks whether
+  to extend the integration to settle this contract or await Q134 separately.
+  Validate split and
   empty fragment order, moved ancestor endpoints, negative margins, relative
   positioning, saturation, insert/remove lifetimes, all X5 identities and
   falsifiers, then repeat same-host text/font-size acceptance. Reopen after

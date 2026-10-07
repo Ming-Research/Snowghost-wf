@@ -1326,8 +1326,9 @@ rounds on one hosted runner. Word, sentence, font-size and block scripts use
 identical page bytes and inputs. A correctness difference, missed mutation,
 nonlocal page block edit or timing regression rejects the integration.
 These requested hosted comparisons are diagnostic performance evidence,
-not precise hardware measurements. Q134's remaining fragment reconstruction work stays
-outside this integration.
+not precise hardware measurements. The initial scope leaves Q134's remaining
+fragment reconstruction decision outside this integration; the final result
+below records why the owner must revisit that scope before further work.
 
 Conflict resolution preserves these contracts:
 
@@ -1570,3 +1571,133 @@ a different host. Retain every revision record and the unchanged scripts.
 The temporary artifact-reuse path is removed after its evidence is collected;
 the maintained workflow returns to independent main/edit-cost/twin/head
 builds. Cancelled package-setup attempts provide no timing acceptance.
+
+
+### Final hosted comparison and remaining acceptance failure
+
+[Run 37668144244](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37668144244)
+completed successfully as a measurement job; its numerical result **does
+not pass integration acceptance**. Workflow revision 050a1ccd measures
+renderer bebd8c270f1383888f317a2af8515cddd205a44c, on Ubuntu 24.04, AMD
+EPYC 7763, four CPUs, kernel 6.17.0-1022-azure, Clang 22 and
+wf-0b7f5c5b9854, with function fragments and WF_WORKERS=4. All seven drivers
+run on that same machine in forward/reverse order. The artifact retains
+224 raw files, each containing 20 ECMA262 or 60 HTML5 edits, revision
+records, page hashes, scripts and machine settings. All 16 generated edit
+scripts are byte-identical to acceptance run 37642163901.
+
+Columns name main 1fdb4050, edit-cost and its independent twin 27c55096,
+allocation-free exact certificates 7a1fc758, positioned-charge publication
+cutoff c26a980e, narrow block-origin reads 4dd3850e, and resolved reference
+endpoints bebd8c27. Main and edit-cost have the same renderer trees as the
+original acceptance run's main 02855399 and head 7ab2bd5f respectively.
+Values are the upper median in microseconds, round 1 / round 2; sequential
+and four-worker parallel builds use the same pages and edits.
+
+| Page / edit / mode | main | cost | twin | cert | positioned | origin | head |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 / word / seq | 108 / 110 | 104 / 107 | 108 / 108 | 107 / 113 | 125 / 118 | 107 / 107 | 117 / 107 |
+| ecma262 / word / par | 164 / 163 | 187 / 173 | 177 / 179 | 176 / 176 | 187 / 173 | 183 / 175 | 181 / 175 |
+| ecma262 / sentence / seq | 248 / 235 | 438 / 418 | 438 / 548 | 975 / 1037 | 950 / 995 | 766 / 826 | 710 / 705 |
+| ecma262 / sentence / par | 301 / 327 | 540 / 524 | 530 / 522 | 841 / 792 | 831 / 842 | 699 / 744 | 648 / 697 |
+| ecma262 / fontsize / seq | 1201 / 1226 | 9099 / 8721 | 8734 / 8585 | 9287 / 8952 | 9195 / 9474 | 8752 / 8970 | 7987 / 8822 |
+| ecma262 / fontsize / par | 2052 / 2013 | 9419 / 9230 | 8386 / 9117 | 9301 / 9339 | 9423 / 9307 | 9444 / 9143 | 9361 / 9231 |
+| ecma262 / block / seq | 525732 / 543124 | 894143 / 897468 | 888947 / 876719 | 115 / 124 | 121 / 115 | 112 / 116 | 116 / 113 |
+| ecma262 / block / par | 378843 / 391563 | 768696 / 775354 | 776664 / 761019 | 192 / 209 | 192 / 187 | 189 / 188 | 192 / 184 |
+| html5 / word / seq | 75 / 74 | 79 / 78 | 82 / 78 | 79 / 80 | 79 / 79 | 80 / 80 | 83 / 80 |
+| html5 / word / par | 121 / 120 | 123 / 129 | 124 / 126 | 129 / 124 | 129 / 127 | 125 / 133 | 126 / 129 |
+| html5 / sentence / seq | 222 / 227 | 362 / 380 | 364 / 356 | 641 / 631 | 371 / 385 | 322 / 335 | 326 / 340 |
+| html5 / sentence / par | 331 / 336 | 386 / 381 | 405 / 386 | 908 / 917 | 384 / 391 | 376 / 363 | 370 / 373 |
+| html5 / fontsize / seq | 720 / 706 | 1859 / 2015 | 2081 / 1803 | 1871 / 1842 | 1803 / 1908 | 1864 / 1749 | 1872 / 2053 |
+| html5 / fontsize / par | 732 / 779 | 2116 / 2121 | 2115 / 2049 | 2207 / 2094 | 2212 / 2253 | 2141 / 2140 | 2138 / 2110 |
+| html5 / block / seq | 607792 / 607838 | 930531 / 915104 | 911537 / 910988 | 857 / 844 | 587 / 611 | 554 / 561 | 611 / 568 |
+| html5 / block / par | 430525 / 442294 | 797542 / 815455 | 804544 / 799613 | 1235 / 1218 | 705 / 699 | 676 / 675 | 674 / 675 |
+
+HTML sentence medians are restored below the concurrent edit-cost controls.
+For HTML local edits 35/36, the positioned-charge repair reduces boundary
+block visits from 1,174 to 112 and index visits from 6,120 to 1,458
+(edit-cost: 112 and 1,039), with no held entries or fallback. This separates
+its redundant ancestor-publication cost from reference fragment work.
+Narrow origin reads and direct resolved endpoints then reduce ECMA sentence
+cost, but do not restore it: head is 710/705 us sequential against cost
+438/418 (twin 438/548), and 648/697 parallel against 540/524 (twin 530/522).
+This remaining difference exceeds the observed control spread. Word and
+font-size medians generally track the controls with small differences and
+noise; this is not a claim that every literal historical median is met.
+Different hosted CPUs preclude treating absolute differences from the older
+acceptance run as isolated renderer effects. The simultaneous source-matched
+controls still establish a sentence regression, so the required acceptance
+cannot be declared. Page block edits now have the splice's much lower cost.
+
+The remaining complete split-line maintenance and fragment certification
+are visible in source. The earlier profile reports appreciable self samples
+in fragment_endpoint and fragment_certificates; it did not isolate a
+split-line maintenance share. These observations do not isolate each remaining pass's
+contribution or prove that a particular representation is necessary. The
+allocation-cost hypothesis was rejected; its equivalent exact check remains
+simpler and allocation-free, without a speed claim. No certificate has been
+weakened, no fallback introduced to evade it, and no workload-specific path
+added. The transient driver-reuse and profile jobs are removed; the timing
+workflow again independently builds main, edit-cost, its twin and head.
+
+Q134 remains open for the fragment dependency/validity representation; its
+old missing-identity premise must account for the merged FragmentAnchor and
+Split.line records. Q135 asks the owner whether to extend this integration
+to settle that bounded repair contract, or park it until Q134 is settled
+separately. Extending the investigation is recommended, with explicit true
+data dependencies and all existing identity, mutation and timing criteria
+preserved. This is a scope recommendation, not a selected representation or
+a claim that every possible local repair has been exhausted. Implementation
+of an unsettled dependency/trust contract waits for the owner.
+
+
+### Final integration correctness and review
+
+The renderer at bebd8c270f1383888f317a2af8515cddd205a44c is unchanged at
+workflow revision 050a1ccd87a672842ec72e798207485eaa9a1b60. Its hosted
+[layout-check 37668144024](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37668144024)
+and [check 37668144297](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37668144297)
+pass, including the document arena self-test and 21 design-checker tests.
+[Oracles 37668144468](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37668144468)
+passes completely. Native page dumps match the reference and seq/par builds
+byte for byte (ECMA262 19,024,863 bytes; HTML5 12,538,869 bytes); all five
+layout fixture pages and the saturation fixture match in all three builds.
+All six X5 kinds on both pages match incremental/full and sequential/parallel
+results: 24 raw files, 960 edits. Every block edit reports splice 1 reason 0:
+20 ECMA262 and 60 HTML5 in each mode. Every case and fixture passes with the
+existing block/style refusals unchanged (2 and 6 respectively); the transfer
+fixture has 276 identical edits in each mode.
+
+[Falsify 37668144201](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37668144201)
+passes all 44 mutations, the exact union of layout's 38 and edit-cost's 30,
+plus the check-machinery job. Every unmutated and mutated driver compiles,
+and every mutation succeeds in its intended detection step; compilation
+failures do not count as detections. This includes the repaired split-line
+fixture on the final renderer.
+
+The independent read-only GPT-6 Astra review covers the complete layout
+48cca69664663be40c1f6a524045bef160ca8981-to-050a1ccd diff, the final workflow
+cleanup and evidence/TODO edits, changed sections and direct consumers,
+pipeline/layout nodes and ancestors, and all A/D/C/T/R/M/V groups plus
+G1–G3 and DC1–DC4. PR-specific V3/V4 are inapplicable under the explicit
+no-PR instruction. Its checks are source/Git/workflow inspection, whitespace,
+mutation-union enumeration, artifact parsing, SHA/tree/script comparisons and
+CI evidence inspection; no local compilation or passing-suite rerun.
+Design lint against the layout base reports nodes 7→7, depth 1→1, decisions
+59→59 and rejected alternatives 24→24. The six decisions added against
+CI's main base are inherited from the layout line, not new integration
+choices. No design node, pin, submodule, module interface or fixture HTML
+changed, and no Whitefoot gap was established.
+
+Findings and dispositions: the stale splice-scope TODO is fixed; the
+split-line mutation's unreachable precondition is repaired in the transfer
+fixture without changing its mutation or expected result; profile wording
+now names only the sampled functions and makes no isolated split-line cost
+claim. Imported TODOs already resolved by layout were removed. Redundant
+positioned publication, broad snapshot reads and the unnecessary coordinate
+round trip are fixed and measured above. The remaining timing acceptance
+finding (DC4/V1) is open, with Q134/Q135 recorded in the maintained TODO.
+Broader design-argument soundness and the choice of a bounded fragment
+contract remain unverified and unapproved; source review is not owner
+approval. All builds and runtime measurements were hosted CI; local checks
+compiled nothing.
