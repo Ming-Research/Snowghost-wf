@@ -2411,7 +2411,7 @@ before a later split is the regression and must match the full rebuild.
 The implemented fixtures are `transfer-multi-before`,
 `transfer-multi-after`, `transfer-inside-head`, `transfer-child-head`,
 `transfer-negative-head`, `transfer-adjacent-head` and
-`transfer-source-removal`, plus `transfer-width-reentry` for a clear:none
+`transfer-source-removal`, plus `transfer-float-width-reentry` for a clear:none
 paragraph whose width changes when its later negative margin crosses an
 earlier float's bottom. Supported split cases include line-growing text
 pairs before later fragment dependencies. The initial source-removal X
