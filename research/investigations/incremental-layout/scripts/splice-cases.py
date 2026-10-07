@@ -1,11 +1,11 @@
-"""Generate the positioned/flex splice fixtures' edits from driver node IDs.
+"""Generate the positioned/flex/transfer splice fixtures' edits from driver node IDs.
 
 Run from the repository root with the CI-built driver and fonts available:
     s=research/investigations/incremental-layout/scripts
     python3 "$s/splice-cases.py" build/layout_oracle_seq positioned build/positioned-case.edits
     build/layout_oracle_seq edit build/positioned-case.edits "$s/positioned-case.html" renderer/style/ua.css > build/positioned-case.raw
     python3 "$s/inctime.py" --check build/positioned-case.edits build/positioned-case.raw
-Use flex in place of positioned for the flex fixture. The existing
+Use flex or transfer in place of positioned for the other fixtures. The existing
 inctime.py requires every operation to match a full rebuild; unsupported
 semantic cases may use their counted structural fallback.
 
@@ -25,7 +25,25 @@ grow/shrink change free space through the edited item's auto flex basis.
 Column wrap crosses the fixed main extent after insertion, changing which
 items share a line. Percentage items exercise counted fallback when their
 dependencies are outside the splice argument. CI supplies the renderer;
-this generator never builds it. Python's standard library has no native
+this generator never builds it.
+
+The transfer fixture isolates eight cases behind separate flow roots:
+transfer-clear-reentry has an earlier float ending at 100px, a seam at
+200px and a later -170px margin before clear:left, so the later natural
+position is 50px before insertion and 70px after it. The float is expired
+at the seam but clearance still holds the probe at 100px. This case must
+reject uniform suffix translation or replay its float-dependent region.
+transfer-clear-expired and transfer-float-expired keep every later natural
+position below the earlier float; transfer-marker-lined keeps real content
+lines in an outside-marker owner. transfer-fixed-sibling,
+transfer-minimum-sibling and transfer-maximum-sibling retain separate
+specified/minimum/maximum height constraints in later siblings, whose
+interiors stay unchanged while their anchors move. transfer-relative-sibling
+moves a later sibling with a nonzero visual offset. These seven cases are
+candidates for certified translation; the governing argument owns their
+final splice/fallback classification. Identity is required for all eight.
+
+Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
 """
 import argparse
@@ -38,6 +56,10 @@ from edits import Tree
 CASES = {
     'positioned': ('positioned-auto', 'positioned-growing', 'positioned-fixed',
                    'positioned-nested', 'positioned-atomic'),
+    'transfer': ('transfer-clear-reentry', 'transfer-clear-expired',
+                 'transfer-float-expired', 'transfer-marker-lined',
+                 'transfer-fixed-sibling', 'transfer-minimum-sibling',
+                 'transfer-maximum-sibling', 'transfer-relative-sibling'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage'),

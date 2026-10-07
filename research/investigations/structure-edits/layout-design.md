@@ -1861,3 +1861,51 @@ wait on targets; cross-line reduction waits on natural cross outputs;
 independent stretch layouts wait on cross targets; container outputs follow
 placement. An outer container waits on its changed child's outputs. These
 are the existing algorithm's dependencies, with no new sibling chain.
+
+
+#### Float and clearance transfer argument (first certificate)
+
+Question: can the edited owner and each outward suffix be transferred while
+all earlier float exclusions remain unchanged? Compare each insert/remove
+prefix with a fresh layout, and bypass the cutoff on the negative-margin
+clearance fixture. Identity failure rejects the certificate; a mutation
+that remains undetected rejects the fixture. A seam-only height comparison
+is expressly not the criterion.
+
+Retain the minimum pre-clearance natural position and maximum float margin
+bottom of each entry subtree, expressed relative to its sequence owner.
+Independent leaves read the completed reference walk's natural positions;
+a block lifts its interior minimum by its own normal offset and includes
+its Open natural position. The balanced index reduces minima and maxima
+without imposing sibling order. A translated direct entry shifts its two
+bounds by the same delta, repairs the index, and leaves descendant-local
+bounds unchanged. Empty minima/maxima keep explicit sentinel values.
+
+For this first certificate, a affected suffix containing floats is refused.
+All preceding floats therefore remain fixed. Before publication, accumulate
+the preceding float maximum across the owner's ancestors, and require it
+not to exceed the affected suffix minimum in either the retained or the
+proposed position. Apply this at each outward boundary and to the flow end.
+The suffix minimum includes every nested Open, paragraph and child natural
+position, so a later negative margin that returns above the seam is covered.
+If clearance currently raises a affected entry, its pre-clearance natural
+position lies below the prefix reach and this certificate refuses it.
+Inactive clearance leaves exactly the ordinary collapsing-margin transfer.
+
+The owner seam must still have exact free-flow transfer arithmetic and
+unchanged exposed struts. Growing ancestors must retain automatic height,
+unchanged width inputs and line presence, and must pass the existing
+height-growth predicate. An outside marker with a retained line creates no
+synthetic line before or after the change; a marker-only owner is refused.
+Unchanged constrained sibling interiors may translate, but an active size
+constraint on the growing path is outside this first certificate. Prefix
+geometry is retained; no claim that a maximum barrier code describes its
+constituents is used. Later floats or an active constraint needed by the
+pages would require extending this argument before admission.
+
+The orders introduced are owner settlement before ancestor output, and a
+changed entry's metadata before the index ancestors that read it. Prefix
+queries, suffix queries and direct sibling motion calculations are
+independent. Publication continues the existing distinct-slot scatter;
+there is no descendant geometry walk. The arithmetic certificate includes
+old and proposed travel and visual excursions before translation.
