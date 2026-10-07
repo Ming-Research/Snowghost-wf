@@ -121,3 +121,21 @@ ECMAScript/HTML inputs, and reuses the completed driver artifacts from run
 37596011168. Every comparison still runs on one new hosted runner. Profiles
 repeat the shared word script ten times in one driver process at 999 Hz to
 separate edit work from one-time page construction.
+
+## New fixture finding under investigation
+
+Revision a5114b9 fails edit 11 of the new edit-cost fixture in
+[the step5 job](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37600571690/job/112723644402).
+That edit grows the retained paragraph before the negative-margin clearance
+sibling. The preceding ten edits pass. The unchanged base is being checked on
+the same script to distinguish a new certificate defect from an inherited
+reference-translation defect; the failure is not waived. Diagnostic workflow
+steps retain both dumps and the per-edit counters before returning failure.
+
+The reference in-place translation checks the changed paragraph and its block
+ancestors, but its old suffix loop translated a later clearance box even when
+negative margins put that box back above an earlier float's bottom. Reuse the
+same old/proposed suffix-motion certificate before this translation as the
+retained boundary path. A refusal re-stacks the affected range with float
+state, because clearance must be recomputed; it does not authorize a constant
+delta for that suffix. The edit-11 dump comparison must establish the repair.

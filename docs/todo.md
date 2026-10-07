@@ -293,9 +293,9 @@ example apart from the renderer code that exposed it
 
 - **M2 geometry still bridges the context-coordinate reference walker.**
   `renderer/layout/geometry.wf:geometry_reference` and `geometry_owned`
-  materialize and re-encode whole-context scratch geometry around layout
-  and update; `translation_exact` conservatively scans it before moving
-  suffix roots. Context fragments, `Split.line`, `naturals`, `held_y` and
+  materialize and re-encode whole-context scratch geometry around reference
+  layout. Consecutive reference updates reuse valid scratch; retained boundary
+  updates bypass both bridges. Context fragments, `Split.line`, `naturals`, `held_y` and
   the context baseline retain their legacy coordinate/rank semantics.
   Impact: local origins remove descendant origin mutations, but these
   scans and scratch writes are not bounded-edit evidence. Change: replace
@@ -322,6 +322,16 @@ example apart from the renderer code that exposed it
   test retained/new text and styles, check tombstones and measure allocations
   and full-build cost. No compile, runtime or performance result is supplied
   by the source-only step-5 implementation.
+
+- **The structural diagnostic parser does not yet accept reason 10.**
+  `inctime.py` accepts fallback reasons 0 through 9, while Q130's
+  post-publication flex refusal can emit 10. Impact: a correctly reported
+  refusal can be rejected as malformed diagnostic output; no occurrence has
+  been established in the edit-cost runs. Change: extend the parser together
+  with a valid reason-10 case and contradictory local/refusal cases in the
+  splice-extension work that owns Q130. Reopen when that work exercises its
+  post-publication refusal. This does not justify accepting a fallback where
+  the page gate requires zero fallbacks.
 
 - **M2 splice frontier and instrumentation remain narrower than final locality.**
   `structure_splice` refuses changed retained styles (reason 6), changing
