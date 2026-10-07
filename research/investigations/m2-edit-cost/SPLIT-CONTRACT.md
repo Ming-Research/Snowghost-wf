@@ -189,7 +189,7 @@ fixture HTML, expected dump, or block success requirement is changed.
 leading fragment and plain/atomic paragraphs, followed by growth and exact
 undo. Ordinary oracles require identity in seq/par. The numeric falsifier
 requires unmutated identity and a detector negative control before omitting
-only `reference_motion_fits` admission; low-origin controls must stay identical
+each `reference_motion_fits` admission call separately; low-origin controls must stay identical
 and a high-origin semantic difference must be observed. No expected result or
 page block-splice requirement is relaxed.
 
@@ -234,3 +234,33 @@ representation removes the observed cost. If boundary publication/lookup
 instead dominates, the remaining bottleneck is broader reference maintenance.
 This repeated-pair profile is exploratory diagnosis, includes process startup
 and style preparation, and does not replace the two-round acceptance workload.
+
+## Remaining-cost profile result
+
+[Hosted profile 37696133904](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37696133904)
+used the measured fused drivers A 3b239df449c136a2f690f5f8d16636c527a5e73f,
+B 6d0286f6257a19d1375e5a4501ec3169193949c2 (renderer 1d7db04),
+main 1fdb4050806ba08ca1ecd09c1e23b7cb77729ce9 and cf12c609,
+with wf-0b7f5c5b9854/clang 22.1.8 on one hosted Intel Xeon Platinum 8370C
+(4 vCPU, Linux 6.17.0-1022-azure). This precedes the numeric correction.
+Four ten-pair samples took 2.55–2.63 seconds including startup; the bounded
+rule selected 228 repetitions, or 456 measured edits, per profile.
+
+For A, pairs 23/24 and 43/44 retained only 7 and 10 entries but accounted for
+84,675 and 54,285 entries, respectively. Their boundary visits were
+2,940/18,042/28,623 and 1,654/8,624/13,634 (entries/blocks/indexes), with one
+reason-5 or reason-6 fallback per edit. `translate_dense_reference_suffix`
+was the largest layout self-time symbol at 12.47% and 7.28%; B showed 12.62%
+and 6.26%, and cf12c609 10.23% and 5.87%. No fragment repair/reconstruction
+symbol reached the report's 0.5% self threshold in A's two profiles.
+The profile includes startup and style work, so these percentages are not
+isolated per-edit shares and do not establish a complete cost decomposition.
+
+Source inspection agrees: the legacy reference path still translates dense
+suffix scratch, then encodes/publishes boundary outputs through retained
+owner indexes. Both representations optimize split fragments, not that wider
+compatibility suffix. This is the remaining measured mechanism for these two
+HTML font edit pairs; it does not prove every HTML font edit has the same cost.
+The ordinary two-round workload remains the acceptance test. A bounded
+reference-suffix representation/consumer contract is deferred in the TODO;
+neither prototype claims to have solved it.
