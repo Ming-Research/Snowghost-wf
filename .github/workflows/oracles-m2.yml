@@ -151,10 +151,14 @@ jobs:
           sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
 
       - name: Full-build dumps against the base (layout branch)
-        if: github.ref == 'refs/heads/research/m2-layout'
+        if: github.ref == 'refs/heads/research/m2-layout' || github.ref == 'refs/heads/research/m2-pages'
         run: |
           set -euo pipefail
-          base=$(git merge-base HEAD origin/research/structure-edits)
+          if [ "$GITHUB_REF" = refs/heads/research/m2-pages ]; then
+            base=2d706ba252c80336ba1926c3d77054714046586d
+          else
+            base=$(git merge-base HEAD origin/research/structure-edits)
+          fi
           git worktree add -q --detach build/base "$base"
           (cd build/base/renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_base")
           echo "base $(git rev-parse --short "$base")"
@@ -233,3 +237,39 @@ jobs:
             test "$differs" -eq 0
             test "$same" -eq 8
           done
+
+      - name: Edit logs against the pinned page-experiment base
+        if: github.ref == 'refs/heads/research/m2-pages'
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          for page in ecma262 html5; do
+            sheets=()
+            if [ "$page" = ecma262 ]; then sheets=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css); fi
+            for kind in word sentence colour fontsize rootfont block; do
+              script="build/x5/scripts/$page-$kind.edits"
+              raw="build/$page-$kind.base.raw"
+              build/layout_oracle_base edit "$script" "build/research/concurrency/$page.html" renderer/style/ua.css "${sheets[@]}" > "$raw"
+              python3 "$s/inctime.py" --check "$script" "$raw"
+              cmp "$raw" "build/x5/out/$page-$kind.seq.txt.raw"
+              cmp "$raw" "build/x5/out/$page-$kind.par.txt.raw"
+              echo "$page $kind: byte-identical edit logs to 2d706ba, including splice/fallback rows and counters (seq/par)"
+            done
+          done
+          for pair in block-case:block-case style-case:style-case splice-route-case:block-case splice-style-case:block-case checkpoint-case:checkpoint-case boundary-case:block-case boundary-baseline-case:boundary-baseline-case; do
+            name=${pair%%:*} html=${pair#*:}
+            script="$s/$name.edits"
+            if [ "$name" = checkpoint-case ]; then script=build/checkpoint-case.edits; fi
+            build/layout_oracle_base edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.base.raw"
+            cmp "build/$name.base.raw" "build/$name.seq.raw"
+            cmp "build/$name.base.raw" "build/$name.par.raw"
+            echo "$name: byte-identical edit logs to 2d706ba, including splice/fallback rows and counters (seq/par)"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always() && github.ref == 'refs/heads/research/m2-pages'
+        with:
+          name: pages-base-comparison
+          path: |
+            build/*.raw
+            build/x5/out/*.raw
