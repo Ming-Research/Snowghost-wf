@@ -347,7 +347,7 @@ Case fixtures, dump comparisons and style checks remain in the core job.
 No edit, expected result or assertion is removed; this changes only which
 independent runner executes each page/kind pair.
 
-## Structural scope attribution under test
+## Structural scope attribution
 
 The superseded full-oracle logs report ecma262 block edits using reason 3
 and html5 block edits mostly using reason 7, despite all incremental dumps
@@ -358,6 +358,15 @@ separate inherited splice scope from this task's changes. Remove this job
 after its evidence is recorded. Its diagnostic success means identity was
 checked and the refusal inventory collected; it does not satisfy the
 zero-fallback gate or change its expected result.
+
+The unchanged-base diagnostic completed in
+[37609793541](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37609793541),
+job 112753999257: 9e1561ac4459 with wf-f949e676acfa. Both block scripts compare
+byte-for-byte with 9888794's step-5 artifacts. Ecma262 has 20 nonlocal reason-3
+edits; html5 has 58 nonlocal reason-7 edits and two local reason-0 splices.
+All 80 incremental dumps match rebuilds. The zero-fallback gate failure is
+therefore inherited, not repaired or waived here. Its existing TODO is
+updated, and the one-use job is removed after saving this attribution.
 
 ## Per-context probe attribution
 
@@ -410,3 +419,25 @@ permit STRING only as a constant value, not a runtime let initializer; the
 injection now declares it as a named array constant, like the ordinary oracle
 labels. This corrects the diagnostic's declaration kind; no runtime string
 feature or compiler gap is claimed.
+
+## Repaired-source hosted comparison
+
+[Run 37608826155](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37608826155)
+measures 9888794 after the saturation repair with the same procedure and
+controls as the historical comparison. Sequential round 1/2 medians in us:
+
+| Page/kind | main | head |
+|---|---:|---:|
+| ecma262 word | 110/115 | 75162/75344 |
+| ecma262 sentence | 231/234 | 75995/74225 |
+| ecma262 font-size | 1321/1175 | 79766/78604 |
+| html5 word | 74/73 | 83/83 |
+| html5 sentence | 217/223 | 649/538 |
+| html5 font-size | 710/716 | 68229/68257 |
+
+Only html5 word satisfies the two-times criterion at this revision. Every
+ecma262 edit of these three kinds still reports reason 9. Whole-process perf
+self samples remain dominated by full-context operations: `reduce_sequence`
+11.10%, `prepare_boundary_entry` 7.66% and `fill_flow` 7.57%. The per-context
+probe must distinguish a missed existing equality from a dependency requiring
+a changed representation or certificate before proposing the next direction.
