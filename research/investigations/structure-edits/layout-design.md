@@ -2445,11 +2445,20 @@ leading empty rectangle reads Split.line, keeps that growth through the
 next structural removal, and requires the removal to remain local. Paired
 text restoration before the removal would conceal the stale offset. This
 first attempt was submitted without the repair at `baad9efe`; it did not
-fail, so that shape was not discriminating. The strengthened fixture puts
-the split first inside a later ordinary wrapper: the wrapper Open makes the
-leading selector read Split.line rather than a preceding sibling's visual
-top. The repair uses the existing split-line shift after origin-only
-translation, excluding equal and ancestor opening ranks.
+fail, so that shape was not discriminating. A later attempt put the split
+first inside an ordinary wrapper, removing the preceding-sibling selector,
+but CI [37611691658](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37611691658)
+at `39de64c2b9556069b8baf6fc9d3e712ce787a95f` still did not detect the
+mutation. Source inspection identifies the missing premise: an unframed
+wrapper remains unresolved when its first split opens, so `open_unresolved`
+sets `Split.line` to `no_line` and selects the visual-top anchor. The fixture
+now gives that retained wrapper 1px of top padding. Its Open resolves the
+frame before the split, while the preceding-event search still stops at the
+wrapper Open. This establishes the real line and selects anchor mode 2.
+Held preceding text growth must then move that line before the next local
+removal; omitting the refresh must lose the representation certificate.
+The implementation repair uses the existing split-line shift after
+origin-only translation, excluding equal and ancestor opening ranks.
 `no-split-line-refresh` removes exactly that call. Its detector validates
 complete incremental identity/protocol first, then accepts a changed required
 local path, because the representation certificate deliberately preserves
