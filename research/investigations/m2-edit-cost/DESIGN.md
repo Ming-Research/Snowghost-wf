@@ -151,9 +151,11 @@ height and last-baseline guards. The edit-baseline script uses the unchanged
 style fixture: downward inline vertical alignment is intended to change height
 without moving the baseline, and a larger font at fixed line height is intended
 to move the baseline without changing height. Separate mutations test those
-conditions; their detection, including unmutated identity, remains required.
+conditions; a flex parent makes a changed context baseline observable, while
+a relative generated block keeps the tested context outside the ordinary-root
+path. Their detection, including unmutated identity, remains required.
 The `[stationary]` tag runs just these two diagnostic mutations; `[falsify]`
-retains the entire matrix.
+takes precedence and retains the entire matrix.
 
 The auxiliary base fixture initially reused the timing compiler artifact.
 Review correctly rejected that compiler-confounded attribution. The corrected

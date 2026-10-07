@@ -57,8 +57,8 @@ float, negative-margin re-entry, constrained sibling and marker barriers.
 
 The edit-baseline kind reuses style-case.html. Inline vertical alignment changes
 only the last line's descent; fixed line height and a larger inline font change
-its baseline without changing its height. Relative body positioning requires
-the nonordinary-root same-output path.
+its baseline without changing its height. A relative generated block requires
+the nonordinary-root same-output path, and a flex parent observes the baseline.
 
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
@@ -111,7 +111,7 @@ def generate(tree, kind):
         if len(inline) != 1:
             raise ValueError('expected one inline em in the unchanged style fixture')
         node = inline[0]['node']
-        lines.append('S body{position:relative;width:2000px} p{line-height:40px} .costbaseline{font-size:24px;line-height:40px} .costdescent{vertical-align:-30px}')
+        lines.append('S body{display:flex;align-items:baseline;width:2000px} p{width:2000px;min-width:0;flex-shrink:0;line-height:40px} p::before{content:"barrier";display:block;position:relative} .costbaseline{font-size:24px;line-height:40px} .costdescent{vertical-align:-30px}')
         for token in ('costdescent', 'costbaseline'):
             lines.extend(('C %d %s' % (node, token), 'K %d %s' % (node, token)))
         return '\n'.join(lines) + '\n'
