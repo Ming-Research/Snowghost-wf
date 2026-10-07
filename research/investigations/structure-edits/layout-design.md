@@ -1788,7 +1788,7 @@ and outward flow publication must use the actual flex output without losing
 the changed child's old output. No flex reuse implementation is claimed by
 this investigation.
 
-#### Q129: additional transfer scope awaiting the owner
+#### Q129: additional transfer scope
 
 The two selected boundaries are necessary but insufficient. A local proof
 for the masked float/clearance state needs to show that unchanged earlier
@@ -1811,9 +1811,9 @@ that no synthetic marker line appears. Its additional falsifier must make
 the negative-margin/clearance example fail when the cutoff is bypassed.
 Independent summary preparation/reduction should retain the existing tree's
 dependencies; prefix/suffix composition is ordered because float exclusions
-and collapsing margins depend on preceding flow. This is a proposed expansion
-of Q128 B, not an approved decision or an implemented certificate. The
-alternative is to retain counted reference replay for these contributors,
+and collapsing margins depend on preceding flow. The continuation authorizes this expansion of Q128 B and directs work to
+proceed on Q129 A unless vetoed. It is not yet an implemented certificate.
+The alternative is to retain counted reference replay for these contributors,
 which preserves correctness but leaves the unchanged page zero-fallback gate
 blocked. No gate or expected result has been relaxed.
 
@@ -1823,3 +1823,41 @@ builds in the full job. Each case inserts/removes a block and edits retained,
 inserted and dependent text around those operations. These establish fixture
 coverage only; until the extensions and their mutations run, identity through
 a counted fallback does not establish splice coverage or falsifier detection.
+
+
+#### Flex retained-input argument (implementation contract)
+
+The comparison is unchanged full flex layout versus an update that repeats
+its container algorithm while retaining item preparation and pre-stretch
+results. A difference in a fixture edit prefix or a page prefix rejects the
+reuse contract. Mutations omit stretch layout, free-space recomputation and
+line rebreaking independently; each must produce an observable difference.
+
+Each child owns a preparation record keyed by the complete `FlexBox` setup
+except the updating flag. The record contains the `FlexItem` before line
+construction, including hypothetical size, natural size, factors, limits,
+margins and baseline inputs. It is invalidated when content or a
+layout-relevant style changes, before an update can clear that child's dirty
+mark. A local splice invalidates the same record on its changed path.
+Unchanged percentage bases are part of this setup equality; changed bases
+cannot reuse preparation. This local ownership adds no order among siblings.
+
+A second record retains the cross size and baseline from the final-main-size
+layout *before stretch*, keyed by the complete requested Space. An unchanged
+item may supply those numbers while its interior still holds a previous
+stretched layout. Once the line cross size is known, the stretch pass
+materializes exactly the Space that full layout would select, including
+removing an old stretch when the new line no longer requests one. Interior
+reuse requires equivalent used space and unchanged content/style. Keeping
+only current stretched height would conflate two different algorithm inputs
+and is rejected; replaying every item's interior introduces unnecessary work
+without shortening a dependency.
+
+The container still orders items, breaks wrapping lines, runs the free-space
+freeze algorithm and resolves cross alignment on every update. Consequently
+wrapping and nested flex containers need no distinct approximate algorithm.
+Independent item preparations precede line construction; final item layouts
+wait on targets; cross-line reduction waits on natural cross outputs;
+independent stretch layouts wait on cross targets; container outputs follow
+placement. An outer container waits on its changed child's outputs. These
+are the existing algorithm's dependencies, with no new sibling chain.

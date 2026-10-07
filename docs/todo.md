@@ -209,12 +209,12 @@ example apart from the renderer code that exposed it
   barrier-3 contributors, and two edit sites
   cross both an `emu-note` flex container and body flex. Impact: the two
   initially identified guards are not sufficient for page acceptance.
-  Q129 awaits the owner's ruling on extending the transfer proof to expired
+  The continuation directs Q129 A: extend the transfer proof to expired
   earlier floats, suffix natural-position minima and lined markers. A
   seam-only float-expiry test is unsound with later negative margins; retaining
   the existing counted reference path leaves the page gate blocked. The
   positioned/flex fixtures are wired for identity; splice implementation and
-  the four requested mutation detections remain pending. Reopen on Q129,
+  the four requested mutation detections remain pending. Complete this work
   before E2 or step-6 acceptance; require every unchanged page-script prefix
   to match a fresh build in seq/par and every block edit to report
   `splice 1 reason 0`. The zero-fallback assertion remains enabled.

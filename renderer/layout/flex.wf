@@ -42,58 +42,6 @@ const flex_at_evenly: u8 = 7_u8;
 
 const flex_infinite: i32 = 2147483647_i32;
 
-struct FlexBox {
-  doc "What the flex container tells its items and the passes over them: its direction as the booleans row (the main axis is horizontal), reverse (the main axis runs against the writing direction) and wrapping and wrap_reverse (flex-wrap), its content width, the height its content box is known to have (unknown when indefinite), the gaps along the main and the cross axis, the alignment properties, and whether pkg::layout's update is updating the container (lay_out_child).";
-  row: Bool;
-  reverse: Bool;
-  wrapping: Bool;
-  wrap_reverse: Bool;
-  content_width: i32;
-  inner_height: i32;
-  main_gap: i32;
-  cross_gap: i32;
-  align_items: u8;
-  justify_content: u8;
-  align_content: u8;
-  updating: Bool;
-}
-
-struct FlexItem {
-  doc "One child context of a flex container as the flex algorithm sees it, in the container's main and cross axes: whether it is a flex item (an absolutely positioned child is not), its order, its margins (auto as zero, with which are auto), its paddings and borders, its flex factors, its border-box sizes (flex base, automatic or given minimum, maximum or unknown, hypothetical, target after flexing, and the main size of its natural layout), its cross-size limits, its alignment as a flex_at constant, the cross size it is stretched to or unknown, its baseline from its border-box top, and its border box's offsets along the main and the cross axis from the content box's start edges.";
-  child: u64;
-  active: Bool;
-  order: i32;
-  main_start: i32;
-  main_end: i32;
-  cross_start: i32;
-  cross_end: i32;
-  auto_main_start: Bool;
-  auto_main_end: Bool;
-  auto_cross_start: Bool;
-  auto_cross_end: Bool;
-  frame_main: i32;
-  frame_cross: i32;
-  grow: f64;
-  shrink: f64;
-  base: i32;
-  minimum: i32;
-  maximum: i32;
-  hypothetical: i32;
-  target: i32;
-  frozen: Bool;
-  cross_minimum: i32;
-  cross_maximum: i32;
-  cross_auto: Bool;
-  natural_main: i32;
-  natural_width: i32;
-  place: u8;
-  stretch_to: i32;
-  cross_size: i32;
-  baseline: i32;
-  main_position: i32;
-  cross_position: i32;
-}
-
 struct FlexLine {
   doc "One flex line over the ordered items first to end (end excluded): its cross size, the largest distance from its start edge to the baseline of an item aligned to baselines, its offset along the cross axis from the content box's start edge, and the sum of its items' hypothetical outer main sizes and gaps.";
   first: u64;
@@ -114,6 +62,64 @@ fn flex_blank_item() -> made: FlexItem pure {
   doc "An item that is no flex item and holds nothing.";
   let no = False();
   return FlexItem(child: 0_u64, active: no, order: 0_i32, main_start: 0_i32, main_end: 0_i32, cross_start: 0_i32, cross_end: 0_i32, auto_main_start: no, auto_main_end: no, auto_cross_start: no, auto_cross_end: no, frame_main: 0_i32, frame_cross: 0_i32, grow: 0.0_f64, shrink: 0.0_f64, base: 0_i32, minimum: 0_i32, maximum: unknown, hypothetical: 0_i32, target: 0_i32, frozen: no, cross_minimum: unknown, cross_maximum: unknown, cross_auto: no, natural_main: unknown, natural_width: unknown, place: flex_at_start, stretch_to: unknown, cross_size: 0_i32, baseline: 0_i32, main_position: 0_i32, cross_position: 0_i32);
+}
+
+fn flex_blank_cache() -> made: FlexCache pure {
+  doc "An invalid item preparation and pre-stretch result, populated only by flex_prepare and flex_final.";
+  let no = False();
+  let setup = FlexBox(row: no, reverse: no, wrapping: no, wrap_reverse: no, content_width: 0_i32, inner_height: unknown, main_gap: 0_i32, cross_gap: 0_i32, align_items: 0_u8, justify_content: 0_u8, align_content: 0_u8, updating: no);
+  let prepared = flex_blank_item();
+  let space = fresh_space();
+  return FlexCache(valid: no, setup: setup, prepared: prepared, final_space: space, final_cross: 0_i32, final_baseline: 0_i32, final_valid: no);
+}
+
+fn flex_forget(context: &Context) -> result: unit writes(context.flex_cache.valid), writes(context.flex_cache.final_valid) {
+  doc "Invalidates a flex item's content-dependent preparation and pre-stretch output before its content or style changes are consumed by an update.";
+  set context^.flex_cache.valid = False();
+  set context^.flex_cache.final_valid = False();
+  return unit;
+}
+
+fn flex_same_setup(first: FlexBox, second: FlexBox) -> same: Bool pure {
+  doc "Exact equality of the inputs to item preparation; updating selects reuse and is not a layout input.";
+  let row = eeq(first.row, second.row);
+  let reverse = eeq(first.reverse, second.reverse);
+  let wrapping = eeq(first.wrapping, second.wrapping);
+  let wrap_reverse = eeq(first.wrap_reverse, second.wrap_reverse);
+  let content_width = first.content_width == second.content_width;
+  let inner_height = first.inner_height == second.inner_height;
+  let main_gap = first.main_gap == second.main_gap;
+  let cross_gap = first.cross_gap == second.cross_gap;
+  let align_items = first.align_items == second.align_items;
+  let justify_content = first.justify_content == second.justify_content;
+  let align_content = first.align_content == second.align_content;
+  let axes = band(row, reverse);
+  let wrap = band(wrapping, wrap_reverse);
+  let directions = band(axes, wrap);
+  let sizes = band(content_width, inner_height);
+  let gaps = band(main_gap, cross_gap);
+  let spaces = band(sizes, gaps);
+  let alignment = band(align_items, justify_content);
+  let aligned = band(alignment, align_content);
+  let geometry = band(directions, spaces);
+  let made = band(geometry, aligned);
+  return made;
+}
+
+fn flex_final_space(item: FlexItem, setup: FlexBox) -> made: Space pure {
+  doc "The space used to obtain an item's pre-stretch cross size and baseline: a row's resolved width, or a column's natural width and resolved height unless that height is its natural main size.";
+  let no = False();
+  let yes = True();
+  let width = setup.content_width;
+  if setup.row {
+    return Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item.target, forced_height: unknown, shrink: no);
+  }
+  let height = if item.target == item.natural_main {
+    give unknown;
+  } else {
+    give item.target;
+  }
+  return Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item.natural_width, forced_height: height, shrink: yes);
 }
 
 fn flex_round(value: f64) -> raw: i32 pure {
@@ -422,7 +428,7 @@ fn flex_content_height(child: &Context, styles: &Styles) -> height: i32 reads(st
 }
 
 fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Gives one child of a flex container its space and, for a flex item, everything the flex algorithm needs of it before flexing (CSS Flexbox 9.2 and 9.3): its margins, paddings, borders and flex factors in the container's axes, its flex base size from flex-basis, width or height, or its content (in a column by laying it out at its cross size, which is kept as its natural layout), its minimum and maximum main sizes with the automatic minimum of 4.5, its hypothetical main size, its cross limits and its alignment. It reads and writes only this child and this item, so a counted loop runs it for every child.";
+  doc "Gives one child of a flex container its space and, for a flex item, everything the flex algorithm needs of it before flexing (CSS Flexbox 9.2 and 9.3): its margins, paddings, borders and flex factors in the container's axes, its flex base size from flex-basis, width or height, or its content (in a column by laying it out at its cross size, which is kept as its natural layout), its minimum and maximum main sizes with the automatic minimum of 4.5, its hypothetical main size, its cross limits and its alignment. An unchanged item reuses the retained preparation only when every setup input is equal; a miss invalidates its pre-stretch result before preparation. It reads and writes only this child and this item, so a counted loop runs it for every child.";
   let style = child^.style;
   let width = setup.content_width;
   let yes = True();
@@ -432,8 +438,23 @@ fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
   set child^.space = child_space(available: width, basis_width: width, basis_height: setup.inner_height, shrink: yes);
   if item^.active {
   } else {
+    flex_forget(context: child);
     return unit;
   }
+  let changed = bor(child^.dirty, child^.restyled);
+  let unchanged = bnot(changed);
+  let retained = band(child^.flex_cache.valid, unchanged);
+  let updating_retained = band(setup.updating, retained);
+  let matching = flex_same_setup(first: child^.flex_cache.setup, second: setup);
+  let reuse = band(updating_retained, matching);
+  if reuse {
+    let kept = child^.flex_cache.prepared;
+    set kept.child = item^.child;
+    set kept.order = item^.order;
+    set item^ = kept;
+    return unit;
+  }
+  flex_forget(context: child);
   let margins = margin_edges(styles: styles, style: style, basis: width);
   let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
   let border = border_edges(styles: styles, style: style);
@@ -642,6 +663,9 @@ fn flex_prepare(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
   let shrink_factor = cvt::<f32, f64>(group.shrink);
   let made = FlexItem(child: item^.child, active: yes, order: item^.order, main_start: main_start, main_end: main_end, cross_start: cross_start, cross_end: cross_end, auto_main_start: auto_main_start, auto_main_end: auto_main_end, auto_cross_start: auto_cross_start, auto_cross_end: auto_cross_end, frame_main: frame_main, frame_cross: frame_cross, grow: grow_factor, shrink: shrink_factor, base: base, minimum: minimum, maximum: main_max, hypothetical: hypothetical, target: hypothetical, frozen: no, cross_minimum: cross_min, cross_maximum: cross_max, cross_auto: cross_auto, natural_main: natural_main, natural_width: natural_forced, place: place, stretch_to: unknown, cross_size: 0_i32, baseline: 0_i32, main_position: 0_i32, cross_position: 0_i32);
   set item^ = made;
+  set child^.flex_cache.setup = setup;
+  set child^.flex_cache.prepared = made;
+  set child^.flex_cache.valid = True();
   return unit;
 }
 
@@ -1245,7 +1269,7 @@ fn flex_place_lines(lines: &Box<Slots<FlexLine>>, wrapping: Bool, cross_size: i3
 }
 
 fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Lays out one child at its final main size: a flex item at its target (a row's item at its width target, a column's item at its height target unless its natural layout already has that height) with its cross size its own; an absolutely positioned child in the space it was given, unless the update defers it to position_out_with (deferred_out). A flex item's cross size and baseline are recorded. It reads and writes only this child and this item.";
+  doc "Obtains one item's pre-stretch cross size and baseline in its final main-size space, reusing the retained result only for unchanged content and that exact space. Reuse does not overwrite a retained stretched interior; flex_stretch later materializes the final used space. An absolutely positioned child uses its assigned space unless deferred_out leaves it to positioning. Each invocation reads and writes only its own child and item.";
   if item^.active {
   } else {
     let deferred = deferred_out(child: child, styles: styles, updating: setup.updating);
@@ -1256,16 +1280,22 @@ fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Docu
     }
     return unit;
   }
-  let width = setup.content_width;
-  let no = False();
-  let yes = True();
-  if setup.row {
-    let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.target, forced_height: unknown, shrink: no);
-    set child^.space = space;
-    let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
-  } else if item^.target != item^.natural_main {
-    let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.natural_width, forced_height: item^.target, shrink: yes);
-    set child^.space = space;
+  let space = flex_final_space(item: item^, setup: setup);
+  let same = same_space(first: child^.flex_cache.final_space, second: space);
+  let reusable = band(child^.flex_cache.final_valid, setup.updating);
+  let reuse = band(reusable, same);
+  if reuse {
+    set item^.cross_size = child^.flex_cache.final_cross;
+    set item^.baseline = child^.flex_cache.final_baseline;
+    return unit;
+  }
+  let already = same_space(first: child^.laid, second: space);
+  let clean = bnot(child^.dirty);
+  let ready = band(already, clean);
+  set child^.space = space;
+  if ready {
+    resolve_margins(child: child, styles: styles);
+  } else {
     let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
   }
   let cross = if setup.row {
@@ -1280,30 +1310,41 @@ fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Docu
     give child^.height;
   }
   set item^.baseline = baseline;
+  set child^.flex_cache.final_space = space;
+  set child^.flex_cache.final_cross = cross;
+  set child^.flex_cache.final_baseline = baseline;
+  set child^.flex_cache.final_valid = True();
   return unit;
 }
 
 fn flex_stretch(child: &Context, item: &FlexItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, setup: FlexBox) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Lays a stretched flex item out again at the cross size its line gives it, when that differs from the cross size it has, keeping its main size. It reads and writes only this child and this item.";
+  doc "Materializes one item in its final used space after line alignment: stretch forces the cross size only when it differs from the pre-stretch result, as in full layout. A retained stretched interior stays intact when that space is unchanged; changed stretch, removal of stretch and changed main sizes use lay_out_child. Each invocation reads and writes only its own child and item.";
   if item^.active {
   } else {
     return unit;
   }
   let wanted = item^.stretch_to;
-  if wanted < 0_i32 {
-    return unit;
-  }
+  let stretching = wanted >= 0_i32;
+  let changed_cross = wanted != item^.cross_size;
+  let force_cross = band(stretching, changed_cross);
   let width = setup.content_width;
   let no = False();
-  if setup.row {
-    if child^.height != wanted {
-      let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.target, forced_height: wanted, shrink: no);
-      set child^.space = space;
-      let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
+  let space = if force_cross {
+    if setup.row {
+      give Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: item^.target, forced_height: wanted, shrink: no);
+    } else {
+      give Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: wanted, forced_height: item^.target, shrink: no);
     }
-  } else if child^.width != wanted {
-    let space = Space(available: width, basis_width: width, basis_height: setup.inner_height, forced_width: wanted, forced_height: item^.target, shrink: no);
-    set child^.space = space;
+  } else {
+    give flex_final_space(item: item^, setup: setup);
+  }
+  let same = same_space(first: child^.laid, second: space);
+  let clean = bnot(child^.dirty);
+  let kept = band(same, clean);
+  set child^.space = space;
+  if kept {
+    resolve_margins(child: child, styles: styles);
+  } else {
     let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: setup.updating);
   }
   let cross = if setup.row {
