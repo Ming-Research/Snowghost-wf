@@ -2429,3 +2429,14 @@ checks must reject each before edits. The fixture expectation machinery now
 checks each initial-removal target kind and ownership and every required
 path row, including the refused source removal. Its local Python smoke test
 passed every deliberately wrong condition; renderer evidence is pending CI.
+
+Completion review R9 identified a missing `shift_split_lines` in the legacy
+`update_in_place` translation path. The restack path already updates this
+scratch, but the direct text path only moves payloads and raw rectangles.
+`transfer-line-lifetime` grows an anonymous line before a later split whose
+leading empty rectangle reads Split.line, keeps that growth through the
+next structural removal, and requires the removal to remain local. Paired
+text restoration before the removal would conceal the stale offset. This
+regression is first submitted without the repair to establish the expected
+failure; the repair will use the same existing split-line shift after the
+origin-only translation, excluding equal and ancestor opening ranks.

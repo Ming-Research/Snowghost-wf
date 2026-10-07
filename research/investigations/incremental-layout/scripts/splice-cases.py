@@ -63,7 +63,7 @@ and removal of a pre-existing split source require reason 3. Stable endpoint
 anchors extend later-split coverage from the earlier prefix-only refusal;
 the required local path is strengthened, and identity remains required.
 
-The transfer fixture isolates twenty cases behind separate flow roots:
+The transfer fixture isolates twenty-one cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, an owner at
 200px whose first line puts the seam at 220px, and a later -170px margin
 before clear:left. The later natural position is 70px before insertion and
@@ -100,6 +100,11 @@ float-floor certificate must expose stale line breaking rather than merely
 passing through a clearance plateau. Identity is required for all twenty.
 
 
+The line-lifetime case keeps a long anonymous-line insertion in place through
+the subsequent block removal, then restores the text. Its later head begins
+an inline owner that the preceding line does not own, so the leading empty
+fragment reads Split.line; block removal still requires a local splice.
+
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
 """
@@ -126,7 +131,8 @@ CASES = {
                  'transfer-multi-before', 'transfer-multi-after',
                  'transfer-inside-head', 'transfer-child-head',
                  'transfer-negative-head', 'transfer-adjacent-head',
-                 'transfer-source-removal', 'transfer-float-width-reentry'),
+                 'transfer-source-removal', 'transfer-float-width-reentry',
+                 'transfer-line-lifetime'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
@@ -154,6 +160,7 @@ EXPECTED_PATHS = {
     'transfer-negative-head': (1, 0),
     'transfer-adjacent-head': (0, 3),
     'transfer-source-removal': (1, 0),
+    'transfer-line-lifetime': (1, 0),
 }
 
 
@@ -248,12 +255,19 @@ def generate(tree, kind):
         else:
             after_insert = (retained['node'], created + 1, probe['node'])
         for node in after_insert:
+            if case == 'transfer-line-lifetime' and node == probe['node']:
+                continue
             if case in WRAPPING_CASES:
                 wrapping_pair(lines, node)
             else:
                 text_pair(lines, node)
+        if case == 'transfer-line-lifetime':
+            held_text = 'Retained anonymous text grows before the split head. ' * 12
+            lines.append('T %d 0 %s' % (probe['node'], held_text))
         lines.append('X %d' % created)
         record_path(paths, case, len(lines))
+        if case == 'transfer-line-lifetime':
+            lines.append('D %d 0 %d' % (probe['node'], len(held_text)))
         for node in (retained['node'], probe['node']):
             if case in WRAPPING_CASES:
                 wrapping_pair(lines, node)
