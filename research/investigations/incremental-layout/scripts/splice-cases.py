@@ -29,7 +29,11 @@ this generator never builds it. The intrinsic-margin case re-queries the
 edited item's intrinsic contributions while its used width stays fixed,
 then edits the paragraph beside a retained atomic inline with percentage
 margins; flow-root and floated children cover the other intrinsic margin
-readers without letting a query replace their used margins.
+readers without letting a query replace their used margins. The inline,
+floated and positioned flex-owner cases insert inside a flex item but cross
+a Text/atomic, Float or Out entry in the enclosing flow. Each structural
+edit is expected to refuse before publication with reason 2 and still match
+its full rebuild; later text edits verify retained route correctness.
 
 The transfer fixture isolates eight cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, a seam at
@@ -66,7 +70,8 @@ CASES = {
                  'transfer-maximum-sibling', 'transfer-relative-sibling'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
-             'flex-percentage', 'flex-intrinsic-margin'),
+             'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
+             'flex-float-owner', 'flex-positioned-owner'),
 }
 
 

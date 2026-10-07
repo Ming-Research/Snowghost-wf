@@ -1970,3 +1970,34 @@ is local or deep-copying retained subtrees solely to predict flex outputs.
 Every reference completion is counted; no performance claim includes it.
 The implementation recommendation proceeds within the approved stage-2
 scope, and remains proposed until owner review of the branch.
+
+
+#### Classifying the flex ancestor's enclosing entry
+
+The actual-output transfer requires an in-flow child-context entry. A routed
+flex context can instead be an atomic inline within a paragraph, a float,
+or an absolutely positioned child. Applying the ordinary child boundary
+update to those entries skips their owning paragraph, float placement or
+positioning dependency. Admission therefore checks that every routed child
+of a flow parent is the same live `Flow::Child` before private construction
+or publication. The other classes explicitly refuse with reason 2.
+
+The `flex-inline-owner`, `flex-float-owner` and `flex-positioned-owner`
+fixtures each edit a paragraph inside a flex item, so the route first
+crosses the flex container and then the enclosing non-Child entry. Each
+fixture inserts and removes a block and follows both with text edits.
+The expected structural path is `splice 0 reason 2`, with full-rebuild
+identity throughout; this extends coverage beyond ordinary block flex
+ancestors without claiming support for those additional dependencies.
+
+
+Completion review repairs: equal-height transfer equality now includes all
+certificate fields (`travel`, natural floor, float reach, known motion and
+free-transfer eligibility), so a changed certificate propagates even when
+geometry does not. The boundary self-check varies each field independently.
+Post-flex flow propagation additionally requires unchanged child width and
+horizontal margins; otherwise horizontal placement needs reference layout
+and the explicit reason-10 path is used. The float fixtures put the edited
+flow owner between the earlier float and later clearance, so the float-floor
+mutation reaches the outward certificate rather than an unrelated refusal
+of a float inside the edited sequence.
