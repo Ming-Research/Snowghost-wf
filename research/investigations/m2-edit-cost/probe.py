@@ -101,4 +101,7 @@ extra = '''  let diagnostics = pkg::layout::probe_trace(layout: layout);
 '''
 assert counts.count('  return unit;') == 1
 counts = counts.replace('  return unit;', extra + '  return unit;')
-oracle.write_text('const probe_label: Array<u8, 6> = \"probe \";\n\n' + body[:start] + counts + body[end:])
+body = body[:start] + counts + body[end:]
+first_function = body.index('fn ')
+body = body[:first_function] + 'const probe_label: Array<u8, 6> = "probe ";\n\n' + body[first_function:]
+oracle.write_text(body)
