@@ -1061,6 +1061,28 @@ of computing on stable slots. The resulting full resynchronization restored
 new text routes before the original script probed texts 54, 56, 58, 60 and
 62. No second route publisher runs on a successful local splice.
 
+The original new-text probes belong to inserted blocks 53/text 54,
+55/text 56, 57/text 58 and 59/text 60, all locally spliced. Block 61/text 62
+instead comes from the mixed-inline reason-3 reconstruction. Removals probe
+whichever of those new blocks survives. The immediate text fixture detects
+`lose-text-route` at edit 2 with `inc DIFF` in the first mutation run
+[37554096137](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37554096137).
+That run did not pass overall: its first counter fixture added a pseudo,
+which the unmutated Q86 path independently refused. The list-marker fixture
+replaces that setup without relaxing its required incremental success.
+
+The focused job in
+[37553901105](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37553901105)
+fails at the repaired refusal assertion (12 versus 2). Its raw page logs
+show that ecma262 block edits 1–20 and html5 block edits 1–60 all reach
+`structure_splice` and take reason-7 reconstruction, with no refused edit
+or dump mismatch. Their missing summaries were a harness defect: `inc`
+read filtered hash output after `edit` had removed diagnostic rows.
+These are fallback results, not E2 local-splice evidence. A diagnostic CI
+copy assigns distinct nonzero codes to the existing context guard exits
+to identify the unsupported boundary condition without changing which
+route executes; its results are pending.
+
 The repair reuses `visit_child` and the same class reach subject keys for
 stable-slot traversals, resolving only selected NodeIds through the existing
 order map. DOM links supply enumeration dependencies; inherited computation
