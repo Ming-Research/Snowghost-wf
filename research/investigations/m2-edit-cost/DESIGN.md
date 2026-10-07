@@ -1,5 +1,8 @@
 # M2 retained edit cost
 
+Latest evidence: [acceptance measurement](#final-source-acceptance-measurement),
+[correctness validation](#final-source-validation), and [owner ledger](#owner-ledger).
+
 ## Question and rejection criterion
 
 Which work introduced between step 1c and step 2, and between step 3a and
@@ -1188,3 +1191,98 @@ fields but explicitly did not establish that current storage cannot reach
 performance remain unverified proposals. Approval remains the owner's.
 All thirty configured falsifiers are rerun on the final renderer revision;
 this is verification of the final source change, not a relaxed matrix.
+
+
+## Final source acceptance measurement
+
+[37642163901](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642163901)
+measures 7ab2bd5f4cf1ec8d50cdb0cc260eb519b4a5524a, including the last
+local-width query guard, on Ubuntu 24.04, four vCPUs of an AMD EPYC 9V74,
+kernel 6.17.0-1022-azure, wf-0b7f5c5b9854 and clang 22.1.8. All builds use
+the same scripts on this host in forward/reverse rounds. Sequential medians in
+us (rounds one/two), computed with X5's upper-median convention:
+
+| Build | ecma262 word | ecma262 sentence | ecma262 fontsize | html5 word | html5 sentence | html5 fontsize |
+|---|---:|---:|---:|---:|---:|---:|
+| main 02855399257b | 83/81 | 188/198 | 1138/1548 | 66/61 | 174/177 | 522/534 |
+| base 9e1561ac4459 | 77632/78710 | 83801/88037 | 85968/88010 | 68959/72678 | 75744/76635 | 79606/77436 |
+| twin fa27cd08cd4e | 81080/82203 | 88183/87045 | 90657/90308 | 73363/71459 | 77898/76743 | 79432/78086 |
+| prior 0430437c8c1a | 86/94 | 802/1418 | 12492/11066 | 67/68 | 501/531 | 15683/16846 |
+| recent 3ec4bb491eb2 | 85/86 | 805/1159 | 8922/10949 | 66/66 | 461/461 | 2409/2196 |
+| head 7ab2bd5f4cf1 | 85/85 | 430/390 | 8976/9978 | 68/65 | 311/301 | 2104/1952 |
+
+Parallel main/head medians are ecma262 word 125/126 vs 135/134, sentence
+235/241 vs 436/422, fontsize 1267/1478 vs 9353/9192; html5 word 95/95
+vs 100/99, sentence 231/246 vs 328/320, fontsize 478/478 vs 1904/1865.
+Word and HTML sentence satisfy 2x in both modes/rounds. ECMA sentence
+passes parallel and sequential round two but fails sequential round one;
+font-size fails both modes and rounds. The task is not accepted complete.
+The last query guard is not isolated from 49981d1 on this host, so no timing
+gain is attributed to that guard alone.
+
+The ordinary batch's work observation repeats: HTML sentence edits 35/36
+in sequential round two retain 199 boundary entries, 112 blocks and zero
+fallbacks, while recent/head index visits are 9487/1039. Times are 552/400
+and 461/301 us. ECMA font-size edits 3/4 remain 9652/10037 us with only
+12 held entries, 41 boundary entries, 157 boundary blocks and 550 indexes;
+legacy entries is 23039 and counts a converged suffix, not physical replay.
+That leaves the slow-fragment attribution relevant after the final repair.
+
+The base/twin noise control has identical renderer source. This hosted run
+supports the large recovery and remaining failure; it does not isolate a
+precise hardware speedup or establish a compiler fix. Source inspection and
+the slow-pair profiles identify retained fragment reconstruction as an
+unnecessary whole-context dependency. Other reference paths still translate
+actually moved context-coordinate scratch, and genuine restyles/intrinsic or
+numeric-certificate failures can require broader replay. No claim is made
+that every remaining broad path is minimal. Eliminating the fragment pass
+requires the Q2 contract; improving its linear traversal without that contract
+could improve time but would leave the locality requirement incomplete.
+
+
+## Final source validation
+
+Renderer revision 7ab2bd5f4cf1ec8d50cdb0cc260eb519b4a5524a has tree
+0230143246a743a533d09ea3b070309e81e91cf0; documentation revision
+85f3e956ae2126b0cfad6a2d8a0b482b2ae2887a has the same renderer tree.
+[Oracles 37642164216](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642164216)
+passed core, step5 and every one of the twelve page/kind identity and
+sequential/parallel comparisons. The full-build comparison used
+ddfd63d0755e51f7c2972e0bb43b0c5d88fe30c7 as its reference; both real pages,
+the layout cases and saturation case were byte-identical in sequential and
+parallel modes. Case HTML files are unchanged from the branch base.
+
+The workflow remains red at only the two inherited page-block zero-fallback
+gates. Final-source raw output retains ecma262's twenty reason-3 nonlocal
+edits and HTML's fifty-eight reason-7 nonlocal edits plus two local splices;
+all eighty edits are inc same in both modes. These match the unchanged-base
+attribution above. The splice-scope work remains separate; no gate is waived.
+
+[Full falsify 37642592077](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642592077)
+on 85f3e956 passed all thirty configured mutations and the check-machinery
+job. This includes the dense-reference, numeric-sentinel, suffix-origin,
+stationary height/baseline and positioned-anchor faults. The pre-existing
+excluded reassociation and descendant-scan mutations remain excluded TODOs;
+this result counts only the configured matrix.
+[Check 37642164170](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642164170)
+and [layout-check 37642164324](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642164324)
+passed at 7ab2bd5; [check 37642592049](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642592049)
+also passed at 85f3e956. All compilation and oracle execution were hosted.
+Local work used non-compiling source, data, YAML and design checks only.
+
+The independent reviewer verified all 144 final-run timing files, the host
+and compiler-pin records, base/twin equality and the quoted counter examples.
+No new source or evidence finding remained after the local-width guard and
+stale TODO attribution fixes. The final limited stop-scope inspection found
+no further obvious bounded repair using the currently retained fragment
+fields; a faster full traversal remains conceivable and is not claimed
+incapable of meeting 2x. Q2 is required to finish the locality repair, while
+numerical performance acceptance is still failed. Q1's compiler remedy and
+its benefit to the current head remain unverified. Both decisions stay open.
+
+Against base 9e1561ac, design lint reports seven nodes, depth one, fifty-nine
+decisions and twenty-four rejected alternatives, all unchanged, and passes.
+No design node, module interface, Whitefoot pin, submodule or case HTML was
+changed. The correctness pin remains wf-f949e676acfa; only the requested
+timing workflow substitutes wf-0b7f5c5b9854 with clang 22.1.8. The branch
+contains no approval record for Q1/Q2, no PR and no main-line merge.
