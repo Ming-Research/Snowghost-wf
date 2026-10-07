@@ -58,9 +58,10 @@ splices, including the initial removal of a pre-existing generated child,
 using the generated commands' operation numbers. --check-paths
 checks each required row exactly once; inctime.py separately validates the
 complete protocol and identity. The transfer sidecar requires the later-float
-case to splice successfully.
+case and both fragment-prefix cases to splice successfully; a later split
+requires reason 3 because its fragment dependencies lie after the seam.
 
-The transfer fixture isolates nine cases behind separate flow roots:
+The transfer fixture isolates twelve cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, an owner at
 200px whose first line puts the seam at 220px, and a later -170px margin
 before clear:left. The later natural position is 70px before insertion and
@@ -79,7 +80,13 @@ final splice/fallback classification. transfer-later-float moves a later
 float with nonzero vertical margins and a following clearing block together,
 after the earlier float has expired; both structural edits require a local
 splice. Omitting only the later float's direct anchor movement must change
-the retained dump. Identity is required for all nine.
+the retained dump. The split-prefix case places an inline containing a block before an ordinary
+gap and the edited owner; the empty-prefix case retains a lineless inline
+fragment before the same gap. Both dependencies must remain in the unchanged
+prefix and both structural operations must splice. The later-split case
+instead places the split after the owner and requires reason 3 for insertion
+and removal. Omitting the prefix dependency guard must reveal stale later
+fragment geometry or ranks. Identity is required for all twelve.
 
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
@@ -102,7 +109,8 @@ CASES = {
                  'transfer-float-expired', 'transfer-marker-lined',
                  'transfer-fixed-sibling', 'transfer-minimum-sibling',
                  'transfer-maximum-sibling', 'transfer-relative-sibling',
-                 'transfer-later-float'),
+                 'transfer-later-float', 'transfer-prefix-split',
+                 'transfer-prefix-empty', 'transfer-later-split'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
@@ -120,6 +128,9 @@ EXPECTED_PATHS = {
     'positioned-generated-removal': (1, 0),
     'positioned-atomic-removal': (1, 0),
     'transfer-later-float': (1, 0),
+    'transfer-prefix-split': (1, 0),
+    'transfer-prefix-empty': (1, 0),
+    'transfer-later-split': (0, 3),
 }
 
 

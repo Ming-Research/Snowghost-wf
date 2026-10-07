@@ -1,0 +1,98 @@
+fn splice_fragment_prefix(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> (valid: Bool, events: u64) reads(context), writes(visits) {
+  doc "Reads a stable sequence prefix's weighted event count, refusing an invalid owner or non-live seam slot. An absent slot denotes the sequence end.";
+  if owner == no_index {
+    if slot != no_index {
+      let node = boundary_node(sequence: &context^.entries, slot: slot, visits: visits);
+      if node.live {
+      } else {
+        return False(), 0_u64;
+      }
+    }
+  } else {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      if slot != no_index {
+        let node = boundary_node(sequence: &context^.blocks.inner[at].entries, slot: slot, visits: visits);
+        if node.live {
+        } else {
+          return False(), 0_u64;
+        }
+      }
+    } else {
+      return False(), 0_u64;
+    }
+  }
+  let prefix = owner_prefix(context: context, owner: owner, slot: slot, visits: visits);
+  return True(), prefix.events;
+}
+
+fn splice_fragments_ready(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> ready: Bool reads(context), writes(visits) {
+  doc "Admits only seams after every retained split and empty-inline dependency. Weighted local prefixes and enclosing Open events recover the current global event rank without compatibility flow_at fields or a materialized walk; the owner chain is the only read order.";
+  if context^.fragment_prefix == 0_u64 {
+    return True();
+  }
+  let cursor = owner;
+  let selected = slot;
+  let seam = 0_u64;
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
+    let (valid, events) = splice_fragment_prefix(context: context, owner: cursor, slot: selected, visits: visits);
+    if valid {
+    } else {
+      return False();
+    }
+    set seam = seam +sat events;
+    if cursor == no_index {
+      let after = seam >= context^.fragment_prefix;
+      return after;
+    }
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+    } else {
+      return False();
+    }
+    let parent = context^.blocks.inner[at].parent;
+    let block_slot = context^.blocks.inner[at].entry_slot;
+    if block_slot == no_index {
+      return False();
+    }
+    let item = if parent == no_index {
+      let payload = splice_payload(sequence: &context^.entries, slot: block_slot, visits: visits);
+      give payload;
+    } else {
+      let parent_at = cvt::<u32, u64>(parent);
+      if parent_at < context^.blocks.inner.len {
+        let payload = splice_payload(sequence: &context^.blocks.inner[parent_at].entries, slot: block_slot, visits: visits);
+        give payload;
+      } else {
+        return False();
+      }
+    }
+    match item {
+      Open(block: found) => {
+        if found != cursor {
+          return False();
+        }
+      }
+      Close(..) => {
+        return False();
+      }
+      Text(..) => {
+        return False();
+      }
+      Child(..) => {
+        return False();
+      }
+      Float(..) => {
+        return False();
+      }
+      Out(..) => {
+        return False();
+      }
+    }
+    set seam = seam +sat 1_u64;
+    set cursor = parent;
+    set selected = block_slot;
+  }
+  return False();
+}

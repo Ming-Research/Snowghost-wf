@@ -223,8 +223,13 @@ example apart from the renderer code that exposed it
   refused: ecma262 at the split-inline context guard, html5 at the later-float
   suffix guard. The constituent inventory found lined markers but no specified,
   minimum or maximum height constraints in either edited context. Remaining:
-  validate later-float translation, argue and implement the required split-inline
-  dependencies, and run all mutation and final acceptance gates. Complete this
+  validate later-float translation and the unchanged-prefix split/empty-inline
+  dependency certificate, extend fragment endpoint updates if any page seam
+  precedes that bound, and run all mutation and final acceptance gates.
+  Positioned and atomic subtree retirement now includes live counts and route
+  tombstones; pre-existing generated-child removal fixtures cover the repair.
+  New generated pseudo membership still belongs to the existing style fallback,
+  so these fixtures do not claim local introduction of the first `has_out`. Complete this
   work before E2 or step-6 acceptance; require every unchanged page-script prefix
   to match a fresh build in seq/par and every block edit to report
   `splice 1 reason 0`. The zero-fallback assertion remains enabled.

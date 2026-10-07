@@ -2079,6 +2079,14 @@ paragraph marks. The replacement fixture removes a pre-existing generated child 
 introducing unsupported pseudo membership. It preserves local-splice and
 identity requirements and leaves the pages' zero-fallback gate unchanged. The source repair
 must pass CI before either removal case is claimed as validated.
+`no-positioned-retirement` omits only the `Out` retirement branch, while
+`no-atomic-retirement` omits atomic-child retirement and count accumulation
+before a removed paragraph is vacated. Each uses the strict semantic detector
+and the local-path baseline assertions of these fixtures: only a valid
+incremental identity/count difference detects the fault, never a path change
+or unrelated failure. The original positioned fault has the run above;
+the atomic fault has no original CI run, so its mutation supplies the required
+before-repair observation. Both detections remain pending CI.
 
 #### Uniform later-float translation
 
@@ -2230,3 +2238,40 @@ that determines `Split.line`. Translating a cached rectangle or line offset
 without proving those inputs unchanged is insufficient. Removing an ancestor
 of an endpoint must count as endpoint removal. The inventory, not a page
 name or benchmark path, determines which general argument must be built.
+
+The first implementation tests the unchanged-prefix candidate. A flow
+context retains `fragment_prefix`, an exclusive event-rank bound that covers
+every split's close and immediately following event, and every paragraph
+that emitted an empty-inline fragment. Full fragment generation computes
+this bound; a replay preserving empty fragments keeps the old bound as a
+conservative maximum. Text edits do not change event ranks. A structural
+splice is admitted only at or after this bound, including each enclosing
+flow context's changed Child event. The seam rank is the sum of cached
+weighted prefixes and ancestor Open events, never a stale `flow_at`.
+
+All fragment inputs then remain in an unchanged prefix. Splits keep their
+raw ranks, run grouping, inline adjacency, first-line state and extents;
+empty-inline paragraphs keep their origins. Later geometry changes cannot
+change these forward-layout inputs, since the ordinary flow certificate
+already excludes changed height/width dependencies. The context's own box
+still gets its new height normally. Fresh root split/empty fragments remain
+refused because publication does not own them. This adds only ordered reads
+on the lexical owner chain; cached prefix queries read independent metadata,
+and fragment construction keeps its existing source-output order.
+
+Fixtures place split and empty-inline fragments before a neutral seam and
+require local insertion/removal followed by text identity. A later split
+fixture requires counted refusal; ignoring the dependency bound must expose
+a stale rectangle or rank in its incremental/full comparison. Page coverage
+is explicitly pending the inventory and unchanged X5 scripts. If any page
+seam precedes the bound, this implementation is insufficient and endpoint
+update support remains required.
+
+The named fixtures are `transfer-prefix-split`, `transfer-prefix-empty` and
+`transfer-later-split`. The first two require local insertion and removal;
+the last requires reason 3 on both operations. `no-fragment-prefix` makes
+only the completed prefix comparison in `splice_fragments_ready` return true,
+retaining its reads and visit writes, and must produce a valid incremental
+identity difference, with the unchanged renderer first passing all identity
+and required-path assertions. A changed fallback path alone is not detection.
+These new fixture paths and mutation detection are pending CI.
