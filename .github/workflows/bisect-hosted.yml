@@ -168,3 +168,66 @@ jobs:
             build/evidence/
             build/x5/scripts/
             build/drivers/driver-*/revision.txt
+
+  profile-parallel:
+    if: contains(github.event.head_commit.message, '[profile-parallel]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37624162286
+          github-token: ${{ github.token }}
+          name: driver-head
+          path: build/profile/prior
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37630797014
+          github-token: ${{ github.token }}
+          name: driver-head
+          path: build/profile/recent
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37630797014
+          github-token: ${{ github.token }}
+          name: edit-cost-evidence
+          path: build/profile/evidence
+      - name: Tools, fonts and the same page
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo sysctl kernel.perf_event_paranoid=-1
+          chmod +x build/profile/{prior,recent}/layout_oracle_*
+          sh research/investigations/concurrency/run.sh fetch || true
+          test -s build/research/concurrency/ecma262.html
+          make -s oracle-fonts
+          uname -a
+          lscpu
+      - name: Isolate one moving sentence pair
+        run: |
+          set -euo pipefail
+          mkdir -p build/parallel-profile
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          source = Path('build/profile/evidence/x5/scripts/ecma262-sentence.edits').read_text().splitlines(True)
+          assert source[6].startswith('T ') and source[7].startswith('D ')
+          Path('build/parallel-profile/pair.edits').write_text(''.join(source[6:8] * 1000))
+          PYEOF
+          sheets=(renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css)
+          for name in prior recent; do
+            for setting in seq-1 par-1 par-4; do
+              mode=${setting%-*} workers=${setting#*-}
+              WF_WORKERS=$workers perf record -F 999 --call-graph dwarf -o "build/parallel-profile/$name-$setting.data" -- "build/profile/$name/layout_oracle_$mode" edittime build/parallel-profile/pair.edits build/research/concurrency/ecma262.html "${sheets[@]}" > "build/parallel-profile/$name-$setting.raw"
+              perf report -i "build/parallel-profile/$name-$setting.data" --stdio --no-children --percent-limit 0.5 > "build/parallel-profile/$name-$setting-self.txt"
+              perf report -i "build/parallel-profile/$name-$setting.data" --stdio --children --percent-limit 1 > "build/parallel-profile/$name-$setting-callers.txt"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-profile
+          path: build/parallel-profile/

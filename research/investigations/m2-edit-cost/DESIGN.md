@@ -781,7 +781,10 @@ The next timing run also downloads the already-built 0430437 driver as
 `prior`, interleaving it with main/base/twin/head on that single host.
 
 
-## Dense suffix and positioned cutoff question
+## Dense suffix and positioned cutoff question at 3ec4bb4
+
+This is the prior criterion for the 2*S experiment implemented at 3ec4bb4.
+The later bounded-density section owns the subsequent 8*S experiment.
 
 A large translated suffix must refresh global reference scratch under the
 existing contract, but need not chase every retained AVL node to do so.
@@ -928,3 +931,18 @@ another acceptance kind worsening over 10% in both rounds beyond base/twin
 noise. Any identity difference rejects correctness. A failed speed criterion
 rejects this crossover or requires a separately identified exploratory
 measurement; it cannot revise the 2x acceptance threshold.
+
+
+## Parallel suffix profile question
+
+The intermediate batch build and 3ec4bb4 have slower parallel moving edits
+than 0430437. A one-use job reuses those built drivers to repeat ecma262
+sentence edits 7/8 one thousand times, comparing sequential, parallel with
+one worker and parallel with four workers on the same host. The scripts
+restore text after each pair. Existing profiles timed shorter repeated pairs;
+the longer repetition separates edit work from startup. This is diagnosis,
+not the acceptance measurement or a precise performance claim. Inspect
+per-edit distributions and whole-process perf for traversal versus runtime
+work. A compiler/scheduler attribution requires an actual observed mechanism;
+slower parallel timing alone does not establish a Whitefoot gap. Remove the
+one-use job after collecting its evidence.
