@@ -1039,11 +1039,13 @@ otherwise complete two-edit insertion/removal log and a passing restored log.
 `splice-route-case.edits` uses `block-case.html` and probes text 44 immediately
 after inserting block 43 before old sibling 17, before any retained-text or
 style edit can cause resynchronization. `checkpoint-case.html` puts a counter
-reset to 7 on the body and makes direct paragraph children of its section
+reset to 777 on the body and makes direct paragraph children of its section
 independent contexts. `checkpoint-case.sh` resolves the section and new-node
 IDs from the driver's node listing, then inserts a neutral context and a
 counter-reading paragraph inside it. A genuine enclosing checkpoint must
-provide 7 to the reader; the synthetic empty checkpoint cannot. Both fixtures
+provide 777 to the reader; the synthetic empty checkpoint cannot. Three
+digits distinguish its geometry from the synthetic checkpoint's zero even
+with tabular digits. Both fixtures
 are consumed by the step-5 oracle job and the mutation matrix. These are
 validation fixtures, not measured results.
 
