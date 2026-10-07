@@ -1359,3 +1359,11 @@ atomic/positioned children and reason-10 diagnostic parsing. They are removed
 rather than reintroduced; the corresponding mutations and parser falsifiers
 remain wired. No Whitefoot pin, submodule or public module interface moves.
 Validation results and independent review will be recorded here after CI.
+
+
+The first integration CI attempt built all four timing drivers successfully
+in run 37652852848, but GitHub failed the workflow without creating its
+measurement job; the failed-job retry API returned HTTP 500. A temporary
+`[timing-reuse]` path runs the unchanged measurement against those four
+artifacts, preserving their revision records. It is removed after the
+measurement completes. Renderer source remains the merge commit's source.

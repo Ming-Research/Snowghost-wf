@@ -363,14 +363,11 @@ example apart from the renderer code that exposed it
   loop certification for suffix computations and publication scatters.
   Reopen in step-5 CI with the documented mutations and seq/par runs; defer
   any locality or performance completion claim until that evidence exists.
-  The edit-cost branch's same-pin base comparison at 9e1561a confirms this
-  scope is inherited: ecma262's 20 block edits use reason 3; html5 uses reason
-  7 on 58 of 60 edits and splices two. Every incremental dump matches, and
-  base/head generated scripts are byte-identical ([attribution](../research/investigations/m2-edit-cost/DESIGN.md#structural-scope-attribution)).
-  The unchanged zero-fallback oracle therefore remains failing independently
-  of the text-edit repairs. Defer widening these seams to the ongoing splice
-  extension, validate both pages' same scripts and semantic mutations there,
-  and reopen this gate when that extension is adopted.
+  The extended splice adopted in this branch covers the two pages' block
+  edits; the merge's unchanged zero-fallback and semantic mutation gates
+  validate that scope together with the scoped text-update paths. Broader
+  instrumentation and unsupported seams remain open; see the
+  [integration record](../research/investigations/m2-edit-cost/DESIGN.md#integration-with-the-extended-splice).
 
 
 - **Child-context publication still follows payload-slot order.**
