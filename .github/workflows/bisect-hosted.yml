@@ -142,3 +142,54 @@ jobs:
             build/evidence/
             build/x5/scripts/
             build/drivers/driver-*/revision.txt
+
+  font-profile:
+    if: contains(github.event.head_commit.message, '[font-profile]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37614591316
+          github-token: ${{ github.token }}
+          name: driver-head
+          path: build
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37608826155
+          github-token: ${{ github.token }}
+          name: edit-cost-evidence
+          path: build/reference
+      - name: Profile the unchanged font-size scripts with the built head
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo sysctl kernel.perf_event_paranoid=-1
+          chmod +x build/layout_oracle_seq
+          sh research/investigations/concurrency/run.sh fetch || true
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do test -s "build/research/concurrency/$file"; done
+          make -s oracle-fonts
+          mkdir -p build/font-profile
+          cp build/revision.txt build/font-profile/
+          uname -a > build/font-profile/machine.txt
+          lscpu >> build/font-profile/machine.txt
+          for page in ecma262 html5; do
+            script="build/reference/x5/scripts/$page-fontsize.edits"
+            cp "$script" build/font-profile/
+            sheets=(renderer/style/ua.css)
+            if [ "$page" = ecma262 ]; then
+              sheets+=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css)
+            fi
+            perf record -F 999 --call-graph dwarf -o "build/font-profile/$page.perf.data" -- build/layout_oracle_seq edittime "$script" "build/research/concurrency/$page.html" "${sheets[@]}" > "build/font-profile/$page.raw"
+            perf report -i "build/font-profile/$page.perf.data" --stdio --no-children --percent-limit 0.5 > "build/font-profile/$page-self.txt"
+            perf report -i "build/font-profile/$page.perf.data" --stdio --children --percent-limit 1 > "build/font-profile/$page-callers.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: font-profile-evidence
+          path: build/font-profile/

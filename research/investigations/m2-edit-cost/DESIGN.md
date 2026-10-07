@@ -486,3 +486,74 @@ a paragraph can alter its own inline-fragment geometry. This removes an
 unrelated-fragment dependency rather than extending changed-geometry admission.
 The same hosted scripts, complete identity checks and mutations must validate
 the result; the successful probe alone does not establish the timing target.
+
+## Reference replay contract
+
+The remaining compatibility bridge is not a true dependency on every layout
+entry. It is required by the current interface between reference settlement
+and owned publication: `update_flow_reference`, `restack_block` and
+`restack_flow` return only `UpdateCounts`. The local `StackResult` also knows
+its convergence point, delta and fragment stability, but the wrapper receives
+none of that mutation scope before publishing every boundary and encoding
+every origin. The walker consumes a full event slice with absolute ranks for
+prefix recovery and suffix operations. Both `local_geometry` and
+`boundary_dirty` describe the whole context, rather than a valid subset.
+
+A scoped replay contract would have to describe changed open ancestors,
+converged suffix positions and naturals, split-fragment inputs, atomic and
+positioned anchors, and the float/numeric summary fields they affect. Simply
+skipping publication would leave stale owner-relative geometry or cached
+transfers authoritative. A retained cursor and explicit mutation scope would
+therefore change material interfaces and validity conditions; their saturation
+argument and design choice need the owner if the measured target requires it.
+The split-guard repair is narrower: equal child outputs prove there are no
+parent geometry writes to represent at all.
+
+At 9888794, the first html5 font-size edit reports `held_entries 9 entries
+39140 boundary_reason 6` while taking 68186 us. `entries` alone does not prove
+39140 geometry writes: `restack_flow` counts the suffix even when its delta is
+zero, whereas suffix translation requires a nonzero delta. The unconditional
+materialization, reduction/publication and encoding are established by the
+wrapper and profile, separately from that counter. No stronger interpretation
+of the legacy counter is used here.
+
+## Guard validation and superseded-source checks
+
+The real baseline peer detects the isolated last-baseline mutation in
+[run 37614046840](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37614046840),
+job 112767993192, at fixture revision 81afb61 (renderer 9888794). Its unmutated
+edits match rebuilds; both font-size round-trip edits become `inc DIFF` in the
+mutant. This is a geometry difference from the intended guard removal, not a
+compiler failure or a malformed diagnostic accepted as detection.
+
+At renderer 9888794, the completed
+[oracle run 37609456167](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37609456167)
+passes core full-build dump comparisons, style and case fixtures, step-5
+checks, and all twelve page/kind incremental and seq/par comparisons. The
+separate zero-fallback assertion fails for both block-edit pages as established
+by the same-pin base attribution. The
+[full mutation run 37610871489](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37610871489)
+detects 24 of 26 configured mutations; its two fixture failures are the
+baseline observer and positioned-anchor reachability described above. These
+are superseded-source results, not acceptance of the later split-guard repair.
+
+The same focused run also detects `no-positioned-anchor` (job 112767993189).
+The original positioned script still has 60 matching edits in both builds.
+In the additional isolated script, all 60 unmutated edits match; the mutant
+has six rebuild differences on admitted static-anchor insertions/removals.
+The percentage-height case correctly retains its two reason-7 refusals, while
+the other eight structural edits report local splices. Thus the new fixture
+reaches the intended mutation without changing renderer admission or dropping
+the original coverage. The focused run passes all three selected mutations.
+
+## Font-size profile question
+
+Does the remaining font-size cost come from full compatibility publication or
+from style/paragraph preparation? Profile each unchanged main-generated
+font-size script once with the already-built dcc16f5 sequential timing driver,
+using 999 Hz task-clock DWARF call graphs. This one-use job reuses the timing
+artifact and performs no compilation. A profile dominated by preparation
+rather than reference update/publication rejects the proposed remaining-cost
+attribution. These whole-process profiles include initial construction; caller
+stacks must distinguish update work before making an edit-specific claim.
+Remove the one-use job after saving its evidence.
