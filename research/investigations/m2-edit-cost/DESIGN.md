@@ -980,3 +980,24 @@ defect still requires generated-code inspection or a minimized compiler trial. T
 not a reason to serialize independent reads, force one worker, or restore
 redundant lookups in Snowghost. The already-selected density experiment
 changes the actual traversal algorithm and predates this diagnostic evidence.
+
+
+The follow-up [binary inspection](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37637227231)
+resolves a concrete fork site in that exact 3ec4bb4 driver. The generated
+suffix thunk only loads its arguments and tail-calls `reference_owner_cursor`.
+The budgeted suffix function enqueues that thunk, calls the other
+`reference_owner_cursor` itself, then calls `wf__par_join` before descending
+the suffix. Thus one parallel task contains a single metadata query, not a
+subtree traversal. This identifies the emitted grain; it does not yet select
+a compiler/runtime remedy or measure a compiler-only fix. The inspection
+artifact includes the revision record, symbol table and disassembly. Both
+one-use diagnostic jobs are removed after their evidence was collected.
+
+At 49981d1, [step5](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37635938597)
+passes all sixteen cascade edits. The unchanged dense mutation is detected
+by cascade edit 2's `inc DIFF` in the
+[focused falsifiers](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37635938623),
+while its baseline has every edit `inc same`; the earlier undetected fault's
+coverage obligation is therefore resolved for the current dense admission.
+The sentinel mutant also passes its detection job. Full final validation
+and the same-host timing result remain outstanding at this record.

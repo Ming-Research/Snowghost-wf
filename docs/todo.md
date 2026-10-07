@@ -19,11 +19,13 @@ example apart from the renderer code that exposed it
   worker_main and join account for 65.37% and 8.86% of whole-process self
   samples. The prior traversal was 689/697/1056 us under the same conditions.
   [Profile, scope and limitations](../research/investigations/m2-edit-cost/DESIGN.md#parallel-suffix-profile-result).
+  Binary inspection identifies a suffix thunk containing only one cursor
+  query, enqueued beside the other query and joined before suffix descent.
   Impact: this revision improves sequential work but has a substantial
-  parallel regression. Exact fork-site/cost-model attribution
-  remains unverified; this is a renderer reproducer, not yet a minimal
-  conformance case. Change: inspect the generated fork/cost path, minimize
-  the two cursor reads inside the recursive walk, and repair compiler/runtime
+  parallel regression. The emitted grain is identified; the cost-model
+  cause and remedy remain unverified. This is a renderer reproducer, not
+  yet a minimal conformance case. Change: minimize the two cursor reads
+  inside the recursive walk and repair compiler/runtime
   grain selection while retaining source independence. Validate unchanged
   work/dumps and seq/par-one/par-four repeated edits plus the M2 acceptance
   matrix on the same host. Reopen with the owner's Whitefoot decision; do
