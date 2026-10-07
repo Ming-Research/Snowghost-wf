@@ -57,3 +57,27 @@ with the length hoisted and the guard omitted; do not conflate a green exit
 with a permitted loop. At this observed scale, run each remaining small probe
 once per compiler mode with a two-minute per-command bound, reporting any
 timeout as unknown rather than as a rejection.
+
+## First complete batch (CI 37562468051)
+
+Revision `fba0c4f0cfef71764952932ec6abd4c7025580f5` established:
+
+- C2's original borrowed-length guard denies the outer loop; hoisting the same
+  length read before the loop permits it. The unchanged cited runtime-stride
+  conformance case also permits its outer loop. Omitting the bounds guard without
+  replacing the proof rejects under REF-4; retain that as a separate negative.
+- Alpha W1 compiles/runs with its original dependencies. Beta W1 rejects at
+  `remaining - left.total_count` under OP-2. Test a separate variant that snapshots
+  that field before comparing/subtracting it, preserving exact arithmetic.
+- Both supplied W3 programs reject under FORM-3 because `checked` is reserved.
+  Keep those originals unchanged as negative evidence; separately rename that
+  identifier to `verified` to test the actual inverse-producer claim.
+- C4 rejects under RANGE-1 at `.back`, the intended reason. C5's ordinary callback
+  compiles/runs; its changing-function callback cycle rejects under FN-6.
+- C1's first harness rejected a conditional move under LIV-1. Move page creation
+  inside the guarded append branch, with an explicit error on insufficient room;
+  this is a harness repair and says nothing about the claimed storage behavior.
+
+The runner now expects the observed rejections of the **unmodified** source
+artifacts. This is a recorded falsification of their validity claim, not a
+changed language expectation. Each repair is separately named and compiled.

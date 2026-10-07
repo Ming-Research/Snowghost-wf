@@ -17,7 +17,14 @@ ROOT = Path(__file__).resolve().parents[3]
 PROBES = Path(__file__).parent / 'probes'
 OUT = ROOT / 'build/storage-probes'
 COMPILER = ROOT / 'build/whitefoot/wf-f949e676acfa/whitefootc'
-NEGATIVE = {'c4-field-inverse-negative': 'RANGE-1', 'c5-changing-callback-negative': 'FN-6'}
+NEGATIVE = {
+    'c2-missing-bound-negative': 'REF-4',
+    'c3-alpha-w3': 'FORM-3',
+    'c3-beta-w1': 'OP-2',
+    'c3-beta-w3': 'FORM-3',
+    'c4-field-inverse-negative': 'RANGE-1',
+    'c5-changing-callback-negative': 'FN-6',
+}
 
 
 def invoke(command, log, env=None):

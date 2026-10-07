@@ -1,0 +1,932 @@
+struct StorageTodaySelection {
+  inserted: u32;
+  selected: u32;
+  offset: u64;
+}
+
+fn storage_today_sequence(sequence: &EntrySequence, before: u32, removed: u32, item: Flow, output: SequenceOutput, event: u64) -> result: Result<StorageTodaySelection, LayoutError> writes(sequence) {
+  let visits = no_boundary_visits();
+  let inserted = propagate insert_before(sequence: sequence, before: before, item: item, output: output, visits: &visits);
+  remove(sequence: sequence, slot: removed, visits: &visits);
+  let (selected, offset) = sequence_select(sequence: sequence, event: event);
+  let observation = StorageTodaySelection(inserted: inserted, selected: selected, offset: offset);
+  return Ok<StorageTodaySelection, LayoutError>(value: observation);
+}
+
+fn storage_today_rank(sequence: &EntrySequence, rank: u64) -> result: u32 reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  let cursor = sequence^.root;
+  let remaining = rank;
+  for (level in 0_u64..64_u64) {
+    let held = sequence_node(sequence: sequence, slot: cursor);
+    if held.live {
+    } else {
+      return no_index;
+    }
+    let left = sequence_node(sequence: sequence, slot: held.left);
+    let left_count = left.total_count;
+    if remaining < left_count {
+      set cursor = held.left;
+    } else if remaining == left_count {
+      return cursor;
+    } else {
+      let after_left = remaining - left_count;
+      set remaining = after_left - 1_u64;
+      set cursor = held.right;
+    }
+  }
+  return no_index;
+}
+
+fn storage_today_links(sequence: &EntrySequence, slot: u32) -> result: SequenceCursor reads(sequence.nodes), reads(sequence.span) {
+  let links = slot_cursor(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
+  return links;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let sequence = new_sequence();
+  let visits = no_boundary_visits();
+  let ordinary = pending_output(events: 1_u64);
+  for (at in 0_u64..6_u64) {
+    let id = cvt.wrap::<u64, u32>(at);
+    let item = Flow::Text(paragraph: id);
+    let inserted = insert_before(sequence: &sequence, before: no_index, item: item, output: ordinary, visits: &visits);
+    match inserted {
+      Ok(value: slot) => {
+        if slot != id {
+          return std::process::exit_status(code: 1_u8);
+        }
+      }
+      Err(error: failure) => {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  let wide = pending_output(events: 3_u64);
+  let item = Flow::Text(paragraph: 99_u32);
+  let result = storage_today_sequence(sequence: &sequence, before: 2_u32, removed: 4_u32, item: item, output: wide, event: 3_u64);
+  match result {
+    Ok(value: seen) => {
+      if seen.inserted != 6_u32 {
+        return std::process::exit_status(code: 3_u8);
+      }
+      if seen.selected != 6_u32 {
+        return std::process::exit_status(code: 4_u8);
+      }
+      if seen.offset != 1_u64 {
+        return std::process::exit_status(code: 5_u8);
+      }
+    }
+    Err(error: failure) => {
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+  let expected = array_filled::<u32, 6>(value: 0_u32);
+  set expected[0_u64] = 0_u32;
+  set expected[1_u64] = 1_u32;
+  set expected[2_u64] = 6_u32;
+  set expected[3_u64] = 2_u32;
+  set expected[4_u64] = 3_u32;
+  set expected[5_u64] = 5_u32;
+  for (rank in 0_u64..6_u64) {
+    let observed = storage_today_rank(sequence: &sequence, rank: rank);
+    if observed != expected[rank] {
+      return std::process::exit_status(code: 6_u8);
+    }
+  }
+  let outside = storage_today_rank(sequence: &sequence, rank: 6_u64);
+  if outside != no_index {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let removed_links = storage_today_links(sequence: &sequence, slot: 4_u32);
+  if removed_links.live {
+    return std::process::exit_status(code: 8_u8);
+  }
+  let missing = Flow::Close(block: no_index);
+  let old = slot_read::<Flow>(pages: &sequence.payloads, slot: 5_u32, span: sequence.span, missing: missing);
+  match old {
+    Text(paragraph: held) => {
+      if held != 5_u32 {
+        return std::process::exit_status(code: 9_u8);
+      }
+    }
+    Open(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+    Close(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+    Child(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+    Float(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+    Out(..) => {
+      return std::process::exit_status(code: 10_u8);
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+
+enum LayoutError {
+  TooLarge();
+  Inconsistent();
+  Text();
+}
+
+const no_index: u32 = 4294967295_u32;
+
+enum Flow {
+  doc "One entry of a flow context's content in tree order. This is a virtual event from the nested owner-local sequences; Close is synthesized when leaving a block. No context retains a flat event array; block, paragraph and context numbers identify payload slots and carry no order or ancestry. Passes share transient event slices and isolated queries read virtual ranks, while entry_slot is the stable owner-local identity and flow_at remains a temporary compatibility rank. Open and Close bracket a block-level box of the context's blocks; Text is a paragraph; Child is an in-flow block-level child context; Float is a floated child context, anchored where it occurs; Out is an absolutely or fixed positioned child context, whose static position is where it occurs.";
+  Open(block: u32);
+  Close(block: u32);
+  Text(paragraph: u32);
+  Child(context: u32);
+  Float(context: u32);
+  Out(context: u32);
+}
+
+enum SlotPages<T> {
+  doc "A lazy binary directory over the owner-local 30-bit slot space. Bulk construction uses one power-of-two leaf sized to its owner; later growth adds directory paths and small leaves without copying an existing page.";
+  Vacant();
+  Fork(left: Box<SlotPages<T>>, right: Box<SlotPages<T>>);
+  Page(values: Box<Array<T>>);
+}
+
+struct EntryHandle {
+  doc "A stable entry slot in one block sequence, or no_index. Slots are never reused, so deletion cannot make an old handle name a new entry.";
+  owner: u32;
+  slot: u32;
+}
+
+struct SequenceOutput {
+  doc "An ordered Through(leading) or Solid(leading, advance, trailing) transfer, with baseline offsets from its first resolved edge. Struts retain their positive maximum and negative minimum separately. travel bounds the absolute arithmetic along the run; ordinary never licenses reassociation outside the bounded exact range. Float handles identify exports in the enclosing BFC, never a block-contained float list.";
+  count: u64;
+  events: u64;
+  first_line: EntryHandle;
+  last_line: EntryHandle;
+  ordinary: Bool;
+  through: Bool;
+  leading_positive: i32;
+  leading_negative: i32;
+  advance: i64;
+  trailing_positive: i32;
+  trailing_negative: i32;
+  first_baseline: i64;
+  last_baseline: i64;
+  travel: i64;
+  min_content: i32;
+  max_content: i32;
+  floats: u64;
+  first_float: EntryHandle;
+  last_float: EntryHandle;
+  barriers: u32;
+}
+
+struct BoundaryVisits {
+  doc "Payload-opening operations on direct entries, block payloads and AVL metadata in the boundary path; repeated opens count again, scalar accesses within one snapshot do not. fallbacks counts departures to the reference path and reason is the greatest refusal code across updated contexts. Reference work, text preparation and metadata page-directory steps are outside these counters, so any fallback disqualifies a locality claim.";
+  entries: u64;
+  blocks: u64;
+  indexes: u64;
+  fallbacks: u64;
+  reason: u32;
+}
+
+struct SequenceNode {
+  doc "A paged index cell. Field-narrow access keeps topology and weights separate from own and total transfers; neither traversal nor link mutation copies a transfer. Removed cells remain tombstones.";
+  links: SequenceCursor;
+  own: SequenceOutput;
+  total: SequenceOutput;
+}
+
+struct SequenceCursor {
+  doc "The copyable topology and structural weights of one AVL node. Semantic transfers are read separately only when combining outputs. Weights remain valid while a reference walk changes payload geometry.";
+  left: u32;
+  right: u32;
+  parent: u32;
+  height: u32;
+  live: Bool;
+  own_events: u64;
+  total_events: u64;
+  total_count: u64;
+}
+
+struct PendingEntry {
+  doc "One construction-only direct entry and its completed virtual event span; its list index becomes its stable payload slot.";
+  item: Flow;
+  events: u64;
+}
+
+struct EntrySequence {
+  doc "One block's direct entries, with independently paged stable payload slots and an AVL order/summary index. allocated is local to this owner, never a context-wide order counter. A block occurs once as Open; Close exists only in the virtual iterator. During construction pending lazily holds plain direct entries and pending_events their virtual span; sealing releases that list and bulk-builds the pages and AVL. Empty and sealed owners hold no pending allocation.";
+  payloads: SlotPages<Flow>;
+  nodes: SlotPages<SequenceNode>;
+  root: u32;
+  allocated: u32;
+  span: u32;
+  pending: Option<Box<Slots<PendingEntry>>>;
+  pending_events: u64;
+}
+
+fn absent_handle() -> made: EntryHandle pure {
+  doc "The absent line or entry handle.";
+  let absent = EntryHandle(owner: no_index, slot: no_index);
+  return absent;
+}
+
+fn empty_output() -> made: SequenceOutput pure {
+  doc "The identity Through transfer, with no line or float handles.";
+  let absent = absent_handle();
+  let yes = True();
+  let empty = SequenceOutput(count: 0_u64, events: 0_u64, first_line: absent, last_line: absent, ordinary: yes, through: yes, leading_positive: 0_i32, leading_negative: 0_i32, advance: 0_i64, trailing_positive: 0_i32, trailing_negative: 0_i32, first_baseline: 0_i64, last_baseline: 0_i64, travel: 0_i64, min_content: 0_i32, max_content: 0_i32, floats: 0_u64, first_float: absent, last_float: absent, barriers: 0_u32);
+  return empty;
+}
+
+fn pending_output(events: u64) -> made: SequenceOutput pure {
+  doc "One entry whose event span is known and whose semantic margin/line output still needs layout.";
+  let pending = empty_output();
+  set pending.count = 1_u64;
+  set pending.events = events;
+  let no = False();
+  set pending.ordinary = no;
+  return pending;
+}
+
+fn join_output(left: &SequenceOutput, right: &SequenceOutput) -> made: SequenceOutput reads(left), reads(right) {
+  doc "Composes Through/Through, Through/Solid, Solid/Through and Solid/Solid in document order. Only unsaturated ordinary transfers may drive placement; structural, baseline and float metadata remain available for unsupported runs.";
+  if left^.count == 0_u64 {
+    return right^;
+  }
+  if right^.count == 0_u64 {
+    return left^;
+  }
+  let joined = empty_output();
+  set joined.count = left^.count +sat right^.count;
+  set joined.events = left^.events +sat right^.events;
+  let first_line = if left^.first_line.slot != no_index {
+    give left^.first_line;
+  } else {
+    give right^.first_line;
+  }
+  set joined.first_line = first_line;
+  let last_line = if right^.last_line.slot != no_index {
+    give right^.last_line;
+  } else {
+    give left^.last_line;
+  }
+  set joined.last_line = last_line;
+  let composed_1 = band(left^.ordinary, right^.ordinary);
+  set joined.ordinary = composed_1;
+  let composed_2 = band(left^.through, right^.through);
+  set joined.through = composed_2;
+  set joined.leading_positive = left^.leading_positive;
+  set joined.leading_negative = left^.leading_negative;
+  set joined.trailing_positive = right^.trailing_positive;
+  set joined.trailing_negative = right^.trailing_negative;
+  let displacement = 0_i64;
+  if left^.through {
+    let composed_3 = imax(left^.leading_positive, right^.leading_positive);
+    set joined.leading_positive = composed_3;
+    let composed_4 = imin(left^.leading_negative, right^.leading_negative);
+    set joined.leading_negative = composed_4;
+    set joined.advance = right^.advance;
+  } else if right^.through {
+    set joined.advance = left^.advance;
+    let composed_5 = imax(left^.trailing_positive, right^.leading_positive);
+    set joined.trailing_positive = composed_5;
+    let composed_6 = imin(left^.trailing_negative, right^.leading_negative);
+    set joined.trailing_negative = composed_6;
+  } else {
+    let positive = imax(left^.trailing_positive, right^.leading_positive);
+    let negative = imin(left^.trailing_negative, right^.leading_negative);
+    let wide_positive = cvt::<i32, i64>(positive);
+    let wide_negative = cvt::<i32, i64>(negative);
+    let gap = wide_positive +sat wide_negative;
+    set displacement = left^.advance +sat gap;
+    set joined.advance = displacement +sat right^.advance;
+  }
+  let first_offset = if left^.first_line.slot != no_index {
+    give left^.first_baseline;
+  } else if right^.first_line.slot != no_index {
+    give displacement +sat right^.first_baseline;
+  } else {
+    give 0_i64;
+  }
+  let last_offset = if right^.last_line.slot != no_index {
+    give displacement +sat right^.last_baseline;
+  } else if left^.last_line.slot != no_index {
+    give left^.last_baseline;
+  } else {
+    give 0_i64;
+  }
+  set joined.first_baseline = first_offset;
+  set joined.last_baseline = last_offset;
+  set joined.travel = left^.travel +sat right^.travel;
+  if joined.travel > 268435456_i64 {
+    set joined.ordinary = False();
+  }
+  let composed_7 = imax(left^.min_content, right^.min_content);
+  set joined.min_content = composed_7;
+  let composed_8 = imax(left^.max_content, right^.max_content);
+  set joined.max_content = composed_8;
+  set joined.floats = left^.floats +sat right^.floats;
+  let first_export = if left^.first_float.slot != no_index {
+    give left^.first_float;
+  } else {
+    give right^.first_float;
+  }
+  let last_export = if right^.last_float.slot != no_index {
+    give right^.last_float;
+  } else {
+    give left^.last_float;
+  }
+  set joined.first_float = first_export;
+  set joined.last_float = last_export;
+  let composed_9 = imax(left^.barriers, right^.barriers);
+  set joined.barriers = composed_9;
+  return joined;
+}
+
+fn vacant_cursor() -> made: SequenceCursor pure {
+  doc "The absent topology and weights, without constructing a semantic transfer.";
+  let no = False();
+  let vacant = SequenceCursor(left: no_index, right: no_index, parent: no_index, height: 0_u32, live: no, own_events: 0_u64, total_events: 0_u64, total_count: 0_u64);
+  return vacant;
+}
+
+fn vacant_node() -> made: SequenceNode pure {
+  doc "The initial page value; live construction cells keep pending transfers until reference publication.";
+  let links = vacant_cursor();
+  let pending = pending_output(events: 0_u64);
+  let vacant = SequenceNode(links: links, own: pending, total: pending);
+  return vacant;
+}
+
+fn new_sequence() -> made: EntrySequence pure {
+  doc "An empty owner-local sequence allocates no payload or index pages.";
+  let payloads = SlotPages<Flow>::Vacant();
+  let nodes = SlotPages<SequenceNode>::Vacant();
+  let pending = None<Box<Slots<PendingEntry>>>();
+  let sequence = EntrySequence(payloads: move payloads, nodes: move nodes, root: no_index, allocated: 0_u32, span: 4_u32, pending: move pending, pending_events: 0_u64);
+  return move sequence;
+}
+
+fn slot_cursor(pages: &SlotPages<SequenceNode>, slot: u32, span: u32) -> made: SequenceCursor reads(pages) {
+  doc "Reads only links, liveness and event weights at a metadata leaf; recursive directory returns never copy a SequenceNode.";
+  let missing = vacant_cursor();
+  if slot >= span {
+    return missing;
+  }
+  match pages^ {
+    Vacant() => {
+      return missing;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        let made = page^.inner[at].links;
+        return made;
+      }
+      return missing;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let earlier = slot_cursor(pages: &left_page^.inner, slot: slot, span: half);
+        return earlier;
+      }
+      let later = slot - half;
+      let following = slot_cursor(pages: &right_page^.inner, slot: later, span: half);
+      return following;
+    }
+  }
+}
+
+fn sequence_node(sequence: &EntrySequence, slot: u32) -> made: SequenceCursor reads(sequence.nodes), reads(sequence.span) {
+  doc "The event walk's small metadata read, independent of payload and semantic boundary fields.";
+  let made = slot_cursor(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
+  return made;
+}
+
+fn sequence_reserve(sequence: &EntrySequence) -> result: unit reads(sequence.allocated), writes(sequence.nodes), writes(sequence.payloads), writes(sequence.span) {
+  doc "Doubles the directory address space by wrapping its existing roots, without copying any payload or index page. The first small sequence allocates only one four-slot page per store.";
+  if sequence^.allocated < sequence^.span {
+    return unit;
+  }
+  if sequence^.span >= 1073741824_u32 {
+    return unit;
+  }
+  let old_nodes = SlotPages<SequenceNode>::Vacant();
+  let old_payloads = SlotPages<Flow>::Vacant();
+  swap(first: &old_nodes, second: &sequence^.nodes);
+  swap(first: &old_payloads, second: &sequence^.payloads);
+  let right_nodes = SlotPages<SequenceNode>::Vacant();
+  let right_payloads = SlotPages<Flow>::Vacant();
+  let node_left = box_new::<SlotPages<SequenceNode>>(value: move old_nodes);
+  let node_right = box_new::<SlotPages<SequenceNode>>(value: move right_nodes);
+  let payload_left = box_new::<SlotPages<Flow>>(value: move old_payloads);
+  let payload_right = box_new::<SlotPages<Flow>>(value: move right_payloads);
+  let nodes = SlotPages<SequenceNode>::Fork(left: move node_left, right: move node_right);
+  set sequence^.nodes = move nodes;
+  let payloads = SlotPages<Flow>::Fork(left: move payload_left, right: move payload_right);
+  set sequence^.payloads = move payloads;
+  set sequence^.span = sequence^.span +sat sequence^.span;
+  return unit;
+}
+
+fn slot_read<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, missing: T) -> value: T reads(pages) {
+  doc "Reads one stable slot through a bounded directory path; absent pages return the supplied vacant value.";
+  if slot >= span {
+    return missing;
+  }
+  match pages^ {
+    Vacant() => {
+      return missing;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        return page^.inner[at];
+      }
+      return missing;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let value = slot_read::<T>(pages: &left_page^.inner, slot: slot, span: half, missing: missing);
+        return value;
+      }
+      let later = slot - half;
+      let value = slot_read::<T>(pages: &right_page^.inner, slot: later, span: half, missing: missing);
+      return value;
+    }
+  }
+}
+
+fn slot_write<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, value: T, missing: T) -> result: unit writes(pages) {
+  doc "Allocates only a missing directory path and its four-slot page, then writes one slot. Existing payload pages never move.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+      if span <= 4_u32 {
+        let count = cvt::<u32, u64>(span);
+        let values = box_array_filled::<T>(count: count, value: missing);
+        let page = SlotPages<T>::Page(values: move values);
+        set pages^ = move page;
+      } else {
+        let empty_left = SlotPages<T>::Vacant();
+        let empty_right = SlotPages<T>::Vacant();
+        let new_left = box_new::<SlotPages<T>>(value: move empty_left);
+        let new_right = box_new::<SlotPages<T>>(value: move empty_right);
+        let fork = SlotPages<T>::Fork(left: move new_left, right: move new_right);
+        set pages^ = move fork;
+      }
+    }
+    Fork(..) => {
+    }
+    Page(..) => {
+    }
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: stored_page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < stored_page^.inner.len {
+        set stored_page^.inner[at] = value;
+      }
+    }
+    Fork(left: stored_left, right: stored_right) => {
+      let half = span / 2_u32;
+      if slot < half {
+        slot_write::<T>(pages: &stored_left^.inner, slot: slot, span: half, value: value, missing: missing);
+      } else {
+        let later = slot - half;
+        slot_write::<T>(pages: &stored_right^.inner, slot: later, span: half, value: value, missing: missing);
+      }
+    }
+  }
+  return unit;
+}
+
+fn slot_links(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, node: SequenceCursor) -> result: unit writes(pages) {
+  doc "Writes an existing cell's topology only, including tombstoning; transfers never pass through this directory path.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        set page^.inner[at].links = node;
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        slot_links(pages: &left_page^.inner, slot: slot, span: half, node: node);
+      } else {
+        let later = slot - half;
+        slot_links(pages: &right_page^.inner, slot: later, span: half, node: node);
+      }
+    }
+  }
+  return unit;
+}
+
+fn sequence_write(sequence: &EntrySequence, slot: u32, node: SequenceCursor) -> result: unit reads(sequence.span), writes(sequence.nodes) {
+  doc "Writes one existing topology slot without copying outputs or accessing payload storage.";
+  slot_links(pages: &sequence^.nodes, slot: slot, span: sequence^.span, node: node);
+  return unit;
+}
+
+fn slot_output(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, own: Bool) -> made: SequenceOutput reads(pages) {
+  doc "Reads exactly one transfer at a live page leaf, taking its structural weights from topology during construction.";
+  if slot < span {
+    match pages^ {
+      Vacant() => {
+      }
+      Page(values: page) => {
+        let at = cvt::<u32, u64>(slot);
+        if at < page^.inner.len {
+          if page^.inner[at].links.live {
+            let output = if own {
+              give page^.inner[at].own;
+            } else {
+              give page^.inner[at].total;
+            }
+            if own {
+              set output.count = 1_u64;
+              set output.events = page^.inner[at].links.own_events;
+            } else {
+              set output.count = page^.inner[at].links.total_count;
+              set output.events = page^.inner[at].links.total_events;
+            }
+            return output;
+          }
+        }
+      }
+      Fork(left: left_page, right: right_page) => {
+        let half = span / 2_u32;
+        if slot < half {
+          let earlier = slot_output(pages: &left_page^.inner, slot: slot, span: half, own: own);
+          return earlier;
+        }
+        let later = slot - half;
+        let following = slot_output(pages: &right_page^.inner, slot: later, span: half, own: own);
+        return following;
+      }
+    }
+  }
+  let empty = empty_output();
+  return empty;
+}
+
+fn slot_store_output(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, output: &SequenceOutput, own: Bool) -> result: unit reads(output), writes(pages) {
+  doc "Writes one transfer and its weights in an existing live cell, without copying topology or the other transfer.";
+  if slot >= span {
+    return unit;
+  }
+  match pages^ {
+    Vacant() => {
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        if page^.inner[at].links.live {
+          if own {
+            set page^.inner[at].own = output^;
+            set page^.inner[at].links.own_events = output^.events;
+          } else {
+            set page^.inner[at].total = output^;
+            set page^.inner[at].links.total_events = output^.events;
+            set page^.inner[at].links.total_count = output^.count;
+          }
+        }
+      }
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        slot_store_output(pages: &left_page^.inner, slot: slot, span: half, output: output, own: own);
+      } else {
+        let later = slot - half;
+        slot_store_output(pages: &right_page^.inner, slot: later, span: half, output: output, own: own);
+      }
+    }
+  }
+  return unit;
+}
+
+fn sequence_parent(sequence: &EntrySequence, slot: u32, parent: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Repairs the parent link of a live index node; empty links require no storage.";
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if held.live {
+    set held.parent = parent;
+    sequence_write(sequence: sequence, slot: slot, node: held);
+  }
+  return unit;
+}
+
+fn sequence_repair(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Repairs topology and reads only the three transfers needed to compose one AVL node.";
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if held.live {
+    let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+    let right_node = boundary_node(sequence: sequence, slot: held.right, visits: visits);
+    let own_field = True();
+    let total_field = False();
+    let left_output = boundary_output(sequence: sequence, slot: held.left, own: total_field, visits: visits);
+    let right_output = boundary_output(sequence: sequence, slot: held.right, own: total_field, visits: visits);
+    let own_output = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
+    let prefix = join_output(left: &left_output, right: &own_output);
+    let total = join_output(left: &prefix, right: &right_output);
+    let taller = imax(left_node.height, right_node.height);
+    set held.height = taller +sat 1_u32;
+    sequence_write(sequence: sequence, slot: slot, node: held);
+    slot_store_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, output: &total, own: total_field);
+  }
+  return unit;
+}
+
+fn sequence_rotate_left(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> root: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Rotates metadata links left while preserving every stable payload slot and the order of entries.";
+  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  let pivot_slot = base.right;
+  let pivot = boundary_node(sequence: sequence, slot: pivot_slot, visits: visits);
+  if pivot.live {
+    set base.right = pivot.left;
+    sequence_parent(sequence: sequence, slot: pivot.left, parent: slot, visits: visits);
+    set pivot.left = slot;
+    set pivot.parent = base.parent;
+    set base.parent = pivot_slot;
+    sequence_write(sequence: sequence, slot: slot, node: base);
+    sequence_write(sequence: sequence, slot: pivot_slot, node: pivot);
+    sequence_repair(sequence: sequence, slot: slot, visits: visits);
+    sequence_repair(sequence: sequence, slot: pivot_slot, visits: visits);
+    return pivot_slot;
+  }
+  return slot;
+}
+
+fn sequence_rotate_right(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> root: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Rotates metadata links right without reading or moving payloads.";
+  let base = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  let pivot_slot = base.left;
+  let pivot = boundary_node(sequence: sequence, slot: pivot_slot, visits: visits);
+  if pivot.live {
+    set base.left = pivot.right;
+    sequence_parent(sequence: sequence, slot: pivot.right, parent: slot, visits: visits);
+    set pivot.right = slot;
+    set pivot.parent = base.parent;
+    set base.parent = pivot_slot;
+    sequence_write(sequence: sequence, slot: slot, node: base);
+    sequence_write(sequence: sequence, slot: pivot_slot, node: pivot);
+    sequence_repair(sequence: sequence, slot: slot, visits: visits);
+    sequence_repair(sequence: sequence, slot: pivot_slot, visits: visits);
+    return pivot_slot;
+  }
+  return slot;
+}
+
+fn sequence_balance(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> root: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Repairs an AVL insertion/removal ancestor with at most two rotations.";
+  sequence_repair(sequence: sequence, slot: slot, visits: visits);
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  let right_node = boundary_node(sequence: sequence, slot: held.right, visits: visits);
+  let right_limit = right_node.height +sat 1_u32;
+  if left_node.height > right_limit {
+    let ll = boundary_node(sequence: sequence, slot: left_node.left, visits: visits);
+    let lr = boundary_node(sequence: sequence, slot: left_node.right, visits: visits);
+    if lr.height > ll.height {
+      let rotated = sequence_rotate_left(sequence: sequence, slot: held.left, visits: visits);
+      set held.left = rotated;
+      sequence_write(sequence: sequence, slot: slot, node: held);
+    }
+    let rotated = sequence_rotate_right(sequence: sequence, slot: slot, visits: visits);
+    return rotated;
+  }
+  let left_limit = left_node.height +sat 1_u32;
+  if right_node.height > left_limit {
+    let rl = boundary_node(sequence: sequence, slot: right_node.left, visits: visits);
+    let rr = boundary_node(sequence: sequence, slot: right_node.right, visits: visits);
+    if rl.height > rr.height {
+      let rotated = sequence_rotate_right(sequence: sequence, slot: held.right, visits: visits);
+      set held.right = rotated;
+      sequence_write(sequence: sequence, slot: slot, node: held);
+    }
+    let rotated = sequence_rotate_left(sequence: sequence, slot: slot, visits: visits);
+    return rotated;
+  }
+  return slot;
+}
+
+fn sequence_insert_at(sequence: &EntrySequence, root: u32, rank: u64, added: u32, parent: u32, visits: &BoundaryVisits) -> made: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Inserts a previously allocated stable leaf into an AVL rank path; only index ancestors are visited.";
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
+  if held.live {
+  } else {
+    sequence_parent(sequence: sequence, slot: added, parent: parent, visits: visits);
+    return added;
+  }
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  if rank <= left_node.total_count {
+    let inserted = sequence_insert_at(sequence: sequence, root: held.left, rank: rank, added: added, parent: root, visits: visits);
+    set held.left = inserted;
+  } else {
+    let after_left = rank -sat left_node.total_count;
+    let after_self = after_left -sat 1_u64;
+    let inserted = sequence_insert_at(sequence: sequence, root: held.right, rank: after_self, added: added, parent: root, visits: visits);
+    set held.right = inserted;
+  }
+  sequence_write(sequence: sequence, slot: root, node: held);
+  let balanced = sequence_balance(sequence: sequence, slot: root, visits: visits);
+  return balanced;
+}
+
+fn insert_before(sequence: &EntrySequence, before: u32, item: Flow, output: SequenceOutput, visits: &BoundaryVisits) -> result: Result<u32, LayoutError> writes(sequence), writes(visits) {
+  doc "Inserts one new direct entry before a live stable slot, or at end for no_index. A range is a batch of these operations in source order. Earlier payload slots are neither read nor copied.";
+  if sequence^.allocated >= 1073741824_u32 {
+    let failure = too_large::<u32>();
+    return failure;
+  }
+  if before != no_index {
+    let target = boundary_node(sequence: sequence, slot: before, visits: visits);
+    if target.live {
+    } else {
+      let inconsistent = LayoutError::Inconsistent();
+      let failure = Err<u32, LayoutError>(error: inconsistent);
+      return failure;
+    }
+  }
+  let rank = boundary_rank(sequence: sequence, slot: before, visits: visits);
+  sequence_reserve(sequence: sequence);
+  let fresh = sequence^.allocated;
+  let missing = Flow::Close(block: no_index);
+  slot_write::<Flow>(pages: &sequence^.payloads, slot: fresh, span: sequence^.span, value: item, missing: missing);
+  let yes = True();
+  let links = SequenceCursor(left: no_index, right: no_index, parent: no_index, height: 1_u32, live: yes, own_events: output.events, total_events: output.events, total_count: output.count);
+  let node = SequenceNode(links: links, own: output, total: output);
+  let missing_node = vacant_node();
+  slot_write::<SequenceNode>(pages: &sequence^.nodes, slot: fresh, span: sequence^.span, value: node, missing: missing_node);
+  let old_root = sequence^.root;
+  let inserted = sequence_insert_at(sequence: sequence, root: old_root, rank: rank, added: fresh, parent: no_index, visits: visits);
+  set sequence^.root = inserted;
+  set sequence^.allocated = fresh + 1_u32;
+  let success = Ok<u32, LayoutError>(value: fresh);
+  return success;
+}
+
+fn sequence_extract_first(sequence: &EntrySequence, root: u32, visits: &BoundaryVisits) -> (rest: u32, first: u32) reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Detaches the first index node for AVL deletion without reading its payload or changing its stable slot.";
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
+  if held.left == no_index {
+    sequence_parent(sequence: sequence, slot: held.right, parent: held.parent, visits: visits);
+    return held.right, root;
+  }
+  let (remainder, first) = sequence_extract_first(sequence: sequence, root: held.left, visits: visits);
+  set held.left = remainder;
+  sequence_write(sequence: sequence, slot: root, node: held);
+  let balanced = sequence_balance(sequence: sequence, slot: root, visits: visits);
+  return balanced, first;
+}
+
+fn sequence_remove_at(sequence: &EntrySequence, root: u32, rank: u64, visits: &BoundaryVisits) -> made: u32 reads(sequence.span), writes(sequence.nodes), writes(visits) {
+  doc "Removes one AVL leaf by rank, transplanting metadata links at a two-child node while leaving every other payload untouched.";
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
+  if held.live {
+  } else {
+    return no_index;
+  }
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  if rank < left_node.total_count {
+    let remainder = sequence_remove_at(sequence: sequence, root: held.left, rank: rank, visits: visits);
+    set held.left = remainder;
+  } else if rank > left_node.total_count {
+    let past_left = rank -sat left_node.total_count;
+    let past_self = past_left -sat 1_u64;
+    let remainder = sequence_remove_at(sequence: sequence, root: held.right, rank: past_self, visits: visits);
+    set held.right = remainder;
+  } else {
+    let vacant = vacant_cursor();
+    sequence_write(sequence: sequence, slot: root, node: vacant);
+    if held.right == no_index {
+      sequence_parent(sequence: sequence, slot: held.left, parent: held.parent, visits: visits);
+      return held.left;
+    }
+    let (rest, successor) = sequence_extract_first(sequence: sequence, root: held.right, visits: visits);
+    let replacement = boundary_node(sequence: sequence, slot: successor, visits: visits);
+    set replacement.left = held.left;
+    set replacement.right = rest;
+    set replacement.parent = held.parent;
+    sequence_parent(sequence: sequence, slot: held.left, parent: successor, visits: visits);
+    sequence_parent(sequence: sequence, slot: rest, parent: successor, visits: visits);
+    sequence_write(sequence: sequence, slot: successor, node: replacement);
+    let balanced = sequence_balance(sequence: sequence, slot: successor, visits: visits);
+    return balanced;
+  }
+  sequence_write(sequence: sequence, slot: root, node: held);
+  let balanced = sequence_balance(sequence: sequence, slot: root, visits: visits);
+  return balanced;
+}
+
+fn remove(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(sequence.root), writes(visits) {
+  doc "Removes one stable slot, leaving its payload page as a hole. Removing a range repeats this operation over the removed handles; unrelated payloads are untouched.";
+  let held = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if held.live {
+    let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+    let old_root = sequence^.root;
+    let remainder = sequence_remove_at(sequence: sequence, root: old_root, rank: rank, visits: visits);
+    set sequence^.root = remainder;
+  }
+  return unit;
+}
+
+fn sequence_select(sequence: &EntrySequence, event: u64) -> (slot: u32, offset: u64) reads(sequence.nodes), reads(sequence.root), reads(sequence.span) {
+  doc "Selects a direct entry by its virtual event weight in logarithmic index work, skipping cached subtree spans.";
+  let cursor = sequence^.root;
+  let remaining = event;
+  for (level in 0_u64..64_u64) {
+    let held = sequence_node(sequence: sequence, slot: cursor);
+    if held.live {
+    } else {
+      return no_index, 0_u64;
+    }
+    let left_node = sequence_node(sequence: sequence, slot: held.left);
+    if remaining < left_node.total_events {
+      set cursor = held.left;
+    } else {
+      set remaining = remaining -sat left_node.total_events;
+      if remaining < held.own_events {
+        return cursor, remaining;
+      }
+      set remaining = remaining -sat held.own_events;
+      set cursor = held.right;
+    }
+  }
+  return no_index, 0_u64;
+}
+
+fn no_boundary_visits() -> made: BoundaryVisits pure {
+  doc "Empty physical-work counters for one attempted boundary update.";
+  let empty = BoundaryVisits(entries: 0_u64, blocks: 0_u64, indexes: 0_u64, fallbacks: 0_u64, reason: 0_u32);
+  return empty;
+}
+
+fn boundary_node(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: SequenceCursor reads(sequence.nodes), reads(sequence.span), writes(visits) {
+  doc "Counts each physical metadata lookup, including repeated lookups; an absent link opens no node.";
+  if slot != no_index {
+    set visits^.indexes = visits^.indexes +sat 1_u64;
+  }
+  let node = sequence_node(sequence: sequence, slot: slot);
+  return node;
+}
+
+fn boundary_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
+  doc "Counts one field-narrow metadata opening; separate topology and transfer lookups count separately, while directory steps remain excluded.";
+  if slot != no_index {
+    set visits^.indexes = visits^.indexes +sat 1_u64;
+  }
+  let output = slot_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, own: own);
+  return output;
+}
+
+fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: u64 reads(sequence.nodes), reads(sequence.root), reads(sequence.span), writes(visits) {
+  doc "Finds the changed entry's direct rank through index parents; ranks are transient and earlier payloads are not read.";
+  let current = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  if current.live {
+  } else {
+    let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+    return root.total_count;
+  }
+  let left = boundary_node(sequence: sequence, slot: current.left, visits: visits);
+  let rank = left.total_count;
+  let cursor = slot;
+  let parent = current.parent;
+  for (level in 0_u64..64_u64) {
+    let ancestor = boundary_node(sequence: sequence, slot: parent, visits: visits);
+    if ancestor.live {
+    } else {
+      return rank;
+    }
+    if ancestor.right == cursor {
+      let earlier = boundary_node(sequence: sequence, slot: ancestor.left, visits: visits);
+      let increment = earlier.total_count +sat 1_u64;
+      set rank = rank +sat increment;
+    }
+    set cursor = parent;
+    set parent = ancestor.parent;
+  }
+  return rank;
+}
+
+fn too_large<T: drop>() -> result: Result<T, LayoutError> pure {
+  doc "Returns the TooLarge refusal.";
+  let failure = LayoutError::TooLarge();
+  return Err<T, LayoutError>(error: failure);
+}
