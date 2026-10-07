@@ -55,7 +55,7 @@ The edit-cost kind reuses the transfer page unchanged. It combines one-character
 round trips with height-changing sentence round trips across relative, expired
 float, negative-margin re-entry, constrained sibling and marker barriers.
 
-The edit-baseline kind reuses style-case.html. Inline vertical alignment changes
+The edit-height and edit-baseline kinds reuse style-case.html. Inline vertical alignment changes
 only the last line's descent; fixed line height and a larger inline font change
 its baseline without changing its height. The targeted flow-root is the only
 visible child of a fixed-width inline-block, whose baseline a generated inline
@@ -73,7 +73,8 @@ from edits import Tree
 
 
 CASES = {
-    'edit-baseline': ('height-only', 'baseline-only'),
+    'edit-baseline': ('baseline-only',),
+    'edit-height': ('height-only',),
     'edit-cost': ('transfer-relative-sibling', 'transfer-clear-expired',
                   'transfer-clear-reentry', 'transfer-maximum-sibling',
                   'transfer-marker-lined'),
@@ -108,14 +109,18 @@ def text_pair(lines, node):
 def generate(tree, kind):
     """Exercise each independent fixture and its text routes after both edits."""
     lines = []
-    if kind == 'edit-baseline':
+    if kind in ('edit-baseline', 'edit-height'):
         inline = [element for element in tree.elements if element['name'] == 'em']
         if len(inline) != 1:
             raise ValueError('expected one inline em in the unchanged style fixture')
         node = inline[0]['node']
-        lines.append('S html::after{content:"reference"} body{display:inline-block;width:2000px} body>div,body>p{display:none} body>p:nth-of-type(1){display:flow-root;width:2000px;font-size:0;line-height:0} em{font-size:16px;line-height:40px} .costbaseline{font-size:24px} .costdescent{vertical-align:-30px}')
-        for token in ('costdescent', 'costbaseline'):
-            lines.extend(('C %d %s' % (node, token), 'K %d %s' % (node, token)))
+        lines.append('S html::after{content:"reference"} body{display:inline-block;width:300px} body>div,body>p{display:none} body>p:nth-of-type(1){display:flow-root;width:300px;font-size:0;line-height:0} em{font-size:16px;line-height:40px} .costbaseline{font-size:24px} .costdescent{vertical-align:-30px}')
+        token = 'costbaseline'
+        if kind == 'edit-height':
+            lines = ['S body{display:flex;align-items:baseline;width:2000px} p{width:2000px;min-width:0;flex-shrink:0;line-height:40px} p::before{content:"barrier";display:block;position:relative} .costdescent{vertical-align:-30px}']
+            token = 'costdescent'
+        lines.extend(('C %d %s' % (node, token), 'K %d %s' % (node, token)))
+        lines.extend(('P 0', 'P 1', 'P 2'))
         return '\n'.join(lines) + '\n'
     if kind == 'edit-cost':
         prefix = 'A longer sentence changes the paragraph height and following origins. ' * 5
@@ -148,7 +153,7 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture_kind = {'edit-cost': 'transfer', 'edit-baseline': 'style'}.get(args.kind, args.kind)
+    fixture_kind = {'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
     fixture = Path(__file__).resolve().with_name(fixture_kind + '-case.html')
     fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')
@@ -158,7 +163,7 @@ def main():
     edits = generate(Tree(nodes), args.kind)
     args.output.write_text(edits)
     print('%s: %d cases, %d edits' %
-          (args.output, len(CASES[args.kind]), len(edits.splitlines())))
+          (args.output, len(CASES[args.kind]), sum(line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X') for line in edits.splitlines() if line.split())))
 
 
 if __name__ == '__main__':

@@ -358,3 +358,21 @@ separate inherited splice scope from this task's changes. Remove this job
 after its evidence is recorded. Its diagnostic success means identity was
 checked and the refusal inventory collected; it does not satisfy the
 zero-fallback gate or change its expected result.
+
+## Per-context probe attribution
+
+The child cutoff did not materially lower ecma262 in 37607708828, and the
+baseline-only mutant remained undetected on 205f512. A one-use diagnostic
+build tags each cutoff return in visit counters and prints per-context tags,
+context sizes and intrinsic-state flags. It runs only the first word pair and
+the guard fixtures; tagged counts and its timings are not acceptance data.
+Remove its source-injection script and job after attribution. The question is
+whether a needless eligibility restriction or an actual changed dependency
+prevents the cutoff. A real changed input rejects widening the equality path.
+
+Keep the previously detecting height fixture as its own edit-height kind.
+The baseline fixture now uses 300px width so its inline-block and generated
+reference fit on one line; at 2000px they wrapped separately and hid the
+baseline dependency. Requested dumps retain the geometry evidence. This
+separates the guard observations without changing either expected identity.
+The script generator also counts actual edits rather than S/P setup lines.
