@@ -336,8 +336,9 @@ case; no expected result or refusal requirement is changed.
 
 ## Identity job partition
 
-The serial page identity stage on superseded revisions remained running for
-more than an hour. Partition the same two pages and six edit kinds into
+The serial oracle job on a5114b9 ran from 09:27 to 10:35 UTC before being
+cancelled after a later source repair; its page identity stage alone ran from
+09:58 to 10:35. Partition the same two pages and six edit kinds into
 native CI matrix jobs. Each job consumes the same compiled sequential and
 parallel drivers, fonts, pages and scripts from the core oracle job, runs both
 original `inc` commands and the original `same` comparison. Block jobs also
@@ -345,3 +346,15 @@ retain the zero-fallback assertion and its deliberately wrong-input checks.
 Case fixtures, dump comparisons and style checks remain in the core job.
 No edit, expected result or assertion is removed; this changes only which
 independent runner executes each page/kind pair.
+
+## Structural scope attribution under test
+
+The superseded full-oracle logs report ecma262 block edits using reason 3
+and html5 block edits mostly using reason 7, despite all incremental dumps
+matching rebuilds. The maintained page gate requires zero structural
+fallbacks. A one-use baseline job compiles the unchanged branch base 9e1561a
+with the correctness pin and runs those same generated block scripts to
+separate inherited splice scope from this task's changes. Remove this job
+after its evidence is recorded. Its diagnostic success means identity was
+checked and the refusal inventory collected; it does not satisfy the
+zero-fallback gate or change its expected result.
