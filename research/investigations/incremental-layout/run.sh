@@ -142,8 +142,8 @@ same() {
 	[ "$#" -gt 0 ] || return 2
 	same_status=0
 	for kind in "$@"; do
-		if ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.seq.txt" ||
-		   ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.par.txt"; then
+		if ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.seq.txt.raw" ||
+		   ! python3 "$here/scripts/inctime.py" --check "$work/scripts/$page-$kind.edits" "$work/out/$page-$kind.par.txt.raw"; then
 			same_status=1
 			continue
 		fi

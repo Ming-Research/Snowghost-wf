@@ -16,7 +16,8 @@ in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
 Structural path records distinguish local splices from reason-coded fallbacks.
-A complete legacy log may omit them; a partial path set is invalid.
+--check requires them for every structural edit. Historical timing and
+filtered reparse logs may omit the entire set; a partial set is invalid.
 Historical logs may omit the entire boundary-count suffix. Current logs
 must supply all five fields together; timings retain and compare those
 counts, and reject mixed old/new timing records within one run.
@@ -56,7 +57,7 @@ def script_operations(path):
     return operations
 
 
-def read(path, operations, checking=False):
+def read(path, operations, checking=False, require_paths=False):
     timed, other, styled, built = {}, {}, {}, {}
     seen, auxiliary, structural = set(), set(), set()
     fallbacks = set()
@@ -147,7 +148,7 @@ def read(path, operations, checking=False):
         raise ValueError(path + ': a timed style edit lacks its style edit line')
     if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'X')}:
         raise ValueError(path + ': a timed structural edit lacks its structure edit line')
-    if paths:
+    if paths or require_paths:
         expected = {i for i, kind in enumerate(operations, 1) if kind in ('B', 'X')}
         if set(paths) != expected:
             raise ValueError(path + ': partial structural path records')
@@ -207,7 +208,7 @@ def main():
         if len(sys.argv) != 4:
             raise ValueError('usage: inctime.py --check SCRIPT OUTPUT')
         operations = script_operations(sys.argv[2])
-        read(sys.argv[3], operations, checking=True)
+        read(sys.argv[3], operations, checking=True, require_paths=True)
         return 0
     if len(sys.argv) < 3:
         raise ValueError('usage: inctime.py SCRIPT RUN...')

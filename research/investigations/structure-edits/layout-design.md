@@ -928,10 +928,12 @@ layout result. CI must establish the proof obligations before this source
 is described as an executable transaction.
 
 The oracle emits `structure path N splice S reason R` in addition to its
-existing structural and physical boundary counters. `inctime.py` accepts
-complete legacy logs without these rows; when any appears it requires one
-for every structural operation, with `S=1` exactly when `R=0`, and compares
-these fields across timing runs. The reason namespace is separate from
+existing structural and physical boundary counters. `inctime.py --check`
+requires one row for every structural operation, with `S=1` exactly when
+`R=0`. Historical timing and filtered reparse logs may omit the entire set;
+a partial set is always invalid. Timing compares these fields across runs.
+The page harness checks raw logs before comparing filtered hashes, and its
+path summary reads those raw logs. The reason namespace is separate from
 step 4's `boundary_reason`:
 
 | R | Meaning and disposition |
@@ -1026,6 +1028,24 @@ belong to the primary agent's CI:
 7. **Drop a path record.** Remove one `structure path` row from an otherwise
    complete new-format log, or change a reason-0 row to `splice 0 reason 0`.
    `inctime.py --check` must reject the malformed/incomplete log.
+
+The temporary `falsify-m2` workflow also runs each oracle shell assertion
+group inside a non-final loop iteration with one violated condition at a
+time (difference, excess refusals, or no successful edits), requiring the
+shell to exit with failure. Its path-log fixtures test one missing row, all
+missing rows, and both contradictory splice/reason combinations, with an
+otherwise complete two-edit insertion/removal log and a passing restored log.
+
+`splice-route-case.edits` uses `block-case.html` and probes text 44 immediately
+after inserting block 43 before old sibling 17, before any retained-text or
+style edit can cause resynchronization. `checkpoint-case.html` puts a counter
+reset to 7 on the body and makes direct paragraph children of its section
+independent contexts. `checkpoint-case.sh` resolves the section and new-node
+IDs from the driver's node listing, then inserts a neutral context and a
+counter-reading paragraph inside it. A genuine enclosing checkpoint must
+provide 7 to the reader; the synthetic empty checkpoint cannot. Both fixtures
+are consumed by the step-5 oracle job and the mutation matrix. These are
+validation fixtures, not measured results.
 
 CI must additionally exercise `:nth-*`, `+` and `~` retained style changes
 (reason 6), exact-checkpoint counter/quote refusals, removal of a pre-existing
