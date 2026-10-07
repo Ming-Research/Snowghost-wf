@@ -679,3 +679,36 @@ The preceding f70dbda implementation's
 finished successfully: all 26 configured mutants were detected and the
 check-machinery job passed. This establishes the repaired baseline/positioned
 fixtures at that source, not validation of the later scoped publisher.
+
+
+## Scoped replay timing result
+
+[37624162286](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37624162286)
+measures 0430437 with the same main/base/twin controls and compiler settings.
+Sequential medians in us, forward/reverse rounds:
+
+| Page/kind | main | branch base | scoped replay |
+|---|---:|---:|---:|
+| ecma262 word | 104 / 99 | 76123 / 75333 | 116 / 105 |
+| ecma262 sentence | 233 / 228 | 83335 / 84150 | 1810 / 960 |
+| ecma262 fontsize | 1278 / 1116 | 85478 / 89276 | 12223 / 10221 |
+| html5 word | 76 / 74 | 67865 / 69687 | 81 / 79 |
+| html5 sentence | 217 / 227 | 73888 / 73452 | 567 / 569 |
+| html5 fontsize | 696 / 669 | 78293 / 72973 | 15157 / 14385 |
+
+Only word medians satisfy 2x. Html5's first font-size edit replays nine held
+entries but reports 1134 boundary entries, 10098 blocks and 97836 indexes;
+the suffix publisher still repairs many direct entries. Ecma262 sentence
+edits 3/4 report 112289 held entries but only 50 boundary entries: the legacy
+counter is not a count of new boundary publication. Profile both unchanged
+font scripts repeated ten times in one process with the already-built 0430437
+driver to separate the remaining transfer repair and scratch translation
+costs from the removed whole-context publication. Startup remains included;
+self samples alone will not establish edit-only percentages. The single-script
+sample's observed duration permits these short repetitions.
+
+Both new scoped faults are detected in
+[37624162318](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37624162318):
+omitting origin encoding makes the baseline fixture's two font edits differ,
+and omitting suffix publication makes positioned-isolated edit 20 differ.
+The corresponding unmutated fixtures match rebuilds.
