@@ -95,7 +95,7 @@ def read(path, operations, checking=False, require_paths=False):
                     not 1 <= edit <= len(operations) or
                     operations[edit - 1] not in ('B', 'X')):
                 raise ValueError('%s:%d: unexpected structure path' % (path, line_number))
-            if (local == 1) != (reason == 0) or not 0 <= reason <= 9:
+            if (local == 1) != (reason == 0) or not 0 <= reason <= 10:
                 raise ValueError('%s:%d: inconsistent splice/fallback reason' % (path, line_number))
             paths[edit] = [local, reason]
             continue

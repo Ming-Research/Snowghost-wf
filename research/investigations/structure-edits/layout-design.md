@@ -2480,3 +2480,23 @@ retained separator. The source-removal and following-head guards remain.
 `transfer-adjacent-head` therefore strengthens its expectation to local
 success; `transfer-before-head` removes a pre-existing separator before a
 head and still requires reason 3, then checks local neutral edits after it.
+
+Completion review R10 found that `inctime.py` still accepted only reasons
+0–9 even though the implemented post-flex contract uses reason 10. A local
+protocol sample demonstrated rejection before repair. The parser now accepts
+`splice 0 reason 10`, and its machinery checks that reason 11 and
+`splice 1 reason 10` remain invalid. The page gate still requires exactly
+`splice 1 reason 0`; recognizing the documented fallback does not relax it.
+
+`flex-outward-reentry` exercises reason 10 at runtime. An earlier float ends
+at 100px, a 100px spacer precedes an auto-height column flex container, and
+its two-line item initially has height 40px. A later paragraph's -30px
+margin puts its natural top at 110px. Removing one pre-existing item
+paragraph leaves 20px, so the actual flex output would put that later
+paragraph at 90px, beside the float. Flex preflight cannot know its actual
+output; the subsequent outward motion certificate must decline with reason
+10, finish the reference layout and let the caller reconstruct correctly.
+The initial removal requires that exact reason and every edit requires full
+identity. The following ordinary B/X pair is identity coverage without a
+forced path. Generator machinery includes initial-only path assertions,
+independently of cases that assert both ordinary B/X paths.

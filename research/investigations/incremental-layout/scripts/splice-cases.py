@@ -100,6 +100,14 @@ line width changes from 340px beside the float to 400px below it, so a false
 float-floor certificate must expose stale line breaking rather than merely
 passing through a clearance plateau. Identity is required for every case.
 
+The flex outward-reentry case first removes a 20px paragraph from an
+auto-height column flex item. Its enclosing flow has an earlier 100px float,
+a 100px spacer, and a later paragraph with -30px top margin: the flex height
+changes from 40px to 20px, moving that paragraph from 110px to 90px. Its
+initial removal requires post-publication refusal reason 10 after the flex
+algorithm supplies its actual new output. Later ordinary B/X edits and text
+pairs require identity without prescribing a structural path.
+
 
 The line-lifetime case keeps a long paragraph insertion in place through
 the subsequent block removal, then restores the text. Its later ordinary
@@ -138,7 +146,7 @@ CASES = {
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
              'flex-float-owner', 'flex-positioned-owner',
-             'flex-intrinsic-position'),
+             'flex-intrinsic-position', 'flex-outward-reentry'),
 }
 
 
@@ -171,6 +179,7 @@ INITIAL_REMOVALS = {
     'positioned-atomic-removal': ('p', 1, 0),
     'transfer-source-removal': ('div', 0, 3),
     'transfer-before-head': ('p', 0, 3),
+    'flex-outward-reentry': ('p', 0, 10),
 }
 
 WRAPPING_CASES = {
@@ -181,7 +190,7 @@ WRAPPING_CASES = {
 
 def record_path(paths, case, number, expected=None):
     """Record the selected case's required result at its structural operation."""
-    if case in EXPECTED_PATHS:
+    if expected is not None or case in EXPECTED_PATHS:
         splice, reason = EXPECTED_PATHS[case] if expected is None else expected
         paths.append('structure path %d splice %d reason %d' %
                      (number, splice, reason))
