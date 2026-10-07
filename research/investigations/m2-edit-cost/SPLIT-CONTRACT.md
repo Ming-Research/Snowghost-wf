@@ -83,21 +83,27 @@ existing reference behavior; no new source limitation is introduced.
 
 ## Candidate data, invariants and true order
 
-A retains a context-lifetime run slot, its first/last split endpoints, explicit
+A retains a run slot within a retained topology, its first/last split endpoints, explicit
 fragment roles, horizontal inputs, trailing margin, leading selector and
 owner-relative line offset. A reverse dependency index maps changed sources
 and adjacency intervals to runs. Distinct runs never alias through coordinates.
-Run slots remain stable while topology survives; replacement retires old
-slots, and stale references must never name new runs. No global identity
-counter is needed: context identity plus local non-reused slot suffices.
+Run slots remain stable while topology survives; replacement retires the old
+topology's slot domain together with every index that can name it. Internal
+references do not escape that domain, so reused storage cannot be observed
+through an old reference. Identity is context plus topology lifetime plus local
+slot; the lifetime needs no stored or wrapping global generation counter.
 Logical publication order is separate from storage identity: the context own
 rectangle comes first, runs follow first-split source order, each emits leading,
 spanning and trailing roles in that order when present, then empty-inline
 sources follow event and mark order. Replacement updates this logical order
 without appending an early replacement behind a kept suffix. Source adjacency
 is the true ordering dependency; independent rectangle evaluation is unordered.
-Context replacement retires its entire identity domain. Exhaustion is checked
-before publication; a saturated counter is not a valid fresh identity.
+Context replacement retires its entire identity domain. The prototypes add no
+identity allocator: split indices use the existing guarded `flow_index`
+conversion and role slots use existing array storage. No generation counter is
+incremented or saturated; `no_index` remains missing metadata, never a fresh
+identity. Any later handle that escapes topology ownership would require an
+explicit non-wrapping generation and exhaustion policy before publication.
 
 B retains the same semantic dependencies and lifetime distinction, but its
 published outputs are flat rectangles. An index maps source identities and
@@ -185,3 +191,12 @@ the exceptional line repair and requires a high-origin semantic difference.
 These are proposed boundary probes until CI demonstrates both observations.
 The local assertion sample rejected missing detection, a low-control mismatch,
 incomplete output and a refused edit; an actual high mismatch was recognized.
+
+The source review also found an unnecessary global repair-to-certificate
+barrier. Both prototypes now evaluate the unchanged full field comparison
+immediately after each leaf repair, using a shared value evaluator with narrow
+immutable reads. Independent subtrees return booleans to a balanced conjunction;
+only validity publication waits for the whole reduction. The separate second
+index traversal is removed. Full publication uses the same evaluator and exact
+comparison, including raw/missing-anchor behavior and saturating operation order.
+Final timing and affected validation must use this fused revision.

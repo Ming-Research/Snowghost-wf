@@ -152,11 +152,11 @@ fn repair_fragment_cell(context: &Context, styles: &Styles, content_left: i32, f
   return unit;
 }
 
-fn repair_fragment_range(context: &Context, styles: &Styles, content_left: i32, from: u64, until: u64, ranges: &[FragmentRange], fragments: &[Fragment], anchors: &[FragmentAnchor]) -> result: unit reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.content_dy), reads(styles), reads(ranges), writes(fragments), writes(anchors) {
-  doc "Looks up affected dependency intervals and repairs disjoint rectangle/anchor slices independently. A keeps translated suffix roles anchored; only intervals intersecting the replayed range need rectangle or metadata repair.";
+fn repair_fragment_range(context: &Context, styles: &Styles, content_left: i32, from: u64, until: u64, ranges: &[FragmentRange], fragments: &[Fragment], anchors: &[FragmentAnchor]) -> valid: Bool reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.content_dx), reads(context.content_dy), reads(styles), reads(ranges), writes(fragments), writes(anchors) {
+  doc "Looks up affected dependency intervals and repairs disjoint rectangle/anchor slices independently, certifying each leaf immediately and joining only the resulting booleans. A keeps translated suffix roles anchored; only intervals intersecting the replayed range need rectangle or metadata repair.";
   let nodes = ranges^.len;
   if nodes == 0_u64 {
-    return unit;
+    return True();
   }
   let root = nodes - 1_u64;
   let range = ranges^[root];
@@ -167,25 +167,31 @@ fn repair_fragment_range(context: &Context, styles: &Styles, content_left: i32, 
       let low = cvt::<u32, u64>(context^.splits.inner[low_at].open);
       let high = cvt::<u32, u64>(context^.splits.inner[high_at].close);
       if low > until {
-        return unit;
+        return True();
       }
       if high < from {
-        return unit;
+        return True();
       }
     } else {
-      return unit;
+      return False();
     }
   } else {
-    return unit;
+    return True();
   }
   let count = fragments^.len;
   if count == 1_u64 {
     if 0_u64 < fragments^.len {
       if 0_u64 < anchors^.len {
         repair_fragment_cell(context: context, styles: styles, content_left: content_left, fragment: &fragments^[0_u64], anchor: &anchors^[0_u64]);
+        let raw = fragments^[0_u64];
+        let anchor = anchors^[0_u64];
+        let no_origins = slots_new::<Origin, 0>();
+        let resolved = anchored_fragment_value(context: context, origins: &no_origins[0_u64..0_u64], raw: raw, anchor: anchor);
+        let same = fragment_representation_same(raw: raw, resolved: resolved, dx: context^.content_dx, dy: context^.content_dy);
+        return same;
       }
     }
-    return unit;
+    return False();
   }
   let half = count / 2_u64;
   let twice = half +sat half;
@@ -193,12 +199,13 @@ fn repair_fragment_range(context: &Context, styles: &Styles, content_left: i32, 
   if half <= count {
     if count <= anchors^.len {
       if left_nodes <= root {
-        repair_fragment_range(context: context, styles: styles, content_left: content_left, from: from, until: until, ranges: &ranges^[0_u64..left_nodes], fragments: &fragments^[0_u64..half], anchors: &anchors^[0_u64..half]);
-        repair_fragment_range(context: context, styles: styles, content_left: content_left, from: from, until: until, ranges: &ranges^[left_nodes..root], fragments: &fragments^[half..count], anchors: &anchors^[half..count]);
+        let left = repair_fragment_range(context: context, styles: styles, content_left: content_left, from: from, until: until, ranges: &ranges^[0_u64..left_nodes], fragments: &fragments^[0_u64..half], anchors: &anchors^[0_u64..half]);
+        let right = repair_fragment_range(context: context, styles: styles, content_left: content_left, from: from, until: until, ranges: &ranges^[left_nodes..root], fragments: &fragments^[half..count], anchors: &anchors^[half..count]);
+        return band(left, right);
       }
     }
   }
-  return unit;
+  return False();
 }
 
 fn repair_anchored_fragments(context: &Context, styles: &Styles, content_left: i32, from: u64, until: u64, delta: i32) -> repaired: Bool reads(styles), writes(context) {
@@ -227,57 +234,11 @@ fn repair_anchored_fragments(context: &Context, styles: &Styles, content_left: i
     return False();
   }
   let end = until;
-  repair_fragment_range(context: context, styles: styles, content_left: content_left, from: from, until: end, ranges: &context^.fragment_ranges.inner[0_u64..nodes], fragments: &context^.fragments.inner[0_u64..count], anchors: &context^.fragment_anchors.inner[0_u64..count]);
-  let valid = fragment_range_certificates(context: context, from: from, until: end, ranges: &context^.fragment_ranges.inner[0_u64..nodes], first: 0_u64, count: count);
+  let valid = repair_fragment_range(context: context, styles: styles, content_left: content_left, from: from, until: end, ranges: &context^.fragment_ranges.inner[0_u64..nodes], fragments: &context^.fragments.inner[0_u64..count], anchors: &context^.fragment_anchors.inner[0_u64..count]);
   set context^.fragments_valid = valid;
   set context^.fragment_repaired = True();
   set context^.fragments_anchored = valid;
   return True();
-}
-
-fn fragment_range_certificates(context: &Context, from: u64, until: u64, ranges: &[FragmentRange], first: u64, count: u64) -> valid: Bool reads(context), reads(ranges) {
-  doc "Checks every changed dependency interval with the full publisher's exact rectangle comparison. Subtrees outside the edit closure retain their previously established certificate; no compared field is omitted.";
-  let nodes = ranges^.len;
-  if nodes == 0_u64 {
-    return True();
-  }
-  let root = nodes - 1_u64;
-  let range = ranges^[root];
-  let low_at = cvt::<u32, u64>(range.first);
-  let high_at = cvt::<u32, u64>(range.last);
-  if low_at < context^.splits.inner.len {
-    if high_at < context^.splits.inner.len {
-      let low = cvt::<u32, u64>(context^.splits.inner[low_at].open);
-      let high = cvt::<u32, u64>(context^.splits.inner[high_at].close);
-      if low > until {
-        return True();
-      }
-      if high < from {
-        return True();
-      }
-    } else {
-      return False();
-    }
-  } else {
-    return True();
-  }
-  if count == 1_u64 {
-    let end = first +sat 1_u64;
-    let no_origins = slots_new::<Origin, 0>();
-    let same = fragment_certificates(context: context, origins: &no_origins[0_u64..0_u64], first: first, end: end);
-    return same;
-  }
-  let half = count / 2_u64;
-  let twice = half +sat half;
-  let left_nodes = twice -sat 1_u64;
-  let middle = first +sat half;
-  let right_count = count -sat half;
-  if left_nodes <= root {
-    let left = fragment_range_certificates(context: context, from: from, until: until, ranges: &ranges^[0_u64..left_nodes], first: first, count: half);
-    let right = fragment_range_certificates(context: context, from: from, until: until, ranges: &ranges^[left_nodes..root], first: middle, count: right_count);
-    return band(left, right);
-  }
-  return False();
 }
 
 fn split_lower_bound(splits: &[Split], rank: u64) -> found: u64 reads(splits) {
