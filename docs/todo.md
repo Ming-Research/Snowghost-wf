@@ -244,41 +244,38 @@ example apart from the renderer code that exposed it
   sum, or mutate the sum it does reach. Reopen before M2's layout PR is
   ready; the falsifier stays out of falsify-m2's matrix until then.
 
-- **M2 typed payload ownership is still context-wide.** Step 3's
-  `EntrySequence` owns paged stable direct-entry handles and its local AVL
-  metadata, but `Context.blocks`, `paragraphs` and `children` still own the
-  typed payloads in growing Slots. Impact: order insertion/removal copies
-  no earlier entry payload, but allocating a heavy payload may still move
-  its context pool; this is not the complete FlowBlock ownership contract.
-  Change: move those typed payloads into owner-local pages and migrate
-  text/style/atomic/table routes together, retaining counted disjoint-slot
-  preparation and child layout. Reopen before declaring step 3 complete or
-  wiring step 5's successful splice. Validate certified sibling loops,
-  payload-storage permutations, stale handles and every edit-prefix dump;
-  count allocations and earlier-payload visits inside the edit. The current
-  index uses append-only slots with tombstones; generation-checked reuse
-  belongs with that migration and session-growth policy.
+- **M2 pooled payloads still need owner-membership proof and reclamation evidence.**
+  The built-in Paged experiment keeps `Context.blocks`, `paragraphs` and
+  `children` in stable paged pools and puts entry field groups in
+  `Context.storage`, with one AVL per owner. Growth no longer moves earlier
+  payloads, but physical storage remains context-owned. Indirect flow-selected
+  writes still need the field-inverse proof above; pooling alone proves no
+  owner-membership relation. Append-only tombstones remain without slot reuse.
+  Change: validate certified sibling loops, payload-storage permutations,
+  stale handles and every edit-prefix dump, and add checked-generation reuse
+  when the session-growth policy requires it. Reopen before reporting M2's
+  complete ownership and locality contract satisfied; count allocations and
+  earlier-payload visits inside the edit.
 
-- **M2 nested index still needs allocation-cost evidence.**
-  `renderer/layout/sequence.wf` supplies local insert/remove/prefix/suffix
-  operations used by the neutral step-5 splice, plus the virtual walker.
-  The two-level-page experiment replaces recursive directory growth with
-  optional pointers to immutable-capacity arrays: a 4-to-64-slot first page
-  and 64-slot later pages. Directory growth moves only pointers, never
-  existing entry cells. Bulk sealing adds transient SequenceCursor scratch
-  to retain disjoint median construction before counted page publication;
-  sparse route writes may initialize a pointer prefix across absent pages.
-  Isolated virtual rank lookup still descends each owner's AVL index;
-  reference walks materialize events and reduce payload outputs once
-  bottom-up before page publication. Reopen with the primary agent's paired
-  full-build and per-edit measurements on the 14900K, including allocation
-  and scratch costs, against `2d706ba` at the unchanged Whitefoot pin.
-  Require byte-identical dumps and splice/fallback rows, incremental identity,
-  mutation detection, preserved field groups and visit-counter meanings.
-  The [experiment contract](../research/investigations/structure-edits/layout-design.md#two-level-page-experiment)
-  records the representation and additional costs; passing correctness CI
-  does not establish its performance envelope or complete the separate
-  typed-payload ownership migration above.
+- **M2 nested index and dense routes still need allocation-cost evidence.**
+  The built-in Paged experiment replaces per-owner hand-written directories
+  with context-wide pools per entry field group. Initial range assignment
+  and initialized-length extension precede disjoint owner sealing; incremental
+  growth copies directory words only. This removes per-owner native-page
+  padding and cursor-copy publication, but the actual allocation and full-build
+  effects remain unmeasured. A `RouteTable` write at H past initialized length
+  L now fills H-L+1 missing payload values: the previous sparse directory filled
+  only a pointer prefix and the requested page. High sparse NodeIds may therefore
+  add material initialization and memory cost. Isolated virtual rank lookup
+  still descends each owner's AVL; reference walks still materialize events.
+  Reopen with the primary agent's paired 14900K full-build and per-edit
+  comparison against `38fd6be`, including allocation, initialization and scratch
+  costs with a twin of the base. Require unchanged dump bytes, splice/fallback
+  rows, mutation detection, field groups and visit-counter meanings. If dense
+  prefix cost is material, compare a sparse routing representation without
+  changing stable entry pools. The
+  [experiment contract](../research/investigations/structure-edits/layout-design.md#built-in-paged-experiment)
+  separates these risks from correctness and parallel-permission evidence.
 
 
 - **M2 geometry still bridges the context-coordinate reference walker.**

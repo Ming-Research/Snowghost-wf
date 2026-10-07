@@ -1,216 +1,65 @@
-fn page_first(count: u64) -> width: u32 pure {
-  doc "Rounds a small owner's first page to a power of two, at least four and at most 64; large owners use uniform 64-slot pages.";
-  let width = 4_u32;
-  for (level in 0_u64..4_u64) {
-    let wide = cvt::<u32, u64>(width);
-    if count <= wide {
-      break;
-    }
-    set width = width +sat width;
+fn paged_push_item<T: drop>(cell: &Box<Paged<T>>, value: T, ceiling: u64) -> pushed: Bool writes(cell) contract {
+  requires ceiling <= 1073741824_u64;
+} {
+  doc "Appends value, doubling a full window (an empty one takes four slots) within ceiling; False, dropping value, when the window already holds ceiling items.";
+  let length = cell^.inner.len;
+  if length >= ceiling {
+    return False();
   }
-  return width;
-}
-
-fn page_address(slot: u32, first: u32) -> (page: u64, offset: u64) pure {
-  doc "Finds a stable slot with one small-first-page branch and constant-depth arithmetic.";
-  if slot < first {
-    let offset = cvt::<u32, u64>(slot);
-    return 0_u64, offset;
-  }
-  let rest = slot - first;
-  let quotient = rest / 64_u32;
-  let remainder = rest % 64_u32;
-  let page = cvt::<u32, u64>(quotient);
-  let offset = cvt::<u32, u64>(remainder);
-  let following = page +sat 1_u64;
-  return following, offset;
-}
-
-fn new_pages<T: copy>(count: u64, missing: T) -> made: SlotPages<T> pure {
-  doc "Creates fixed-capacity pages for a sealed dense prefix. The directory alone may grow later; no page is ever grown.";
-  if count == 0_u64 {
-    return SlotPages<T>::Vacant();
-  }
-  let first = page_first(count: count);
-  let width = cvt::<u32, u64>(first);
-  let rest = count -sat width;
-  let rounded = rest +sat 63_u64;
-  let later = rounded / 64_u64;
-  let length = later +sat 1_u64;
-  let directory = box_slots_new::<Option<Box<Array<T>>>>(capacity: length);
-  for (page in 0_u64..length) {
-    if directory.inner.len < directory.inner.cap {
-      let absent = None<Box<Array<T>>>();
-      place_back(window: &directory.inner, value: move absent);
-    }
-  }
-  for (page in 0_u64..length) {
-    let capacity = if page == 0_u64 {
-      give width;
+  let capacity = cell^.inner.cap;
+  if length >= capacity {
+    invariant below_ceiling: length < ceiling;
+    invariant full: capacity <= length;
+    let room = ceiling - capacity;
+    if capacity < room {
+      if capacity == 0_u64 {
+        grow_paged(cell: cell, capacity: 4_u64);
+      } else {
+        let doubled = capacity + capacity;
+        grow_paged(cell: cell, capacity: doubled);
+      }
     } else {
-      give 64_u64;
-    }
-    if page < directory.inner.len {
-      let values = box_array_filled::<T>(count: capacity, value: missing);
-      let present = Some<Box<Array<T>>>(value: move values);
-      set directory.inner[page] = move present;
+      grow_paged(cell: cell, capacity: ceiling);
     }
   }
-  return SlotPages<T>::Pages(first: first, directory: move directory);
+  place_back(window: &cell^.inner, value: move value);
+  return True();
 }
 
-fn page_ensure<T: copy>(pages: &SlotPages<T>, slot: u32, missing: T) -> result: unit writes(pages) {
-  doc "Extends only the pointer directory through a requested page, leaving intervening pages absent; allocates only the requested fixed array.";
-  match pages^ {
-    Vacant() => {
-      let directory = box_slots_new::<Option<Box<Array<T>>>>(capacity: 4_u64);
-      set pages^ = SlotPages<T>::Pages(first: 4_u32, directory: move directory);
-    }
-    Pages(..) => {
+fn new_pages<T: copy>(count: u64, missing: T) -> made: Box<Paged<T>> pure {
+  doc "Initializes a dense paged prefix; subsequent geometric growth copies only directory words.";
+  let made = box_paged_new::<T>(capacity: count);
+  for (s in 0_u64..count) {
+    if made.inner.len < made.inner.cap {
+      place_back(window: &made.inner, value: missing);
     }
   }
-  match pages^ {
-    Vacant() => {
-    }
-    Pages(first: first_width, directory: pointers) => {
-      let (page, offset) = page_address(slot: slot, first: first_width^);
-      let required = page +sat 1_u64;
-      let start = pointers^.inner.len;
-      for (index in start..required) {
-        let absent = None<Box<Array<T>>>();
-        let pushed = push_item::<Option<Box<Array<T>>>>(cell: pointers, value: move absent, ceiling: 1073741824_u64);
-      }
-      if page < pointers^.inner.len {
-        let page_cell = &pointers^.inner[page];
-        match page_cell^ {
-          None() => {
-            let width = cvt::<u32, u64>(first_width^);
-            let capacity = if page == 0_u64 {
-              give width;
-            } else {
-              give 64_u64;
-            }
-            let values = box_array_filled::<T>(count: capacity, value: missing);
-            set pointers^.inner[page] = Some<Box<Array<T>>>(value: move values);
-          }
-          Some(..) => {
-          }
-        }
-      }
-    }
-  }
-  return unit;
+  return move made;
 }
 
-fn page_read<T, E, R: copy, fn observe(value: &T, env: &E) -> result: R reads(value), reads(env)>(pages: &SlotPages<T>, slot: u32, span: u32, env: &E, missing: R) -> made: R reads(pages), reads(env) {
-  doc "The shared read access: finds one fixed page and invokes the field-specific function without copying its containing cell.";
+fn slot_read<T: copy>(pages: &Box<Paged<T>>, slot: u32, span: u32, missing: T) -> value: T reads(pages) {
+  doc "Reads one stable slot in constant depth or returns its explicit missing value.";
+  let at = cvt::<u32, u64>(slot);
   if slot < span {
-    match pages^ {
-      Vacant() => {
-      }
-      Pages(first: first_width, directory: pointers) => {
-        let (page, offset) = page_address(slot: slot, first: first_width^);
-        if page < pointers^.inner.len {
-          let page_cell = &pointers^.inner[page];
-          match page_cell^ {
-            None() => {
-            }
-            Some(value: values) => {
-              if offset < values^.inner.len {
-                let made = observe(value: &values^.inner[offset], env: env);
-                return made;
-              }
-            }
-          }
-        }
-      }
+    if at < pages^.inner.len {
+      return pages^.inner[at];
     }
   }
   return missing;
 }
 
-fn page_edit<T, E, fn apply_field(value: &T, env: &E) -> result: unit reads(env), writes(value)>(pages: &SlotPages<T>, slot: u32, span: u32, env: &E) -> result: unit reads(env), writes(pages) {
-  doc "The shared existing-cell write access; the callback selects the field group and leaves other groups in place.";
+fn slot_write<T: copy>(pages: &Box<Paged<T>>, slot: u32, span: u32, value: T, missing: T) -> result: unit writes(pages) {
+  doc "Extends a dense initialized prefix through the requested stable slot without moving earlier payloads.";
   if slot < span {
-    match pages^ {
-      Vacant() => {
-      }
-      Pages(first: first_width, directory: pointers) => {
-        let (page, offset) = page_address(slot: slot, first: first_width^);
-        if page < pointers^.inner.len {
-          let page_cell = &pointers^.inner[page];
-          match page_cell^ {
-            None() => {
-            }
-            Some(value: values) => {
-              if offset < values^.inner.len {
-                apply_field(value: &values^.inner[offset], env: env);
-              }
-            }
-          }
-        }
-      }
+    let at = cvt::<u32, u64>(slot);
+    let until = at +sat 1_u64;
+    let start = pages^.inner.len;
+    for (s in start..until) {
+      let kept = paged_push_item::<T>(cell: pages, value: missing, ceiling: 1073741824_u64);
     }
-  }
-  return unit;
-}
-
-fn page_each<T, E, fn apply_field(values: &[T], base: u64, env: &E) -> result: unit reads(env), writes(values)>(pages: &SlotPages<T>, env: &E) -> result: unit reads(env), writes(pages) {
-  doc "Visits allocated pages in a counted directory loop; each callback owns one disjoint fixed array and its global slot base.";
-  match pages^ {
-    Vacant() => {
+    if at < pages^.inner.len {
+      set pages^.inner[at] = value;
     }
-    Pages(first: first_width, directory: pointers) => {
-      let width = cvt::<u32, u64>(first_width^);
-      let count = pointers^.inner.len;
-      for (page in 0_u64..count) {
-        if page < pointers^.inner.len {
-          let page_cell = &pointers^.inner[page];
-          match page_cell^ {
-            None() => {
-            }
-            Some(value: values) => {
-              let previous = page -sat 1_u64;
-              let tail = previous *sat 64_u64;
-              let base = if page == 0_u64 {
-                give 0_u64;
-              } else {
-                give width +sat tail;
-              }
-              let length = values^.inner.len;
-              apply_field(values: &values^.inner[0_u64..length], base: base, env: env);
-            }
-          }
-        }
-      }
-    }
-  }
-  return unit;
-}
-
-fn page_copy<T: copy>(value: &T, env: &unit) -> made: T reads(value) {
-  doc "Copies a whole payload or route cell when that is the requested field.";
-  return value^;
-}
-
-fn page_replace<T: copy>(value: &T, env: &T) -> result: unit reads(env), writes(value) {
-  doc "Initializes or replaces one complete cell.";
-  set value^ = env^;
-  return unit;
-}
-
-fn slot_read<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, missing: T) -> value: T reads(pages) {
-  doc "Reads one stable payload or route through the shared fixed-depth access.";
-  let env = unit;
-  let value = page_read::<T, unit, T, fn page_copy::<T>>(pages: pages, slot: slot, span: span, env: &env, missing: missing);
-  return value;
-}
-
-fn slot_write<T: copy>(pages: &SlotPages<T>, slot: u32, span: u32, value: T, missing: T) -> result: unit writes(pages) {
-  doc "Allocates a missing fixed page and writes its cell; earlier published payloads never move.";
-  if slot < span {
-    page_ensure::<T>(pages: pages, slot: slot, missing: missing);
-    page_edit::<T, T, fn page_replace::<T>>(pages: pages, slot: slot, span: span, env: &value);
   }
   return unit;
 }

@@ -15,7 +15,7 @@ struct RoutePatch {
 
 fn sparse_routes<T: copy>(length: u64, missing: T) -> made: RouteTable<T> pure {
   doc "Reserves identities without allocating payload pages; writes may extend an optional-pointer directory across absent pages.";
-  let pages = SlotPages<T>::Vacant();
+  let pages = box_paged_new::<T>(capacity: 0_u64);
   let made = RouteTable<T>(pages: move pages, len: length, span: 1073741824_u32, missing: missing);
   return move made;
 }
@@ -120,12 +120,15 @@ fn publish_splice_routes(layout: &Layout, patch: &RoutePatch, removed_nodes: &[u
 
 fn relocate_splice(fresh: &Context, input: SpliceInput, y: i64) -> result: unit writes(fresh) {
   doc "Rebases private payloads once into final stable slots. Independent paragraphs, blocks and child contexts retain their internal origins; only the inserted root anchor receives its owner's offset.";
+  relocate_storage(storage: &fresh^.storage, input: input);
+  let entry_base = input.allocated +sat 1_u32;
   let blocks = fresh^.blocks.inner.len;
   for (at in 0_u64..blocks) {
     let block = &fresh^.blocks.inner[at];
-    relocate_payloads(pages: &block^.entries.payloads, blocks: input.blocks, paragraphs: input.paragraphs, children: input.children);
-    relocate_nodes(pages: &block^.entries.nodes, blocks: input.blocks, owner: input.owner, slot: input.allocated);
-    let output = relocate_output(output: block^.boundary, block_base: input.blocks, owner: input.owner, slot: input.allocated);
+    let new_root = rebased_slot(slot: block^.entries.root, base: entry_base);
+    set block^.entries.root = new_root;
+    set block^.entries.base = block^.entries.base +sat entry_base;
+    let output = relocate_output(output: block^.boundary, block_base: input.blocks, entry_base: entry_base, owner: input.owner, slot: input.allocated);
     set block^.boundary = output;
     set block^.inner_x = block^.inner_x +sat input.left;
     set block^.avail_left = block^.avail_left +sat input.left;
@@ -137,6 +140,7 @@ fn relocate_splice(fresh: &Context, input: SpliceInput, y: i64) -> result: unit 
       set block^.y = y;
     } else {
       set block^.parent = block^.parent +sat input.blocks;
+      set block^.entry_slot = block^.entry_slot +sat entry_base;
     }
   }
   let paragraphs = fresh^.paragraphs.inner.len;
@@ -146,6 +150,7 @@ fn relocate_splice(fresh: &Context, input: SpliceInput, y: i64) -> result: unit 
       set paragraph^.block = input.owner;
     } else {
       set paragraph^.block = paragraph^.block +sat input.blocks;
+      set paragraph^.entry_slot = paragraph^.entry_slot +sat entry_base;
     }
     set paragraph^.left = paragraph^.left +sat input.left;
     set paragraph^.broken_left = paragraph^.broken_left +sat input.left;
@@ -200,6 +205,7 @@ fn relocate_splice(fresh: &Context, input: SpliceInput, y: i64) -> result: unit 
       set child^.anchor.y = y;
     } else {
       set child^.block = child^.block +sat input.blocks;
+      set child^.entry_slot = child^.entry_slot +sat entry_base;
     }
   }
   return unit;
@@ -213,40 +219,58 @@ fn vacant_paragraph(style: StyleRef) -> made: Paragraph pure {
   return move paragraph;
 }
 
-fn publish_splice_payloads(context: &Context, fresh: &Context) -> result: unit writes(context.blocks), writes(context.paragraphs), writes(context.children), writes(context.definite_free), writes(fresh) {
-  doc "Appends preflighted payloads to the existing context-wide stable pools. The Slots append boundary orders publication only; subtree preparation has already completed independently.";
-  let definite_free = band(context^.definite_free, fresh^.definite_free);
-  set context^.definite_free = definite_free;
-  let blocks = fresh^.blocks.inner.len;
-  let paragraphs = fresh^.paragraphs.inner.len;
-  let children = fresh^.children.inner.len;
-  let style = fresh^.style;
-  let no = False();
-  for (at in 0_u64..blocks) {
-    if at < fresh^.blocks.inner.len {
-      let taken = new_block(style: style, marker: no);
-      swap(first: &taken, second: &fresh^.blocks.inner[at]);
-      let pushed = push_item::<Block>(cell: &context^.blocks, value: move taken, ceiling: item_ceiling);
-    }
-  }
-  for (at in 0_u64..paragraphs) {
-    if at < fresh^.paragraphs.inner.len {
-      let taken = vacant_paragraph(style: style);
-      swap(first: &taken, second: &fresh^.paragraphs.inner[at]);
-      let pushed = push_item::<Paragraph>(cell: &context^.paragraphs, value: move taken, ceiling: item_ceiling);
-    }
-  }
-  for (at in 0_u64..children) {
-    if at < fresh^.children.inner.len {
-      let taken = new_context(kind: ctx_flow, style: style);
-      swap(first: &taken, second: &fresh^.children.inner[at]);
-      let pushed = push_item::<Context>(cell: &context^.children, value: move taken, ceiling: item_ceiling);
+fn publish_payload_run<T>(target: &Run<T>, source: &Run<T>) -> result: unit writes(target), writes(source) {
+  doc "Swaps each initialized payload into its reserved stable slot independently; publication preflight gives equal run lengths.";
+  let count = source^.len;
+  for (s in 0_u64..count) {
+    if s < target^.len {
+      swap(first: &target^[s], second: &source^[s]);
     }
   }
   return unit;
 }
 
-fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visits: &BoundaryVisits) -> result: unit reads(context.blocks.inner), writes(items), writes(visits) {
+fn publish_splice_payloads(context: &Context, fresh: &Context) -> result: unit writes(context.storage), writes(context.blocks), writes(context.paragraphs), writes(context.children), writes(context.definite_free), writes(fresh) {
+  doc "Reserves preflighted stable payload slots, then publishes each pool in a flat independent pass. Only window growth and initialization order the reservation.";
+  let definite_free = band(context^.definite_free, fresh^.definite_free);
+  set context^.definite_free = definite_free;
+  let blocks = fresh^.blocks.inner.len;
+  let paragraphs = fresh^.paragraphs.inner.len;
+  let children = fresh^.children.inner.len;
+  let block_base = context^.blocks.inner.len;
+  let paragraph_base = context^.paragraphs.inner.len;
+  let child_base = context^.children.inner.len;
+  let style = fresh^.style;
+  let no = False();
+  for (at in 0_u64..blocks) {
+    let vacant = new_block(style: style, marker: no);
+    let pushed = paged_push_item::<Block>(cell: &context^.blocks, value: move vacant, ceiling: item_ceiling);
+  }
+  for (at in 0_u64..paragraphs) {
+    let vacant = vacant_paragraph(style: style);
+    let pushed = paged_push_item::<Paragraph>(cell: &context^.paragraphs, value: move vacant, ceiling: item_ceiling);
+  }
+  for (at in 0_u64..children) {
+    let vacant = new_context(kind: ctx_flow, style: style);
+    let pushed = paged_push_item::<Context>(cell: &context^.children, value: move vacant, ceiling: item_ceiling);
+  }
+  let block_end = context^.blocks.inner.len;
+  let paragraph_end = context^.paragraphs.inner.len;
+  let child_end = context^.children.inner.len;
+  if block_base <= block_end {
+    publish_payload_run::<Block>(target: &context^.blocks.inner[block_base..block_end], source: &fresh^.blocks.inner[0_u64..blocks]);
+  }
+  if paragraph_base <= paragraph_end {
+    publish_payload_run::<Paragraph>(target: &context^.paragraphs.inner[paragraph_base..paragraph_end], source: &fresh^.paragraphs.inner[0_u64..paragraphs]);
+  }
+  if child_base <= child_end {
+    publish_payload_run::<Context>(target: &context^.children.inner[child_base..child_end], source: &fresh^.children.inner[0_u64..children]);
+  }
+  publish_entry_storage(target: &context^.storage, source: &fresh^.storage);
+  return unit;
+}
+
+fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visits: &BoundaryVisits) -> result: unit reads(context.blocks.inner), reads(context.storage), writes(items), writes(visits) {
   doc "Collects only a removed entry's owned flow subtree. Child contexts are retired as whole owned trees, so their payload slots need no rebasing.";
   let pushed = push_item::<Flow>(cell: items, value: item, ceiling: item_ceiling);
   set visits^.entries = visits^.entries +sat 1_u64;
@@ -257,10 +281,10 @@ fn removed_entries(context: &Context, item: Flow, items: &Box<Slots<Flow>>, visi
         set visits^.blocks = visits^.blocks +sat 1_u64;
         let sequence = &context^.blocks.inner[at].entries;
         let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
-        later_handles(sequence: sequence, root: sequence^.root, skip: 0_u64, owner: b, handles: &handles, visits: visits);
+        later_handles(storage: &context^.storage, sequence: sequence, root: sequence^.root, skip: 0_u64, owner: b, handles: &handles, visits: visits);
         let count = handles.inner.len;
         for (k in 0_u64..count) {
-          let nested = splice_payload(sequence: sequence, slot: handles.inner[k].slot, visits: visits);
+          let nested = splice_payload(storage: &context^.storage, sequence: sequence, slot: handles.inner[k].slot, visits: visits);
           removed_entries(context: context, item: nested, items: items, visits: visits);
         }
       }

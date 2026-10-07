@@ -11,18 +11,18 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
     give input.before;
   }
   if selected != no_index {
-    let target = boundary_node(sequence: sequence, slot: selected, visits: visits);
+    let target = boundary_node(storage: &context^.storage, sequence: sequence, slot: selected, visits: visits);
     if target.live {
     } else {
       return Err<SplicePlan, u32>(error: 1_u32);
     }
   }
   if removing {
-  } else if sequence^.allocated >= 1073741824_u32 {
+  } else if context^.storage.payloads.inner.len >= 1073741824_u64 {
     return Err<SplicePlan, u32>(error: 8_u32);
   }
-  let rank = boundary_rank(sequence: sequence, slot: selected, visits: visits);
-  let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+  let rank = boundary_rank(storage: &context^.storage, sequence: sequence, slot: selected, visits: visits);
+  let root = boundary_node(storage: &context^.storage, sequence: sequence, slot: sequence^.root, visits: visits);
   let after = if removing {
     give rank +sat 1_u64;
   } else {
@@ -31,25 +31,25 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let no = False();
   if rank > 0_u64 {
     let previous = rank - 1_u64;
-    let preceding_slot = direct_slot(sequence: sequence, rank: previous, visits: visits);
-    let preceding_item = splice_payload(sequence: sequence, slot: preceding_slot, visits: visits);
+    let preceding_slot = direct_slot(storage: &context^.storage, sequence: sequence, rank: previous, visits: visits);
+    let preceding_item = splice_payload(storage: &context^.storage, sequence: sequence, slot: preceding_slot, visits: visits);
     let reason = splice_boundary(context: context, item: preceding_item, removing: no, visits: visits);
     if reason != 0_u32 {
       return Err<SplicePlan, u32>(error: reason);
     }
   }
   if after < root.total_count {
-    let following_slot = direct_slot(sequence: sequence, rank: after, visits: visits);
-    let following_item = splice_payload(sequence: sequence, slot: following_slot, visits: visits);
+    let following_slot = direct_slot(storage: &context^.storage, sequence: sequence, rank: after, visits: visits);
+    let following_item = splice_payload(storage: &context^.storage, sequence: sequence, slot: following_slot, visits: visits);
     let reason = splice_boundary(context: context, item: following_item, removing: no, visits: visits);
     if reason != 0_u32 {
       return Err<SplicePlan, u32>(error: reason);
     }
   }
   let total_field = False();
-  let old = boundary_output(sequence: sequence, slot: sequence^.root, own: total_field, visits: visits);
-  let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
-  let suffix = range_output(sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
+  let old = boundary_output(storage: &context^.storage, sequence: sequence, slot: sequence^.root, own: total_field, visits: visits);
+  let prefix = range_output(storage: &context^.storage, sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
+  let suffix = range_output(storage: &context^.storage, sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
   let joined = join_output(left: &prefix, right: &added);
   let output = join_output(left: &joined, right: &suffix);
   let same_edges = splice_edges_equal(first: old, second: output);
@@ -84,7 +84,7 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let moves = box_array_filled::<SpliceMove>(count: count, value: empty_result);
   for (at in 0_u64..count) {
     let current_rank = after +sat at;
-    let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined);
+    let movement = splice_move(storage: &context^.storage, sequence: sequence, rank: current_rank, after: after, joined: joined);
     set moves.inner[at] = movement;
   }
   let (movement_visits, movements_supported) = splice_moves_total(moves: &moves.inner[0_u64..count]);
@@ -208,7 +208,7 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
 fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Settles a published root through step 4's existing finish operation; legacy natural-position scratch is invalidated for the next reference fallback.";
   let total_field = False();
-  let after = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  let after = boundary_output(storage: &context^.storage, sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
   let wide_baseline = after.last_baseline -sat old_root.last_baseline;
   let baseline_delta = geometry_narrow(value: wide_baseline);
   if context^.has_baseline {
@@ -220,12 +220,12 @@ fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles
   return unit;
 }
 
-fn commit_splice_sequence(sequence: &EntrySequence, input: SpliceInput, item: Flow, added: SequenceOutput, removing: Bool, visits: &BoundaryVisits) -> result: unit writes(sequence), writes(visits) {
+fn commit_splice_sequence(storage: &EntryStorage, sequence: &EntrySequence, input: SpliceInput, item: Flow, added: SequenceOutput, removing: Bool, visits: &BoundaryVisits) -> result: unit writes(sequence), writes(visits), writes(storage) {
   doc "Publishes one preflighted AVL mutation. The only recoverable insert failures, capacity and stale before-slot, were checked before any retained write.";
   if removing {
-    remove(sequence: sequence, slot: input.removed, visits: visits);
+    remove(storage: storage, sequence: sequence, slot: input.removed, visits: visits);
   } else {
-    let inserted = insert_before(sequence: sequence, before: input.before, item: item, output: added, visits: visits);
+    let inserted = insert_before(storage: storage, sequence: sequence, before: input.before, item: item, output: added, visits: visits);
   }
   return unit;
 }
@@ -235,7 +235,7 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
   let empty_visits = no_boundary_visits();
   set context^.boundary_visits = empty_visits;
   let total_field = False();
-  let old_root = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  let old_root = boundary_output(storage: &context^.storage, sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
   if depth < steps^.len {
     let route = steps^[depth];
     let child = cvt::<u32, u64>(route.child);
@@ -261,11 +261,11 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
     removed_entries(context: context, item: removed, items: &retired, visits: &context^.boundary_visits);
   }
   if input.owner == no_index {
-    commit_splice_sequence(sequence: &context^.entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
+    commit_splice_sequence(storage: &context^.storage, sequence: &context^.entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
   } else {
     let at = cvt::<u32, u64>(input.owner);
     if at < context^.blocks.inner.len {
-      commit_splice_sequence(sequence: &context^.blocks.inner[at].entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
+      commit_splice_sequence(storage: &context^.storage, sequence: &context^.blocks.inner[at].entries, input: input, item: item, added: added, removing: removing, visits: &context^.boundary_visits);
     }
   }
   publish_splice_payloads(context: context, fresh: fresh);
@@ -301,14 +301,14 @@ struct SpliceMove {
   supported: Bool;
 }
 
-fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput) -> made: SpliceMove reads(sequence) {
+fn splice_move(storage: &EntryStorage, sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput) -> made: SpliceMove reads(sequence), reads(storage) {
   doc "Computes one direct sibling's new entering edge independently from cached prefixes. Duplicated logarithmic metadata reads avoid ordering sibling computations.";
   let visits = no_boundary_visits();
-  let slot = direct_slot(sequence: sequence, rank: rank, visits: &visits);
-  let item = splice_payload(sequence: sequence, slot: slot, visits: &visits);
+  let slot = direct_slot(storage: storage, sequence: sequence, rank: rank, visits: &visits);
+  let item = splice_payload(storage: storage, sequence: sequence, slot: slot, visits: &visits);
   set visits.entries = visits.entries +sat 1_u64;
   let own_field = True();
-  let own = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: &visits);
+  let own = boundary_output(storage: storage, sequence: sequence, slot: slot, own: own_field, visits: &visits);
   let supported = True();
   if own.through {
     let text = match item {
@@ -333,8 +333,8 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
     }
     set supported = text;
   }
-  let between = range_output(sequence: sequence, root: sequence^.root, from: after, until: rank, visits: &visits);
-  let previous = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: &visits);
+  let between = range_output(storage: storage, sequence: sequence, root: sequence^.root, from: after, until: rank, visits: &visits);
+  let previous = range_output(storage: storage, sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: &visits);
   let preceding = join_output(left: &joined, right: &between);
   let old_y = splice_edge(prefix: previous, own: own);
   let new_y = splice_edge(prefix: preceding, own: own);

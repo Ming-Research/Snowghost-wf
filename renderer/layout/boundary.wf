@@ -233,13 +233,13 @@ fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destin
 
 fn reduce_sequence(context: &Context, sequence: &EntrySequence, root: u32, styles: &Styles, basis_height: i32, destination: &[BoundaryReduction]) -> made: SequenceOutput reads(context), reads(sequence), reads(styles), writes(destination) {
   doc "Reduces each live AVL node once in post-order. Left, nested block and right use disjoint event slices; only their parent transfer waits for returned totals. Initial owner pages provide direct slot reads without an allocated snapshot; grown directories retain bounded lookup paths.";
-  let held = sequence_node(sequence: sequence, slot: root);
+  let held = sequence_node(storage: &context^.storage, sequence: sequence, slot: root);
   if held.live {
   } else {
     let empty = empty_output();
     return empty;
   }
-  let left_node = sequence_node(sequence: sequence, slot: held.left);
+  let left_node = sequence_node(storage: &context^.storage, sequence: sequence, slot: held.left);
   let before = left_node.total_events;
   let after = before +sat held.own_events;
   let count = destination^.len;
@@ -257,7 +257,7 @@ fn reduce_sequence(context: &Context, sequence: &EntrySequence, root: u32, style
     let empty = empty_output();
     return empty;
   }
-  let item = sequence_payload(sequence: sequence, slot: root);
+  let item = sequence_payload(storage: &context^.storage, sequence: sequence, slot: root);
   let own = pending_output(events: held.own_events);
   let measured = empty_block_output();
   match item {
@@ -359,51 +359,18 @@ fn boundary_event_rank(item: Flow, ranks: &BoundaryRanks) -> made: u64 reads(ran
   return 18446744073709551615_u64;
 }
 
-fn store_reduction(nodes: &SlotPages<SequenceNode>, payloads: &SlotPages<Flow>, ranks: &BoundaryRanks, reduced: &[BoundaryReduction]) -> result: unit reads(payloads), reads(ranks), reads(reduced), writes(nodes) {
-  doc "Publishes reduced own/total fields by independent directory pages and cells; payload and node stores share the same first width and page boundaries.";
-  match nodes^ {
-    Vacant() => {
-    }
-    Pages(first: node_first, directory: node_pages) => {
-      match payloads^ {
-        Vacant() => {
-        }
-        Pages(first: payload_first, directory: payload_pages) => {
-          let count = node_pages^.inner.len;
-          for (page in 0_u64..count) {
-            if page < node_pages^.inner.len {
-              if page < payload_pages^.inner.len {
-                let page_cell = &node_pages^.inner[page];
-                match page_cell^ {
-                  None() => {
-                  }
-                  Some(value: node_page) => {
-                    let payload_cell = &payload_pages^.inner[page];
-                    match payload_cell^ {
-                      None() => {
-                      }
-                      Some(value: payload_page) => {
-                        let length = node_page^.inner.len;
-                        for (at in 0_u64..length) {
-                          if at < node_page^.inner.len {
-                            if node_page^.inner[at].links.live {
-                              if at < payload_page^.inner.len {
-                                let item = payload_page^.inner[at];
-                                let rank = boundary_event_rank(item: item, ranks: ranks);
-                                if rank < reduced^.len {
-                                  set node_page^.inner[at].own = reduced^[rank].own;
-                                  set node_page^.inner[at].total = reduced^[rank].total;
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+fn store_reduction(storage: &EntryStorage, ranks: &BoundaryRanks, reduced: &[BoundaryReduction]) -> result: unit reads(ranks), reads(reduced), writes(storage) {
+  doc "Publishes every live slot's reduced transfers in a flat counted loop over the context pool.";
+  for (s in 0_u64..storage^.links.inner.len) {
+    if storage^.links.inner[s].live {
+      if s < storage^.payloads.inner.len {
+        let rank = boundary_event_rank(item: storage^.payloads.inner[s], ranks: ranks);
+        if rank < reduced^.len {
+          if s < storage^.own.inner.len {
+            set storage^.own.inner[s] = reduced^[rank].own;
+          }
+          if s < storage^.total.inner.len {
+            set storage^.total.inner[s] = reduced^[rank].total;
           }
         }
       }
@@ -412,14 +379,13 @@ fn store_reduction(nodes: &SlotPages<SequenceNode>, payloads: &SlotPages<Flow>, 
   return unit;
 }
 
-fn store_block_reduction(block: &Block, ranks: &BoundaryRanks, reduced: &[BoundaryReduction]) -> result: unit reads(block.flow_at), reads(block.entries.payloads), reads(ranks), reads(reduced), writes(block.entries.nodes), writes(block.boundary), writes(block.output) {
+fn store_block_reduction(block: &Block, ranks: &BoundaryRanks, reduced: &[BoundaryReduction]) -> result: unit reads(block.flow_at), reads(ranks), reads(reduced), writes(block.boundary), writes(block.output) {
   doc "Publishes one block independently of every other block after all nested reductions have completed.";
   let rank = cvt::<u32, u64>(block^.flow_at);
   if rank < reduced^.len {
     set block^.boundary = reduced^[rank].own;
     set block^.output = reduced^[rank].block;
   }
-  store_reduction(nodes: &block^.entries.nodes, payloads: &block^.entries.payloads, ranks: ranks, reduced: reduced);
   return unit;
 }
 
@@ -437,7 +403,7 @@ fn publish_boundaries(context: &Context, events: &[Flow], styles: &Styles, basis
   }
   let ranks = boundary_ranks(context: context);
   let total = reduce_sequence(context: context, sequence: &context^.entries, root: context^.entries.root, styles: styles, basis_height: basis_height, destination: &reduced.inner[0_u64..count]);
-  store_reduction(nodes: &context^.entries.nodes, payloads: &context^.entries.payloads, ranks: &ranks, reduced: &reduced.inner[0_u64..count]);
+  store_reduction(storage: &context^.storage, ranks: &ranks, reduced: &reduced.inner[0_u64..count]);
   let blocks = context^.blocks.inner.len;
   for (at in 0_u64..blocks) {
     if at < context^.blocks.inner.len {
@@ -562,72 +528,72 @@ struct BoundaryMove {
   delta: i64;
 }
 
-fn boundary_node(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: SequenceCursor reads(sequence.nodes), reads(sequence.span), writes(visits) {
+fn boundary_node(storage: &EntryStorage, sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: SequenceCursor reads(storage), reads(sequence.span), writes(visits) {
   doc "Counts each physical metadata lookup, including repeated lookups; an absent link opens no node.";
   if slot != no_index {
     set visits^.indexes = visits^.indexes +sat 1_u64;
   }
-  let node = sequence_node(sequence: sequence, slot: slot);
+  let node = sequence_node(storage: storage, sequence: sequence, slot: slot);
   return node;
 }
 
-fn boundary_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
+fn boundary_output(storage: &EntryStorage, sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(storage), reads(sequence.span), writes(visits) {
   doc "Counts one field-narrow metadata opening; separate topology and transfer lookups count separately, while directory steps remain excluded.";
   if slot != no_index {
     set visits^.indexes = visits^.indexes +sat 1_u64;
   }
-  let output = slot_output(pages: &sequence^.nodes, slot: slot, span: sequence^.span, own: own);
+  let output = slot_output(storage: storage, slot: slot, span: sequence^.span, own: own);
   return output;
 }
 
-fn boundary_set(sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+fn boundary_set(storage: &EntryStorage, sequence: &EntrySequence, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(storage), writes(visits) {
   doc "Repairs one changed entry and its logarithmic AVL path. Each lookup opens only topology or the transfer consumed by the join.";
   let cursor = slot;
   let own_field = True();
   let total_field = False();
   for (level in 0_u64..64_u64) {
-    let current = boundary_node(sequence: sequence, slot: cursor, visits: visits);
+    let current = boundary_node(storage: storage, sequence: sequence, slot: cursor, visits: visits);
     if current.live {
     } else {
       return unit;
     }
     let own_output = if cursor == slot {
-      slot_store_output(pages: &sequence^.nodes, slot: cursor, span: sequence^.span, output: &output, own: own_field);
+      slot_store_output(storage: storage, slot: cursor, span: sequence^.span, output: &output, own: own_field);
       give output;
     } else {
-      let retained = boundary_output(sequence: sequence, slot: cursor, own: own_field, visits: visits);
+      let retained = boundary_output(storage: storage, sequence: sequence, slot: cursor, own: own_field, visits: visits);
       give retained;
     }
-    let left = boundary_output(sequence: sequence, slot: current.left, own: total_field, visits: visits);
-    let right = boundary_output(sequence: sequence, slot: current.right, own: total_field, visits: visits);
+    let left = boundary_output(storage: storage, sequence: sequence, slot: current.left, own: total_field, visits: visits);
+    let right = boundary_output(storage: storage, sequence: sequence, slot: current.right, own: total_field, visits: visits);
     let prefix = join_output(left: &left, right: &own_output);
     let total = join_output(left: &prefix, right: &right);
-    slot_store_output(pages: &sequence^.nodes, slot: cursor, span: sequence^.span, output: &total, own: total_field);
+    slot_store_output(storage: storage, slot: cursor, span: sequence^.span, output: &total, own: total_field);
     set cursor = current.parent;
   }
   return unit;
 }
 
-fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: u64 reads(sequence.nodes), reads(sequence.root), reads(sequence.span), writes(visits) {
+fn boundary_rank(storage: &EntryStorage, sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> made: u64 reads(storage), reads(sequence.root), reads(sequence.span), writes(visits) {
   doc "Finds the changed entry's direct rank through index parents; ranks are transient and earlier payloads are not read.";
-  let current = boundary_node(sequence: sequence, slot: slot, visits: visits);
+  let current = boundary_node(storage: storage, sequence: sequence, slot: slot, visits: visits);
   if current.live {
   } else {
-    let root = boundary_node(sequence: sequence, slot: sequence^.root, visits: visits);
+    let root = boundary_node(storage: storage, sequence: sequence, slot: sequence^.root, visits: visits);
     return root.total_count;
   }
-  let left = boundary_node(sequence: sequence, slot: current.left, visits: visits);
+  let left = boundary_node(storage: storage, sequence: sequence, slot: current.left, visits: visits);
   let rank = left.total_count;
   let cursor = slot;
   let parent = current.parent;
   for (level in 0_u64..64_u64) {
-    let ancestor = boundary_node(sequence: sequence, slot: parent, visits: visits);
+    let ancestor = boundary_node(storage: storage, sequence: sequence, slot: parent, visits: visits);
     if ancestor.live {
     } else {
       return rank;
     }
     if ancestor.right == cursor {
-      let earlier = boundary_node(sequence: sequence, slot: ancestor.left, visits: visits);
+      let earlier = boundary_node(storage: storage, sequence: sequence, slot: ancestor.left, visits: visits);
       let increment = earlier.total_count +sat 1_u64;
       set rank = rank +sat increment;
     }
@@ -637,20 +603,20 @@ fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
   return rank;
 }
 
-fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> reads(sequence.payloads), reads(sequence.root), reads(sequence.span), writes(sequence.nodes), writes(visits) {
+fn boundary_sequence_update(storage: &EntryStorage, sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> reads(sequence.root), reads(sequence.span), writes(storage), writes(visits) {
   doc "Repairs the balanced reduction, then down-sweeps only the intersecting direct suffix. Since the changed solid entry preserves its struts, every later entering state changes by delta. Earlier entries are skipped using cached counts; equal-height baseline edits make no sibling list.";
-  boundary_set(sequence: sequence, slot: slot, output: output, visits: visits);
+  boundary_set(storage: storage, sequence: sequence, slot: slot, output: output, visits: visits);
   let moves = box_slots_new::<BoundaryMove>(capacity: 0_u64);
   if delta != 0_i64 {
-    let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
+    let rank = boundary_rank(storage: storage, sequence: sequence, slot: slot, visits: visits);
     let after = rank +sat 1_u64;
     let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
-    later_handles(sequence: sequence, root: sequence^.root, skip: after, owner: no_index, handles: &handles, visits: visits);
+    later_handles(storage: storage, sequence: sequence, root: sequence^.root, skip: after, owner: no_index, handles: &handles, visits: visits);
     let count = handles.inner.len;
     for (at in 0_u64..count) {
       let handle = handles.inner[at];
       let missing = Flow::Close(block: no_index);
-      let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: handle.slot, span: sequence^.span, missing: missing);
+      let item = slot_read::<Flow>(pages: &storage^.payloads, slot: handle.slot, span: sequence^.span, missing: missing);
       set visits^.entries = visits^.entries +sat 1_u64;
       let translation = BoundaryMove(item: item, delta: delta);
       let kept = push_item::<BoundaryMove>(cell: &moves, value: translation, ceiling: item_ceiling);
@@ -696,13 +662,13 @@ fn apply_boundary_move(context: &Context, translation: BoundaryMove) -> result: 
 fn boundary_owner_update(context: &Context, owner: u32, slot: u32, output: SequenceOutput, delta: i64) -> result: unit writes(context) {
   doc "Routes one local reduction and direct-sibling translation, without a context-wide coordinate conversion. The current indirect payload scatter still needs the step-3 distinct-slot proof.";
   let moves = if owner == no_index {
-    let delivered_102 = boundary_sequence_update(sequence: &context^.entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
+    let delivered_102 = boundary_sequence_update(storage: &context^.storage, sequence: &context^.entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
     give move delivered_102;
   } else {
     let at = cvt::<u32, u64>(owner);
     if at < context^.blocks.inner.len {
       set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-      let delivered_103 = boundary_sequence_update(sequence: &context^.blocks.inner[at].entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
+      let delivered_103 = boundary_sequence_update(storage: &context^.storage, sequence: &context^.blocks.inner[at].entries, slot: slot, output: output, delta: delta, visits: &context^.boundary_visits);
       give move delivered_103;
     } else {
       let delivered_104 = box_slots_new::<BoundaryMove>(capacity: 0_u64);
@@ -820,7 +786,7 @@ fn propagate_boundary(context: &Context, owner: u32, slot: u32, output: Sequence
     let measured = context^.blocks.inner[at].output;
     let root = context^.blocks.inner[at].entries.root;
     let total_field = False();
-    let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
+    let inside = boundary_output(storage: &context^.storage, sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
     let after = lift_block_output(inside: &inside, measured: measured);
     let height = measured.height +sat delta;
     if at < context^.blocks.inner.len {
@@ -984,7 +950,7 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
   }
   let root = context^.entries.root;
   let total_field = False();
-  let old_root = boundary_output(sequence: &context^.entries, slot: root, own: total_field, visits: &context^.boundary_visits);
+  let old_root = boundary_output(storage: &context^.storage, sequence: &context^.entries, slot: root, own: total_field, visits: &context^.boundary_visits);
   if old_root.ordinary {
   } else {
     let reason = imax(old_root.barriers, 1_u32);
@@ -1011,7 +977,7 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
   }
   propagate_boundary(context: context, owner: change.owner, slot: change.slot, output: change.output, delta: change.delta);
   let new_root_slot = context^.entries.root;
-  let after = boundary_output(sequence: &context^.entries, slot: new_root_slot, own: total_field, visits: &context^.boundary_visits);
+  let after = boundary_output(storage: &context^.storage, sequence: &context^.entries, slot: new_root_slot, own: total_field, visits: &context^.boundary_visits);
   let baseline_delta = after.last_baseline -sat old_root.last_baseline;
   let narrow_delta = geometry_narrow(value: baseline_delta);
   if context^.has_baseline {

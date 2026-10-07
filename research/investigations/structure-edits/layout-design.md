@@ -471,10 +471,10 @@ Whitefoot source to compile:
 ```
 FlowBlock = style, parent_route, local_depth,
             normal_origin, own_relative_shift, used_size, width_inputs,
-            paged_slots<Block | Paragraph | Context>, indexed_sequence<EntryId>,
+            indexed_sequence<EntryId> into context-pooled typed paged slots,
             boundary_output, dirty_children, local_split_fragments
 Paragraph = existing shaped/line data + owned contiguous Piece storage
-EntryId   = owner-local stable slot + checked generation
+EntryId   = owner membership + context-pool stable slot; checked generation on reuse
 Route     = owning block/context route + stable slot
 TextUse   = paragraph route + local piece range
 StyleUse  = owning block/subtree route and explicit paragraph uses
@@ -494,12 +494,13 @@ A route directory is routing data, not an alternate owner of geometry.
 Context serials may initially stay numerically identical to a full build,
 but appended serials must remain valid without reindexing old paths. New
 routes are allocated within their new subtree and published in disjoint
-slots. Use chunked growth for NodeId-indexed `text_units`/`uses` and route
-pages so one added node does not allocate and initialize an array as large
-as the DOM. Use a fixed-fanout shallow radix directory so growth touches
-only new pages and their directory paths, and include that allocation
-inside the measured edit. Do not depend on an untimed reservation to hide
-a whole-directory copy. A table
+slots. Use stable paged growth for NodeId-indexed `text_units`/`uses` and route
+stores, and include allocation inside the measured edit. The built-in Paged
+experiment uses a dense initialized prefix: a high sparse write must fill
+missing route values below it, while later growth copies only directory
+words. This replaces the earlier shallow sparse-directory proposal; its
+additional prefix work must be reported and included in the comparison.
+Do not depend on an untimed reservation to hide that work or a directory copy. A table
 shared by all elements is not a shared **mutation chain**: independently
 known NodeIds write disjoint slots. If that independence cannot be proved
 at the pin, resolve the minimal Whitefoot proof gap before replacing it by
@@ -524,8 +525,10 @@ Boundary-state changes update the same path. `visit_later` descends only
 intersecting subtrees and exposes independent owned child regions. Validate
 that traversal's proof at the pin before changing all payload types; a
 missing distinct-slot proof is a Whitefoot gap, not license to serialize
-unrelated writes. Local index nodes and payload pages are block-owned, so
-there is no context-wide order index shared by unrelated blocks.
+unrelated writes. Entry membership and each AVL order index remain block-owned; physical
+entry field groups and typed payloads are pooled per context. A global pool
+slot is an address, never a context-wide order rank. Unrelated blocks share
+allocation storage but no order index.
 
 ### Geometry and boundary outputs
 
@@ -1649,3 +1652,112 @@ cost, parallel speed and actual E1 splice latency remain unverified.
 Q114 A, Q104, Q109 and Q115 A are approved inputs. Step-3 source has not been compiled or executed in this
 implementation session; the primary agent owns CI validation. No approval log entry or readiness claim is made. Delivery is a
 local branch commit only, as requested; there is no push or PR update.
+
+
+### Built-in Paged experiment
+
+This experiment ports `research/m2-pages` at
+`38fd6be2ba5ad1ca972f689e734e7f40737d8876` to Whitefoot's built-in
+`Paged<T>`. Its compiler is experiment release `wf-exp-1b9b08301143`, commit
+`1b9b08301143bd6831a376e7167db7b5d5788c95`, specification v0.95, from
+[Whitefoot PR #263](https://github.com/Ming-Research/Whitefoot/pull/263), based
+on `wf-0b7f5c5b9854`. The adopted Whitefoot-kit revision is
+`a16dc1c9efac0fb95ed2f33ecbeaf24f2fd22ef0`; every compiling hosted workflow
+uses its `make toolchain` to install the release's LLVM. The experiment pin
+is work-branch-only under [Whitefoot-kit's downstream rule](../../../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change).
+
+The question and rejection criteria precede this branch's evidence:
+[Whitefoot's prototype contract](https://github.com/Ming-Research/Whitefoot/blob/1b9b08301143bd6831a376e7167db7b5d5788c95/research/investigations/paged-storage/DESIGN.md#criterion)
+requires C1, the flat C1 probe and renderer dense payload loops are permitted;
+C2, emitted growth copies directory words only; and C3, html5 full-layout
+cost is within the noise of hand-written two-level pages, measured with
+interleaved runs and a twin of the base. A C1 failure other than an
+implementation defect, or materially slower C3 access, rejects the proposal.
+This branch supplies correctness, permission and growth evidence. The primary
+agent owns C3 on the 14900K; no timing or performance conclusion is claimed
+here. Dump bytes, incremental identity, splice/fallback rows, stable identities,
+tombstones and visit-counter meanings must remain equal to the task base.
+
+#### Small owners and representation
+
+[Specification STOR-6, WIN-1 and OP-13](https://github.com/Ming-Research/Whitefoot/blob/1b9b08301143bd6831a376e7167db7b5d5788c95/spec/kernel-spec.md)
+and the prototype's [lowering rule](https://github.com/Ming-Research/Whitefoot/blob/1b9b08301143bd6831a376e7167db7b5d5788c95/research/investigations/paged-storage/DESIGN.md#lowering)
+answer the small-owner question: allocation uses `ceil(capacity / B)` full
+pages, where B is the largest power of two with `B * stride <= 4096`, or one
+for an element larger than 4096 bytes. A positive capacity smaller than B
+still allocates B element positions. For the C1 probe's two-u64 Slot, stride
+16 gives B=256, so capacity 1 allocates a 4096-byte payload page, 256 times its
+16 bytes of requested element capacity, plus the cell and directory. This is
+a consequence of the specified representation, not an allocator measurement;
+the CI probe also checks `paged_page_len::<Slot>() == 256` on its target.
+
+Accordingly `Context.storage: EntryStorage` owns four pools:
+`Box<Paged<Flow>>`, `Box<Paged<SequenceCursor>>`, and separate
+`Box<Paged<SequenceOutput>>` stores for each node's own transfer and subtree
+total. Each owner retains its AVL root, initial range base and count,
+admission span and construction-only pending entries. It owns membership and
+order; its links name stable global slots in those context pools. Physical
+allocation no longer charges each small owner a native page for each of the
+four field groups. Page padding belongs to the last page of each context pool,
+while an owner with one entry consumes one initialized element in each pool.
+This preserves the separation of topology, payload and transfer access paths.
+
+The document-order builder records local pending entries and completed spans.
+After the walk, `seal_context` assigns disjoint prefix ranges to owners,
+initializes pool slots, builds each AVL over disjoint `&Run<SequenceCursor>`
+halves, publishes payloads by flat slot and rebases payload entry handles once.
+The prefix assignment and `place_back` initialization have a length-allocation
+dependency; independent owner work starts after its storage exists. A pending
+list is released at sealing. Initial contiguous ranges support construction,
+not later owner-membership tests: incremental insertion appends to the shared
+pools and joins the resulting global slot to that owner's AVL. No earlier
+published payload moves, and no global order index is introduced.
+
+The heavy typed stores `Context.blocks`, `paragraphs` and `children` also
+become `Box<Paged<T>>`. Dense preparation, boundary publication and sealing
+write flat logical slots, exposing the affine element relation directly to
+PAR-2 instead of quotient/remainder directory lookup or indirect event handles.
+Block membership and context recursion keep their existing semantics. The
+library growth helper doubles logical capacity and calls `grow_paged` followed
+by `place_back`; every access re-establishes bounds after growth, whose
+whole-cell effect invalidates references and facts even though elements do not
+move. No stored reference is used.
+
+`RouteTable<T>` is a dense Paged store with the same missing value, admission
+span and published high-water mark. The earlier sparse directory initialized
+missing pointer entries but left absent payload pages unallocated. A new high
+route now initializes every intervening missing payload value. For a previous
+initialized length L and write at H >= L, that is H-L+1 element placements,
+instead of only pointer-prefix and requested-page work. This semantic-preserving
+cost change remains an explicit risk in `docs/todo.md`; it is included in C3
+and edit-cost follow-up, and is not described as sparse allocation.
+
+#### Evidence to collect
+
+The temporary `layout-check` workflow retains the original
+`research/storage-mocks` C1 source, with its license, alongside the built-in
+Paged equivalent in `research/investigations/storage-layout/probes/`.
+The new probe grows from capacity 1 to 1024, initializes 768 slots over three
+native pages, writes every field once through a flat-slot loop and once through
+page references, and checks `field == index + 110` and `untouched == 99`.
+Sequential and four-worker executions check the same literal results.
+Its emitted LLVM and permission ledgers are retained as CI artifacts.
+
+The workflow also emits the layout-oracle permission ledger for both current
+source and `38fd6be` with the experiment compiler, and for `38fd6be` with its
+original compiler pin. This separates source-representation changes from
+compiler changes. The ledger requires a build entry; Whitefoot refuses
+`--par-ledger --check-module`, so the invocation is
+`--par --par-ledger --emit-llvm --graph modules.wfg --entry layout_oracle`.
+The report must identify each loop over Paged, including refusals and their
+reasons, and compare corresponding baseline loops. A permission is not a
+measurement of actual parallel overlap.
+
+`check` and `layout-check` must pass. An `[oracles]` run compares full dumps
+and complete raw edit logs against `38fd6be`, retaining the same splice and
+fallback rows; `[falsify]` retains every existing mutation and check. Emitted
+LLVM must show directory-pointer copies in `grow_paged` with no element copy.
+Source line counts are compared with the same task base. These are required
+observations, not results claimed before the runs finish. Any newly exposed
+compiler refusal or defect receives a minimal example and a maintained TODO;
+renderer semantics are not changed to hide it.
