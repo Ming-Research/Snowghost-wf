@@ -10,6 +10,49 @@ on:
   workflow_dispatch:
 
 jobs:
+  step5:
+    if: contains(github.event.head_commit.message, '[oracles]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Driver and fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+      - name: Structural path diagnostics
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          build/layout_oracle_seq edit "$s/block-case.edits" "$s/block-case.html" renderer/style/ua.css > build/block-case.raw
+          grep -E 'structure path| inc (same|DIFF|refused)$' build/block-case.raw
+          sh research/investigations/concurrency/run.sh fetch || true
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
+          for page in ecma262 html5; do
+            sh research/investigations/incremental-layout/run.sh inc seq "$page" block
+            cat "build/x5/scripts/$page-block.edits"
+            grep 'structure path' "build/x5/out/$page-block.seq.txt.raw"
+          done
+          differs=$(grep -c ' inc DIFF$' build/block-case.raw || true)
+          refused=$(grep -c ' inc refused$' build/block-case.raw || true)
+          same=$(grep -c ' inc same$' build/block-case.raw || true)
+          test "$differs" -eq 0
+          test "$refused" -le 2
+          test "$same" -gt 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: step5-diagnostics
+          path: |
+            build/block-case.raw
+            build/x5/scripts/*-block.edits
+            build/x5/out/*-block.seq.txt.raw
+            build/x5/*.nodes
   oracles:
     # On the layout branch, only for a head commit that asks for it.
     if: github.ref != 'refs/heads/research/m2-layout' || contains(github.event.head_commit.message, '[oracles]')
@@ -108,7 +151,10 @@ jobs:
               refused=$(grep -c ' inc refused$' "build/$name.$build.raw" || true)
               echo "$name ($build): inc same $same, DIFF $differs, refused $refused (at most $allowed allowed)"
               grep -o 'structure path [0-9]* splice [01] reason [0-9]*' "build/$name.$build.raw" | tr '\n' ';' | sed 's/structure path //g; s/;$/\n/' || true
-              test "$differs" -eq 0 && test "$refused" -le "$allowed" && test "$same" -gt 0
+              grep ' inc refused$' "build/$name.$build.raw" || true
+              test "$differs" -eq 0
+              test "$refused" -le "$allowed"
+              test "$same" -gt 0
             done
           done
           for build in seq par; do
@@ -124,5 +170,6 @@ jobs:
             same=$(grep -c ' inc same$' "build/boundary-baseline-case.$build.raw" || true)
             differs=$(grep -c ' inc DIFF$' "build/boundary-baseline-case.$build.raw" || true)
             echo "boundary-baseline-case ($build): inc same $same, DIFF $differs"
-            test "$differs" -eq 0 && test "$same" -eq 8
+            test "$differs" -eq 0
+            test "$same" -eq 8
           done
