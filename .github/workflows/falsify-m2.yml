@@ -45,6 +45,29 @@ jobs:
                   assert bad.returncode == 1 and b'survived' not in bad.stdout, (index, name, bad.stdout)
                   print('detected assertion group', index, name, wrong)
           PYEOF
+      - name: Mutated driver failures distinguish expected assertions from unrelated errors
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess
+          import tempfile
+          from pathlib import Path
+          workflow = Path('.github/workflows/falsify-m2.yml').read_text()
+          start = workflow.index('            status=$?')
+          end = workflow.index('            elif ! python3', start)
+          handler = workflow[start:end] + '\n            fi\necho reached-end'
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              (root / 'build').mkdir()
+              error = root / 'build/probe.mutated.err'
+              for status, diagnostic, expected in [(9, 'unrelated driver error', 9), (2, 'boundary transfer check failed', 0), (0, '', 0)]:
+                  error.write_text(diagnostic)
+                  command = 'name=probe\n(exit ' + str(status) + ')\n' + handler
+                  result = subprocess.run(['bash', '-c', command], cwd=root, capture_output=True, text=True)
+                  assert result.returncode == expected, (status, diagnostic, result)
+                  assert ('reached-end' in result.stdout) == (expected == 0), result
+                  assert ('detected:' in result.stdout) == ('boundary transfer check failed' in diagnostic), result
+                  print('driver status', status, diagnostic or 'success', 'handled as', expected)
+          PYEOF
       - name: Path-log falsifiers reject missing and contradictory rows
         run: |
           python3 - <<'PYEOF'

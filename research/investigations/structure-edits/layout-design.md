@@ -1090,6 +1090,13 @@ stable-slot traversals, resolving only selected NodeIds through the existing
 order map. DOM links supply enumeration dependencies; inherited computation
 keeps the existing depth frontier. The public `RestyleSet` already permits
 stable slots in any order, so no interface or representation changes.
+The stable-slot destination is initialized to its known size before mapping,
+so each selected NodeId writes a distinct output index; window construction
+alone requires sequential length updates. The completion review caught and
+removed an unnecessary shared append from that mapping. It also caught a
+mutation-harness early exit that rejected the expected boundary assertion;
+the handler now accepts that specific diagnostic, keeps unrelated driver
+failures fatal, and exercises both outcomes plus successful execution in CI.
 The existing preorder path remains valid until the first structural edit.
 `splice-style-case.edits` checks descendant, following-sibling and
 following-sibling-descendant reaches across insertion and removal. The
