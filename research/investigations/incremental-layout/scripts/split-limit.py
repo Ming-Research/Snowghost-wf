@@ -66,7 +66,15 @@ def run(driver, directory, detect):
                 inctime.read(str(protocol), operations, checking=True)
                 differences.append(name)
             else:
-                inctime.read(str(rawfile), operations, checking=True)
+                try:
+                    inctime.read(str(rawfile), operations, checking=True)
+                except ValueError:
+                    debug = directory / (name + '.debug.edits')
+                    debug.write_text('P 1\nP 2\n' + script.read_text())
+                    with (directory / (name + '.debug.raw')).open('w') as output, (directory / (name + '.debug.err')).open('w') as error:
+                        result = subprocess.run([driver, 'edit', str(debug), str(page), 'renderer/style/ua.css'], stdout=output, stderr=error)
+                    (directory / (name + '.debug.status')).write_text(str(result.returncode) + '\n')
+                    raise
             print(name, 'seconds', round(elapsed, 3), 'different edits', different, flush=True)
     if detect:
         if not differences:

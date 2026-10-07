@@ -216,3 +216,17 @@ pre-breaking inapplicable, allowing the existing split-fragment refusal to
 reach legacy reference updating instead. Ordinary incremental counters and
 base dumps are now captured with both plain and atomic variants. No admission
 guard or expected identity is changed; selective omission must still differ.
+
+## Remaining-cost diagnostic question, before profiling
+
+The fused hosted comparison 37684940686 still fails HTML5 font-size acceptance
+for both representations. Selected pairs 23/24 and 43/44 were near A's earlier
+sequential median, with reason-5 and reason-6 boundary fallbacks and thousands
+of boundary visits despite few held entries. Profile those unchanged C/K pairs
+on main, cf12c609, A and B using the measured drivers and verified page digest.
+Two small samples select a bounded repetition count before the profiler runs.
+If split-fragment work still dominates, reject the claim that the targeted
+representation removes the observed cost. If boundary publication/lookup
+instead dominates, the remaining bottleneck is broader reference maintenance.
+This repeated-pair profile is exploratory diagnosis, includes process startup
+and style preparation, and does not replace the two-round acceptance workload.
