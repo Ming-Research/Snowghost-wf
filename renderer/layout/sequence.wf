@@ -1010,7 +1010,7 @@ fn nested_event(context: &Context, sequence: &EntrySequence, at: u64) -> made: F
 }
 
 fn flow_event(context: &Context, at: u64) -> made: Flow reads(context) {
-  doc "The compatibility iterator's event at a temporary rank. Used only for isolated lookups; rank walks borrow the event slice owned by their pass.";
+  doc "The compatibility iterator's event at a temporary rank. Full rank walks borrow their pass-owned slice; bounded incremental walks may select retained events directly.";
   let item = nested_event(context: context, sequence: &context^.entries, at: at);
   return item;
 }
@@ -1127,4 +1127,46 @@ fn record_child_entry(context: &Context, child: u32, owner: u32, slot: u32) -> r
     set context^.children.inner[at].entry_slot = slot;
   }
   return unit;
+}
+
+fn reference_length(context: &Context, events: &[Flow]) -> count: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span), reads(events) {
+  doc "Reads a full pass's shared event slice length, or the retained virtual length for an incremental walk represented by an empty slice.";
+  if events^.len > 0_u64 {
+    return events^.len;
+  }
+  return flow_length(context: context);
+}
+
+fn reference_event(context: &Context, events: &[Flow], at: u64) -> made: Flow reads(context), reads(events) {
+  doc "Reads a full pass's shared event slice or selects one bounded incremental event from retained owner indexes. An empty slice denotes the virtual view, not an absent flow.";
+  if at < events^.len {
+    return events^[at];
+  }
+  if events^.len == 0_u64 {
+    return flow_event(context: context, at: at);
+  }
+  return Flow::Close(block: no_index);
+}
+
+fn reference_child_event(context: &Context, events: &[Flow], at: u64) -> made: Flow reads(context), reads(events) {
+  doc "Classifies a recorded non-atomic child through its stable owner entry on virtual reference walks, avoiding a fresh root-to-rank descent for every candidate. Full passes retain their shared event slice; atomic or retired slots produce no matching child payload.";
+  if at < context^.children.inner.len {
+    if events^.len > 0_u64 {
+      let rank = cvt::<u32, u64>(context^.children.inner[at].flow_at);
+      let full_item = reference_event(context: context, events: events, at: rank);
+      return full_item;
+    }
+    let owner = context^.children.inner[at].block;
+    let slot = context^.children.inner[at].entry_slot;
+    if owner == no_index {
+      let root_item = sequence_payload(sequence: &context^.entries, slot: slot);
+      return root_item;
+    }
+    let owner_at = cvt::<u32, u64>(owner);
+    if owner_at < context^.blocks.inner.len {
+      let nested_item = sequence_payload(sequence: &context^.blocks.inner[owner_at].entries, slot: slot);
+      return nested_item;
+    }
+  }
+  return Flow::Close(block: no_index);
 }

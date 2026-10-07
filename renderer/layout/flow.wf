@@ -664,12 +664,12 @@ fn place_splits(context: &Context, from: u64, flow: u64, left: i32, width: i32) 
 fn entry_extent(context: &Context, events: &[Flow], flow: u32) -> (top: i32, bottom: i32) reads(context), reads(events) {
   doc "The top and bottom, in the context's border box, of the block or child context whose flow entry is flow: a block's at its Open or Close entry, a child context's at its Child entry.";
   let at = cvt::<u32, u64>(flow);
-  let flow_bound_657 = events^.len;
+  let flow_bound_657 = reference_length(context: context, events: events);
   if at < flow_bound_657 {
   } else {
     return 0_i32, 0_i32;
   }
-  let item = events^[at];
+  let item = reference_event(context: context, events: events, at: at);
   match item {
     Open(block: b) => {
       let index = cvt::<u32, u64>(b);
@@ -710,12 +710,12 @@ fn entry_extent(context: &Context, events: &[Flow], flow: u32) -> (top: i32, bot
 
 fn lineless(context: &Context, events: &[Flow], flow: u64) -> empty: Bool reads(context), reads(events) {
   doc "Tells whether flow entry flow is a paragraph without lines.";
-  let flow_bound_702 = events^.len;
+  let flow_bound_702 = reference_length(context: context, events: events);
   if flow < flow_bound_702 {
   } else {
     return False();
   }
-  let item = events^[flow];
+  let item = reference_event(context: context, events: events, at: flow);
   match item {
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
@@ -753,9 +753,9 @@ fn sibling_above(context: &Context, events: &[Flow], closing: &Box<Array<u8>>, f
   for (back in 0_u64..flow) {
     let before = flow - back;
     let at = before - 1_u64;
-    let flow_bound_744 = events^.len;
+    let flow_bound_744 = reference_length(context: context, events: events);
     if at < flow_bound_744 {
-      let item = events^[at];
+      let item = reference_event(context: context, events: events, at: at);
       match item {
         Text(..) => {
           let empty = lineless(context: context, events: events, flow: at);
@@ -804,12 +804,12 @@ fn gap_lineless(context: &Context, events: &[Flow], after: u32, before: u32) -> 
 
 fn shows_owner(context: &Context, events: &[Flow], flow: u64, owner: u32, opening: Bool) -> shown: Bool reads(context), reads(events) {
   doc "Tells whether flow entry flow is a paragraph with lines in which owner's inline box opens (opening) or closes, so that it reports owner's rectangle there itself.";
-  let flow_bound_794 = events^.len;
+  let flow_bound_794 = reference_length(context: context, events: events);
   if flow < flow_bound_794 {
   } else {
     return False();
   }
-  let item = events^[flow];
+  let item = reference_event(context: context, events: events, at: flow);
   let paragraph = match item {
     Text(paragraph: p) => {
       give cvt::<u32, u64>(p);
@@ -880,12 +880,12 @@ fn shows_owner(context: &Context, events: &[Flow], flow: u64, owner: u32, openin
 fn entry_margin(context: &Context, events: &[Flow], styles: &Styles, flow: u32, basis: i32, below: Bool) -> margin: i32 reads(context), reads(events), reads(styles) {
   doc "The top margin (or the bottom one, when below) of the block or child context whose flow entry is flow.";
   let at = cvt::<u32, u64>(flow);
-  let flow_bound_869 = events^.len;
+  let flow_bound_869 = reference_length(context: context, events: events);
   if at < flow_bound_869 {
   } else {
     return 0_i32;
   }
-  let item = events^[at];
+  let item = reference_event(context: context, events: events, at: at);
   let style = match item {
     Open(block: b) => {
       let index = cvt::<u32, u64>(b);
@@ -1063,7 +1063,7 @@ fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Style
       }
     }
   } else {
-    let entries = events^.len;
+    let entries = reference_length(context: context, events: events);
     for (k in 0_u64..entries) {
       let empty = lineless(context: context, events: events, flow: k);
       if empty {
@@ -1228,12 +1228,12 @@ fn split_closings(context: &Context) -> closing: Box<Array<u8>> reads(context) {
 
 fn empty_inline_fragments(context: &Context, events: &[Flow], keys: &Box<Array<u64>>, flow: u64) -> result: unit reads(events), reads(keys), writes(context) {
   doc "Adds an empty rectangle, at the paragraph's origin, for each inline box that opens in the paragraph at flow entry flow, which has no lines, when no block interrupts its element here.";
-  let flow_bound_1189 = events^.len;
+  let flow_bound_1189 = reference_length(context: context, events: events);
   if flow < flow_bound_1189 {
   } else {
     return unit;
   }
-  let item = events^[flow];
+  let item = reference_event(context: context, events: events, at: flow);
   let paragraph = match item {
     Text(paragraph: p) => {
       give cvt::<u32, u64>(p);
@@ -1418,11 +1418,12 @@ struct Restack {
 }
 
 struct StackResult {
-  doc "What a stacking pass returns: the content height (which contains the floats) and the last line's baseline, and for a re-stack whether it stopped after flow entry stop_at with every later entry to move by delta (the open blocks already given their final position and grown by delta), how many entries it stacked again, and whether empty-inline fragments may be kept (every affected paragraph kept whether it has lines, and its empty fragment inputs stayed unchanged).";
+  doc "What a stacking pass returns: the content height (which contains the floats) and the last line's baseline, and for a re-stack its actual restart start_at and whether it stopped after flow entry stop_at with every later entry to move by delta (the open blocks already given their final position and grown by delta), how many entries it stacked again, and whether empty-inline fragments may be kept (every affected paragraph kept whether it has lines, and its empty fragment inputs stayed unchanged).";
   height: i32;
   baseline: i32;
   has_baseline: Bool;
   stopped: Bool;
+  start_at: u64;
   stop_at: u64;
   delta: i32;
   restacked: u64;
@@ -1625,9 +1626,9 @@ fn interior_position(value: i32) -> interior: Bool pure {
 
 fn paragraph_at_entry(context: &Context, events: &[Flow], at_entry: u64) -> paragraph: u64 reads(context), reads(events) {
   doc "The paragraph payload slot named by a Text entry in the flat flow walk, or the paragraph count for another entry or the end. Payload slots are identities, not flow ranks.";
-  let flow_bound_1579 = events^.len;
+  let flow_bound_1579 = reference_length(context: context, events: events);
   if at_entry < flow_bound_1579 {
-    let item = events^[at_entry];
+    let item = reference_event(context: context, events: events, at: at_entry);
     match item {
       Text(paragraph: p) => {
         return cvt::<u32, u64>(p);
@@ -1649,9 +1650,9 @@ fn paragraph_at_entry(context: &Context, events: &[Flow], at_entry: u64) -> para
 
 fn block_at_entry(context: &Context, events: &[Flow], at_entry: u64) -> block: u64 reads(context), reads(events) {
   doc "The block payload slot named by an Open entry in the flat flow walk, or the block count for another entry or the end.";
-  let flow_bound_1602 = events^.len;
+  let flow_bound_1602 = reference_length(context: context, events: events);
   if at_entry < flow_bound_1602 {
-    let item = events^[at_entry];
+    let item = reference_event(context: context, events: events, at: at_entry);
     match item {
       Open(block: b) => {
         return cvt::<u32, u64>(b);
@@ -1683,7 +1684,7 @@ fn block_entry(context: &Context, block: u32) -> at_entry: u32 reads(context.blo
 fn previous_stacked_paragraph(context: &Context, events: &[Flow], from: u64) -> paragraph: u64 reads(context), reads(events) {
   doc "The last unchanged paragraph with lines before the flow entry from, found by walking preceding flow entries. Its natural position, height and parent chain describe the state immediately after it. The paragraph count denotes none.";
   let count = context^.paragraphs.inner.len;
-  let virtual_count = events^.len;
+  let virtual_count = reference_length(context: context, events: events);
   let end = imin(from, virtual_count);
   for (step in 0_u64..end) {
     let back = end - step;
@@ -1699,18 +1700,14 @@ fn previous_stacked_paragraph(context: &Context, events: &[Flow], from: u64) -> 
 }
 
 fn preceding_float_entries(context: &Context, events: &[Flow], before: u64) -> entries: Box<Slots<u32>> reads(context), reads(events) {
-  doc "The Float entries before a restart boundary, in virtual nested sequence order. Reads the existing child candidates against the caller's transient event buffer, then insertion-sorts only the selected entry positions without relying on child slot order. It retains no ordered sequence.";
+  doc "The Float entries before a restart boundary, in virtual nested sequence order. Classifies the existing child candidates by the shared full buffer or stable owner handle, then insertion-sorts only the selected entry positions without relying on child slot order. It retains no ordered sequence.";
   let entries = box_slots_new::<u32>(capacity: 0_u64);
   let children = context^.children.inner.len;
   for (c in 0_u64..children) {
     let at_entry = context^.children.inner[c].flow_at;
     let flow = cvt::<u32, u64>(at_entry);
     if flow < before {
-      let event_rank = flow;
-      let event_value = Flow::Close(block: no_index);
-      if event_rank < events^.len {
-        set event_value = events^[event_rank];
-      }
+      let event_value = reference_child_event(context: context, events: events, at: c);
       let (kind, index) = entry_kind(item: event_value);
       if kind == 2_u8 {
         if index == c {
@@ -1759,8 +1756,10 @@ fn resume_float_state(context: &Context, events: &[Flow], styles: &Styles, stack
     let at_entry = entries.inner[f];
     let event_rank = cvt::<u32, u64>(at_entry);
     let event_value = Flow::Close(block: no_index);
-    if event_rank < events^.len {
-      set event_value = events^[event_rank];
+    let reference_bound = reference_length(context: context, events: events);
+    if event_rank < reference_bound {
+      let selected_reference_event = reference_event(context: context, events: events, at: event_rank);
+      set event_value = selected_reference_event;
     }
     let (kind, c) = entry_kind(item: event_value);
     if kind == 2_u8 {
@@ -1901,7 +1900,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
   let below = no_updates();
   let fragments_same = plan.empty_stable;
   let none = box_slots_new::<Exclusion>(capacity: 0_u64);
-  let flow_count = events^.len;
+  let flow_count = reference_length(context: context, events: events);
   let floors = box_array_filled::<i32>(count: 0_u64, value: 0_i32);
   prepare_naturals(context: context, count: flow_count);
   let restart = 0_u64;
@@ -1951,7 +1950,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
   }
   let boundary_floats = stack.floats.inner.len > 0_u64;
   for (k in restart..flow_count) {
-    let flow_bound_1892 = events^.len;
+    let flow_bound_1892 = reference_length(context: context, events: events);
     if k >= flow_bound_1892 {
       break;
     }
@@ -1972,7 +1971,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
         set before_reach = stack.reach;
       }
     }
-    let item = events^[k];
+    let item = reference_event(context: context, events: events, at: k);
     let waiting_line = pending_margin(stack: &stack);
     let line_offset = stack.cursor +sat waiting_line;
     let line_at = content_top +sat line_offset;
@@ -2494,7 +2493,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
     }
   }
   if stopped {
-    return StackResult(height: 0_i32, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same, below: below);
+    return StackResult(height: 0_i32, baseline: baseline, has_baseline: has_baseline, stopped: stopped, start_at: restart, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same, below: below);
   }
   let end_term = pending_margin(stack: &stack);
   let end = stack.cursor +sat end_term;
@@ -2503,7 +2502,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
   set context^.content_raw = height;
   set context^.flow_end = end;
   let positive = imax(height, 0_i32);
-  return StackResult(height: positive, baseline: baseline, has_baseline: has_baseline, stopped: stopped, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same, below: below);
+  return StackResult(height: positive, baseline: baseline, has_baseline: has_baseline, stopped: stopped, start_at: restart, stop_at: stop_at, delta: stop_delta, restacked: restacked, fragments_same: fragments_same, below: below);
 }
 
 fn positioned_block(context: &Context, styles: &Styles, open_blocks: &[u32]) -> (found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles), reads(open_blocks) {
@@ -2918,18 +2917,14 @@ fn chain_anchor(context: &Context, styles: &Styles, block: u32) -> (found: Bool,
 }
 
 fn position_out_children(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> counts: UpdateCounts reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "position_out for a flow context whose pre-pass recorded each child's flow entry and block: positions each out-of-flow child found among the children, its anchor from chain_anchor, using the pass's event slice for entry classification, and returns what their layouts counted.";
+  doc "position_out for a flow context whose pre-pass recorded each child's flow entry and block: positions each out-of-flow child found among the children, its anchor from chain_anchor, using the shared full event slice or stable owner entry for classification, and returns what their layouts counted.";
   let border = border_edges(styles: styles, style: context^.style);
   let counted = no_updates();
   let count = context^.children.inner.len;
   for (at in 0_u64..count) {
     if at < context^.children.inner.len {
       let block = context^.children.inner[at].block;
-      let event_rank = cvt::<u32, u64>(context^.children.inner[at].flow_at);
-      let event_value = Flow::Close(block: no_index);
-      if event_rank < events^.len {
-        set event_value = events^[event_rank];
-      }
+      let event_value = reference_child_event(context: context, events: events, at: at);
       let (kind, index) = entry_kind(item: event_value);
       let out_kind = kind == 3_u8;
       let this_child = index == at;
@@ -3073,13 +3068,13 @@ fn intrinsic_flow(context: &Context, events: &[Flow], styles: &Styles, document:
   let fixed_depth = 0_u64;
   let chunk_text = 0_i32;
   let chunk_floats = 0_i32;
-  let flow_count = events^.len;
+  let flow_count = reference_length(context: context, events: events);
   for (k in 0_u64..flow_count) {
-    let flow_bound_2991 = events^.len;
+    let flow_bound_2991 = reference_length(context: context, events: events);
     if k >= flow_bound_2991 {
       break;
     }
-    let item = events^[k];
+    let item = reference_event(context: context, events: events, at: k);
     match item {
       Open(block: b) => {
         set most = chunk_most(most: most, text: chunk_text, floats: chunk_floats, around: around);

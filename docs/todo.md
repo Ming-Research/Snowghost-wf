@@ -9,6 +9,28 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
+- **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
+  snapshots its left and right owner cursors independently, then visits the
+  affected suffix. In a same-host, same-script 2,000-edit comparison using
+  wf-0b7f5c5b9854/clang 22, this naturally written traversal took median
+  608 us sequentially, 607 us with the parallel binary at one worker, and
+  5533 us at four workers. Legacy edit work counters were identical.
+  Generated budgeted suffix functions and their thunk appear in perf;
+  worker_main and join account for 65.37% and 8.86% of whole-process self
+  samples. The prior traversal was 689/697/1056 us under the same conditions.
+  [Profile, scope and limitations](../research/investigations/m2-edit-cost/DESIGN.md#parallel-suffix-profile-result).
+  Binary inspection identifies a suffix thunk containing only one cursor
+  query, enqueued beside the other query and joined before suffix descent.
+  Impact: this revision improves sequential work but has a substantial
+  parallel regression. The emitted grain is identified; the cost-model
+  cause and remedy remain unverified. This is a renderer reproducer, not
+  yet a minimal conformance case. Change: minimize the two cursor reads
+  inside the recursive walk and repair compiler/runtime
+  grain selection while retaining source independence. Validate unchanged
+  work/dumps and seq/par-one/par-four repeated edits plus the M2 acceptance
+  matrix on the same host. Reopen with the owner's Whitefoot decision; do
+  not hide the issue by serializing reads or forcing worker count.
+
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
   Fork(left: Box<Pages>, right: Box<Pages>); }`, and functions that change
@@ -35,9 +57,10 @@ example apart from the renderer code that exposed it
   `payloads[slot].value`, with `payloads[slot].entry == k`. At Whitefoot
   `f949e676acfa811f96b21afd07f02c06dcd14b51`, RANGE-1 admits integer-array
   elements but no field below an element or enum payload. PAR-2 therefore
-  does not certify Snowghost's indirect translation and local-width writes
-  in `translate_after` and `prepare_local_widths`; their sibling writes
-  have no semantic dependency. This is a specification/source inspection
+  does not certify Snowghost's indirect local-width writes in
+  `prepare_local_widths`; their sibling writes have no semantic dependency.
+  The former indirect suffix translation exposed the same limitation;
+  `translate_reference_after` now uses direct payload loops or owner traversal. This is a specification/source inspection
   finding, not a new compiler trial or timing result. The maintained
   `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
   demonstrates the supported separate integer-array inverse, which would
@@ -290,23 +313,27 @@ example apart from the renderer code that exposed it
   byte identity, logarithmic physical visit counts or speed from source alone.
 
 
-- **M2 geometry still bridges the context-coordinate reference walker.**
-  `renderer/layout/geometry.wf:geometry_reference` and `geometry_owned`
-  materialize and re-encode whole-context scratch geometry around layout
-  and update; `translation_exact` conservatively scans it before moving
-  suffix roots. Context fragments, `Split.line`, `naturals`, `held_y` and
-  the context baseline retain their legacy coordinate/rank semantics.
-  Impact: local origins remove descendant origin mutations, but these
-  scans and scratch writes are not bounded-edit evidence. Change: replace
-  the bridge with owner-local boundary outputs and anchored spanning
-  fragments, naturals and baseline handles as the nested sequence lands.
-  Keep the numeric compatibility path for every potentially saturating
-  block until an alternative proves byte identity. Reopen in M2 step 4; compare all edit prefixes with fresh full dumps, inject the step-2
-  geometry falsifiers, and count scratch/metadata visits separately from
-  translated local origins. The primary agent supplied steps 1 and 2 as
-  compiled input; seq/par dumps, extreme-coordinate cases and placement
-  timing have no additional evidence from this implementation session.
-
+- **Split-fragment reconstruction remains whole-context after a small
+  font-size replay.** At 49981d1, ecma262 font-size edits 3/4 replay 12
+  entries but cost about 10 ms. A repeated-pair profile exposes virtual
+  sequence selection, shows_owner and split_fragments_with_empty; source
+  rebuilds every split rectangle when the existing reuse certificate fails.
+  Fragment stores a DOM owner and context rectangle but no unique run or
+  endpoint dependency. Removing the top guard is unsafe for collapsing
+  ancestors and coordinate/flow order differ under negative margins.
+  [Evidence and open Q2](../research/investigations/m2-edit-cost/DESIGN.md#slow-font-size-profile-result).
+  Earlier timing-only probing attributed about 0.8 ms of a 1.1–1.5 ms
+  sfontsize edit to this pass on #spec-container
+  ([earlier evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt));
+  that work proposed retaining sorted structural keys and closing flags.
+  M2 now additionally needs a bounded link from those keys to emitted runs.
+  Change: choose stable run/end-point identities with owner-relative anchors,
+  or a retained dependency index for the flat rectangles; a transient full
+  scan does not remove the unrelated context dependency. Validate split and
+  empty fragment order, moved ancestor endpoints, negative margins, relative
+  positioning, saturation, insert/remove lifetimes, all X5 identities and
+  falsifiers, then repeat same-host text/font-size acceptance. Reopen after
+  the owner chooses the representation.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
@@ -336,6 +363,14 @@ example apart from the renderer code that exposed it
   loop certification for suffix computations and publication scatters.
   Reopen in step-5 CI with the documented mutations and seq/par runs; defer
   any locality or performance completion claim until that evidence exists.
+  The edit-cost branch's same-pin base comparison at 9e1561a confirms this
+  scope is inherited: ecma262's 20 block edits use reason 3; html5 uses reason
+  7 on 58 of 60 edits and splices two. Every incremental dump matches, and
+  base/head generated scripts are byte-identical ([attribution](../research/investigations/m2-edit-cost/DESIGN.md#structural-scope-attribution)).
+  The unchanged zero-fallback oracle therefore remains failing independently
+  of the text-edit repairs. Defer widening these seams to the ongoing splice
+  extension, validate both pages' same scripts and semantic mutations there,
+  and reopen this gate when that extension is adopted.
 
 
 - **Child-context publication still follows payload-slot order.**
@@ -491,21 +526,6 @@ example apart from the renderer code that exposed it
   a subtree that is not block-and-text-only, or no close found) is not
   isolated. Change: report the refusal in a diagnostic run, then widen
   that check. Reopen with the next ecma262 incremental layout target
-  ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
-
-- **A re-stack makes the context's inline-box fragments again.** After
-  every re-stack of a context with block-in-inline splits,
-  `restack_flow` runs `split_fragments_with_empty`: a sort of the
-  splits, a flag per flow entry, the per-split loop and a copy of the
-  kept empty fragments with a binary search each. On #spec-container
-  that is about 0.8 ms of each 1.1-1.5 ms sfontsize edit (timing-only
-  probe). A converged re-stack now keeps and translates the list when
-  no split opens or closes in the re-stacked range and no lineless
-  paragraph there opens an inline box; a range holding such a split or
-  paragraph still regenerates everything. Change: keep the sorted keys
-  and closing flags, which depend only on the flow's structure, and
-  regenerate only the runs that intersect the range. Reopen with the
-  next ecma262 incremental layout target
   ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
 
 - **A context's cached intrinsic sizes depend on when they are first

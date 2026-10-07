@@ -114,8 +114,29 @@ the subsequent block removal, then restores the text. Its later ordinary
 wrapper begins with a split head, so the leading empty fragment reads
 Split.line at the wrapper opening; block removal still requires a local splice.
 
-Python's standard library has no native
-parser for the driver's node listing, so it reuses edits.Tree.
+The edit-cost kind reuses the transfer page unchanged. It combines one-character
+round trips with height-changing sentence round trips across relative, expired
+float, negative-margin re-entry, constrained sibling and marker barriers.
+
+The edit-cascade kind shares the unchanged transfer page in one flow, grows
+several paragraphs before undoing them in reverse order, and makes later
+reference restarts consume geometry translated by earlier edits. It targets
+stale global reference scratch that an immediate edit/undo pair can hide.
+
+The positioned-isolated kind retains the original positioned edits and isolates
+the percentage-height fixture in its own flow root, so unrelated seams can
+reach anchor publication; the original positioned kind remains unchanged.
+
+The edit-height and edit-baseline kinds reuse style-case.html. The height
+fixture uses flex baseline alignment; downward inline vertical alignment
+changes its line height. The baseline fixture fixes line height while changing
+font size inside a flow root within an inline-block body. The existing real
+head/title element is made visible as its baseline peer, so a stale baseline
+moves geometry that the DOM dump observes. Independent mutations suppress the
+height or last-baseline equality guard, and each must be detected.
+
+Python's standard library has no native parser for the driver's node listing,
+so it reuses edits.Tree.
 """
 import argparse
 import re
@@ -127,6 +148,12 @@ from edits import Tree
 
 
 CASES = {
+    'edit-cascade': ('reference-suffix-reader',),
+    'edit-baseline': ('baseline-only',),
+    'edit-height': ('height-only',),
+    'edit-cost': ('transfer-relative-sibling', 'transfer-clear-expired',
+                  'transfer-clear-reentry', 'transfer-maximum-sibling',
+                  'transfer-marker-lined'),
     'positioned': ('positioned-auto', 'positioned-growing', 'positioned-fixed',
                    'positioned-nested', 'positioned-atomic',
                    'positioned-atomic-cancel', 'positioned-generated-removal',
@@ -148,6 +175,8 @@ CASES = {
              'flex-float-owner', 'flex-positioned-owner',
              'flex-intrinsic-position', 'flex-outward-reentry'),
 }
+
+CASES['positioned-isolated'] = CASES['positioned']
 
 
 
@@ -242,6 +271,41 @@ def generate(tree, kind):
     """Exercise each independent fixture and its text routes after both edits."""
     lines = []
     paths = []
+    if kind == 'positioned-isolated':
+        lines.append('S .growing{display:flow-root}')
+    if kind in ('edit-baseline', 'edit-height'):
+        inline = [element for element in tree.elements if element['name'] == 'em']
+        if len(inline) != 1:
+            raise ValueError('expected one inline em in the unchanged style fixture')
+        node = inline[0]['node']
+        lines.append('S head{display:inline-block;width:200px} title{display:block;font-size:16px;line-height:20px} head>style{display:none} body{display:inline-block;width:300px} body>div,body>p{display:none} body>p:nth-of-type(1){display:flow-root;width:300px;font-size:0;line-height:0} em{font-size:16px;line-height:40px} .costbaseline{font-size:24px} .costdescent{vertical-align:-30px}')
+        token = 'costbaseline'
+        if kind == 'edit-height':
+            lines = ['S body{display:flex;align-items:baseline;width:2000px} p{width:2000px;min-width:0;flex-shrink:0;line-height:40px} p::before{content:"barrier";display:block;position:relative} .costdescent{vertical-align:-30px}']
+            token = 'costdescent'
+        lines.extend(('C %d %s' % (node, token), 'K %d %s' % (node, token)))
+        lines.extend(('P 0', 'P 1', 'P 2'))
+        return '\n'.join(lines) + '\n', ''
+    if kind == 'edit-cascade':
+        lines.append('S section{display:block}')
+        prefix = 'A longer sentence moves the following retained paragraphs. ' * 5
+        nodes = [marker(tree, case, role)['node'] for case in
+                 ('transfer-clear-expired', 'transfer-float-expired',
+                  'transfer-marker-lined', 'transfer-relative-sibling')
+                 for role in ('retained', 'probe')]
+        for node in nodes:
+            lines.append('T %d 0 %s' % (node, prefix))
+        for node in reversed(nodes):
+            lines.append('D %d 0 %d' % (node, len(prefix.encode())))
+        return '\n'.join(lines) + '\n', ''
+    if kind == 'edit-cost':
+        prefix = 'A longer sentence changes the paragraph height and following origins. ' * 5
+        for case in CASES[kind]:
+            node = marker(tree, case, 'retained')['node']
+            text_pair(lines, node)
+            lines.extend(('T %d 0 %s' % (node, prefix),
+                          'D %d 0 %d' % (node, len(prefix.encode()))))
+        return '\n'.join(lines) + '\n', ''
     for number, case in enumerate(CASES[kind]):
         retained = marker(tree, case, 'retained')
         probe = marker(tree, case, 'probe')
@@ -255,13 +319,13 @@ def generate(tree, kind):
             if removal['name'] != tag or removal['parent'] != paragraph['parent']:
                 raise ValueError(case + ': removal marker must be a sibling ' + tag)
             lines.append('X %d' % removal['node'])
-            record_path(paths, case, len(lines), (initial_splice, initial_reason))
+            record_path(paths, case, sum(line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X') for line in lines), (initial_splice, initial_reason))
             for node in (retained['node'], probe['node']):
                 text_pair(lines, node)
         created = tree.arena + 2 * number
         lines.append('B %d %d Inserted block.' %
                      (paragraph['parent'], paragraph['node']))
-        record_path(paths, case, len(lines))
+        record_path(paths, case, sum(line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X') for line in lines))
         if case == 'flex-intrinsic-position':
             after_insert = (probe['node'],)
         else:
@@ -277,7 +341,7 @@ def generate(tree, kind):
             held_text = 'Retained anonymous text grows before the split head. ' * 12
             lines.append('T %d 0 %s' % (probe['node'], held_text))
         lines.append('X %d' % created)
-        record_path(paths, case, len(lines))
+        record_path(paths, case, sum(line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X') for line in lines))
         if case == 'transfer-line-lifetime':
             lines.append('D %d 0 %d' % (probe['node'], len(held_text)))
         for node in (retained['node'], probe['node']):
@@ -301,7 +365,8 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture = Path(__file__).resolve().with_name(args.kind + '-case.html')
+    fixture_kind = {'edit-cascade': 'transfer', 'positioned-isolated': 'positioned', 'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
+    fixture = Path(__file__).resolve().with_name(fixture_kind + '-case.html')
     fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')
     with nodes.open('w') as output:
@@ -311,7 +376,7 @@ def main():
     args.output.write_text(edits)
     args.output.with_suffix(args.output.suffix + ".paths").write_text(paths)
     print('%s: %d cases, %d edits' %
-          (args.output, len(CASES[args.kind]), len(edits.splitlines())))
+          (args.output, len(CASES[args.kind]), sum(line.split()[0] in ('T', 'D', 'C', 'K', 'B', 'X') for line in edits.splitlines() if line.split())))
 
 
 if __name__ == '__main__':

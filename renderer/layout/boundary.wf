@@ -549,6 +549,217 @@ fn publish_boundaries(context: &Context, events: &[Flow], styles: &Styles, basis
   return unit;
 }
 
+fn reference_item_output(context: &Context, item: Flow, styles: &Styles, basis_height: i32) -> made: SequenceOutput reads(styles), writes(context) {
+  doc "Publishes one settled reference payload while local geometry is decoded. Nested sequence totals must already be current for Open. Returns the own transfer without repairing an index; reference geometry, height and sibling displacement are already settled by the caller. Counters cover directly opened payloads, owner blocks and AVL metadata, excluding shared transfer preparation and earlier reference replay.";
+  let owner = no_index;
+  let own = empty_output();
+  let nested = False();
+  match item {
+    Open(block: b) => {
+      set nested = True();
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        set owner = context^.blocks.inner[at].parent;
+        let root = context^.blocks.inner[at].entries.root;
+        let total_field = False();
+        let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
+        let (transfer, size) = block_output(block: &context^.blocks.inner[at], styles: styles, inside: &inside, basis_height: basis_height);
+        set own = transfer;
+        let measured = size;
+        let origin = block_origin(context: context, block: b);
+        let parent_origin = block_origin(context: context, block: owner);
+        let offset = origin.y -sat parent_origin.y;
+        let observed = entry_motion(context: context, item: item, styles: styles);
+        set measured.offset = offset;
+        let natural = if observed.natural_floor == 9223372036854775807_i64 {
+          give observed.natural_floor;
+        } else {
+          give observed.natural_floor -sat offset;
+        }
+        set measured.natural = natural;
+        set measured.motion_known = observed.motion_known;
+        let lifted_motion = lift_block_output(inside: &inside, measured: measured);
+        set own.natural_floor = lifted_motion.natural_floor;
+        set own.float_reach = lifted_motion.float_reach;
+        set own.motion_known = lifted_motion.motion_known;
+        set context^.blocks.inner[at].boundary = own;
+        set context^.blocks.inner[at].output = measured;
+      } else {
+        return own;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      } else {
+        return own;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      } else {
+        return own;
+      }
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      } else {
+        return own;
+      }
+    }
+    Out(context: o) => {
+      let at = cvt::<u32, u64>(o);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      } else {
+        return own;
+      }
+    }
+    Close(..) => {
+      return own;
+    }
+  }
+  if nested {
+  } else {
+    let empty = empty_output();
+    let no_block = empty_block_output();
+    let prepared = BoundaryReduction(own: empty, total: empty, block: no_block);
+    prepare_boundary_entry(context: context, item: item, styles: styles, destination: &prepared);
+    set own = prepared.own;
+  }
+  return own;
+}
+
+fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "Publishes one settled reference transfer and repairs its owning AVL path. Shared output preparation also serves the batch suffix publisher, which joins each intersected node only once.";
+  let own = reference_item_output(context: context, item: item, styles: styles, basis_height: basis_height);
+  let owner = no_index;
+  let slot = no_index;
+  let child = no_index;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        set owner = context^.blocks.inner[at].parent;
+        set slot = context^.blocks.inner[at].entry_slot;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        set owner = context^.paragraphs.inner[at].block;
+        set slot = context^.paragraphs.inner[at].entry_slot;
+      }
+    }
+    Child(context: c) => {
+      set child = c;
+    }
+    Float(context: f) => {
+      set child = f;
+    }
+    Out(context: o) => {
+      set child = o;
+    }
+    Close(..) => {
+      return unit;
+    }
+  }
+  let child_at = cvt::<u32, u64>(child);
+  if child_at < context^.children.inner.len {
+    set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+    set owner = context^.children.inner[child_at].block;
+    set slot = context^.children.inner[child_at].entry_slot;
+  }
+  if owner == no_index {
+    boundary_set(sequence: &context^.entries, slot: slot, output: own, visits: &context^.boundary_visits);
+  } else {
+    let owner_at = cvt::<u32, u64>(owner);
+    if owner_at < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      boundary_set(sequence: &context^.blocks.inner[owner_at].entries, slot: slot, output: own, visits: &context^.boundary_visits);
+    }
+  }
+  return unit;
+}
+
+fn translated_reference_output(context: &Context, item: Flow, previous: SequenceOutput, delta: i64, styles: &Styles, basis_height: i32) -> made: SequenceOutput reads(styles), writes(context) {
+  doc "Reuses an intact suffix entry after certified exact reference translation and origin encoding with local_geometry False. An active owner may also have moved: Open derives its relative displacement from the encoded origin, while plain paragraphs and children refresh observed motion. Floats, positioned children and atomic paragraphs reprepare position-dependent travel; no index ancestor is repaired here.";
+  let motion_only = False();
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        let new_offset = context^.blocks.inner[at].y;
+        let old_offset = context^.blocks.inner[at].output.offset;
+        let relative_delta = new_offset -sat old_offset;
+        let shifted = shift_motion(output: previous, delta: relative_delta);
+        set context^.blocks.inner[at].output.offset = new_offset;
+        set context^.blocks.inner[at].output.basis_height = basis_height;
+        set context^.blocks.inner[at].boundary = shifted;
+        return shifted;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        if context^.paragraphs.inner[at].atomics.inner.len == 0_u64 {
+          set motion_only = True();
+        }
+      }
+    }
+    Child(..) => {
+      set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+      set motion_only = True();
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+      return previous;
+    }
+  }
+  if motion_only {
+    let observed = entry_motion(context: context, item: item, styles: styles);
+    let refreshed = previous;
+    set refreshed.natural_floor = observed.natural_floor;
+    set refreshed.float_reach = observed.float_reach;
+    set refreshed.motion_known = observed.motion_known;
+    return refreshed;
+  }
+  let prepared = reference_item_output(context: context, item: item, styles: styles, basis_height: basis_height);
+  return prepared;
+}
+
+fn publish_reference_ancestors(context: &Context, owner: u32, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "Republishes settled enclosing block outputs from inner to outer after their affected children, preserving the reference walk's completed geometry and repairing each parent's cached sequence total before the next Open.";
+  let cursor = owner;
+  let limit = context^.blocks.inner.len;
+  for (level in 0_u64..limit) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      let parent = context^.blocks.inner[at].parent;
+      let item = Flow::Open(block: cursor);
+      publish_reference_item(context: context, item: item, styles: styles, basis_height: basis_height);
+      set cursor = parent;
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
 fn context_entry_output(child: &Context, styles: &Styles) -> made: SequenceOutput reads(child), reads(styles) {
   doc "Publishes an in-flow independent context's measured transfer through the same constructor used for private arithmetic preflight.";
   let output = context_size_output(child: child, styles: styles, height: child^.height, baseline: child^.baseline);
@@ -780,7 +991,7 @@ fn boundary_rank(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -
 }
 
 fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: SequenceOutput, delta: i64, visits: &BoundaryVisits) -> made: Box<Slots<BoundaryMove>> writes(sequence), writes(visits) {
-  doc "Repairs the balanced reduction, then down-sweeps only the intersecting direct suffix. Since the changed solid entry preserves its struts, every later entering state changes by delta. Earlier entries are skipped using cached counts; equal-height baseline edits make no sibling list.";
+  doc "Repairs the balanced reduction, then down-sweeps only the intersecting direct suffix. Since the changed solid entry preserves its struts, every later entering state changes by delta. Earlier entries are skipped using cached counts; the suffix reduction repairs each intersected AVL node once while emitting moves in order, and equal-height baseline edits make no sibling list.";
   let own_field = True();
   let previous = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
   let replacement = output;
@@ -795,18 +1006,8 @@ fn boundary_sequence_update(sequence: &EntrySequence, slot: u32, output: Sequenc
   if delta != 0_i64 {
     let rank = boundary_rank(sequence: sequence, slot: slot, visits: visits);
     let after = rank +sat 1_u64;
-    let handles = box_slots_new::<EntryHandle>(capacity: 0_u64);
-    later_handles(sequence: sequence, root: sequence^.root, skip: after, owner: no_index, handles: &handles, visits: visits);
-    let count = handles.inner.len;
-    for (at in 0_u64..count) {
-      let handle = handles.inner[at];
-      let missing = Flow::Close(block: no_index);
-      let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: handle.slot, span: sequence^.span, missing: missing);
-      set visits^.entries = visits^.entries +sat 1_u64;
-      sequence_motion_shift(sequence: sequence, slot: handle.slot, delta: delta, visits: visits);
-      let translation = BoundaryMove(item: item, delta: delta);
-      let kept = push_item::<BoundaryMove>(cell: &moves, value: translation, ceiling: item_ceiling);
-    }
+    let root = sequence^.root;
+    let total = sequence_motion_suffix(sequence: sequence, root: root, skip: after, delta: delta, moves: &moves, visits: visits);
   }
   return move moves;
 }
@@ -1188,7 +1389,8 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
     set context^.baseline = context^.baseline +sat narrow_delta;
   }
   let no_events = slots_new::<Flow, 0>();
-  let (moved, positioned_counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
+  let position_children = False();
+  let (moved, positioned_counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta, position_children: position_children);
   let combined = add_counts(first: counts, second: positioned_counts);
   set combined.contexts = combined.contexts +sat 1_u64;
   if context^.marked_paragraphs == 1_u32 {
@@ -1205,6 +1407,280 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
   set context^.boundary_dirty = True();
   let yes = True();
   return yes, combined;
+}
+
+struct ParagraphBefore {
+  doc "The scalar geometry before a speculative single-paragraph break. A failed same-output cutoff passes it to reference replay, which consumes the already broken lines without losing the old height or baseline.";
+  at: u64;
+  height: i32;
+  lines: u64;
+  baseline: i32;
+}
+
+fn stationary_paragraph(context: &Context, styles: &Styles, fonts: &FontSet, picks: &FontPicks, before: Before) -> (handled: Bool, previous: ParagraphBefore) reads(styles), reads(fonts), reads(picks), writes(context) {
+  doc "Cuts off a single paragraph edit whose height and last baseline outputs remain identical. Fresh summary propagation carries any first-baseline change. Unrelated context barriers cannot affect a paragraph outside floats with unchanged width and no atomic children. A nonempty paragraph with unchanged height preserves parent split-fragment inputs; breaking refreshes its own fragments. Only its retained summary and ancestor reductions change; a changed geometric output leaves replay the original scalar geometry.";
+  let missing = ParagraphBefore(at: 18446744073709551615_u64, height: 0_i32, lines: 0_u64, baseline: 0_i32);
+  let no = False();
+  if context^.local_geometry {
+  } else {
+    return no, missing;
+  }
+  if context^.restyled {
+    return no, missing;
+  }
+  if context^.restyled_blocks != 0_u32 {
+    return no, missing;
+  }
+  if context^.marked_paragraphs != 1_u32 {
+    return no, missing;
+  }
+  if context^.marked_children != 0_u32 {
+    return no, missing;
+  }
+  let intrinsic = bor(context^.intrinsic_held, context^.intrinsic_known);
+  if intrinsic {
+    return no, missing;
+  }
+  if context^.space.shrink {
+    return no, missing;
+  }
+  let steady_space = same_space(first: context^.space, second: before.space);
+  if steady_space {
+  } else {
+    return no, missing;
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  if frame.columned {
+    return no, missing;
+  }
+  let at = cvt::<u32, u64>(context^.marked_paragraph);
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return no, missing;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  if context^.paragraphs.inner[at].beside {
+    return no, missing;
+  }
+  if context^.paragraphs.inner[at].atomics.inner.len != 0_u64 {
+    return no, missing;
+  }
+  let old_lines = context^.paragraphs.inner[at].lines.inner.len;
+  if old_lines == 0_u64 {
+    return no, missing;
+  }
+  let old_height = context^.paragraphs.inner[at].height;
+  if old_height <= 0_i32 {
+    return no, missing;
+  }
+  let old_base = last_line_baseline(paragraph: &context^.paragraphs.inner[at]);
+  let previous = ParagraphBefore(at: at, height: old_height, lines: old_lines, baseline: old_base);
+  let old_output = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+  let children = context^.children.inner.len;
+  let empty = box_slots_new::<Exclusion>(capacity: 0_u64);
+  break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], styles: styles, fonts: fonts, picks: picks, exclusions: &empty.inner[0_u64..0_u64], origin_y: 0_i32);
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return no, previous;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  let output = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+  if output.through {
+    return no, previous;
+  }
+  if output.advance != old_output.advance {
+    return no, previous;
+  }
+  if output.last_baseline != old_output.last_baseline {
+    return no, previous;
+  }
+  let owner = context^.paragraphs.inner[at].block;
+  let slot = context^.paragraphs.inner[at].entry_slot;
+  propagate_boundary(context: context, owner: owner, slot: slot, output: output, delta: 0_i32);
+  clear_marks(context: context);
+  set context^.dirty = False();
+  set context^.boundary_visits.fallbacks = 0_u64;
+  set context^.boundary_visits.reason = 0_u32;
+  let yes = True();
+  return yes, previous;
+}
+
+fn moved_paragraph(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, previous: ParagraphBefore) -> (handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Settles a paragraph that the same-output probe broke but could not stop. The existing splice certificate admits only unchanged width, clamping and float inputs; publication translates direct siblings and repairs ancestors, never materializing or converting unrelated descendants.";
+  let counts = no_updates();
+  let no = False();
+  let at = previous.at;
+  if at < context^.paragraphs.inner.len {
+  } else {
+    return no, counts;
+  }
+  if context^.splits.inner.len != 0_u64 {
+    return no, counts;
+  }
+  if context^.definite_free {
+  } else {
+    return no, counts;
+  }
+  let width_stable = splice_width_stable(context: context, styles: styles);
+  if width_stable {
+  } else {
+    return no, counts;
+  }
+  let owns = owns_fragment(style: context^.style);
+  let allowed = if owns {
+    give 1_u64;
+  } else {
+    give 0_u64;
+  }
+  if context^.fragments.inner.len > allowed {
+    return no, counts;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  let output = paragraph_output(paragraph: &context^.paragraphs.inner[at]);
+  if output.through {
+    return no, counts;
+  }
+  let owner = context^.paragraphs.inner[at].block;
+  let slot = context^.paragraphs.inner[at].entry_slot;
+  let delta = context^.paragraphs.inner[at].height -sat previous.height;
+  let fixed_reach = owner_stationary_reach(context: context, owner: owner, slot: slot, visits: &context^.boundary_visits);
+  let ready = changed_entry_ready(context: context, owner: owner, slot: slot, output: output, delta: delta, fixed_reach: fixed_reach, styles: styles, visits: &context^.boundary_visits);
+  if ready {
+  } else {
+    set context^.boundary_visits.reason = 9_u32;
+    return no, counts;
+  }
+  let total_field = False();
+  let old_root = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  propagate_boundary(context: context, owner: owner, slot: slot, output: output, delta: delta);
+  let extra = splice_finish(context: context, old_root: old_root, delta: delta, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let combined = extra;
+  set combined.contexts = combined.contexts +sat 1_u64;
+  set combined.paragraphs = combined.paragraphs +sat 1_u64;
+  clear_marks(context: context);
+  set context^.dirty = False();
+  set context^.boundary_visits.fallbacks = 0_u64;
+  set context^.boundary_visits.reason = 0_u32;
+  let yes = True();
+  return yes, combined;
+}
+
+struct ChildBefore {
+  doc "The original scalar output of a child already updated by an early equality probe. Reference replay reuses its result and compares against these old dimensions.";
+  at: u64;
+  geometry: Before;
+}
+
+fn stationary_child(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> (handled: Bool, counts: UpdateCounts, previous: ChildBefore) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Observes one independent child's actual outputs before compatibility passes. Equal border size, margins and baseline leave every parent stacking input unchanged, including spanning fragments whose geometry still has identical child inputs. A changed output carries its original scalar geometry to reference settlement.";
+  let empty = fresh_before();
+  let missing = ChildBefore(at: 18446744073709551615_u64, geometry: empty);
+  let counts = no_updates();
+  let no = False();
+  if context^.local_geometry {
+  } else {
+    return no, counts, missing;
+  }
+  if context^.restyled {
+    return no, counts, missing;
+  }
+  if context^.restyled_blocks != 0_u32 {
+    return no, counts, missing;
+  }
+  if context^.marked_paragraphs != 0_u32 {
+    return no, counts, missing;
+  }
+  if context^.marked_children != 1_u32 {
+    return no, counts, missing;
+  }
+  let intrinsic = bor(context^.intrinsic_held, context^.intrinsic_known);
+  if intrinsic {
+    return no, counts, missing;
+  }
+  let steady_space = same_space(first: context^.space, second: before.space);
+  if steady_space {
+  } else {
+    return no, counts, missing;
+  }
+  let width_stable = splice_width_stable(context: context, styles: styles);
+  if width_stable {
+  } else {
+    return no, counts, missing;
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  if frame.columned {
+    return no, counts, missing;
+  }
+  let total_field = False();
+  let root = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  let origin = cvt::<i32, i64>(frame.content_top);
+  let bounded = transfer_fits(origin: origin, travel: root.travel);
+  let ordinary = band(root.ordinary, bounded);
+  if ordinary {
+    return no, counts, missing;
+  }
+  let at = cvt::<u32, u64>(context^.marked_child);
+  if at < context^.children.inner.len {
+  } else {
+    return no, counts, missing;
+  }
+  let independent = splice_child_entry(context: context, child: at, visits: &context^.boundary_visits);
+  if independent {
+  } else {
+    return no, counts, missing;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  let child_before = before_of(context: &context^.children.inner[at]);
+  let previous = ChildBefore(at: at, geometry: child_before);
+  let updated = update_child(child: &context^.children.inner[at], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: child_before);
+  if at < context^.children.inner.len {
+  } else {
+    return no, updated, previous;
+  }
+  let same = same_outputs(before: child_before, context: &context^.children.inner[at]);
+  if same {
+  } else {
+    return no, updated, previous;
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  let output = context_entry_output(child: &context^.children.inner[at], styles: styles);
+  let owner = context^.children.inner[at].block;
+  let slot = context^.children.inner[at].entry_slot;
+  propagate_boundary(context: context, owner: owner, slot: slot, output: output, delta: 0_i32);
+  clear_marks(context: context);
+  set context^.dirty = False();
+  set updated.contexts = updated.contexts +sat 1_u64;
+  let yes = True();
+  return yes, updated, previous;
+}
+
+fn probed_reference_bounded(context: &Context, styles: &Styles, paragraph_before: ParagraphBefore, child_before: ChildBefore) -> bounded: Bool reads(styles), writes(context) {
+  doc "Retains the old/new arithmetic admission when an early probe changes geometry. Equal outputs need no translation; changed outputs outside this bound must run full reference stacking, preserving saturation order rather than applying a narrowed delta.";
+  let owner = no_index;
+  let slot = no_index;
+  let output = empty_output();
+  let paragraph_at = paragraph_before.at;
+  let child_at = child_before.at;
+  if paragraph_at < context^.paragraphs.inner.len {
+    set owner = context^.paragraphs.inner[paragraph_at].block;
+    set slot = context^.paragraphs.inner[paragraph_at].entry_slot;
+    set output = paragraph_output(paragraph: &context^.paragraphs.inner[paragraph_at]);
+  } else if child_at < context^.children.inner.len {
+    set owner = context^.children.inner[child_at].block;
+    set slot = context^.children.inner[child_at].entry_slot;
+    set output = context_entry_output(child: &context^.children.inner[child_at], styles: styles);
+  } else {
+    return False();
+  }
+  set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+  let proposed = preview_boundary(context: context, owner: owner, slot: slot, output: output, visits: &context^.boundary_visits);
+  let total_field = False();
+  let old = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: &context^.boundary_visits);
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let origin = cvt::<i32, i64>(frame.content_top);
+  let travel = old.travel +sat proposed.travel;
+  let bounded = transfer_fits(origin: origin, travel: travel);
+  return bounded;
 }
 
 fn boundary_counts(layout: &Layout) -> (entries: u64, blocks: u64, indexes: u64, fallbacks: u64, reason: u32) reads(layout) {

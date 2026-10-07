@@ -59,7 +59,7 @@ fn content_position(value: Position, dx: i32, dy: i32) -> made: Position pure {
   return Position(x: shifted_x, y: shifted_y);
 }
 
-fn block_origin(context: &Context, block: u32) -> made: Origin reads(context) {
+fn block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner), reads(context.local_geometry) {
   doc "Accumulates a block origin through parent links using scalar snapshots that do not copy owned entry sequences.";
   let cursor = block;
   let accumulated = zero_origin();
@@ -246,6 +246,100 @@ fn store_child_origin(child: &Context, origins: &[Origin]) -> result: unit reads
   return unit;
 }
 
+fn encode_reference_block(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), writes(context.blocks.inner[at]) {
+  doc "Encodes one block from valid resolved reference scratch while local_geometry is False. Reading the resolved parent is independent of local-origin writes, so no context-wide snapshot is needed.";
+  if at < context^.blocks.inner.len {
+    let held = block_snapshot(block: &context^.blocks.inner[at]);
+    let owner = block_origin(context: context, block: held.parent);
+    let absolute = origin_from_resolved(nx: held.normal_x, ny: held.normal_y, vx: held.resolved_x, vy: held.resolved_y);
+    let local = origin_relative(value: absolute, owner: owner);
+    set context^.blocks.inner[at].x = local.x;
+    set context^.blocks.inner[at].y = local.y;
+    set context^.blocks.inner[at].dx = local.dx;
+    set context^.blocks.inner[at].dy = local.dy;
+  }
+  return unit;
+}
+
+fn encode_reference_child(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), writes(context.children.inner) {
+  doc "Encodes one child anchor from valid resolved reference scratch while local_geometry is False, retaining the zero owner for viewport placement and leaving the child's own contents untouched.";
+  if at < context^.children.inner.len {
+    let owner = if context^.children.inner[at].viewport_origin {
+      give zero_origin();
+    } else {
+      give block_origin(context: context, block: context^.children.inner[at].block);
+    }
+    let absolute = origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y);
+    let local = origin_relative(value: absolute, owner: owner);
+    set context^.children.inner[at].anchor = local;
+  }
+  return unit;
+}
+
+fn encode_reference_item(context: &Context, item: Flow) -> result: unit writes(context) {
+  doc "Encodes only a reference event's resolved payload and a Text event's placed atomic child anchors. The caller keeps local_geometry False with globally valid resolved scratch throughout the scoped pass; lineless paragraphs use the same exact conversion as the full encoder, and no scratch coordinate or geometry mode changes.";
+  let child_slot = no_index;
+  match item {
+    Open(block: b) => {
+      let block_at = cvt::<u32, u64>(b);
+      if block_at < context^.blocks.inner.len {
+        encode_reference_block(context: context, at: block_at);
+      }
+    }
+    Text(paragraph: p) => {
+      let paragraph_at = cvt::<u32, u64>(p);
+      if paragraph_at < context^.paragraphs.inner.len {
+        let owner = block_origin(context: context, block: context^.paragraphs.inner[paragraph_at].block);
+        let absolute = origin_from_resolved(nx: context^.paragraphs.inner[paragraph_at].normal_x, ny: context^.paragraphs.inner[paragraph_at].normal_top, vx: context^.paragraphs.inner[paragraph_at].resolved_x, vy: context^.paragraphs.inner[paragraph_at].resolved_top);
+        let local = origin_relative(value: absolute, owner: owner);
+        set context^.paragraphs.inner[paragraph_at].x = local.x;
+        set context^.paragraphs.inner[paragraph_at].top = local.y;
+        set context^.paragraphs.inner[paragraph_at].dx = local.dx;
+        set context^.paragraphs.inner[paragraph_at].dy = local.dy;
+        let atomics = context^.paragraphs.inner[paragraph_at].atomics.inner.len;
+        for (atomic_at in 0_u64..atomics) {
+          let placed = context^.paragraphs.inner[paragraph_at].atomics.inner[atomic_at];
+          let atomic_child = cvt::<u32, u64>(placed.context);
+          encode_reference_child(context: context, at: atomic_child);
+        }
+      }
+    }
+    Child(context: c) => {
+      set child_slot = c;
+    }
+    Float(context: f) => {
+      set child_slot = f;
+    }
+    Out(context: o) => {
+      set child_slot = o;
+    }
+    Close(..) => {
+    }
+  }
+  if child_slot != no_index {
+    let child_at = cvt::<u32, u64>(child_slot);
+    encode_reference_child(context: context, at: child_at);
+  }
+  return unit;
+}
+
+fn encode_reference_ancestors(context: &Context, owner: u32) -> result: unit writes(context) {
+  doc "Encodes an affected owner's ancestor chain from valid resolved reference scratch while local_geometry is False. Only discovering the next parent orders this walk; local-origin writes do not change any resolved origin read by later conversions.";
+  let cursor = owner;
+  let count = context^.blocks.inner.len;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < count {
+      let parent = context^.blocks.inner[at].parent;
+      encode_reference_block(context: context, at: at);
+      set cursor = parent;
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
 fn geometry_owned(context: &Context) -> result: unit writes(context) {
   doc "Publishes both payload origins and context-fragment dependencies after a completed reference pass.";
   let synchronize = True();
@@ -389,150 +483,20 @@ fn reference_geometry(context: &Context, synchronize: Bool) -> result: unit writ
   return unit;
 }
 
-fn translation_fits(value: i32, delta: i32) -> fits: Bool pure {
-  let wide_value = cvt::<i32, i64>(value);
-  let wide_delta = cvt::<i32, i64>(delta);
-  let moved = wide_value +sat wide_delta;
-  let above = moved >= -2147483648_i64;
-  let below = moved <= 2147483647_i64;
-  return band(above, below);
-}
-
-fn translation_exact(context: &Context, delta: i32) -> exact: Bool reads(context) {
-  doc "A conservative numeric guard on the suffix translation. A potentially saturated normal or visual sum keeps the original per-entry i32 path; no reassociation is used to infer a saturated result.";
-  let blocks = context^.blocks.inner.len;
-  for (b in 0_u64..blocks) {
-    let slot = flow_index(at: b);
-    let accumulated = block_origin(context: context, block: slot);
-    let normal = origin_normal(value: accumulated);
-    let visual = block_position(context: context, at: b);
-    let normal_fits = translation_fits(value: normal.y, delta: delta);
-    let visual_fits = translation_fits(value: visual.y, delta: delta);
-    let both = band(normal_fits, visual_fits);
-    if both {
-    } else {
-      return False();
-    }
-  }
-  let paragraphs = context^.paragraphs.inner.len;
-  for (p in 0_u64..paragraphs) {
-    let accumulated_paragraph = paragraph_origin(context: context, at: p);
-    let normal_paragraph = origin_normal(value: accumulated_paragraph);
-    let visual_paragraph = paragraph_position(context: context, at: p);
-    let paragraph_normal_fits = translation_fits(value: normal_paragraph.y, delta: delta);
-    let paragraph_visual_fits = translation_fits(value: visual_paragraph.y, delta: delta);
-    let paragraph_both = band(paragraph_normal_fits, paragraph_visual_fits);
-    if paragraph_both {
-    } else {
-      return False();
-    }
-  }
-  let children = context^.children.inner.len;
-  for (c in 0_u64..children) {
-    let child_visual = child_position(context: context, at: c);
-    let child_fits = translation_fits(value: child_visual.y, delta: delta);
-    if child_fits {
-    } else {
-      return False();
-    }
-  }
-  return True();
-}
-
-fn owner_translated(blocks: &[Block], owner: u32, flow_at: u32) -> translated: Bool reads(blocks) {
-  let at = cvt::<u32, u64>(owner);
-  if at < blocks^.len {
-    let opened = blocks^[at].flow_at;
-    let later = opened > flow_at;
-    let present = opened != no_index;
-    return band(later, present);
-  }
-  return False();
-}
-
-fn shift_block(block: &Block, delta: i32) -> result: unit writes(block) {
-  doc "Translates an owner-relative block by changing only its normal origin. Descendants inherit this motion through origin_accumulate.";
-  let wide_delta = cvt::<i32, i64>(delta);
-  set block^.y = block^.y +sat wide_delta;
-  return unit;
-}
-
-fn shift_owned_paragraph(paragraph: &Paragraph, blocks: &[Block], flow_at: u32, delta: i32) -> result: unit reads(blocks), writes(paragraph) {
-  let after = paragraph^.flow_at > flow_at;
-  let placed = paragraph^.lines.inner.len > 0_u64;
-  let present = paragraph^.flow_at != no_index;
-  let later = band(after, present);
-  let moved = band(later, placed);
-  if moved {
-    let inherited = owner_translated(blocks: blocks, owner: paragraph^.block, flow_at: flow_at);
-    if inherited {
-    } else {
-      let wide_delta = cvt::<i32, i64>(delta);
-      set paragraph^.top = paragraph^.top +sat wide_delta;
-    }
-  }
-  return unit;
-}
-
-fn shift_owned_child(child: &Context, blocks: &[Block], flow_at: u32, delta: i32) -> result: unit reads(blocks), writes(child) {
-  let after = child^.flow_at > flow_at;
-  let present = child^.flow_at != no_index;
-  let later = band(after, present);
-  if later {
-    let inherited = if child^.viewport_origin {
-      give False();
-    } else {
-      give owner_translated(blocks: blocks, owner: child^.block, flow_at: flow_at);
-    }
-    if inherited {
-    } else {
-      let wide_delta = cvt::<i32, i64>(delta);
-      set child^.anchor.y = child^.anchor.y +sat wide_delta;
-    }
-  }
-  return unit;
-}
-
-fn translate_after(context: &Context, events: &[Flow], flow_at: u32, delta: i32) -> result: unit reads(events), writes(context) {
-  doc "Moves only suffix roots in owner-relative storage when every old i32 addition is exact. The reference bridge remains during step 2: it materializes scratch positions for the remaining legacy update readers, without rewriting descendant local origins. Saturation uses the old per-entry path.";
-  let safe = translation_exact(context: context, delta: delta);
-  if safe {
-  } else {
-    translate_reference_after(context: context, events: events, flow_at: flow_at, delta: delta);
+fn geometry_update_reference(context: &Context) -> result: unit writes(context) {
+  doc "Reuses the reference coordinates left by the preceding full or reference update when no owned boundary edit or table content adjustment has invalidated them. Preparation changes paragraph contents, not origins. A boundary edit or content shift still materializes the exact reference bridge.";
+  if context^.boundary_dirty {
+    geometry_reference(context: context);
     return unit;
   }
-  let synchronize = False();
-  own_geometry(context: context, synchronize: synchronize);
-  let blocks = context^.blocks.inner.len;
-  let no = False();
-  let roots = box_array_filled::<Bool>(count: blocks, value: no);
-  for (b in 0_u64..blocks) {
-    if b < context^.blocks.inner.len {
-      let held = block_snapshot(block: &context^.blocks.inner[b]);
-      let inherited = owner_translated(blocks: &context^.blocks.inner[0_u64..blocks], owner: held.parent, flow_at: flow_at);
-      let direct = bnot(inherited);
-      let later = held.flow_at > flow_at;
-      let present = held.flow_at != no_index;
-      let eligible = band(later, present);
-      set roots.inner[b] = band(eligible, direct);
-    }
+  if context^.content_dx != 0_i32 {
+    geometry_reference(context: context);
+    return unit;
   }
-  if blocks <= context^.blocks.inner.len {
-    for (b in 0_u64..blocks) {
-      if roots.inner[b] {
-        shift_block(block: &context^.blocks.inner[b], delta: delta);
-      }
-    }
+  if context^.content_dy != 0_i32 {
+    geometry_reference(context: context);
+    return unit;
   }
-  let paragraphs = context^.paragraphs.inner.len;
-  let held_blocks = context^.blocks.inner.len;
-  for (p in 0_u64..paragraphs) {
-    shift_owned_paragraph(paragraph: &context^.paragraphs.inner[p], blocks: &context^.blocks.inner[0_u64..held_blocks], flow_at: flow_at, delta: delta);
-  }
-  let children = context^.children.inner.len;
-  for (c in 0_u64..children) {
-    shift_owned_child(child: &context^.children.inner[c], blocks: &context^.blocks.inner[0_u64..held_blocks], flow_at: flow_at, delta: delta);
-  }
-  reference_geometry(context: context, synchronize: synchronize);
+  set context^.local_geometry = False();
   return unit;
 }
