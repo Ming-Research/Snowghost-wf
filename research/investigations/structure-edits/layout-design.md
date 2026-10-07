@@ -1265,11 +1265,14 @@ stride. Base Array allocations additionally carry their length header;
 Paged has separate cell and directory allocations. Neither allocator overhead
 nor process memory usage is represented by page-data totals.
 
-The base html5 census has not completed. Its initial diagnostic declarations
-were corrected, and a later generated empty initializer introduced a blank
-line that FORM-2 rejected; that generator was corrected in `20d0016`.
-Until corrected CI runs, no html5 store count or aggregate allocation total
-is claimed. The summarizer was checked without compilation using a synthetic
+The corrected base census compiled and completed the flow fixture in
+[CI 37642691480](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642691480).
+The fetch then verified html5 but failed on the unrelated Apollo 11 page's
+pinned hash, before invoking the html5 census. The census workflow now permits
+that fetch failure only when its required, verified html5 file exists; the
+harness leaves a mismatching download under `.unverified`, never that name.
+No page pin or required census input is weakened.
+The summarizer was checked without compilation using a synthetic
 complete seven-type census and the CI IR: the complete input passed; a
 missing type, wrong native length, unequal node/payload owner widths,
 missing completion row and partial row each failed. This checks evidence
