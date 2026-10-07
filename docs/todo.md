@@ -351,6 +351,21 @@ example apart from the renderer code that exposed it
   of one owner, including coincident rectangles; reopen if measured costs or
   a bounded-topology acceptance claim requires that work.
 
+- **HTML font edits still translate dense compatibility suffixes.** Q134's
+  two split-fragment prototypes leave this broader work in place. In the
+  [hosted repeated-pair profile](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#remaining-cost-profile-result),
+  A's pairs 23/24 and 43/44 retained 7/10 entries but visited tens of thousands
+  of entries, while dense suffix translation was the largest layout self-time
+  symbol. Impact: neither fused prototype met HTML font-size acceptance in
+  the ordinary two-round comparison. The profile covers two pairs and includes
+  startup, so the remaining share is not fully isolated. Change: establish
+  which legacy readers require resolved suffix scratch and replace broad
+  translation/publication with retained exact owner motion and scoped access,
+  preserving saturation order. Validate all X5 identity/splice gates, add a
+  suffix-repair omission falsifier, and rerun the same-host two-round comparison
+  with an identical-source control. Reopen after the owner decides Q134,
+  before claiming the M2 edit-cost target complete.
+
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
   only the inserted/removed subtree's routes on the neutral splice path.
