@@ -1101,7 +1101,27 @@ The existing preorder path remains valid until the first structural edit.
 `splice-style-case.edits` checks descendant, following-sibling and
 following-sibling-descendant reaches across insertion and removal. The
 `stale-class-frontier` mutation restores the stale-traversal promotion and
-must make these probes refuse. CI validation of this repair is pending.
+must make these probes refuse. The focused oracle at `c3b29cd` in
+[37557227954](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37557227954)
+passes all three added fixtures and leaves only block-case edits 5 and 6
+refused. The counter fixture's first edit is a local splice; its second
+correctly reconstructs from an exact enclosing checkpoint (reason 5) and
+matches the full rebuild. The gate at `5b2298b` passes in
+[37557293310](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37557293310).
+The check-machinery job in
+[37557293309](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37557293309)
+detects all eight oracle-assertion violations, four malformed path logs, and
+both expected and unrelated driver failures, with passing restored inputs.
+The synthetic-checkpoint job in that mutation run detects edit 2 as
+`inc refused` instead of the baseline's `inc same`: the invented empty
+incoming counter state fails Q86's outgoing-state equality. This is the
+counter-sensitive failure the fixture requires, before any wrong layout can
+publish. The temporary `style refusal` diagnostic used to locate the ten class
+failures is removed after that audit: it was not part of the raw-log grammar
+and made the class mutation stop before checking its actual refused edit.
+The restored diagnostic-free oracle must make the class fixture fail on
+`expected inc same, got refused`. Full seq/par and final mutation-matrix
+results remain pending.
 
 CI must additionally exercise `:nth-*`, `+` and `~` retained style changes
 (reason 6), exact-checkpoint counter/quote refusals, removal of a pre-existing
