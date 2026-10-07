@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-07 Compare built-in Paged with the same layout owners
+
+Nodes: pipeline/layout
+
+Owner-approved: The owner requested "Keep one Paged per pool exactly where 38fd6be has one directory" and "The goal is no representation change", accepted Q1's store_reduction storage-access adaptation, and closed Q2 with "Use that helper for pages.wf's page_ensure and the appends, keeping everything else as specified." This approves the work-branch experiment, not main-line adoption or a merge.
+
+Summary: The built-in Paged experiment replaces each owner-local two-level directory with one Box<Paged<T>>, preserving logical growth boundaries, context payload pools, sealing and AVL behavior. Native node pages publish independently while payload access uses global slots because native page lengths differ. Guarded growth and append use the specified reference-parameter route. The comparison isolates built-in storage while retaining owner-local dependencies; the shared-context alternative would change ownership and is excluded. Allocation evidence and validation are recorded in [the investigation](../research/investigations/structure-edits/layout-design.md#built-in-paged-owner-preserving-variant).
+
 ## 2026-10-06 Keep style slots stable across structural edits and bound the insertion restyle
 
 Nodes: pipeline/style

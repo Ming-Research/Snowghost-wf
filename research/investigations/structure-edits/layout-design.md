@@ -1265,6 +1265,14 @@ stride. Base Array allocations additionally carry their length header;
 Paged has separate cell and directory allocations. Neither allocator overhead
 nor process memory usage is represented by page-data totals.
 
+The census visits retained nonempty stores after one successful full build.
+These equal stores created for this build: `finish_tree_sequences` seals each
+final context/root/block owner once, and `finish_sequence` creates its two
+stores only for a nonempty pending sequence. `build_boxes` then creates the
+five route stores (StyleRoute materializes on its first publication), all
+kept in the returned Layout. No full-build path replaces those stores;
+splice and structural-rebuild creation paths are outside this census.
+
 The corrected base census compiled and completed the flow fixture in
 [CI 37642691480](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642691480).
 The fetch then verified html5 but failed on the unrelated Apollo 11 page's
@@ -1279,17 +1287,85 @@ missing completion row and partial row each failed. This checks evidence
 handling, not renderer behavior. The generated census remains an experiment
 consumer, with its source injection confined to a detached base tree.
 
-Independent read-only GPT-6 Astra review covered the complete base-to-
-`8d4b07f` change and followed diagnostic/documentation changes through
-`20d0016`, using the project checklist and G1–G3/DC1–DC4. It found stale
-allocation descriptions (corrected in changed files; the unchanged route
-caller prose is explicitly deferred in `docs/todo.md`) and the probe's wrong
-workflow name (corrected). It found no additional source defect within scope;
-compiler acceptance, complete census, equivalence, actual parallel execution
-and mutation results remain unverified. Static design lint passed all 21
-checker tests with seven nodes, depth one, 57 decisions and 24 rejected
-alternatives, unchanged counts from `38fd6be`. No local compilation or timing
-was performed.
+#### Validation of the reference-parameter implementation
+
+Revision `c7ec0d8acd28a608fe3d4c33de3c51b90d01f92f` passes
+[check 37645318725](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37645318725)
+(renderer acceptance, document self-test and 21 design-checker tests) and
+[layout-check 37645318944](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37645318944)
+(layout acceptance, allocation IR and completed census).
+[Falsify 37645318734](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37645318734)
+detected all 17 selected mutations, with a detection row in each job's log,
+and passed the check-machinery job.
+[Oracles 37645318824](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37645318824)
+passed both jobs: ecma262 and html5 full-build dumps match `38fd6be` byte for
+byte, and the six layout/saturation fixtures match the base in sequential
+and parallel builds. All 12 page/edit-kind combinations and seven edit
+fixtures have byte-identical base/seq/par raw logs, including splice/fallback
+rows and counters; 38 pairwise comparisons of the downloaded raw artifacts
+also passed. Sequential/parallel incremental identity, style checks and the
+of-clause falsifier all passed. Existing block/style fixture refusals remain
+exactly the base's two/six, respectively. This is the single requested
+oracles run and single requested falsify run; no timings were taken.
+The pre-existing excluded saturation
+and descendant-scan mutations remain deferred as documented in `docs/todo.md`;
+this experiment changes neither their selection nor their expectations.
+
+#### Completed html5 allocation census
+
+[Layout-check 37645318944](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37645318944)
+on `c7ec0d8acd28a608fe3d4c33de3c51b90d01f92f` completed the unchanged base
+`38fd6be` full-build census on Ubuntu 24.04 x86-64 with experiment compiler
+`wf-exp-496186df5346`. The completion row reports 117,179 elements, 13,843
+contexts and 60,868 paragraphs. Each of 41,451 nonempty sequence owners has
+one node store and one Flow store, plus five global route stores: 82,907
+stores created. The owner histogram by initial width is 38,664 at 4, 1,408
+at 8, 796 at 16, 409 at 32 and 174 at 64.
+
+| Type | Stores | Paged first-page data bytes | Base first-page data bytes |
+|---|---:|---:|---:|
+| SequenceNode | 41,451 | 100,808,832 | 61,675,520 |
+| Flow | 41,451 | 42,445,824 | 1,623,040 |
+| TextUnit | 1 | 4,096 | 1,024 |
+| StyleUse | 1 | 4,096 | 256 |
+| StyleRoute | 1 | 3,072 | 96 |
+| u32 | 1 | 4,096 | 256 |
+| ContextPath | 1 | 3,072 | 768 |
+| Total | 82,907 | 143,273,088 | 63,300,960 |
+
+Thus first-page data increase by 79,972,128 bytes (2.263 times the base).
+For the 38,664 smallest sequence owners alone, their 77,328 stores require
+133,622,784 bytes of native first pages versus 48,252,672 bytes in the base,
+an increase of 85,370,112 bytes. The aggregate increase is smaller because
+large owners' first native node page is smaller than the base's first page;
+those owners need several native pages. These are page-data accounting from
+the base census and exact native allocation IR, excluding descriptors,
+directories, base Array headers and allocator overhead, not a process-memory
+measurement. Whole-page cost on tiny owners is a finding retained by the
+requested like-for-like experiment; no stores are shared or ownership changed.
+
+Independent read-only GPT-6 Astra review covered the complete 15-file scope: the
+`38fd6be..c7ec0d8` diff plus the final research record and approval log, direct renderer consumers, diagnostic generators,
+workflow selection and comparisons, pin requirements, and the pipeline/layout
+design with its ancestor and style sibling. It applied all project checklist
+groups and G1–G3/DC1–DC4, with PR-only obligations inapplicable under the
+owner's no-PR instruction. Static review found no new defect. Follow-up review
+independently reproduced the census counts and byte totals from CI artifacts
+and verified compiler acceptance, self-test and all 21 checker tests. The completed evidence review verified all 17 mutation detection rows, all
+38 raw-log comparisons and the full-build dump equality results, with no
+findings. `make design-ready DESIGN_REVIEW_BASE=38fd6be` also passes. Explicit-base form lint reports seven nodes,
+depth one, 57 decisions and 24 rejected alternatives, all unchanged from
+`38fd6be`. No local compilation or timing was performed.
+
+Findings and dispositions: Q2's compiler-gap diagnosis is corrected to the
+specified reference-holder rule, and the owner-directed helper resolves the
+renderer acceptance issue without a pin change. The census fetch dependency
+on unrelated Apollo 11 bytes is fixed by requiring the verified html5 input.
+Native whole-page cost on small owners is reported above and retained, as the
+owner requires ownership to stay unchanged. Earlier review's stale allocation
+prose in changed files and wrong probe workflow name were fixed; the unchanged
+`routes.wf` allocation prose remains explicitly deferred in `docs/todo.md`
+because the task freezes callers. No upstream compiler gap is filed.
 
 ### Two-level page experiment
 
