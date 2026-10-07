@@ -186,31 +186,32 @@ jobs:
                   texts.extend((dict(node=base + 1, parent=base + 2, data=('M2 retained %s.' % case).encode()),
                                 dict(node=base + 3, parent=base + 4, data=('M2 probe %s.' % case).encode())))
                   elements[base + 2] = dict(name='p', parent=base + 5, node=base + 2)
-                  if case in ('positioned-generated-removal', 'positioned-atomic-removal'):
+                  if case in fixture.INITIAL_REMOVALS:
                       texts.append(dict(node=base + 6, parent=base + 7, data=('M2 remove %s.' % case).encode()))
-                      elements[base + 7] = dict(name='p', parent=base + 5, node=base + 7)
+                      elements[base + 7] = dict(name=fixture.INITIAL_REMOVALS[case][0], parent=base + 5, node=base + 7)
               tree = SimpleNamespace(texts=texts, by_node=elements, arena=1000)
               edits, paths = fixture.generate(tree, kind)
               rows = paths.splitlines()
               selected = set(fixture.CASES[kind]) & fixture.EXPECTED_PATHS.keys()
-              extra = len(selected & {'positioned-generated-removal', 'positioned-atomic-removal'})
+              extra = len(selected & fixture.INITIAL_REMOVALS.keys())
               assert len(rows) == 2 * len(selected) + extra
               commands = edits.splitlines()
               for row in rows:
                   operation = int(row.split()[2])
                   assert commands[operation - 1][0] in ('B', 'X'), row
-              for case in selected & {'positioned-generated-removal', 'positioned-atomic-removal'}:
+              for case in selected & fixture.INITIAL_REMOVALS.keys():
                   removal = fixture.marker(tree, case, 'remove')
                   target = tree.by_node[removal['parent']]
                   operation = commands.index('X %d' % target['node']) + 1
-                  assert 'structure path %d splice 1 reason 0' % operation in rows
+                  _, splice, reason = fixture.INITIAL_REMOVALS[case]
+                  assert 'structure path %d splice %d reason %d' % (operation, splice, reason) in rows
                   for field, wrong in [('name', 'span'), ('parent', None)]:
                       saved = target[field]
                       target[field] = wrong
                       try:
                           fixture.generate(tree, kind)
                       except ValueError as error:
-                          assert 'removal marker must be a sibling paragraph' in str(error)
+                          assert 'removal marker must be a sibling' in str(error)
                       else:
                           raise AssertionError('invalid removal target accepted: ' + field)
                       finally:
@@ -272,7 +273,7 @@ jobs:
       matrix:
         # reassociate-saturation is out until docs/todo.md's item on it is resolved.
         # Step 4's descendant-scan mutation waits for the visit sentinels (docs/todo.md).
-        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route, synthetic-checkpoint, stale-class-frontier, unsafe-admission, no-positioned-anchor, no-stretch, no-free-space, no-wrap-rebreak, no-float-floor, stale-intrinsic-margins, omit-transfer-travel, omit-transfer-natural-floor, omit-transfer-float-reach, omit-transfer-free-transfer, omit-transfer-motion-known, no-moving-float-anchor, no-positioned-retirement, no-atomic-retirement, no-fragment-prefix]
+        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route, synthetic-checkpoint, stale-class-frontier, unsafe-admission, no-positioned-anchor, no-stretch, no-free-space, no-wrap-rebreak, no-float-floor, stale-intrinsic-margins, omit-transfer-travel, omit-transfer-natural-floor, omit-transfer-float-reach, omit-transfer-free-transfer, omit-transfer-motion-known, no-moving-float-anchor, no-positioned-retirement, no-atomic-retirement, no-split-anchor, stale-split-ranks, omit-transfer-fragment-sources, omit-transfer-fragment-first, omit-transfer-fragment-last]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -347,8 +348,10 @@ jobs:
           elif m == "no-atomic-retirement":
               old = "          let children = context^.children.inner.len;\n          let (removed_contexts, removed_paragraphs) = retire_splice_atomics(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], paths: paths);\n          set contexts = contexts +sat removed_contexts;\n          set paragraphs = paragraphs +sat removed_paragraphs;\n"
               swap("renderer/layout/splice_publish.wf", old, "")
-          elif m == "no-fragment-prefix":
-              swap("renderer/layout/splice_fragments.wf", "      let after = seam >= context^.fragment_prefix;\n      return after;", "      let after = seam >= context^.fragment_prefix;\n      return True();")
+          elif m == "no-split-anchor":
+              swap("renderer/layout/fragment_geometry.wf", "  let use_anchor = band(context^.local_geometry, context^.fragments_valid);", "  let use_anchor = False();")
+          elif m == "stale-split-ranks":
+              swap("renderer/layout/fragment_geometry.wf", "      set split.open = opening;\n      set split.close = closing;\n", "")
           elif m == "no-stretch":
               p = Path("renderer/layout/flex.wf")
               source = p.read_text()
@@ -383,7 +386,7 @@ jobs:
               p.write_text(source[:start] + body + source[end:])
           elif m.startswith("omit-transfer-"):
               field = m.removeprefix("omit-transfer-").replace("-", "_")
-              if field in ("travel", "natural_floor", "float_reach"):
+              if field in ("travel", "natural_floor", "float_reach", "fragment_sources", "fragment_first", "fragment_last"):
                   old = "  if first." + field + " != second." + field + " {\n    return False();\n  }\n"
               elif field in ("free_transfer", "motion_known"):
                   local = "free_same" if field == "free_transfer" else "motion_same"
@@ -413,7 +416,7 @@ jobs:
           grep 'unsafe arithmetic admission produced no rebuild difference' build/near-limit-negative.log
           python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_mutated build/near-limit-unsafe --unsafe
       - name: Detect semantic extension mutations
-        if: contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-fragment-prefix"]'), matrix.mutation)
+        if: contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         run: |
           set -euo pipefail
           cat > build/semantic-falsify.py <<'PYEOF'
@@ -497,7 +500,7 @@ jobs:
             exit 1
           fi
       - name: Detect
-        if: matrix.mutation != 'unsafe-admission' && !contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-fragment-prefix"]'), matrix.mutation)
+        if: matrix.mutation != 'unsafe-admission' && !contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         run: |
           set +e
           detected=""
@@ -560,7 +563,7 @@ jobs:
             build/near-limit-*/
             build/near-limit-negative.log
       - uses: actions/upload-artifact@v4
-        if: always() && contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-fragment-prefix"]'), matrix.mutation)
+        if: always() && contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         with:
           name: semantic-${{ matrix.mutation }}
           path: |

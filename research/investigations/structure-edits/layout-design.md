@@ -2239,39 +2239,193 @@ without proving those inputs unchanged is insufficient. Removing an ancestor
 of an endpoint must count as endpoint removal. The inventory, not a page
 name or benchmark path, determines which general argument must be built.
 
-The first implementation tests the unchanged-prefix candidate. A flow
-context retains `fragment_prefix`, an exclusive event-rank bound that covers
-every split's close and immediately following event, and every paragraph
-that emitted an empty-inline fragment. Full fragment generation computes
-this bound; a replay preserving empty fragments keeps the old bound as a
-conservative maximum. Text edits do not change event ranks. A structural
-splice is admitted only at or after this bound, including each enclosing
-flow context's changed Child event. The seam rank is the sum of cached
-weighted prefixes and ancestor Open events, never a stale `flow_at`.
+The unchanged-prefix candidate was implemented and checked at `d981f914`.
+Its bound preserved all dependencies before a seam, but the inventory below
+rejects it as sufficient page coverage. It is superseded by stable endpoint
+anchors and seam dependency summaries, argued below; its fixtures remain.
 
-All fragment inputs then remain in an unchanged prefix. Splits keep their
-raw ranks, run grouping, inline adjacency, first-line state and extents;
-empty-inline paragraphs keep their origins. Later geometry changes cannot
-change these forward-layout inputs, since the ordinary flow certificate
-already excludes changed height/width dependencies. The context's own box
-still gets its new height normally. Fresh root split/empty fragments remain
-refused because publication does not own them. This adds only ordered reads
-on the lexical owner chain; cached prefix queries read independent metadata,
-and fragment construction keeps its existing source-output order.
+#### Ecma262 split-owner inventory at ebc9be94
 
-Fixtures place split and empty-inline fragments before a neutral seam and
-require local insertion/removal followed by text identity. A later split
-fixture requires counted refusal; ignoring the dependency bound must expose
-a stale rectangle or rank in its incremental/full comparison. Page coverage
-is explicitly pending the inventory and unchanged X5 scripts. If any page
-seam precedes the bound, this implementation is insufficient and endpoint
-update support remains required.
+CI [37601205755](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37601205755)
+at `ebc9be94aa2929f5889f4a63e1abcf583b626a0e` records 4,196 splits and
+11,694 context fragments in ecma262 context 91. The first insertion before
+NodeId 390176 is at event rank 104306; 94 splits begin later. Eight of the
+ten insertion sites have block ranks in this context's inventory, and every
+one precedes later splits (94–1,406 records). The two nested-context sites
+need their inner ranks separately. This rejects unchanged-prefix admission
+as sufficient page coverage; it does not reject the prefix argument itself.
 
-The named fixtures are `transfer-prefix-split`, `transfer-prefix-empty` and
-`transfer-later-split`. The first two require local insertion and removal;
-the last requires reason 3 on both operations. `no-fragment-prefix` makes
-only the completed prefix comparison in `splice_fragments_ready` return true,
-retaining its reads and visit writes, and must produce a valid incremental
-identity difference, with the unchanged renderer first passing all identity
-and required-path assertions. A changed fallback path alone is not detection.
-These new fixture paths and mutation detection are pending CI.
+The splits belong to 3,708 inline owners: 2,298 `emu-alg`, 1,309
+`emu-grammar` and 101 `emu-table`. There are 3,607 single-record owners and
+101 owners with 2–28 records; all multiple-record owners are `emu-grammar`.
+The 2,298 algorithm records open at `ol` block ranks, and the 1,797 grammar
+records open at `emu-production` block ranks. For all 4,095 mapped ranges,
+the close is after every descendant block's open, and no unrelated block
+opens inside the range. The builder records the matching block Close;
+the inventory lacks a complete event-kind list, so nesting checks alone do
+not independently recover each exact closing rank. The 101 table records
+have equal open/close ranks absent from the block map. The builder's
+independent Child path creates this shape, and every such owner has one
+DOM `figure` child; the inventory lacks that child's flow rank for a direct
+payload-identity check.
+
+Every split owner has exactly three context rectangles: a zero-height
+leading rectangle, a positive-height main rectangle and a zero-height
+trailing rectangle. This is measured output, not a proof that every owner's
+records always join one run. All 101 multiple-record owners have a common
+block parent for their production blocks; each adjacent record has
+`next.open - previous.close == 2`. The intervening event's kind, line count,
+inline marks and the `gap_lineless` predicate were not recorded. The first
+seam's affected suffix includes 69 owners: 44 algorithms, 24 grammars and
+one table. Two grammars have 14 and 13 records, so anchoring every affected
+owner to one enclosed `ol` would omit required cases.
+
+The first later algorithm owner 390330 wraps `ol` NodeId 390331 (block
+30844), open 104356 and close 104396. Its leading and main y are 75994187,
+main height 24192, and trailing y 76019531, in the renderer's 1/64px units.
+The first later multiple-record grammar owner 409907 has leading/main y
+79328603, main height 96058 and trailing y 79425813. Later table owner
+413047 has leading/main y 79921257, main height 10056 and trailing y
+79933041. Across all owners, the leading rectangle equals main top for
+2,623 owners, lies 18px above it for 1,081, and 9px above for four. Trailing
+rectangles lie 18px beyond main bottom for 2,419 owners, exactly at bottom
+for 1,188, and 27px beyond for 101. Independent block top/bottom measurements
+were not emitted; these values establish the observed rectangle relationships,
+not a replacement argument for first-line and margin dependencies.
+
+The other 570 context fragments are the context's own `div` NodeId 21173
+box (y 0, height 81602022) and one zero-size rectangle at y 0 for each of
+569 `span` owners, disjoint from split owners. Of those spans, 568 are
+direct children of `emu-clause` and one of `emu-annex`; their nearest block
+open ranks range from 289 to 110570. Paragraph source ranks were not emitted.
+Only insertion owner 211274 contains such a span (211275), before its `h1`
+and before the edited paragraph 211291. The other nine insertion owners
+contain none. All are pre-existing nodes, so none belongs to the freshly
+inserted plain paragraph removed by an X5 inverse edit. Their zero y must
+not be assumed to translate with the containing block: `paragraph_position`
+uses a lineless paragraph's retained resolved position, and
+`empty_inline_fragments` reads that position. General endpoint ownership
+must preserve the reference's distinction.
+
+#### Stable split endpoints and anchored fragment extents
+
+The next comparison replaces the insufficient prefix-only implementation.
+It must admit an ordinary complete-block edit before retained split runs,
+and inside a retained split head, while matching full layout after the edit
+and subsequent text edits. A changed run count, rectangle, or later replay
+rank rejects the proposal. Page inventory motivates the scope but never
+selects renderer behavior.
+
+A Split retains its stable Open(block) or Child(context) identity. Its raw
+open/close ranks are reference-walker scratch. Before a reference replay,
+weighted sequence prefixes and lexical ancestor Open events restore the
+opening rank; a block's cached interior event count determines its closing
+rank. This bridge is already a whole-context operation, and is never called
+by the accepted local splice. Split.line retains an exact offset from its
+head's normal origin, republished after each reference pass; no_line stays
+a sentinel. Thus a later text edit cannot reuse a pre-insertion raw rank.
+
+Context fragments have aligned anchor metadata; paragraph fragments keep
+their existing representation. A split run's main fragment reads its first
+head's visual top and last head's visual bottom, using the reference i32
+saturating subtraction for height. Its leading empty fragment either reads
+the first visual top, or the first normal origin plus the saved Split.line
+offset, according to the selector the reference generator chose. Its
+trailing empty fragment reads the last visual bottom plus the reference
+resolved bottom margin. Each endpoint is a stable payload identity, not an
+event rank. The existing placement walk resolves anchors from its block
+origin snapshot. Independent endpoints and fragments require no ordering.
+The reference bridge materializes these rectangles before replay, and the
+reference generator republishes their anchors or line offsets afterwards.
+
+The splice preserves the generator's topology and selectors with two local
+certificates. Each entry summary counts split heads and empty-inline source
+paragraphs in its owned flow; independent child interiors are excluded,
+because their fragments belong to that child. Removing an entry with a
+nonzero count is refused, including removal of an ancestor of a source.
+Fresh root splits and context fragments remain refused. Secondly, summaries
+retain the first and last non-transparent direct entry kind: ordinary solid
+or split head. A Through ordinary entry, lineless paragraph, Float or Out is
+transparent for this conservative query; a split head is never transparent.
+The retained prefix's last kind and suffix's first kind must not be split
+heads. This covers intervening whitespace without scanning earlier entries.
+The existing neutral complete-block and immediate-boundary checks remain.
+
+These guards preserve the split list, its order, and every gap that could
+join two runs. A removed or inserted complete block cannot occur between
+split heads without meeting a split head at one of the conservative seam
+edges. The same guards preserve the immediate inline-mark selectors and
+sibling_above at affected heads. The first retained ordinary solid entry
+absorbs the changed incoming margin strut; its unchanged trailing strut
+makes each later split's pending-margin line translate with its normal
+origin. A splice inside a split head leaves that head's entering edge and
+external adjacency unchanged, and changes its anchored bottom by the new
+height. Ancestor propagation preserves exposed struts, so the argument also
+holds for an enclosing split head or independent Child. Float/clearance and
+exact-arithmetic certificates still apply; anchors do not license a new
+layout transfer. Lineless empty-inline fragments remain raw: the reference
+reads their retained scratch position, not the translated owner origin.
+
+The only new orders are existing source order for fragment publication and
+lexical ancestry for weighted rank lookup. Summary reduction follows the
+existing index dependency tree. Split/fragment bridge calculations write
+independent temporary cells before independent publication, so metadata
+reads do not create a sibling write chain. No local splice scans splits,
+fragments, previous payloads or unchanged descendant geometry.
+
+The earlier prefix/later fixtures remain identity checks; the later-split
+path now requires local success because anchored extents implement it.
+Additional fixtures cover multiple joined heads, editing inside a head,
+independent Child heads, negative margins, and refused adjacent-head or
+source-removal seams. Mutations suppress anchor resolution and split-rank
+restoration separately; each must produce a valid identity difference.
+
+The reference bridge lifetime is explicit: before legacy readers, anchored
+rectangles and split rank/line scratch are materialized. On return to owned
+geometry, every Split.line offset is republished from the actual reference
+scratch. Independent fragment checks then require each anchor to reproduce
+the actual raw rectangle exactly. Their balanced conjunction certifies the
+context representation; a mismatch keeps raw fragments authoritative and
+refuses structural anchor reuse with reason 3 until a later replay restores
+agreement. This covers legacy translate/keep paths as well as regeneration,
+without overriding a legitimate reference update. It is a representation
+certificate, not an oracle or evidence of CSS correctness. A page mismatch
+here must be investigated, never admitted by dropping the certificate.
+
+A Through block does not reset the pending margin strut, so the conservative
+neighbor summary skips it; a retained split head is never skipped. A solid
+ordinary block's Close preserves sibling_above=true for the next head; a
+lined paragraph resets the strut for the stored-line branch. Ancestor-head
+incoming edges remain unchanged. Thus the argument does not assume that an
+empty block absorbs margins.
+
+The origin-only bridge inside `translate_after` deliberately does not
+synchronize fragments or split lines. It runs during a legacy reference
+pass, whose caller still owns `shift_split_lines` and `translate_fragments`.
+Synchronizing there would apply delta twice. The shared conversion helpers
+therefore take an explicit synchronization mode: external replay entry and
+exit synchronize dependencies, while the internal suffix-origin conversion
+preserves raw fragment/line state for its caller. A line-growing text edit
+before a later split is the regression and must match the full rebuild.
+
+The implemented fixtures are `transfer-multi-before`,
+`transfer-multi-after`, `transfer-inside-head`, `transfer-child-head`,
+`transfer-negative-head`, `transfer-adjacent-head` and
+`transfer-source-removal`, plus `transfer-width-reentry` for a clear:none
+paragraph whose width changes when its later negative margin crosses an
+earlier float's bottom. Supported split cases include line-growing text
+pairs before later fragment dependencies. The initial source-removal X
+requires reason 3; subsequent neutral B/X pairs still require local success.
+The temporary CI semantic inventory injection is removed after its evidence
+was retained in the research record and CI artifacts.
+
+`no-split-anchor` replaces the retired prefix-bound mutation because the
+prefix representation has been superseded, not because its identity check
+was relaxed. It disables only anchored placement. `stale-split-ranks` omits
+only reference-bridge rank publication and must fail a following text edit.
+Three additional equality mutations omit fragment_sources, fragment_first
+or fragment_last from same_transfer; the oracle's independent changed-field
+checks must reject each before edits. The fixture expectation machinery now
+checks each initial-removal target kind and ownership and every required
+path row, including the refused source removal. Its local Python smoke test
+passed every deliberately wrong condition; renderer evidence is pending CI.

@@ -247,12 +247,22 @@ fn store_child_origin(child: &Context, origins: &[Origin]) -> result: unit reads
 }
 
 fn geometry_owned(context: &Context) -> result: unit writes(context) {
+  doc "Publishes both payload origins and context-fragment dependencies after a completed reference pass.";
+  let synchronize = True();
+  own_geometry(context: context, synchronize: synchronize);
+  return unit;
+}
+
+fn own_geometry(context: &Context, synchronize: Bool) -> result: unit writes(context) {
   doc "Encodes the resolved reference outputs in independent payload loops, using a read-only snapshot so a child's conversion never depends on its parent's write. All arithmetic that could saturate still runs through the reference walker before this exact change of representation.";
   if context^.local_geometry {
     return unit;
   }
   let origins = geometry_snapshot(context: context);
   let blocks = origins.inner.len;
+  if synchronize {
+    own_fragment_geometry(context: context, origins: &origins.inner[0_u64..blocks]);
+  }
   if blocks <= context^.blocks.inner.len {
     for (b in 0_u64..blocks) {
       store_block_origin(block: &context^.blocks.inner[b], origins: &origins.inner[0_u64..blocks]);
@@ -327,6 +337,13 @@ fn restore_child_origin(child: &Context, origins: &[Origin], dx: i32, dy: i32) -
 }
 
 fn geometry_reference(context: &Context) -> result: unit writes(context) {
+  doc "Restores payloads and stable fragment dependencies before an external reference replay.";
+  let synchronize = True();
+  reference_geometry(context: context, synchronize: synchronize);
+  return unit;
+}
+
+fn reference_geometry(context: &Context, synchronize: Bool) -> result: unit writes(context) {
   doc "Materializes the compatibility walker's scratch coordinates before a full or partial replay. Kept owner-relative geometry is authoritative between passes. The snapshot separates independent payload writes from ancestor reads.";
   if context^.local_geometry {
   } else {
@@ -336,6 +353,23 @@ fn geometry_reference(context: &Context) -> result: unit writes(context) {
   let blocks = origins.inner.len;
   let dx = context^.content_dx;
   let dy = context^.content_dy;
+  if synchronize {
+    reference_fragment_geometry(context: context, origins: &origins.inner[0_u64..blocks]);
+  } else {
+    let fragments = context^.fragments.inner.len;
+    let owns = owns_fragment(style: context^.style);
+    let first = if owns {
+      give imin(fragments, 1_u64);
+    } else {
+      give 0_u64;
+    }
+    for (f in first..fragments) {
+      if f < context^.fragments.inner.len {
+        set context^.fragments.inner[f].x = context^.fragments.inner[f].x +sat dx;
+        set context^.fragments.inner[f].y = context^.fragments.inner[f].y +sat dy;
+      }
+    }
+  }
   if blocks <= context^.blocks.inner.len {
     for (b in 0_u64..blocks) {
       restore_block_origin(block: &context^.blocks.inner[b], absolute: origins.inner[b], dx: dx, dy: dy);
@@ -348,19 +382,6 @@ fn geometry_reference(context: &Context) -> result: unit writes(context) {
   let children = context^.children.inner.len;
   for (c in 0_u64..children) {
     restore_child_origin(child: &context^.children.inner[c], origins: &origins.inner[0_u64..blocks], dx: dx, dy: dy);
-  }
-  let count = context^.fragments.inner.len;
-  let owns = owns_fragment(style: context^.style);
-  let first = if owns {
-    give imin(count, 1_u64);
-  } else {
-    give 0_u64;
-  }
-  for (f in first..count) {
-    if f < context^.fragments.inner.len {
-      set context^.fragments.inner[f].x = context^.fragments.inner[f].x +sat dx;
-      set context^.fragments.inner[f].y = context^.fragments.inner[f].y +sat dy;
-    }
   }
   set context^.content_dx = 0_i32;
   set context^.content_dy = 0_i32;
@@ -480,7 +501,8 @@ fn translate_after(context: &Context, events: &[Flow], flow_at: u32, delta: i32)
     translate_reference_after(context: context, events: events, flow_at: flow_at, delta: delta);
     return unit;
   }
-  geometry_owned(context: context);
+  let synchronize = False();
+  own_geometry(context: context, synchronize: synchronize);
   let blocks = context^.blocks.inner.len;
   let no = False();
   let roots = box_array_filled::<Bool>(count: blocks, value: no);
@@ -511,6 +533,6 @@ fn translate_after(context: &Context, events: &[Flow], flow_at: u32, delta: i32)
   for (c in 0_u64..children) {
     shift_owned_child(child: &context^.children.inner[c], blocks: &context^.blocks.inner[0_u64..held_blocks], flow_at: flow_at, delta: delta);
   }
-  geometry_reference(context: context);
+  reference_geometry(context: context, synchronize: synchronize);
   return unit;
 }

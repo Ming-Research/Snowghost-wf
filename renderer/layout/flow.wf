@@ -939,10 +939,13 @@ fn split_fragments(context: &Context, events: &[Flow], styles: &Styles, content_
 }
 
 fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Styles, content_left: i32, kept: &[Fragment], preserve_empty: Bool) -> result: unit reads(events), reads(styles), reads(kept), writes(context) {
-  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts. The splits sorted by owner (split_keys) give each split the next one of the same owner and answer whether an owner is interrupted, and a flag per flow entry (split_closings) whether a block closing there interrupts an inline box, so a full pass costs O(S log S + F) for S splits and F flow entries. When preserve_empty holds, kept contains the previous context fragments without its own box; fragments whose owners are not split owners are the unchanged empty-inline tail and are copied without inspecting their paragraphs. Rank queries borrow the context pass's event slice.";
+  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts. The splits sorted by owner (split_keys) give each split the next one of the same owner and answer whether an owner is interrupted, and a flag per flow entry (split_closings) whether a block closing there interrupts an inline box, so a full pass costs O(S log S + F) for S splits and F flow entries. When preserve_empty holds, kept contains the previous context fragments without its own box; fragments whose owners are not split owners are the unchanged empty-inline tail and are copied without inspecting their paragraphs. Each emitted split rectangle publishes aligned stable endpoint metadata. Empty source flags are refreshed on a full pass and retained with preserved empty fragments. Rank queries borrow the context pass's event slice.";
   if preserve_empty {
   } else {
-    set context^.fragment_prefix = 0_u64;
+    let paragraph_count = context^.paragraphs.inner.len;
+    for (paragraph_at in 0_u64..paragraph_count) {
+      set context^.paragraphs.inner[paragraph_at].empty_fragment = False();
+    }
   }
   let count = context^.splits.inner.len;
   let bounded = imin(count, item_ceiling);
@@ -966,17 +969,13 @@ fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Style
   }
   let used = box_array_filled::<u8>(count: bounded, value: 0_u8);
   for (k in 0_u64..bounded) {
-    if k < context^.splits.inner.len {
-      let close = cvt::<u32, u64>(context^.splits.inner[k].close);
-      let dependency_end = close +sat 2_u64;
-      let dependency_bound = imax(context^.fragment_prefix, dependency_end);
-      set context^.fragment_prefix = dependency_bound;
-    }
     if k < used.inner.len {
       if used.inner[k] == 0_u8 {
         if k < context^.splits.inner.len {
           let first = context^.splits.inner[k];
           let last_close = first.close;
+          let last_opening = first.opening;
+          let split_index = flow_index(at: k);
           let j = k;
           for (step in 0_u64..bounded) {
             if j < next_same.inner.len {
@@ -989,6 +988,7 @@ fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Style
               let joined = gap_lineless(context: context, events: events, after: last_close, before: next.open);
               if joined {
                 set last_close = next.close;
+                set last_opening = next.opening;
                 if j < used.inner.len {
                   set used.inner[j] = 1_u8;
                 }
@@ -1023,15 +1023,31 @@ fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Style
             } else {
               give first.line;
             }
+            let leading_mode = if first.line == no_line {
+              give 1_u8;
+            } else if sibling {
+              give 1_u8;
+            } else {
+              give 2_u8;
+            }
+            let leading_at = context^.fragments.inner.len;
+            let leading_anchor = FragmentAnchor(mode: leading_mode, first: first.opening, last: last_opening, split: split_index, margin: 0_i32);
             add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_y, width: 0_i32, height: 0_i32);
+            anchor_fragment(context: context, at: leading_at, anchor: leading_anchor);
           }
+          let main_at = context^.fragments.inner.len;
+          let main_anchor = FragmentAnchor(mode: 3_u8, first: first.opening, last: last_opening, split: split_index, margin: 0_i32);
           add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
+          anchor_fragment(context: context, at: main_at, anchor: main_anchor);
           let after = run_close +sat 1_u64;
           let has_after = shows_owner(context: context, events: events, flow: after, owner: first.owner, opening: yes);
           if bnot(has_after) {
             let beneath = entry_margin(context: context, events: events, styles: styles, flow: last_close, basis: first.width, below: yes);
             let line_bottom = bottom +sat beneath;
+            let trailing_at = context^.fragments.inner.len;
+            let trailing_anchor = FragmentAnchor(mode: 4_u8, first: first.opening, last: last_opening, split: split_index, margin: beneath);
             add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_bottom, width: 0_i32, height: 0_i32);
+            anchor_fragment(context: context, at: trailing_at, anchor: trailing_anchor);
           }
         }
       }
@@ -1043,7 +1059,7 @@ fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Style
       let fragment = kept^[f];
       let interrupted = split_owner(keys: &keys, owner: fragment.owner);
       if bnot(interrupted) {
-        let pushed = push_item::<Fragment>(cell: &context^.fragments, value: fragment, ceiling: item_ceiling);
+        add_fragment(context: context, kind: fragment.kind, owner: fragment.owner, x: fragment.x, y: fragment.y, width: fragment.width, height: fragment.height);
       }
     }
   } else {
@@ -1258,10 +1274,13 @@ fn empty_inline_fragments(context: &Context, events: &[Flow], keys: &Box<Array<u
             if shown {
               let interrupted = split_owner(keys: keys, owner: s.element);
               if bnot(interrupted) {
+                let empty_before = context^.fragments.inner.len;
                 add_fragment(context: context, kind: placed_element, owner: s.element, x: left, y: top, width: 0_i32, height: 0_i32);
-                let dependency_end = flow +sat 1_u64;
-                let dependency_bound = imax(context^.fragment_prefix, dependency_end);
-                set context^.fragment_prefix = dependency_bound;
+                if context^.fragments.inner.len > empty_before {
+                  if paragraph < context^.paragraphs.inner.len {
+                    set context^.paragraphs.inner[paragraph].empty_fragment = True();
+                  }
+                }
               }
             }
           }
@@ -3480,10 +3499,7 @@ fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: 
   }
   for (f in own_count..count) {
     if f < context^.fragments.inner.len {
-      let held_fragment = context^.fragments.inner[f];
-      let content_x = held_fragment.x +sat context^.content_dx;
-      let content_y = held_fragment.y +sat context^.content_dy;
-      let fragment = Fragment(kind: held_fragment.kind, owner: held_fragment.owner, x: content_x, y: content_y, width: held_fragment.width, height: held_fragment.height);
+      let fragment = placed_context_fragment(context: context, origins: &origins.inner[0_u64..origin_count], at: f);
       place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
     }
   }

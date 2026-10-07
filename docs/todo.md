@@ -215,17 +215,21 @@ example apart from the renderer code that exposed it
   the existing counted reference path leaves the page gate blocked. The
   positioned and flex implementations now retain anchor dependencies and
   pre-stretch measurements; the transfer extension also covers uniformly moved
-  later floats against stationary-prefix reach. In CI
-  [37597267424](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37597267424)
-  at `5738c2d`, all 72 positioned and 152 flex fixture edits matched rebuilds;
-  the fixture gate failed on the floated flex owner's refusal-code precedence,
-  repaired in the subsequent extension. The diagnostic first page edits still
-  refused: ecma262 at the split-inline context guard, html5 at the later-float
-  suffix guard. The constituent inventory found lined markers but no specified,
-  minimum or maximum height constraints in either edited context. Remaining:
-  validate later-float translation and the unchanged-prefix split/empty-inline
-  dependency certificate, extend fragment endpoint updates if any page seam
-  precedes that bound, and run all mutation and final acceptance gates.
+  later floats against stationary-prefix reach. CI
+  [37602480329](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37602480329)
+  at `41085b1377803b9d62275b1f7e4278e055cd30bc` passed the focused step-5
+  run: all 60 html5 block edits spliced locally and matched rebuilds;
+  ecma262's 20 matched rebuilds but retained reason 3 for split fragments.
+  The constituent inventory found lined markers but no specified, minimum or
+  maximum height constraints in either edited context. The unchanged-prefix
+  fragment certificate passed its fixtures at `d981f914`, but every directly
+  mapped ecma262 seam precedes later splits. Stable split endpoint anchors
+  now replace that insufficient scope, with source-removal and seam-topology
+  summaries and a reference-bridge equivalence certificate. Remaining:
+  validate anchor/rank lifetimes, all required page paths, and the final
+  seq/par acceptance and mutation gates. The reference bridge remains a
+  whole-context path outside accepted local splice work; no new performance
+  claim is made.
   Positioned and atomic subtree retirement now includes live counts and route
   tombstones; pre-existing generated-child removal fixtures cover the repair.
   New generated pseudo membership still belongs to the existing style fallback,

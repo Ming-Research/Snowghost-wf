@@ -1,0 +1,209 @@
+fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (normal: i32, top: i32, bottom: i32) reads(context), reads(origins) {
+  doc "Resolves a stable split head from a placement snapshot, preserving the reference visual-top then height saturation order. The context content adjustment is applied once before the extent.";
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        let origin = owner_origin(origins: origins, owner: b);
+        let normal_place = origin_normal(value: origin);
+        let visual_place = origin_visual(value: origin);
+        let normal_y = normal_place.y +sat context^.content_dy;
+        let top_y = visual_place.y +sat context^.content_dy;
+        let bottom_y = top_y +sat context^.blocks.inner[at].height;
+        return normal_y, top_y, bottom_y;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        let child = &context^.children.inner[at];
+        let origin = if context^.local_geometry {
+          let parent = owner_origin(origins: origins, owner: child^.block);
+          let accumulated = origin_accumulate(owner: parent, local: child^.anchor);
+          give accumulated;
+        } else {
+          let resolved = origin_from_resolved(nx: child^.normal_x, ny: child^.normal_y, vx: child^.x, vy: child^.y);
+          give resolved;
+        }
+        let normal_place = origin_normal(value: origin);
+        let visual_place = origin_visual(value: origin);
+        let normal_y = normal_place.y +sat context^.content_dy;
+        let top_y = visual_place.y +sat context^.content_dy;
+        let bottom_y = top_y +sat child^.height;
+        return normal_y, top_y, bottom_y;
+      }
+    }
+    Close(..) => {
+    }
+    Text(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return 0_i32, 0_i32, 0_i32;
+}
+
+fn anchored_context_fragment(context: &Context, origins: &[Origin], at: u64) -> made: Fragment reads(context), reads(origins) {
+  doc "Evaluates one fragment's stable endpoint expression independently. Raw fragments keep the reference's lineless scratch semantics; split extents preserve its operation order instead of translating a previously clamped height.";
+  let empty = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  if at < context^.fragments.inner.len {
+  } else {
+    return empty;
+  }
+  let fragment = context^.fragments.inner[at];
+  set fragment.x = fragment.x +sat context^.content_dx;
+  set fragment.y = fragment.y +sat context^.content_dy;
+  if at < context^.fragment_anchors.inner.len {
+  } else {
+    return fragment;
+  }
+  let anchor = context^.fragment_anchors.inner[at];
+  if anchor.mode == 0_u8 {
+    return fragment;
+  }
+  let (normal, top, first_bottom) = fragment_endpoint(context: context, origins: origins, item: anchor.first);
+  if anchor.mode == 1_u8 {
+    set fragment.y = top;
+  } else if anchor.mode == 2_u8 {
+    let split = cvt::<u32, u64>(anchor.split);
+    if split < context^.splits.inner.len {
+      let wide = cvt::<i32, i64>(normal);
+      let line = wide +sat context^.splits.inner[split].line_offset;
+      let y = geometry_narrow(value: line);
+      set fragment.y = y;
+    }
+  } else if anchor.mode == 3_u8 {
+    let (last_normal, last_top, bottom) = fragment_endpoint(context: context, origins: origins, item: anchor.last);
+    set fragment.y = top;
+    set fragment.height = bottom -sat top;
+  } else if anchor.mode == 4_u8 {
+    let (last_normal, last_top, bottom) = fragment_endpoint(context: context, origins: origins, item: anchor.last);
+    set fragment.y = bottom +sat anchor.margin;
+  }
+  return fragment;
+}
+
+fn placed_context_fragment(context: &Context, origins: &[Origin], at: u64) -> made: Fragment reads(context), reads(origins) {
+  doc "Uses certified anchors only while owner-relative geometry is authoritative; otherwise preserves the actual reference rectangles.";
+  let use_anchor = band(context^.local_geometry, context^.fragments_valid);
+  if use_anchor {
+    let resolved = anchored_context_fragment(context: context, origins: origins, at: at);
+    return resolved;
+  }
+  if at < context^.fragments.inner.len {
+    let fragment = context^.fragments.inner[at];
+    set fragment.x = fragment.x +sat context^.content_dx;
+    set fragment.y = fragment.y +sat context^.content_dy;
+    return fragment;
+  }
+  return Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+}
+
+fn fragment_certificates(values: &[Bool]) -> valid: Bool reads(values) {
+  doc "Conjoins independent representation checks through a balanced reduction, adding no ordered fragment traversal.";
+  let count = values^.len;
+  if count == 0_u64 {
+    return True();
+  }
+  if count == 1_u64 {
+    return values^[0_u64];
+  }
+  let middle = count / 2_u64;
+  let first = fragment_certificates(values: &values^[0_u64..middle]);
+  let last = fragment_certificates(values: &values^[middle..count]);
+  return band(first, last);
+}
+
+fn own_fragment_geometry(context: &Context, origins: &[Origin]) -> result: unit reads(origins), writes(context) {
+  doc "Republishes Split.line offsets after every legacy reference path, then certifies each cached anchor against the actual raw rectangle. A failed representation check leaves raw output authoritative and blocks local structural reuse.";
+  let count = context^.splits.inner.len;
+  let offsets = box_array_filled::<i64>(count: count, value: 0_i64);
+  for (at in 0_u64..count) {
+    if at < context^.splits.inner.len {
+      let split = context^.splits.inner[at];
+      let (normal, top, bottom) = fragment_endpoint(context: context, origins: origins, item: split.opening);
+      let wide_line = cvt::<i32, i64>(split.line);
+      let wide_normal = cvt::<i32, i64>(normal);
+      set offsets.inner[at] = wide_line -sat wide_normal;
+    }
+  }
+  for (at in 0_u64..count) {
+    if at < context^.splits.inner.len {
+      set context^.splits.inner[at].line_offset = offsets.inner[at];
+    }
+  }
+  let fragments = context^.fragments.inner.len;
+  let no = False();
+  let checks = box_array_filled::<Bool>(count: fragments, value: no);
+  for (at in 0_u64..fragments) {
+    if at < context^.fragments.inner.len {
+      let raw = context^.fragments.inner[at];
+      let resolved = anchored_context_fragment(context: context, origins: origins, at: at);
+      let raw_x = raw.x +sat context^.content_dx;
+      let raw_y = raw.y +sat context^.content_dy;
+      let x_same = raw_x == resolved.x;
+      let y_same = raw_y == resolved.y;
+      let width_same = raw.width == resolved.width;
+      let height_same = raw.height == resolved.height;
+      let place_same = band(x_same, y_same);
+      let size_same = band(width_same, height_same);
+      let same = band(place_same, size_same);
+      set checks.inner[at] = same;
+    }
+  }
+  let matches = fragment_certificates(values: &checks.inner[0_u64..fragments]);
+  let aligned = context^.fragment_anchors.inner.len == fragments;
+  let valid = band(matches, aligned);
+  set context^.fragments_valid = valid;
+  return unit;
+}
+
+fn reference_fragment_geometry(context: &Context, origins: &[Origin]) -> result: unit reads(origins), writes(context) {
+  doc "Materializes split anchors and restores current weighted ranks before the compatibility walker reads them. Reads and publication use separate arrays; this whole-context bridge is outside accepted local splice work.";
+  let count = context^.fragments.inner.len;
+  let empty = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  let values = box_array_filled::<Fragment>(count: count, value: empty);
+  let owned = owns_fragment(style: context^.style);
+  let first = if owned {
+    give imin(count, 1_u64);
+  } else {
+    give 0_u64;
+  }
+  for (at in first..count) {
+    let value = placed_context_fragment(context: context, origins: origins, at: at);
+    set values.inner[at] = value;
+  }
+  let splits = context^.splits.inner.len;
+  let absent = Flow::Close(block: no_index);
+  let empty_split = Split(owner: no_index, opening: absent, line_offset: 0_i64, open: no_index, close: no_index, left: 0_i32, width: 0_i32, line: no_line);
+  let restored = box_array_filled::<Split>(count: splits, value: empty_split);
+  for (at in 0_u64..splits) {
+    if at < context^.splits.inner.len {
+      let split = context^.splits.inner[at];
+      let (opening, closing) = fragment_event_rank(context: context, item: split.opening);
+      set split.open = opening;
+      set split.close = closing;
+      if split.line != no_line {
+        let (normal, top, bottom) = fragment_endpoint(context: context, origins: origins, item: split.opening);
+        let wide = cvt::<i32, i64>(normal);
+        let line = wide +sat split.line_offset;
+        let resolved_line = geometry_narrow(value: line);
+        set split.line = resolved_line;
+      }
+      set restored.inner[at] = split;
+    }
+  }
+  for (at in first..count) {
+    if at < context^.fragments.inner.len {
+      set context^.fragments.inner[at] = values.inner[at];
+    }
+  }
+  for (at in 0_u64..splits) {
+    if at < context^.splits.inner.len {
+      set context^.splits.inner[at] = restored.inner[at];
+    }
+  }
+  return unit;
+}

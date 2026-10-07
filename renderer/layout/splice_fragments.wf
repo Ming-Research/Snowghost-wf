@@ -26,11 +26,8 @@ fn splice_fragment_prefix(context: &Context, owner: u32, slot: u32, visits: &Bou
   return True(), prefix.events;
 }
 
-fn splice_fragments_ready(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> ready: Bool reads(context), writes(visits) {
-  doc "Admits only seams after every retained split and empty-inline dependency. Weighted local prefixes and enclosing Open events recover the current global event rank without compatibility flow_at fields or a materialized walk; the owner chain is the only read order.";
-  if context^.fragment_prefix == 0_u64 {
-    return True();
-  }
+fn fragment_weighted_rank(context: &Context, owner: u32, slot: u32, visits: &BoundaryVisits) -> (valid: Bool, rank: u64) reads(context), writes(visits) {
+  doc "Restores a stable entry's global event rank through weighted local prefixes and enclosing Open events. This reference-bridge query never reads compatibility flow_at fields or materializes a walk; only lexical ancestry is ordered.";
   let cursor = owner;
   let selected = slot;
   let seam = 0_u64;
@@ -39,22 +36,21 @@ fn splice_fragments_ready(context: &Context, owner: u32, slot: u32, visits: &Bou
     let (valid, events) = splice_fragment_prefix(context: context, owner: cursor, slot: selected, visits: visits);
     if valid {
     } else {
-      return False();
+      return False(), 0_u64;
     }
     set seam = seam +sat events;
     if cursor == no_index {
-      let after = seam >= context^.fragment_prefix;
-      return after;
+      return True(), seam;
     }
     let at = cvt::<u32, u64>(cursor);
     if at < context^.blocks.inner.len {
     } else {
-      return False();
+      return False(), 0_u64;
     }
     let parent = context^.blocks.inner[at].parent;
     let block_slot = context^.blocks.inner[at].entry_slot;
     if block_slot == no_index {
-      return False();
+      return False(), 0_u64;
     }
     let item = if parent == no_index {
       let payload = splice_payload(sequence: &context^.entries, slot: block_slot, visits: visits);
@@ -65,34 +61,98 @@ fn splice_fragments_ready(context: &Context, owner: u32, slot: u32, visits: &Bou
         let payload = splice_payload(sequence: &context^.blocks.inner[parent_at].entries, slot: block_slot, visits: visits);
         give payload;
       } else {
-        return False();
+        return False(), 0_u64;
       }
     }
     match item {
       Open(block: found) => {
         if found != cursor {
-          return False();
+          return False(), 0_u64;
         }
       }
       Close(..) => {
-        return False();
+        return False(), 0_u64;
       }
       Text(..) => {
-        return False();
+        return False(), 0_u64;
       }
       Child(..) => {
-        return False();
+        return False(), 0_u64;
       }
       Float(..) => {
-        return False();
+        return False(), 0_u64;
       }
       Out(..) => {
-        return False();
+        return False(), 0_u64;
       }
     }
     set seam = seam +sat 1_u64;
     set cursor = parent;
     set selected = block_slot;
   }
-  return False();
+  return False(), 0_u64;
+}
+
+fn fragment_event_rank(context: &Context, item: Flow) -> (open: u32, close: u32) reads(context) {
+  doc "Restores reference-only split endpoint ranks from an Open or independent Child identity. A block's close follows its cached interior span; an independent child occupies one event. Invalid or retired heads return absent ranks, and local counter cells are discarded.";
+  let owner = no_index;
+  let slot = no_index;
+  let inside_span = 0_u64;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set owner = context^.blocks.inner[at].parent;
+        set slot = context^.blocks.inner[at].entry_slot;
+        let inside = sequence_node(sequence: &context^.blocks.inner[at].entries, slot: context^.blocks.inner[at].entries.root);
+        set inside_span = inside.total_events +sat 1_u64;
+      } else {
+        return no_index, no_index;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        if context^.children.inner[at].retired {
+          return no_index, no_index;
+        }
+        set owner = context^.children.inner[at].block;
+        set slot = context^.children.inner[at].entry_slot;
+      } else {
+        return no_index, no_index;
+      }
+    }
+    Close(..) => {
+      return no_index, no_index;
+    }
+    Text(..) => {
+      return no_index, no_index;
+    }
+    Float(..) => {
+      return no_index, no_index;
+    }
+    Out(..) => {
+      return no_index, no_index;
+    }
+  }
+  if slot == no_index {
+    return no_index, no_index;
+  }
+  let visits = no_boundary_visits();
+  let (valid, first) = fragment_weighted_rank(context: context, owner: owner, slot: slot, visits: &visits);
+  if valid {
+  } else {
+    return no_index, no_index;
+  }
+  if first < 4294967295_u64 {
+  } else {
+    return no_index, no_index;
+  }
+  let last = first +sat inside_span;
+  if last < 4294967295_u64 {
+    let opening = cvt::<u64, u32>(first);
+    let closing = cvt::<u64, u32>(last);
+    return opening, closing;
+  }
+  return no_index, no_index;
 }

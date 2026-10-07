@@ -14,7 +14,7 @@ Each ordinary case inserts a paragraph before its retained marker, edits retaine
 new and dependent text, removes the paragraph, then edits the retained and
 dependent text again. Insert/delete text pairs restore the original text.
 Each case owns a separate section. Ordinary insertion/removal restores it;
-the two generated-removal cases permanently delete their dedicated payload
+the initial-removal cases permanently delete their dedicated payload
 before that sequence. No later case reads a prior case's geometry. Within a
 case the edits are ordered because each operation consumes the preceding retained layout and its published routes.
 
@@ -58,10 +58,12 @@ splices, including the initial removal of a pre-existing generated child,
 using the generated commands' operation numbers. --check-paths
 checks each required row exactly once; inctime.py separately validates the
 complete protocol and identity. The transfer sidecar requires the later-float
-case and both fragment-prefix cases to splice successfully; a later split
-requires reason 3 because its fragment dependencies lie after the seam.
+case and supported split cases to splice successfully. Adjacent-head seams
+and removal of a pre-existing split source require reason 3. Stable endpoint
+anchors extend later-split coverage from the earlier prefix-only refusal;
+the required local path is strengthened, and identity remains required.
 
-The transfer fixture isolates twelve cases behind separate flow roots:
+The transfer fixture isolates twenty cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, an owner at
 200px whose first line puts the seam at 220px, and a later -170px margin
 before clear:left. The later natural position is 70px before insertion and
@@ -80,13 +82,23 @@ final splice/fallback classification. transfer-later-float moves a later
 float with nonzero vertical margins and a following clearing block together,
 after the earlier float has expired; both structural edits require a local
 splice. Omitting only the later float's direct anchor movement must change
-the retained dump. The split-prefix case places an inline containing a block before an ordinary
-gap and the edited owner; the empty-prefix case retains a lineless inline
-fragment before the same gap. Both dependencies must remain in the unchanged
-prefix and both structural operations must splice. The later-split case
-instead places the split after the owner and requires reason 3 for insertion
-and removal. Omitting the prefix dependency guard must reveal stale later
-fragment geometry or ranks. Identity is required for all twelve.
+the retained dump. The split-prefix and empty-prefix cases retain fragments before a neutral seam.
+The later-split case retains a split after the owner. Joined heads appear both
+before and after a seam; further cases edit inside a split head, retain an
+independent flow-root Child head, and move a head with negative margins.
+These supported cases require local insertion/removal. Long text insertions
+and deletions after both structural edits force wrapping and exercise later
+fragment placement during reference updates. The adjacent-head case requires
+reason 3 for both operations. Source-removal first removes a pre-existing div
+containing a split (reason 3), then tests ordinary local B/X edits. Its initial
+removal is independently recorded, without changing later created NodeIds.
+The width-reentry case has no clearance: an earlier float ends at 100px, the
+owner starts at 200px with two 20px lines, and a later -150px margin puts the
+long paragraph at natural y=90px before insertion and 110px after it. Its
+line width changes from 340px beside the float to 400px below it, so a false
+float-floor certificate must expose stale line breaking rather than merely
+passing through a clearance plateau. Identity is required for all twenty.
+
 
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
@@ -110,7 +122,11 @@ CASES = {
                  'transfer-fixed-sibling', 'transfer-minimum-sibling',
                  'transfer-maximum-sibling', 'transfer-relative-sibling',
                  'transfer-later-float', 'transfer-prefix-split',
-                 'transfer-prefix-empty', 'transfer-later-split'),
+                 'transfer-prefix-empty', 'transfer-later-split',
+                 'transfer-multi-before', 'transfer-multi-after',
+                 'transfer-inside-head', 'transfer-child-head',
+                 'transfer-negative-head', 'transfer-adjacent-head',
+                 'transfer-source-removal', 'transfer-float-width-reentry'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
@@ -130,14 +146,33 @@ EXPECTED_PATHS = {
     'transfer-later-float': (1, 0),
     'transfer-prefix-split': (1, 0),
     'transfer-prefix-empty': (1, 0),
-    'transfer-later-split': (0, 3),
+    'transfer-later-split': (1, 0),
+    'transfer-multi-before': (1, 0),
+    'transfer-multi-after': (1, 0),
+    'transfer-inside-head': (1, 0),
+    'transfer-child-head': (1, 0),
+    'transfer-negative-head': (1, 0),
+    'transfer-adjacent-head': (0, 3),
+    'transfer-source-removal': (1, 0),
 }
 
 
-def record_path(paths, case, number):
+INITIAL_REMOVALS = {
+    'positioned-generated-removal': ('p', 1, 0),
+    'positioned-atomic-removal': ('p', 1, 0),
+    'transfer-source-removal': ('div', 0, 3),
+}
+
+WRAPPING_CASES = {
+    'transfer-later-split', 'transfer-multi-before', 'transfer-multi-after',
+    'transfer-inside-head', 'transfer-child-head', 'transfer-negative-head',
+}
+
+
+def record_path(paths, case, number, expected=None):
     """Record the selected case's required result at its structural operation."""
     if case in EXPECTED_PATHS:
-        splice, reason = EXPECTED_PATHS[case]
+        splice, reason = EXPECTED_PATHS[case] if expected is None else expected
         paths.append('structure path %d splice %d reason %d' %
                      (number, splice, reason))
 
@@ -178,6 +213,12 @@ def text_pair(lines, node):
     lines.extend(('T %d 0 R' % node, 'D %d 0 1' % node))
 
 
+def wrapping_pair(lines, node):
+    """Grow a retained line across wraps, then restore it before the next edit."""
+    text = 'Long wrapping text changes this retained paragraph before later split fragments. ' * 6
+    lines.extend(('T %d 0 %s' % (node, text), 'D %d 0 %d' % (node, len(text))))
+
+
 def generate(tree, kind):
     """Exercise each independent fixture and its text routes after both edits."""
     lines = []
@@ -188,13 +229,14 @@ def generate(tree, kind):
         paragraph = tree.by_node[retained['parent']]
         if paragraph['name'] != 'p' or paragraph['parent'] is None:
             raise ValueError(case + ': retained marker must be a paragraph child')
-        if case in ('positioned-generated-removal', 'positioned-atomic-removal'):
+        if case in INITIAL_REMOVALS:
             removed = marker(tree, case, 'remove')
             removal = tree.by_node[removed['parent']]
-            if removal['name'] != 'p' or removal['parent'] != paragraph['parent']:
-                raise ValueError(case + ': removal marker must be a sibling paragraph')
+            tag, initial_splice, initial_reason = INITIAL_REMOVALS[case]
+            if removal['name'] != tag or removal['parent'] != paragraph['parent']:
+                raise ValueError(case + ': removal marker must be a sibling ' + tag)
             lines.append('X %d' % removal['node'])
-            record_path(paths, case, len(lines))
+            record_path(paths, case, len(lines), (initial_splice, initial_reason))
             for node in (retained['node'], probe['node']):
                 text_pair(lines, node)
         created = tree.arena + 2 * number
@@ -206,11 +248,17 @@ def generate(tree, kind):
         else:
             after_insert = (retained['node'], created + 1, probe['node'])
         for node in after_insert:
-            text_pair(lines, node)
+            if case in WRAPPING_CASES:
+                wrapping_pair(lines, node)
+            else:
+                text_pair(lines, node)
         lines.append('X %d' % created)
         record_path(paths, case, len(lines))
         for node in (retained['node'], probe['node']):
-            text_pair(lines, node)
+            if case in WRAPPING_CASES:
+                wrapping_pair(lines, node)
+            else:
+                text_pair(lines, node)
     return '\n'.join(lines) + '\n', ''.join(line + '\n' for line in paths)
 
 
