@@ -137,4 +137,40 @@ identities. Existing saturation and structural falsifiers remain enabled.
 ## Status
 
 Contract recorded before implementation. Q135 A is authorized and closed;
-Q134 remains open pending both prototypes, validation and measurements.
+Q134 remains open pending validation and measurements. Independent contract
+review found and fixed the empty-source line-presence/identity dependency,
+publication order separate from storage identity, and the Child margin case.
+
+Both prototypes use topology-local run-role slots aligned with the reference
+fragment sequence and a balanced postorder interval index. Internal references
+do not escape the topology; clearing it drops the entire index before slots
+can be reused. This implements a lifetime domain rather than a wrapping global
+generation counter. Kept topology retains stable split endpoints and role
+slots. Topology-changing replays still reconstruct the context's split runs;
+bounded topology replacement remains an explicit prototype limitation.
+Text/style preparation rebuilds Open/Close marks from the unchanged Begin/End
+pieces; changed text offsets do not change the owner predicates read by the
+fragment builder. Box-tree reconstruction replaces the topology instead.
+
+The first hosted layout-check sample at 7e38d03541fdf44ae6d3b383b0d8b634ac02524f
+spent 10 seconds in its compiler/check step (run 37675824700), before expanding
+to full correctness jobs. The first B compilation exposed a missing Styles
+alias, fixed at 1c68bb5; it was a source error, not a Whitefoot gap. Obsolete
+mutation run 37677062916 was cancelled after the source changed; it is no pass.
+
+B repairs the changed range plus its translated suffix, then runs the existing
+complete field comparison only over those dependency intervals. A repairs the
+replayed range, retaining suffix expressions and their certificates because
+their local inputs are unchanged. A's split lines are also owner-relative:
+stacked openings mark raw line scratch dirty; binary source-range lookup
+publishes those offsets. The existing arithmetic travel certificate permits
+unchanged suffix offsets; exceptional numeric repair preserves the reference
+saturating addition using the still-retained old owner origins. Both options
+keep the original full construction and certification for replaced topology.
+
+The A no-split-line-refresh mutant now drops the dirty publication in
+line_splits: dropping a suffix-coordinate write would be ineffective after
+that write is intentionally eliminated. Its original path requirement and
+unmutated identity remain. The additional option-specific mutant drops the
+targeted fragment-cell repair and must fail a semantic identity check. No
+fixture HTML, expected dump, or block success requirement is changed.
