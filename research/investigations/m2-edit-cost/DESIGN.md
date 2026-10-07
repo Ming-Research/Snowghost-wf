@@ -1248,9 +1248,12 @@ Renderer revision 7ab2bd5f4cf1ec8d50cdb0cc260eb519b4a5524a has tree
 [Oracles 37642164216](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37642164216)
 passed core, step5 and every one of the twelve page/kind identity and
 sequential/parallel comparisons. The full-build comparison used
-ddfd63d0755e51f7c2972e0bb43b0c5d88fe30c7 as its reference; both real pages,
-the layout cases and saturation case were byte-identical in sequential and
-parallel modes. Case HTML files are unchanged from the branch base.
+ddfd63d0755e51f7c2972e0bb43b0c5d88fe30c7 as its reference. The sequential
+real-page dumps were compared byte-for-byte with that reference. The layout
+cases and saturation case also had explicit base/seq/par byte comparisons.
+Real-page seq/par equality uses X5's hash, length and edit-result records;
+no separate full-page seq/par byte comparison is claimed. Case HTML files
+are unchanged from the branch base.
 
 The workflow remains red at only the two inherited page-block zero-fallback
 gates. Final-source raw output retains ecma262's twenty reason-3 nonlocal
