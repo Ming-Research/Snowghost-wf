@@ -1223,16 +1223,16 @@ not a fallback for an unsuccessful built-in store. Validation uses layout-check,
 check, one requested oracles run and one requested falsify run; a CI census
 must report native lengths, actual first-page bytes and html5 store counts.
 
-The first implementation at `73f2454` is blocked by a guarded append
-rejection. The independent diagnostic at `2e5392a`,
-[CI 37641936463](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641936463),
-accepts guarded enum-payload appends for both Paged and Slots without growth
-or a loop, and rejects all six variants adding growth or a loop with FN-8.
-The same guard is present in every case. This is a compiler acceptance
-finding, not permission to extract another renderer helper or change storage;
-Q2 in `docs/todo.md` records the proposed Whitefoot work. No equivalence,
-mutation-success or runtime Paged-store count is claimed while compilation
-is blocked. The base census and native allocation IR are independent evidence.
+The initial guarded enum-payload append was rejected with FN-8. Whitefoot's
+specification resolves the call requirement at the referent while the guard
+names the binder: ENT-2 keeps the terms distinct, and writes kill MSR-3's
+PAYLOAD bridge. This is specified behavior, not a checker defect; see the
+[upstream TODO](https://github.com/Ming-Research/Whitefoot/blob/8b647edbbc950c81bca81ce47022338058877aef/docs/todo.md).
+The owner closed Q2 by directing the documented reference-parameter helper
+route. `page_fill` performs guarded growth and append through that parameter
+for both initialization and `page_ensure`, with the same pin, store ownership
+and growth policy. The isolated binder diagnostics remain historical evidence;
+accepting those spellings would require a Whitefoot specification decision.
 
 #### Guard investigation and allocation evidence
 

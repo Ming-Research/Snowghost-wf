@@ -9,32 +9,25 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
-- **Q2: guarded append loses an enum-payload reference fact after growth or
-  at a loop boundary.** At pinned Whitefoot `496186df5346`, this fragment
-  inside `Pages(storage: values)` is rejected with FN-8 at `place_back`,
-  despite the immediately enclosing guard:
-
-  ```whitefoot
-  if values^.inner.cap < required {
-    grow_paged(cell: values, capacity: required);
-  }
-  if values^.inner.len < values^.inner.cap {
-    place_back(window: &values^.inner, value: 0_u64);
-  }
-  ```
-
-  The complete generated cases are wired through
-  `research/investigations/structure-edits/scripts/paged-guard-probe.py` to
-  layout-check. [CI 37641936463](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641936463)
-  accepts the no-growth/no-loop case for both Paged and Slots; adding either
-  growth or the append loop rejects the fresh guard for both shapes.
-  Snowghost's new `page_ensure` is blocked by the same diagnostic. Proposed
-  fix: preserve the identity of enum-payload reference paths when fresh
-  range facts cross growth and loop processing; the compiler's exact cause
-  remains unverified. Validate all eight positive cases and negative cases
-  with absent or reversed guards, then the renderer's ordinary CI and
-  oracles. Reopen when the owner authorizes a corrected Whitefoot experiment
-  release; no alternate spelling or storage representation is adopted here.
+- **Q2: reference-holder length guards follow a specification rule with a
+  documented helper route.** Whitefoot's [TODO](https://github.com/Ming-Research/Whitefoot/blob/8b647edbbc950c81bca81ce47022338058877aef/docs/todo.md)
+  records: "A length guard written through a reference holder stops proving
+  the requirement of a call passing that holder once a write reaches the
+  referent". At pin `496186df5346`, FN-8 instantiates `place_back` at the
+  actual's resolved referent (`store^.Pages.storage.inner.len < cap`), while
+  a guard through the enum binder spells `values^.inner.len`. ENT-2 treats
+  those as distinct terms. The PAYLOAD placement datum from arm entry
+  (MSR-3) bridges them until growth writes the referent; a loop head's
+  continuing kill of the append's length write also removes the bridge.
+  This is specified behavior, not a compiler defect. The isolated cases in
+  `research/investigations/structure-edits/scripts/paged-guard-probe.py`
+  preserve the acceptance evidence. The owner closed Q2 by directing the
+  documented route: pass the store to a reference-parameter helper that
+  guards growth and append inside, as firn's `pop_items`/`pop_one` does.
+  `pages.wf` uses `page_fill` for initialization and `page_ensure`, retaining
+  the same ownership and logical growth. Any change accepting the binder
+  spelling is an owner decision in Whitefoot; reopen there if that spelling
+  is required, with the existing growth/loop witnesses and negative guards.
 
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
