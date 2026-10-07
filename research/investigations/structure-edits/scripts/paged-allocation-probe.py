@@ -1,0 +1,92 @@
+"""Inject a CI-only census into a detached base tree and create allocation IR probes.
+
+The oracles workflow consumes this experiment's diagnostic; remove with the
+Paged experiment. Production sources and helper callers are not instrumented.
+"""
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+layout = root / 'renderer/layout'
+module = (layout / 'module.wfm').read_text()
+types = ['SequenceNode', 'Flow', 'TextUnit', 'StyleUse', 'StyleRoute', 'u32', 'ContextPath']
+source = '''fn allocation_store<T>(pages: &SlotPages<T>, kind: u64, output: &Box<Slots<u64>>) -> result: unit reads(pages), writes(output) {
+  doc "Records each nonempty base store's type, native page length and old first width.";
+  match pages^ {
+    Vacant() => {
+    }
+    Pages(first: width, directory: pointers) => {
+      let native = paged_page_len::<T>();
+      let first = cvt::<u32, u64>(width^);
+      let a = push_item::<u64>(cell: output, value: kind, ceiling: 1073741824_u64);
+      let b = push_item::<u64>(cell: output, value: native, ceiling: 1073741824_u64);
+      let c = push_item::<u64>(cell: output, value: first, ceiling: 1073741824_u64);
+      let d = push_item::<u64>(cell: output, value: pointers^.inner.len, ceiling: 1073741824_u64);
+    }
+  }
+  return unit;
+}
+
+fn allocation_sequence(sequence: &EntrySequence, output: &Box<Slots<u64>>) -> result: unit reads(sequence), writes(output) {
+  doc "Records the two independent stores belonging to one owner.";
+  allocation_store::<SequenceNode>(pages: &sequence^.nodes, kind: 0_u64, output: output);
+  allocation_store::<Flow>(pages: &sequence^.payloads, kind: 1_u64, output: output);
+  return unit;
+}
+
+fn allocation_context(context: &Context, output: &Box<Slots<u64>>) -> result: unit reads(context), writes(output) {
+  doc "Visits the retained owned tree once for allocation accounting only.";
+  allocation_sequence(sequence: &context^.entries, output: output);
+  for (at in 0_u64..context^.blocks.inner.len) {
+    allocation_sequence(sequence: &context^.blocks.inner[at].entries, output: output);
+  }
+  for (child in 0_u64..context^.children.inner.len) {
+    allocation_context(context: &context^.children.inner[child], output: output);
+  }
+  return unit;
+}
+
+public fn allocation_census(layout: &Layout) -> result: Box<Slots<u64>> reads(layout) {
+  doc "Returns CI-only allocation rows after a complete build of the base tree.";
+  let output = box_slots_new::<u64>(capacity: 0_u64);
+  allocation_context(context: &layout^.root, output: &output);
+'''
+for kind, (typ, field) in enumerate(zip(types[2:], ['text_units', 'uses', 'routes', 'context_of', 'paths']), 2):
+    source += f'  allocation_store::<{typ}>(pages: &layout^.{field}.pages, kind: {kind}_u64, output: &output);\n'
+source += '  return move output;\n}\n'
+(layout / 'allocation_probe.wf').write_text(source)
+(layout / 'module.wfm').write_text(module + '\npublic fn allocation_census(layout: &Layout) -> result: Box<Slots<u64>> reads(layout) doc "Returns CI-only allocation rows.";\n')
+p=root / 'renderer/oracle/layout/layout.wf'
+s=p.read_text(); anchor='    let (counted_contexts, counted_paragraphs) = layout_counts(layout: &layout);'
+assert s.count(anchor) == 1
+s=s.replace(anchor, '''    let census = pkg::layout::allocation_census(layout: &layout);
+    let census_buffer = box_slots_new::<u8>(capacity: 256_u64);
+    for (cell in 0_u64..census.inner.len) {
+      put_decimal(buffer: &census_buffer, value: census.inner[cell]);
+      let column = cell % 4_u64;
+      if column == 3_u64 {
+        put_byte(buffer: &census_buffer, value: 10_u8);
+      } else {
+        put_byte(buffer: &census_buffer, value: 32_u8);
+      }
+    }
+    let census_written = flush(factory: files, output: out, buffer: &census_buffer);
+''' + anchor)
+p.write_text(s)
+# The exact declarations, not a handwritten ABI estimate, determine allocations.
+declarations = []
+for typ in ['EntryHandle', 'SequenceOutput', 'SequenceCursor'] + [t for t in types if t != 'u32']:
+    match = re.search(r'^(?:struct|enum) ' + typ + r' \{.*?^\}', module, re.M | re.S)
+    assert match, typ
+    declarations.append(match.group())
+for typ in types:
+    probe='\n\n'.join(declarations) + f'''
+
+fn main() -> result: unit pure {{
+  doc "Exposes this element type's actual native page allocation in compiler IR.";
+  let storage = box_paged_new::<{typ}>(capacity: 1_u64);
+  return unit;
+}}
+'''
+    (root / f'{typ}.wf').write_text(probe)
