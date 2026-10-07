@@ -337,13 +337,19 @@ example apart from the renderer code that exposed it
   the unrelated context dependency. Owner item Q134 remains open; its earlier
   missing-identity grounds must now account for the retained anchors. The
   [final integration comparison](../research/investigations/m2-edit-cost/DESIGN.md#final-hosted-comparison-and-remaining-acceptance-failure)
-  still fails ECMA sentence acceptance after local repairs; Q135 asks whether
-  to extend the integration to settle this contract or await Q134 separately.
+  still fails ECMA sentence acceptance after local repairs. Q135 A is now
+  authorized: the [dependency contract and two prototypes](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md)
+  investigate Q134 on isolated experiment branches. Neither is adopted.
   Validate split and
   empty fragment order, moved ancestor endpoints, negative margins, relative
   positioning, saturation, insert/remove lifetimes, all X5 identities and
   falsifiers, then repeat same-host text/font-size acceptance. Reopen after
-  the owner chooses the representation.
+  the owner chooses the representation. Topology-changing replays still rebuild
+  all runs in both current prototypes: a future retained adjacency index must
+  replace only affected runs while preserving source publication order. Its
+  validation must include line-presence changes that split and join two runs
+  of one owner, including coincident rectangles; reopen if measured costs or
+  a bounded-topology acceptance claim requires that work.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
