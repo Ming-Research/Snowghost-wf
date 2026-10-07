@@ -27,7 +27,7 @@ fn page_address(slot: u32, first: u32) -> (page: u64, offset: u64) pure {
 }
 
 fn new_pages<T: copy>(count: u64, missing: T) -> made: SlotPages<T> pure {
-  doc "Creates fixed-capacity pages for a sealed dense prefix. The directory alone may grow later; no page is ever grown.";
+  doc "Creates one built-in Paged for each nonempty owner, retaining the small-first logical growth boundaries.";
   if count == 0_u64 {
     return SlotPages<T>::Vacant();
   }
@@ -36,35 +36,23 @@ fn new_pages<T: copy>(count: u64, missing: T) -> made: SlotPages<T> pure {
   let rest = count -sat width;
   let rounded = rest +sat 63_u64;
   let later = rounded / 64_u64;
-  let length = later +sat 1_u64;
-  let directory = box_slots_new::<Option<Box<Array<T>>>>(capacity: length);
-  for (page in 0_u64..length) {
-    if directory.inner.len < directory.inner.cap {
-      let absent = None<Box<Array<T>>>();
-      place_back(window: &directory.inner, value: move absent);
+  let tail = later *sat 64_u64;
+  let capacity = width +sat tail;
+  let storage = box_paged_new::<T>(capacity: capacity);
+  for (at in 0_u64..capacity) {
+    if storage.inner.len < storage.inner.cap {
+      place_back(window: &storage.inner, value: missing);
     }
   }
-  for (page in 0_u64..length) {
-    let capacity = if page == 0_u64 {
-      give width;
-    } else {
-      give 64_u64;
-    }
-    if page < directory.inner.len {
-      let values = box_array_filled::<T>(count: capacity, value: missing);
-      let present = Some<Box<Array<T>>>(value: move values);
-      set directory.inner[page] = move present;
-    }
-  }
-  return SlotPages<T>::Pages(first: first, directory: move directory);
+  return SlotPages<T>::Pages(first: first, storage: move storage);
 }
 
 fn page_ensure<T: copy>(pages: &SlotPages<T>, slot: u32, missing: T) -> result: unit writes(pages) {
-  doc "Extends only the pointer directory through a requested page, leaving intervening pages absent; allocates only the requested fixed array.";
+  doc "Extends the built-in page store through the requested logical page without relocating published cells.";
   match pages^ {
     Vacant() => {
-      let directory = box_slots_new::<Option<Box<Array<T>>>>(capacity: 4_u64);
-      set pages^ = SlotPages<T>::Pages(first: 4_u32, directory: move directory);
+      let storage = box_paged_new::<T>(capacity: 4_u64);
+      set pages^ = SlotPages<T>::Pages(first: 4_u32, storage: move storage);
     }
     Pages(..) => {
     }
@@ -72,29 +60,18 @@ fn page_ensure<T: copy>(pages: &SlotPages<T>, slot: u32, missing: T) -> result: 
   match pages^ {
     Vacant() => {
     }
-    Pages(first: first_width, directory: pointers) => {
+    Pages(first: first_width, storage: values) => {
       let (page, offset) = page_address(slot: slot, first: first_width^);
-      let required = page +sat 1_u64;
-      let start = pointers^.inner.len;
-      for (index in start..required) {
-        let absent = None<Box<Array<T>>>();
-        let pushed = push_item::<Option<Box<Array<T>>>>(cell: pointers, value: move absent, ceiling: 1073741824_u64);
+      let width = cvt::<u32, u64>(first_width^);
+      let tail = page *sat 64_u64;
+      let required = width +sat tail;
+      if values^.inner.cap < required {
+        grow_paged(cell: values, capacity: required);
       }
-      if page < pointers^.inner.len {
-        let page_cell = &pointers^.inner[page];
-        match page_cell^ {
-          None() => {
-            let width = cvt::<u32, u64>(first_width^);
-            let capacity = if page == 0_u64 {
-              give width;
-            } else {
-              give 64_u64;
-            }
-            let values = box_array_filled::<T>(count: capacity, value: missing);
-            set pointers^.inner[page] = Some<Box<Array<T>>>(value: move values);
-          }
-          Some(..) => {
-          }
+      let start = values^.inner.len;
+      for (at in start..required) {
+        if values^.inner.len < values^.inner.cap {
+          place_back(window: &values^.inner, value: missing);
         }
       }
     }
@@ -103,25 +80,16 @@ fn page_ensure<T: copy>(pages: &SlotPages<T>, slot: u32, missing: T) -> result: 
 }
 
 fn page_read<T, E, R: copy, fn observe(value: &T, env: &E) -> result: R reads(value), reads(env)>(pages: &SlotPages<T>, slot: u32, span: u32, env: &E, missing: R) -> made: R reads(pages), reads(env) {
-  doc "The shared read access: finds one fixed page and invokes the field-specific function without copying its containing cell.";
+  doc "Reads one stable logical slot through the built-in page directory without copying its containing cell.";
   if slot < span {
     match pages^ {
       Vacant() => {
       }
-      Pages(first: first_width, directory: pointers) => {
-        let (page, offset) = page_address(slot: slot, first: first_width^);
-        if page < pointers^.inner.len {
-          let page_cell = &pointers^.inner[page];
-          match page_cell^ {
-            None() => {
-            }
-            Some(value: values) => {
-              if offset < values^.inner.len {
-                let made = observe(value: &values^.inner[offset], env: env);
-                return made;
-              }
-            }
-          }
+      Pages(storage: values, ..) => {
+        let at = cvt::<u32, u64>(slot);
+        if at < values^.inner.len {
+          let made = observe(value: &values^.inner[at], env: env);
+          return made;
         }
       }
     }
@@ -130,24 +98,15 @@ fn page_read<T, E, R: copy, fn observe(value: &T, env: &E) -> result: R reads(va
 }
 
 fn page_edit<T, E, fn apply_field(value: &T, env: &E) -> result: unit reads(env), writes(value)>(pages: &SlotPages<T>, slot: u32, span: u32, env: &E) -> result: unit reads(env), writes(pages) {
-  doc "The shared existing-cell write access; the callback selects the field group and leaves other groups in place.";
+  doc "Edits one stable logical slot, leaving field selection to the callback.";
   if slot < span {
     match pages^ {
       Vacant() => {
       }
-      Pages(first: first_width, directory: pointers) => {
-        let (page, offset) = page_address(slot: slot, first: first_width^);
-        if page < pointers^.inner.len {
-          let page_cell = &pointers^.inner[page];
-          match page_cell^ {
-            None() => {
-            }
-            Some(value: values) => {
-              if offset < values^.inner.len {
-                apply_field(value: &values^.inner[offset], env: env);
-              }
-            }
-          }
+      Pages(storage: values, ..) => {
+        let at = cvt::<u32, u64>(slot);
+        if at < values^.inner.len {
+          apply_field(value: &values^.inner[at], env: env);
         }
       }
     }
@@ -156,31 +115,17 @@ fn page_edit<T, E, fn apply_field(value: &T, env: &E) -> result: unit reads(env)
 }
 
 fn page_each<T, E, fn apply_field(values: &[T], base: u64, env: &E) -> result: unit reads(env), writes(values)>(pages: &SlotPages<T>, env: &E) -> result: unit reads(env), writes(pages) {
-  doc "Visits allocated pages in a counted directory loop; each callback owns one disjoint fixed array and its global slot base.";
+  doc "Visits each built-in page independently with its global logical slot base.";
   match pages^ {
     Vacant() => {
     }
-    Pages(first: first_width, directory: pointers) => {
-      let width = cvt::<u32, u64>(first_width^);
-      let count = pointers^.inner.len;
+    Pages(storage: values, ..) => {
+      let width = paged_page_len::<T>();
+      let count = values^.inner.pages.len;
       for (page in 0_u64..count) {
-        if page < pointers^.inner.len {
-          let page_cell = &pointers^.inner[page];
-          match page_cell^ {
-            None() => {
-            }
-            Some(value: values) => {
-              let previous = page -sat 1_u64;
-              let tail = previous *sat 64_u64;
-              let base = if page == 0_u64 {
-                give 0_u64;
-              } else {
-                give width +sat tail;
-              }
-              let length = values^.inner.len;
-              apply_field(values: &values^.inner[0_u64..length], base: base, env: env);
-            }
-          }
+        if page < values^.inner.pages.len {
+          let base = page *sat width;
+          apply_field(values: &values^.inner.pages[page], base: base, env: env);
         }
       }
     }

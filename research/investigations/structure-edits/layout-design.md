@@ -1184,6 +1184,40 @@ step-4 counters, not an allocation or whole-builder census; fallback attempts
 and route-page visits require fuller instrumentation before locality claims.
 The maintained TODO carries those limits and the full-build route-cost risk.
 
+### Built-in Paged owner-preserving variant
+
+This experiment compares `research/m2-paged-nodes` with
+`38fd6be2ba5ad1ca972f689e734e7f40737d8876`, the two-level page variant below.
+The question is whether the built-in page store can implement the same
+owner-local helper contracts with identical full-build dumps and edit logs,
+including splice/fallback rows and counters. Any difference rejects the
+replacement. No timing experiment is part of this task. An html5 out-of-memory
+failure or several-fold slowdown is a finding, not permission to share stores.
+
+Each nonempty store remains local to its original owner; no context-wide
+pool is introduced. `SlotPages` keeps Vacant and the logical first width,
+with one `Box<Paged<T>>` replacing the directory. Initial logical capacity
+still rounds to the first 4–64 cells plus 64-cell increments. Growth extends
+through the requested logical block, with Paged allocating native whole pages
+and initializing its dense prefix, including any intervening route holes.
+Native page length is type-dependent; first-page allocation must be measured
+in CI rather than assumed to be 4096 bytes. Context blocks, paragraphs and
+children remain `Box<Slots<T>>`. Sealing, AVL operations, helper signatures,
+callbacks and callers are unchanged, except for the approved storage access
+inside `store_reduction`: independent node page/cell loops use the global
+slot to read payloads whose native page length differs. Its reduction and
+callers remain unchanged. Q1 was approved as option A in the continuation
+instruction. This is an experimental storage choice, not a main-line adoption.
+
+The true dependencies remain the owner-local pending and length-update chains,
+the AVL ancestors, and child totals before their parent reduction. Native
+page publication has disjoint pages and cells, with read-only payload access.
+The shared-context alternative is outside the like-for-like comparison and
+would change ownership. The retained hand-written store is the comparison,
+not a fallback for an unsuccessful built-in store. Validation uses layout-check,
+check, one requested oracles run and one requested falsify run; a CI census
+must report native lengths, actual first-page bytes and html5 store counts.
+
 ### Two-level page experiment
 
 The experiment starts at `2d706ba252c80336ba1926c3d77054714046586d`.
