@@ -55,6 +55,10 @@ The edit-cost kind reuses the transfer page unchanged. It combines one-character
 round trips with height-changing sentence round trips across relative, expired
 float, negative-margin re-entry, constrained sibling and marker barriers.
 
+The positioned-isolated kind retains the original positioned edits and isolates
+the percentage-height fixture in its own flow root, so unrelated seams can
+reach anchor publication; the original positioned kind remains unchanged.
+
 The edit-height and edit-baseline kinds reuse style-case.html. Inline vertical alignment changes
 only the last line's descent; fixed line height and a larger inline font change
 its baseline without changing its height. The targeted flow-root is the only
@@ -90,6 +94,8 @@ CASES = {
              'flex-float-owner', 'flex-positioned-owner'),
 }
 
+CASES['positioned-isolated'] = CASES['positioned']
+
 
 def marker(tree, case, role):
     """Resolve one exact marker, refusing fixtures with missing/duplicate text."""
@@ -109,12 +115,14 @@ def text_pair(lines, node):
 def generate(tree, kind):
     """Exercise each independent fixture and its text routes after both edits."""
     lines = []
+    if kind == 'positioned-isolated':
+        lines.append('S .growing{display:flow-root}')
     if kind in ('edit-baseline', 'edit-height'):
         inline = [element for element in tree.elements if element['name'] == 'em']
         if len(inline) != 1:
             raise ValueError('expected one inline em in the unchanged style fixture')
         node = inline[0]['node']
-        lines.append('S html::after{content:"reference"} body{display:inline-block;width:300px} body>div,body>p{display:none} body>p:nth-of-type(1){display:flow-root;width:300px;font-size:0;line-height:0} em{font-size:16px;line-height:40px} .costbaseline{font-size:24px} .costdescent{vertical-align:-30px}')
+        lines.append('S head{display:inline-block;width:200px} title{display:block;font-size:16px;line-height:20px} head>style{display:none} body{display:inline-block;width:300px} body>div,body>p{display:none} body>p:nth-of-type(1){display:flow-root;width:300px;font-size:0;line-height:0} em{font-size:16px;line-height:40px} .costbaseline{font-size:24px} .costdescent{vertical-align:-30px}')
         token = 'costbaseline'
         if kind == 'edit-height':
             lines = ['S body{display:flex;align-items:baseline;width:2000px} p{width:2000px;min-width:0;flex-shrink:0;line-height:40px} p::before{content:"barrier";display:block;position:relative} .costdescent{vertical-align:-30px}']
@@ -153,7 +161,7 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture_kind = {'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
+    fixture_kind = {'positioned-isolated': 'positioned', 'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
     fixture = Path(__file__).resolve().with_name(fixture_kind + '-case.html')
     fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')

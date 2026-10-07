@@ -162,8 +162,8 @@ style fixture: downward inline vertical alignment is intended to change height
 without moving the baseline, and a larger font at fixed line height is intended
 to move the baseline without changing height. Separate mutations test those
 conditions. Their detection, including unmutated identity, remains required.
-The `[stationary]` tag runs just these two diagnostic mutations; `[falsify]`
-takes precedence and retains the entire matrix.
+The `[stationary]` tag selects the focused guard/anchor diagnostics described
+below; `[falsify]` takes precedence and retains the entire matrix.
 
 The auxiliary base fixture initially reused the timing compiler artifact.
 Review correctly rejected that compiler-confounded attribution. The corrected
@@ -441,3 +441,24 @@ self samples remain dominated by full-context operations: `reduce_sequence`
 11.10%, `prepare_boundary_entry` 7.66% and `fill_flow` 7.57%. The per-context
 probe must distinguish a missed existing equality from a dependency requiring
 a changed representation or certificate before proposing the next direction.
+
+## Observable guard fixtures
+
+The 4f874e6 baseline mutation changed the exercised path (two paragraph
+updates became one, with boundary indexes falling from 40 to 30), but its
+generated reference text is absent from the DOM-based geometry dump. It was
+therefore an ineffective observer, not proof that the baseline guard was
+unvisited or unnecessary. The revised script makes the existing head/title
+visible as a real inline baseline peer, retaining the flow-root target and
+unchanged HTML. CI must detect the baseline mutant with this observer.
+
+The full mutation run also leaves `no-positioned-anchor` undetected. All ten
+structural edits in its original positioned fixture refuse with reason 7.
+Source inspection finds the percentage-height absolute child in `.growing`
+clears `definite_free` on the enclosing flow; ancestor splice admission then
+refuses before anchor publication. Those admission and preparation bodies
+are unchanged from 9e1561a. The additional `positioned-isolated` script sets
+only `.growing{display:flow-root}` before the same edits, separating that
+dependency from the other anchor cases. The original script remains wired.
+The limited `[stationary]` diagnostic now includes that anchor mutation;
+`[falsify]` still selects all 26 mutations. Detection remains required.
