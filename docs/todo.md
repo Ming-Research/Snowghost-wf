@@ -9,6 +9,26 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
+- **Affine element permission rejects a length read of its written root.**
+  At experiment `wf-exp-1b9b08301143`, a flat `for (s in 0..source.len)`
+  loop with `if s < target.len { swap(&target[s], &source[s]); }` is denied
+  under condition 2 for both `&Run<T>` and contiguous slice parameters.
+  The complete canonical minimal functions are `swap_runs`, `swap_slices`
+  and the paired length-hoisted controls in
+  [the permission probe](../research/investigations/storage-layout/probes/c2-paged-permission.wf).
+  The same restriction denies a Paged or Slots field-pool gather with an
+  in-loop target-length guard. Scalar fields of noncopy elements are permitted
+  in the controls. PAR-2's affine-element rule admits only matching element
+  reads (plus its page-descriptor exception) through the written root; the
+  pinned checker's `element_map_coverage` implements that restriction, while
+  certified coverage already exempts measure reads. This is a specified
+  permission limitation, not a demonstrated compiler defect. Impact: dense
+  boundary publication and payload Run swaps remain uncertified in the port.
+  Change: consider admitting invariant measure reads for affine-element maps
+  without admitting writes to length or capacity; validate both storage kinds
+  and conflicting measure-write negatives. Reopen before accepting renderer
+  C1 or when Whitefoot changes PAR-2; the renderer retains the exposed form.
+
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
   Fork(left: Box<Pages>, right: Box<Pages>); }`, and functions that change
@@ -243,6 +263,21 @@ example apart from the renderer code that exposed it
   origin through placement in the oracle's dump and make the case reach the
   sum, or mutate the sum it does reach. Reopen before M2's layout PR is
   ready; the falsifier stays out of falsify-m2's matrix until then.
+
+- **M2 Paged sealing loses two loop permissions.** At
+  `64e6dbfc4b935a15fc647404b8df7939068695b4`, layout ledger run
+  [37579711874](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37579711874)
+  denies the owner-sealing loop's shared `context.storage` argument (condition
+  2), where the old per-owner pages were permitted. Disjoint prefix ranges
+  exist, but the helper row does not expose them. Child sealing also becomes
+  denied because its capacity-error propagation can leave the loop (condition
+  4). Impact: the port adds serial permission barriers despite independent
+  owner work. Change: expose assigned Run ranges at the owner boundary and
+  separate successful capacity admission from recursive independent sealing;
+  preserve the preflight and error semantics. Reopen before claiming the
+  prototype's renderer C1 criterion or maximal initial sealing parallelism;
+  validate both ledger permissions and unchanged oracle/falsifier results.
+  These are source/interface limitations, not demonstrated compiler defects.
 
 - **M2 pooled payloads still need owner-membership proof and reclamation evidence.**
   The built-in Paged experiment keeps `Context.blocks`, `paragraphs` and

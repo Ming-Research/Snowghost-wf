@@ -1732,7 +1732,7 @@ instead of only pointer-prefix and requested-page work. This semantic-preserving
 cost change remains an explicit risk in `docs/todo.md`; it is included in C3
 and edit-cost follow-up, and is not described as sparse allocation.
 
-#### Evidence to collect
+#### Evidence procedure
 
 The temporary `layout-check` workflow retains the original
 `research/storage-mocks` C1 source, with its license, alongside the built-in
@@ -1757,8 +1757,7 @@ measurement of actual parallel overlap.
 and complete raw edit logs against `38fd6be`, retaining the same splice and
 fallback rows; `[falsify]` retains every existing mutation and check. Emitted
 LLVM must show directory-pointer copies in `grow_paged` with no element copy.
-Source line counts are compared with the same task base. These are required
-observations, not results claimed before the runs finish. Any newly exposed
+Source line counts are compared with the same task base. The completed observations are recorded below, scoped to their source revisions. Any newly exposed
 compiler refusal or defect receives a minimal example and a maintained TODO;
 renderer semantics are not changed to hide it.
 
@@ -1798,3 +1797,126 @@ slot immediately after the existing counted payload read, using the already
 collected handles; the extra traversal is removed. The review also removed
 the unused page-callback environment and corrected obsolete representation
 descriptions. These are repairs within the selected pooling direction.
+
+
+#### Renderer permission comparison
+
+[CI run 37579711874](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37579711874)
+at `64e6dbfc4b935a15fc647404b8df7939068695b4` emitted all three layout ledgers.
+On the same baseline source, the original `wf-f949e676acfa` and experiment
+compilers give identical verdicts and reasons for all 547 source loops. The
+source port changes the totals from 128 permitted / 419 denied to 130 permitted /
+421 denied across 551 current loops. Of 539 corresponding loops, 124 stay
+permitted, 413 stay denied, two become denied and none becomes permitted.
+Eight old loops disappear (two permitted, six denied), while twelve new loops
+appear (six permitted, six denied). These whole-layout totals include loops
+unrelated to storage; they are not a count of Paged loops alone.
+
+The new flat entry-pool copy and relocation loops are permitted, as are the
+paragraph and child handle-rebase loops. `prepare_context`'s paragraph and
+child preparation band reductions remain permitted. The flat `store_reduction`
+and `publish_boundaries` block-publication loops remain denied at their element writes; the new
+block handle-rebase and generic payload-Run swap loops are also denied under
+condition 2. The standalone C1 improvement therefore does **not** establish
+the prototype's full renderer C1 criterion. Minimal controls below separate
+these refusals from a claim that Paged itself caused them.
+
+Two regressions have source-visible causes. The owner-sealing loop formerly
+wrote an independent block's private pages; it now passes the shared
+`context.storage` to `seal_owner`, so its coarse effect row hides the disjoint
+owner ranges (condition 2). The recursive child-sealing loop now propagates a
+possible failure from the global pool-capacity preflight, which leaves the
+loop (condition 4). Neither observation establishes a compiler defect. The
+capacity safety check remains, and the renderer is not rewritten to conceal
+the refusal. A future owner-sealing interface may expose already assigned
+Run ranges directly; whether it certifies the loop remains to be checked. That
+interface work is distinct from this storage experiment and its observed
+permission outcome.
+
+
+The complete [loop-by-loop comparison](runs/paged-layout-ledger.md) links its
+TSV of every verdict and full reason, semantic correspondences, source revisions
+and artifact hashes. [Source line counts](runs/paged-line-counts.tsv) cover all
+31 layout `.wf`/`.wfm` files, including text: 28,480 to 28,401, a reduction of
+79 lines. `pages.wf` falls from 216 to 66; `sequence.wf` grows from 960 to 1,028.
+The native and built-in C1 probes separately have 103 and 92 lines.
+
+#### Correctness validation and completion review
+
+The renderer validation revision is
+`64e6dbfc4b935a15fc647404b8df7939068695b4`:
+
+| Required run | Result and evidence |
+| --- | --- |
+| [check 37579711936](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37579711936) | Passed: renderer checks, document-arena self-test and design lint. |
+| [layout-check 37579711874](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37579711874) | Passed: layout module, C1 sequential/four-worker checks, LLVM and three layout ledgers. |
+| [oracles-m2 37579712002](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37579712002) | Passed both oracle and structural-diagnostic jobs. Full-build dumps and 19 edit-log comparisons are byte-identical to `38fd6be`, including splice/fallback rows and counters, in sequential and parallel runs. |
+| [falsify-m2 37579711847](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37579711847) | Passed all 17 mutation jobs and check-machinery falsifiers. |
+
+The separate read-only Codex/GPT-6 completion review covered the complete
+`38fd6be..86cf37a` implementation, the project checklist and owner-wide design
+checks, then the `64e6dbf` repair diff. Its three findings were fixed: redundant
+uncounted retirement traversal, stale representation descriptions, and an
+unused callback environment. The review rechecked those repairs without
+rerunning green suites. Task-base design lint reports seven nodes, depth one,
+57 decisions and 24 rejected alternatives, unchanged counts from the base.
+Local checks compiled nothing; all compilation and execution used CI.
+The experiment remains a work branch, with no readiness or merge claim.
+
+
+#### Minimal permission refusals and controls
+
+The complete standalone [permission controls](../storage-layout/probes/c2-paged-permission.wf)
+and [all probe loop ledgers](runs/paged-probe-ledgers.txt) are preserved.
+[CI run 37592536947](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37592536947)
+at `f2c497e287498f7186d8f2b297e59fd1057e998f` passed the storage-probe step:
+sequential and four-worker literal checks, permission emission and LLVM.
+No renderer source changed after the validated `64e6dbf` revision.
+
+| Minimal operation | In-loop target length | Length captured before loop |
+| --- | --- | --- |
+| Paged field-pool gather (`gather_paged`) | Denied, condition 2 | Permitted |
+| Slots field-pool gather (`gather_slots`) | Denied, condition 2 | Permitted |
+| Generic swap over two `&Run<T>` parameters | Denied, condition 2 | Permitted |
+| Generic swap over two `&[T]` parameters | Denied, condition 2 | Permitted |
+| Specialized swap over two `&Run<Cell>` parameters | Denied, condition 2 | Permitted |
+
+`Cell` owns a Box, so it is noncopy. Its direct scalar-field update and its
+narrow helper update are permitted in both Paged and Slots. Thus neither
+noncopy elements nor generic swaps explain the observed refusals. The paired
+controls change only the placement of the unwritten target-length read;
+independent literal checks cover each result before a later operation can
+hide it. A specialized `swap<u64>` control was initially rejected correctly by
+OP-11; the reviewed probe uses affine Cell specialization instead. That was a
+probe error, not a compiler defect.
+
+The minimized rejected form is a loop over source slots that tests
+`s < target.len` inside its body before writing or swapping `target[s]`.
+[Pinned PAR-2](https://github.com/Ming-Research/Whitefoot/blob/1b9b08301143bd6831a376e7167db7b5d5788c95/spec/kernel-spec.md)
+requires reads through a written affine-element root to be matching element
+reads, except for the page-formation descriptor exemption.
+[`element_map_coverage`](https://github.com/Ming-Research/Whitefoot/blob/1b9b08301143bd6831a376e7167db7b5d5788c95/compiler/src/semantic/loop_permission.rs#L1613)
+implements that exclusion; certified coverage separately exempts measure
+reads. The control result isolates this specified permission limitation,
+which also explains the renderer's guarded dense reductions, block publication,
+block handle rebasing and payload Run swaps. It is recorded in `docs/todo.md`
+as a Whitefoot requirement, with both storage controls and a reopening condition.
+No new compiler defect was demonstrated, and no renderer workaround was added.
+
+Outcome: standalone C1 is improved, but the current port fails renderer C1.
+Because the isolated refusals are not compiler defects, the prototype
+criterion rejects this current result; it is not an accepted replacement
+pending only timing. Directory-copy criterion C2 is satisfied, and performance
+criterion C3 is unmeasured.
+The two source-induced sealing regressions and the measure-read restriction
+remain explicit follow-ups. Sparse route-prefix allocation cost and pooled
+owner-membership/reclamation evidence also remain recorded follow-ups; they
+are not claimed resolved by correctness or permission checks.
+
+
+A scoped read-only follow-up review covered the permission controls and
+preserved evidence through `f2c497e`, including the actual sequential/parallel
+probe results, all ledger rows and the pinned specification/checker diagnosis.
+The invalid scalar swap control and imprecise block-publication wording were
+fixed and rechecked; no findings remained within scope. The owner has not been
+asked to accept the failed criterion, and no approval or merge is implied.
