@@ -1,0 +1,67 @@
+# Temporary: bisects the per-edit cost of M2's layout steps on hosted runners,
+# one job per build, in parallel. A regression of tens to hundreds of times
+# needs no precise machine; the 14900K is for close comparisons. Removed with
+# this temporary branch.
+name: bisect-hosted
+
+on:
+  push:
+    branches: [research/timing-pages]
+
+jobs:
+  time:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [main=02855399257b, s1a=a0f040229afe, s1b=77e439391eed, s1c=31725c882ed9, s2=06ffc4788375, s3a=59c88e0947c9, m2=d3450cdba983]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: LLVM 22 and fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          curl -fsSL --retry 3 -o /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 22 >/dev/null
+          sudo ln -sf /usr/bin/clang-22 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld
+          clang --version | head -1
+      - name: Drivers of ${{ matrix.build }}
+        run: |
+          set -euo pipefail
+          pair='${{ matrix.build }}'
+          name=${pair%%=*} ref=${pair#*=}
+          git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+          git worktree add -q --detach build/tree "$ref"
+          (cd build/tree && git submodule update -q --init)
+          make -s -C build/tree compiler
+          wfc=$(realpath "$(ls build/tree/build/whitefoot/*/whitefootc | head -1)")
+          (cd build/tree/renderer && "$wfc" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_seq")
+          (cd build/tree/renderer && "$wfc" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_par")
+          echo "$name $ref $(cat build/tree/whitefoot.pin)"
+      - name: Pages and edit scripts
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch >/dev/null 2>&1 || true
+          make -s oracle-fonts
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
+      - name: Time word and font-size edits
+        run: |
+          set -euo pipefail
+          pair='${{ matrix.build }}'
+          name=${pair%%=*}
+          for page in ecma262 html5; do
+            for kind in word fontsize; do
+              rm -rf build/x5/time
+              ALONE=1 sh research/investigations/incremental-layout/run.sh time seq "$page" "$kind" 1 > out.txt
+              echo "RESULT $name seq $page $kind $(grep -E '^us min|style\+update' out.txt | tr '\n' ' ')"
+              rm -rf build/x5/time
+              ALONE=1 WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh time par "$page" "$kind" 1 > out.txt
+              echo "RESULT $name par4 $page $kind $(grep -E '^us min|style\+update' out.txt | tr '\n' ' ')"
+            done
+          done
