@@ -1195,7 +1195,7 @@ tombstones, or field-narrow operations change. The primary agent owns paired
 14900K measurements; this branch makes no timing claim.
 
 The selected page width is 64: tens of thousands of entries need hundreds of
-pointers, while fixed-page padding is less than 64 cells per store. A first
+pointers, while fixed-page padding is less than 64 cells per dense store. A first
 page of the smallest power of two covering the initial owner, clamped to
 4–64, prevents a one-entry owner allocating 64 large SequenceNodes. The choice
 is reasoned, not measured; reopen it if allocation, memory, or measured costs
@@ -1210,6 +1210,14 @@ The directory grows geometrically through the existing `push_item` helper;
 only optional pointers move. Sparse route patches allocate the requested
 page and initialize intervening pointer entries to None. This adds pointer
 prefix work to high sparse writes, but never initializes absent payloads.
+Dense directory creation also has a `place_back` length-update chain: each
+optional pointer slot must exist before the counted page allocation loop can
+write it. At the pinned Whitefoot revision, OP-13's filled Array constructors
+require copy elements, which `Option<Box<Array<T>>>` does not satisfy, and
+`box_slots_new` starts empty. Thus this Slots representation initializes its
+directory sequentially, then allocates and publishes pages independently.
+That directory-length chain is an additional full-build cost of this choice;
+it does not order payload work across the completed pages.
 
 `page_read`, `page_edit`, and `page_each` take raw function-kind callbacks;
 field callbacks select links, own, total, payload, or relocation fields. Bulk
@@ -1237,13 +1245,51 @@ make check, oracles against the pinned base (full dumps and structural path
 rows), and all existing falsifiers. The Whitefoot pin and submodules remain
 unchanged. The experiment has no merge authorization or performance acceptance.
 
-The first module check passed on `baf4bc32b6d06d800e24ee0fa9fcbd6effb9504d`
-([layout-check 37562404107](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37562404107)).
-Full gate, base equivalence, and mutation detection remain pending at this
-point. `sequence.wf` changes from 1,106 to 960 lines and `routes.wf` from 86
-to 62; the shared `pages.wf` contains 216 lines. No Fork-style page descent
-remains. These are source counts, not performance evidence.
+#### Validation and review
 
+The renderer and workflow revision
+`6565a7cbe60136897ab6835f201c5ad83ba7ff93` passed:
+
+| Check | CI run | Result |
+| --- | --- | --- |
+| `layout-check` | [37562475232](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37562475232) | `pkg::layout` accepted |
+| `make check` | [37562475206](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37562475206) | Gate, DOM self-test and design lint passed |
+| `[oracles]` | [37562475237](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37562475237) | Both jobs passed; dumps and complete edit logs match the frozen base |
+| `[falsify]` | [37562475201](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37562475201) | All 17 renderer mutations detected; check-machinery job passed |
+
+Full-build dumps of ecma262 and html5 match `2d706ba` byte for byte. The
+flow/table/flex/grid/columns fixtures and the saturation fixture also match
+the base and agree byte for byte between sequential and four-worker builds.
+Complete raw edit logs match the base byte for byte
+for six edit kinds on both real pages and seven focused fixtures, in both
+build modes. Thus hashes, splice/fallback rows and the printed visit counters
+are unchanged in that coverage. The raw logs are retained in the oracle run's
+`pages-base-comparison` artifact. Existing falsifier anchors did not move;
+none was weakened. Additional comparison probes reject altered, truncated,
+and missing dump/path/counter evidence.
+
+An independent read-only Codex/GPT-6 agent (exact backend variant not exposed)
+reviewed the complete task-base diff through `6565a7c`, changed sections and
+direct consumers, all triggered A/D/C/T/R/M/V checklist groups, and
+G1–G3/DC1–DC4 against pipeline/layout, its ancestor and the style sibling.
+It reran no green suite. Three prose findings were fixed: the maintained TODO's
+obsolete fork-growth/status description; the omitted directory-length
+initialization dependency and its OP-13 ground; and a padding bound now
+qualified to dense stores. No renderer correctness finding remained within
+scope. Performance and actual parallel overlap remain unverified.
+
+Compile-free local `make design-lint DESIGN_REVIEW_BASE=2d706ba` passed all
+21 checker tests. Against this task's base: seven nodes, depth one, 57 decisions
+and 24 rejected alternatives, with no count changes. All renderer compilation
+and execution ran in hosted CI; no timing experiment was run. No Whitefoot pin,
+submodule, or Whitefoot-gap record changed.
+
+`sequence.wf` changes from 1,106 to 960 lines and `routes.wf` from 86 to 62;
+the shared `pages.wf` contains 216 lines. No Fork-style page descent remains.
+These are source counts, not performance evidence. Logical AVL and nested
+context recursion, pending construction lists and transient cursor scratch
+remain; the existing typed Context payload pools are outside this SlotPages
+experiment and retain the separate TODO ownership-migration item.
 
 ### Full-build regression repair
 

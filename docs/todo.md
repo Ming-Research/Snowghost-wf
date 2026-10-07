@@ -259,23 +259,26 @@ example apart from the renderer code that exposed it
   index uses append-only slots with tombstones; generation-checked reuse
   belongs with that migration and session-growth policy.
 
-- **M2 nested index still needs CI and allocation-cost evidence.**
+- **M2 nested index still needs allocation-cost evidence.**
   `renderer/layout/sequence.wf` supplies local insert/remove/prefix/suffix
-  operations and a virtual walker, but only append construction and output
-  repair are wired before the step-5 splice. No local compile or execution
-  was authorized. Compare full dumps and edit prefixes, exercise AVL
-  rotations and deletion of a two-child node, inspect certified preparation
-  loops, and compare full-build costs against the frozen M1 source at the
-  same Whitefoot pin. Each sequence starts with four-slot pages and grows
-  its directory by wrapping the old roots, without copying existing pages.
-  Isolated virtual rank lookup descends each owner index; reference walks
-  materialize events and now reduce payload outputs once bottom-up before
-  page publication. Validate the disjoint slice proofs, restored float-prefix
-  state, physical-read counters and temporary snapshot/output memory, then
-  measure against the [full-build repair criterion](../research/investigations/structure-edits/layout-design.md#full-build-regression-repair)
-  before accepting its performance envelope. Reopen with the primary
-  agent's step-3 CI and step 4's boundary-output propagation. Do not infer
-  byte identity, logarithmic physical visit counts or speed from source alone.
+  operations used by the neutral step-5 splice, plus the virtual walker.
+  The two-level-page experiment replaces recursive directory growth with
+  optional pointers to immutable-capacity arrays: a 4-to-64-slot first page
+  and 64-slot later pages. Directory growth moves only pointers, never
+  existing entry cells. Bulk sealing adds transient SequenceCursor scratch
+  to retain disjoint median construction before counted page publication;
+  sparse route writes may initialize a pointer prefix across absent pages.
+  Isolated virtual rank lookup still descends each owner's AVL index;
+  reference walks materialize events and reduce payload outputs once
+  bottom-up before page publication. Reopen with the primary agent's paired
+  full-build and per-edit measurements on the 14900K, including allocation
+  and scratch costs, against `2d706ba` at the unchanged Whitefoot pin.
+  Require byte-identical dumps and splice/fallback rows, incremental identity,
+  mutation detection, preserved field groups and visit-counter meanings.
+  The [experiment contract](../research/investigations/structure-edits/layout-design.md#two-level-page-experiment)
+  records the representation and additional costs; passing correctness CI
+  does not establish its performance envelope or complete the separate
+  typed-payload ownership migration above.
 
 
 - **M2 geometry still bridges the context-coordinate reference walker.**
