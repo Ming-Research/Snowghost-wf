@@ -527,6 +527,131 @@ fn publish_boundaries(context: &Context, events: &[Flow], styles: &Styles, basis
   return unit;
 }
 
+fn publish_reference_item(context: &Context, item: Flow, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "Publishes one settled reference payload while local geometry is decoded. Nested sequence totals must already be current for Open. Repairs only semantic index ancestors; reference geometry, height and sibling displacement are already settled by the caller. Counters cover directly opened payloads, owner blocks and AVL metadata, excluding shared transfer preparation and earlier reference replay.";
+  let owner = no_index;
+  let slot = no_index;
+  let own = empty_output();
+  let nested = False();
+  match item {
+    Open(block: b) => {
+      set nested = True();
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+        set owner = context^.blocks.inner[at].parent;
+        set slot = context^.blocks.inner[at].entry_slot;
+        let root = context^.blocks.inner[at].entries.root;
+        let total_field = False();
+        let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
+        let (transfer, size) = block_output(block: &context^.blocks.inner[at], styles: styles, inside: &inside, basis_height: basis_height);
+        set own = transfer;
+        let measured = size;
+        let origin = block_origin(context: context, block: b);
+        let parent_origin = block_origin(context: context, block: owner);
+        let offset = origin.y -sat parent_origin.y;
+        let observed = entry_motion(context: context, item: item, styles: styles);
+        set measured.offset = offset;
+        let natural = if observed.natural_floor == 9223372036854775807_i64 {
+          give observed.natural_floor;
+        } else {
+          give observed.natural_floor -sat offset;
+        }
+        set measured.natural = natural;
+        set measured.motion_known = observed.motion_known;
+        let lifted_motion = lift_block_output(inside: &inside, measured: measured);
+        set own.natural_floor = lifted_motion.natural_floor;
+        set own.float_reach = lifted_motion.float_reach;
+        set own.motion_known = lifted_motion.motion_known;
+        set context^.blocks.inner[at].boundary = own;
+        set context^.blocks.inner[at].output = measured;
+      } else {
+        return unit;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        set owner = context^.paragraphs.inner[at].block;
+        set slot = context^.paragraphs.inner[at].entry_slot;
+      } else {
+        return unit;
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        set owner = context^.children.inner[at].block;
+        set slot = context^.children.inner[at].entry_slot;
+      } else {
+        return unit;
+      }
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        set owner = context^.children.inner[at].block;
+        set slot = context^.children.inner[at].entry_slot;
+      } else {
+        return unit;
+      }
+    }
+    Out(context: o) => {
+      let at = cvt::<u32, u64>(o);
+      if at < context^.children.inner.len {
+        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+        set owner = context^.children.inner[at].block;
+        set slot = context^.children.inner[at].entry_slot;
+      } else {
+        return unit;
+      }
+    }
+    Close(..) => {
+      return unit;
+    }
+  }
+  if nested {
+  } else {
+    let empty = empty_output();
+    let no_block = empty_block_output();
+    let prepared = BoundaryReduction(own: empty, total: empty, block: no_block);
+    prepare_boundary_entry(context: context, item: item, styles: styles, destination: &prepared);
+    set own = prepared.own;
+  }
+  if owner == no_index {
+    boundary_set(sequence: &context^.entries, slot: slot, output: own, visits: &context^.boundary_visits);
+  } else {
+    let owner_at = cvt::<u32, u64>(owner);
+    if owner_at < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      boundary_set(sequence: &context^.blocks.inner[owner_at].entries, slot: slot, output: own, visits: &context^.boundary_visits);
+    }
+  }
+  return unit;
+}
+
+fn publish_reference_ancestors(context: &Context, owner: u32, styles: &Styles, basis_height: i32) -> result: unit reads(styles), writes(context) {
+  doc "Republishes settled enclosing block outputs from inner to outer after their affected children, preserving the reference walk's completed geometry and repairing each parent's cached sequence total before the next Open.";
+  let cursor = owner;
+  let limit = context^.blocks.inner.len;
+  for (level in 0_u64..limit) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+      let parent = context^.blocks.inner[at].parent;
+      let item = Flow::Open(block: cursor);
+      publish_reference_item(context: context, item: item, styles: styles, basis_height: basis_height);
+      set cursor = parent;
+    } else {
+      return unit;
+    }
+  }
+  return unit;
+}
+
 fn context_entry_output(child: &Context, styles: &Styles) -> made: SequenceOutput reads(child), reads(styles) {
   doc "Publishes an in-flow independent context's measured transfer through the same constructor used for private arithmetic preflight.";
   let output = context_size_output(child: child, styles: styles, height: child^.height, baseline: child^.baseline);
@@ -1148,7 +1273,8 @@ fn boundary_update(context: &Context, styles: &Styles, document: &Document, font
     set context^.baseline = context^.baseline +sat narrow_delta;
   }
   let no_events = slots_new::<Flow, 0>();
-  let (moved, positioned_counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta);
+  let position_children = False();
+  let (moved, positioned_counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: change.delta, position_children: position_children);
   let combined = add_counts(first: counts, second: positioned_counts);
   set combined.contexts = combined.contexts +sat 1_u64;
   if context^.marked_paragraphs == 1_u32 {

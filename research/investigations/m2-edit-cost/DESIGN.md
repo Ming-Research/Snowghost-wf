@@ -503,9 +503,11 @@ A scoped replay contract would have to describe changed open ancestors,
 converged suffix positions and naturals, split-fragment inputs, atomic and
 positioned anchors, and the float/numeric summary fields they affect. Simply
 skipping publication would leave stale owner-relative geometry or cached
-transfers authoritative. A retained cursor and explicit mutation scope would
-therefore change material interfaces and validity conditions; their saturation
-argument and design choice need the owner if the measured target requires it.
+transfers authoritative. A transient mutation scope can describe those writes
+without changing persistent authority or validity: the existing design already
+permits bounded virtual event lookup. Missing private result fields alone do
+not establish a new design decision. Scoped publication must preserve the
+reference saturation order and every affected transfer input.
 The split-guard repair is narrower: equal child outputs prove there are no
 parent geometry writes to represent at all.
 
@@ -584,3 +586,80 @@ previous changed-output scope now that a broken snapshot can reach it. No
 fragment scan, new retained cache or broader movement certificate is added.
 The forthcoming same-script timing and identity/mutation runs must establish
 the effect of this separate repair.
+
+
+## Font-size profile result
+
+The diagnostic [37618236405](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37618236405)
+used renderer dcc16f52a99bf9a0306e5bb480e15ac45702069b with the timing pin.
+Both font-size scripts are byte-identical to that revision's acceptance
+measurement scripts. In whole-process self samples, ecma262 spends 3.97% in
+`reduce_sequence`, 3.16% in `fill_flow` and 3.01% in
+`prepare_boundary_entry`; html5 spends 8.50%, 6.09% and 6.15% respectively.
+There are no lost samples, but many caller chains terminate at unresolved
+addresses. These profiles therefore corroborate the presence of the bridge
+work, not an edit-only percentage or a complete caller attribution. Initial
+construction and page loading remain included; ecma262's `read_open_file`
+alone accounts for 3.62%.
+
+The separately printed phase times distinguish style from layout on the first
+font edit: ecma262 reports `style_us 1007` and retained-update `us 82403`, with 12
+prepared units, five contexts, one paragraph, 44 held entries, 35543 entries
+and three boundary fallbacks (reason 9). Html5 reports `style_us 107` and
+retained-update `us 73100`, with one prepared unit, two contexts, one paragraph, nine
+held entries, 39140 entries and one fallback (reason 6). These are profiled
+runs, not acceptance timings. The small style phase rules out style preparation
+as the explanation of those edits' large retained-update times. The `us`
+interval includes delta processing, font picks and marking as well as layout;
+paragraph preparation is not separately isolated here. The fallback wrapper
+unconditionally materializes, publishes/reduces and encodes even when the
+reference walker converges locally; legacy `entries` still does not count
+actual changed writes. The one-use profile job is removed after this evidence.
+
+
+## Paragraph split result and scoped replay question
+
+[37619980526](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37619980526)
+measures f70dbda10cb1 with the same workflow, controls and compiler settings.
+Sequential medians in us, forward/reverse rounds:
+
+| Page/kind | main | branch base | f70dbda |
+|---|---:|---:|---:|
+| ecma262 word | 61 / 68 | 72327 / 69720 | 75 / 75 |
+| ecma262 sentence | 139 / 134 | 79240 / 77124 | 68236 / 71341 |
+| ecma262 fontsize | 1370 / 1139 | 87886 / 82192 | 69170 / 71908 |
+| html5 word | 46 / 46 | 65997 / 64046 | 54 / 53 |
+| html5 sentence | 130 / 129 | 69868 / 66756 | 383 / 395 |
+| html5 fontsize | 463 / 366 | 71240 / 68426 | 62377 / 65089 |
+
+Both word medians now satisfy 2x, in both sequential and parallel modes.
+The legacy ecma262 counter tuples still equal the base and aggregate reason 9
+remains: small ancestor refusals do not imply that its large context replayed.
+Sentence and font-size acceptance still fails.
+
+Can transient scope eliminate the remaining compatibility passes without new
+retained state? Capture the reference walk's actual restart, last changed
+entry and converged suffix delta. Use retained virtual event lookup only for
+bounded walks; full passes retain their one shared event array. Encode only
+changed payloads and ancestors, publish changed leaf transfers then enclosing
+blocks, and skip the unchanged interiors of uniformly translated suffix
+blocks when the existing arithmetic bound establishes no saturation. Keep the
+reference scratch globally current, and keep the full publication when scope
+or numeric proof is unavailable. This does not replace the reference stacking
+order, the global geometry authority flag or existing admission conditions.
+
+Compare the same hosted scripts against main/base/twin, all incremental prefixes
+against rebuilds, and the complete configured mutation suite. Any differing
+dump rejects the scoped implementation; a remaining full-context bridge in a
+converged edit or failure of the 2x target rejects its performance sufficiency.
+Do not infer a required owner decision from implementation size or private
+scope fields. A concrete new invariant would need a separate decision.
+
+
+The scoped-path falsifiers separately suppress scoped origin encoding and
+omit the converged suffix's publication. They must leave full builds intact
+and produce incremental dump differences through the ordinary fixture driver.
+Existing near-limit, atomic/positioned and mixed edit fixtures remain wired;
+no original mutation is removed. A child whose size is unchanged may still
+change intrinsic transfer data: the transient scope therefore keeps a sole
+updated child's entry separately from the primary paragraph range.
