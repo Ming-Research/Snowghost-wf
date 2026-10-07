@@ -174,8 +174,10 @@ unchanged suffix offsets; exceptional numeric repair preserves the reference
 saturating addition using the still-retained old owner origins. Both options
 keep the original full construction and certification for replaced topology.
 
-A's no-split-line-refresh mutant disables current-head line resolution and
-reads stale raw line scratch. The previous dirty-publication omission was
+A's no-split-line-refresh mutant disables the published mode-2 anchor
+resolution and reads stale raw line scratch. The reference-only
+`split_reference_line` helper is not the reader of retained suffix fragments;
+its superseded queued mutation is not validation evidence. The previous dirty-publication omission was
 not detected (37679193027): ordinary suffix translation no longer needs that
 publication. Dropping an eliminated suffix-coordinate write is also ineffective.
 The original path requirement and unmutated identity remain unchanged. The additional option-specific mutant drops the
@@ -200,3 +202,9 @@ only validity publication waits for the whole reduction. The separate second
 index traversal is removed. Full publication uses the same evaluator and exact
 comparison, including raw/missing-anchor behavior and saturating operation order.
 Final timing and affected validation must use this fused revision.
+
+The first generated saturation probes passed normal seq/par identity and the
+unmutated detector negative control, but did not detect omission of exceptional
+repair (37683206470). They therefore establish boundary identity only, not
+coverage of that repair path. Its reach and a distinguishing probe remain under
+investigation; the omission expectation is unchanged.
