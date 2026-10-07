@@ -333,3 +333,15 @@ changed-probe handoff; failure marks reference replay for full stacking.
 This reuses the existing arithmetic rule, leaving the equality cutoff before
 it. The existing near-limit positive case is the before-failing regression
 case; no expected result or refusal requirement is changed.
+
+## Identity job partition
+
+The serial page identity stage on superseded revisions remained running for
+more than an hour. Partition the same two pages and six edit kinds into
+native CI matrix jobs. Each job consumes the same compiled sequential and
+parallel drivers, fonts, pages and scripts from the core oracle job, runs both
+original `inc` commands and the original `same` comparison. Block jobs also
+retain the zero-fallback assertion and its deliberately wrong-input checks.
+Case fixtures, dump comparisons and style checks remain in the core job.
+No edit, expected result or assertion is removed; this changes only which
+independent runner executes each page/kind pair.

@@ -417,16 +417,9 @@ jobs:
             sh research/investigations/incremental-style/run.sh structure "$page" block
           done
 
-      - name: Layout identity on the pages' edits and X5's case pages, seq and par
-        env:
-          KINDS: word sentence colour fontsize rootfont block
+      - name: X5's case pages, seq and par
         run: |
           set -euo pipefail
-          for page in ecma262 html5; do
-            sh research/investigations/incremental-layout/run.sh inc seq "$page" $KINDS
-            WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh inc par "$page" $KINDS
-            sh research/investigations/incremental-layout/run.sh same "$page" $KINDS
-          done
           s=research/investigations/incremental-layout/scripts
           sh "$s/checkpoint-case.sh" build/layout_oracle_seq build/checkpoint-case.edits
           for build in seq par; do
@@ -491,10 +484,55 @@ jobs:
               grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.$build.raw"
             done
           done
-      - name: Page block edits require zero fallbacks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: page-identity-inputs
+          compression-level: 1
+          path: |
+            build/layout_oracle_seq
+            build/layout_oracle_par
+            build/fonts/
+            build/research/concurrency/
+            build/x5/scripts/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m2-arithmetic-oracles
+          path: |
+            build/near-limit-*/
+            build/*.raw
+            build/x5/out/*.raw
+
+  page-identity:
+    needs: oracles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        page: [ecma262, html5]
+        kind: [word, sentence, colour, fontsize, rootfont, block]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: page-identity-inputs
+          path: build
+      - name: Layout identity and sequential/parallel equality
+        env:
+          PAGE: ${{ matrix.page }}
+          KIND: ${{ matrix.kind }}
         run: |
           set -euo pipefail
-          for page in ecma262 html5; do
+          chmod +x build/layout_oracle_seq build/layout_oracle_par
+          sh research/investigations/incremental-layout/run.sh inc seq "$PAGE" "$KIND"
+          WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh inc par "$PAGE" "$KIND"
+          sh research/investigations/incremental-layout/run.sh same "$PAGE" "$KIND"
+      - name: Page block edits require zero fallbacks
+        if: matrix.kind == 'block'
+        run: |
+          set -euo pipefail
+          for page in "${{ matrix.page }}"; do
             for build in seq par; do
               python3 - "build/x5/out/$page-block.$build.txt.raw" <<'PYEOF'
           import re
@@ -521,8 +559,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: m2-arithmetic-oracles
-          path: |
-            build/near-limit-*/
-            build/*.raw
-            build/x5/out/*.raw
+          name: identity-${{ matrix.page }}-${{ matrix.kind }}
+          path: build/x5/out/
