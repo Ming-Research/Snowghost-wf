@@ -59,15 +59,16 @@ The positioned-isolated kind retains the original positioned edits and isolates
 the percentage-height fixture in its own flow root, so unrelated seams can
 reach anchor publication; the original positioned kind remains unchanged.
 
-The edit-height and edit-baseline kinds reuse style-case.html. Inline vertical alignment changes
-only the last line's descent; fixed line height and a larger inline font change
-its baseline without changing its height. The targeted flow-root is the only
-visible child of a fixed-width inline-block, whose baseline a generated inline
-sibling observes without requesting intrinsic sizes. Zero-sized surrounding
-text prevents an unchanged strut from changing the tested line height.
+The edit-height and edit-baseline kinds reuse style-case.html. The height
+fixture uses flex baseline alignment; downward inline vertical alignment
+changes its line height. The baseline fixture fixes line height while changing
+font size inside a flow root within an inline-block body. The existing real
+head/title element is made visible as its baseline peer, so a stale baseline
+moves geometry that the DOM dump observes. Independent mutations suppress the
+height or last-baseline equality guard, and each must be detected.
 
-Python's standard library has no native
-parser for the driver's node listing, so it reuses edits.Tree.
+Python's standard library has no native parser for the driver's node listing,
+so it reuses edits.Tree.
 """
 import argparse
 from pathlib import Path

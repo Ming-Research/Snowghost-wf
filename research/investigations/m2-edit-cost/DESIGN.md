@@ -462,3 +462,27 @@ only `.growing{display:flow-root}` before the same edits, separating that
 dependency from the other anchor cases. The original script remains wired.
 The limited `[stationary]` diagnostic now includes that anchor mutation;
 `[falsify]` still selects all 26 mutations. Detection remains required.
+
+## Split-fragment refusal attribution
+
+[Probe run 37612766302](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37612766302)
+tags cutoff returns in a diagnostic-only build of renderer 9888794. On the
+first ecma262 word insertion, child context 2924 contains two blocks and five
+paragraphs and completes the stationary paragraph path. Parent context 91
+contains 33032 blocks and 45933 paragraphs; its child cutoff returns at the
+blanket `splits.inner.len != 0` guard. Its intrinsic flags are both false.
+The same refusal repeats on deletion. This rejects the proposed atomic-inline
+explanation for this edit: the changed leaf already completes locally.
+Diagnostic counter tags and timings are not acceptance measurements.
+
+An independent Flow::Child with identical border dimensions, margins and
+baseline gives every parent split fragment the same geometry inputs. Its
+interior fragments belong to its independent context; parent paragraphs and
+block styles are unmarked. Remove the whole-parent split-list exclusion from
+the child equality observation. No parent fragment is rewritten or scanned
+on success. A changed output still carries its original Before to reference
+replay. The paragraph cutoff retains its split exclusion because rebreaking
+a paragraph can alter its own inline-fragment geometry. This removes an
+unrelated-fragment dependency rather than extending changed-geometry admission.
+The same hosted scripts, complete identity checks and mutations must validate
+the result; the successful probe alone does not establish the timing target.
