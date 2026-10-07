@@ -100,6 +100,56 @@ jobs:
                   print('detected', name, diagnostic)
               assert check(rows).returncode == 0
           PYEOF
+      - name: Semantic mutation detection requires valid identity evidence
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          lines = Path('.github/workflows/falsify-m2.yml').read_text().splitlines()
+          start = lines.index("          cat > build/semantic-falsify.py <<'PYEOF'") + 1
+          end = lines.index('          PYEOF', start)
+          source = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines[start:end]) + '\n'
+          rows = ['base hash 0000000000000000 bytes 1', 'created 10',
+                  'structure path 1 splice 1 reason 0', 'edit 1 hash 0000000000000001 bytes 2 inc same',
+                  'structure path 2 splice 1 reason 0', 'edit 2 hash 0000000000000000 bytes 1 inc same']
+          good = '\n'.join(rows) + '\n'
+          different = good.replace('bytes 2 inc same', 'bytes 2 inc DIFF')
+          cases = [
+              ('baseline negative control', good, '', 0, 1),
+              ('actual incremental difference', different, '', 0, 0),
+              ('valid path change alone', good.replace('splice 1 reason 0', 'splice 0 reason 7'), '', 0, 1),
+              ('unrelated crash', '', 'unrelated driver error', 9, 2),
+              ('intended boundary assertion', '', 'boundary transfer check failed\n', 2, 0),
+              ('wrong boundary exit', '', 'boundary transfer check failed\n', 9, 2),
+              ('mixed boundary diagnostic', '', 'boundary transfer check failed\nunrelated error', 2, 2),
+              ('late boundary diagnostic', good, 'boundary transfer check failed\n', 2, 2),
+              ('unexpected successful stderr', good, 'unrelated diagnostic', 0, 2),
+              ('empty output', '', '', 0, 2),
+              ('malformed after difference', different + 'not a protocol record\n', '', 0, 2),
+              ('incomplete after difference', different.replace(rows[-1] + '\n', ''), '', 0, 2),
+              ('missing paths after difference', different.replace(rows[2] + '\n', ''), '', 0, 2),
+              ('contradictory path', different.replace('splice 1 reason 0', 'splice 0 reason 0'), '', 0, 2),
+              ('refused edit', good.replace('bytes 2 inc same', 'bytes 2 inc refused'), '', 0, 2),
+          ]
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              helper = root / 'semantic-falsify.py'
+              helper.write_text(source)
+              script = root / 'case.edits'
+              script.write_text('B 1 - Text\nX 10\n')
+              raw = root / 'case.raw'
+              error = root / 'case.err'
+              for name, output, diagnostic, status, expected in cases:
+                  raw.write_text(output)
+                  error.write_text(diagnostic)
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), str(status), name], capture_output=True, text=True)
+                  assert result.returncode == expected, (name, result.returncode, result.stdout, result.stderr)
+                  assert ('detected:' in result.stdout) == (expected == 0), (name, result.stdout)
+                  print(name, 'classified as', expected)
+          PYEOF
   falsify:
     if: contains(github.event.head_commit.message, '[falsify]')
     runs-on: ubuntu-24.04
@@ -109,7 +159,7 @@ jobs:
       matrix:
         # reassociate-saturation is out until docs/todo.md's item on it is resolved.
         # Step 4's descendant-scan mutation waits for the visit sentinels (docs/todo.md).
-        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route, synthetic-checkpoint, stale-class-frontier, unsafe-admission]
+        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route, synthetic-checkpoint, stale-class-frontier, unsafe-admission, no-positioned-anchor, no-stretch, no-free-space, no-wrap-rebreak, no-float-floor, stale-intrinsic-margins]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -174,6 +224,40 @@ jobs:
               swap("renderer/style/restyle.wf", "let full = unbounded;", "let full = bor(unbounded, traversal^.stale);")
           elif m == "unsafe-admission":
               swap("renderer/layout/boundary.wf", "let fits = bound <= 2147483647_i64;", "let fits = bound <= 68719476735_i64;")
+          elif m == "no-positioned-anchor":
+              swap("renderer/layout/boundary.wf", "        set context^.children.inner[out_at].anchor.y = context^.children.inner[out_at].anchor.y +sat translation.delta;\n", "")
+          elif m == "no-stretch":
+              p = Path("renderer/layout/flex.wf")
+              source = p.read_text()
+              start = source.index("fn flex_stretch(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              old = "  let counted = no_updates();\n"
+              assert body.count(old) == 1
+              body = body.replace(old, old + "  if setup.updating {\n    return counted;\n  }\n")
+              p.write_text(source[:start] + body + source[end:])
+          elif m == "no-free-space":
+              swap("renderer/layout/flex.wf", "    flex_resolve(lanes: &lanes, first: first, end: end, space: main_inner, gap: main_gap);", "    if setup.updating {\n    } else {\n      flex_resolve(lanes: &lanes, first: first, end: end, space: main_inner, gap: main_gap);\n    }")
+          elif m == "no-wrap-rebreak":
+              swap("renderer/layout/flex.wf", "  let lines = flex_build_lines(lanes: &lanes, wrapping: wrapping, available: available, gap: main_gap);", "  let line_wrapping = if setup.updating {\n    give False();\n  } else {\n    give wrapping;\n  }\n  let lines = flex_build_lines(lanes: &lanes, wrapping: line_wrapping, available: available, gap: main_gap);")
+          elif m == "no-float-floor":
+              p = Path("renderer/layout/splice_motion.wf")
+              source = p.read_text()
+              start = source.index("fn motion_above(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              doc_end = body.index(';') + 1
+              p.write_text(source[:start] + body[:doc_end] + "\n  return True();\n}\n" + source[end:])
+          elif m == "stale-intrinsic-margins":
+              p = Path("renderer/layout/flow.wf")
+              source = p.read_text()
+              start = source.index("fn intrinsic_flow(")
+              end = source.index("\nfn ", start + 1)
+              body = source[start:end]
+              old = "    let (least, most) = intrinsic_sizes(context: &context^.children.inner[c], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);\n"
+              assert body.count(old) == 1
+              body = body.replace(old, old + "    let measured_style = context^.children.inner[c].style;\n    let measured_margins = margin_edges(styles: styles, style: measured_style, basis: 0_i32);\n    set context^.children.inner[c].margin_left = measured_margins.left;\n    set context^.children.inner[c].margin_right = measured_margins.right;\n")
+              p.write_text(source[:start] + body + source[end:])
           print("applied", m)
           PYEOF
           git diff --stat
@@ -189,8 +273,75 @@ jobs:
           fi
           grep 'unsafe arithmetic admission produced no rebuild difference' build/near-limit-negative.log
           python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_mutated build/near-limit-unsafe --unsafe
+      - name: Detect semantic extension mutations
+        if: contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins"]'), matrix.mutation)
+        run: |
+          set -euo pipefail
+          cat > build/semantic-falsify.py <<'PYEOF'
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          script, raw, error, status, label = sys.argv[1:]
+          status = int(status)
+          output = Path(raw).read_text()
+          diagnostic = Path(error).read_text()
+          if status == 2 and diagnostic.strip() == 'boundary transfer check failed' and not output:
+              print('detected:', label, 'boundary transfer check failed')
+              raise SystemExit(0)
+          if status != 0 or diagnostic:
+              print('INVALID:', label, 'driver status', status, diagnostic, file=sys.stderr)
+              raise SystemExit(2)
+          pattern = r'^(edit \d+ hash [0-9a-f]{16} bytes \d+ inc )DIFF$'
+          normalized, differences = re.subn(pattern, r'\1same', output, flags=re.M)
+          with tempfile.TemporaryDirectory() as directory:
+              checked = Path(directory) / 'normalized.raw'
+              checked.write_text(normalized)
+              result = subprocess.run([sys.executable, 'research/investigations/incremental-layout/scripts/inctime.py', '--check', script, str(checked)], capture_output=True, text=True)
+          if result.returncode != 0:
+              print('INVALID:', label, 'oracle protocol', result.stderr, file=sys.stderr)
+              raise SystemExit(2)
+          if differences:
+              print('detected:', label, differences, 'incremental rebuild differences')
+              raise SystemExit(0)
+          print('NOT DETECTED:', label)
+          raise SystemExit(1)
+          PYEOF
+          s=research/investigations/incremental-layout/scripts
+          for kind in positioned flex transfer; do
+            python3 "$s/splice-cases.py" build/layout_base "$kind" "build/$kind-case.edits"
+          done
+          detected=no
+          for kind in positioned flex transfer; do
+            name="$kind-case"
+            script="build/$name.edits"
+            base_status=0
+            build/layout_base edit "$script" "$s/$name.html" renderer/style/ua.css > "build/$name.base.raw" 2> "build/$name.base.err" || base_status=$?
+            negative_status=0
+            python3 build/semantic-falsify.py "$script" "build/$name.base.raw" "build/$name.base.err" "$base_status" "$name baseline" > "build/$name.negative.log" 2>&1 || negative_status=$?
+            cat "build/$name.negative.log"
+            if [ "$negative_status" -ne 1 ]; then
+              echo "baseline failed or was accepted as mutation detection: $name" >&2
+              exit 1
+            fi
+            mutant_status=0
+            build/layout_mutated edit "$script" "$s/$name.html" renderer/style/ua.css > "build/$name.mutated.raw" 2> "build/$name.mutated.err" || mutant_status=$?
+            detection_status=0
+            python3 build/semantic-falsify.py "$script" "build/$name.mutated.raw" "build/$name.mutated.err" "$mutant_status" "$name ${{ matrix.mutation }}" || detection_status=$?
+            if [ "$detection_status" -eq 0 ]; then
+              detected=yes
+            elif [ "$detection_status" -ne 1 ]; then
+              exit "$detection_status"
+            fi
+          done
+          if [ "$detected" != yes ]; then
+            echo "NOT DETECTED: ${{ matrix.mutation }}" >&2
+            exit 1
+          fi
       - name: Detect
-        if: matrix.mutation != 'unsafe-admission'
+        if: matrix.mutation != 'unsafe-admission' && !contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins"]'), matrix.mutation)
         run: |
           set +e
           detected=""
@@ -205,10 +356,14 @@ jobs:
           done
           s=research/investigations/incremental-layout/scripts
           sh "$s/checkpoint-case.sh" build/layout_base build/checkpoint-case.edits
-          for pair in splice-route-case:block-case splice-style-case:block-case checkpoint-case:checkpoint-case; do
+          for kind in positioned flex transfer; do
+            python3 "$s/splice-cases.py" build/layout_base "$kind" "build/$kind-case.edits" || exit 1
+          done
+          for pair in splice-route-case:block-case splice-style-case:block-case checkpoint-case:checkpoint-case positioned-case:positioned-case flex-case:flex-case transfer-case:transfer-case; do
             name=${pair%%:*} html=${pair#*:}
             script="$s/$name.edits"
             if [ "$name" = checkpoint-case ]; then script=build/checkpoint-case.edits; fi
+            case "$name" in positioned-case|flex-case|transfer-case) script="build/$name.edits";; esac
             build/layout_base edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.base.raw" || exit 1
             python3 "$s/inctime.py" --check "$script" "build/$name.base.raw" || exit 1
             build/layout_mutated edit "$script" "$s/$html.html" renderer/style/ua.css > "build/$name.mutated.raw" 2> "build/$name.mutated.err"
@@ -243,3 +398,12 @@ jobs:
           path: |
             build/near-limit-*/
             build/near-limit-negative.log
+      - uses: actions/upload-artifact@v4
+        if: always() && contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins"]'), matrix.mutation)
+        with:
+          name: semantic-${{ matrix.mutation }}
+          path: |
+            build/*-case.edits*
+            build/*-case.*.raw
+            build/*-case.*.err
+            build/*-case.negative.log
