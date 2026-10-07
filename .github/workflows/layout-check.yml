@@ -5,7 +5,7 @@ name: layout-check
 
 on:
   push:
-    branches: [research/m2-layout, research/m2-pages]
+    branches: [research/m2-layout, research/m2-pages, research/m2-paged]
 
 concurrency:
   group: layout-check-${{ github.ref }}
@@ -19,8 +19,67 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Install the host toolchain
+        run: make toolchain
       - name: Check pkg::layout
         run: |
           make -s compiler
           wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
           cd renderer && "$wfc" --graph modules.wfg --check-module pkg::layout
+  paged-evidence:
+    if: github.ref == 'refs/heads/research/m2-paged'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: make toolchain
+      - name: C1 native and built-in Paged probes, permission ledgers and LLVM
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/paged-evidence
+          for probe in c1-native-pages c1-paged; do
+            source="research/investigations/storage-layout/probes/$probe.wf"
+            "$wfc" "$source" -o "build/paged-evidence/$probe-seq" > "build/paged-evidence/$probe-seq.log" 2>&1 || { cat "build/paged-evidence/$probe-seq.log"; exit 1; }
+            "build/paged-evidence/$probe-seq"
+            "$wfc" --par --par-ledger "$source" -o "build/paged-evidence/$probe-par" > "build/paged-evidence/$probe-par.log" 2>&1 || { cat "build/paged-evidence/$probe-par.log"; exit 1; }
+            cat "build/paged-evidence/$probe-par.log"
+            WF_WORKERS=4 "build/paged-evidence/$probe-par"
+            "$wfc" --emit-llvm "$source" > "build/paged-evidence/$probe.ll" 2> "build/paged-evidence/$probe-llvm.log" || { cat "build/paged-evidence/$probe-llvm.log"; exit 1; }
+            echo "$probe: sequential and parallel literal checks passed; LLVM retained"
+          done
+      - name: Current and baseline layout permission ledgers with the experiment compiler
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          out="$GITHUB_WORKSPACE/build/paged-evidence"
+          git worktree add --detach build/paged-baseline 38fd6be2ba5ad1ca972f689e734e7f40737d8876
+          for revision in current baseline; do
+            source="$GITHUB_WORKSPACE/renderer"
+            if [ "$revision" = baseline ]; then source="$GITHUB_WORKSPACE/build/paged-baseline/renderer"; fi
+            (cd "$source" && "$wfc" --par --par-ledger --emit-llvm --graph modules.wfg --entry layout_oracle -o "$out/layout-$revision.ll") > "$out/layout-$revision.log" 2>&1 || { cat "$out/layout-$revision.log"; exit 1; }
+            grep '^PAR loop' "$out/layout-$revision.log" > "$out/layout-$revision-loops.txt"
+            cat "$out/layout-$revision-loops.txt"
+          done
+      - name: Baseline layout ledger with its original compiler pin
+        run: |
+          set -euo pipefail
+          baseline="$GITHUB_WORKSPACE/build/paged-baseline"
+          out="$GITHUB_WORKSPACE/build/paged-evidence"
+          make -s -f whitefoot-kit/whitefoot.mk ROOT="$baseline" BUILD="$baseline/build" compiler
+          original_wfc=$(realpath "$(ls "$baseline"/build/whitefoot/*/whitefootc | head -1)")
+          (cd "$baseline/renderer" && "$original_wfc" --par --par-ledger --emit-llvm --graph modules.wfg --entry layout_oracle -o "$out/layout-baseline-original.ll") > "$out/layout-baseline-original.log" 2>&1 || { cat "$out/layout-baseline-original.log"; exit 1; }
+          grep '^PAR loop' "$out/layout-baseline-original.log" > "$out/layout-baseline-original-loops.txt"
+          cat "$out/layout-baseline-original-loops.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paged-evidence
+          path: |
+            build/paged-evidence/*.log
+            build/paged-evidence/*-loops.txt
+            build/paged-evidence/c1-*.ll

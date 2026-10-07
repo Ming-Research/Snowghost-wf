@@ -1,0 +1,103 @@
+struct Slot {
+  field: u64;
+  untouched: u64;
+}
+
+fn change(field: &u64, amount: u64) -> result: u64 writes(field) {
+  let before = field^;
+  set field^ = before +wrap amount;
+  return before;
+}
+
+fn make_page(base: u64) -> result: Box<Slots<Slot>> pure {
+  let page = box_slots_new::<Slot>(capacity: 4_u64);
+  for (o in 0_u64..4_u64) {
+    let value = base +wrap o;
+    let slot = Slot(field: value, untouched: 99_u64);
+    if page.inner.len < page.inner.cap {
+      place_back(window: &page.inner, value: slot);
+    }
+  }
+  return move page;
+}
+
+fn grow_directory(pages: &Box<Slots<Box<Slots<Slot>>>>) -> result: unit writes(pages) {
+  doc "Only this function performs growth; all inner pages keep capacity four.";
+  let capacity = pages^.inner.cap;
+  if capacity <= 8_u64 {
+    grow(cell: pages, capacity: 16_u64);
+  }
+  return unit;
+}
+
+fn flat_slots(pages: &Box<Slots<Box<Slots<Slot>>>>) -> result: unit writes(pages) {
+  doc "C1 literal flat counted loop: every logical slot writes its own field.";
+  for (slot in 0_u64..12_u64) {
+    let p = slot / 4_u64;
+    let o = slot % 4_u64;
+    if p < pages^.inner.len {
+      if o < pages^.inner[p].inner.len {
+        let before = change(field: &pages^.inner[p].inner[o].field, amount: 10_u64);
+      }
+    }
+  }
+  return unit;
+}
+
+fn one_page(page: &Box<Slots<Slot>>) -> result: unit writes(page) {
+  let count = page^.inner.len;
+  for (o in 0_u64..count) {
+    let before = change(field: &page^.inner[o].field, amount: 100_u64);
+  }
+  return unit;
+}
+
+fn by_page(pages: &Box<Slots<Box<Slots<Slot>>>>) -> result: unit writes(pages) {
+  doc "C1 alternative spelling: independent pages, each with an independent slot loop.";
+  let count = pages^.inner.len;
+  for (p in 0_u64..count) {
+    one_page(page: &pages^.inner[p]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let pages = box_slots_new::<Box<Slots<Slot>>>(capacity: 1_u64);
+  let first = make_page(base: 0_u64);
+  place_back(window: &pages.inner, value: move first);
+  grow_directory(pages: &pages);
+  for (p in 1_u64..3_u64) {
+    let base = p * 4_u64;
+    if pages.inner.len < pages.inner.cap {
+      let page = make_page(base: base);
+      place_back(window: &pages.inner, value: move page);
+    } else {
+      return std::process::exit_status(code: 6_u8);
+    }
+  }
+  flat_slots(pages: &pages);
+  by_page(pages: &pages);
+  if pages.inner.len != 3_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  for (p in 0_u64..3_u64) {
+    if pages.inner[p].inner.len != 4_u64 {
+      return std::process::exit_status(code: 2_u8);
+    }
+    if pages.inner[p].inner.cap != 4_u64 {
+      return std::process::exit_status(code: 3_u8);
+    }
+    for (o in 0_u64..4_u64) {
+      let base = p * 4_u64;
+      let at = base + o;
+      let expected = at + 110_u64;
+      if pages.inner[p].inner[o].field != expected {
+        return std::process::exit_status(code: 4_u8);
+      }
+      if pages.inner[p].inner[o].untouched != 99_u64 {
+        return std::process::exit_status(code: 5_u8);
+      }
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}

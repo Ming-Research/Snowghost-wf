@@ -1,0 +1,92 @@
+struct Slot {
+  field: u64;
+  untouched: u64;
+}
+
+fn change(field: &u64, amount: u64) -> result: u64 writes(field) {
+  doc "Add the same amount as the native-page C1 probe and return the previous value.";
+  let before = field^;
+  set field^ = before +wrap amount;
+  return before;
+}
+
+fn grow_directory(pages: &Box<Paged<Slot>>) -> result: unit writes(pages) {
+  doc "Grow from one slot to four target pages without relocating initialized slots.";
+  let capacity = pages^.inner.cap;
+  if capacity <= 1024_u64 {
+    grow_paged(cell: pages, capacity: 1024_u64);
+  }
+  return unit;
+}
+
+fn flat_slots(pages: &Box<Paged<Slot>>) -> result: unit writes(pages) {
+  doc "C1 flat counted loop: every logical slot writes its own field across page boundaries.";
+  let count = pages^.inner.len;
+  for (slot in 0_u64..count) {
+    let before = change(field: &pages^.inner[slot].field, amount: 10_u64);
+  }
+  return unit;
+}
+
+fn one_page(page: &[Slot]) -> result: unit writes(page) {
+  doc "Update each initialized slot of one contiguous native page.";
+  let count = page^.len;
+  for (offset in 0_u64..count) {
+    let before = change(field: &page^[offset].field, amount: 100_u64);
+  }
+  return unit;
+}
+
+fn by_page(pages: &Box<Paged<Slot>>) -> result: unit writes(pages) {
+  doc "C1 alternative spelling: independent native pages with independent slot loops.";
+  let count = pages^.inner.pages.len;
+  for (page_index in 0_u64..count) {
+    one_page(page: &pages^.inner.pages[page_index]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Check three initialized native pages, growth, both traversal forms and the untouched field.";
+  let page_len = paged_page_len::<Slot>();
+  if page_len != 256_u64 {
+    let wrong_target = std::process::exit_status(code: 1_u8);
+    return wrong_target;
+  }
+  let pages = box_paged_new::<Slot>(capacity: 1_u64);
+  let first = Slot(field: 0_u64, untouched: 99_u64);
+  place_back(window: &pages.inner, value: first);
+  grow_directory(pages: &pages);
+  for (slot in 1_u64..768_u64) {
+    if pages.inner.len < pages.inner.cap {
+      let value = Slot(field: slot, untouched: 99_u64);
+      place_back(window: &pages.inner, value: value);
+    } else {
+      let capacity_failure = std::process::exit_status(code: 6_u8);
+      return capacity_failure;
+    }
+  }
+  flat_slots(pages: &pages);
+  by_page(pages: &pages);
+  if pages.inner.len != 768_u64 {
+    let wrong_length = std::process::exit_status(code: 2_u8);
+    return wrong_length;
+  }
+  if pages.inner.pages.len != 3_u64 {
+    let wrong_pages = std::process::exit_status(code: 3_u8);
+    return wrong_pages;
+  }
+  for (index in 0_u64..pages.inner.len) {
+    let expected = index +wrap 110_u64;
+    if pages.inner[index].field != expected {
+      let wrong_value = std::process::exit_status(code: 4_u8);
+      return wrong_value;
+    }
+    if pages.inner[index].untouched != 99_u64 {
+      let wrong_untouched = std::process::exit_status(code: 5_u8);
+      return wrong_untouched;
+    }
+  }
+  let success = std::process::exit_status(code: 0_u8);
+  return success;
+}
