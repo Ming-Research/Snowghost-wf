@@ -45,3 +45,15 @@ FN-5/FN-6, RANGE-1 through RANGE-5, PAR-2, and STOR-7/STOR-8.
 
 Snowghost's maintained TODO at this base still describes stride-window denial.
 The investigation records its disposition after observing the compiler.
+
+## Initial sample (CI 37562135575)
+
+Revision `608010ac6cebc9401350a19e876e8fe4aadc51be`: fixed-stride compiled in
+4.37 seconds sequential and 2.46 seconds with `--par`; both executions passed
+every literal check. This measures setup-scale only, not speed or parallelism.
+The outer loop was **denied**, despite the inner fill loop being permitted.
+Next compare the exact upstream runtime-stride case and fixed-stride variants
+with the length hoisted and the guard omitted; do not conflate a green exit
+with a permitted loop. At this observed scale, run each remaining small probe
+once per compiler mode with a two-minute per-command bound, reporting any
+timeout as unknown rather than as a rejection.
