@@ -174,8 +174,10 @@ unchanged suffix offsets; exceptional numeric repair preserves the reference
 saturating addition using the still-retained old owner origins. Both options
 keep the original full construction and certification for replaced topology.
 
-A's no-split-line-refresh mutant disables current-head line resolution and
-reads stale raw line scratch. The previous dirty-publication omission was
+A's no-split-line-refresh mutant disables the published mode-2 anchor
+resolution and reads stale raw line scratch. The reference-only
+`split_reference_line` helper is not the reader of retained suffix fragments;
+its superseded queued mutation is not validation evidence. The previous dirty-publication omission was
 not detected (37679193027): ordinary suffix translation no longer needs that
 publication. Dropping an eliminated suffix-coordinate write is also ineffective.
 The original path requirement and unmutated identity remain unchanged. The additional option-specific mutant drops the
@@ -200,3 +202,31 @@ only validity publication waits for the whole reduction. The separate second
 index traversal is removed. Full publication uses the same evaluator and exact
 comparison, including raw/missing-anchor behavior and saturating operation order.
 Final timing and affected validation must use this fused revision.
+
+The first generated saturation probes passed normal seq/par identity and the
+unmutated detector negative control, but did not detect omission of exceptional
+repair (37683206470). They therefore establish boundary identity only, not
+coverage of that repair path. Its reach and a distinguishing probe remain under
+investigation; the omission expectation is unchanged.
+
+Source inspection explains that first probe's non-discrimination: the plain
+paragraph is pre-broken; the high-origin travel refusal then marks the context
+restyled and forces full stacking. The additional atomic-inline variant makes
+pre-breaking inapplicable, allowing the existing split-fragment refusal to
+reach legacy reference updating instead. Ordinary incremental counters and
+base dumps are now captured with both plain and atomic variants. No admission
+guard or expected identity is changed; selective omission must still differ.
+
+## Remaining-cost diagnostic question, before profiling
+
+The fused hosted comparison 37684940686 still fails HTML5 font-size acceptance
+for both representations. Selected pairs 23/24 and 43/44 were near A's earlier
+sequential median, with reason-5 and reason-6 boundary fallbacks and thousands
+of boundary visits despite few held entries. Profile those unchanged C/K pairs
+on main, cf12c609, A and B using the measured drivers and verified page digest.
+Two small samples select a bounded repetition count before the profiler runs.
+If split-fragment work still dominates, reject the claim that the targeted
+representation removes the observed cost. If boundary publication/lookup
+instead dominates, the remaining bottleneck is broader reference maintenance.
+This repeated-pair profile is exploratory diagnosis, includes process startup
+and style preparation, and does not replace the two-round acceptance workload.
