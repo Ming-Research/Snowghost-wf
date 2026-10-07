@@ -489,8 +489,8 @@ the result; the successful probe alone does not establish the timing target.
 
 ## Reference replay contract
 
-The remaining compatibility bridge is not a true dependency on every layout
-entry. It is required by the current interface between reference settlement
+At f70dbda, the remaining compatibility bridge is not a true dependency on
+every layout entry. It follows from the interface between reference settlement
 and owned publication: `update_flow_reference`, `restack_block` and
 `restack_flow` return only `UpdateCounts`. The local `StackResult` also knows
 its convergence point, delta and fragment stability, but the wrapper receives
@@ -611,7 +611,7 @@ held entries, 39140 entries and one fallback (reason 6). These are profiled
 runs, not acceptance timings. The small style phase rules out style preparation
 as the explanation of those edits' large retained-update times. The `us`
 interval includes delta processing, font picks and marking as well as layout;
-paragraph preparation is not separately isolated here. The fallback wrapper
+paragraph preparation is not separately isolated here. That revision's fallback wrapper
 unconditionally materializes, publishes/reduces and encodes even when the
 reference walker converges locally; legacy `entries` still does not count
 actual changed writes. The one-use profile job is removed after this evidence.
@@ -663,3 +663,19 @@ Existing near-limit, atomic/positioned and mixed edit fixtures remain wired;
 no original mutation is removed. A child whose size is unchanged may still
 change intrinsic transfer data: the transient scope therefore keeps a sole
 updated child's entry separately from the primary paragraph range.
+
+
+## Scoped replay validation in progress
+
+At 0430437c8c1ad05b528b8b0c6998dbcfb4a49213, the ordinary correctness-pin
+[check](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37624162517)
+and [step-5 oracle](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37624162489)
+pass, including the unchanged near-limit and structural-path checks. Complete
+page identity, the two new scoped mutations and timing remain separate
+requirements; this focused success does not establish them.
+
+The preceding f70dbda implementation's
+[full falsifier run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37619980302)
+finished successfully: all 26 configured mutants were detected and the
+check-machinery job passed. This establishes the repaired baseline/positioned
+fixtures at that source, not validation of the later scoped publisher.

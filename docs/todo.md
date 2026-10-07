@@ -291,29 +291,28 @@ example apart from the renderer code that exposed it
   byte identity, logarithmic physical visit counts or speed from source alone.
 
 
-- **M2 geometry still bridges the context-coordinate reference walker.**
-  `update_flow` unconditionally materializes the complete event array,
-  republishes/reduces all boundary outputs and re-encodes whole-context
-  geometry after a refused boundary update. Reusing valid reference scratch
-  and cutting off unchanged paragraph/child outputs removes those passes only
-  on those paths. `update_flow_reference`, `restack_block` and `restack_flow`
-  return counts rather than the mutation frontier; the wrapper loses the
-  stacker's stop, delta and fragment-identity information. Context fragments,
-  `Split.line`, `naturals` and `held_y` still use legacy coordinates/ranks,
-  with whole-context `local_geometry` and `boundary_dirty` validity.
-  Impact: converged reference updates still pay for unrelated entries;
+- **M2 scoped reference publication needs complete validation and timing.**
+  `renderer/layout/reference.wf` now carries a transient replay range,
+  converged suffix displacement and separately updated child through the
+  existing context-coordinate walker. Bounded walks use retained virtual
+  events; publication encodes affected entries and repairs their owner
+  chains, skipping intact translated block interiors only under the existing
+  arithmetic bound. Reference scratch remains globally current; no retained
+  authority or validity state is added. Full event materialization and
+  publication remain for restyled/full replay, intrinsic-margin changes or
+  an unavailable numeric certificate. Context fragments, `Split.line`,
+  `naturals` and `held_y` still use legacy coordinates/ranks, and nonzero
+  suffix translation still visits affected descendant scratch coordinates.
+  Impact: source scope alone does not establish dump identity or the 2x
+  text/font-size target. The prior
   [same-script counters, timings and profiles](../research/investigations/m2-edit-cost/DESIGN.md#reference-replay-contract)
-  corroborate bridge work and separate style-stage time from retained-update
-  time. Change: carry transient mutation scope through the compatibility
-  walker, covering entry geometry, ancestors, suffixes, split fragments and
-  positioned/atomic anchors, and publish only affected retained outputs.
-  Existing virtual events and stable handles support that implementation
-  without new persistent authority or validity state. Preserve
-  saturating operation order for unsupported numeric transfers. Reopen for
-  the M2 per-edit acceptance work; validate every incremental prefix,
-  extreme coordinates, seq/par identity and configured mutations, then
-  repeat interleaved main/base/twin/head timing. No O(context) pass is claimed
-  to be an inherent dependency of an unchanged output.
+  establish the removed compatibility passes, not this repair's sufficiency.
+  Reopen as part of the active M2 per-edit acceptance work: validate every
+  incremental prefix, extreme coordinates, seq/par identity and configured
+  mutations, then repeat interleaved main/base/twin/head timing. Inspect any
+  remaining broad pass against its actual dependencies; no O(context) pass
+  is claimed to be inherent merely because the previous interface omitted
+  the mutation scope.
 
 
 - **M2 fallback routing and append-only storage still grow with the session.**
