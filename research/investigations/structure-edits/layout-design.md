@@ -2092,7 +2092,7 @@ and the local-path baseline assertions of these fixtures: only a valid
 incremental identity/count difference detects the fault, never a path change
 or unrelated failure. The original positioned fault has the run above;
 the atomic fault has no original CI run, so its mutation supplies the required
-before-repair observation. Both detections remain pending CI.
+before-repair observation. Both detections are required by the mutation acceptance gate below.
 
 #### Uniform later-float translation
 
@@ -2435,7 +2435,7 @@ or fragment_last from same_transfer; the oracle's independent changed-field
 checks must reject each before edits. The fixture expectation machinery now
 checks each initial-removal target kind and ownership and every required
 path row, including the refused source removal. Its local Python smoke test
-passed every deliberately wrong condition; renderer evidence is pending CI.
+passed every deliberately wrong condition; renderer acceptance is recorded below.
 
 Completion review R9 identified a missing `shift_split_lines` in the legacy
 `update_in_place` translation path. The restack path already updates this
@@ -2500,3 +2500,30 @@ The initial removal requires that exact reason and every edit requires full
 identity. The following ordinary B/X pair is identity coverage without a
 forced path. Generator machinery includes initial-only path assertions,
 independently of cases that assert both ordinary B/X paths.
+
+
+#### Semantic extension acceptance
+
+The focused `step5` job of CI
+[37611691695](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37611691695)
+at `39de64c2b9556069b8baf6fc9d3e712ce787a95f` passed. Its unchanged page
+scripts produced 20 ecma262 and 60 html5 structural operations, all
+`splice 1 reason 0` and all `inc same`. The positioned, flex and transfer
+fixtures produced respectively 106, 169 and 274 edits, all `inc same`.
+All 18 positioned structural operations spliced locally. The flex fixtures
+include 18 local operations, two reason-7 arithmetic/transfer refusals, six
+reason-2 ownership refusals and three reason-10 completed-reference results.
+The transfer fixtures include 40 local operations, four reason-7 refusals and
+two reason-3 fragment-source/topology refusals. These are sequential focused
+observations, not a substitute for the complete acceptance matrix.
+
+The full `[oracles]` gate requires all six X5 edit kinds on both pinned pages,
+sequentially and in parallel, to match full rebuilds, together with the case
+pages, full-build dumps, near-limit checks and the page zero-fallback gate.
+The `[falsify]` gate requires every enabled mutation to be detected, including
+positioned anchors, stretch, free-space recomputation, wrapping, float-floor
+reentry and split-fragment lifetime. A correct baseline and a changed path
+alone do not detect semantic mutations; the split-line-refresh optimization
+contract is the explicitly argued exception above. CI run records and their
+raw artifacts are the evidence for these gates. No renderer was compiled or
+executed locally, and no timing or complete-M2 claim follows from this work.

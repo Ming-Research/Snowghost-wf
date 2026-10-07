@@ -189,55 +189,34 @@ example apart from the renderer code that exposed it
   step 5 uses this path. Require every edit prefix to equal a fresh build,
   with zero unexplained fallback on the claimed ordinary workloads.
 
-- **M2 page block edits still meet semantic splice barriers.**
-  The fixed travel limits have been replaced by the
-  [origin-aware arithmetic certificate](../research/investigations/structure-edits/layout-design.md#origin-aware-ordinary-arithmetic-certificate).
-  CI run [37565331129](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37565331129)
-  at `66fdec5` reports ecma262 block edits 1–20 as `splice 0 reason 2`
-  and html5 edits 1–60 as `splice 0 reason 7`, all equal to full rebuilds.
-  The diagnostic copy isolates ecma262's non-flow context guard (kind 1,
-  flex; the pinned ecmarkup stylesheet makes the body flex), and html5's
-  nonordinary root transfer with barrier 5 (positioned or atomic content).
-  Q128 B (owner direction, 2026-10-07) selected positioned/atomic propagation
-  followed by flex propagation. The
-  [constituent inventory](../research/investigations/structure-edits/layout-design.md#q128-semantic-extension-constituent-inventory-and-proof-boundary)
-  in CI [37578072578](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37578072578)
-  at `4154340` found additional barriers hidden by the maximum reason 5:
-  html5's first edited `dd` (NodeId 217487) itself has barrier 1 from the
-  earlier-float flag; its context also has clearance and barrier-3
-  (constrained or marker) contributors. Ecma262's target flow also contains
-  barrier-3 contributors, and two edit sites
-  cross both an `emu-note` flex container and body flex. Impact: the two
-  initially identified guards are not sufficient for page acceptance.
-  The continuation directs Q129 A: extend the transfer proof to expired
-  earlier floats, suffix natural-position minima and lined markers. A
-  seam-only float-expiry test is unsound with later negative margins; retaining
-  the existing counted reference path leaves the page gate blocked. The
-  positioned and flex implementations now retain anchor dependencies and
-  pre-stretch measurements; the transfer extension also covers uniformly moved
-  later floats against stationary-prefix reach. CI
-  [37602480329](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37602480329)
-  at `41085b1377803b9d62275b1f7e4278e055cd30bc` passed the focused step-5
-  run: all 60 html5 block edits spliced locally and matched rebuilds;
-  ecma262's 20 matched rebuilds but retained reason 3 for split fragments.
-  The constituent inventory found lined markers but no specified, minimum or
-  maximum height constraints in either edited context. The unchanged-prefix
-  fragment certificate passed its fixtures at `d981f914`, but every directly
-  mapped ecma262 seam precedes later splits. Stable split endpoint anchors
-  now replace that insufficient scope, with source-removal and seam-topology
-  summaries and a reference-bridge equivalence certificate. Remaining:
-  validate the retained-separator extension for ecma262's remaining four
-  split refusals, split-line refresh through text updates, and the final
-  seq/par acceptance and mutation gates. The reference bridge remains a
-  whole-context path outside accepted local splice work; no new performance
-  claim is made.
-  Positioned and atomic subtree retirement now includes live counts and route
-  tombstones; pre-existing generated-child removal fixtures cover the repair.
-  New generated pseudo membership still belongs to the existing style fallback,
-  so these fixtures do not claim local introduction of the first `has_out`. Complete this
-  work before E2 or step-6 acceptance; require every unchanged page-script prefix
-  to match a fresh build in seq/par and every block edit to report
-  `splice 1 reason 0`. The zero-fallback assertion remains enabled.
+- **M2 splice scope beyond the certified page paths.**
+  Q128 B and Q129 A extend local splicing through positioned and atomic
+  anchors, enclosing flex containers, expired earlier floats and uniformly
+  translated later floats, lined markers, and retained split fragments.
+  The [arguments and acceptance evidence](../research/investigations/structure-edits/layout-design.md#semantic-extension-acceptance)
+  distinguish source guarantees from measured coverage. Focused CI
+  [37611691695](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37611691695)
+  at `39de64c2b9556069b8baf6fc9d3e712ce787a95f` reports all 20 ecma262
+  and 60 html5 block edits as `splice 1 reason 0`, all equal to full rebuilds.
+  The full seq/par and mutation gates remain mandatory acceptance checks.
+  Cases outside the certificate retain explicit counted refusal: active
+  height constraints, changed float exports, removed fragment sources or
+  uncertified split topology, and flex routes through atomic, float or
+  positioned ownership. Actual flex outputs that fail the enclosing-flow
+  certificate use the proposed Q130 completed-reference reason-10 contract.
+  Impact: these other workloads have correct reference recovery, without
+  a claim of bounded local work. Reopen each limitation when an experiment
+  needs that workload, with a dependency argument, a normal and boundary
+  fixture, full-rebuild identity and a discriminating mutation.
+  Positioned and atomic retirement includes live counts and route tombstones.
+  Publication of the first `has_out` state is source-reviewed only: the
+  block-edit DSL cannot introduce that membership neutrally, and generated
+  pseudo membership uses the existing style fallback. Add runtime coverage
+  when a neutral structural edit can express it; do not relabel style fallback
+  as local splicing. The fragment reference bridge remains a whole-context
+  path outside accepted local splice work. No performance claim follows from
+  the page path or identity checks, and the zero-fallback assertion remains
+  enabled.
 
 - **M2 step 4 needs parallel scatter and complete physical-work evidence.**
   AVL reduction repair is local, but `later_handles` appends to one temporary
