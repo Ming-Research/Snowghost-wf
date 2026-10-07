@@ -1495,9 +1495,14 @@ struct FloatShift {
   shift: i32;
 }
 
-fn restack_settles(context: &Context, styles: &Styles, frames: &Box<Slots<Frame>>, plan: Restack, content_top: i32, floats: FloatShift, cursor: i32, old_cursor: i32, floor: i32, basis_height: i32) -> settles: Bool reads(context), reads(styles), reads(frames) {
-  doc "Tells whether a re-stack may stop after a paragraph with lines whose previous placement also had lines, the rest of the flow moving by delta = cursor - old_cursor. Every block still open must end delta lower than before, less what its top moved (frames_grow); the waiting margins are none after a paragraph with lines, in both passes. When every float placed again moved by delta (or none was placed again), the floats of the two passes after the edited entry differ by delta like the rest: with delta 0 the states are the same and the re-stack stops; otherwise the floats placed before the edited entry, which did not move, must not reach below floor (the lowest position any later entry started from before floats and clearance moved it in the previous pass: naturals) nor the previous flow's end (plan.old_flow_end), in either pass (moved by delta in this one). When floats moved by other amounts, no float of either pass may reach below those limits. Then nothing placed so far narrows, moves, clears or holds up anything later and the content height moves by delta.";
+fn restack_settles(context: &Context, styles: &Styles, frames: &Box<Slots<Frame>>, plan: Restack, content_top: i32, old_travel: i64, floats: FloatShift, cursor: i32, old_cursor: i32, floor: i32, basis_height: i32) -> settles: Bool reads(context), reads(styles), reads(frames) {
+  doc "Tells whether a re-stack may stop after a paragraph with lines whose previous placement also had lines, the rest of the flow moving by delta = cursor - old_cursor. Old root travel and the content origin must certify the proposed suffix movement before any translation. Every block still open must end delta lower than before, less what its top moved (frames_grow); the waiting margins are none after a paragraph with lines, in both passes. When every float placed again moved by delta (or none was placed again), the floats of the two passes after the edited entry differ by delta like the rest: with delta 0 the states are the same and the re-stack stops; otherwise the floats placed before the edited entry, which did not move, must not reach below floor (the lowest position any later entry started from before floats and clearance moved it in the previous pass: naturals) nor the previous flow's end (plan.old_flow_end), in either pass (moved by delta in this one). When floats moved by other amounts, no float of either pass may reach below those limits. Then nothing placed so far narrows, moves, clears or holds up anything later and the content height moves by delta.";
   let delta = cursor -sat old_cursor;
+  let exact_suffix = reference_motion_fits(origin: content_top, travel: old_travel, delta: delta);
+  if exact_suffix {
+  } else {
+    return False();
+  }
   let followed = floats.shift == delta;
   let none_moved = bnot(floats.any);
   let moved_alike = band(floats.uniform, followed);
@@ -1883,6 +1888,13 @@ fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Fra
 
 fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, content_left: i32, content_top: i32, content_width: i32, basis_height: i32, plan: Restack) -> result: StackResult reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "The stacking pass of a flow context, the one walk that keeps the true order of its content: places block boxes, paragraphs and in-flow child contexts down the content box with CSS 2.2's margin collapsing (8.3.1) and clearance, places floats as they come and breaks again the paragraphs that floats narrow, records out-of-flow children's static positions, and returns the content height, which contains the floats, and the last line's baseline; it records the flow's end before the floats (flow_end) and each entry's natural position (naturals). A re-stack (plan, Restack) recovers the state after the preceding paragraph with lines from its natural position, ancestor frames and placed floats, falling back to the start when no such paragraph exists or an inverted coordinate is saturated. It replays only the remaining entries before plan.from: a paragraph keeps its lines and a child its position, read back from where the previous pass placed it, and neither is placed again, while blocks, floats and out-of-flow children go through the same steps as before (they write what they wrote); from plan.from on it stacks as a full pass would after update's pre-pass path, breaking a paragraph again at full width first when the previous pass narrowed its lines or the paragraph is marked (after reading its previous height) and settling a child in the space the pre-pass gives it (settle_child), and after each paragraph with lines at or after plan.until it asks restack_settles whether to stop there. Suffix floors are built only when a float and a changed stacking state require them.";
+  let old_travel = if plan.partial {
+    let total_output = False();
+    let old_output = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_output, visits: &context^.boundary_visits);
+    give old_output.travel;
+  } else {
+    give 0_i64;
+  }
   let empty_floats = box_slots_new::<Exclusion>(capacity: 0_u64);
   let stack = Stack(cursor: 0_i32, positive: 0_i32, negative: 0_i32, floats: move empty_floats, float_floor: -2147483647_i32, reach: -2147483647_i32);
   set context^.baseline_entry = no_index;
@@ -2270,7 +2282,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
                 give -2147483647_i32;
               }
               let shifted = FloatShift(before_reach: before_reach, reach: stack.reach, old_reach: old_reach, any: any_float, uniform: floats_uniform, shift: float_shift);
-              let settles = restack_settles(context: context, styles: styles, frames: &frames, plan: plan, content_top: content_top, floats: shifted, cursor: stack.cursor, old_cursor: old_cursor, floor: floor, basis_height: basis_height);
+              let settles = restack_settles(context: context, styles: styles, frames: &frames, plan: plan, content_top: content_top, old_travel: old_travel, floats: shifted, cursor: stack.cursor, old_cursor: old_cursor, floor: floor, basis_height: basis_height);
               if settles {
                 settle_open(context: context, frames: &frames, plan: plan, content_left: content_left, content_top: content_top, delta: delta);
                 set stopped = True();

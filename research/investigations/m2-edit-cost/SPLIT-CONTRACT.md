@@ -169,9 +169,10 @@ complete field comparison only over those dependency intervals. A repairs the
 replayed range, retaining suffix expressions and their certificates because
 their local inputs are unchanged. A's split lines are also owner-relative:
 stacked openings mark raw line scratch dirty; binary source-range lookup
-publishes those offsets. The existing arithmetic travel certificate permits
-unchanged suffix offsets; exceptional numeric repair preserves the reference
-saturating addition using the still-retained old owner origins. Both options
+publishes those offsets. The existing arithmetic travel certificate is required before suffix reuse,
+including convergence at a computed zero delta because saturated old positions
+cannot recover the true old cursor. Exact motion preserves suffix offsets;
+unsafe arithmetic replays the suffix through the original operations. Both options
 keep the original full construction and certification for replaced topology.
 
 A's no-split-line-refresh mutant disables the published mode-2 anchor
@@ -184,15 +185,13 @@ The original path requirement and unmutated identity remain unchanged. The addit
 targeted fragment-cell repair and must fail a semantic identity check. No
 fixture HTML, expected dump, or block success requirement is changed.
 
-Independent review identified missing runtime coverage of A's exceptional
-split-line saturation repair. `split-limit.py` now generates low/high-origin
-Open and Child heads with an empty leading fragment, followed by paragraph
-growth/shrink edits. The supplementary hosted oracle job reuses exact-source
-correctness drivers and requires seq/par identity; A additionally omits only
-the exceptional line repair and requires a high-origin semantic difference.
-These are proposed boundary probes until CI demonstrates both observations.
-The local assertion sample rejected missing detection, a low-control mismatch,
-incomplete output and a refused edit; an actual high mismatch was recognized.
+`split-limit.py` generates low/high-origin Open and Child heads with an empty
+leading fragment and plain/atomic paragraphs, followed by growth and exact
+undo. Ordinary oracles require identity in seq/par. The numeric falsifier
+requires unmutated identity and a detector negative control before omitting
+only `reference_motion_fits` admission; low-origin controls must stay identical
+and a high-origin semantic difference must be observed. No expected result or
+page block-splice requirement is relaxed.
 
 The source review also found an unnecessary global repair-to-certificate
 barrier. Both prototypes now evaluate the unchanged full field comparison
@@ -203,19 +202,24 @@ index traversal is removed. Full publication uses the same evaluator and exact
 comparison, including raw/missing-anchor behavior and saturating operation order.
 Final timing and affected validation must use this fused revision.
 
-The first generated saturation probes passed normal seq/par identity and the
-unmutated detector negative control, but did not detect omission of exceptional
-repair (37683206470). They therefore establish boundary identity only, not
-coverage of that repair path. Its reach and a distinguishing probe remain under
-investigation; the omission expectation is unchanged.
+The initial plain boundary probes passed, but did not exercise the exceptional
+line repair: paragraph pre-breaking followed by numeric refusal forced full
+stacking. Adding an unchanged atomic inline reached reference reuse and exposed
+an undo mismatch in both prototypes (A run 37691741191, B run 37696134276).
+The B debug dump shows the head at 33554412 px instead of the full build's
+33554420 px after undo; the full hash returns to the initial hash. Saturating
+`old_y + 20px`, then subtracting 20px, loses the original coordinate. The old
+publication-time numeric check was too late to repair that information.
 
-Source inspection explains that first probe's non-discrimination: the plain
-paragraph is pre-broken; the high-origin travel refusal then marks the context
-restyled and forces full stacking. The additional atomic-inline variant makes
-pre-breaking inapplicable, allowing the existing split-fragment refusal to
-reach legacy reference updating instead. Ordinary incremental counters and
-base dumps are now captured with both plain and atomic variants. No admission
-guard or expected identity is changed; selective omission must still differ.
+Both prototypes now require the origin/travel certificate before in-place
+suffix translation and before accepting partial-stack convergence. Failed
+admission continues reference replay through the suffix. The old root travel
+is read once before partial stacking. A's exceptional fragment-only line repair
+is retired: it cannot repair saturated endpoint geometry, and both former
+call sites now require its exact-motion certificate before translation.
+The numeric admission omission replaces that unreachable repair omission;
+all existing fragment and targeted-cell falsifiers remain wired. Base comparison
+and corrected runtime validation are pending.
 
 ## Remaining-cost diagnostic question, before profiling
 

@@ -3,8 +3,8 @@
 Usage: split-limit.py DRIVER OUTPUT_DIR [--detect-omission]
 The optional mode requires an actual high-origin mismatch while checking the
 complete driver protocol and unchanged low-origin controls. CI runs the same
-inputs on unmodified sequential/parallel drivers before omitting the exceptional
-line repair. The generated pages and logs stay in OUTPUT_DIR; case pages stay
+inputs on unmodified sequential/parallel drivers before omitting the numeric
+suffix admission. The generated pages and logs stay in OUTPUT_DIR; case pages stay
 unchanged. The standard library has no driver-node parser, so this reuses Tree.
 """
 import re
@@ -78,8 +78,8 @@ def run(driver, directory, detect):
             print(name, 'seconds', round(elapsed, 3), 'different edits', different, flush=True)
     if detect:
         if not differences:
-            raise AssertionError('omitted exceptional split-line repair produced no high-origin difference')
-        print('detected exceptional split-line omission:', ', '.join(differences))
+            raise AssertionError('omitted numeric suffix admission produced no high-origin difference')
+        print('detected numeric suffix-admission omission:', ', '.join(differences))
 
 
 if __name__ == '__main__':
