@@ -34,7 +34,8 @@ whose intervening flow events are all lineless paragraphs. Multiple runs of
 one owner remain distinct even when their rectangles coincide. Fragment
 identity is run identity plus role (leading, spanning, trailing), never owner
 plus rectangle. Paragraph text/inline fragments retain paragraph ownership.
-Context-owned empty-inline fragments retain their source paragraph's reference
+Empty-inline identity is source paragraph plus inline mark, separate from
+run-plus-role identity. Context-owned empty-inline fragments retain their source paragraph's reference
 scratch semantics: a lineless paragraph does not acquire a translated origin.
 
 | Output | Inputs, including negative dependencies |
@@ -45,8 +46,8 @@ scratch semantics: a lineless paragraph does not acquire a translated origin.
 | Leading y | First visual top, or pending line position from the first normal origin and exact offset; preserve the selector and saturation order. |
 | Spanning rectangle | First split's containing left/width; context content left; first visual top; last visual top and height. Height is `(last_top +sat last_height) -sat first_top`. |
 | Trailing existence | Event immediately after the last close; its line presence and opening inline-owner marks. |
-| Trailing y | Last visual top, height, and resolved bottom margin, whose percentage basis is the first split width. |
-| Empty-inline rectangle | Source paragraph's marks and styles, absence of that owner from the split-owner set, paragraph left and its retained lineless resolved position. |
+| Trailing y | Last visual top, height, and resolved bottom margin: a block resolves its style with the first split width as percentage basis; an independent Child supplies its already resolved margin_bottom. |
+| Empty-inline rectangle | Source paragraph's line-presence bit, marks and styles, absence of that owner from the split-owner set, paragraph left and its retained lineless resolved position. |
 
 Text can change shaping, line count, height, intrinsic contributions and
 line-presence, hence run joining and adjacent-fragment existence. Unchanged
@@ -89,6 +90,12 @@ and adjacency intervals to runs. Distinct runs never alias through coordinates.
 Run slots remain stable while topology survives; replacement retires old
 slots, and stale references must never name new runs. No global identity
 counter is needed: context identity plus local non-reused slot suffices.
+Logical publication order is separate from storage identity: the context own
+rectangle comes first, runs follow first-split source order, each emits leading,
+spanning and trailing roles in that order when present, then empty-inline
+sources follow event and mark order. Replacement updates this logical order
+without appending an early replacement behind a kept suffix. Source adjacency
+is the true ordering dependency; independent rectangle evaluation is unordered.
 Context replacement retires its entire identity domain. Exhaustion is checked
 before publication; a saturated counter is not a valid fresh identity.
 
