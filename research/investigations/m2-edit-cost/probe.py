@@ -84,7 +84,7 @@ body = oracle.read_text()
 start = body.index('fn put_counts(')
 end = body.index('\nfn ', start + 1)
 counts = body[start:end]
-extra = '''  let diagnostics = probe_trace(layout: layout);
+extra = '''  let diagnostics = pkg::layout::probe_trace(layout: layout);
   let rows = diagnostics.inner.len / 8_u64;
   let label: Array<u8, 6> = "probe ";
   for (row in 0_u64..rows) {

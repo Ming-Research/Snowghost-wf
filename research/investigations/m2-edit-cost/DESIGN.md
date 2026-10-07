@@ -397,3 +397,10 @@ including positive edit 4 that failed before the saturation repair. The
 unpartitioned remainder of this run is superseded by 37609456167 on the same
 renderer source. General identity, final timings and the complete mutation
 matrix are not yet claimed passing.
+
+Diagnostic review caught a missing qualified import in the generated oracle
+call; it now names `pkg::layout::probe_trace`. Per-context tags on unvisited
+contexts can survive later edits, so first-edit records are the primary
+attribution and later records require comparison with the preceding trace.
+Base/head block scripts must also compare equal before the baseline result is
+called a same-script attribution.
