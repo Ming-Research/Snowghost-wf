@@ -219,3 +219,15 @@ travel bound is not needed for that observation. Changed outputs still need
 the existing certificate or reference replay. Timing and all identity/mutation
 checks must test this rearrangement; the first run is not acceptance evidence
 for the revised order.
+
+The limited review found that clearing the probed child's dirty flag made
+`single_marked_child` reject the pending parent entry before consuming its
+snapshot. Match the parent's sole marked slot to `ChildBefore` instead,
+preserving the ordinary missing-child refusal otherwise. The same match skips
+reset/state scans over unrelated children: the only marked child is already
+settled, so none remains dirty for those scans to visit. Full settlement also
+keeps the original snapshot when it builds its comparison array.
+The direct child-entry certificate call exposed the same overly broad read
+contract as the paragraph call; its actual reads are children, blocks and
+entries, disjoint from boundary visit counters. Narrow that contract without
+changing its body or the call.

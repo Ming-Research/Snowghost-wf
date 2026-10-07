@@ -1132,6 +1132,18 @@ fn single_marked_child(context: &Context) -> (one: Bool, index: u64) reads(conte
   return False(), 0_u64;
 }
 
+fn pending_child_probe(context: &Context, previous: ChildBefore) -> pending: Bool reads(context) {
+  doc "Whether the sole child still pending at the parent is the child already settled by the early probe. Its cleared dirty flag does not discard the parent's original output snapshot.";
+  if context^.marked_children != 1_u32 {
+    return False();
+  }
+  let at = cvt::<u32, u64>(context^.marked_child);
+  if at < context^.children.inner.len {
+    return at == previous.at;
+  }
+  return False();
+}
+
 fn single_marked_paragraph(context: &Context) -> (one: Bool, index: u64) reads(context) {
   doc "Whether exactly one paragraph of the context is marked, as text_changed counted them, and its index.";
   if context^.marked_paragraphs == 1_u32 {
@@ -1213,6 +1225,11 @@ fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document
     }
   }
   let (has_child, c) = single_marked_child(context: context);
+  let probed_child = pending_child_probe(context: context, previous: child_before);
+  if probed_child {
+    set has_child = True();
+    set c = child_before.at;
+  }
   let child_wanted = children_marked == 1_u32;
   let child_lost = bnot(has_child);
   let child_missing = band(child_wanted, child_lost);
@@ -1510,7 +1527,11 @@ fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &
 
 fn update_flow_reference(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before, paragraph_before: ParagraphBefore, child_before: ChildBefore) -> counts: UpdateCounts reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Brings the marked flow context up to date, before holding its space and outputs from its previous layout, with lay_out_flow's passes: its width; then, when its geometry and space are those of its previous layout and no marked child is positioned, update_in_place updates it without the pre-pass or the stacking pass where it can. Otherwise the pre-pass runs again, each marked child is updated, each unmarked child whose space came out unchanged is kept (its margins resolved again) and every other one laid out again, each paragraph is broken again when it is marked, its flow width changed, it follows a float and holds lines the stacking pass narrowed or moved beside one (full_width_lines), or it holds an atomic inline whose outputs changed, and finish_flow stacks the flow and writes the fragments again. Each loop over the children or the paragraphs is a counted loop whose iteration writes only its own element and its own entry of a local array.";
-  reset_marked_children(context: context);
+  let probed_child = pending_child_probe(context: context, previous: child_before);
+  if probed_child {
+  } else {
+    reset_marked_children(context: context);
+  }
   let was_known = context^.intrinsic_known;
   let width = used_width(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   set context^.width = width;
@@ -1534,7 +1555,14 @@ fn update_flow_reference(context: &Context, events: &[Flow], styles: &Styles, do
   let newly_known = band(was_unknown, context^.intrinsic_known);
   let own_marked_known = band(context^.dirty, context^.intrinsic_known);
   let own_asked = bor(newly_known, own_marked_known);
-  let (children_asked, out_marked) = marked_children_state(context: context, styles: styles);
+  let children_asked = False();
+  let out_marked = False();
+  if probed_child {
+  } else {
+    let (child_intrinsic, child_positioned) = marked_children_state(context: context, styles: styles);
+    set children_asked = child_intrinsic;
+    set out_marked = child_positioned;
+  }
   let marked_paragraphs = context^.marked_paragraphs > 0_u32;
   let asked = bor(own_asked, children_asked);
   let kept_frame = band(same_frame, same_place);
@@ -1613,7 +1641,11 @@ fn update_flow_reference(context: &Context, events: &[Flow], styles: &Styles, do
   let befores = box_array_filled::<Before>(count: bounded, value: unknown_before);
   for (k in 0_u64..bounded) {
     if k < context^.children.inner.len {
-      set befores.inner[k] = before_of(context: &context^.children.inner[k]);
+      if k == child_before.at {
+        set befores.inner[k] = child_before.geometry;
+      } else {
+        set befores.inner[k] = before_of(context: &context^.children.inner[k]);
+      }
     }
   }
   let results = box_array_filled::<UpdateCounts>(count: bounded, value: nothing);
