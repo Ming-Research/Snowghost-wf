@@ -19,6 +19,7 @@ on:
       full: {type: string, required: false}
       rounds: {type: string, required: false}
       time: {type: string, required: false}
+      profile: {type: string, required: false}
 
 concurrency:
   group: time-14900k
@@ -48,6 +49,8 @@ env:
   # whitefootc runs /usr/bin/clang, which must be its release's LLVM major
   # (whitefoot-kit/downstream.md).
   TIME: ${{ inputs.time || '1' }}
+  # Names from BUILDS whose box build on html5 is profiled with perf (temporary).
+  PROFILE: ${{ inputs.profile || '' }}
 
 jobs:
   time:
@@ -209,6 +212,33 @@ jobs:
             for kind in $EDIT_KINDS; do
               node research/investigations/engine-comparison/chromium.mjs "$data/$page.html" "build/x5/$page.nodes" "build/x5/scripts/$page-$kind.edits" $sheets | tee "results/chromium-$page-$kind.txt" | tail -2
             done
+          done
+
+      - name: Profile the box build (perf, temporary)
+        if: env.PROFILE != ''
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEPS/perfdebs" && cd "$DEPS/perfdebs"
+          k=$(uname -r)
+          for p in linux-tools-common "linux-tools-$k" "linux-tools-${k%-generic}"; do ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || true; done
+          wanted=$(apt-cache depends --recurse --no-recommends --no-suggests --no-conflicts --no-breaks --no-replaces --no-enhances "linux-tools-${k%-generic}" 2>/dev/null | grep -E '^[a-z0-9]' | sort -u)
+          for p in $wanted; do
+            if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed'; then continue; fi
+            ls "${p}"_*.deb >/dev/null 2>&1 || apt-get download "$p" >/dev/null 2>&1 || true
+          done
+          for d in *.deb; do dpkg -x "$d" "$DEPS/perfroot"; done
+          perf=$(find "$DEPS/perfroot" -type f -name perf | head -1)
+          lib="$DEPS/perfroot/usr/lib/x86_64-linux-gnu:$DEPS/perfroot/lib/x86_64-linux-gnu"
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p results
+          page=build/research/concurrency/html5.html
+          for name in $PROFILE; do
+            drv="build/drivers/$name-seq"
+            LD_LIBRARY_PATH=$lib "$perf" stat -e task-clock,instructions,cycles,cache-misses,page-faults -o "results/perf-stat-$name.txt" "$drv" boxes 20 "$page" renderer/style/ua.css > /dev/null
+            LD_LIBRARY_PATH=$lib "$perf" record -F 1999 -g -o "build/$name.perf" "$drv" boxes 20 "$page" renderer/style/ua.css > /dev/null
+            LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name.perf" --no-children --stdio --percent-limit 0.5 -g none 2>/dev/null | grep -v '^$' | head -70 > "results/perf-boxes-$name.txt"
+            LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name.perf" --children --stdio --percent-limit 2 -g none 2>/dev/null | grep -v '^$' | head -60 > "results/perf-boxes-children-$name.txt"
+            echo "== $name"; cat "results/perf-stat-$name.txt"; head -45 "results/perf-boxes-$name.txt"
           done
 
       - name: Time the full stages
