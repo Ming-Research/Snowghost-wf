@@ -769,3 +769,50 @@ live entry directly; kind and child-index checks still exclude atomic and
 retired candidates. Full passes keep their existing shared array access.
 This removes a new lookup dependency from float recovery and positioned-child
 classification, without introducing retained state or a candidate cache.
+
+
+The suffix certificate has explicit ordinary-path boundary checks: admit
+2147483646 at origin zero, reject the natural sentinel 2147483647, and reject
+origin one plus travel 2147483646. A separate `reference-sentinel` mutant
+changes strict comparison to inclusive comparison and must be detected by
+the oracle's existing transfer assertion. The full configured matrix now has
+29 mutants; the original 26 and the two scoped geometry faults remain wired.
+The next timing run also downloads the already-built 0430437 driver as
+`prior`, interleaving it with main/base/twin/head on that single host.
+
+
+## Dense suffix and positioned cutoff question
+
+A large translated suffix must refresh global reference scratch under the
+existing contract, but need not chase every retained AVL node to do so.
+Compare the indexed traversal with independent physical-payload loops admitted
+only when all allocated block, paragraph and child slots number at most twice
+the selected suffix's virtual events. That condition bounds every scanned
+prefix/tombstone slot by actual suffix work; small suffixes keep indexed
+selection. Current `flow_at` selects only following live payloads, with atomic
+children translated once in the child loop. A child whose geometric owner is
+a tombstoned block is excluded even if its own `retired` flag is absent.
+Lengths are captured before each counted loop and writes are element-local,
+so no indirect scatter proof or new sequential buffer construction is needed.
+This preserves global scratch validity and each saturating coordinate write.
+
+Positioned publication also need not repair an unchanged output's owner chain.
+Encode each actual Out anchor, prepare its exact transfer, and compare it to
+its cached own transfer using the existing complete equality check. An equal
+transfer cannot change a parent reduction; placement changes no owner block
+geometry. Changed transfers keep normal index and ancestor repair. Anchors
+are encoded even when their symmetric travel bounds happen to compare equal.
+
+Reject either repair for an incremental/rebuild difference, an undetected
+scoped fault, or an admission that scans more than its stated work bound.
+Compare the combined timing against the built 0430437 prior and the unchanged
+main/base/twin controls; retain the intermediate batch build's result
+separately. No claim of 2x follows from the static work bound alone.
+
+
+The dense-path fault suppresses only the selected paragraph scratch
+translation while retaining the sparse traversal and full-build path. It must
+produce an incremental difference through existing fixtures, establishing
+that those fixtures actually exercise dense translation. The full configured
+matrix therefore has 30 mutants; the three preceding scoped faults remain
+selected together with it by `[reference]`.

@@ -89,7 +89,7 @@ fn publish_reference_event(context: &Context, item: Flow, styles: &Styles, basis
 }
 
 fn publish_reference_positioned(context: &Context, events: &[Flow], styles: &Styles, basis_height: i32) -> result: unit reads(events), reads(styles), writes(context) {
-  doc "Refreshes every actual Out payload that position_out_children may have changed, identifying candidates by child metadata and stable owner handles rather than scanning every flow event. Atomic children sharing a Text rank are excluded.";
+  doc "Refreshes every actual Out payload that position_out_children may have changed, identifying candidates by child metadata and stable owner handles rather than scanning every flow event. Atomic children sharing a Text rank are excluded. Every selected anchor is encoded, but identical own transfers stop before index or ancestor repair because positioned placement changes no containing block geometry.";
   if context^.has_out {
   } else {
     return unit;
@@ -99,6 +99,7 @@ fn publish_reference_positioned(context: &Context, events: &[Flow], styles: &Sty
   for (at in 0_u64..count) {
     if at < context^.children.inner.len {
       let owner = context^.children.inner[at].block;
+      let slot = context^.children.inner[at].entry_slot;
       let rank = cvt::<u32, u64>(context^.children.inner[at].flow_at);
       if rank < bound {
         let item = reference_child_event(context: context, events: events, at: at);
@@ -108,9 +109,24 @@ fn publish_reference_positioned(context: &Context, events: &[Flow], styles: &Sty
         let selected = band(is_out, same_child);
         if selected {
           encode_reference_item(context: context, item: item);
-          publish_reference_item(context: context, item: item, styles: styles, basis_height: basis_height);
-          encode_reference_ancestors(context: context, owner: owner);
-          publish_reference_ancestors(context: context, owner: owner, styles: styles, basis_height: basis_height);
+          let own_field = True();
+          let previous = reference_owner_output(context: context, owner: owner, slot: slot, own: own_field);
+          let prepared = reference_item_output(context: context, item: item, styles: styles, basis_height: basis_height);
+          let same = same_transfer(first: previous, second: prepared);
+          if same {
+          } else {
+            if owner == no_index {
+              boundary_set(sequence: &context^.entries, slot: slot, output: prepared, visits: &context^.boundary_visits);
+            } else {
+              let owner_at = cvt::<u32, u64>(owner);
+              if owner_at < context^.blocks.inner.len {
+                set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+                boundary_set(sequence: &context^.blocks.inner[owner_at].entries, slot: slot, output: prepared, visits: &context^.boundary_visits);
+              }
+            }
+            encode_reference_ancestors(context: context, owner: owner);
+            publish_reference_ancestors(context: context, owner: owner, styles: styles, basis_height: basis_height);
+          }
         }
       }
     }
@@ -423,11 +439,101 @@ fn translate_reference_owner_suffix(context: &Context, owner: u32, slot: u32, he
   return unit;
 }
 
+fn shift_dense_reference_block(block: &Block, after: u64, delta: i32) -> result: unit reads(block.entry_slot), reads(block.flow_at), writes(block.normal_y), writes(block.resolved_y) {
+  doc "Translates one live block selected by its current Open rank. Removed block slots have no entry_slot; the reference pre-pass assigns ranks before a topology-changing context can use suffix translation.";
+  if block^.entry_slot == no_index {
+    return unit;
+  }
+  if block^.flow_at == no_index {
+    return unit;
+  }
+  let rank = cvt::<u32, u64>(block^.flow_at);
+  if rank > after {
+    set block^.resolved_y = block^.resolved_y +sat delta;
+    set block^.normal_y = block^.normal_y +sat delta;
+  }
+  return unit;
+}
+
+fn shift_dense_reference_paragraph(paragraph: &Paragraph, after: u64, delta: i32) -> result: unit writes(paragraph) {
+  doc "Translates one nonretired paragraph selected by its current Text rank, preserving shift_paragraph's lineless exception. Atomic children are shifted only by the separate child loop.";
+  if paragraph^.retired {
+    return unit;
+  }
+  if paragraph^.flow_at == no_index {
+    return unit;
+  }
+  let rank = cvt::<u32, u64>(paragraph^.flow_at);
+  if rank > after {
+    shift_paragraph(paragraph: paragraph, delta: delta);
+  }
+  return unit;
+}
+
+fn shift_dense_reference_child(child: &Context, blocks: &[Block], after: u64, delta: i32) -> result: unit reads(blocks), writes(child) {
+  doc "Translates one nonretired child whose current flow rank follows the cutoff, including each atomic once at its paragraph rank and viewport children before positioned layout. A nonroot geometric owner must remain live: removing its block may leave an unretired atomic or positioned child slot with an obsolete rank.";
+  if child^.retired {
+    return unit;
+  }
+  if child^.flow_at == no_index {
+    return unit;
+  }
+  let rank = cvt::<u32, u64>(child^.flow_at);
+  if rank > after {
+  } else {
+    return unit;
+  }
+  if child^.block != no_index {
+    let owner = cvt::<u32, u64>(child^.block);
+    if owner < blocks^.len {
+      if blocks^[owner].entry_slot == no_index {
+        return unit;
+      }
+    } else {
+      return unit;
+    }
+  }
+  set child^.normal_y = child^.normal_y +sat delta;
+  set child^.y = child^.y +sat delta;
+  return unit;
+}
+
+fn translate_dense_reference_suffix(context: &Context, after: u64, delta: i32) -> result: unit writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner) {
+  doc "Translates a suffix through independent physical-payload loops after the caller bounds all scanned slots by twice the live suffix's event count. Lengths include tombstones and atomic children; each iteration writes only its own payload, and child coordinates are never also written by the paragraph loop.";
+  let blocks = context^.blocks.inner.len;
+  let paragraphs = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  for (b in 0_u64..blocks) {
+    shift_dense_reference_block(block: &context^.blocks.inner[b], after: after, delta: delta);
+  }
+  for (p in 0_u64..paragraphs) {
+    shift_dense_reference_paragraph(paragraph: &context^.paragraphs.inner[p], after: after, delta: delta);
+  }
+  for (c in 0_u64..children) {
+    shift_dense_reference_child(child: &context^.children.inner[c], blocks: &context^.blocks.inner[0_u64..blocks], after: after, delta: delta);
+  }
+  return unit;
+}
+
 fn translate_reference_suffix(context: &Context, after: u64, delta: i32) -> result: unit writes(context) {
-  doc "Applies the reference walker's existing saturating coordinate translation strictly after one virtual rank, visiting each selected live payload through retained owner indexes without materializing events or scanning the prefix or unrelated child slots.";
+  doc "Applies the reference walker's saturating coordinate translation strictly after one current virtual rank. Dense payload loops are admitted only when all physical slots cost at most twice the live suffix events; otherwise cached owner indexes skip the prefix. A changed topology forces reference preparation before either path, so rank selection retains the same meaning without new state or event materialization.";
   let first = after +sat 1_u64;
   let root = context^.entries.root;
   let cursor = reference_owner_cursor(context: context, owner: no_index, slot: root);
+  let suffix = cursor.total_events -sat first;
+  if suffix == 0_u64 {
+    return unit;
+  }
+  let blocks = context^.blocks.inner.len;
+  let paragraphs = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  let text_slots = blocks +sat paragraphs;
+  let physical = text_slots +sat children;
+  let allowance = suffix +sat suffix;
+  if physical <= allowance {
+    translate_dense_reference_suffix(context: context, after: after, delta: delta);
+    return unit;
+  }
   translate_reference_owner_suffix(context: context, owner: no_index, slot: root, held: cursor, skip: first, delta: delta);
   return unit;
 }

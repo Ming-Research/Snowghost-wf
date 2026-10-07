@@ -315,6 +315,23 @@ example apart from the renderer code that exposed it
   the mutation scope.
 
 
+- **Removed Open payloads may retain orphan atomic child slots.**
+  `retire_splice_payloads` vacates Text payloads but does not retire their
+  placed atomic contexts; its Float/Out cases also do not retire child slots.
+  Float-containing removal is excluded by `free_transfer=False`, but atomic
+  and Out barriers alone do not establish that exclusion. Source-predicted
+  reproduction: remove an auto-height, unframed div containing an inline-block
+  between two ordinary paragraphs. Its block is tombstoned while the atomic
+  child may retain `retired=False` and an old rank. No rendered failure has
+  been observed; possible impacts are retained routes, inaccurate retirement
+  counts and slot scans treating orphans as live. Dense reference scans check
+  the geometric owner's live entry as well as the child's flag. Change:
+  reproduce through CI, then retire every admitted removed subtree's owned
+  child contexts exactly once, including atomics, and verify route/count
+  deltas plus mixed edit/rebuild identity. Reopen with the splice-scope work
+  before broadening removed-subtree admission. This is a source lead, not a
+  claim that the existing oracles demonstrate a failure.
+
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
   only the inserted/removed subtree's routes on the neutral splice path.
