@@ -1289,3 +1289,15 @@ No design node, module interface, Whitefoot pin, submodule or case HTML was
 changed. The correctness pin remains wf-f949e676acfa; only the requested
 timing workflow substitutes wf-0b7f5c5b9854 with clang 22.1.8. The branch
 contains no approval record for Q1/Q2, no PR and no main-line merge.
+
+
+## Direct full-page byte comparison
+
+Final report inspection distinguished X5's seq/par hash/length records from
+explicit full-page byte comparisons. Add native cmp of both real pages'
+sequential and four-worker dumps to the existing full-build oracle step.
+A one-use job reuses the already-built final correctness drivers from
+37642164216, compares both pages directly, and checks that an altered dump
+is rejected. This validates the additional comparison without recompiling
+or rerunning the green mutation or page-edit suites. Remove the one-use job
+after its result; keep the ordinary oracle comparison wired.
