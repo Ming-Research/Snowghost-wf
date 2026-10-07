@@ -1039,15 +1039,17 @@ otherwise complete two-edit insertion/removal log and a passing restored log.
 `splice-route-case.edits` uses `block-case.html` and probes text 44 immediately
 after inserting block 43 before old sibling 17, before any retained-text or
 style edit can cause resynchronization. `checkpoint-case.html` puts a counter
-reset of `list-item` to 777 on the body and makes direct paragraph children of its section
+reset of `list-item` to 777 on the section and makes its direct paragraph children
 independent contexts. `checkpoint-case.sh` resolves the section and new-node
 IDs from the driver's node listing, then inserts a neutral context and a
 list-item paragraph with an inside decimal marker inside it. This introduces
 a counter reader without changing pseudo membership or generated-text
 references, which the style/Q86 fallback currently refuses independently.
-A genuine enclosing checkpoint produces marker 778; the synthetic empty
-checkpoint produces 1. Three digits distinguish their geometry even with
-tabular digits. Both fixtures
+A genuine enclosing checkpoint produces marker 778 and leaves the root
+context's outgoing state unchanged: the section's counter goes out of scope
+when the body closes. The synthetic empty checkpoint instead constructs 1
+and cannot reproduce the genuine incoming/outgoing state. Three digits also
+distinguish their geometry even with tabular digits. Both fixtures
 are consumed by the step-5 oracle job and the mutation matrix. These are
 validation fixtures, not measured results.
 
