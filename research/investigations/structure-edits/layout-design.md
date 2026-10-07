@@ -2459,16 +2459,34 @@ head. That line both resolves the wrapper and can make `shows_owner` suppress
 the leading split fragment, so resolving the wrapper alone does not establish
 mode 2.
 
-A temporary CI inventory compares the current framed inline with a plain
-span inside the padded wrapper. It records actual anchor modes, raw split
-lines and offsets, calls and nonzero translations in `update_in_place`, and
-the anchor certificate after each edit around the held text growth. The
-comparison runs with and without exactly the split-line refresh call. The
-proposal is rejected if the plain span does not emit a line-based anchor,
-if the growth does not use the nonzero-delta path, or if omitting its line
-refresh leaves the next removal local. Normal identity and local-path
-requirements remain unchanged; diagnostic rows are removed before ordinary
-protocol validation, and the temporary job is removed after its evidence.
+The discriminating CI inventory
+[37624438479](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37624438479)
+at `5dc92f9cf749cf00fe1e42fabd3e97358f43f60d` compared that framed inline
+with a plain span inside the padded wrapper, each with and without exactly
+the line-refresh call. Its `line-lifetime-inventory` artifact records modes,
+raw lines and offsets, `update_in_place` calls and nonzero translations, and
+certificate validity around the held text growth. The prior rejection
+criterion was no mode-2 anchor, no nonzero-delta update, or no subsequent path
+change when the refresh was omitted.
+
+In context 29 (section NodeId 275), the framed span NodeId 284 emitted modes
+3 and 4 only; its stale line offset therefore did not invalidate an anchor.
+The plain span emitted modes 2, 3 and 4. At edit 251 both drivers increased
+`update_in_place` calls from three to four and performed one translation of
+15,360 layout units. The baseline line moved from 5,504 to 20,864 while its
+normal-relative offset remained -768. The mutant retained line 5,504 and
+published offset -16,128, despite raw leading-fragment y moving to 20,864.
+Its representation certificate became false. Removal 252 stayed
+`splice 1 reason 0` in the baseline and became `splice 0 reason 3` in the
+mutant; both kept full-rebuild identity. These observations distinguish a
+missing line refresh from an unexercised anchor or update path.
+
+The maintained fixture uses that plain span and retains the padded wrapper,
+held text growth and required local removal. Other split fixtures retain
+framed inline coverage. Removing decoration here supplies the previously
+missing line-based anchor; it does not relax identity or path expectations.
+The temporary diagnostic job and its injected counters are removed after
+this evidence. Normal oracle and mutation jobs run the uninstrumented source.
 The implementation repair uses the existing split-line shift after
 origin-only translation, excluding equal and ancestor opening ranks.
 `no-split-line-refresh` removes exactly that call. Its detector validates
