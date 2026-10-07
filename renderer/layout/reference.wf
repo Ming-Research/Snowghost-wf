@@ -440,15 +440,16 @@ fn translate_reference_owner_suffix(context: &Context, owner: u32, slot: u32, he
 }
 
 fn shift_dense_reference_block(block: &Block, after: u64, delta: i32) -> result: unit reads(block.entry_slot), reads(block.flow_at), writes(block.normal_y), writes(block.resolved_y) {
-  doc "Translates one live block selected by its current Open rank. Removed block slots have no entry_slot; the reference pre-pass assigns ranks before a topology-changing context can use suffix translation.";
-  if block^.entry_slot == no_index {
+  doc "Translates one live block selected by its current Open rank, reading liveness only after the rank selects it. Removed block slots have no entry_slot; the reference pre-pass assigns ranks before a topology-changing context can use suffix translation.";
+  let stored_rank = block^.flow_at;
+  if stored_rank == no_index {
     return unit;
   }
-  if block^.flow_at == no_index {
-    return unit;
-  }
-  let rank = cvt::<u32, u64>(block^.flow_at);
+  let rank = cvt::<u32, u64>(stored_rank);
   if rank > after {
+    if block^.entry_slot == no_index {
+      return unit;
+    }
     set block^.resolved_y = block^.resolved_y +sat delta;
     set block^.normal_y = block^.normal_y +sat delta;
   }
@@ -456,31 +457,33 @@ fn shift_dense_reference_block(block: &Block, after: u64, delta: i32) -> result:
 }
 
 fn shift_dense_reference_paragraph(paragraph: &Paragraph, after: u64, delta: i32) -> result: unit writes(paragraph) {
-  doc "Translates one nonretired paragraph selected by its current Text rank, preserving shift_paragraph's lineless exception. Atomic children are shifted only by the separate child loop.";
-  if paragraph^.retired {
+  doc "Translates one nonretired paragraph selected by its current Text rank before reading retirement, preserving shift_paragraph's lineless exception. Atomic children are shifted only by the separate child loop.";
+  let stored_rank = paragraph^.flow_at;
+  if stored_rank == no_index {
     return unit;
   }
-  if paragraph^.flow_at == no_index {
-    return unit;
-  }
-  let rank = cvt::<u32, u64>(paragraph^.flow_at);
+  let rank = cvt::<u32, u64>(stored_rank);
   if rank > after {
+    if paragraph^.retired {
+      return unit;
+    }
     shift_paragraph(paragraph: paragraph, delta: delta);
   }
   return unit;
 }
 
 fn shift_dense_reference_child(child: &Context, blocks: &[Block], after: u64, delta: i32) -> result: unit reads(blocks), writes(child) {
-  doc "Translates one nonretired child whose current flow rank follows the cutoff, including each atomic once at its paragraph rank and viewport children before positioned layout. A nonroot geometric owner must remain live: removing its block may leave an unretired atomic or positioned child slot with an obsolete rank.";
-  if child^.retired {
+  doc "Translates one nonretired child whose current flow rank follows the cutoff, rejecting the prefix before reading retirement or owner metadata and including each atomic once at its paragraph rank and viewport children before positioned layout. A nonroot geometric owner must remain live: removing its block may leave an unretired atomic or positioned child slot with an obsolete rank.";
+  let stored_rank = child^.flow_at;
+  if stored_rank == no_index {
     return unit;
   }
-  if child^.flow_at == no_index {
-    return unit;
-  }
-  let rank = cvt::<u32, u64>(child^.flow_at);
+  let rank = cvt::<u32, u64>(stored_rank);
   if rank > after {
   } else {
+    return unit;
+  }
+  if child^.retired {
     return unit;
   }
   if child^.block != no_index {
@@ -499,7 +502,7 @@ fn shift_dense_reference_child(child: &Context, blocks: &[Block], after: u64, de
 }
 
 fn translate_dense_reference_suffix(context: &Context, after: u64, delta: i32) -> result: unit writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner) {
-  doc "Translates a suffix through independent physical-payload loops after the caller bounds all scanned slots by twice the live suffix's event count. Lengths include tombstones and atomic children; each iteration writes only its own payload, and child coordinates are never also written by the paragraph loop.";
+  doc "Translates a suffix through independent physical-payload loops after the caller bounds all scanned slots by eight times the live suffix's event count. Lengths include tombstones and atomic children; each iteration writes only its own payload, and child coordinates are never also written by the paragraph loop.";
   let blocks = context^.blocks.inner.len;
   let paragraphs = context^.paragraphs.inner.len;
   let children = context^.children.inner.len;
@@ -516,7 +519,7 @@ fn translate_dense_reference_suffix(context: &Context, after: u64, delta: i32) -
 }
 
 fn translate_reference_suffix(context: &Context, after: u64, delta: i32) -> result: unit writes(context) {
-  doc "Applies the reference walker's saturating coordinate translation strictly after one current virtual rank. Dense payload loops are admitted only when all physical slots cost at most twice the live suffix events; otherwise cached owner indexes skip the prefix. A changed topology forces reference preparation before either path, so rank selection retains the same meaning without new state or event materialization.";
+  doc "Applies the reference walker's saturating coordinate translation strictly after one current virtual rank. Dense payload loops are admitted only when all physical slots cost at most eight times the live suffix events; otherwise cached owner indexes skip the prefix. A changed topology forces reference preparation before either path, so rank selection retains the same meaning without new state or event materialization.";
   let first = after +sat 1_u64;
   let root = context^.entries.root;
   let cursor = reference_owner_cursor(context: context, owner: no_index, slot: root);
@@ -529,7 +532,9 @@ fn translate_reference_suffix(context: &Context, after: u64, delta: i32) -> resu
   let children = context^.children.inner.len;
   let text_slots = blocks +sat paragraphs;
   let physical = text_slots +sat children;
-  let allowance = suffix +sat suffix;
+  let twice = suffix +sat suffix;
+  let four_times = twice +sat twice;
+  let allowance = four_times +sat four_times;
   if physical <= allowance {
     translate_dense_reference_suffix(context: context, after: after, delta: delta);
     return unit;

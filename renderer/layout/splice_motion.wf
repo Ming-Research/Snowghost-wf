@@ -96,13 +96,41 @@ fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: Sequenc
   return output;
 }
 
-fn sequence_motion_shift(sequence: &EntrySequence, slot: u32, delta: i64, visits: &BoundaryVisits) -> result: unit writes(sequence), writes(visits) {
-  doc "Repairs a direct translated entry's cached bounds without opening its descendants; only AVL ancestors read the changed bounds.";
+fn sequence_motion_suffix(sequence: &EntrySequence, root: u32, skip: u64, delta: i64, moves: &Box<Slots<BoundaryMove>>, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.payloads), reads(sequence.span), writes(sequence.nodes), writes(moves), writes(visits) {
+  doc "Shifts the observed bounds of each direct suffix entry once and emits its unchanged payload in sequence order. Cached direct counts exclude the prefix; each intersected AVL node joins left, own and right once in the retained association, without opening nested block entries or repairing the same ancestor per sibling.";
+  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
   let own_field = True();
-  let before = boundary_output(sequence: sequence, slot: slot, own: own_field, visits: visits);
-  let after = shift_motion(output: before, delta: delta);
-  boundary_set(sequence: sequence, slot: slot, output: after, visits: visits);
-  return unit;
+  let total_field = False();
+  if held.live {
+  } else {
+    let empty = empty_output();
+    return empty;
+  }
+  if skip >= held.total_count {
+    let unchanged = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+    return unchanged;
+  }
+  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
+  let prefix_count = left_node.total_count;
+  let left = sequence_motion_suffix(sequence: sequence, root: held.left, skip: skip, delta: delta, moves: moves, visits: visits);
+  let own_output = boundary_output(sequence: sequence, slot: root, own: own_field, visits: visits);
+  if skip <= prefix_count {
+    let shifted = shift_motion(output: own_output, delta: delta);
+    set own_output = shifted;
+    slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &own_output, own: own_field);
+    let missing = Flow::Close(block: no_index);
+    let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: root, span: sequence^.span, missing: missing);
+    set visits^.entries = visits^.entries +sat 1_u64;
+    let translation = BoundaryMove(item: item, delta: delta);
+    let kept = push_item::<BoundaryMove>(cell: moves, value: translation, ceiling: item_ceiling);
+  }
+  let after = prefix_count +sat 1_u64;
+  let right_skip = skip -sat after;
+  let right = sequence_motion_suffix(sequence: sequence, root: held.right, skip: right_skip, delta: delta, moves: moves, visits: visits);
+  let prefix = join_output(left: &left, right: &own_output);
+  let total = join_output(left: &prefix, right: &right);
+  slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &total, own: total_field);
+  return total;
 }
 
 fn inherited_float_reach(context: &Context, owner: u32, visits: &BoundaryVisits) -> reach: i64 reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), writes(visits) {

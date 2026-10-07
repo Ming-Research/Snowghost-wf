@@ -816,3 +816,115 @@ produce an incremental difference through existing fixtures, establishing
 that those fixtures actually exercise dense translation. The full configured
 matrix therefore has 30 mutants; the three preceding scoped faults remain
 selected together with it by `[reference]`.
+
+
+## Intermediate batch result
+
+[37629049652](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37629049652)
+compares 84a63f3 with the same-host `prior` 0430437 driver, main, base and twin.
+The head includes batch publication, fused cursor reads and stable child
+handles, but not the later dense loops or positioned cutoff. Sequential
+medians in us, forward/reverse rounds:
+
+| Page/kind | main | prior 0430437 | batch 84a63f3 |
+|---|---:|---:|---:|
+| ecma262 word | 105 / 106 | 120 / 123 | 137 / 136 |
+| ecma262 sentence | 249 / 240 | 2730 / 4147 | 1119 / 2965 |
+| ecma262 fontsize | 2072 / 1634 | 17922 / 18312 | 15986 / 16712 |
+| html5 word | 76 / 79 | 79 / 83 | 83 / 81 |
+| html5 sentence | 249 / 236 | 735 / 570 | 609 / 634 |
+| html5 fontsize | 929 / 737 | 24628 / 20518 | 14601 / 15012 |
+
+Only word acceptance passes. Parallel moving edits regress against prior:
+ecma262 sentence 1860/2969 to 9459/10045 us, ecma262 fontsize 18645/19235 to
+32580/33835 us, and html5 fontsize 24350/20423 to 32014/31821 us. These are
+observed executable results, not yet a compiler or scheduler attribution.
+The separate first-font-round-trip sequential profiles corroborate remaining
+scratch traversal: html5 self samples include `translate_reference_payload`
+10.11%, `reference_owner_cursor` 7.42% and `boundary_set` 4.20%; ecma262's first
+two are 4.84% and 4.34%. Startup remains included. The pending dense/cutoff
+comparison must establish whether the remaining path satisfies acceptance;
+the batch alone does not.
+
+At 84a63f3,
+[check](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37629049676),
+[step5](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37629049624)
+and all three [scoped falsifiers](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37629049708)
+pass. The sentinel mutant fails specifically with `boundary transfer check
+failed`, establishing the new numeric check's discrimination. The earlier
+0430437 full oracle's core and step5 jobs also passed before the remaining
+page jobs were superseded by validation of 3ec4bb4; no full-page pass is
+claimed for the canceled run.
+
+
+## Dense and positioned cutoff result
+
+[37630797014](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37630797014)
+measures 3ec4bb491eb2fd1e8e59205aad87e418df32ed5c on the same hosted runner
+as main, base, twin and prior. Sequential medians in us, two rounds:
+
+| Page/kind | main | head 3ec4bb4 |
+|---|---:|---:|
+| ecma262 word | 100 / 100 | 115 / 115 |
+| ecma262 sentence | 229 / 247 | 1069 / 903 |
+| ecma262 fontsize | 1471 / 1536 | 8957 / 10295 |
+| html5 word | 74 / 76 | 77 / 77 |
+| html5 sentence | 216 / 224 | 563 / 545 |
+| html5 fontsize | 735 / 781 | 2408 / 2501 |
+
+Only word meets acceptance in both modes. Parallel head medians are ecma262
+word 190/185, sentence 4775/3796, fontsize 16093/16348; html5 word 125/128,
+sentence 646/654, fontsize 3102/3134. Their main controls are respectively
+160/169, 296/317, 1610/1685, 119/119, 323/343 and 762/732. The per-edit
+ecma262 prepared/context/paragraph/held/entry tuples still match base.
+HTML sentence edits 35/36 take the ordinary boundary path with 199 entries,
+112 blocks and 9487 index updates, zero fallbacks; they determine the median.
+They identify repeated suffix ancestor repairs outside the reference path
+as remaining work, not another giant-context fallback.
+
+The new `reference-dense` mutation compiled but was **not detected** in
+[37630796772](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37630796772).
+Dense translation therefore lacks its required discriminating evidence; it
+is not called validated. An added `edit-cascade` sequence uses the unchanged
+transfer page with a shared flow, moves later paragraphs and edits them
+before undoing earlier changes. Unlike immediate round trips it forces
+subsequent restarts to consume retained scratch. The unmutated sequence must
+match every rebuild and the unchanged dense fault must be detected; otherwise
+the new sequence does not establish that obligation.
+
+
+## Ordinary suffix index repair question
+
+The 3ec4bb4 HTML sentence edits 35/36 perform 9487 index visits for 199
+entries, with zero fallbacks. `boundary_sequence_update` enumerates the
+suffix, then `boundary_set` repairs overlapping ancestors for every sibling.
+A single direct-rank traversal can retain the exact left-own-right reduction
+association, shift each own motion certificate once and emit the same ordered
+move list. It opens no nested block entries and changes no admission predicate.
+The move list has a true order dependency; cached reduction repair need not
+repeat after each append. Compare against a downloaded 3ec4bb4 driver named
+`recent` on the same host, in addition to prior/main/base/twin. Reject the
+repair if entry/block counts, move order, fallback outcomes or dump identity
+change, if index visits do not fall, or if repeated same-condition timing
+regresses. Overall acceptance remains within 2x main in both modes.
+
+
+## Bounded density crossover experiment
+
+The first-font-pair profile at 3ec4bb4 still spends self samples in
+`reference_owner_cursor` (ecma262 2.56%) and `translate_reference_payload`
+(2.51%), while HTML shows `translate_dense_reference_suffix` (2.77%). These
+whole-process samples include startup. Test changing the dense admission
+from physical slots <= 2*S to <= 8*S, where S is the actual live virtual
+suffix event count, and checking current ranks before loading retirement
+or owner metadata. Both existing algorithms preserve the same coordinate
+results, validity contract and dependency graph; the constant is an empirical
+crossover, not page selection. All allocated slots, including tombstones and
+atomic children, remain charged to the bound.
+
+Keep this experiment only if ecma262 sentence or font-size median improves
+by at least 10% in both sequential rounds against same-host `recent`, without
+another acceptance kind worsening over 10% in both rounds beyond base/twin
+noise. Any identity difference rejects correctness. A failed speed criterion
+rejects this crossover or requires a separately identified exploratory
+measurement; it cannot revise the 2x acceptance threshold.

@@ -55,6 +55,11 @@ The edit-cost kind reuses the transfer page unchanged. It combines one-character
 round trips with height-changing sentence round trips across relative, expired
 float, negative-margin re-entry, constrained sibling and marker barriers.
 
+The edit-cascade kind shares the unchanged transfer page in one flow, grows
+several paragraphs before undoing them in reverse order, and makes later
+reference restarts consume geometry translated by earlier edits. It targets
+stale global reference scratch that an immediate edit/undo pair can hide.
+
 The positioned-isolated kind retains the original positioned edits and isolates
 the percentage-height fixture in its own flow root, so unrelated seams can
 reach anchor publication; the original positioned kind remains unchanged.
@@ -78,6 +83,7 @@ from edits import Tree
 
 
 CASES = {
+    'edit-cascade': ('reference-suffix-reader',),
     'edit-baseline': ('baseline-only',),
     'edit-height': ('height-only',),
     'edit-cost': ('transfer-relative-sibling', 'transfer-clear-expired',
@@ -131,6 +137,18 @@ def generate(tree, kind):
         lines.extend(('C %d %s' % (node, token), 'K %d %s' % (node, token)))
         lines.extend(('P 0', 'P 1', 'P 2'))
         return '\n'.join(lines) + '\n'
+    if kind == 'edit-cascade':
+        lines.append('S section{display:block}')
+        prefix = 'A longer sentence moves the following retained paragraphs. ' * 5
+        nodes = [marker(tree, case, role)['node'] for case in
+                 ('transfer-clear-expired', 'transfer-float-expired',
+                  'transfer-marker-lined', 'transfer-relative-sibling')
+                 for role in ('retained', 'probe')]
+        for node in nodes:
+            lines.append('T %d 0 %s' % (node, prefix))
+        for node in reversed(nodes):
+            lines.append('D %d 0 %d' % (node, len(prefix.encode())))
+        return '\n'.join(lines) + '\n'
     if kind == 'edit-cost':
         prefix = 'A longer sentence changes the paragraph height and following origins. ' * 5
         for case in CASES[kind]:
@@ -162,7 +180,7 @@ def main():
     parser.add_argument('kind', choices=CASES)
     parser.add_argument('output', type=Path)
     args = parser.parse_args()
-    fixture_kind = {'positioned-isolated': 'positioned', 'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
+    fixture_kind = {'edit-cascade': 'transfer', 'positioned-isolated': 'positioned', 'edit-cost': 'transfer', 'edit-baseline': 'style', 'edit-height': 'style'}.get(args.kind, args.kind)
     fixture = Path(__file__).resolve().with_name(fixture_kind + '-case.html')
     fixture = fixture.relative_to(Path.cwd())
     nodes = args.output.with_suffix(args.output.suffix + '.nodes')
