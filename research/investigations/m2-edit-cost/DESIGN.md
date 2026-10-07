@@ -73,3 +73,22 @@ The stationary-output mutation suppresses the three equality guards and must
 be detected by the existing incremental fixtures. The timing comparison must
 show reduced boundary fallbacks and the expected per-edit cost; source shape
 alone is not acceptance evidence.
+
+## Sharing the existing actual-output certificate
+
+A positive-height paragraph whose output changes can use the same certificate
+as a changed child context after the splice extension: the block path must
+preserve width and accept the exact height delta, each direct suffix must
+remain beyond unchanged earlier floats and contain no moving float, root
+struts must remain equal, and the old/new travel budget must fit the reference
+arithmetic range. The context must have no percentage-height dependency or
+spanning fragments and must keep its width independently of intrinsic content.
+
+`changed_entry_ready` factors that existing certificate out of
+`actual_flow_ready`; it changes no condition for the existing child consumer.
+The paragraph probe excludes atomics and overlapping floats before breaking.
+On admission, the existing boundary propagation and splice finish consume the
+actual paragraph output and translate only direct siblings, eliminating the
+whole-context compatibility dependency for that case. On refusal, reference
+replay receives the original scalar geometry. This is a new consumer of the
+existing certificate, not evidence that every text or font-size edit is local.
