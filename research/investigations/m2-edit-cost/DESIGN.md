@@ -1469,3 +1469,26 @@ Compare fragment certification, split-line maintenance and remaining
 reference traversal symbols; if they are not prominent, reject the candidate
 attribution. Startup remains included and sampled shares are not edit-only
 causal percentages. This one-use profile job is removed after collection.
+
+
+### Unchanged positioned-charge publication
+
+The complete 7a1fc758 oracle run 37658778314 passes, but the same-source
+comparison has an additional discriminating observation: HTML sentence
+edits 35/36 take the local path with no held entries or fallback, while
+boundary block visits rise from edit-cost's 112 to 1,174 and index visits
+from 1,039 to 6,120. This cannot be attributed to the reference fragment
+bridge. Layout added a positioned-child arithmetic-certificate refresh after
+settlement; it recomputes exact travel but publishes every active child
+through all ancestors even when that one output field is unchanged.
+
+Retain the exact fresh charge calculation, compare it with the cached own
+output, and return on equality before dependent publication. The unchanged
+output already has the same ancestor reduction; changed charges retain the
+original publication. No input, movement condition, trust or representation
+changes. The test is full oracle/mutation coverage plus a same-host prior,
+edit-cost and twin comparison. Reject this attribution if the local HTML
+pairs retain the excess visit counts or if medians do not improve beyond
+control spread. This does not assume that the ECMA reference cost has the
+same cause. The short profile of the prior drivers remains independent;
+its one-use job is removed from the next workflow revision.

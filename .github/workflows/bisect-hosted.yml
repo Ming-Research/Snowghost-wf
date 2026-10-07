@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [main=1fdb4050806ba08ca1ecd09c1e23b7cb77729ce9, cost=27c55096b75341ccff1b21f859736d9e85fa5dda, twin=27c55096b75341ccff1b21f859736d9e85fa5dda, head=HEAD]
+        build: [head=HEAD]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,10 +65,27 @@ jobs:
           submodules: true
       - uses: actions/download-artifact@v4
         with:
-          pattern: driver-*
+          pattern: driver-head
           path: build/drivers
-      - name: Select builds
-        run: echo "BUILD_NAMES=main cost twin head" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37652852848
+          github-token: ${{ github.token }}
+          pattern: driver-*
+          path: build/controls
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 37658778136
+          github-token: ${{ github.token }}
+          name: driver-head
+          path: build/drivers/driver-prior
+      - name: Select controls and the same-source prior
+        run: |
+          set -euo pipefail
+          for name in main cost twin; do
+            cp -R build/controls/driver-$name build/drivers/
+          done
+          echo "BUILD_NAMES=main cost twin prior head" >> "$GITHUB_ENV"
       - name: Fonts and perf
         run: |
           set -euo pipefail
@@ -118,68 +135,4 @@ jobs:
           path: |
             build/evidence/
             build/x5/scripts/
-            build/drivers/driver-*/revision.txt
-
-  fragment-profile:
-    if: contains(github.event.head_commit.message, '[fragment-profile]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - uses: actions/download-artifact@v4
-        with:
-          run-id: 37658778136
-          github-token: ${{ github.token }}
-          name: driver-head
-          path: build/drivers/driver-head
-      - uses: actions/download-artifact@v4
-        with:
-          run-id: 37652852848
-          github-token: ${{ github.token }}
-          name: driver-cost
-          path: build/drivers/driver-cost
-      - name: Fonts and profiler
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
-          sudo sysctl kernel.perf_event_paranoid=-1
-          chmod +x build/drivers/driver-*/layout_oracle_*
-          uname -a
-          lscpu
-          perf --version
-          cat build/drivers/driver-*/revision.txt
-      - name: Repeat the unchanged sentence workload
-        run: |
-          set -euo pipefail
-          sh research/investigations/concurrency/run.sh fetch || true
-          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html; do
-            test -s "build/research/concurrency/$file"
-          done
-          make -s oracle-fonts
-          cp build/drivers/driver-cost/layout_oracle_seq build/layout_oracle_seq
-          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
-          mkdir -p build/profile
-          for pair in ecma262:seq html5:par; do
-            page=${pair%:*} mode=${pair#*:}
-            python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); pathlib.Path(sys.argv[2]).write_text(p.read_text()*300)' "build/x5/scripts/$page-sentence.edits" "build/profile/$page.edits"
-            sheets=(renderer/style/ua.css)
-            if [ "$page" = ecma262 ]; then
-              sheets+=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css)
-            fi
-            for name in cost head; do
-              output="build/profile/$name-$page-$mode"
-              WF_WORKERS=4 perf record -F 999 --call-graph dwarf -o "$output.data" -- "build/drivers/driver-$name/layout_oracle_$mode" edittime "build/profile/$page.edits" "build/research/concurrency/$page.html" "${sheets[@]}" > "$output.raw"
-              perf report -i "$output.data" --stdio --no-children --percent-limit 0.5 > "$output-self.txt"
-              perf report -i "$output.data" --stdio --children --percent-limit 1 > "$output-callers.txt"
-            done
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fragment-profile
-          path: |
-            build/profile/
             build/drivers/driver-*/revision.txt
