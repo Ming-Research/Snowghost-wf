@@ -946,3 +946,37 @@ per-edit distributions and whole-process perf for traversal versus runtime
 work. A compiler/scheduler attribution requires an actual observed mechanism;
 slower parallel timing alone does not establish a Whitefoot gap. Remove the
 one-use job after collecting its evidence.
+
+
+## Parallel suffix profile result
+
+[37636318467](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37636318467)
+reused 0430437 and 3ec4bb4 drivers built with wf-0b7f5c5b9854 and clang 22.
+The hosted Ubuntu 24.04 machine was a four-CPU Intel Xeon Platinum 8370C,
+kernel 6.17.0-1022-azure. For 1,000 repetitions of ecma262 sentence edits
+7/8 (2,000 timed edits), medians in us were:
+
+| Build | seq | par, 1 worker | par, 4 workers |
+|---|---:|---:|---:|
+| 0430437 | 689 | 697 | 1056 |
+| 3ec4bb4 | 608 | 607 | 5533 |
+
+Every edit in all six runs had the same legacy tuple: prepared 1, contexts 5,
+paragraphs 1, held entries 13600, entries 13605. All six profiles reported
+zero lost samples. In the 3ec four-worker whole-process profile, self samples
+were worker_main 65.37%, join 8.86%, generated budgeted
+translate_reference_owner_suffix 7.34%, budgeted translate_reference_payload
+2.53%, and reference_owner_cursor 2.34%. Its suffix thunk also appears at
+0.53%. Prior four-worker worker_main/join were 44.70%/2.43%; prior and recent
+one-worker and sequential profiles instead expose ordinary suffix traversal.
+Startup remains included; these percentages are not edit-only shares.
+
+The worker-count comparison and generated suffix tasks establish a
+parallel-execution performance gap on this workload. Task granularity is a
+strong lead. Cursor fusion removed repeated reads and exposed independent
+left/right cursor work, but several source changes separate these builds,
+so it is not an isolated cause. Attributing a specific fork site or cost-model
+defect still requires generated-code inspection or a minimized compiler trial. This is a Whitefoot performance issue to bring to the owner,
+not a reason to serialize independent reads, force one worker, or restore
+redundant lookups in Snowghost. The already-selected density experiment
+changes the actual traversal algorithm and predates this diagnostic evidence.

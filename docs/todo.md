@@ -9,6 +9,26 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
+- **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
+  snapshots its left and right owner cursors independently, then visits the
+  affected suffix. In a same-host, same-script 2,000-edit comparison using
+  wf-0b7f5c5b9854/clang 22, this naturally written traversal took median
+  608 us sequentially, 607 us with the parallel binary at one worker, and
+  5533 us at four workers. Legacy edit work counters were identical.
+  Generated budgeted suffix functions and their thunk appear in perf;
+  worker_main and join account for 65.37% and 8.86% of whole-process self
+  samples. The prior traversal was 689/697/1056 us under the same conditions.
+  [Profile, scope and limitations](../research/investigations/m2-edit-cost/DESIGN.md#parallel-suffix-profile-result).
+  Impact: this revision improves sequential work but has a substantial
+  parallel regression. Exact fork-site/cost-model attribution
+  remains unverified; this is a renderer reproducer, not yet a minimal
+  conformance case. Change: inspect the generated fork/cost path, minimize
+  the two cursor reads inside the recursive walk, and repair compiler/runtime
+  grain selection while retaining source independence. Validate unchanged
+  work/dumps and seq/par-one/par-four repeated edits plus the M2 acceptance
+  matrix on the same host. Reopen with the owner's Whitefoot decision; do
+  not hide the issue by serializing reads or forcing worker count.
+
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
   Fork(left: Box<Pages>, right: Box<Pages>); }`, and functions that change
