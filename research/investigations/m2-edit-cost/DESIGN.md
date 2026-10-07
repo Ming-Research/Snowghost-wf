@@ -1,5 +1,7 @@
 # M2 retained edit cost
 
+Q134 / Q135 A follow-up: [split dependency contract and experiment](SPLIT-CONTRACT.md).
+
 Latest evidence: [acceptance measurement](#final-source-acceptance-measurement),
 [correctness validation](#final-source-validation), and [owner ledger](#owner-ledger).
 
