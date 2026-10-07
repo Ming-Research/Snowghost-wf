@@ -208,3 +208,11 @@ unmutated detector negative control, but did not detect omission of exceptional
 repair (37683206470). They therefore establish boundary identity only, not
 coverage of that repair path. Its reach and a distinguishing probe remain under
 investigation; the omission expectation is unchanged.
+
+Source inspection explains that first probe's non-discrimination: the plain
+paragraph is pre-broken; the high-origin travel refusal then marks the context
+restyled and forces full stacking. The additional atomic-inline variant makes
+pre-breaking inapplicable, allowing the existing split-fragment refusal to
+reach legacy reference updating instead. Ordinary incremental counters and
+base dumps are now captured with both plain and atomic variants. No admission
+guard or expected identity is changed; selective omission must still differ.

@@ -21,18 +21,21 @@ html,body{margin:0;padding:0}body{font:16px/20px monospace}
 section{display:flow-root;width:240px;padding-top:ORIGINpx}
 p{margin:0;width:80px}.wrapper{padding-top:1px}
 .head{margin-top:40px;margin-bottom:0;DISPLAY}
-</style><section><p>Probe.</p><div class="wrapper"><span><div class="head">Head.</div></span></div></section>
+</style><section><p>Probe.ATOMIC</p><div class="wrapper"><span><div class="head">Head.</div></span></div></section>
 """
 
 
 def run(driver, directory, detect):
     directory.mkdir(parents=True, exist_ok=True)
     differences = []
+    heads = [('open', '', ''), ('child', 'display:flow-root', ''),
+             ('open-atomic', '', '<i style="display:inline-block;width:1px;height:1px"></i>'),
+             ('child-atomic', 'display:flow-root', '<i style="display:inline-block;width:1px;height:1px"></i>')]
     for origin_name, origin in [('low', '40'), ('high', '33554360')]:
-        for head_name, display in [('open', ''), ('child', 'display:flow-root')]:
+        for head_name, display, atomic in heads:
             name = origin_name + '-' + head_name
             page = directory / (name + '.html')
-            page.write_text(TEMPLATE.replace('ORIGIN', origin).replace('DISPLAY', display))
+            page.write_text(TEMPLATE.replace('ORIGIN', origin).replace('DISPLAY', display).replace('ATOMIC', atomic))
             nodes = directory / (name + '.nodes')
             nodes.write_text(subprocess.check_output([driver, 'nodes', '0', str(page), 'renderer/style/ua.css'], text=True))
             tree = Tree(nodes)
@@ -45,6 +48,16 @@ def run(driver, directory, detect):
             elapsed = time.monotonic() - before
             rawfile.write_text(raw)
             operations = inctime.script_operations(str(script))
+            if not detect:
+                dump = subprocess.check_output([driver, 'dump', '1', str(page), 'renderer/style/ua.css'], text=True)
+                (directory / (name + '.dump')).write_text(dump)
+                timedfile = directory / (name + '.timed')
+                timed = subprocess.check_output([driver, 'incremental', str(script), str(page), 'renderer/style/ua.css'], text=True)
+                timedfile.write_text(timed)
+                inctime.read(str(timedfile), operations)
+                for row in timed.splitlines():
+                    if row.startswith('edit '):
+                        print(name, row, flush=True)
             different = re.findall(r'^edit (\d+) hash [0-9a-f]{16} bytes \d+ inc DIFF$', raw, re.M)
             if detect and different and origin_name == 'high':
                 # This copy checks completeness and protocol, not identity.
