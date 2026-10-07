@@ -1237,6 +1237,14 @@ make check, oracles against the pinned base (full dumps and structural path
 rows), and all existing falsifiers. The Whitefoot pin and submodules remain
 unchanged. The experiment has no merge authorization or performance acceptance.
 
+The first module check passed on `baf4bc32b6d06d800e24ee0fa9fcbd6effb9504d`
+([layout-check 37562404107](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37562404107)).
+Full gate, base equivalence, and mutation detection remain pending at this
+point. `sequence.wf` changes from 1,106 to 960 lines and `routes.wf` from 86
+to 62; the shared `pages.wf` contains 216 lines. No Fork-style page descent
+remains. These are source counts, not performance evidence.
+
+
 ### Full-build regression repair
 
 The question is whether removing repeated nested rank descent, incremental
