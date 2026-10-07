@@ -368,149 +368,20 @@ fn geometry_reference(context: &Context) -> result: unit writes(context) {
   return unit;
 }
 
-fn translation_fits(value: i32, delta: i32) -> fits: Bool pure {
-  let wide_value = cvt::<i32, i64>(value);
-  let wide_delta = cvt::<i32, i64>(delta);
-  let moved = wide_value +sat wide_delta;
-  let above = moved >= -2147483648_i64;
-  let below = moved <= 2147483647_i64;
-  return band(above, below);
-}
-
-fn translation_exact(context: &Context, delta: i32) -> exact: Bool reads(context) {
-  doc "A conservative numeric guard on the suffix translation. A potentially saturated normal or visual sum keeps the original per-entry i32 path; no reassociation is used to infer a saturated result.";
-  let blocks = context^.blocks.inner.len;
-  for (b in 0_u64..blocks) {
-    let slot = flow_index(at: b);
-    let accumulated = block_origin(context: context, block: slot);
-    let normal = origin_normal(value: accumulated);
-    let visual = block_position(context: context, at: b);
-    let normal_fits = translation_fits(value: normal.y, delta: delta);
-    let visual_fits = translation_fits(value: visual.y, delta: delta);
-    let both = band(normal_fits, visual_fits);
-    if both {
-    } else {
-      return False();
-    }
-  }
-  let paragraphs = context^.paragraphs.inner.len;
-  for (p in 0_u64..paragraphs) {
-    let accumulated_paragraph = paragraph_origin(context: context, at: p);
-    let normal_paragraph = origin_normal(value: accumulated_paragraph);
-    let visual_paragraph = paragraph_position(context: context, at: p);
-    let paragraph_normal_fits = translation_fits(value: normal_paragraph.y, delta: delta);
-    let paragraph_visual_fits = translation_fits(value: visual_paragraph.y, delta: delta);
-    let paragraph_both = band(paragraph_normal_fits, paragraph_visual_fits);
-    if paragraph_both {
-    } else {
-      return False();
-    }
-  }
-  let children = context^.children.inner.len;
-  for (c in 0_u64..children) {
-    let child_visual = child_position(context: context, at: c);
-    let child_fits = translation_fits(value: child_visual.y, delta: delta);
-    if child_fits {
-    } else {
-      return False();
-    }
-  }
-  return True();
-}
-
-fn owner_translated(blocks: &[Block], owner: u32, flow_at: u32) -> translated: Bool reads(blocks) {
-  let at = cvt::<u32, u64>(owner);
-  if at < blocks^.len {
-    let opened = blocks^[at].flow_at;
-    let later = opened > flow_at;
-    let present = opened != no_index;
-    return band(later, present);
-  }
-  return False();
-}
-
-fn shift_block(block: &Block, delta: i32) -> result: unit writes(block) {
-  doc "Translates an owner-relative block by changing only its normal origin. Descendants inherit this motion through origin_accumulate.";
-  let wide_delta = cvt::<i32, i64>(delta);
-  set block^.y = block^.y +sat wide_delta;
-  return unit;
-}
-
-fn shift_owned_paragraph(paragraph: &Paragraph, blocks: &[Block], flow_at: u32, delta: i32) -> result: unit reads(blocks), writes(paragraph) {
-  let after = paragraph^.flow_at > flow_at;
-  let placed = paragraph^.lines.inner.len > 0_u64;
-  let present = paragraph^.flow_at != no_index;
-  let later = band(after, present);
-  let moved = band(later, placed);
-  if moved {
-    let inherited = owner_translated(blocks: blocks, owner: paragraph^.block, flow_at: flow_at);
-    if inherited {
-    } else {
-      let wide_delta = cvt::<i32, i64>(delta);
-      set paragraph^.top = paragraph^.top +sat wide_delta;
-    }
-  }
-  return unit;
-}
-
-fn shift_owned_child(child: &Context, blocks: &[Block], flow_at: u32, delta: i32) -> result: unit reads(blocks), writes(child) {
-  let after = child^.flow_at > flow_at;
-  let present = child^.flow_at != no_index;
-  let later = band(after, present);
-  if later {
-    let inherited = if child^.viewport_origin {
-      give False();
-    } else {
-      give owner_translated(blocks: blocks, owner: child^.block, flow_at: flow_at);
-    }
-    if inherited {
-    } else {
-      let wide_delta = cvt::<i32, i64>(delta);
-      set child^.anchor.y = child^.anchor.y +sat wide_delta;
-    }
-  }
-  return unit;
-}
-
-fn translate_after(context: &Context, events: &[Flow], flow_at: u32, delta: i32) -> result: unit reads(events), writes(context) {
-  doc "Moves only suffix roots in owner-relative storage when every old i32 addition is exact. The reference bridge remains during step 2: it materializes scratch positions for the remaining legacy update readers, without rewriting descendant local origins. Saturation uses the old per-entry path.";
-  let safe = translation_exact(context: context, delta: delta);
-  if safe {
-  } else {
-    translate_reference_after(context: context, events: events, flow_at: flow_at, delta: delta);
+fn geometry_update_reference(context: &Context) -> result: unit writes(context) {
+  doc "Reuses the reference coordinates left by the preceding full or reference update when no owned boundary edit or table content adjustment has invalidated them. Preparation changes paragraph contents, not origins. A boundary edit or content shift still materializes the exact reference bridge.";
+  if context^.boundary_dirty {
+    geometry_reference(context: context);
     return unit;
   }
-  geometry_owned(context: context);
-  let blocks = context^.blocks.inner.len;
-  let no = False();
-  let roots = box_array_filled::<Bool>(count: blocks, value: no);
-  for (b in 0_u64..blocks) {
-    if b < context^.blocks.inner.len {
-      let held = block_snapshot(block: &context^.blocks.inner[b]);
-      let inherited = owner_translated(blocks: &context^.blocks.inner[0_u64..blocks], owner: held.parent, flow_at: flow_at);
-      let direct = bnot(inherited);
-      let later = held.flow_at > flow_at;
-      let present = held.flow_at != no_index;
-      let eligible = band(later, present);
-      set roots.inner[b] = band(eligible, direct);
-    }
+  if context^.content_dx != 0_i32 {
+    geometry_reference(context: context);
+    return unit;
   }
-  if blocks <= context^.blocks.inner.len {
-    for (b in 0_u64..blocks) {
-      if roots.inner[b] {
-        shift_block(block: &context^.blocks.inner[b], delta: delta);
-      }
-    }
+  if context^.content_dy != 0_i32 {
+    geometry_reference(context: context);
+    return unit;
   }
-  let paragraphs = context^.paragraphs.inner.len;
-  let held_blocks = context^.blocks.inner.len;
-  for (p in 0_u64..paragraphs) {
-    shift_owned_paragraph(paragraph: &context^.paragraphs.inner[p], blocks: &context^.blocks.inner[0_u64..held_blocks], flow_at: flow_at, delta: delta);
-  }
-  let children = context^.children.inner.len;
-  for (c in 0_u64..children) {
-    shift_owned_child(child: &context^.children.inner[c], blocks: &context^.blocks.inner[0_u64..held_blocks], flow_at: flow_at, delta: delta);
-  }
-  geometry_reference(context: context);
+  set context^.local_geometry = False();
   return unit;
 }

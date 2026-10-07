@@ -26,3 +26,26 @@ cost and dependency to the owner instead of weakening these criteria.
 
 The workflow and this investigation own the measurement procedure and its
 results. Remove the temporary workflow when this research branch is retired.
+
+## Reference coordinate repair under test
+
+The reference update starts and finishes in its context-coordinate scratch.
+Its old suffix translator nevertheless checked every block, paragraph and
+child for exact arithmetic, encoded the whole context into local origins,
+translated local roots, then decoded the whole context for its caller. The
+replacement uses the existing saturating reference suffix translator directly.
+This removes the dependency on validating and converting unrelated prefix
+payloads; the retained owned representation is still published at the pass end.
+No unsupported arithmetic is admitted: the same per-entry i32 operations used
+by the compatibility fallback remain authoritative.
+
+Before an ordinary reference update, reference scratch left by the previous
+reference/full build is already valid if boundary_dirty is false and both
+content offsets are zero. Preparation changes text and line data but no origins.
+The update now reuses that scratch; owned boundary edits and table content
+adjustments still require the bridge. This removes ancestor accumulation and
+whole-payload restoration from consecutive reference updates. It introduces no
+new retained cache or validity state; it uses the existing bridge-invalidating
+conditions. CI identity, mixed edit fixtures and saturation falsifiers must
+validate this invariant before acceptance. These changes do not yet remove
+boundary publication or the final encoding pass.
