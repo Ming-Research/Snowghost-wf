@@ -57,9 +57,10 @@ example apart from the renderer code that exposed it
   `payloads[slot].value`, with `payloads[slot].entry == k`. At Whitefoot
   `f949e676acfa811f96b21afd07f02c06dcd14b51`, RANGE-1 admits integer-array
   elements but no field below an element or enum payload. PAR-2 therefore
-  does not certify Snowghost's indirect translation and local-width writes
-  in `translate_reference_after` and `prepare_local_widths`; their sibling writes
-  have no semantic dependency. This is a specification/source inspection
+  does not certify Snowghost's indirect local-width writes in
+  `prepare_local_widths`; their sibling writes have no semantic dependency.
+  The former indirect suffix translation exposed the same limitation;
+  `translate_reference_after` now uses direct payload loops or owner traversal. This is a specification/source inspection
   finding, not a new compiler trial or timing result. The maintained
   `tests/conformance/cases/range5-pos-scatter-through-left-inverse.wf`
   demonstrates the supported separate integer-array inverse, which would
@@ -322,6 +323,11 @@ example apart from the renderer code that exposed it
   endpoint dependency. Removing the top guard is unsafe for collapsing
   ancestors and coordinate/flow order differ under negative margins.
   [Evidence and open Q2](../research/investigations/m2-edit-cost/DESIGN.md#slow-font-size-profile-result).
+  Earlier timing-only probing attributed about 0.8 ms of a 1.1–1.5 ms
+  sfontsize edit to this pass on #spec-container
+  ([earlier evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt));
+  that work proposed retaining sorted structural keys and closing flags.
+  M2 now additionally needs a bounded link from those keys to emitted runs.
   Change: choose stable run/end-point identities with owner-relative anchors,
   or a retained dependency index for the flat rectangles; a transient full
   scan does not remove the unrelated context dependency. Validate split and
@@ -329,30 +335,6 @@ example apart from the renderer code that exposed it
   positioning, saturation, insert/remove lifetimes, all X5 identities and
   falsifiers, then repeat same-host text/font-size acceptance. Reopen after
   the owner chooses the representation.
-
-- **M2 scoped reference publication needs complete validation and timing.**
-  `renderer/layout/reference.wf` now carries a transient replay range,
-  converged suffix displacement and separately updated child through the
-  existing context-coordinate walker. Bounded walks use retained virtual
-  events; publication encodes affected entries and repairs their owner
-  chains, skipping intact translated block interiors only under the existing
-  arithmetic bound. Reference scratch remains globally current; no retained
-  authority or validity state is added. Full event materialization and
-  publication remain for restyled/full replay, intrinsic-margin changes or
-  an unavailable numeric certificate. Context fragments, `Split.line`,
-  `naturals` and `held_y` still use legacy coordinates/ranks, and nonzero
-  suffix translation still visits affected descendant scratch coordinates.
-  Impact: source scope alone does not establish dump identity or the 2x
-  text/font-size target. The prior
-  [same-script counters, timings and profiles](../research/investigations/m2-edit-cost/DESIGN.md#reference-replay-contract)
-  establish the removed compatibility passes, not this repair's sufficiency.
-  Reopen as part of the active M2 per-edit acceptance work: validate every
-  incremental prefix, extreme coordinates, seq/par identity and configured
-  mutations, then repeat interleaved main/base/twin/head timing. Inspect any
-  remaining broad pass against its actual dependencies; no O(context) pass
-  is claimed to be inherent merely because the previous interface omitted
-  the mutation scope.
-
 
 - **Removed Open payloads may retain orphan atomic child slots.**
   `retire_splice_payloads` vacates Text payloads but does not retire their
@@ -572,21 +554,6 @@ example apart from the renderer code that exposed it
   a subtree that is not block-and-text-only, or no close found) is not
   isolated. Change: report the refusal in a diagnostic run, then widen
   that check. Reopen with the next ecma262 incremental layout target
-  ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
-
-- **A re-stack makes the context's inline-box fragments again.** After
-  every re-stack of a context with block-in-inline splits,
-  `restack_flow` runs `split_fragments_with_empty`: a sort of the
-  splits, a flag per flow entry, the per-split loop and a copy of the
-  kept empty fragments with a binary search each. On #spec-container
-  that is about 0.8 ms of each 1.1-1.5 ms sfontsize edit (timing-only
-  probe). A converged re-stack now keeps and translates the list when
-  no split opens or closes in the re-stacked range and no lineless
-  paragraph there opens an inline box; a range holding such a split or
-  paragraph still regenerates everything. Change: keep the sorted keys
-  and closing flags, which depend only on the flow's structure, and
-  regenerate only the runs that intersect the range. Reopen with the
-  next ecma262 incremental layout target
   ([evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt)).
 
 - **A context's cached intrinsic sizes depend on when they are first

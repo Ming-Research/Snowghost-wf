@@ -1136,3 +1136,55 @@ No claim is made that 2x is impossible using current storage: a linear
 compatibility iterator might improve time while retaining unrelated whole-
 context reconstruction, and would leave the user's locality requirement
 incomplete. The blocking choice is how to remove that dependency correctly.
+
+
+## Completed correctness matrix for the suffix repairs
+
+At d26ef9870d44c7739de973ec79f01ac2f2170943, whose renderer is identical
+to 49981d1, [oracles 37637912123](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37637912123)
+passed core, step5 and all twelve page/kind incremental identity and
+sequential/parallel comparisons. The workflow is red only at the ecma262
+and html5 block zero-fallback gates. Their logs retain exactly the inherited
+20 reason-3 and 58 reason-7 nonlocal edits, with two local HTML splices;
+the unchanged-base attribution above still applies. No identity failed and
+no assertion was removed or weakened.
+
+[Full falsify 37637912049](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37637912049)
+passed all thirty configured mutations and the assertion-machinery job.
+The previously undetected dense-reference fault is now detected by the
+cascade fixture; the same unmutated fixture passes. Existing deliberately
+excluded mutations remain separate TODO items, not counted as detected.
+[Check 37637912349](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37637912349)
+and [layout-check 37637912213](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37637912213)
+passed. Compiler runs were hosted; local checks compiled nothing.
+
+The obsolete scoped-publication validation TODO is removed after this full
+matrix and the recorded timing runs. Its remaining cost is owned by Q1/Q2
+and the existing representation/locality items. The older inline-fragment
+rebuild TODO is merged into Q2's entry, preserving its earlier measurement
+and structural-key proposal rather than keeping two owners for the same gap.
+The final local-width range repair is validated separately below.
+
+
+## Completion review follow-up
+
+The same independent read-only GPT-6 reviewer checked targeted source and
+evidence updates through 7ab2bd5 after the complete base-diff review above.
+The cumulative scope covers A/D/C/T/R/M/V and relevant G1–G3/DC1–DC4;
+follow-ups inspected changed regions and their affected consumers without
+rerunning green suites. Additional findings fixed were the separately
+updated child's transfer omitted from scoped publication, a misleading call
+label, ambiguous old/new density criteria, and the out-of-range width
+lookup. Final guidance fixes remove the obsolete validation TODO, merge the
+duplicate fragment TODO and replace a now-historical indirect translation
+example with the still-current local-width example. The reviewer verified
+raw medians, index counts, profile scripts and emitted cursor fork structure.
+
+The last width repair skips a reads-only lookup exactly where its callee
+already returned before any write; the reviewer found no behavioral change.
+The reviewer found no bounded general fragment repair with current retained
+fields but explicitly did not establish that current storage cannot reach
+2x with a faster full pass. Q1's compiler remedy and Q2's representation and
+performance remain unverified proposals. Approval remains the owner's.
+All thirty configured falsifiers are rerun on the final renderer revision;
+this is verification of the final source change, not a relaxed matrix.
