@@ -1234,6 +1234,60 @@ Q2 in `docs/todo.md` records the proposed Whitefoot work. No equivalence,
 mutation-success or runtime Paged-store count is claimed while compilation
 is blocked. The base census and native allocation IR are independent evidence.
 
+#### Guard investigation and allocation evidence
+
+On source `2e5392ac4a0269f528db281b18ccf800ccad1812`,
+[layout-check 37641936463](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641936463)
+and [check 37641936395](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641936395)
+both rejected `pages.wf`'s guarded append with FN-8. The former also ran the
+eight isolated acceptance cases described above. Oracles and falsify were
+not requested on the uncompilable source and their jobs were skipped.
+
+The native allocation probes in
+[CI 37641236094](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37641236094)
+emitted these LLVM page-allocation operands for the exact renderer type
+declarations with the pinned compiler on Ubuntu 24.04 x86-64:
+
+| Type | Native page length | Actual element stride | One native page, bytes |
+|---|---:|---:|---:|
+| SequenceNode | 8 | 304 | 2,432 |
+| Flow | 128 | 8 | 1,024 |
+| TextUnit | 256 | 16 | 4,096 |
+| StyleUse | 1,024 | 4 | 4,096 |
+| StyleRoute | 128 | 24 | 3,072 |
+| u32 | 1,024 | 4 | 4,096 |
+| ContextPath | 256 | 12 | 3,072 |
+
+These are CI compiler allocation operands, not a completed Paged renderer's
+runtime census. The native backing page has no per-page header. The base
+store's first-page data are its retained first width, 4–64, times the same
+stride. Base Array allocations additionally carry their length header;
+Paged has separate cell and directory allocations. Neither allocator overhead
+nor process memory usage is represented by page-data totals.
+
+The base html5 census has not completed. Its initial diagnostic declarations
+were corrected, and a later generated empty initializer introduced a blank
+line that FORM-2 rejected; that generator was corrected in `20d0016`.
+Until corrected CI runs, no html5 store count or aggregate allocation total
+is claimed. The summarizer was checked without compilation using a synthetic
+complete seven-type census and the CI IR: the complete input passed; a
+missing type, wrong native length, unequal node/payload owner widths,
+missing completion row and partial row each failed. This checks evidence
+handling, not renderer behavior. The generated census remains an experiment
+consumer, with its source injection confined to a detached base tree.
+
+Independent read-only GPT-6 Astra review covered the complete base-to-
+`8d4b07f` change and followed diagnostic/documentation changes through
+`20d0016`, using the project checklist and G1–G3/DC1–DC4. It found stale
+allocation descriptions (corrected in changed files; the unchanged route
+caller prose is explicitly deferred in `docs/todo.md`) and the probe's wrong
+workflow name (corrected). It found no additional source defect within scope;
+compiler acceptance, complete census, equivalence, actual parallel execution
+and mutation results remain unverified. Static design lint passed all 21
+checker tests with seven nodes, depth one, 57 decisions and 24 rejected
+alternatives, unchanged counts from `38fd6be`. No local compilation or timing
+was performed.
+
 ### Two-level page experiment
 
 The experiment starts at `2d706ba252c80336ba1926c3d77054714046586d`.
