@@ -1648,3 +1648,175 @@ cost, parallel speed and actual E1 splice latency remain unverified.
 Q114 A, Q104, Q109 and Q115 A are approved inputs. Step-3 source has not been compiled or executed in this
 implementation session; the primary agent owns CI validation. No approval log entry or readiness claim is made. Delivery is a
 local branch commit only, as requested; there is no push or PR update.
+
+### Q128 semantic extension: constituent inventory and proof boundary
+
+Q128 B (owner direction, 2026-10-07) selects positioned/atomic propagation,
+then flex-item propagation, keeping the unchanged X5 scripts and the
+zero-fallback gate. The question before implementation is whether these two
+extensions cover the actual page owners. The discriminating observation is
+an inventory of the individual retained transfers in the first edited
+owner's context, rather than its maximum refusal reason. A contributor
+outside those two extensions rejects the premise that removing just their
+guards can establish the page acceptance claim. This is a scope
+investigation, not a timing comparison.
+
+A temporary read-only inventory at `4154340` ran in hosted CI
+[37578072578](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37578072578),
+using the unchanged pin and pinned page bytes. Its `step5-diagnostics`
+artifact contains `html5.semantic.raw`, `ecma262.semantic.raw` and the node
+listings. Each `semantic` row is five integers: record kind, context slot,
+payload slot, style NodeId, detail. Kinds are 1 context kind, 2 nonordinary
+block's maximum barrier, 3 paragraph atomic count, 4 positioned child's
+position, and 5 nonordinary block's position. These diagnostic rows are not
+part of the oracle protocol. The normal near-limit check correctly rejected
+them; the inventory step passed, but the run as a whole failed. The temporary
+API and printing were subsequently removed, without weakening the parser.
+
+The first html5 splice owner is `dd` NodeId 217487, block slot 25203 in flow
+context slot 1 (the `html` element). Its own transfer has **barrier 1**, not
+5. Its ancestor `dl` NodeId 217457 has barrier 5; body NodeId 47 also has
+barrier 5. The context inventory reports:
+
+| Contributor | Observed records |
+| --- | ---: |
+| Nonordinary block transfers with maximum barrier 1 | 17,631 |
+| Maximum barrier 2 | 2,642 |
+| Maximum barrier 3 | 5,088 |
+| Maximum barrier 5 | 2,626 |
+| Relative-positioned blocks among those records | 698 |
+| Paragraphs with atomic inlines | 1,053 |
+| Absolute-positioned children | 531 |
+| Fixed-positioned children | 0 |
+
+These are retained payload records, including ancestors whose summaries
+inherit a descendant's barrier, not counts of independent layout defects.
+The absolute children belong to `pre` (217), `li` (202), `dl` (102), `p` (6)
+and `span` (4) styles; the relative blocks are `h4` (394), `li` (202) and
+`dl` (102). Atomic paragraphs predominantly belong to `dt` (1,029), with
+23 `p` and one `div`. Thus stage 1 also has to account for relative block
+origins; “positioned” is not solely an out-of-flow classification.
+
+`join_output` takes the maximum barrier, so 5 conceals 1–3. In
+`stack_flow`, `boundary_floats` becomes true after the first float and never
+expires; each later block stores it as `output.reads_floats`. This explains
+why the distant `dd` is marked even when the earlier float may no longer
+reach it. It is not evidence that a float actually changes that edit's
+geometry. The stylesheet also has `dt { clear:left }`, and eight edited
+parent sites are list items. The existing blanket marker check rejects
+those independently of whether the marker creates a line.
+
+The first ecma262 target is in flow context slot 91, element NodeId 21173.
+Its inventory has 20,146 nonordinary block records with maximum barrier 3,
+7,689 with barrier 5, 2,447 relative heading blocks, and 2,149 atomic
+paragraphs. Therefore crossing body's flex context alone does not make
+that target ordinary. The first edit on each page still matched its full
+rebuild: html5 reported `splice 0 reason 7`, ecma262 `splice 0 reason 2`.
+These are one-edit diagnostic observations, not the required final all-edit
+acceptance run.
+
+#### Positioned and atomic argument, with its missing premise
+
+If the in-flow transfer is valid and its old/new arithmetic is certified,
+the owner and its direct later siblings settle first. An unchanged
+paragraph's atomic child uses the same laid-out local offset and therefore
+moves once with the paragraph. A moved enclosing block already moves all
+its local descendants; their anchors must not also receive that delta.
+
+For an out-of-flow child, compare its containing-block position and size,
+percentage bases and inset resolution inputs. With those inputs unchanged,
+an auto axis follows its changed static position, while a definite inset
+axis keeps the coordinate that the existing positioning algorithm computes.
+Fixed explicit offsets use the viewport, not the moved ancestor. A changed
+containing-block size goes through the existing incremental child-layout
+path, followed by positioning. Nested contexts keep their internal local
+origins and move through one anchor. Relative positioning also needs its
+visual excursion in the arithmetic certificate: translating an already
+saturated visual coordinate is not equivalent to recomputing it.
+
+Independent anchor translations have no inter-anchor dependency. Their
+inputs wait for owner geometry and containing-block sizes, and publication
+waits for those independent results. Re-laying out a resized child precedes
+positioning that reads its new dimensions. These are the necessary orders;
+there is no justified descendant-by-descendant translation or sibling order.
+
+The missing premise is a valid transfer through the earlier-float,
+clearance and marker contributors identified above. Accepting `barriers ==
+5` cannot establish it, and the requested positioned extension cannot by
+itself remove the first html5 owner's barrier 1.
+
+#### Flex argument and the actual nested page paths
+
+An unchanged flex setup fixes the axes, ordering, available main/cross
+space and percentage bases. Each item's hypothetical main size depends on
+its flex basis, intrinsic contribution or natural layout, limits, margins
+and frame. The container's line breaking and free-space distribution read
+all those hypothetical sizes and flex factors. Final main sizes determine
+which item interiors need layout; natural cross sizes and baselines then
+determine line cross sizes and alignment; stretch can change an item's used
+cross size and require its interior to be laid out again. Placement and the
+container's baseline/size follow those results. Running the existing
+`flex.wf` arithmetic in that order avoids changing its rounding or
+saturation behavior.
+
+Unchanged siblings can reuse retained preparation results when their styles,
+content and setup inputs are unchanged. Their interiors can be retained
+when their final used space is unchanged, even if their anchor moves. A
+changed final main or cross size uses the existing incremental layout path.
+Sibling layouts, including stretch layouts, are independent once their
+sizes are known. Line membership and the freeze loop retain their algorithmic
+dependencies; enclosing contexts wait on the container's new outputs.
+
+The pinned ecmarkup CSS uses definite-width body flex with 33% and 66%
+flex bases. Those percentages do not prohibit reuse when their width basis
+is unchanged. Two script sites also cross an `emu-note` row flex container:
+insertions before nodes 98185 and 123590, edit pairs 7–8 and 19–20.
+Their result must propagate through the spec-container flow and then body
+flex. A one-flex-ancestor cap or blanket percentage rejection would therefore
+fail the required page workload. This bottom-up argument composes when each
+container satisfies its input conditions; unsupported changed percentage
+bases, line rebreaking or chains outside the argument retain explicit
+fallbacks.
+
+Implementation obligations remain: flex preparation and pre-stretch results
+are currently transient; a stretched item's retained height is not its
+natural height; intrinsic caches must be invalidated along the changed path;
+and outward flow publication must use the actual flex output without losing
+the changed child's old output. No flex reuse implementation is claimed by
+this investigation.
+
+#### Q129: additional transfer scope awaiting the owner
+
+The two selected boundaries are necessary but insufficient. A local proof
+for the masked float/clearance state needs to show that unchanged earlier
+floats cannot reach any later natural position or flow end, in either the
+old or proposed layout, and that later floats preserve their relative
+geometry. Existing `restack_settles` states this condition, but its suffix
+floor comes from flat `naturals` scratch; the local splice invalidates that
+scratch, and `SequenceOutput` does not retain the needed minimum.
+
+A seam-only test is unsound. If an unchanged left float ends at y=100 and
+the seam is y=200, a later negative margin can put a `clear:left` block's
+natural position at y=70. Inserting height 10 changes that natural position
+to 80, but clearance still places it at 100. Uniform translation would put
+it at 110. Both layouts have no active float at the seam.
+
+The recommended additional stage would retain the required local float
+reach and suffix-minimum evidence, preserve other barrier kinds separately,
+and certify lined marker blocks only when the old/new line presence proves
+that no synthetic marker line appears. Its additional falsifier must make
+the negative-margin/clearance example fail when the cutoff is bypassed.
+Independent summary preparation/reduction should retain the existing tree's
+dependencies; prefix/suffix composition is ordered because float exclusions
+and collapsing margins depend on preceding flow. This is a proposed expansion
+of Q128 B, not an approved decision or an implemented certificate. The
+alternative is to retain counted reference replay for these contributors,
+which preserves correctness but leaves the unchanged page zero-fallback gate
+blocked. No gate or expected result has been relaxed.
+
+The positioned and flex fixture pages and `splice-cases.py` are wired to
+`oracles-m2` for full-rebuild identity, sequentially in step5 and in both
+builds in the full job. Each case inserts/removes a block and edits retained,
+inserted and dependent text around those operations. These establish fixture
+coverage only; until the extensions and their mutations run, identity through
+a counted fallback does not establish splice coverage or falsifier detection.

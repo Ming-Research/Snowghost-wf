@@ -25,17 +25,15 @@ jobs:
           make -s compiler oracle-fonts
           wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
           (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
-      - name: Q128 semantic inventory before the normal checks
+      - name: Positioned and flex fixture identity
         run: |
           set -euo pipefail
-          sh research/investigations/concurrency/run.sh fetch || true
-          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
-          for page in ecma262 html5; do
-            sheets=()
-            if [ "$page" = ecma262 ]; then sheets=(assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css); fi
-            head -1 "build/x5/scripts/$page-block.edits" > "build/$page-inventory.edits"
-            build/layout_oracle_seq edit "build/$page-inventory.edits" "build/research/concurrency/$page.html" renderer/style/ua.css "${sheets[@]}" > "build/$page.semantic.raw"
-            grep '^semantic ' "build/$page.semantic.raw"
+          s=research/investigations/incremental-layout/scripts
+          for kind in positioned flex; do
+            python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "build/$kind-case.edits"
+            time build/layout_oracle_seq edit "build/$kind-case.edits" "$s/$kind-case.html" renderer/style/ua.css > "build/$kind-case.raw"
+            python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.raw"
+            grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.raw"
           done
       - name: Small arithmetic fixture before the page batch
         run: python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_oracle_seq build/near-limit-step5
@@ -113,12 +111,12 @@ jobs:
             build/splice-route-case.raw
             build/splice-style-case.raw
             build/checkpoint-case.*
+            build/positioned-case.*
+            build/flex-case.*
             build/*.trace.raw
-            build/*.semantic.raw
             build/x5/scripts/*-block.edits
             build/x5/out/*-block.seq.txt.raw
             build/x5/*.nodes
-            build/x5/out/*-block.seq.txt.raw
   oracles:
     # On the layout branch, only for a head commit that asks for it.
     if: github.ref != 'refs/heads/research/m2-layout' || contains(github.event.head_commit.message, '[oracles]')
@@ -257,6 +255,18 @@ jobs:
             echo "boundary-baseline-case ($build): inc same $same, DIFF $differs"
             test "$differs" -eq 0
             test "$same" -eq 8
+          done
+      - name: Positioned and flex fixture identity, seq and par
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          for kind in positioned flex; do
+            python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "build/$kind-case.edits"
+            for build in seq par; do
+              WF_WORKERS=4 build/layout_oracle_$build edit "build/$kind-case.edits" "$s/$kind-case.html" renderer/style/ua.css > "build/$kind-case.$build.raw"
+              python3 "$s/inctime.py" --check "build/$kind-case.edits" "build/$kind-case.$build.raw"
+              grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.$build.raw"
+            done
           done
       - name: Page block edits require zero fallbacks
         run: |

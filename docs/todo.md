@@ -198,16 +198,25 @@ example apart from the renderer code that exposed it
   The diagnostic copy isolates ecma262's non-flow context guard (kind 1,
   flex; the pinned ecmarkup stylesheet makes the body flex), and html5's
   nonordinary root transfer with barrier 5 (positioned or atomic content).
-  The old arithmetic guard hid these later refusals. Impact: neither page
-  establishes E2 locality or step-6 zero-fallback acceptance. The arithmetic
-  proof does not cover flex sizing/alignment or positioned/atomic transfer
-  propagation, so those guards remain. Change: establish a local propagation
-  contract across those semantic boundaries, or isolate the affected ordinary
-  region with a proof that preserves every dependent output. This needs a
-  design decision beyond the arithmetic repair. Reopen before E2 or step-6
-  acceptance; require the unchanged page scripts' every prefix to match a
-  fresh build in seq/par and every block edit to report `splice 1 reason 0`.
-  The zero-fallback CI assertion remains enabled.
+  Q128 B (owner direction, 2026-10-07) selected positioned/atomic propagation
+  followed by flex propagation. The
+  [constituent inventory](../research/investigations/structure-edits/layout-design.md#q128-semantic-extension-constituent-inventory-and-proof-boundary)
+  in CI [37578072578](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37578072578)
+  at `4154340` found additional barriers hidden by the maximum reason 5:
+  html5's first edited `dd` (NodeId 217487) itself has barrier 1 from the
+  earlier-float flag; its context also has clearance and marker contributors.
+  Ecma262's target flow also contains marker barriers, and two edit sites
+  cross both an `emu-note` flex container and body flex. Impact: the two
+  initially identified guards are not sufficient for page acceptance.
+  Q129 awaits the owner's ruling on extending the transfer proof to expired
+  earlier floats, suffix natural-position minima and lined markers. A
+  seam-only float-expiry test is unsound with later negative margins; retaining
+  the existing counted reference path leaves the page gate blocked. The
+  positioned/flex fixtures are wired for identity; splice implementation and
+  the four requested mutation detections remain pending. Reopen on Q129,
+  before E2 or step-6 acceptance; require every unchanged page-script prefix
+  to match a fresh build in seq/par and every block edit to report
+  `splice 1 reason 0`. The zero-fallback assertion remains enabled.
 
 - **M2 step 4 needs parallel scatter and complete physical-work evidence.**
   AVL reduction repair is local, but `later_handles` appends to one temporary
