@@ -151,6 +151,28 @@ jobs:
                   assert result.returncode == expected, (name, result.returncode, result.stdout, result.stderr)
                   assert ('detected:' in result.stdout) == (expected == 0), (name, result.stdout)
                   print(name, 'classified as', expected)
+              required = Path(str(script) + '.paths')
+              required.write_text(rows[2] + '\n' + rows[4] + '\n')
+              for name, output, expected_status in [
+                  ('path negative control', good, 1),
+                  ('required path changed', good.replace('splice 1 reason 0', 'splice 0 reason 3'), 0),
+                  ('malformed path protocol', good.replace(rows[2] + '\n', ''), 2),
+              ]:
+                  raw.write_text(output)
+                  error.write_text('')
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), '0', name, 'path'], capture_output=True, text=True)
+                  assert result.returncode == expected_status, (name, result.stdout, result.stderr)
+                  print(name, 'classified as', expected_status)
+              for name, contents in [('missing required paths', None), ('invalid required path', 'malformed\n'), ('duplicate required path', rows[2] + '\n' + rows[2] + '\n')]:
+                  if contents is None:
+                      required.unlink()
+                  else:
+                      required.write_text(contents)
+                  raw.write_text(good)
+                  error.write_text('')
+                  result = subprocess.run([sys.executable, str(helper), str(script), str(raw), str(error), '0', name, 'path'], capture_output=True, text=True)
+                  assert result.returncode == 2, (name, result.stdout, result.stderr)
+                  print(name, 'rejected')
               for name, output, diagnostic, status, expected in [
                   ('certificate assertion', '', 'boundary transfer check failed\n', 2, 0),
                   ('certificate mutation with unchanged output', good, '', 0, 2),
@@ -273,7 +295,7 @@ jobs:
       matrix:
         # reassociate-saturation is out until docs/todo.md's item on it is resolved.
         # Step 4's descendant-scan mutation waits for the visit sentinels (docs/todo.md).
-        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route, synthetic-checkpoint, stale-class-frontier, unsafe-admission, no-positioned-anchor, no-stretch, no-free-space, no-wrap-rebreak, no-float-floor, stale-intrinsic-margins, omit-transfer-travel, omit-transfer-natural-floor, omit-transfer-float-reach, omit-transfer-free-transfer, omit-transfer-motion-known, no-moving-float-anchor, no-positioned-retirement, no-atomic-retirement, no-split-anchor, stale-split-ranks, omit-transfer-fragment-sources, omit-transfer-fragment-first, omit-transfer-fragment-last]
+        mutation: [omit-ancestor, relative-twice, shift-table-descendants, column-map-early, collapse-strut, clear-floats-at-close, stop-on-height, unchecked-baseline, omit-ancestor-height, skip-seam, omit-edge, no-sibling-move, live-count-insert, live-count-remove, lose-text-route, synthetic-checkpoint, stale-class-frontier, unsafe-admission, no-positioned-anchor, no-stretch, no-free-space, no-wrap-rebreak, no-float-floor, stale-intrinsic-margins, omit-transfer-travel, omit-transfer-natural-floor, omit-transfer-float-reach, omit-transfer-free-transfer, omit-transfer-motion-known, no-moving-float-anchor, no-positioned-retirement, no-atomic-retirement, no-split-anchor, no-split-line-refresh, stale-split-ranks, omit-transfer-fragment-sources, omit-transfer-fragment-first, omit-transfer-fragment-last]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -350,6 +372,8 @@ jobs:
               swap("renderer/layout/splice_publish.wf", old, "")
           elif m == "no-split-anchor":
               swap("renderer/layout/fragment_geometry.wf", "  let use_anchor = band(context^.local_geometry, context^.fragments_valid);", "  let use_anchor = False();")
+          elif m == "no-split-line-refresh":
+              swap("renderer/layout/update.wf", "    shift_split_lines(context: context, flow_at: change.flow_at, delta: change.delta);\n", "")
           elif m == "stale-split-ranks":
               swap("renderer/layout/fragment_geometry.wf", "      set split.open = opening;\n      set split.close = closing;\n", "")
           elif m == "no-stretch":
@@ -416,7 +440,7 @@ jobs:
           grep 'unsafe arithmetic admission produced no rebuild difference' build/near-limit-negative.log
           python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_mutated build/near-limit-unsafe --unsafe
       - name: Detect semantic extension mutations
-        if: contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
+        if: contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         run: |
           set -euo pipefail
           cat > build/semantic-falsify.py <<'PYEOF'
@@ -452,6 +476,23 @@ jobs:
           if differences:
               print('detected:', label, differences, 'incremental rebuild differences')
               raise SystemExit(0)
+          if mode == 'path':
+              try:
+                  expected_rows = Path(script + '.paths').read_text().splitlines()
+                  expected = {}
+                  for row in expected_rows:
+                      match = re.fullmatch(r'structure path (\d+) splice ([01]) reason (\d+)', row)
+                      if not match or match[1] in expected:
+                          raise ValueError('malformed or duplicate required path')
+                      expected[match[1]] = row
+              except (OSError, ValueError) as failure:
+                  print('INVALID:', label, str(failure), file=sys.stderr)
+                  raise SystemExit(2)
+              actual = {match[1]: match[0] for match in re.finditer(r'^structure path (\d+) splice [01] reason \d+$', output, re.M)}
+              changed = [number for number, row in expected.items() if actual.get(number) != row]
+              if changed:
+                  print('detected:', label, 'required structural paths changed', ','.join(changed))
+                  raise SystemExit(0)
           print('NOT DETECTED:', label)
           raise SystemExit(1)
           PYEOF
@@ -471,6 +512,7 @@ jobs:
               done
               ;;
           esac
+          if [ "${{ matrix.mutation }}" = no-split-line-refresh ]; then detection_mode=path; fi
           detected=no
           for pair in $pairs; do
             name=${pair%%:*} html=${pair#*:}
@@ -500,7 +542,7 @@ jobs:
             exit 1
           fi
       - name: Detect
-        if: matrix.mutation != 'unsafe-admission' && !contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
+        if: matrix.mutation != 'unsafe-admission' && !contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         run: |
           set +e
           detected=""
@@ -563,7 +605,7 @@ jobs:
             build/near-limit-*/
             build/near-limit-negative.log
       - uses: actions/upload-artifact@v4
-        if: always() && contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
+        if: always() && contains(fromJSON('["no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         with:
           name: semantic-${{ matrix.mutation }}
           path: |

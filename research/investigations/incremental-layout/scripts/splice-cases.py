@@ -58,12 +58,12 @@ splices, including the initial removal of a pre-existing generated child,
 using the generated commands' operation numbers. --check-paths
 checks each required row exactly once; inctime.py separately validates the
 complete protocol and identity. The transfer sidecar requires the later-float
-case and supported split cases to splice successfully. Adjacent-head seams
-and removal of a pre-existing split source require reason 3. Stable endpoint
+case and supported split cases to splice successfully. Removing a separator
+before a head or a pre-existing split source requires reason 3. Stable endpoint
 anchors extend later-split coverage from the earlier prefix-only refusal;
 the required local path is strengthened, and identity remains required.
 
-The transfer fixture isolates twenty-one cases behind separate flow roots:
+The transfer fixture isolates twenty-two cases behind separate flow roots:
 transfer-clear-reentry has an earlier float ending at 100px, an owner at
 200px whose first line puts the seam at 220px, and a later -170px margin
 before clear:left. The later natural position is 70px before insertion and
@@ -88,8 +88,9 @@ before and after a seam; further cases edit inside a split head, retain an
 independent flow-root Child head, and move a head with negative margins.
 These supported cases require local insertion/removal. Long text insertions
 and deletions after both structural edits force wrapping and exercise later
-fragment placement during reference updates. The adjacent-head case requires
-reason 3 for both operations. Source-removal first removes a pre-existing div
+fragment placement during reference updates. The adjacent-head case requires local success because its following ordinary
+paragraph remains a separator. The before-head case removes a pre-existing
+separator immediately before a split and requires reason 3. Source-removal first removes a pre-existing div
 containing a split (reason 3), then tests ordinary local B/X edits. Its initial
 removal is independently recorded, without changing later created NodeIds.
 The width-reentry case has no clearance: an earlier float ends at 100px, the
@@ -97,13 +98,13 @@ owner starts at 200px with two 20px lines, and a later -150px margin puts the
 long paragraph at natural y=90px before insertion and 110px after it. Its
 line width changes from 340px beside the float to 400px below it, so a false
 float-floor certificate must expose stale line breaking rather than merely
-passing through a clearance plateau. Identity is required for all twenty.
+passing through a clearance plateau. Identity is required for every case.
 
 
-The line-lifetime case keeps a long anonymous-line insertion in place through
-the subsequent block removal, then restores the text. Its later head begins
-an inline owner that the preceding line does not own, so the leading empty
-fragment reads Split.line; block removal still requires a local splice.
+The line-lifetime case keeps a long paragraph insertion in place through
+the subsequent block removal, then restores the text. Its later ordinary
+wrapper begins with a split head, so the leading empty fragment reads
+Split.line at the wrapper opening; block removal still requires a local splice.
 
 Python's standard library has no native
 parser for the driver's node listing, so it reuses edits.Tree.
@@ -132,7 +133,7 @@ CASES = {
                  'transfer-inside-head', 'transfer-child-head',
                  'transfer-negative-head', 'transfer-adjacent-head',
                  'transfer-source-removal', 'transfer-float-width-reentry',
-                 'transfer-line-lifetime'),
+                 'transfer-line-lifetime', 'transfer-before-head'),
     'flex': ('flex-row-stretch', 'flex-row-start', 'flex-column-start',
              'flex-column-stretch', 'flex-grow', 'flex-shrink', 'flex-wrap',
              'flex-percentage', 'flex-intrinsic-margin', 'flex-inline-owner',
@@ -158,9 +159,10 @@ EXPECTED_PATHS = {
     'transfer-inside-head': (1, 0),
     'transfer-child-head': (1, 0),
     'transfer-negative-head': (1, 0),
-    'transfer-adjacent-head': (0, 3),
+    'transfer-adjacent-head': (1, 0),
     'transfer-source-removal': (1, 0),
     'transfer-line-lifetime': (1, 0),
+    'transfer-before-head': (1, 0),
 }
 
 
@@ -168,6 +170,7 @@ INITIAL_REMOVALS = {
     'positioned-generated-removal': ('p', 1, 0),
     'positioned-atomic-removal': ('p', 1, 0),
     'transfer-source-removal': ('div', 0, 3),
+    'transfer-before-head': ('p', 0, 3),
 }
 
 WRAPPING_CASES = {

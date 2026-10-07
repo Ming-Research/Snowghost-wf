@@ -1653,8 +1653,8 @@ local branch commit only, as requested; there is no push or PR update.
 
 Q128 B (owner direction, 2026-10-07) selects positioned/atomic propagation,
 then flex-item propagation, keeping the unchanged X5 scripts and the
-zero-fallback gate. The question before implementation is whether these two
-extensions cover the actual page owners. The discriminating observation is
+zero-fallback gate. At the initial inventory, the question was whether these two
+extensions covered the actual page owners. The discriminating observation is
 an inventory of the individual retained transfers in the first edited
 owner's context, rather than its maximum refusal reason. A contributor
 outside those two extensions rejects the premise that removing just their
@@ -1741,12 +1741,12 @@ waits for those independent results. Re-laying out a resized child precedes
 positioning that reads its new dimensions. These are the necessary orders;
 there is no justified descendant-by-descendant translation or sibling order.
 
-The missing premise is a valid transfer through the earlier-float,
-clearance and barrier-3 contributors identified above. Barrier 3 conflates
-height constraints and marker state; the inventory did not record their
-individual predicates, so their exact division remains unverified. Accepting `barriers ==
-5` cannot establish it, and the requested positioned extension cannot by
-itself remove the first html5 owner's barrier 1.
+The initial inventory lacked a valid transfer premise through the earlier-
+float, clearance and barrier-3 contributors. Barrier 3 conflates height
+constraints and marker state; that inventory did not record their individual
+predicates. The later constituent inventory and Q129 arguments below resolve
+those dependencies. Accepting `barriers == 5` alone cannot establish them,
+and positioned propagation alone cannot remove the owner's barrier 1.
 
 #### Flex argument and the actual nested page paths
 
@@ -1777,16 +1777,16 @@ insertions before nodes 98185 and 123590, edit pairs 7–8 and 19–20.
 Their result must propagate through the spec-container flow and then body
 flex. A one-flex-ancestor cap or blanket percentage rejection would therefore
 fail the required page workload. This bottom-up argument composes when each
-container satisfies its input conditions; unsupported changed percentage
-bases, line rebreaking or chains outside the argument retain explicit
-fallbacks.
+container satisfies its input conditions. The implementation below reruns
+line breaking and rejects reuse when a percentage basis changes; a context
+outside the propagated input/output certificates retains explicit fallback.
 
-Implementation obligations remain: flex preparation and pre-stretch results
-are currently transient; a stretched item's retained height is not its
-natural height; intrinsic caches must be invalidated along the changed path;
-and outward flow publication must use the actual flex output without losing
-the changed child's old output. No flex reuse implementation is claimed by
-this investigation.
+The initial implementation obligations were to retain preparation and
+pre-stretch results, invalidate intrinsic caches along the changed path,
+and publish actual flex outputs while preserving the old output needed for
+comparison. A stretched item's retained height is not its natural height.
+The retained-input and actual-output sections below own the implemented
+mechanisms and their validation requirements.
 
 #### Q129: additional transfer scope
 
@@ -1796,7 +1796,8 @@ floats cannot reach any later natural position or flow end, in either the
 old or proposed layout, and that later floats preserve their relative
 geometry. Existing `restack_settles` states this condition, but its suffix
 floor comes from flat `naturals` scratch; the local splice invalidates that
-scratch, and `SequenceOutput` does not retain the needed minimum.
+scratch. Before this extension, `SequenceOutput` did not retain that
+minimum; the implemented summary certificate is argued below.
 
 A seam-only test is unsound. If an unchanged left float ends at y=100 and
 the seam is y=200, a later negative margin can put a `clear:left` block's
@@ -1812,7 +1813,8 @@ the negative-margin/clearance example fail when the cutoff is bypassed.
 Independent summary preparation/reduction should retain the existing tree's
 dependencies; prefix/suffix composition is ordered because float exclusions
 and collapsing margins depend on preceding flow. The continuation authorizes this expansion of Q128 B and directs work to
-proceed on Q129 A unless vetoed. It is not yet an implemented certificate.
+proceed on Q129 A unless vetoed. The float/clearance certificate and its
+later uniform-float extension below implement that direction.
 The alternative is to retain counted reference replay for these contributors,
 which preserves correctness but leaves the unchanged page zero-fallback gate
 blocked. No gate or expected result has been relaxed.
@@ -1881,7 +1883,8 @@ without imposing sibling order. A translated direct entry shifts its two
 bounds by the same delta, repairs the index, and leaves descendant-local
 bounds unchanged. Empty minima/maxima keep explicit sentinel values.
 
-For this first certificate, an affected suffix containing floats is refused.
+This initial scope is extended by Uniform later-float translation below.
+For the initial certificate, an affected suffix containing floats is refused.
 All preceding floats therefore remain fixed. Before publication, accumulate
 the preceding float maximum across the owner's ancestors, and require it
 not to exceed the affected suffix minimum in either the retained or the
@@ -1889,7 +1892,7 @@ proposed position. Apply this at each outward boundary and to the flow end.
 The suffix minimum includes every nested Open, paragraph and child natural
 position, so a later negative margin that returns above the seam is covered.
 If clearance currently raises an affected entry, its pre-clearance natural
-position lies below the prefix reach and this certificate refuses it.
+position is less than the prefix reach and this certificate refuses it.
 Inactive clearance leaves exactly the ordinary collapsing-margin transfer.
 
 The owner seam must still have exact free-flow transfer arithmetic and
@@ -1925,7 +1928,8 @@ flow children, floats and atomic inlines. The added `flex-intrinsic-margin`
 fixture holds final width constant while an edit forces an intrinsic query
 and then edits text beside a percentage-margin atomic child. This repair
 preserves the full intrinsic calculation and removes its unintended write;
-its behavioral detection remains a CI obligation.
+the dedicated `flex-intrinsic-position` case below supplies behavioral
+mutation detection, which remains a CI obligation.
 
 #### Settling a flex ancestor after publication
 
@@ -2077,8 +2081,10 @@ source inspection found `retire_splice_payloads` omitted `Out` retirement.
 The analogous atomic removal covers child contexts referenced by removed
 paragraph marks. The replacement fixture removes a pre-existing generated child instead of
 introducing unsupported pseudo membership. It preserves local-splice and
-identity requirements and leaves the pages' zero-fallback gate unchanged. The source repair
-must pass CI before either removal case is claimed as validated.
+identity requirements and leaves the pages' zero-fallback gate unchanged.
+The repaired baseline passed both removals in focused CI
+[37602480329](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37602480329)
+at `41085b1377803b9d62275b1f7e4278e055cd30bc`; mutation detection remains separate.
 `no-positioned-retirement` omits only the `Out` retirement branch, while
 `no-atomic-retirement` omits atomic-child retirement and count accumulation
 before a removed paragraph is vacated. Each uses the strict semantic detector
@@ -2347,14 +2353,15 @@ Fresh root splits and context fragments remain refused. Secondly, summaries
 retain the first and last non-transparent direct entry kind: ordinary solid
 or split head. A Through ordinary entry, lineless paragraph, Float or Out is
 transparent for this conservative query; a split head is never transparent.
-The retained prefix's last kind and suffix's first kind must not be split
-heads. This covers intervening whitespace without scanning earlier entries.
+The suffix's first kind must not be a split head. A prefix ending in a
+split head requires a retained ordinary solid separator in that suffix.
+This covers intervening whitespace without scanning earlier entries.
 The existing neutral complete-block and immediate-boundary checks remain.
 
 These guards preserve the split list, its order, and every gap that could
-join two runs. A removed or inserted complete block cannot occur between
-split heads without meeting a split head at one of the conservative seam
-edges. The same guards preserve the immediate inline-mark selectors and
+join two runs. A removed or inserted complete block cannot change a gap between joined
+split heads: a following split head is refused, and a preceding split head
+requires a retained ordinary separator after the seam. The same guards preserve the immediate inline-mark selectors and
 sibling_above at affected heads. The first retained ordinary solid entry
 absorbs the changed incoming margin strut; its unchanged trailing strut
 makes each later split's pending-margin line translate with its normal
@@ -2433,10 +2440,43 @@ passed every deliberately wrong condition; renderer evidence is pending CI.
 Completion review R9 identified a missing `shift_split_lines` in the legacy
 `update_in_place` translation path. The restack path already updates this
 scratch, but the direct text path only moves payloads and raw rectangles.
-`transfer-line-lifetime` grows an anonymous line before a later split whose
+`transfer-line-lifetime` grows a paragraph before a later split whose
 leading empty rectangle reads Split.line, keeps that growth through the
 next structural removal, and requires the removal to remain local. Paired
 text restoration before the removal would conceal the stale offset. This
-regression is first submitted without the repair to establish the expected
-failure; the repair will use the same existing split-line shift after the
-origin-only translation, excluding equal and ancestor opening ranks.
+first attempt was submitted without the repair at `baad9efe`; it did not
+fail, so that shape was not discriminating. The strengthened fixture puts
+the split first inside a later ordinary wrapper: the wrapper Open makes the
+leading selector read Split.line rather than a preceding sibling's visual
+top. The repair uses the existing split-line shift after origin-only
+translation, excluding equal and ancestor opening ranks.
+`no-split-line-refresh` removes exactly that call. Its detector validates
+complete incremental identity/protocol first, then accepts a changed required
+local path, because the representation certificate deliberately preserves
+correct raw output when line metadata is stale. This mutation checks the
+required optimization contract; the other semantic mutations still require
+an actual identity difference (or their exact boundary assertion). The new
+path mode has unchanged-output, missing/invalid expectation, duplicate and
+malformed-protocol negative controls.
+
+The focused page run at `b384564a01526c40dc808c758d178e0fad93003c`
+[37608958517](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37608958517)
+matched every block edit: html5 had 60 local splices, ecma262 had 16 local
+splices and four reason-3 refusals (operations 3/4 and 9/10). Both remaining
+seams follow a completed algorithm split, parent whitespace and a retained
+ordinary paragraph. The preceding split closes at rank 91958 or 62345;
+the corresponding seam is 91960 or 62347. This narrows the needed extension
+to one-sided adjacency after a split, not a gap between joined heads.
+
+The retained-separator condition above admits this shape. The retained
+ordinary entry remains a non-lineless event separating runs, so adding or
+removing the neutral block cannot change grouping. The preceding head's
+immediate following event either survives (a lineless paragraph or another
+transparent event), or changes between complete-block Open/Child events;
+none reports the inline owner's following line. Exposing a lined paragraph
+immediately is already refused by the existing boundary check. Its endpoint
+and bottom margin survive, while later head inputs are protected by the
+retained separator. The source-removal and following-head guards remain.
+`transfer-adjacent-head` therefore strengthens its expectation to local
+success; `transfer-before-head` removes a pre-existing separator before a
+head and still requires reason 3, then checks local neutral edits after it.

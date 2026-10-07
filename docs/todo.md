@@ -226,7 +226,8 @@ example apart from the renderer code that exposed it
   mapped ecma262 seam precedes later splits. Stable split endpoint anchors
   now replace that insufficient scope, with source-removal and seam-topology
   summaries and a reference-bridge equivalence certificate. Remaining:
-  validate anchor/rank lifetimes, all required page paths, and the final
+  validate the retained-separator extension for ecma262's remaining four
+  split refusals, split-line refresh through text updates, and the final
   seq/par acceptance and mutation gates. The reference bridge remains a
   whole-context path outside accepted local splice work; no new performance
   claim is made.
@@ -535,20 +536,18 @@ example apart from the renderer code that exposed it
   sizes asks before it has written its children's spaces (the fresh space,
   basis 0), a child's own layout asks after (its real basis), so the same
   box's min- and max-content widths differ with the order of requests.
-  `intrinsic_flow` also writes every child's margins resolved against no
-  width, which `lay_out_child` overwrites. The incremental update
-  (`renderer/layout/update.wf`) reproduces both by returning marked
-  children to the fresh space, resolving kept children's margins again
-  (also on its in-place path, when the context's own intrinsic sizes were
-  computed in the update), forgetting a relaid child's sizes only where a
+  The incremental update (`renderer/layout/update.wf`) reproduces this
+  basis behavior by returning marked children to the fresh space,
+  forgetting a relaid child's sizes only where a
   full layout would compute them against another basis
   (`intrinsic_basis`), and recomputing a container item's sizes against
   the basis they were last computed against.
   Impact: percentage paddings on shrink-to-fit boxes size them by request
   order, and every incremental path must mirror that order. Change: resolve
   intrinsic contributions against one fixed basis (CSS Sizing 3 resolves
-  cyclic percentages against zero for them) and leave the children's
-  margins to their own layout. Reopen with the next layout correctness
+  cyclic percentages against zero for them). Intrinsic measurement now
+  preserves live margins; that separate side effect was repaired by the
+  M2 splice extension. Reopen with the next layout correctness
   work or when the update's resets cost measurably.
 
 - **An incremental re-stack lays out again every child a float narrowed.**
