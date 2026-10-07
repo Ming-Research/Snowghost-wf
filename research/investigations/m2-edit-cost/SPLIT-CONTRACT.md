@@ -168,9 +168,20 @@ unchanged suffix offsets; exceptional numeric repair preserves the reference
 saturating addition using the still-retained old owner origins. Both options
 keep the original full construction and certification for replaced topology.
 
-The A no-split-line-refresh mutant now drops the dirty publication in
-line_splits: dropping a suffix-coordinate write would be ineffective after
-that write is intentionally eliminated. Its original path requirement and
-unmutated identity remain. The additional option-specific mutant drops the
+A's no-split-line-refresh mutant disables current-head line resolution and
+reads stale raw line scratch. The previous dirty-publication omission was
+not detected (37679193027): ordinary suffix translation no longer needs that
+publication. Dropping an eliminated suffix-coordinate write is also ineffective.
+The original path requirement and unmutated identity remain unchanged. The additional option-specific mutant drops the
 targeted fragment-cell repair and must fail a semantic identity check. No
 fixture HTML, expected dump, or block success requirement is changed.
+
+Independent review identified missing runtime coverage of A's exceptional
+split-line saturation repair. `split-limit.py` now generates low/high-origin
+Open and Child heads with an empty leading fragment, followed by paragraph
+growth/shrink edits. The supplementary hosted oracle job reuses exact-source
+correctness drivers and requires seq/par identity; A additionally omits only
+the exceptional line repair and requires a high-origin semantic difference.
+These are proposed boundary probes until CI demonstrates both observations.
+The local assertion sample rejected missing detection, a low-control mismatch,
+incomplete output and a refused edit; an actual high mismatch was recognized.
