@@ -2446,17 +2446,29 @@ next structural removal, and requires the removal to remain local. Paired
 text restoration before the removal would conceal the stale offset. This
 first attempt was submitted without the repair at `baad9efe`; it did not
 fail, so that shape was not discriminating. A later attempt put the split
-first inside an ordinary wrapper, removing the preceding-sibling selector,
-but CI [37611691658](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37611691658)
-at `39de64c2b9556069b8baf6fc9d3e712ce787a95f` still did not detect the
-mutation. Source inspection identifies the missing premise: an unframed
-wrapper remains unresolved when its first split opens, so `open_unresolved`
-sets `Split.line` to `no_line` and selects the visual-top anchor. The fixture
-now gives that retained wrapper 1px of top padding. Its Open resolves the
-frame before the split, while the preceding-event search still stops at the
-wrapper Open. This establishes the real line and selects anchor mode 2.
-Held preceding text growth must then move that line before the next local
-removal; omitting the refresh must lose the representation certificate.
+first inside an ordinary wrapper, but CI
+[37611691658](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37611691658)
+at `39de64c2b9556069b8baf6fc9d3e712ce787a95f` did not detect the mutation.
+Adding 1px of top padding to resolve that wrapper before its split also
+failed to detect it in CI
+[37618315798](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37618315798)
+at `9aba0456a8ac85cc6be89fd7fe14c175ada832d3`. The source explanation that
+the original wrapper necessarily leaves `Split.line=no_line` omitted a
+premise: the inline's own border and padding can create a line before the
+head. That line both resolves the wrapper and can make `shows_owner` suppress
+the leading split fragment, so resolving the wrapper alone does not establish
+mode 2.
+
+A temporary CI inventory compares the current framed inline with a plain
+span inside the padded wrapper. It records actual anchor modes, raw split
+lines and offsets, calls and nonzero translations in `update_in_place`, and
+the anchor certificate after each edit around the held text growth. The
+comparison runs with and without exactly the split-line refresh call. The
+proposal is rejected if the plain span does not emit a line-based anchor,
+if the growth does not use the nonzero-delta path, or if omitting its line
+refresh leaves the next removal local. Normal identity and local-path
+requirements remain unchanged; diagnostic rows are removed before ordinary
+protocol validation, and the temporary job is removed after its evidence.
 The implementation repair uses the existing split-line shift after
 origin-only translation, excluding equal and ancestor opening ranks.
 `no-split-line-refresh` removes exactly that call. Its detector validates
