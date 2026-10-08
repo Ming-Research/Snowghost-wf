@@ -415,78 +415,188 @@ fn shift_reference_child_slot(context: &Context, slot: u32, delta: i32) -> resul
   return unit;
 }
 
-fn translate_reference_payload(context: &Context, item: Flow, skip: u64, delta: i32) -> result: unit writes(context) {
-  doc "Translates the selected suffix of a single virtual payload: Open, nested events, Close for a block, or one leaf. Text retains the legacy lineless exception while shifting each placed atomic child's scratch independently of its paragraph's line presence.";
-  match item {
-    Open(block: b) => {
-      let at = cvt::<u32, u64>(b);
-      if at < context^.blocks.inner.len {
-        let nested_root = context^.blocks.inner[at].entries.root;
-        let nested_cursor = reference_owner_cursor(context: context, owner: b, slot: nested_root);
-        if skip == 0_u64 {
-          shift_reference_block(block: &context^.blocks.inner[at], delta: delta);
+fn shift_reference_child(child: &Context, delta: i32) -> result: unit writes(child) {
+  doc "Applies the legacy suffix displacement to one child's normal and visual reference coordinates and its finite natural placement.";
+  set child^.normal_y = child^.normal_y +sat delta;
+  set child^.y = child^.y +sat delta;
+  if child^.placement_natural_known {
+    set child^.placement_natural = child^.placement_natural +sat delta;
+    set child^.placement_natural_known = child^.placement_natural != 2147483647_i32;
+  }
+  return unit;
+}
+
+fn owner_suffix_order(context: &Context, owner: u32, root: u32, held: SequenceCursor, skip: u64, order: &[Flow]) -> (partial: u32, partial_skip: u64) reads(context), writes(order) {
+  doc "Read-only preparation of one owner's raw suffix: every direct payload whose events all follow skip is copied into order at its own stable slot, which its target's entry_slot names, and the one Open that contains the cut is returned with its nested skip. Other slots keep the absent Close.";
+  if held.live {
+  } else {
+    return no_index, 0_u64;
+  }
+  if skip >= held.total_events {
+    return no_index, 0_u64;
+  }
+  let left = reference_owner_cursor(context: context, owner: owner, slot: held.left);
+  let right = reference_owner_cursor(context: context, owner: owner, slot: held.right);
+  let before = left.total_events;
+  let after = before +sat held.own_events;
+  let partial = no_index;
+  let partial_skip = 0_u64;
+  if skip < before {
+    let (left_partial, left_skip) = owner_suffix_order(context: context, owner: owner, root: held.left, held: left, skip: skip, order: order);
+    set partial = left_partial;
+    set partial_skip = left_skip;
+  }
+  if skip < after {
+    let own_skip = skip -sat before;
+    let item = reference_owner_payload(context: context, owner: owner, slot: root);
+    let at = cvt::<u32, u64>(root);
+    if own_skip == 0_u64 {
+      if at < order^.len {
+        set order^[at] = item;
+      }
+    } else {
+      match item {
+        Open(block: b) => {
+          set partial = b;
+          set partial_skip = own_skip - 1_u64;
         }
-        let nested_skip = skip -sat 1_u64;
-        translate_reference_owner_suffix(context: context, owner: b, slot: nested_root, held: nested_cursor, skip: nested_skip, delta: delta);
+        Close(..) => {
+        }
+        Text(..) => {
+        }
+        Child(..) => {
+        }
+        Float(..) => {
+        }
+        Out(..) => {
+        }
       }
     }
-    Text(paragraph: p) => {
-      if skip == 0_u64 {
+  }
+  let right_skip = skip -sat after;
+  let (right_partial, right_skip_out) = owner_suffix_order(context: context, owner: owner, root: held.right, held: right, skip: right_skip, order: order);
+  if right_partial != no_index {
+    set partial = right_partial;
+    set partial_skip = right_skip_out;
+  }
+  return partial, partial_skip;
+}
+
+fn shift_owner_suffix(order: &[Flow], blocks: &[Block], paragraphs: &[Paragraph], children: &[Context], delta: i32) -> result: unit reads(order), writes(blocks), writes(paragraphs), writes(children) contract {
+  requires forall inv(k in 0..order^.len) when order^[k].Open.block < blocks^.len: blocks^[order^[k].Open.block].entry_slot == k;
+  requires forall inv(k in 0..order^.len) when order^[k].Text.paragraph < paragraphs^.len: paragraphs^[order^[k].Text.paragraph].entry_slot == k;
+  requires forall inv(k in 0..order^.len) when order^[k].Child.context < children^.len: children^[order^[k].Child.context].entry_slot == k;
+  requires forall inv(k in 0..order^.len) when order^[k].Float.context < children^.len: children^[order^[k].Float.context].entry_slot == k;
+  requires forall inv(k in 0..order^.len) when order^[k].Out.context < children^.len: children^[order^[k].Out.context].entry_slot == k;
+} {
+  doc "Moves the direct suffix targets of one owner by delta in independent iterations. Each slot k names at most one target, and that target's stored entry_slot is k, so two iterations never write the same block, paragraph or child: the stored entry slot is the left inverse of the payload index in every variant, including the three variants that share the child store.";
+  let count = order^.len;
+  for (
+    k in 0..count,
+    apart(i, j) {
+    }
+  ) {
+    let item = order^[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < blocks^.len {
+          shift_reference_block(block: &blocks^[at], delta: delta);
+        }
+      }
+      Text(paragraph: p) => {
         let at = cvt::<u32, u64>(p);
-        if at < context^.paragraphs.inner.len {
-          shift_paragraph(paragraph: &context^.paragraphs.inner[at], delta: delta);
-          let atomics = context^.paragraphs.inner[at].atomics.inner.len;
-          for (atomic_at in 0_u64..atomics) {
-            let atomic_item = context^.paragraphs.inner[at].atomics.inner[atomic_at];
-            shift_reference_child_slot(context: context, slot: atomic_item.context, delta: delta);
-          }
+        if at < paragraphs^.len {
+          shift_paragraph(paragraph: &paragraphs^[at], delta: delta);
         }
       }
-    }
-    Child(context: c) => {
-      if skip == 0_u64 {
-        shift_reference_child_slot(context: context, slot: c, delta: delta);
+      Child(context: c) => {
+        let at = cvt::<u32, u64>(c);
+        if at < children^.len {
+          shift_reference_child(child: &children^[at], delta: delta);
+        }
       }
-    }
-    Float(context: f) => {
-      if skip == 0_u64 {
-        shift_reference_child_slot(context: context, slot: f, delta: delta);
+      Float(context: f) => {
+        let at = cvt::<u32, u64>(f);
+        if at < children^.len {
+          shift_reference_child(child: &children^[at], delta: delta);
+        }
       }
-    }
-    Out(context: o) => {
-      if skip == 0_u64 {
-        shift_reference_child_slot(context: context, slot: o, delta: delta);
+      Out(context: o) => {
+        let at = cvt::<u32, u64>(o);
+        if at < children^.len {
+          shift_reference_child(child: &children^[at], delta: delta);
+        }
       }
-    }
-    Close(..) => {
+      Close(..) => {
+      }
     }
   }
   return unit;
 }
 
 fn translate_reference_owner_suffix(context: &Context, owner: u32, slot: u32, held: SequenceCursor, skip: u64, delta: i32) -> result: unit writes(context) {
-  doc "Visits only the suffix of one retained owner AVL using the caller's cursor snapshot. Each child's cursor is read once and passed into recursion; coordinate writes change neither links nor liveness, so the payload lookup need not reopen topology. Cached event totals skip untouched prefix subtrees.";
-  if held.live {
+  doc "Raw suffix translation of one owner in the natural order: a read-only preparation copies the direct suffix payloads by stable slot, independent direct target writes follow, then the remaining dependent work: atomic children of the moved paragraphs, the complete nested contents of moved Opens, and the nested suffix of the Open that contains the cut.";
+  let span = if owner == no_index {
+    give context^.entries.span;
   } else {
-    return unit;
+    let owner_at = cvt::<u32, u64>(owner);
+    if owner_at < context^.blocks.inner.len {
+      give context^.blocks.inner[owner_at].entries.span;
+    } else {
+      give 0_u32;
+    }
   }
-  if skip >= held.total_events {
-    return unit;
+  let width = cvt::<u32, u64>(span);
+  let absent = Flow::Close(block: no_index);
+  let order = box_array_filled::<Flow>(count: width, value: absent);
+  let order_count = order.inner.len;
+  let (partial, partial_skip) = owner_suffix_order(context: context, owner: owner, root: slot, held: held, skip: skip, order: &order.inner[0_u64..order_count]);
+  let blocks = context^.blocks.inner.len;
+  let paragraphs = context^.paragraphs.inner.len;
+  let children = context^.children.inner.len;
+  shift_owner_suffix(order: &order.inner[0_u64..order_count], blocks: &context^.blocks.inner[0_u64..blocks], paragraphs: &context^.paragraphs.inner[0_u64..paragraphs], children: &context^.children.inner[0_u64..children], delta: delta);
+  for (k in 0_u64..order_count) {
+    let item = order.inner[k];
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < context^.blocks.inner.len {
+          let nested_root = context^.blocks.inner[at].entries.root;
+          let nested_cursor = reference_owner_cursor(context: context, owner: b, slot: nested_root);
+          translate_reference_owner_suffix(context: context, owner: b, slot: nested_root, held: nested_cursor, skip: 0_u64, delta: delta);
+        }
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          let atomics = context^.paragraphs.inner[at].atomics.inner.len;
+          for (atomic_at in 0_u64..atomics) {
+            if at < context^.paragraphs.inner.len {
+              if atomic_at < context^.paragraphs.inner[at].atomics.inner.len {
+                let atomic_item = context^.paragraphs.inner[at].atomics.inner[atomic_at];
+                shift_reference_child_slot(context: context, slot: atomic_item.context, delta: delta);
+              }
+            }
+          }
+        }
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+      Close(..) => {
+      }
+    }
   }
-  let left = reference_owner_cursor(context: context, owner: owner, slot: held.left);
-  let right = reference_owner_cursor(context: context, owner: owner, slot: held.right);
-  let before = left.total_events;
-  let after = before +sat held.own_events;
-  if skip < before {
-    translate_reference_owner_suffix(context: context, owner: owner, slot: held.left, held: left, skip: skip, delta: delta);
+  let partial_at = cvt::<u32, u64>(partial);
+  if partial_at < context^.blocks.inner.len {
+    let nested_root = context^.blocks.inner[partial_at].entries.root;
+    let nested_cursor = reference_owner_cursor(context: context, owner: partial, slot: nested_root);
+    translate_reference_owner_suffix(context: context, owner: partial, slot: nested_root, held: nested_cursor, skip: partial_skip, delta: delta);
   }
-  if skip < after {
-    let own_skip = skip -sat before;
-    let item = reference_owner_payload(context: context, owner: owner, slot: slot);
-    translate_reference_payload(context: context, item: item, skip: own_skip, delta: delta);
-  }
-  let right_skip = skip -sat after;
-  translate_reference_owner_suffix(context: context, owner: owner, slot: held.right, held: right, skip: right_skip, delta: delta);
   return unit;
 }
 
