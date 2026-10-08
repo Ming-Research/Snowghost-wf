@@ -376,6 +376,10 @@ example apart from the renderer code that exposed it
   offsets, with explicit raw-scratch validity. The new gates remain pending;
   Q139 also requires the owner's disposition of independent sibling writes
   that the pinned Whitefoot stored-field proof grammar cannot certify.
+  The four-cohort Q138 timing still fails HTML5 font-size: direct following
+  siblings are moved and published separately even when their descendants are
+  unchanged. Q141 asks whether to retain displacement on sequence ranges,
+  with explicit reader, rotation, splice and saturation rules; it is not adopted.
 
 - **M2 root-font edits still need a measured whole-context cost repair.**
   The correctly styled Q138 ECMA profile identifies the first large regression
@@ -388,10 +392,11 @@ example apart from the renderer code that exposed it
   Root font invalidates its style consumers, but ECMA's fixed body size means it need not
   reprepare all text. Current Q138 removes repeated dense materialization and
   source-index reconstruction. Validate its two-round full six-kind comparison;
-  if whole-context replay remains above twice main, examine actual retained
-  flow inputs for unused own-constraint edits rather than assume every restyle
-  requires interior publication. Any new retained-input contract needs an owner
-  decision before adoption.
+  the current comparison still fails ECMA262 root-font in both modes and rounds.
+  Q140 asks whether to retain completed effective flow inputs so unused
+  own-constraint changes can preserve interiors. That contract remains an
+  unimplemented proposal pending the owner; equal outer dimensions alone are
+  insufficient.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes

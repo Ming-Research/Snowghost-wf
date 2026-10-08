@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: [completion acceptance](#completion-acceptance) fails; option A
+Current outcome: [Q138 acceptance](#q138-four-cohort-acceptance-at-0dc2e5e) fails; option A
 is not merged into research/m2-layout.
 
 ## Question and prior rejection criterion
@@ -756,6 +756,8 @@ presented as bounded repair for all edit kinds.
   earlier M2 root-font regression; acceptance remains required before merging.
 - Q139: open; independent owner-motion publication reopens the stored-field
   proof requirement. No sorting or inverse-array workaround is adopted.
+- Q140: open; retained effective flow-input admission for unchanged interiors.
+- Q141: open; retained sequence-range displacement for direct suffix siblings.
 
 ---
 
@@ -988,3 +990,17 @@ Q139 remains open; Q140 or Q141 does not silently supersede it.
 | html5 | block | par | 474319/456200 | 682/769 | 653/665 | 725/707 | fails r1 |
 
 Acceptance fails 13 of 48 cells: four ECMA262 root-font cells, three HTML5 font-size cells and six block cells. The control twin records variability but does not waive any failed threshold. Main and base source revisions are frozen as in the root-font bisect above. The subsequent investigation and Q140/Q141 record the remaining work; no merge is authorized by this result.
+
+The four-cohort pin-only children are main `7207d33e71bccdfcc51d2733cd70f0d2643ee53e`, base `bcec4b22e7a9d262836b646f1884ba9fa44c00ed`, twin `3702353f977b0c221f2bde88c8cda1f6a9f46f2b` and A `b8ecf9ba41f511fd9806e3684d86cc2c7f654b79`. Their exact patches and source identities are in that run’s `edit-cost-evidence` artifact; no pin-only child was pushed or adopted.
+
+### Parallel reduction repair from completion review
+
+The review found two added chains not covered by Q139's stored-field write
+limitation: the old/new head union used serial cursors, and touched-owner motion
+used a serial early-return scan. The union now partitions the source domain,
+counts both nominee halves independently, then fills disjoint output slices
+whose offsets depend only on those counts; empty subtrees prune immediately.
+Owner motion now uses a balanced read-only Boolean reduction. No retained
+representation or accepted rendering behavior changes. The additional count
+work and compiler/runtime results require validation at this new revision;
+earlier timings remain evidence of failure, not a performance claim for it.

@@ -739,78 +739,102 @@ fn update_split_joins(targets: &[u64], values: &[SplitJoin], offset: u64, count:
   return joins^[root];
 }
 
-fn merge_split_head_count(first: &[u64], second: &[u64], ceiling: u64) -> count: u64 reads(first), reads(second) {
-  doc "Counts distinct live run-head nominees from sorted before/after sets so the result allocates only changed heads and cannot exceed the split source domain.";
-  let left = 0_u64;
-  let right = 0_u64;
-  let count = 0_u64;
-  let previous = ceiling;
-  let steps = first^.len +sat second^.len;
-  for (step in 0_u64..steps) {
-    let a = if left < first^.len {
-      give first^[left];
-    } else {
-      give ceiling;
-    }
-    let b = if right < second^.len {
-      give second^[right];
-    } else {
-      give ceiling;
-    }
-    let selected = imin(a, b);
-    if selected >= ceiling {
-      break;
-    }
-    if a == selected {
-      set left = left +sat 1_u64;
-    }
-    if b == selected {
-      set right = right +sat 1_u64;
-    }
-    if selected != previous {
-      set count = count +sat 1_u64;
-      set previous = selected;
+fn split_head_union_count(first: &[u64], second: &[u64], from: u64, until: u64) -> count: u64 reads(first), reads(second) {
+  doc "Counts unique nominees in one source interval. Input slices contain only that interval's sorted nominees; empty subtrees stop immediately, and independent halves reduce to their summed cardinality.";
+  if from >= until {
+    return 0_u64;
+  }
+  let has_first = first^.len > 0_u64;
+  let has_second = second^.len > 0_u64;
+  let present = bor(has_first, has_second);
+  if present {
+  } else {
+    return 0_u64;
+  }
+  let width = until - from;
+  if width == 1_u64 {
+    return 1_u64;
+  }
+  let half = width / 2_u64;
+  let middle = from +sat half;
+  let first_cut = split_key_position(keys: first, key: middle);
+  let second_cut = split_key_position(keys: second, key: middle);
+  let first_length = first^.len;
+  let second_length = second^.len;
+  if first_cut <= first_length {
+    if second_cut <= second_length {
+      let left = split_head_union_count(first: &first^[0_u64..first_cut], second: &second^[0_u64..second_cut], from: from, until: middle);
+      let right = split_head_union_count(first: &first^[first_cut..first_length], second: &second^[second_cut..second_length], from: middle, until: until);
+      return left +sat right;
     }
   }
-  return count;
+  return 0_u64;
+}
+
+fn fill_split_head_union(first: &[u64], second: &[u64], from: u64, until: u64, output: &[u64]) -> result: unit reads(first), reads(second), writes(output) {
+  doc "Publishes sorted unique run heads through disjoint output slices. Independent child counts determine the one necessary prefix offset; recursive child fills then write only their own slices without a shared cursor.";
+  if from >= until {
+    return unit;
+  }
+  if output^.len == 0_u64 {
+    return unit;
+  }
+  let has_first = first^.len > 0_u64;
+  let has_second = second^.len > 0_u64;
+  let present = bor(has_first, has_second);
+  if present {
+  } else {
+    return unit;
+  }
+  let width = until - from;
+  if width == 1_u64 {
+    set output^[0_u64] = from;
+    return unit;
+  }
+  let half = width / 2_u64;
+  let middle = from +sat half;
+  let first_cut = split_key_position(keys: first, key: middle);
+  let second_cut = split_key_position(keys: second, key: middle);
+  let first_length = first^.len;
+  let second_length = second^.len;
+  if first_cut <= first_length {
+    if second_cut <= second_length {
+      let left = split_head_union_count(first: &first^[0_u64..first_cut], second: &second^[0_u64..second_cut], from: from, until: middle);
+      let right = split_head_union_count(first: &first^[first_cut..first_length], second: &second^[second_cut..second_length], from: middle, until: until);
+      let total = left +sat right;
+      if left <= total {
+        if total <= output^.len {
+          fill_split_head_union(first: &first^[0_u64..first_cut], second: &second^[0_u64..second_cut], from: from, until: middle, output: &output^[0_u64..left]);
+          fill_split_head_union(first: &first^[first_cut..first_length], second: &second^[second_cut..second_length], from: middle, until: until, output: &output^[left..total]);
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn merge_split_head_count(first: &[u64], second: &[u64], ceiling: u64) -> count: u64 reads(first), reads(second) {
+  doc "Counts the bounded union after excluding absent or retired nominees. Only equal source identities deduplicate, and no serial merge cursor orders independent heads.";
+  let first_end = split_key_position(keys: first, key: ceiling);
+  let second_end = split_key_position(keys: second, key: ceiling);
+  if first_end <= first^.len {
+    if second_end <= second^.len {
+      let counted = split_head_union_count(first: &first^[0_u64..first_end], second: &second^[0_u64..second_end], from: 0_u64, until: ceiling);
+      return counted;
+    }
+  }
+  return 0_u64;
 }
 
 fn merge_split_heads(first: &[u64], second: &[u64], ceiling: u64) -> made: Box<Array<u64>> reads(first), reads(second) {
-  doc "Forms the bounded sorted union of old and new run heads; coincident endpoints never merge identities, only equal source slots do.";
+  doc "Forms the bounded sorted union of old and new run heads through independent source-domain partitions; no unselected domain cell is materialized or moved.";
   let count = merge_split_head_count(first: first, second: second, ceiling: ceiling);
   let made = box_array_filled::<u64>(count: count, value: ceiling);
-  let left = 0_u64;
-  let right = 0_u64;
-  let out = 0_u64;
-  let previous = ceiling;
-  let steps = first^.len +sat second^.len;
-  for (step in 0_u64..steps) {
-    let a = if left < first^.len {
-      give first^[left];
-    } else {
-      give ceiling;
-    }
-    let b = if right < second^.len {
-      give second^[right];
-    } else {
-      give ceiling;
-    }
-    let selected = imin(a, b);
-    if selected >= ceiling {
-      break;
-    }
-    if a == selected {
-      set left = left +sat 1_u64;
-    }
-    if b == selected {
-      set right = right +sat 1_u64;
-    }
-    if selected != previous {
-      if out < made.inner.len {
-        set made.inner[out] = selected;
-      }
-      set out = out +sat 1_u64;
-      set previous = selected;
+  let first_end = split_key_position(keys: first, key: ceiling);
+  let second_end = split_key_position(keys: second, key: ceiling);
+  if first_end <= first^.len {
+    if second_end <= second^.len {
+      fill_split_head_union(first: &first^[0_u64..first_end], second: &second^[0_u64..second_end], from: 0_u64, until: ceiling, output: &made.inner[0_u64..count]);
     }
   }
   return move made;
