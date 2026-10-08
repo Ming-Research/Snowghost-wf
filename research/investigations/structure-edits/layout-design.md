@@ -3018,3 +3018,31 @@ Keep the counted fallback until the discrepancy is resolved. A surviving
 mutation overturns the claimed evidence; a slow full build overturns the
 representation choice, not the CSS induction. This task changes no renderer,
 pin or submodule, files no Whitefoot gap, and supplies no execution results.
+
+
+### Q139 implementation: independent full-layout probe
+
+The implementation first compares `tests/layout/percentage-height-cases.html`
+with Chromium through `tests/layout/layout_oracle.mjs` on hosted CI. The
+probe covers a 200px block with nested 50% blocks, the same outer block with
+an auto-height intermediate, the html/body viewport chain, and a nested
+formatting-context boundary. A mismatch rejects the existing resolver;
+full/incremental identity cannot establish this premise. The Chromium dump,
+comparison and renderer dump are retained as CI artifacts. The focused case
+has fourteen block boxes and no visible inline/text boxes; its ordinary
+oracle floor requires all fourteen to match.
+
+The candidate repair propagates the immediate containing block's definite
+content height in the existing top-down pre-pass and retains the input in
+`BlockOutput.basis_height`. Every intermediate percentage is resolved in
+order; an auto-height block supplies an indefinite basis. The stacking pass,
+child spaces and boundary/growth consumers use that same input. A restyled
+block with percentage-dependent descendants requires the pre-pass before
+child layout; width equality alone cannot establish height-key equality.
+The full oracle result is pending; this is not a completion claim.
+
+Per the implementation task's machine constraint, all evidence and all
+performance comparisons use GitHub-hosted CI, including the comparison of
+every X5 edit kind against main and `95ea4a1` with a twin. No local build,
+check, test or timing is part of this experiment. This overrides the earlier
+argument's proposed 14900K measurement host for this task.

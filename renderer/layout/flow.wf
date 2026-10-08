@@ -9,10 +9,11 @@ alias break_mandatory = pkg::layout::text::break_mandatory;
 alias break_allowed = pkg::layout::text::break_allowed;
 
 struct Frame {
-  doc "A block box open during a flow pass: its index, the left offset and width of its content box in the context's content box, its top border and padding, and, in the stacking pass, whether its border-box top is known yet, its relative offset and whether a line box lies inside it.";
+  doc "A block box open during a flow pass: its index, the left offset, width and definite height basis of its containing block, its top border and padding, and, in the stacking pass, whether its border-box top is known yet, its relative offset and whether a line box lies inside it.";
   block: u32;
   left: i32;
   width: i32;
+  basis_height: i32;
   top_frame: i32;
   known: Bool;
   dx: i32;
@@ -219,12 +220,46 @@ fn innermost_block(frames: &Box<Slots<Frame>>) -> block: u32 reads(frames) {
   return found;
 }
 
+fn definite_block_height(styles: &Styles, style: StyleRef, basis_width: i32, basis_height: i32) -> height: i32 reads(styles) {
+  doc "The content height established before laying out an ordinary block's contents, or unknown for an auto/content-dependent height. Resolve each percentage against its immediate containing block, then apply its own limits and box conversion in the full height resolver's order.";
+  let border = border_edges(styles: styles, style: style);
+  let padding = padding_edges(styles: styles, style: style, basis: basis_width);
+  let border_height = vertical(edges: border);
+  let padding_height = vertical(edges: padding);
+  let frame = border_height +sat padding_height;
+  let specified = specified_height(styles: styles, style: style, basis: basis_height, frame: frame);
+  if specified < 0_i32 {
+    return unknown;
+  }
+  let (minimum, maximum) = height_limits(styles: styles, style: style, basis: basis_height, frame: frame);
+  let constrained = clamp_size(size: specified, minimum: minimum, maximum: maximum);
+  let content = constrained -sat frame;
+  let height = imax(content, 0_i32);
+  return height;
+}
+
+fn containing_height(context: &Context, styles: &Styles, owner: u32, context_height: i32) -> height: i32 reads(context), reads(styles) {
+  doc "Reads the immediate containing block's definite content height. Its retained basis was resolved at Open, so nested percentages keep every intermediate operation and an auto-height block breaks the chain.";
+  if owner == no_index {
+    return context_height;
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let block = block_snapshot(block: &context^.blocks.inner[at]);
+    let basis = context^.blocks.inner[at].output.basis_height;
+    let height = definite_block_height(styles: styles, style: block.style, basis_width: block.avail_width, basis_height: basis);
+    return height;
+  }
+  return unknown;
+}
+
 fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_width: i32, content_height: i32) -> result: unit reads(events), reads(styles), writes(context) {
   doc "The pre-pass of a flow context: walks its flow with the containing widths of the open block boxes, sets each block's width and left offset, each paragraph's width and left offset, and each child context's space: in-flow children fill their containing block, floats, out-of-flow boxes and atomic inlines shrink to fit.";
   let frames = box_slots_new::<Frame>(capacity: 8_u64);
   let flow_count = events^.len;
   let left = 0_i32;
   let width = content_width;
+  let height = content_height;
   let next_split = 0_u64;
   set context^.has_out = False();
   let free = True();
@@ -243,6 +278,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
         let at = cvt::<u32, u64>(b);
         if at < context^.blocks.inner.len {
           set context^.blocks.inner[at].parent = around;
+          set context^.blocks.inner[at].output.basis_height = height;
           set context^.blocks.inner[at].flow_at = here;
           let style = context^.blocks.inner[at].style;
           let relative = height_relative(styles: styles, style: style);
@@ -259,7 +295,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           let border = border_edges(styles: styles, style: style);
           let padding = padding_edges(styles: styles, style: style, basis: width);
           let unknown_top = False();
-          let saved = Frame(block: b, left: left, width: width, top_frame: 0_i32, known: unknown_top, dx: 0_i32, dy: 0_i32, lines: unknown_top);
+          let saved = Frame(block: b, left: left, width: width, basis_height: height, top_frame: 0_i32, known: unknown_top, dx: 0_i32, dy: 0_i32, lines: unknown_top);
           let pushed = push_item::<Frame>(cell: &frames, value: saved, ceiling: item_ceiling);
           let inner_left = x +sat border.left;
           set left = inner_left +sat padding.left;
@@ -270,6 +306,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           set width = imax(inner, 0_i32);
           set context^.blocks.inner[at].content_left = left;
           set context^.blocks.inner[at].content_width = width;
+          set height = definite_block_height(styles: styles, style: style, basis_width: saved.width, basis_height: saved.basis_height);
         }
       }
       Close(..) => {
@@ -278,6 +315,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           let last = depth - 1_u64;
           set left = frames.inner[last].left;
           set width = frames.inner[last].width;
+          set height = frames.inner[last].basis_height;
           let removed = take_back(window: &frames.inner);
         }
       }
@@ -296,9 +334,13 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
                 let child_at = cvt::<u32, u64>(child);
                 if child_at < context^.children.inner.len {
                   let yes = True();
-                  set context^.children.inner[child_at].space = child_space(available: width, basis_width: width, basis_height: unknown, shrink: yes);
+                  set context^.children.inner[child_at].space = child_space(available: width, basis_width: width, basis_height: height, shrink: yes);
                   set context^.children.inner[child_at].flow_at = here;
                   set context^.children.inner[child_at].block = around;
+                  let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+                  let independent = bnot(relative);
+                  set free = band(free, independent);
+                  set flow_free = band(flow_free, independent);
                 }
               }
               Open(..) => {
@@ -319,7 +361,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           let table = kind == ctx_table;
           let replaced = kind == ctx_replaced;
           let fits = bor(table, replaced);
-          set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: content_height, shrink: fits);
+          set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: height, shrink: fits);
           set context^.children.inner[at].normal_x = left;
           set context^.children.inner[at].x = left;
           set context^.children.inner[at].flow_at = here;
@@ -334,7 +376,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
         let at = cvt::<u32, u64>(c);
         if at < context^.children.inner.len {
           let yes = True();
-          set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: content_height, shrink: yes);
+          set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: height, shrink: yes);
           set context^.children.inner[at].normal_x = left;
           set context^.children.inner[at].x = left;
           set context^.children.inner[at].flow_at = here;
@@ -1857,7 +1899,7 @@ fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Fra
       } else {
         return False();
       }
-      let saved = Frame(block: b, left: held.avail_left, width: held.avail_width, top_frame: top_frame, known: yes, dx: dx, dy: dy, lines: yes);
+      let saved = Frame(block: b, left: held.avail_left, width: held.avail_width, basis_height: context^.blocks.inner[at].output.basis_height, top_frame: top_frame, known: yes, dx: dx, dy: dy, lines: yes);
       let pushed = push_item::<Frame>(cell: frames, value: saved, ceiling: item_ceiling);
     }
   }
@@ -2014,7 +2056,8 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
           set_natural(context: context, at: k, y: natural);
           let cleared = clear_floor > natural;
           let unknown_top = False();
-          let saved = Frame(block: b, left: left, width: width, top_frame: top_frame, known: unknown_top, dx: total_dx, dy: total_dy, lines: unknown_top);
+          let retained_basis = context^.blocks.inner[at].output.basis_height;
+          let saved = Frame(block: b, left: left, width: width, basis_height: retained_basis, top_frame: top_frame, known: unknown_top, dx: total_dx, dy: total_dy, lines: unknown_top);
           let pushed = push_item::<Frame>(cell: &frames, value: saved, ceiling: item_ceiling);
           let framed = top_frame > 0_i32;
           let resolve = bor(framed, cleared);
@@ -2052,8 +2095,9 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
           let margins = margin_edges(styles: styles, style: style, basis: outer_width);
           let bottom_frame = border.bottom +sat padding.bottom;
           let vertical_frame = frame.top_frame +sat bottom_frame;
-          let specified = specified_height(styles: styles, style: style, basis: basis_height, frame: vertical_frame);
-          let (minimum, maximum) = height_limits(styles: styles, style: style, basis: basis_height, frame: vertical_frame);
+          let block_basis = context^.blocks.inner[at].output.basis_height;
+          let specified = specified_height(styles: styles, style: style, basis: block_basis, frame: vertical_frame);
+          let (minimum, maximum) = height_limits(styles: styles, style: style, basis: block_basis, frame: vertical_frame);
           let marker = marker_line(context: context, styles: styles, fonts: fonts, picks: picks, at: at, lines: frame.lines);
           let has_marker = marker > 0_i32;
           if frame.known {
@@ -2286,7 +2330,9 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
             let replaced = fits_kind == ctx_replaced;
             let fits = bor(table, replaced);
             let held = before_of(context: &context^.children.inner[at]);
-            set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: basis_height, shrink: fits);
+            let owner = context^.children.inner[at].block;
+            let containing = containing_height(context: context, styles: styles, owner: owner, context_height: basis_height);
+            set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: containing, shrink: fits);
             let ignored = no_updates();
             let tally = box_array_filled::<UpdateCounts>(count: 1_u64, value: ignored);
             let yes = True();
@@ -2439,7 +2485,9 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
               let float_previous_origin = child_position(context: context, at: at);
               let previous_bottom = old_float_bottom(child: &context^.children.inner[at], position: float_previous_origin, content_top: content_top, dy: float_dy);
               set old_reach = imax(old_reach, previous_bottom);
-              let float_space = child_space(available: width, basis_width: width, basis_height: basis_height, shrink: yes_shrink);
+              let owner = context^.children.inner[at].block;
+              let containing = containing_height(context: context, styles: styles, owner: owner, context_height: basis_height);
+              let float_space = child_space(available: width, basis_width: width, basis_height: containing, shrink: yes_shrink);
               let held = before_of(context: &context^.children.inner[at]);
               set context^.children.inner[at].space = float_space;
               let ignored = no_updates();
@@ -2672,7 +2720,8 @@ fn flow_frame(styles: &Styles, style: StyleRef, space: Space, width: i32) -> fra
   let definite = if forced >= 0_i32 {
     give forced -sat frame_vertical;
   } else if specified >= 0_i32 {
-    give specified -sat frame_vertical;
+    let resolved = definite_block_height(styles: styles, style: style, basis_width: basis, basis_height: space.basis_height);
+    give resolved;
   } else {
     give unknown;
   }
