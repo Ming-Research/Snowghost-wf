@@ -117,5 +117,6 @@ Applying the rule fixed above:
 So the C3 loss of the like-for-like build is confined to the sequential box
 build: about 9%, half from page geometry and growth and half from `Paged`'s
 own page allocation. The whole layout stage shows no loss outside noise. The
-larger losses reported for `paged` and `hf` therefore come mostly from their
-pooled store design, not from the `Paged` type.
+larger losses measured earlier for `paged` and `hf` probably come mostly
+from their pooled store design rather than from the `Paged` type; those builds
+were not in this run, so that remains to be confirmed.
