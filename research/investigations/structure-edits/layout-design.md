@@ -2629,8 +2629,12 @@ preorder numbers or the nearest formatting-context root:
   to `A` but not `G`. A lexical ancestor test alone would reject the very
   case this extension is intended to admit.
 - `R` is the retained in-flow geometry whose percentage inputs the splice
-  proposes to reuse, including blocks, child contexts, floats, and their
-  retained descendant dependency summaries in every affected scope.
+  proposes to reuse, including ordinary blocks and the own records of child contexts and floats
+  directly read by each route context. Nested context interiors do not
+  contribute to their parent inventory: an off-route context translates
+  under unchanged Space, and flex relays changed Space through its existing
+  equality check and relayout. A route that descends into a child checks
+  that child context's direct-reader inventory separately.
   Earlier siblings count too. It is not just the edited parent's style.
   Out-of-flow boxes that Q128 actually settles again are excluded from
   this reuse claim; their inputs and arithmetic charges still follow Q128.
@@ -2653,8 +2657,9 @@ Admission requires all the following premises before retained publication:
    record and unchanged resolution inputs: containing-block identity,
    property/expression, style and font inputs, width/box-sizing inputs,
    viewport and layout mode. Relevant invalidation or missing metadata is
-   failure, not absence of a dependency. Retained nested contexts contribute
-   summaries even when their entry itself has no percentage style.
+   failure, not absence of a dependency. A child context contributes only its own percentage reads; its
+   interior is governed by unchanged-Space translation and flex
+   Space-equality relayout, not this parent inventory.
 2. **Definite, edit-independent provenance.** Every such read has a definite
    basis, and every height-producing link in its provenance terminates in
    an unchanged external size or content-independent specified size.
@@ -2754,8 +2759,9 @@ prefix state determine the direct suffix's new origins. An unchanged
 suffix entry has unchanged width, used height and normalized boundary input,
 so it needs exactly its certified translation; its descendants retain local
 origins. Beyond a fixed-height ancestor the size delta can be zero, but all
-other outputs must still settle. No new percentage-driven relayout of a
-retained off-path subtree is needed.
+other outputs must still settle. An off-route context with unchanged Space retains its interior. Flex
+settlement that changes an item's Space relays that change through the
+existing relayout path, including any nested percentage readers.
 
 The precise preservation claim distinguishes the splice's existing update
 sets. Let `T` be the existing direct suffix translations and boxes moved by
@@ -2783,8 +2789,9 @@ The conjunction with the existing certificates is essential:
 - **Flex.** Q128 still recomputes the container algorithm and checks complete
   preparation/space keys, stretch, wrapping, free space and actual outputs.
   A size supplied by the changed flex result cannot be certified unchanged
-  before that result exists: a reused percentage consumer of that size fails
-  premise 2. Recomputed item interiors remain the flex algorithm's work,
+  before that result exists. Direct readers checked by this certificate
+  still need premise 2; readers inside a nested flex item instead follow
+  its Space-equality check and relayout. Recomputed item interiors remain the flex algorithm's work,
   not reuse authorized here. Q130 still owns an outward failure after flex
   publication. Grid/table/multicol scope does not expand.
 - **Positioned and atomic content.** Q128 settles the relevant anchors,
@@ -2814,7 +2821,7 @@ them. Both distinguish having a percentage dependency from changing its
 basis; neither flag alone proves cache reuse. This is an analogy, not an
 independent correctness oracle for Snowghost's transfer implementation.
 
-### Refusals and minimal negative examples
+### Refusals and context-boundary identity examples
 
 These are HTML fragments for later fixture construction, not executed
 fixtures. Unless a row says otherwise, place the fragment in a standards-mode
@@ -2825,14 +2832,15 @@ seam does not accidentally supply the refusal being tested. Each Q139
 failure is reason 7 if reached; variants exercising other guards must assert
 their own reason rather than manufacturing a reason-7 result.
 
-| Failure | Minimal fragment / edit | Why refusal remains necessary |
+| Case | Minimal fragment / edit | Required result and reason |
 | --- | --- | --- |
 | Indefinite basis on the growing chain | `<section id="a"><p>old</p><!-- insert --><div style="height:50%"><p>tail</p></div></section>` | `a` has content-driven auto height and is in `G`. The percentage behaves as auto here; reusing a numeric old height as a definite basis is invalid. This conservative refusal does not claim CSS requires a cycle or a changed percentage result. |
 | Indefinite basis even off the growing chain | `<section><p>old</p><!-- insert --></section><aside><div style="height:50%"><p>tail</p></div></aside>` | The retained aside subtree contains an unresolved basis, although aside is not edited. A proposed summary that says only "basis not in G" would miss the definiteness premise. No stable-indefinite certificate is added here. |
 | A broken intermediate percentage chain | `<div style="height:200px"><section style="height:50%"><div id="a"><p>old</p><!-- insert --><div style="height:50%"><p>tail</p></div></div></section></div>` | The inner percentage's immediate basis is auto-height `a`, not the outer 200px box. Retaining only the terminal definite ancestor would incorrectly admit it. |
 | Percentage minimum on an auto-height ancestor | `<div style="height:200px"><section style="min-height:50%"><p style="height:80px">old</p><!-- insert 40px block --></section></div>` | The minimum stays 100px, but the section changes from 100px to 120px, not by the inserted 40px. An active clamp on the growing path is outside the existing transfer. Removal crosses the boundary in reverse. |
 | Percentage maximum on an auto-height ancestor | `<div style="height:200px"><section style="max-height:50%"><p style="height:80px">old</p><!-- insert 40px block --></section></div>` | The maximum stays 100px, but the section grows by 20px and then overflows. Same-basis equality is insufficient; an active/crossed clamp remains reason 7. |
-| Layout-supplied definite basis may change | `<div style="display:flex;align-items:stretch"><section><p>old</p><!-- insert tall block --></section><aside><div style="height:50%"><p>tail</p></div></aside></div>` | The changed flex line can stretch aside to a different height and re-resolve its child. A reused interior cannot treat the old stretch target as an external constant. Q128 may instead recompute that interior; Q139 cannot certify it before settlement. Where an enclosing unsupported entry refuses earlier, that earlier reason remains. |
+| Layout-supplied definite basis may change | `<div style="display:flex;align-items:stretch"><section><p>old</p><!-- insert tall block --></section><aside><div style="height:50%"><p>tail</p></div></aside></div>` | `layout-stretch` is a positive splice/identity case. The changed flex line can stretch aside to a different height; the existing flex Space-equality check then relays out its interior and resolves its percentage child again. Its nested reader is outside the parent direct inventory. |
+| Nested retained context (`nested-context-reader`) | `<section><p>old</p><!-- insert --></section><aside style="display:flow-root"><div style="height:50%"><p>tail</p></div></aside>` | Positive splice/identity case: aside has no direct percentage read and its unchanged Space permits translation of the whole context. Its interior reader contributes only when an edit route enters that context. |
 | New percentage read with no admissible external basis | `<section><p>old</p><!-- insert <div style="height:50%"><p>new</p></div> --><p>tail</p></section>` | Looking only at retained reads would miss the inserted box's auto/content-driven basis. Private construction must fail this certificate before publishing any routes or geometry. |
 | Changed source, resolution mode, or stale provenance | `<div id="basis" style="height:200px"><section style="height:50%"><p>old</p><!-- insert --></section></div>`; first change `basis` to `height:auto` or `height:300px`, then insert, without an intervening retained-record refresh in the fault injection | The old identity/value/definiteness record is not current. The legitimate style path must invalidate or republish it; missing records after a reference rebuild or slot replacement are equally unknown. A combined retained restyle may correctly refuse earlier with reason 6. |
 | Changed viewport input | `html,body {height:100%}` with `<section><p>old</p><!-- insert --></section>`; resize the viewport before attempting reuse | The terminal external value is no longer equal. Normal resize layout must refresh it, or this preflight refuses. HTML alone cannot express stale retained viewport state. |
@@ -2894,8 +2902,9 @@ Positive fixtures must include:
 
 Negative fixtures cover every row above, both min/max indefinite variants,
 unchanged-numeric-value but changed-definiteness state, a missing or retired
-basis handle, and a percentage reader in a nested retained context whose own
-entry is percentage-free. Retain the existing float-floor negative-margin,
+basis handle. A percentage reader inside a nested retained context whose
+own entry is percentage-free is instead a positive identity case, alongside
+`layout-stretch`, under the approved direct-reader scope. Retain the existing float-floor negative-margin,
 flex changed-space, split-topology and near-limit negatives. Attribute the
 first refusal to the guard actually reached; preserve full rendering on all
 fallbacks and assert unchanged retained state at a reason-7 preflight exit.
@@ -2910,7 +2919,7 @@ mutation obligations are:
 
 | Premise | Mutation, and observation required to detect it |
 | --- | --- |
-| Complete consumer inventory (1) | Omit one percentage reader in a retained nested context or a float, and independently ignore min-height and max-height reads. The focused negative must lose its required reason-7 path or produce wrong geometry. Instrument the selected predicate so an earlier guard cannot masquerade as detection. |
+| Complete consumer inventory (1) | Omit one direct percentage reader in the route context or a float, and independently ignore min-height and max-height reads. The focused negative must lose its required reason-7 path or produce wrong geometry. Instrument the selected predicate so an earlier guard cannot masquerade as detection. |
 | Correct immediate basis and full provenance (1–2) | Replace the immediate containing block with the context root, or flatten a nested chain past the auto-height intermediate. The independent 200/100/50 rectangle expectations or the broken-chain refusal must fail. |
 | Definite, content-independent basis (2) | Treat an indefinite old numeric height as definite; separately accept an old flex stretch target as immutable. The auto-height/flex negative must either violate its reuse/refusal assertion or differ after the growing edit. A fully recomputed flex interior is not a detection of this reuse mutation. |
 | Growing-chain exclusion (2) | Ignore one basis membership in `G`, or remove an unresolved layout-sized ancestor from `G` on equal old numbers. Use a certificate-level fixture for this predicate with other premises supplied, plus a flex-growth integration probe; demand an explicit assertion failure if another preflight conservatively masks the mutation. |
@@ -3373,9 +3382,10 @@ an off-route nested context, the premise M2's percentage-free guard
 relied on, instead of the argument's rule that retained nested contexts
 contribute their readers; the argument's two negative rows for an
 indefinite nested reader and a stretched flex sibling would become
-admitted cases. That reverses a stated premise, so the choice is the
-owner's; the candidate keeps the argument's whole-subtree inventory and
-the flex fixture's expectations stay unchanged and failing until then.
+admitted cases. The owner selected the direct-reader inventory on 2026-10-08. The
+argument above now states that scope; `nested-context-reader` and
+`layout-stretch` require splice/identity, and the flex fixture keeps its
+existing expectations.
 
 ### Paired edit cost and record reuse
 
