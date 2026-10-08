@@ -432,7 +432,7 @@ The new `zero-suffix` mutation restores the old reference guard; the new
 Each produces `inc DIFF` on both edits of its corresponding new fixture,
 while the unmutated baselines pass. Existing mutations remain detected.
 
-One separate read-only review, using GPT-6 Astra, inspected the complete
+One separate read-only review inspected the complete
 `cf12c609..e8594aa` diff, the local counter repair through `b86c2e9`, and the
 final evidence-only investigation changes. It checked groups A/D/C/T/R/M/V
 and applicable G1–G3/DC1–DC4 against the pipeline, layout and relevant style
@@ -460,5 +460,6 @@ The latest M2 head was fetched and merged before final validation; it remained
 `cf12c609`, already included. Only `research/m2-apollo11-fix` was pushed and no
 PR was opened. All builds and checks ran on GitHub-hosted runners. No
 Whitefoot gap was encountered, and the compiler pin and submodules were
-unchanged. The temporary diagnosis workflow remains for reproducibility on
-this work branch and is removed before integration, as its header requires.
+unchanged. The temporary diagnosis workflow, `apollo11-diag.yml`, last ran in
+full as run 37736036220 at `b86c2e9`; it was removed when this repair was
+integrated into research/m2-layout.
