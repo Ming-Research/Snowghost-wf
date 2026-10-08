@@ -3475,3 +3475,33 @@ every paired sample above; that path refreshes and republishes records
 in addition to laying out. Smaller per-edit medians of 1 to 7 percent on
 text, style and block edits fall inside wide ranges that include the
 twin's medians and are not separated from noise by these samples.
+
+
+### Approved direct inventory and compact records
+
+On 2026-10-08 the owner selected direct-reader inventory and record
+compaction. Each route context counts its own direct height/minimum/maximum
+percentage readers; a child context contributes only its own record.
+Nested interiors follow unchanged-Space translation and flex Space-equality
+relayout. The two scope fixtures now require admitted full-rebuild identity;
+the existing flex paths remain unchanged. The superseded scope-variant job
+is removed because it implemented the now-selected candidate as a mutation.
+The unused `flow_definite_free` field and its writers are removed (review F6).
+
+The compact representation gives each block/context an optional owned
+`HeightProof`, allocated only for percentage readers. Other boxes derive
+height state from current style and layout inputs when a containing basis
+or fixed-height transfer needs it. Allocations belong to their consumer;
+sibling writes remain independent, with no shared record table or counter.
+The alternative dense record charged every box 72 bytes regardless of reads.
+Summary counts become saturating `u32`: reductions rebuild from live entries
+and never subtract, so overflow cannot erase a nonzero unproved count.
+
+Before measuring, the comparison remains main `8fbc160`, M2 `95ea4a1`, its
+independently built twin and the candidate, on one GitHub-hosted runner per
+experiment, sequential and four workers. Every X5 kind uses identical
+captures, fonts and edits in alternating order; full layout and peak RSS
+use the same drivers and inputs. Root-font cost outside the paired twin
+spread, or memory growth no smaller than the dense-record sample above,
+rejects the cost aim. Any admitted geometry mismatch, lost required path
+or undetected mutation rejects correctness. No cost result is claimed yet.

@@ -4,7 +4,7 @@ alias Styles = pkg::style::Styles;
 alias sizing_value = pkg::css::values::sizing_value;
 
 fn empty_height_summary() -> made: HeightSummary pure {
-  return HeightSummary(consumers: 0_u64, unproved: 0_u64);
+  return HeightSummary(consumers: 0_u32, unproved: 0_u32);
 }
 
 fn join_height_summary(first: HeightSummary, second: HeightSummary) -> made: HeightSummary pure {
@@ -17,6 +17,84 @@ fn absent_height_proof() -> made: HeightProof pure {
   let no = False();
   let style = StyleRef(element: no_index, pseudo: no_index, anonymous: no);
   return HeightProof(consumer: style, source_context: no_index, source_owner: no_index, source_element: no_index, source_kind: 0_u8, basis_state: 0_u8, basis_height: unknown, basis_width: 0_i32, content_height: unknown, forced_height: unknown, state: 0_u8, read_mask: 0_u8, size_key: no_index, box_key: no_index, spacing_key: no_index, border_key: no_index, font_key: no_index, valid: no);
+}
+
+fn read_height_record(record: &Option<Box<HeightProof>>) -> made: HeightProof reads(record) {
+  match record^ {
+    Some(value: proof) => {
+      return proof^.inner;
+    }
+    None() => {
+      return absent_height_proof();
+    }
+  }
+}
+
+fn store_height_record(record: &Option<Box<HeightProof>>, proof: HeightProof) -> result: unit writes(record) {
+  if proof.read_mask == 0_u8 {
+    set record^ = None<Box<HeightProof>>();
+    return unit;
+  }
+  match record^ {
+    Some(value: held) => {
+      set held^.inner = proof;
+      return unit;
+    }
+    None() => {
+    }
+  }
+  let held = box_new::<HeightProof>(value: proof);
+  set record^ = Some<Box<HeightProof>>(value: move held);
+  return unit;
+}
+
+fn stored_height_summary(record: &Option<Box<HeightProof>>) -> made: HeightSummary reads(record) {
+  match record^ {
+    Some(value: proof) => {
+      return height_proof_summary(proof: proof^.inner);
+    }
+    None() => {
+      return empty_height_summary();
+    }
+  }
+}
+
+fn derived_context_height_proof(context: &Context, styles: &Styles) -> made: HeightProof reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(context.height_input), reads(styles) {
+  let input = absent_height_proof();
+  set input.source_context = context^.height_input.context;
+  set input.source_owner = context^.height_input.owner;
+  set input.source_element = context^.height_input.element;
+  set input.source_kind = context^.height_input.kind;
+  set input.basis_state = context^.height_input.state;
+  let proof = resolve_height_proof(styles: styles, style: context^.style, input: input, width: context^.space.basis_width, height: context^.space.basis_height, forced: context^.space.forced_height);
+  if context^.natural != natural_object {
+    set proof.state = 3_u8;
+  }
+  if context^.kind == ctx_table {
+    set proof.state = 3_u8;
+  }
+  return proof;
+}
+
+fn context_height_proof(context: &Context, styles: &Styles) -> made: HeightProof reads(context.height_proof), reads(context.height_input), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(styles) {
+  let proof = read_height_record(record: &context^.height_proof);
+  let relative = height_relative(styles: styles, style: context^.style);
+  if relative {
+    return proof;
+  }
+  return derived_context_height_proof(context: context, styles: styles);
+}
+
+fn block_height_proof(block: &Block, styles: &Styles) -> made: HeightProof reads(block), reads(styles) {
+  let proof = read_height_record(record: &block^.height_proof);
+  let relative = height_relative(styles: styles, style: block^.style);
+  if relative {
+    return proof;
+  }
+  let input = absent_height_proof();
+  set input.source_owner = block^.parent;
+  set input.source_kind = 2_u8;
+  return resolve_height_proof(styles: styles, style: block^.style, input: input, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
 }
 
 fn height_input_of(proof: HeightProof) -> made: HeightInput pure {
@@ -48,19 +126,32 @@ fn set_height_input(child: &Context, proof: HeightProof) -> result: unit writes(
 }
 
 fn context_height_current(context: &Context, styles: &Styles) -> same: Bool reads(context.height_proof), reads(context.height_input), reads(context.style), reads(context.space), reads(styles) {
-  let old_input = height_input_of(proof: context^.height_proof);
+  let relative = height_relative(styles: styles, style: context^.style);
+  if relative {
+  } else {
+    return True();
+  }
+  let proof = read_height_record(record: &context^.height_proof);
+  let old_input = height_input_of(proof: proof);
   let same = same_height_input(first: old_input, second: context^.height_input);
   if same {
   } else {
     return False();
   }
-  let current = height_proof_current(proof: context^.height_proof, styles: styles, style: context^.style, width: context^.space.basis_width, height: context^.space.basis_height, forced: context^.space.forced_height);
+  let current = height_proof_current(proof: proof, styles: styles, style: context^.style, width: context^.space.basis_width, height: context^.space.basis_height, forced: context^.space.forced_height);
   return current;
 }
 
 fn keep_height_proof(context: &Context, styles: &Styles) -> kept: Bool reads(styles), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(context.height_input), writes(context.height_proof) {
   doc "Decides whether retained geometry may stay under the current incoming edge. A changed source or kind, or a basis that gained or lost content independence, needs fresh layout, so descendants derive their records again. Under the same edge, stale style keys or changed resolution numbers only refresh this record: the caller's update or space comparison decides geometry, and a changed definite content height re-prepares any direct reader (definite_free) while stale descendant numbers fail their own currentness. Only state 2 proves a descendant's basis, so a refresh that changes that independence, this record's validity or its reads is treated like a changed edge; auto and layout-supplied states are equally unproved, a container's measuring and final passes alternate between them, and a descendant edge still keyed to the previous unproved state fails its own currentness and refuses admission.";
-  let old = context^.height_proof;
+  let old = read_height_record(record: &context^.height_proof);
+  let relative = height_relative(styles: styles, style: context^.style);
+  if relative {
+  } else {
+    set context^.height_proof = None<Box<HeightProof>>();
+    let previously_free = old.read_mask == 0_u8;
+    return previously_free;
+  }
   let old_input = height_input_of(proof: old);
   let incoming = context^.height_input;
   let same_edge = same_height_input(first: old_input, second: incoming);
@@ -87,7 +178,7 @@ fn keep_height_proof(context: &Context, styles: &Styles) -> kept: Bool reads(sty
     }
   }
   refresh_context_height_proof(context: context, styles: styles);
-  let renewed = context^.height_proof;
+  let renewed = read_height_record(record: &context^.height_proof);
   let valid = eeq(renewed.valid, old.valid);
   if valid {
   } else {
@@ -159,19 +250,19 @@ fn sizing_read_mask(height: Sizing, minimum: Sizing, maximum: Sizing) -> mask: u
   return mask;
 }
 
-fn height_read_count(mask: u8) -> count: u64 pure {
+fn height_read_count(mask: u8) -> count: u32 pure {
   let remaining = mask;
-  let count = 0_u64;
+  let count = 0_u32;
   if remaining >= 4_u8 {
-    set count = count + 1_u64;
+    set count = count + 1_u32;
     set remaining = remaining - 4_u8;
   }
   if remaining >= 2_u8 {
-    set count = count + 1_u64;
+    set count = count + 1_u32;
     set remaining = remaining - 2_u8;
   }
   if remaining == 1_u8 {
-    set count = count + 1_u64;
+    set count = count + 1_u32;
   }
   return count;
 }
@@ -296,10 +387,10 @@ fn height_proof_summary(proof: HeightProof) -> made: HeightSummary pure {
   let readers = height_read_count(mask: proof.read_mask);
   if proof.valid {
   } else {
-    return HeightSummary(consumers: readers, unproved: 1_u64);
+    return HeightSummary(consumers: readers, unproved: 1_u32);
   }
-  if readers == 0_u64 {
-    return HeightSummary(consumers: 0_u64, unproved: 0_u64);
+  if readers == 0_u32 {
+    return HeightSummary(consumers: 0_u32, unproved: 0_u32);
   }
   if proof.basis_state != 2_u8 {
     return HeightSummary(consumers: readers, unproved: readers);
@@ -307,17 +398,17 @@ fn height_proof_summary(proof: HeightProof) -> made: HeightSummary pure {
   if proof.basis_height < 0_i32 {
     return HeightSummary(consumers: readers, unproved: readers);
   }
-  return HeightSummary(consumers: readers, unproved: 0_u64);
+  return HeightSummary(consumers: readers, unproved: 0_u32);
 }
 
-fn containing_height_proof(context: &Context, styles: &Styles, owner: u32, height: i32) -> made: HeightProof reads(context.height_proof), reads(context.height_input), reads(context.slot), reads(context.blocks.inner), reads(context.retired), reads(context.style), reads(context.space), reads(styles) {
+fn containing_height_proof(context: &Context, styles: &Styles, owner: u32, height: i32) -> made: HeightProof reads(context.height_proof), reads(context.height_input), reads(context.slot), reads(context.blocks.inner), reads(context.retired), reads(context.style), reads(context.space), reads(styles), reads(context.natural), reads(context.kind) {
   doc "Shares the immediate containing record through a stable owner link. An auto intermediate remains an indefinite edge, even below a definite ancestor.";
   let made = absent_height_proof();
   set made.source_context = context^.slot;
   set made.source_owner = owner;
   set made.source_kind = 2_u8;
   set made.basis_height = height;
-  let source = context^.height_proof;
+  let source = context_height_proof(context: context, styles: styles);
   if context^.retired {
     return made;
   }
@@ -335,18 +426,21 @@ fn containing_height_proof(context: &Context, styles: &Styles, owner: u32, heigh
       if block^.entry_slot == no_index {
         return made;
       }
-      let current = height_proof_current(proof: block^.height_proof, styles: styles, style: block^.style, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
+      let proof = block_height_proof(block: block, styles: styles);
+      let current = height_proof_current(proof: proof, styles: styles, style: block^.style, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
       if current {
       } else {
         return made;
       }
-      if block^.height_proof.source_context != context^.slot {
+      if proof.read_mask != 0_u8 {
+        if proof.source_context != context^.slot {
+          return made;
+        }
+      }
+      if proof.source_owner != block^.parent {
         return made;
       }
-      if block^.height_proof.source_owner != block^.parent {
-        return made;
-      }
-      set source = block^.height_proof;
+      set source = proof;
     } else {
       return made;
     }
@@ -360,14 +454,14 @@ fn containing_height_proof(context: &Context, styles: &Styles, owner: u32, heigh
   return made;
 }
 
-fn fresh_containing_proof(context: &Context, owner: u32, height: i32) -> made: HeightProof reads(context.height_proof), reads(context.slot), reads(context.blocks.inner), reads(context.retired) {
+fn fresh_containing_proof(context: &Context, styles: &Styles, owner: u32, height: i32) -> made: HeightProof reads(context.height_proof), reads(context.slot), reads(context.blocks.inner), reads(context.retired), reads(context.height_input), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(styles) {
   doc "containing_height_proof inside the flow pre-pass, which resolved the context's record and every open block's record earlier in the same pass from the inputs it now passes down; only the currentness checks those writes establish are omitted.";
   let made = absent_height_proof();
   set made.source_context = context^.slot;
   set made.source_owner = owner;
   set made.source_kind = 2_u8;
   set made.basis_height = height;
-  let source = context^.height_proof;
+  let source = context_height_proof(context: context, styles: styles);
   if context^.retired {
     return made;
   }
@@ -377,7 +471,7 @@ fn fresh_containing_proof(context: &Context, owner: u32, height: i32) -> made: H
       if context^.blocks.inner[at].entry_slot == no_index {
         return made;
       }
-      set source = context^.blocks.inner[at].height_proof;
+      set source = block_height_proof(block: &context^.blocks.inner[at], styles: styles);
     } else {
       return made;
     }
@@ -431,21 +525,21 @@ fn viewport_height_proof(styles: &Styles, style: StyleRef, width: i32, height: i
 }
 
 fn own_height_summary(context: &Context, styles: &Styles) -> made: HeightSummary reads(context), reads(styles) {
-  let own = height_proof_summary(proof: context^.height_proof);
+  let own = stored_height_summary(record: &context^.height_proof);
   let current = context_height_current(context: context, styles: styles);
   if current {
   } else {
-    set own.unproved = own.unproved +sat 1_u64;
+    set own.unproved = own.unproved +sat 1_u32;
   }
   return own;
 }
 
 fn context_height_summary(context: &Context, styles: &Styles) -> made: HeightSummary reads(context), reads(styles) {
-  let own = height_proof_summary(proof: context^.height_proof);
+  let own = stored_height_summary(record: &context^.height_proof);
   let current = context_height_current(context: context, styles: styles);
   if current {
   } else {
-    set own.unproved = own.unproved +sat 1_u64;
+    set own.unproved = own.unproved +sat 1_u32;
   }
   let inside = context^.height_summary;
   if context^.kind == ctx_flow {
@@ -458,7 +552,7 @@ fn context_height_summary(context: &Context, styles: &Styles) -> made: HeightSum
 
 fn retained_height_summary(context: &Context) -> made: HeightSummary reads(context) {
   doc "Snapshots the published inventory before an update, without consulting already-restyled inputs. Equality cutoffs must publish changed metadata even when the box size is equal.";
-  let own = height_proof_summary(proof: context^.height_proof);
+  let own = stored_height_summary(record: &context^.height_proof);
   let inside = context^.height_summary;
   if context^.kind == ctx_flow {
     let total = sequence_output(sequence: &context^.entries);
@@ -514,20 +608,13 @@ fn layout_height_inputs(context: &Context) -> result: unit writes(context) {
 }
 
 fn refresh_context_height_proof(context: &Context, styles: &Styles) -> result: unit reads(styles), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(context.height_input), writes(context.height_proof) {
-  let input = absent_height_proof();
-  set input.source_context = context^.height_input.context;
-  set input.source_owner = context^.height_input.owner;
-  set input.source_element = context^.height_input.element;
-  set input.source_kind = context^.height_input.kind;
-  set input.basis_state = context^.height_input.state;
-  let proof = resolve_height_proof(styles: styles, style: context^.style, input: input, width: context^.space.basis_width, height: context^.space.basis_height, forced: context^.space.forced_height);
-  if context^.natural != natural_object {
-    set proof.state = 3_u8;
+  let relative = height_relative(styles: styles, style: context^.style);
+  if relative {
+    let proof = derived_context_height_proof(context: context, styles: styles);
+    store_height_record(record: &context^.height_proof, proof: proof);
+  } else {
+    set context^.height_proof = None<Box<HeightProof>>();
   }
-  if context^.kind == ctx_table {
-    set proof.state = 3_u8;
-  }
-  set context^.height_proof = proof;
   return unit;
 }
 
@@ -538,13 +625,18 @@ fn refresh_height_summary(context: &Context, styles: &Styles) -> result: unit re
   return unit;
 }
 
-fn block_height_current(context: &Context, styles: &Styles, at: u64) -> current: Bool reads(context.height_proof), reads(context.height_input), reads(context.slot), reads(context.blocks.inner), reads(context.retired), reads(context.style), reads(context.space), reads(styles) {
+fn block_height_current(context: &Context, styles: &Styles, at: u64) -> current: Bool reads(context.height_proof), reads(context.height_input), reads(context.slot), reads(context.blocks.inner), reads(context.retired), reads(context.style), reads(context.space), reads(styles), reads(context.natural), reads(context.kind) {
   if at < context^.blocks.inner.len {
     let block = &context^.blocks.inner[at];
     if block^.entry_slot == no_index {
       return False();
     }
-    let proof = block^.height_proof;
+    let relative = height_relative(styles: styles, style: block^.style);
+    if relative {
+    } else {
+      return True();
+    }
+    let proof = read_height_record(record: &block^.height_proof);
     let current = height_proof_current(proof: proof, styles: styles, style: block^.style, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
     if current {
     } else {
@@ -615,7 +707,7 @@ fn refresh_local_height_proofs(context: &Context, events: &[Flow], styles: &Styl
           let basis = containing_height(context: context, styles: styles, owner: parent, context_height: height);
           let input = containing_height_proof(context: context, styles: styles, owner: parent, height: basis);
           let proof = resolve_height_proof(styles: styles, style: context^.blocks.inner[at].style, input: input, width: context^.blocks.inner[at].avail_width, height: basis, forced: unknown);
-          set context^.blocks.inner[at].height_proof = proof;
+          store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);
           set context^.blocks.inner[at].output.basis_height = basis;
         }
       }
@@ -655,8 +747,38 @@ fn refresh_local_height_proofs(context: &Context, events: &[Flow], styles: &Styl
 }
 
 fn height_read_counts(layout: &Layout) -> (consumers: u64, unproved: u64) reads(layout) {
-  let own = height_proof_summary(proof: layout^.root.height_proof);
+  let own = stored_height_summary(record: &layout^.root.height_proof);
   let root = sequence_output(sequence: &layout^.root.entries);
   let summary = join_height_summary(first: own, second: root.heights);
-  return summary.consumers, summary.unproved;
+  let consumers = cvt::<u32, u64>(summary.consumers);
+  let unproved = cvt::<u32, u64>(summary.unproved);
+  return consumers, unproved;
+}
+
+fn rebase_height_context(record: &Option<Box<HeightProof>>, serial: u32) -> result: unit writes(record) {
+  match record^ {
+    Some(value: proof) => {
+      set proof^.inner.source_context = serial;
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn relocate_height_record(record: &Option<Box<HeightProof>>, input: SpliceInput) -> result: unit writes(record) {
+  match record^ {
+    Some(value: held) => {
+      set held^.inner.source_context = input.serial;
+      if held^.inner.source_owner == no_index {
+        set held^.inner.source_owner = input.owner;
+        set held^.inner.source_element = input.height_proof.source_element;
+      } else {
+        set held^.inner.source_owner = held^.inner.source_owner +sat input.blocks;
+      }
+    }
+    None() => {
+    }
+  }
+  return unit;
 }
