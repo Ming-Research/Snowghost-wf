@@ -193,3 +193,89 @@ jobs:
             build/x5/scripts/
             build/drivers/driver-*/revision.txt
             build/drivers/driver-*/pin-only.patch
+
+  profile-rootfont:
+    if: contains(github.event.head_commit.message, '[profile]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Frozen bisect drivers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for name in main fixed; do
+            gh run download 37718501510 -n "driver-$name" --dir "build/drivers/driver-$name"
+          done
+          for name in s2 s3a m2 base a; do
+            gh run download 37718099858 -n "driver-$name" --dir "build/drivers/driver-$name"
+          done
+          chmod +x build/drivers/driver-*/layout_oracle_*
+      - name: Fonts and sampled profiler
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo sysctl kernel.perf_event_paranoid=-1
+          uname -a | tee build/machine.txt
+          lscpu | tee -a build/machine.txt
+          perf --version | tee -a build/machine.txt
+      - name: Exact ECMA262 timing inputs
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          make -s oracle-fonts
+          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare ecma262
+          mkdir -p build/profile-evidence
+          sha256sum build/research/concurrency/ecma262.html build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css renderer/style/ua.css build/x5/scripts/ecma262-rootfont.edits > build/profile-evidence/inputs.sha256
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          source = Path('build/x5/scripts/ecma262-rootfont.edits').read_text().splitlines(True)
+          setup = [line for line in source if line.startswith('S ')]
+          pair = [line for line in source if line.startswith(('C ', 'K '))][:2]
+          assert len(pair) == 2 and pair[0].startswith('C ') and pair[1].startswith('K ')
+          Path('build/profile-evidence/ecma262-sample.edits').write_text(''.join(setup + pair))
+          PYEOF
+      - name: Bound and profile the same styled workload
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          for sample in 1 2; do
+            WF_WORKERS=4 /usr/bin/time -p -o build/profile-evidence/ecma262-$sample.time build/drivers/driver-a/layout_oracle_seq edittime build/profile-evidence/ecma262-sample.edits "$data/ecma262.html" renderer/style/ua.css "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css" "assets/css/print.css=$data/ecma262-print.css" > build/profile-evidence/ecma262-sample-$sample.raw
+          done
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          root = Path('build/profile-evidence')
+          values = [float((root / f'ecma262-{n}.time').read_text().splitlines()[0].split()[1]) for n in (1, 2)]
+          assert max(values) < 60, values
+          repeats = min(100, max(2, int(60 / max(values))))
+          lines = (root / 'ecma262-sample.edits').read_text().splitlines(True)
+          setup = [line for line in lines if line.startswith('S ')]
+          pair = [line for line in lines if line.startswith(('C ', 'K '))]
+          (root / 'ecma262.edits').write_text(''.join(setup + pair * repeats))
+          (root / 'ecma262-scale.txt').write_text(f'{values}; {repeats} round trips\n')
+          PYEOF
+          for name in main s2 s3a m2 base a fixed; do
+            output=build/profile-evidence/$name-ecma262
+            WF_WORKERS=4 perf record -F 499 --call-graph dwarf,4096 -o "$output.data" -- build/drivers/driver-$name/layout_oracle_seq edittime build/profile-evidence/ecma262.edits "$data/ecma262.html" renderer/style/ua.css "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css" "assets/css/print.css=$data/ecma262-print.css" > "$output.raw"
+            perf report -i "$output.data" --stdio --no-children --percent-limit 0.5 > "$output-self.txt"
+            perf report -i "$output.data" --stdio --children --percent-limit 1 > "$output-callers.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rootfont-profile-evidence
+          path: |
+            build/machine.txt
+            build/profile-evidence/
+            build/x5/scripts/ecma262-rootfont.edits
+            build/drivers/driver-*/revision.txt
+            build/drivers/driver-*/pin-only.patch
