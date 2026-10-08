@@ -1096,3 +1096,68 @@ independent twin, together with main/cf12/cf12-twin, on one hosted runner with
 the full two-round six-kind script. Reject a block-cost attribution if its
 medians do not separate from both before controls. All correctness gates remain
 required; no profile percentage alone establishes an acceptance improvement.
+
+### Q138 correctness and review at db46e92
+
+The complete runtime revision db46e9218eb3b53550148843a0c3f433e5c113e4 passes
+[layout-check 37728270697](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37728270697),
+[check 37728270906](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37728270906),
+[oracles 37728270744](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37728270744)
+and [all 53 falsification jobs 37728270791](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37728270791).
+This is the revision measured in the six-cohort table above; the subsequent
+child-owner reuse candidate requires its own validation.
+
+The oracle run passes all 14 jobs. Full ECMA262 and HTML5 dumps are byte-identical
+to the oracle's frozen ddfd63d base and across sequential/parallel modes
+(19,024,863 and 12,538,869 bytes); five layout cases and the saturation fixture
+are also unchanged. All six X5 kinds yield 24 raw files, 960 incremental/full
+matches, zero differences/refusals, and 12 byte-equal normalized seq/par pairs.
+All page block paths are splice 1, reason 0: 20 ECMA262 and 60 HTML5 per mode.
+The new topology matrix yields 384 matches across both modes; split-limit and
+near-limit probes yield 32 and 40 matches respectively, with no differences or
+refusals in these probes. Existing separately counted case refusals remain.
+
+The exact original `reference-suffix` mutation is detected by the independent
+cached-publication assertion. The missing-repair omission produces eight
+transfer-fixture differences; missing following translation produces 54 transfer,
+16 cascade and 16 reference-frame differences. The topology omission's baseline
+has 192 matches, its negative control correctly rejects an undistinguished
+result, and the compiled mutation produces 48 differences across all 12 variants.
+Old-frame and natural-floor omissions are also detected. No mutation or expected
+result was weakened. The lineless reset, source-retention lifetime and cached
+publication regressions are fixed within their exercised scope.
+
+A separate read-only reviewer (inherited Codex model, deployment identifier not
+exposed) inspected the full 30-file cf12c609..db46e92 diff, changed regions and
+direct consumers, the pipeline/layout, pipeline, style and scope decisions,
+and the actual hosted logs/artifacts. No suite was rerun. RV1–RV3 corrected
+lineless-coordinate, style-floor and source-index lifetime documentation. RV4
+corrected the constructed publication oracle's displacement before validation.
+RV5 removed serial chains from the pure head union and owner-motion reduction.
+The owned-origin specialization and subsequent local child-owner reuse received
+separate narrow source review; runtime evidence for the latter is pending.
+
+Groups A/D/C/T/R/M/V and G1–G3/DC1–DC4 were examined; pin-move checks and PR
+operations are inapplicable because no dependency moved and the owner forbids
+PR actions. Q139 remains an explicit R3/G2/DC2 finding against maximal
+parallelism. Numeric/source-retention soundness beyond inspected paths and
+probes, and independent Chromium conformance of the new generated topology
+pages, remain unverified; existing external fixtures remain intact. DC4 and
+full task acceptance remain incomplete because the timing gate fails. The
+check log passes the DOM self-test, 21 checker tests and design lint. Lint's
+CI base reports 7 nodes/depth 1/62 decisions/24 rejections against 53 decisions;
+source counts against review base cf12 are 7→7 nodes, depth 1→1, 59→62 decisions
+and 24→24 rejections. Only the layout node changes. Owner approval is not
+supplied by review.
+
+All compilation, execution and checks ran on GitHub-hosted CI. Local work only
+inspected/edited source and Git state and analyzed downloaded evidence. The
+Whitefoot pin and both submodule revisions are unchanged. Q139 records the
+existing field/enum inverse-proof requirement in the TODO; no external issue
+or compiler workaround was introduced.
+
+### Delayed block profile: startup excluded, sample loss limits attribution
+
+[Run 37733734625](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37733734625) succeeds with the frozen db46e92/base/twin drivers. First edits arrive 2.34–2.48 seconds after launch, before sampling starts at five seconds; total runs last 20.03–22.03 seconds. The two-edit samples took 2.25–2.30 seconds and selected the existing 30,000-round-trip cap. All three runs contain 60,000 edits; upper medians are base 245 us, twin 243 us and A 273 us. These instrumented repeated-pair medians are diagnostic, not acceptance.
+
+Post-startup samples include A's block-origin and child-motion-travel reads, so those operations are not confined to startup. However, perf reports 39,542/35,244/41,288 lost samples for base/twin/A. No quantitative attribution is accepted from these percentages. Repeat the same frozen comparison at 99 Hz with a 1,024-page buffer instead of the 499 Hz default-buffer setup; retain the observed startup markers and admission controls. This repeat repairs measurement loss, not a failed performance threshold, and cannot replace the full-script acceptance comparison.
