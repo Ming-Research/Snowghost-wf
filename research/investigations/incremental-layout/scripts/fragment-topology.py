@@ -17,7 +17,7 @@ from edits import Tree
 
 PAGE = """<!doctype html><style>
 html,body{margin:0;padding:0}body{font:16px/20px monospace}
-section{display:flow-root;width:180px}div{margin:0}span{background:#def}
+section{display:flow-root;width:180px}div{margin:0}span{background:#def;white-space:pre-line}
 .head{HEAD}.offset{OFFSET}p{margin:0}
 </style><section><p>Before.</p><span>\t <div class="head">First head.</div> \t <div class="head offset">Second head.</div> \t\t</span><p>After.</p><span>\t\t</span><p>Last.</p></section>
 """
@@ -50,12 +50,12 @@ def run(driver, directory, detect):
             edits = []
             # Each transition changes a different negative or empty dependency.
             for node in selected:
-                edits.extend((f'T {node} 0 Visible ', f'D {node} 0 8'))
+                edits.extend((f'T {node} 0 \\n', f'D {node} 0 1'))
             # Retain several replacements at once, then consume them in another order.
             for node in selected:
-                edits.append(f'T {node} 0 Visible ')
+                edits.append(f'T {node} 0 \\n')
             for node in reversed(selected):
-                edits.append(f'D {node} 0 8')
+                edits.append(f'D {node} 0 1')
             script = directory / (name + '.edits')
             script.write_text('\n'.join(edits) + '\n')
             rawfile = directory / (name + '.raw')

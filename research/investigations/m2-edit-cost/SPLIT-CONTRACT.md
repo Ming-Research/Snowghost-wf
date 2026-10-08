@@ -101,6 +101,63 @@ and split endpoint identities require no reconstruction. A narrower replay or
 publication path must follow actual changed dependencies on any document;
 ECMA262's identity or a root-font edit label must never select it.
 
+### Correctly styled ECMA262 profile: membership hypothesis rejected
+
+[Hosted profile 37722145044](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37722145044)
+uses the frozen bisect drivers, wf-0b7f5c5b9854, and the same captured page,
+UA stylesheet and named external stylesheet mappings as the timing command.
+The original bisect workflow's ECMA262 profile commands omitted the external
+stylesheets; those profiles cannot attribute the timing workload. This separate
+job corrects that input mismatch without cancelling or replacing the timing run.
+
+The corrected profile ran sequential drivers with WF_WORKERS=4 on one
+Ubuntu 24.04 AMD EPYC 7763 hosted runner exposing four vCPUs, Linux
+6.17.0-1022-azure. Two A sample round trips took 3.70 and 3.64 seconds including
+startup, selecting 16 round trips (32 edits), all the first 12px/undo pair.
+These upper medians in microseconds are from profiled runs, include profiler
+overhead and are diagnostic evidence, not the two-round acceptance workload:
+
+| Source cohort | Edit | Marking | Layout after marking/picks |
+|---|---:|---:|---:|
+| main 8fbc160 | 28,629 | 1,100 | 27,532 |
+| step 2 0e2a093 | 35,882 | 11 | 35,871 |
+| step 3a db5d98c | 3,556,842 | 17 | 3,556,824 |
+| 2d706ba | 92,276 | 70 | 92,204 |
+| cf12c609 | 114,619 | 74 | 114,545 |
+| A 0857633 | 110,735 | 72 | 110,665 |
+| exact-route repair b31a1b1 | 110,151 | 70 | 110,081 |
+
+Picks have zero upper median in these runs. Style medians range from 3,877 to
+4,044 microseconds and are excluded from edit time. The layout column subtracts
+each edit's marking and picks before taking its median; subtracting the column
+medians need not give the same result. The exact-route membership hypothesis is
+rejected for this ECMA262 pair: marking is already only tens of microseconds,
+and its removal leaves the roughly 110 ms edit unchanged within this profile's
+uncontrolled spread. The repair's correctness gate passed, but no root-font
+performance improvement is claimed from it.
+
+The first large profile regression is step 2 to step 3a. Step 3a replaces direct
+flat-event reads with virtual owner-index selection in compatibility walkers.
+Its `slot_read` specialization accounts for 76.64% inclusive samples,
+`sequence_select` for 8.03% self samples, and `sequence_repair` for 2.03% self.
+Most of `slot_read`'s descendants are unresolved libc addresses; record copying
+is a source hypothesis, not a resolved symbol attribution. By 2d706ba, shared
+materialized events and revised publication remove most of that intermediate
+regression, but `reduce_sequence` (6.44% self), `prepare_boundary_entry` (3.74%),
+`fill_flow` (3.13%) and `store_reduction` (2.76%) expose remaining full-context
+representation maintenance. A and the repair show the same dominant layout
+functions. Profiles include initial construction and style work, so these
+percentages are not isolated edit-time shares; call-stack gaps also limit
+inclusive attribution.
+
+Every cohort prepares 41 paragraphs in this pair. The earlier cohorts report
+three updated contexts and zero rebroken paragraphs; cf12c609/A/repair report
+four contexts, 41 rebroken paragraphs and 112,823 entries. These counts are not
+comparable across that interval: the flex update changed from adding only one
+context to including the child's `flex_counts`. They do not establish that
+those descendants were newly visited. Correctly timed full-cohort evidence and
+a dependency-based removal of unnecessary context work remain required.
+
 ### Bounded topology dependency audit
 
 The retained geometry interval is not a topology certificate. In particular,
@@ -199,6 +256,28 @@ falsifier must successfully compile and trip that assertion.
 
 These are implementation obligations under Q138 A; hosted semantic and omission
 evidence is required before claiming the new transaction is complete.
+
+### Continuation validation probes
+
+The generated topology probe changes whitespace-only paragraphs between lineless
+and lined states with a preserved newline under `white-space:pre-line`. The first
+probe inserted visible text into whitespace-only nodes and was correctly refused
+by the existing text-patch admission before layout; replacing that operation
+preserves the intended split/join test without changing admission. It covers
+leading, intervening, trailing and empty-inline sources, nested owners sharing
+an opening, negative margins, coincident rectangles, growth and undo. Established
+fixture HTML stays unchanged.
+
+The owner-motion omission removes direct block displacement. Its first mutant
+left a blank line and failed canonical-form checking; that result is not semantic
+detection. The corrected omission removes the complete statement line. The
+old-frame omission supplies current scratch instead of the captured old origin
+at the shared ancestry resolver. A narrower paragraph-materialization mutation
+was not detected by the existing fixtures and did not omit old-frame resolution
+for children or descendant Opens; it therefore did not test the stated global
+contract. A relative-owner/padded-context fixture extends the existing cascade
+schedule. Neither an unrelated compiler failure nor a refused edit counts as a
+falsifier result.
 
 ## Contract before implementation
 
