@@ -58,9 +58,10 @@ speed decides only between candidates of equal dependencies.
   `whitefoot.pin` names (Whitefoot-kit's `whitefoot.mk`), builds the renderer,
   checks that the static atoms record matches its name list, runs the
   document arena's self-test and `make design-lint`. It needs git,
-  Python 3, curl, `/usr/bin/clang`, LLD on Linux and the `design/skill` and
-  `whitefoot-kit` submodules; `make check WHITEFOOTC=<path>` uses another
-  compiler.
+  Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM major the
+  release names (`make toolchain` installs it, `make toolchain-check`
+  checks it), and the `design/skill` and `whitefoot-kit` submodules;
+  `make check WHITEFOOTC=<path>` uses another compiler.
 - The readiness check adds `make pin-ready`: `whitefoot.pin` names no
   experiment release.
 - Review checklist: [docs/review-checklist.md](docs/review-checklist.md).
