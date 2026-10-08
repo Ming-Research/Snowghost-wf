@@ -24,6 +24,30 @@ in each page/mode/round; word and block must be no worse than the base. Only a
 passing result authorizes a merge commit into research/m2-layout followed by
 layout-check and check. Failure is reported to the owner without merging.
 
+## Q138 continuation and root-font bisect
+
+The owner continues Q134 A through Q138 A (the previous report called it
+Q136). Finish bounded topology replacement and the owner-motion/legacy-reader
+contract. The acceptance now applies a twice-main limit to word, sentence,
+colour, font-size and root-font, with block no worse than cf12c609, in both
+modes and rounds on the same hosted runner. The correctness gates are unchanged.
+Only acceptance permits the requested merge commit into research/m2-layout.
+
+Before measurement: compare main 8fbc160, step 2 0e2a093, step 3a db5d98c,
+2d706ba, cf12c609, its independent twin and the working A revision. Each CI
+build makes and records a pin-only child commit selecting wf-0b7f5c5b9854;
+no timing pin is adopted by the work branch. The hosted workflow retains the
+patch and both source and child identities. All cohorts use LLVM 22, the same
+page/script inputs and one measurement runner in forward/reverse order.
+The first step whose root-font cost separates from its predecessor and control
+spread identifies the regression interval, not yet its cause. Inspect its
+per-edit counters and profile the responsible path before attributing cost.
+Reject the hypothesis that retained metadata alone explains the regression if
+its work does not rise at that interval or a same-source removal does not
+improve the measured root-font edit. Root font still restyles the document;
+paragraph preparation, changed inherited metrics and actual reflow are not
+assumed removable. Compare that floor with main's path explicitly.
+
 ## Contract before implementation
 
 The reference is the existing full fragment generator, checked against the
