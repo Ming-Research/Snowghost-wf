@@ -79,10 +79,10 @@ adding visible text makes two. The new run needs roles that did not previously
 exist. A lined paragraph immediately before/after a run also controls whether
 that run emits an empty role, and a backward sibling query controls its leading
 position. Those negative dependencies can lie outside first-open..last-close.
-The current compact aligned arrays cannot insert a role without shifting later
-slots, and `stacked.fragments_same=False` therefore clears the entire domain.
+The preceding compact aligned arrays could not insert a role without shifting
+later slots, so `stacked.fragments_same=False` cleared the entire domain.
 
-The continuation's implementation target reserves three independently active
+The continuation's implementation reserves three independently active
 roles in one record at every stable split slot, with a run using its first
 split's cells. A single record per split preserves the source-count limit;
 a flat array of three times the split count could reject previously admitted
@@ -93,7 +93,8 @@ separately from split cells. Publication emits only active records in the
 existing phases and source order; physical capacity must never stand in for a
 live-fragment count. A local run replacement retires only its changed records;
 source-domain reconstruction still retires every handle and dependency index.
-This is an implementation target, not a claim that bounded replacement is wired.
+The replacement is wired into replay; its correctness and cost remain unverified
+until the hosted gates below run on this revision.
 
 ### Owner motion and legacy-reader transaction
 
