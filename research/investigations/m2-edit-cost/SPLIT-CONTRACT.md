@@ -1496,7 +1496,7 @@ The implementation in `renderer/layout/range.wf` follows the contract above with
 
 Producers. Hybrid translation (`install_reference_geometry`) computes each cut-chain owner's action from its captured old frame and settled frame before installing anything, installs it on that owner's direct suffix and descends only into the Open containing the cut; semantic publication (`publish_reference_ranges`) later installs the action's local y and the latest basis on the same ranges and retires the descriptors. Ordinary boundary propagation and the certified splice suffix install `(0, delta, 0, 0)` with the equal semantic displacement. Positioned entries of every installed range are found through the positioned trait and moved explicitly: block-owned anchors by the owner action (or their own planned splice movement) and viewport anchors by the ordinary vertical movement only. Atomic anchors are paragraph-relative (`placement_paragraph`) and follow their paragraph without a write.
 
-Readers and lifetimes. Point readers (`block_local`, `paragraph_local`, `child_local`, `block_boundary`, `block_measured`, `effective_output`) collect ancestor actions on the owner index path only when the context holds actions; range reads (`inherited_range_output`) pass inherited displacement down. `boundary_set`, rotations, insertion, removal and successor extraction distribute pending actions first; point geometry encoding exposes its path and retires only its own geometry action; semantic point publication folds and retires only its own semantic and basis channels. Full bridges (`reference_geometry`, `own_geometry`, `full_reference_publication`) fold every action into bases, duplicated Open fields and stored transfers with one top-down traversal per owner before the existing dense loops; installation clears `reference_dense`.
+Readers and lifetimes. Point readers (`block_local`, `paragraph_local`, `child_local`, `block_boundary`, `block_measured`, `effective_output`) collect ancestor actions on the owner index path only when that owner may retain actions (the later reader bound below); range reads (`inherited_range_output`) pass inherited displacement down. `boundary_set`, rotations, insertion, removal and successor extraction distribute pending actions first; point geometry encoding exposes its path and retires only its own geometry action; semantic point publication folds and retires only its own semantic and basis channels. Full bridges (`reference_geometry`, `own_geometry`, `full_reference_publication`) fold every action into bases, duplicated Open fields and stored transfers with one top-down traversal per owner before the existing dense loops; installation clears `reference_dense`.
 
 Remaining linear work, not changed by this implementation: the splice plan still certifies each suffix sibling independently (`splice_move`, logarithmic reads per sibling), the dense raw path at reference phase 0 still translates and publishes each payload, and `publish_reference_positioned` and `splice_position` still scan every child of a context that has positioned children. Their cost and any replacement are open.
 
@@ -1652,9 +1652,12 @@ array or an alias test.
 
 **Falsification and acceptance.** Existing independent range constants and
 range fixtures cover installation, inherited geometry/semantic reads, point
-replacement, rewiring, opposite shifts and full normalization. Omitting
-activation must fail their nonzero expected actions; premature clearing must
-fail retained-action reads. The after profile must reduce inherited node-read
+replacement, rewiring, opposite shifts and full normalization. The `range-activation` omission must fail their nonzero expected actions;
+`range-retained-activation` clears the bit immediately after installation and
+must fail retained-action reads. Existing rotation, exposure and point-output omissions
+remove their newly unexhibited scalar read rows as well as the intended call,
+so those mutations continue to reach the behavioral oracle rather than failing
+compilation. No expected geometry or detection requirement changes. The after profile must reduce inherited node-read
 calls; otherwise this bound has not addressed the observed cause. The timing
 comparison retains main and cf12c609, replaces the old pre-frontier cohort
 with 58b16da for a direct reader before/after, and keeps the patched frontier;

@@ -16,6 +16,7 @@ assert len(edits) >= 36, len(edits)
 sample = root / 'sample.edits'
 sample.write_text(''.join(setup + edits[34:36]))
 env = dict(os.environ, WF_WORKERS='4')
+build_names = os.environ.get('PROFILE_BUILDS', 'frontier ranges').split()
 
 
 def command(name, mode, script):
@@ -59,7 +60,7 @@ def run(name, mode, script, label, profiled=False):
             path.unlink()
         assert len({row['thread'] for row in records}) == 1, ('mixed update threads', records)
         assert len(records) == len(costs), ('expected one update dump per edit', out, len(records), len(costs))
-        assert sum(row['inherited_calls'] for row in records) > 0 if name == 'ranges' else True
+        assert sum(row['inherited_calls'] for row in records) > 0 if name != 'frontier' else True
         Path(f'{out}.counts.json').write_text(json.dumps(records, indent=2) + '\n')
     return elapsed
 
@@ -208,7 +209,7 @@ assert sorted(phase_counts) == [(2, 2, 4), (5, 5, 10)], phase_counts
 print('profiler excludes 400 reader calls outside the two selected updates:', phase_counts, flush=True)
 
 # Native samples establish the workload and observed spread before profiling it.
-for name in ('frontier', 'ranges'):
+for name in build_names:
     symbols = subprocess.check_output(['nm', '-an', command(name, 'seq', sample)[0]], text=True)
     assert any(line.split()[-1:] == ['wf_layout.update'] for line in symbols.splitlines()), 'missing exact collection boundary'
     (root / f'{name}.symbols.txt').write_text('\n'.join(
@@ -217,9 +218,9 @@ for name in ('frontier', 'ranges'):
         for index in (1, 2):
             assert run(name, mode, sample, f'sample-{index}') < 60
 
-pilot = [run(name, 'seq', sample, 'pilot', True) for name in ('frontier', 'ranges')]
+pilot = [run(name, 'seq', sample, 'pilot', True) for name in build_names]
 assert max(pilot) < 600, ('profile sample too slow for full batch', pilot)
-for name in ('frontier', 'ranges'):
+for name in build_names:
     for mode in ('seq', 'par'):
         run(name, mode, source, 'native')
     run(name, 'seq', source, 'profile', True)

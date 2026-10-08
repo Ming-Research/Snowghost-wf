@@ -391,10 +391,13 @@ example apart from the renderer code that exposed it
   behavioral discriminator yet. The [ten-cohort comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#ten-cohort-comparison-at-c5cae05)
   shows far fewer counted visits and no long tail, but higher typical cost:
   HTML5 sentence rises from about 320 to 570 us sequential and now fails the
-  2x gate, and block stays above cf12. Next: profile the HTML5 sentence edit
-  on the frontier and range drivers to test whether uncounted inherited-path
-  reads in point readers cause it; if so, consider resolving placement once
-  per pass or bounding the path, and re-measure. The splice plan's
+  2x gate, and block stays above cf12. The
+  [matched profile](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#matched-inherited-reader-verdict-and-owner-local-bound)
+  identifies inherited readers as the added cost: 78,862,686 instructions over
+  60 updates, against a net increase of 16,637,125. The proposed reader repair
+  skips index paths in owner sequences without retained actions; its
+  activation/retirement falsifiers, after profile and twin-controlled six-kind
+  timing remain to run before claiming the regression fixed. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.
@@ -424,7 +427,11 @@ example apart from the renderer code that exposed it
   The stationary frontier therefore does not reach this edit; it makes
   ECMA262 font-size more than twice as fast. A bounded root interval per context fixed
   a measured HTML5 root-font regression. Remaining root-font work needs a
-  bounded non-stationary restack of the marked paragraphs, an owner decision.
+  bounded non-stationary restack of the marked paragraphs. The owner selected
+  that direction after the range-reader diagnosis and repair: first record the
+  actual refusal, then specify convergence, displacement, dependencies and
+  refusals before implementation. Changed extents remain a hypothesis until
+  the counter observes them.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and
