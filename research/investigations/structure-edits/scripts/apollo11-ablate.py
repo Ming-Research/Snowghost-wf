@@ -32,16 +32,18 @@ def run(label, css, edits=sample):
     return paths
 
 
-# The sample precedes expansion; all controls retain the original NodeIds.
+# Follow-up controls address simultaneous dependencies left by one-at-a-time overrides.
 run('baseline', '')
-run('html-auto', 'html{height:auto!important}')
-run('body-auto', 'body{height:auto!important}')
-run('body-restore', 'body{height:auto!important}body{height:100%!important}')
+both = 'html,body{height:auto!important}'
 grid = 'main#content,.mw-page-container-inner{display:block!important}'
-run('grids-block', grid)
-run('body-auto-grids-block', 'body{height:auto!important}' + grid)
-run('body-auto-all', 'body{height:auto!important}', original)
-run('quote-margin-all', '.mw-body blockquote>p{margin-top:0!important}', original)
+run('both-auto', both)
+run('both-auto-html-restore', both + 'html{height:100%!important}')
+run('both-auto-body-restore', both + 'body{height:100%!important}')
+run('both-auto-grids-block', both + grid)
+all_heights = '*{height:auto!important;min-height:0!important;max-height:none!important}'
+run('all-heights-auto', all_heights)
+run('all-heights-auto-grids-block', all_heights + grid)
+run('both-auto-all', both, original)
 
 # Preserve full and incremental dumps of the newly observed sentence failure.
 # This is a diagnostic capture of a known failing original workload, not a

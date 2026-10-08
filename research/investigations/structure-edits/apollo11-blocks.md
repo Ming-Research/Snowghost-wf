@@ -20,6 +20,100 @@ Hosted timing fields are incidental diagnostics, not a performance comparison
 with that machine. E2's retained raw timing artifacts are the source for any
 14900K time decomposition. No renderer behavior is changed by this diagnosis.
 
+## Hosted capture, identity and edit sites
+
+Hosted run [37727037303](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37727037303)
+at `d180d718a0e20b4db7c0cf99e4a3b8a66631e94e` built the pinned sequential and
+parallel drivers, prepared the ordinary X5 scripts, and checked all 60 edits
+of each kind in each build. The first two-edit block sample passed before
+the batch. The live input SHA-256 values are:
+
+| Input | SHA-256 |
+| --- | --- |
+| apollo11.html | `1405f09a8888e2854ba8785a4da6b50dbd3951fb56ec9eca7f2e20aa3fe78dc4` |
+| apollo11-modules.css | `cc2e64f8f1706af7f505ec69b6c9807cb05a743f7887ccbf8c7e104e1f41a9f8` |
+| apollo11-site.css | `a292ccfd0f47accce300fd2febc776a88c2cd18b82f3f4cc8fad01fbdb9ca1d8` |
+
+All block, word, colour, fontsize and rootfont edits report `inc same`,
+sequentially and in parallel, and their seq/par comparable output agrees.
+Sentence edits **31–32 report `inc DIFF` in both builds**; the other 58 match.
+There are no `inc refused` edits. The workflow correctly fails rather than
+weakening the expectation, and continues through the remaining kinds.
+Thus this is a completed diagnosis with a discovered correctness defect,
+**not a green all-kind identity result**. The original script inserts 85
+bytes at byte offset 137 of Text NodeId 3126, then deletes them; its parent
+is paragraph 3090 in the lead section 2154. The text describes Armstrong
+walking on the Moon and Aldrin following nineteen minutes later.
+The existing TODO's earlier sentence31–32 *performance* observation does not
+establish the cause of this newly recorded identity failure.
+
+Both builds' block paths are exactly 54 `splice 0 reason 7` and six
+`splice 0 reason 6`, with no other reasons and no local splice. The path
+IDs and all six kinds' boundary-reason/fallback distributions agree with
+E2's tables below despite the changed HTML and site CSS. Each block pair
+inserts a fresh plain HTML `p` with one Text node before the listed old `p`,
+then removes that newly created `p` (never the old sibling). These NodeIds
+belong to this hosted capture, not to E2's distinct HTML. The three
+blockquote pairs have reason 6; all remaining pairs have reason 7.
+
+| Edits B–X | Parent NodeId and element | Before old p | Created/removed p | Splice / reason, both edits |
+| --- | --- | ---: | ---: | --- |
+| 1–2 | 4719 `section#mwAqk` | 4736 | 23219 | 0 / 7 |
+| 3–4 | 3891 `section#mwAXM` | 3988 | 23221 | 0 / 7 |
+| 5–6 | 6357 `section#mwBS0` | 7073 | 23223 | 0 / 7 |
+| 7–8 | 3347 `blockquote.templatequote` | 3348 | 23225 | 0 / 6 |
+| 9–10 | 6357 `section#mwBS0` | 6976 | 23227 | 0 / 7 |
+| 11–12 | 7411 `section#mwBsE` | 7418 | 23229 | 0 / 7 |
+| 13–14 | 5150 `section#mwA0A` | 5235 | 23231 | 0 / 7 |
+| 15–16 | 7411 `section#mwBsE` | 7488 | 23233 | 0 / 7 |
+| 17–18 | 3210 `section#mwnw` | 3429 | 23235 | 0 / 7 |
+| 19–20 | 6357 `section#mwBS0` | 6639 | 23237 | 0 / 7 |
+| 21–22 | 8799 `section#mwCKU` | 8985 | 23239 | 0 / 7 |
+| 23–24 | 4603 `section#mwAng` | 4637 | 23241 | 0 / 7 |
+| 25–26 | 3210 `section#mwnw` | 3566 | 23243 | 0 / 7 |
+| 27–28 | 9762 `section#mwCig` | 9805 | 23245 | 0 / 7 |
+| 29–30 | 6307 `blockquote#mwBRk.templatequote` | 6308 | 23247 | 0 / 6 |
+| 31–32 | 9762 `section#mwCig` | 9774 | 23249 | 0 / 7 |
+| 33–34 | 5472 `section#mwA8Y` | 5695 | 23251 | 0 / 7 |
+| 35–36 | 3350 `div#mw1g.templatequotecite` | 3351 | 23253 | 0 / 7 |
+| 37–38 | 6013 `section#mwBJ4` | 6114 | 23255 | 0 / 7 |
+| 39–40 | 5771 `section#mwBDc` | 5788 | 23257 | 0 / 7 |
+| 41–42 | 4301 `section#mwAfU` | 4306 | 23259 | 0 / 7 |
+| 43–44 | 7618 `blockquote#mwBxU.templatequote` | 7619 | 23261 | 0 / 6 |
+| 45–46 | 3210 `section#mwnw` | 3366 | 23263 | 0 / 7 |
+| 47–48 | 5771 `section#mwBDc` | 5853 | 23265 | 0 / 7 |
+| 49–50 | 7645 `section#mwBx8` | 8243 | 23267 | 0 / 7 |
+| 51–52 | 6357 `section#mwBS0` | 7037 | 23269 | 0 / 7 |
+| 53–54 | 5472 `section#mwA8Y` | 5632 | 23271 | 0 / 7 |
+| 55–56 | 6357 `section#mwBS0` | 6718 | 23273 | 0 / 7 |
+| 57–58 | 7093 `section#mwBkI` | 7256 | 23275 | 0 / 7 |
+| 59–60 | 7645 `section#mwBx8` | 8147 | 23277 | 0 / 7 |
+
+The parents are 26 sections, three `blockquote.templatequote` elements and
+one `div.templatequotecite`. No block insertion or removal is owned directly
+by a table, infobox float, flex/grid container, positioned element, list item
+or counter setter. The blockquotes establish their own flow contexts through
+`overflow:hidden`, explaining their small Q86 reconstruction scope. The
+citation's old paragraph 3351 has `display:inline`; the edited owner is
+therefore a potential mixed-inline seam beyond the first complete-block
+certificate, masked by the earlier reason-7 guard in this run.
+
+All these owners lie under `div.mw-parser-output` 2153, `#mw-content-text`
+2152, relative-positioned `#bodyContent` 2046, grid `main#content` 1288,
+`.mw-content-container` 1286, grid `.mw-page-container-inner` 374,
+relative-positioned `.mw-page-container` 372, body 69, and html 2.
+Some section and blockquote ancestors intervene below `.mw-parser-output`;
+the complete chains are in the artifact's `apollo11-owners.txt`. A full
+html5lib/Snowghost tag-preorder agreement validated the attribute-label
+mapping, and the style dump uses Snowghost's computed styles at the same
+indices. The parser-output counter reset stays outside every inserted or
+removed subtree; no reported structure reason 5 implicates counter state.
+
+Font-size sites are a different sample: ten `li`, five `span`, three each
+of `ul`, `td` and `tr`, and one each of `cite`, `audio`, `header`, `blockquote`,
+`div` and `tbody`. They do reach list/table and other formatting paths; the
+boundary maximum alone cannot identify an individual owner as their cause.
+
 ## E2 evidence already retained
 
 The E2 artifact `time-14900k-37674972449` contains structural-path records,
@@ -206,3 +300,18 @@ scripts come from run
 The initial baseline must still pass the ordinary `inctime.py --check`.
 The helper also captures requested full and incremental dumps for original
 sentence edits 31–32, which the first run found different in both builds.
+
+### Follow-up question before simultaneous-height controls
+
+Run 37729474890 rejected the sufficiency of either individual html/body height
+override, even with the two grids changed to blocks: every sampled path stayed
+at reason 7. The blockquote margin control removed all six reason-6 outcomes;
+all 60 then reported reason 7 and retained full-rebuild identity.
+
+The next comparison overrides both html and body heights together, restores
+each separately, and combines the joint override with the grid control. The
+initial anonymous flow can contain both height dependencies; removing only
+one cannot certify it. A broad height/min/max override supplies a bounded
+control for other retained height dependencies. Reason 2 after the joint
+override would support the simultaneous-height account; no change would
+reject it. The full 60-edit script checks whether the first pair generalizes.

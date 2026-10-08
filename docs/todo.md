@@ -212,6 +212,33 @@ example apart from the renderer code that exposed it
   step 5 uses this path. Require every edit prefix to equal a fresh build,
   with zero unexplained fallback on the claimed ordinary workloads.
 
+- **Apollo sentence edits 31–32 fail retained/full identity.** Hosted
+  [diagnostic 37727037303](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37727037303)
+  at `d180d718a0e20b4db7c0cf99e4a3b8a66631e94e` (unchanged renderer
+  `cf12c609`) reports `inc DIFF` for both edits in seq and par; the other
+  58 sentence edits and all five other X5 kinds pass. The captured input
+  hashes, exact script and owner are in the
+  [Apollo diagnosis](../research/investigations/structure-edits/apollo11-blocks.md#hosted-capture-identity-and-edit-sites).
+  Impact: Apollo cannot be claimed incrementally equivalent to a full rebuild.
+  Cause is unverified; the older sentence31–32 float-restacking performance
+  item below is not proof of the same correctness cause. Change: minimize
+  Text NodeId 3126's insert/delete at byte 137 and repair the lost geometry
+  dependency, retaining the original identity expectation. Reopen in the next
+  renderer correctness task; require fail-before/pass-after on the captured
+  input, seq/par full-dump identity and a focused case. Deferred here because
+  the owner requested diagnosis with no renderer changes.
+
+- **E2 timing artifacts overwrite earlier rounds' per-edit rows.** The
+  [E2 workflow at 54e4aab](https://github.com/Ming-Research/Snowghost-wf/blob/54e4aab295013819254fe071faff4fb2f56af534/.github/workflows/time-14900k.yml)
+  copies each round's `*.r1.txt` into the same `results/raw/BUILD-MODE/`
+  directory. Run 37674972449 retains three summary files but only round 3's
+  raw rows. Impact: the quoted round-2 median 18,846 us cannot be decomposed
+  per edit from its artifact; round 3 can. Change: include round in the raw
+  destination, then verify that a two-round hosted harness fixture preserves
+  both distinguishable inputs. Reopen before the next multi-round timing
+  run. Deferred: that timing workflow is outside this diagnostic branch's
+  base; no timing rerun or renderer change is needed for the current result.
+
 - **M2 splice scope beyond the certified page paths.**
   Q128 B and Q129 A extend local splicing through positioned and atomic
   anchors, enclosing flex containers, expired earlier floats and uniformly
