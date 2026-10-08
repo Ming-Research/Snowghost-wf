@@ -1,0 +1,383 @@
+fn empty_flow_inputs() -> made: FlowInputs pure {
+  doc "An invalid completed-flow certificate; only successful publication makes it valid.";
+  let space = fresh_space();
+  let no = False();
+  let frame = FlowFrame(content_left: 0_i32, content_top: 0_i32, flow_width: 0_i32, definite: -1_i32, columned: no, column_count: 0_i32, column_width: 0_i32, column_gap: 0_i32);
+  return FlowInputs(valid: no, space: space, width: 0_i32, frame: frame);
+}
+
+fn retain_flow_inputs(context: &Context, styles: &Styles) -> result: unit reads(context.kind), reads(context.style), reads(context.space), reads(context.width), reads(styles), writes(context.flow_inputs) {
+  doc "Retains the actual inputs only after a completed flow publication; non-flow contexts carry no certificate.";
+  let valid = context^.kind == ctx_flow;
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
+  let made = FlowInputs(valid: valid, space: context^.space, width: context^.width, frame: frame);
+  set context^.flow_inputs = made;
+  return unit;
+}
+
+fn frontier_mark(frontier: &ParagraphFrontier, at: u64, span: u64) -> result: unit writes(frontier) {
+  doc "Inserts one stable dirty slot through its binary directory path; an existing leaf remains pending.";
+  if at >= span {
+    return unit;
+  }
+  match frontier^ {
+    Vacant() => {
+      if span == 1_u64 {
+        let output = empty_output();
+        set frontier^ = ParagraphFrontier::Mark(output: output);
+      } else {
+        let vacant_left = ParagraphFrontier::Vacant();
+        let vacant_right = ParagraphFrontier::Vacant();
+        let left_box = box_new::<ParagraphFrontier>(value: move vacant_left);
+        let right_box = box_new::<ParagraphFrontier>(value: move vacant_right);
+        set frontier^ = ParagraphFrontier::Fork(left: move left_box, right: move right_box);
+      }
+    }
+    Mark(..) => {
+    }
+    Fork(..) => {
+    }
+  }
+  match frontier^ {
+    Vacant() => {
+    }
+    Mark(..) => {
+    }
+    Fork(left: stored_left, right: stored_right) => {
+      let half = span / 2_u64;
+      if at < half {
+        frontier_mark(frontier: &stored_left^.inner, at: at, span: half);
+      } else {
+        let later = at - half;
+        frontier_mark(frontier: &stored_right^.inner, at: later, span: half);
+      }
+    }
+  }
+  return unit;
+}
+
+fn frontier_vacant(frontier: &ParagraphFrontier) -> vacant: Bool reads(frontier) {
+  doc "Tests the empty interval without traversing its descendants.";
+  match frontier^ {
+    Vacant() => {
+      return True();
+    }
+    Mark(..) => {
+      return False();
+    }
+    Fork(..) => {
+      return False();
+    }
+  }
+}
+
+fn frontier_from_paragraphs(paragraphs: &[Paragraph], span: u64) -> made: ParagraphFrontier reads(paragraphs) {
+  doc "Builds the semantic dirty set while dense construction already owns every paragraph; child intervals are independent.";
+  let count = paragraphs^.len;
+  if count == 0_u64 {
+    return ParagraphFrontier::Vacant();
+  }
+  if span == 1_u64 {
+    if 0_u64 < count {
+      if paragraphs^[0_u64].dirty {
+        let output = empty_output();
+        return ParagraphFrontier::Mark(output: output);
+      }
+    }
+    return ParagraphFrontier::Vacant();
+  }
+  let half = span / 2_u64;
+  let middle = imin(half, count);
+  let left_tree = frontier_from_paragraphs(paragraphs: &paragraphs^[0_u64..middle], span: half);
+  let right_tree = frontier_from_paragraphs(paragraphs: &paragraphs^[middle..count], span: half);
+  let left_empty = frontier_vacant(frontier: &left_tree);
+  let right_empty = frontier_vacant(frontier: &right_tree);
+  let both_empty = band(left_empty, right_empty);
+  if both_empty {
+    return ParagraphFrontier::Vacant();
+  }
+  let left_box = box_new::<ParagraphFrontier>(value: move left_tree);
+  let right_box = box_new::<ParagraphFrontier>(value: move right_tree);
+  return ParagraphFrontier::Fork(left: move left_box, right: move right_box);
+}
+
+fn frontier_prepare(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(frontier), reads(document), reads(styles), reads(fonts), reads(picks), writes(paragraphs) {
+  doc "Prepares only dirty leaves through disjoint paragraph slices, preserving every mark until layout consumes it.";
+  let count = paragraphs^.len;
+  match frontier^ {
+    Vacant() => {
+      return True();
+    }
+    Mark(..) => {
+      if 0_u64 < count {
+        let previous = shaped_empty();
+        swap(first: &previous, second: &paragraphs^[0_u64].shaped);
+        let previous_text = box_slots_new::<u32>(capacity: 0_u64);
+        swap(first: &previous_text, second: &paragraphs^[0_u64].text);
+        let held = previous_text.inner.len;
+        reset_paragraph(paragraph: &paragraphs^[0_u64]);
+        let stored = document^.text.inner.len;
+        let made = styles^.generated_text.inner.len;
+        let done = prepare_paragraph(bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &paragraphs^[0_u64], previous: &previous, previous_text: &previous_text.inner[0_u64..held]);
+        return done;
+      }
+      return False();
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let middle = imin(half, count);
+      let left_ok = frontier_prepare(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half, document: document, styles: styles, fonts: fonts, picks: picks);
+      let right_ok = frontier_prepare(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half, document: document, styles: styles, fonts: fonts, picks: picks);
+      let both_ok = band(left_ok, right_ok);
+      return both_ok;
+    }
+  }
+}
+
+fn frontier_clear(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64) -> result: unit reads(frontier), writes(paragraphs) {
+  doc "Clears exactly the consumed leaves using the same disjoint sparse partition as preparation.";
+  let count = paragraphs^.len;
+  match frontier^ {
+    Vacant() => {
+    }
+    Mark(..) => {
+      if 0_u64 < count {
+        set paragraphs^[0_u64].dirty = False();
+      }
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let middle = imin(half, count);
+      frontier_clear(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half);
+      frontier_clear(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half);
+    }
+  }
+  return unit;
+}
+
+fn frontier_ready(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64) -> ready: Bool reads(frontier), reads(paragraphs) {
+  doc "Preflights all leaves before any speculative break: positive solid lines, retained width and left edge, no float or atomic dependence.";
+  let count = paragraphs^.len;
+  match frontier^ {
+    Vacant() => {
+      return True();
+    }
+    Mark(..) => {
+      if 0_u64 < count {
+        if paragraphs^[0_u64].dirty {
+        } else {
+          return False();
+        }
+        if paragraphs^[0_u64].lines.inner.len == 0_u64 {
+          return False();
+        }
+        if paragraphs^[0_u64].height <= 0_i32 {
+          return False();
+        }
+        if paragraphs^[0_u64].beside {
+          return False();
+        }
+        if paragraphs^[0_u64].atomics.inner.len != 0_u64 {
+          return False();
+        }
+        if paragraphs^[0_u64].width != paragraphs^[0_u64].broken_width {
+          return False();
+        }
+        if paragraphs^[0_u64].left != paragraphs^[0_u64].broken_left {
+          return False();
+        }
+        return True();
+      }
+      return False();
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let middle = imin(half, count);
+      let left_ready = frontier_ready(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half);
+      let right_ready = frontier_ready(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half);
+      let both_ready = band(left_ready, right_ready);
+      return both_ready;
+    }
+  }
+}
+
+fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion]) -> (stationary: Bool, broken: u64, visited: u64) reads(children), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(frontier), writes(paragraphs) {
+  doc "Independently breaks admitted leaves and retains their fresh transfers without publication or mark retirement; failed placement leaves full replay all its dirty inputs.";
+  let count = paragraphs^.len;
+  match frontier^ {
+    Vacant() => {
+      return True(), 0_u64, 1_u64;
+    }
+    Mark(..) => {
+      if 0_u64 < count {
+        let old_height = paragraphs^[0_u64].height;
+        let old_baseline = last_line_baseline(paragraph: &paragraphs^[0_u64]);
+        break_paragraph(paragraph: &paragraphs^[0_u64], children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions, origin_y: 0_i32);
+        let fresh = paragraph_output(paragraph: &paragraphs^[0_u64]);
+        set frontier^ = ParagraphFrontier::Mark(output: fresh);
+        let new_baseline = last_line_baseline(paragraph: &paragraphs^[0_u64]);
+        let solid = bnot(fresh.through);
+        let same_height = old_height == paragraphs^[0_u64].height;
+        let same_baseline = old_baseline == new_baseline;
+        let same_extent = band(same_height, same_baseline);
+        let kept = band(solid, same_extent);
+        return kept, 1_u64, 1_u64;
+      }
+      return False(), 0_u64, 1_u64;
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let middle = imin(half, count);
+      let (left_same, left_count, left_visits) = frontier_break(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
+      let (right_same, right_count, right_visits) = frontier_break(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
+      let both_same = band(left_same, right_same);
+      let total_count = left_count +sat right_count;
+      let child_visits = left_visits +sat right_visits;
+      let total_visits = child_visits +sat 1_u64;
+      return both_same, total_count, total_visits;
+    }
+  }
+}
+
+fn frontier_publish(frontier: &ParagraphFrontier, context: &Context, first: u64, span: u64) -> result: unit reads(frontier), writes(context) {
+  doc "Publishes completed stationary leaves and ancestor reductions; shared owner writes remain serial under the existing owner-publication contract.";
+  match frontier^ {
+    Vacant() => {
+    }
+    Mark(output: fresh_output) => {
+      if first < context^.paragraphs.inner.len {
+        let owner = context^.paragraphs.inner[first].block;
+        let slot = context^.paragraphs.inner[first].entry_slot;
+        propagate_boundary(context: context, owner: owner, slot: slot, output: fresh_output, delta: 0_i32);
+      }
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let later = first +sat half;
+      frontier_publish(frontier: &left_tree^.inner, context: context, first: first, span: half);
+      frontier_publish(frontier: &right_tree^.inner, context: context, first: later, span: half);
+    }
+  }
+  return unit;
+}
+
+fn stationary_frontier(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> (attempted: Bool, handled: Bool, counts: UpdateCounts) reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Consumes a stationary sparse paragraph transaction under retained completed inputs; any changed placement returns directly to full reference replay with all marks intact.";
+  let counts = no_updates();
+  let no = False();
+  let yes = True();
+  let multiple = context^.marked_paragraphs > 1_u32;
+  let candidate = bor(multiple, context^.restyled);
+  if candidate {
+  } else {
+    return no, no, counts;
+  }
+  if context^.kind != ctx_flow {
+    return no, no, counts;
+  }
+  if context^.flow_inputs.valid {
+  } else {
+    return no, no, counts;
+  }
+  if context^.local_geometry {
+  } else {
+    return no, no, counts;
+  }
+  if context^.boundary_dirty {
+    return no, no, counts;
+  }
+  if context^.marked_children != 0_u32 {
+    return no, no, counts;
+  }
+  if context^.restyled_blocks != 0_u32 {
+    return no, no, counts;
+  }
+  if context^.has_out {
+    return no, no, counts;
+  }
+  let intrinsic = bor(context^.intrinsic_known, context^.intrinsic_held);
+  if intrinsic {
+    return no, no, counts;
+  }
+  if context^.space.shrink {
+    return no, no, counts;
+  }
+  let saved = context^.flow_inputs;
+  let same_space_inputs = same_space(first: context^.space, second: saved.space);
+  if same_space_inputs {
+  } else {
+    return no, no, counts;
+  }
+  let ignored = sizes_ignored(context: context, styles: styles);
+  let keyword = width_keyword(styles: styles, style: context^.style, ignored: ignored);
+  if keyword >= 0_i32 {
+    return no, no, counts;
+  }
+  let no_events = slots_new::<Flow, 0>();
+  let width = used_width(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  if width != saved.width {
+    return no, no, counts;
+  }
+  let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: width);
+  if frame.columned {
+    return no, no, counts;
+  }
+  if saved.frame.columned {
+    return no, no, counts;
+  }
+  if frame.content_left != saved.frame.content_left {
+    return no, no, counts;
+  }
+  if frame.content_top != saved.frame.content_top {
+    return no, no, counts;
+  }
+  if frame.flow_width != saved.frame.flow_width {
+    return no, no, counts;
+  }
+  if frame.definite != saved.frame.definite {
+    return no, no, counts;
+  }
+  let paragraph_count = context^.paragraphs.inner.len;
+  let ready = frontier_ready(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: item_ceiling);
+  if ready {
+  } else {
+    return no, no, counts;
+  }
+  let child_count = context^.children.inner.len;
+  let none = slots_new::<Exclusion, 0>();
+  let (stationary, broken, visited) = frontier_break(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: item_ceiling, children: &context^.children.inner[0_u64..child_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none[0_u64..0_u64]);
+  set counts.paragraphs = broken;
+  let paragraph_pair = broken +sat broken;
+  let paragraph_opens = paragraph_pair +sat paragraph_pair;
+  set counts.work.entries = paragraph_opens;
+  if stationary {
+  } else {
+    return yes, no, counts;
+  }
+  let consumed = ParagraphFrontier::Vacant();
+  swap(first: &consumed, second: &context^.paragraph_frontier);
+  frontier_publish(frontier: &consumed, context: context, first: 0_u64, span: item_ceiling);
+  let position_children = False();
+  let (moved, settled) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: 0_i32, position_children: position_children);
+  let group = box_of(styles: styles, style: context^.style);
+  let shown_x = group.overflow_x == overflow_visible;
+  let clipped_x = group.overflow_x == overflow_clip;
+  let shown_y = group.overflow_y == overflow_visible;
+  let clipped_y = group.overflow_y == overflow_clip;
+  let visible_x = bor(shown_x, clipped_x);
+  let visible_y = bor(shown_y, clipped_y);
+  let visible = band(visible_x, visible_y);
+  let based = context^.baseline_entry != no_index;
+  let has_baseline = band(based, visible);
+  set context^.has_baseline = has_baseline;
+  frontier_clear(frontier: &consumed, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: item_ceiling);
+  set context^.marked_paragraphs = 0_u32;
+  set context^.dirty = False();
+  set context^.restyled = False();
+  set counts.contexts = 1_u64;
+  set counts.work.entries = counts.work.entries +sat paragraph_pair;
+  let publication_work = add_boundary_visits(first: counts.work, second: context^.boundary_visits);
+  set counts.work = publication_work;
+  let combined = add_counts(first: counts, second: settled);
+  return yes, yes, combined;
+}

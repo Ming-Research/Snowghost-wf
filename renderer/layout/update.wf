@@ -119,6 +119,7 @@ fn patch_pieces(context: &Context, document: &Document, text_unit: TextUnit, dat
     } else {
       set context^.marked_paragraphs = context^.marked_paragraphs +sat 1_u32;
       set context^.marked_paragraph = text_unit.paragraph;
+      frontier_mark(frontier: &context^.paragraph_frontier, at: paragraph, span: item_ceiling);
     }
     set context^.paragraphs.inner[paragraph].dirty = True();
   }
@@ -250,7 +251,7 @@ fn reset_paragraph(paragraph: &Paragraph) -> result: unit writes(paragraph) {
 }
 
 fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
-  doc "Forgets the marked context's intrinsic sizes, which its content no longer gives, recording whether they were known and what they were (intrinsic_held, held_min, held_max), and prepares again each of its marked paragraphs, handing each its previous text and shaping so that unchanged segments are only scaled again, then does the same in each marked child context: the one text_changed recorded when it marked one, or each one in a counted loop whose iterations test their own element's mark when it marked several; False when shaping refuses a paragraph. The marks stay for the layout pass.";
+  doc "Forgets the marked context's intrinsic sizes, which its content no longer gives, recording whether they were known and what they were (intrinsic_held, held_min, held_max), and prepares again each of its marked paragraphs, handing each its previous text and shaping so that unchanged segments are only scaled again, then does the same in each marked child context: the one text_changed recorded when it marked one, or the sparse frontier when it marked several; independent frontier branches write disjoint paragraph slices. Marked children follow their existing count-based traversal. False when shaping refuses a paragraph. The marks stay for the layout pass.";
   flex_forget(context: context);
   let stored = document^.text.inner.len;
   let made = styles^.generated_text.inner.len;
@@ -273,18 +274,8 @@ fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts
     }
   } else if context^.marked_paragraphs > 0_u32 {
     let count = context^.paragraphs.inner.len;
-    for (i in 0_u64..count) {
-      if context^.paragraphs.inner[i].dirty {
-        let previous = shaped_empty();
-        swap(first: &previous, second: &context^.paragraphs.inner[i].shaped);
-        let previous_text = box_slots_new::<u32>(capacity: 0_u64);
-        swap(first: &previous_text, second: &context^.paragraphs.inner[i].text);
-        let held = previous_text.inner.len;
-        reset_paragraph(paragraph: &context^.paragraphs.inner[i]);
-        let done = prepare_paragraph(bytes: &document^.text.inner[0_u64..stored], generated: &styles^.generated_text.inner[0_u64..made], styles: styles, fonts: fonts, picks: picks, paragraph: &context^.paragraphs.inner[i], previous: &previous, previous_text: &previous_text.inner[0_u64..held]);
-        set ok = band(ok, done);
-      }
-    }
+    let done = frontier_prepare(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..count], span: item_ceiling, document: document, styles: styles, fonts: fonts, picks: picks);
+    set ok = band(ok, done);
   }
   let (one_child, c) = single_marked_child(context: context);
   if one_child {
@@ -346,6 +337,7 @@ fn clear_subtree(context: &Context) -> result: unit writes(context) {
   set context^.dirty = False();
   set context^.restyled = False();
   set context^.restyled_blocks = 0_u32;
+  set context^.paragraph_frontier = ParagraphFrontier::Vacant();
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   let count = context^.paragraphs.inner.len;
@@ -360,10 +352,12 @@ fn reset_tree(context: &Context) -> result: unit writes(context) {
   doc "Returns the context and every context below it to the state build_boxes leaves for lay_out to start from: no intrinsic sizes known, the fresh space, and no marks on it or its paragraphs and no marked ones counted.";
   flex_forget(context: context);
   set context^.intrinsic_known = False();
+  set context^.flow_inputs.valid = False();
   set context^.space = fresh_space();
   set context^.dirty = False();
   set context^.restyled = False();
   set context^.restyled_blocks = 0_u32;
+  set context^.paragraph_frontier = ParagraphFrontier::Vacant();
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   let count = context^.paragraphs.inner.len;
@@ -441,15 +435,6 @@ fn same_outputs(before: Before, context: &Context) -> same: Bool reads(context) 
   let shape = band(size, base);
   let made = band(shape, margins);
   return made;
-}
-
-fn clear_paragraph_marks(context: &Context) -> result: unit writes(context) {
-  doc "Clears the mark of every paragraph of the context, one per iteration of a counted loop.";
-  let count = context^.paragraphs.inner.len;
-  for (i in 0_u64..count) {
-    set context^.paragraphs.inner[i].dirty = False();
-  }
-  return unit;
 }
 
 fn first_float_entry(context: &Context, events: &[Flow]) -> (first: u64, floats: Bool) reads(context), reads(events) {
@@ -589,6 +574,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
       set child^.dirty = False();
       set child^.restyled = False();
       set child^.restyled_blocks = 0_u32;
+      set child^.paragraph_frontier = ParagraphFrontier::Vacant();
       set child^.marked_paragraphs = 0_u32;
       set child^.marked_children = 0_u32;
       resolve_margins(child: child, styles: styles);
@@ -602,6 +588,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
   set child^.dirty = False();
   set child^.restyled = False();
   set child^.restyled_blocks = 0_u32;
+  set child^.paragraph_frontier = ParagraphFrontier::Vacant();
   set child^.marked_paragraphs = 0_u32;
   set child^.marked_children = 0_u32;
   resolve_margins(child: child, styles: styles);
@@ -1151,15 +1138,17 @@ fn single_marked_paragraph(context: &Context) -> (one: Bool, index: u64) reads(c
 }
 
 fn clear_marks(context: &Context) -> result: unit writes(context) {
-  doc "Clears the marks of the context's paragraphs, the one text_changed recorded when it marked one, every one when it marked several, and the counts of marked paragraphs and children (each child clears its own mark as it is updated).";
+  doc "Clears only the consumed paragraph frontier and its marks; each child clears its own mark as it is updated. The empty frontier has the same lifetime as the zero paragraph count.";
   let (one, at) = single_marked_paragraph(context: context);
   if one {
     if at < context^.paragraphs.inner.len {
       set context^.paragraphs.inner[at].dirty = False();
     }
   } else if context^.marked_paragraphs > 0_u32 {
-    clear_paragraph_marks(context: context);
+    let count = context^.paragraphs.inner.len;
+    frontier_clear(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..count], span: item_ceiling);
   }
+  set context^.paragraph_frontier = ParagraphFrontier::Vacant();
   set context^.marked_paragraphs = 0_u32;
   set context^.marked_children = 0_u32;
   return unit;
@@ -1359,6 +1348,7 @@ fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document
     if has_paragraph {
       if p < context^.paragraphs.inner.len {
         set context^.paragraphs.inner[p].dirty = False();
+        set context^.paragraph_frontier = ParagraphFrontier::Vacant();
         set context^.marked_paragraphs = 0_u32;
       }
     }
@@ -1496,6 +1486,24 @@ fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Compares completed effective inputs at the actual parent-supplied space, settles an admitted dirty frontier, then retains the new inputs only after publication. A speculative changed output forces full replay before any further old-output probe.";
+  let visits = no_boundary_visits();
+  set context^.boundary_visits = visits;
+  let (attempted, handled, trial) = stationary_frontier(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  if handled {
+    retain_flow_inputs(context: context, styles: styles);
+    return trial;
+  }
+  if attempted {
+    set context^.restyled = True();
+  }
+  let replayed = update_flow_replay(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  let counts = add_counts(first: trial, second: replayed);
+  retain_flow_inputs(context: context, styles: styles);
+  return counts;
+}
+
+fn update_flow_replay(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Attempts bounded owner propagation before hybrid reference replay. Natural positions follow their payload origins; only a structural change invalidates compatibility event ranks.";
   let extra_rank = 18446744073709551615_u64;
   if context^.marked_children == 1_u32 {

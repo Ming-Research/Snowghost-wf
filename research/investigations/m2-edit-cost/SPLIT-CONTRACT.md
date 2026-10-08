@@ -31,7 +31,7 @@ Q136). Finish bounded topology replacement and the owner-motion/legacy-reader
 contract. The acceptance now applies a twice-main limit to word, sentence,
 colour, font-size and root-font, with block no worse than cf12c609, in both
 modes and rounds on the same hosted runner. The correctness gates are unchanged.
-Only acceptance permits the requested merge commit into research/m2-layout.
+The later Q139 ruling additionally blocks adoption until Whitefoot supports independent owner-motion writes.
 
 Before measurement: compare main 8fbc160, step 2 0e2a093, step 3a db5d98c,
 2d706ba, cf12c609, its independent twin and the working A revision. Each CI
