@@ -189,6 +189,20 @@ def fixtures():
     body = '<section style="height:600px">' + paragraphs(2) + ''.join('<div style="height:10%%">H%02d.</div>' % i for i in range(4)) + '</section>'
     yield 'basis-splice', page(body), basis
 
+    # A splice whose following sibling changes its top margin publishes that
+    # frontier transfer; later ordinary edits before it join through the
+    # stored frontier transfer rather than its range-shifted old one.
+    def frontier(tree):
+        quote = first(tree, 'blockquote')
+        retained = element_of(tree, 'Retained')
+        created = tree.arena
+        text_node = created + 1
+        escaped = LONG.replace('\\', '\\\\')
+        return ([f'B {quote} {retained} Inserted head.', f'T {text_node} 14 {escaped}', f'D {text_node} 14 {len(LONG)}'] +
+                [f'T {text_node} 14 {escaped}', f'X {created}'])
+    body = ('<blockquote><p>Retained paragraph.</p><p>Following paragraph.</p>' + paragraphs(4) + '</blockquote>')
+    yield 'frontier-reuse', page(body, 'blockquote{display:block;margin:0;overflow:hidden;width:400px}blockquote>p:first-child{margin-top:0}p{margin:8px 0}'), frontier
+
     # A wide private relocation forces the full bridge before hybrid replay.
     def wide(tree):
         owner = element_of(tree, 'W00.')
