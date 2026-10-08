@@ -889,3 +889,102 @@ The admitted pre-line topology probe at 48b1cd0 failed its unmutated control
 
 The unchanged `reference-suffix` omission compiled but was not detected by the
 48b1cd0 rendered-output cases ([job 113136419287](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37723544963/job/113136419287)). Previously that call published both local geometry and cached transfers. Owner motion now updates authoritative geometry first, so omitting cached publication can leave rendered dumps equal while natural-floor summaries and the block's published offset remain stale. The mutation is retained exactly; the oracle now calls `reference_publication_check` before edits. A constructed two-block suffix moves its root-owned offset from 5 to 12 with displacement 7 and a retained natural offset of 5. Independent expectations require suffix own and block-boundary natural floors of 17, root minimum 17 against the unaffected prefix's 100, published offset 12 and four virtual events. The ordinary branch must pass and the original omission must fail this assertion. The initial draft's zero displacement was corrected before CI because it contradicted the root-owned movement. This adds a cached-state discriminator without narrowing the existing rendered-output checks.
+
+### Remaining suffix and block cost profile: question before sampling
+
+The four-cohort continuation timing passes sentence and ECMA262 font-size but
+still fails ECMA262 root-font, HTML5 font-size and six block cells. HTML5's
+font-size pair 23 retains seven replay entries but the instrumented A path
+visits 5,339 boundary entries, 20,609 block metadata records and 41,624 index
+records. These counters include newly charged direct suffix traversal; comparing
+them with earlier undercounted counters does not establish increased work.
+Source inspection finds separate movement and publication passes over direct
+following siblings, while intact block descendants are skipped. A flat suffix
+of N direct blocks still requires N origin and transfer updates.
+
+The HTML5 block case has equal base/A visit counts but slower A timings; those
+counters do not attribute the difference. Profile identical first block
+insert/remove pairs and font-size pair 23/24 on frozen base, its independently
+built twin and A from acceptance run 37722644051. First time two single-pair
+samples on both base and A, then bound the repeated workload to about 45 seconds
+of edit work using the slowest pair. Block removals advance the append-only node
+ID by two per insertion. This repeated-pair workload is diagnostic, not X5
+acceptance; startup and session growth remain in the profile. Reject direct
+suffix traversal as the font-size explanation if its update stacks are absent;
+reject a claimed block cause unless the corresponding source difference and
+samples distinguish it from the twin. No new layout design is implemented by
+this diagnostic job, which is removed after its evidence is captured.
+
+### Q140: unchanged effective flow inputs
+
+Q140 is open. ECMA262 root-font prepares 41 paragraphs but still republishes a
+context spanning 112,823 reported entries; the current measured A takes
+114,678–117,447 us sequential against main's 31,088–33,198 us. An own style
+constraint may change without changing the used flow inputs. The current
+`flow_frame` comparison computes both frames with current styles, so it cannot
+prove that a restyled context has the same old inputs.
+
+- A (recommended): retain the completed effective flow inputs and define the
+  exact unchanged-input admission, invalidation and consumer contract before
+  implementing it. Unmarked interiors could retain geometry, naturals,
+  fragments and summaries. This adds per-context state and proof obligations;
+  the achievable improvement still needs measurement.
+- B: retain full replay and investigate its metadata or compiler costs. This
+  avoids a new cache but retains work proportional to the context.
+- C: park the branch without merging.
+- Confidence 3/5: the excess full-context work is measured; whether a sufficient
+  set of these edits has equal effective inputs remains to be demonstrated.
+
+### Q141: retained suffix-range displacement
+
+Q141 is open. After one edited paragraph followed by N direct block siblings,
+current owner-relative geometry requires N sibling origins and cached transfer
+updates even though each block's interior is unchanged. Native independent
+scatter (Q139) would expose parallelism but would not remove these visits.
+HTML5 font-size still takes 1,881–2,100 us parallel against main's 794–892 us.
+
+- A (recommended): develop retained exact displacement on sequence-index
+  ranges, including old/current reads, cached reductions, split endpoints,
+  rotations, splice lifetimes and saturation. This can replace sibling-wide
+  updates with boundary-path work but is a broader representation contract.
+- B: retain direct sibling publication and investigate constant costs only.
+  This keeps the present representation and its linear suffix work; no timing
+  evidence yet establishes that constant improvements meet the gate.
+- C: park the branch without merging.
+- Confidence 4/5 that removing the linear visits needs a changed representation;
+  their complete timing contribution and achievable acceptance remain empirical.
+
+Q139 remains open; Q140 or Q141 does not silently supersede it.
+
+### Q138 four-cohort acceptance at 0dc2e5e
+
+[Run 37722644051](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37722644051) passed its measurement workflow with 192 raw timing files and 7,680 edit records. This table measures 0dc2e5ee7abcc78c2c7b90b8e7975a8776b8608a, before the later lined-to-lineless correctness repair and oracle additions; it is failure evidence, not acceptance of a later revision. All cohorts use wf-0b7f5c5b9854, LLVM 22, WF_WORKERS=4 and identical scripts on one Ubuntu 24.04 AMD EPYC 7763 hosted runner exposing four vCPUs, Linux 6.17.0-1022-azure. Columns are upper median edit microseconds, round 1 / round 2; separate style time is excluded.
+
+| Page | Kind | Mode | Main | cf12c609 | cf12 twin | A | Result |
+|---|---|---|---:|---:|---:|---:|---|
+| ecma262 | word | seq | 112/100 | 106/105 | 116/106 | 107/107 | passes |
+| ecma262 | word | par | 161/169 | 173/180 | 197/178 | 194/186 | passes |
+| ecma262 | sentence | seq | 240/236 | 846/717 | 724/775 | 169/150 | passes |
+| ecma262 | sentence | par | 352/330 | 742/660 | 694/693 | 230/239 | passes |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| ecma262 | fontsize | seq | 1986/1314 | 9799/9437 | 9659/9312 | 609/588 | passes |
+| ecma262 | fontsize | par | 2086/2102 | 9837/9473 | 8947/9468 | 1100/1148 | passes |
+| ecma262 | rootfont | seq | 33198/31088 | 122099/116972 | 118760/116894 | 117447/114678 | fails r1,r2 |
+| ecma262 | rootfont | par | 69565/68907 | 226799/222314 | 222385/220962 | 188655/188117 | fails r1,r2 |
+| ecma262 | block | seq | 570280/554167 | 117/121 | 119/113 | 120/123 | fails r1,r2 |
+| ecma262 | block | par | 400435/390379 | 201/187 | 208/182 | 189/196 | fails r2 |
+| html5 | word | seq | 73/73 | 81/81 | 79/83 | 80/81 | passes |
+| html5 | word | par | 122/121 | 132/132 | 126/131 | 127/125 | passes |
+| html5 | sentence | seq | 240/224 | 361/320 | 323/343 | 374/362 | passes |
+| html5 | sentence | par | 349/334 | 387/376 | 358/350 | 389/379 | passes |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| html5 | fontsize | seq | 898/673 | 2186/1820 | 1887/1851 | 1742/1421 | fails r2 |
+| html5 | fontsize | par | 892/794 | 2303/2164 | 2370/2183 | 2100/1881 | fails r1,r2 |
+| html5 | rootfont | seq | 635084/630093 | 783877/779067 | 783720/777928 | 782826/785511 | passes |
+| html5 | rootfont | par | 368650/367799 | 572984/572601 | 568968/568400 | 543432/541945 | passes |
+| html5 | block | seq | 655266/671965 | 583/575 | 571/579 | 634/622 | fails r1,r2 |
+| html5 | block | par | 474319/456200 | 682/769 | 653/665 | 725/707 | fails r1 |
+
+Acceptance fails 13 of 48 cells: four ECMA262 root-font cells, three HTML5 font-size cells and six block cells. The control twin records variability but does not waive any failed threshold. Main and base source revisions are frozen as in the root-font bisect above. The subsequent investigation and Q140/Q141 record the remaining work; no merge is authorized by this result.
