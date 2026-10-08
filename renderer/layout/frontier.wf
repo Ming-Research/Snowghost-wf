@@ -62,6 +62,41 @@ fn frontier_mark(frontier: &ParagraphFrontier, at: u64, span: u64) -> result: un
   return unit;
 }
 
+fn frontier_span_for(count: u64) -> span: u64 pure {
+  doc "The smallest power-of-two interval holding count stable paragraph slots, so a sparse path has the logarithmic depth of the context's own paragraph domain rather than of the global slot ceiling.";
+  let span = 1_u64;
+  for (level in 0_u64..31_u64) {
+    if span >= count {
+      return span;
+    }
+    set span = span +sat span;
+  }
+  return span;
+}
+
+fn frontier_insert(context: &Context, at: u64) -> result: unit writes(context.paragraph_frontier), writes(context.frontier_span) {
+  doc "Marks one stable slot, first doubling the root interval while the slot lies beyond it: an empty set only doubles its interval, and a nonempty set becomes the left half of a new fork. No existing leaf moves and no slot is rescanned.";
+  for (level in 0_u64..31_u64) {
+    if at < context^.frontier_span {
+      break;
+    }
+    let empty = frontier_vacant(frontier: &context^.paragraph_frontier);
+    if empty {
+    } else {
+      let held = ParagraphFrontier::Vacant();
+      swap(first: &held, second: &context^.paragraph_frontier);
+      let left_box = box_new::<ParagraphFrontier>(value: move held);
+      let vacant_right = ParagraphFrontier::Vacant();
+      let right_box = box_new::<ParagraphFrontier>(value: move vacant_right);
+      set context^.paragraph_frontier = ParagraphFrontier::Fork(left: move left_box, right: move right_box);
+    }
+    set context^.frontier_span = context^.frontier_span +sat context^.frontier_span;
+  }
+  let span = context^.frontier_span;
+  frontier_mark(frontier: &context^.paragraph_frontier, at: at, span: span);
+  return unit;
+}
+
 fn frontier_vacant(frontier: &ParagraphFrontier) -> vacant: Bool reads(frontier) {
   doc "Tests the empty interval without traversing its descendants.";
   match frontier^ {
@@ -331,7 +366,8 @@ fn stationary_frontier(context: &Context, styles: &Styles, document: &Document, 
   let paragraph_count = context^.paragraphs.inner.len;
   let child_count = context^.children.inner.len;
   let none = slots_new::<Exclusion, 0>();
-  let (stationary, broken, visited) = frontier_break(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: item_ceiling, children: &context^.children.inner[0_u64..child_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none[0_u64..0_u64]);
+  let frontier_span = context^.frontier_span;
+  let (stationary, broken, visited) = frontier_break(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: frontier_span, children: &context^.children.inner[0_u64..child_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none[0_u64..0_u64]);
   set counts.paragraphs = broken;
   let paragraph_pair = broken +sat broken;
   let broken_opens = paragraph_pair +sat broken;
@@ -343,7 +379,7 @@ fn stationary_frontier(context: &Context, styles: &Styles, document: &Document, 
   }
   let consumed = ParagraphFrontier::Vacant();
   swap(first: &consumed, second: &context^.paragraph_frontier);
-  frontier_publish(frontier: &consumed, context: context, first: 0_u64, span: item_ceiling);
+  frontier_publish(frontier: &consumed, context: context, first: 0_u64, span: frontier_span);
   let position_children = False();
   let (moved, settled) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: 0_i32, position_children: position_children);
   let group = box_of(styles: styles, style: context^.style);
@@ -358,7 +394,7 @@ fn stationary_frontier(context: &Context, styles: &Styles, document: &Document, 
   let has_baseline = band(based, visible);
   set context^.has_baseline = has_baseline;
   let consumed_count = context^.paragraphs.inner.len;
-  frontier_clear(frontier: &consumed, paragraphs: &context^.paragraphs.inner[0_u64..consumed_count], span: item_ceiling);
+  frontier_clear(frontier: &consumed, paragraphs: &context^.paragraphs.inner[0_u64..consumed_count], span: frontier_span);
   set context^.marked_paragraphs = 0_u32;
   set context^.dirty = False();
   set context^.restyled = False();
