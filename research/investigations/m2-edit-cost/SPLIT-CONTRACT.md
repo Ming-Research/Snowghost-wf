@@ -126,6 +126,23 @@ source-domain reconstruction still retires every handle and dependency index.
 The replacement is wired into replay; its correctness and cost remain unverified
 until the hosted gates below run on this revision.
 
+A separate source-domain certificate retains sorted split keys, same-owner links
+and negative dependency intervals across a full geometry replay. Such a replay
+still recomputes every required join from current line presence, every role,
+empty-source activity and geometric range certificate; it does not repeat source
+sorting or structural gap discovery. Source construction invalidates the
+certificate, and a new context starts without it. Certified splices preserve it
+only under the same retained-source/barrier contract used by bounded repair.
+Equal source counts alone never authorize reuse. The retained-splice argument
+uses existing admission: inserted content has no split sources, retired subtrees
+have no fragment sources, Float/Out retirement is refused, and the seam rejects
+insertion into a potentially joinable same-owner gap. A non-Text Open/Child
+between splits of the same still-open inline owner is itself a split source, so
+removing that barrier would fail source retirement. This deduction relies on
+`splice.wf` and `splice_boundary.wf`; independent review must check it against
+their complete admission paths. This removes source work that root-font
+restyling cannot change; its measured contribution remains unverified.
+
 ### Owner motion and legacy-reader transaction
 
 The selected continuation retains owner-relative geometry as durable state.
@@ -172,6 +189,14 @@ convergence. Unsafe arithmetic executes the reference operations in their
 original order. Materialization and encoding preserve exact i64 differences and
 all i32 narrowing/saturating boundaries. Anchoring does not authorize reversing
 saturation or treating a previous raw rectangle as current reference output.
+The stack gives a finite Text natural only to a paragraph with lines. Lineless
+paragraph scratch therefore remains fixed with an absent natural; atomic child
+anchors still move independently. For a raw fallback, a natural that saturates
+to MAX becomes absent and cannot be resurrected by a later negative shift.
+The boundary oracle exercises MAX-1, +1, -1 directly and requires both persistent
+absence and the independent round-trip of scratch coordinates. Its omission
+falsifier must successfully compile and trip that assertion.
+
 These are implementation obligations under Q138 A; hosted semantic and omission
 evidence is required before claiming the new transaction is complete.
 

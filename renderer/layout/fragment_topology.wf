@@ -299,12 +299,14 @@ fn fill_split_dependencies(links: &[SplitLink], splits: &[Split], offset: u64, r
   }
   if count == 1_u64 {
     let link = links^[0_u64];
-    let previous = if offset == 0_u64 {
-      give no_index;
-    } else {
-      let before = offset - 1_u64;
-      let slot = flow_index(at: before);
-      give slot;
+    let previous = no_index;
+    if offset < splits^.len {
+      let opening = cvt::<u32, u64>(splits^[offset].open);
+      let first_at = split_lower_bound(splits: splits, rank: opening);
+      if first_at > 0_u64 {
+        let before = first_at - 1_u64;
+        set previous = flow_index(at: before);
+      }
     }
     if link.gap_possible {
       if link.previous < previous {
@@ -338,31 +340,37 @@ fn fill_split_dependencies(links: &[SplitLink], splits: &[Split], offset: u64, r
 }
 
 fn build_split_topology(context: &Context, events: &[Flow]) -> result: unit reads(events), writes(context) {
-  doc "Creates source-domain metadata once on full construction. Each split reserves exactly three role fields in one cell, preserving the existing split-count limit without a three-times larger indexed domain.";
-  let keys = split_keys(context: context);
-  let count = keys.inner.len;
-  let no = False();
-  let empty_link = SplitLink(previous: no_index, next: no_index, order: no_index, gap_possible: no);
-  let links = box_array_filled::<SplitLink>(count: count, value: empty_link);
-  for (at in 0_u64..count) {
-    let link = split_source_link(context: context, events: events, keys: &keys.inner[0_u64..count], at: at);
-    set links.inner[at] = link;
+  doc "Builds static split identities, same-owner links and source dependencies only when source construction invalidated their certificate. Every full geometry replay recomputes incoming joins from current line presence, even when the source domain is retained.";
+  if context^.split_topology_known {
+  } else {
+    let keys = split_keys(context: context);
+    let count = keys.inner.len;
+    let no = False();
+    let empty_link = SplitLink(previous: no_index, next: no_index, order: no_index, gap_possible: no);
+    let links = box_array_filled::<SplitLink>(count: count, value: empty_link);
+    for (at in 0_u64..count) {
+      let link = split_source_link(context: context, events: events, keys: &keys.inner[0_u64..count], at: at);
+      set links.inner[at] = link;
+    }
+    set context^.split_keys = move keys;
+    set context^.split_links = move links;
+    let twice = count +sat count;
+    let nodes = twice -sat 1_u64;
+    let empty_range = FragmentRange(first: no_index, last: no_index);
+    let dependencies = box_array_filled::<FragmentRange>(count: nodes, value: empty_range);
+    let split_count = context^.splits.inner.len;
+    let link_count = context^.split_links.inner.len;
+    let filled = fill_split_dependencies(links: &context^.split_links.inner[0_u64..link_count], splits: &context^.splits.inner[0_u64..split_count], offset: 0_u64, ranges: &dependencies.inner[0_u64..nodes]);
+    set context^.split_dependencies = move dependencies;
+    set context^.split_topology_known = True();
   }
-  set context^.split_keys = move keys;
-  set context^.split_links = move links;
-  let twice = count +sat count;
-  let nodes = twice -sat 1_u64;
-  let empty_join = SplitJoin(first: no_index, last: no_index);
-  let joins = box_array_filled::<SplitJoin>(count: nodes, value: empty_join);
   let key_count = context^.split_keys.inner.len;
-  let joined = fill_split_joins(context: context, events: events, keys: &context^.split_keys.inner[0_u64..key_count], offset: 0_u64, joins: &joins.inner[0_u64..nodes]);
+  let join_twice = key_count +sat key_count;
+  let join_nodes = join_twice -sat 1_u64;
+  let empty_join = SplitJoin(first: no_index, last: no_index);
+  let joins = box_array_filled::<SplitJoin>(count: join_nodes, value: empty_join);
+  let joined = fill_split_joins(context: context, events: events, keys: &context^.split_keys.inner[0_u64..key_count], offset: 0_u64, joins: &joins.inner[0_u64..join_nodes]);
   set context^.split_joins = move joins;
-  let empty_range = FragmentRange(first: no_index, last: no_index);
-  let dependencies = box_array_filled::<FragmentRange>(count: nodes, value: empty_range);
-  let split_count = context^.splits.inner.len;
-  let link_count = context^.split_links.inner.len;
-  let filled = fill_split_dependencies(links: &context^.split_links.inner[0_u64..link_count], splits: &context^.splits.inner[0_u64..split_count], offset: 0_u64, ranges: &dependencies.inner[0_u64..nodes]);
-  set context^.split_dependencies = move dependencies;
   return unit;
 }
 
@@ -918,6 +926,10 @@ fn refresh_replayed_empty_sources(context: &Context, events: &[Flow], from: u64,
 
 fn replace_fragment_topology(context: &Context, events: &[Flow], styles: &Styles, content_left: i32, from: u64, until: u64) -> replaced: Bool reads(events), reads(styles), writes(context) {
   doc "Repairs incoming join edges selected by changed source dependencies, prepares only old/new affected run heads, publishes their fixed role cells, and repairs only affected interval ancestors. Empty-inline sources refresh in their own paragraph-mark domains.";
+  if context^.split_topology_known {
+  } else {
+    return False();
+  }
   let count = context^.splits.inner.len;
   if count != context^.split_links.inner.len {
     return False();
