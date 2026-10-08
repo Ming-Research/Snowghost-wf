@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [main=8fbc1601785cee70265da1eac4d99589fc6fb67c, s2=0e2a0931f630f156bf99bcc9596d37acea787ca8, s3a=db5d98c8675ab7ead43d829a802abb9bc32f9562, m2=2d706ba252c80336ba1926c3d77054714046586d, base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, a=HEAD]
+        build: [main=8fbc1601785cee70265da1eac4d99589fc6fb67c, fixed=HEAD]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,7 +44,7 @@ jobs:
           (cd build/tree && git submodule update -q --init)
           source=$(git -C build/tree rev-parse HEAD)
           echo "release = wf-0b7f5c5b9854" > build/tree/whitefoot.pin
-          git -C build/tree -c user.name='Snowghost timing' -c user.email='noreply@anthropic.com' commit -am 'Timing only: pin wf-0b7f5c5b9854 for Q138 root-font bisect
+          git -C build/tree -c user.name='Snowghost timing' -c user.email='noreply@anthropic.com' commit --allow-empty -am 'Timing only: pin wf-0b7f5c5b9854 for Q138 root-font bisect
 
           Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
           git -C build/tree show --format=fuller HEAD > build/pin-only.patch
@@ -75,8 +75,16 @@ jobs:
         with:
           pattern: driver-*
           path: build/drivers
+      - name: Reuse completed bisect drivers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for name in s2 s3a m2 base twin a; do
+            gh run download 37718099858 -n "driver-$name" --dir "build/drivers/driver-$name"
+          done
       - name: Select builds
-        run: echo "BUILD_NAMES=main s2 s3a m2 base twin a" >> "$GITHUB_ENV"
+        run: echo "BUILD_NAMES=main s2 s3a m2 base twin a fixed" >> "$GITHUB_ENV"
       - name: Fonts
         run: |
           set -euo pipefail
@@ -123,7 +131,7 @@ jobs:
             for name in $names; do
               cp build/drivers/driver-$name/layout_oracle_* build/
               for page in ecma262 html5; do
-                for kind in word sentence colour fontsize rootfont block; do
+                for kind in rootfont; do
                   for mode in seq par; do
                     rm -rf build/x5/time
                     ALONE=1 WF_WORKERS=4 /usr/bin/time -p sh research/investigations/incremental-layout/run.sh time "$mode" "$page" "$kind" 1 > build/evidence/$name-$page-$kind-$mode-r$round.summary
@@ -132,6 +140,47 @@ jobs:
                   done
                 done
               done
+            done
+          done
+      - name: Root-font sampled attribution
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r)
+          sudo sysctl kernel.perf_event_paranoid=-1
+          mkdir -p build/evidence/profile
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          for page in ('ecma262', 'html5'):
+              source = Path(f'build/x5/scripts/{page}-rootfont.edits').read_text().splitlines(True)
+              setup = [line for line in source if line.startswith('S ')]
+              pair = [line for line in source if line.startswith(('C ', 'K '))][:2]
+              assert len(pair) == 2 and pair[0].startswith('C ') and pair[1].startswith('K ')
+              Path(f'build/evidence/profile/{page}-sample.edits').write_text(''.join(setup + pair))
+          PYEOF
+          for page in ecma262 html5; do
+            for sample in 1 2; do
+              WF_WORKERS=4 /usr/bin/time -p -o build/evidence/profile/$page-$sample.time build/drivers/driver-a/layout_oracle_seq edittime build/evidence/profile/$page-sample.edits build/research/concurrency/$page.html renderer/style/ua.css > build/evidence/profile/$page-$sample.raw
+            done
+          done
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          root = Path('build/evidence/profile')
+          for page in ('ecma262', 'html5'):
+              values = [float((root / f'{page}-{n}.time').read_text().splitlines()[0].split()[1]) for n in (1, 2)]
+              assert max(values) < 60, values
+              repeats = min(100, max(2, int(60 / max(values))))
+              lines = (root / f'{page}-sample.edits').read_text().splitlines(True)
+              setup = [line for line in lines if line.startswith('S ')]
+              pair = [line for line in lines if line.startswith(('C ', 'K '))]
+              (root / f'{page}.edits').write_text(''.join(setup + pair * repeats))
+              (root / f'{page}-scale.txt').write_text(f'{values}; {repeats} round trips\n')
+          PYEOF
+          for page in ecma262 html5; do
+            for name in main s2 s3a m2 base a fixed; do
+              output=build/evidence/profile/$name-$page
+              WF_WORKERS=4 perf record -F 499 --call-graph dwarf,4096 -o "$output.data" -- build/drivers/driver-$name/layout_oracle_seq edittime build/evidence/profile/$page.edits build/research/concurrency/$page.html renderer/style/ua.css > "$output.raw"
+              perf report -i "$output.data" --stdio --no-children --percent-limit 0.5 > "$output-self.txt"
+              perf report -i "$output.data" --stdio --children --percent-limit 1 > "$output-callers.txt"
             done
           done
       - uses: actions/upload-artifact@v4

@@ -48,6 +48,27 @@ improve the measured root-font edit. Root font still restyles the document;
 paragraph preparation, changed inherited metrics and actual reflow are not
 assumed removable. Compare that floor with main's path explicitly.
 
+### Exact-route membership experiment
+
+Source inspection finds route-by-route paragraph membership scans introduced
+with M2 style routing. Every recorded paragraph route comes from its strut or
+pieces. A change that includes strut inputs can therefore trust route membership;
+a boxes-only change still filters strut-only uses. A paragraph already dirty
+needs neither the membership scan nor another count. The candidate removes
+only these repeated proofs; it retains explicit routing and all mark propagation.
+Compare A and this repair on the same source/compiler/runner, retaining delta,
+layout and total edit times. Profiles include startup and styling and establish
+sampled attribution only, not an exclusive edit-time percentage. Reject the
+cost explanation if those functions and marking time do not separate, or the
+same-source repair does not reduce root-font cost. Existing style, boxes-only
+and post-splice style oracles remain required.
+
+The first bisect attempt (37718099858) cannot measure: main already has the
+requested release pin, so its pin-only commit exits with no change. Recovery
+allows that no-op commit and reuses only the other successfully built exact
+cohort artifacts; their revision and pin patches remain in the evidence. This
+setup failure supplies no performance evidence.
+
 ## Contract before implementation
 
 The reference is the existing full fragment generator, checked against the
