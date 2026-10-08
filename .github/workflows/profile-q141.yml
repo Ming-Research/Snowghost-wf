@@ -1,0 +1,99 @@
+# Temporary: where apollo11's block-edit fallback spends its time (Q141,
+# Q144 C), on hosted runners. The question is coarse (18.8 ms against main's
+# 13.0 ms, with the structural rebuild 7,048 us against 3,265 us), so hosted
+# noise does not decide it; only the profile's distribution is used, no
+# timing comparison. Removed before research/m2-layout is ready.
+name: profile-q141
+
+on:
+  push:
+    branches: [research/q141-profile]
+  workflow_dispatch:
+
+jobs:
+  profile:
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [head, 8fbc160]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Select renderer revision
+        run: |
+          if [ '${{ matrix.revision }}' != head ]; then
+            git checkout '${{ matrix.revision }}'
+            git submodule update --init
+          fi
+          git rev-parse HEAD
+          cat whitefoot.pin
+      - name: Toolchain, fonts and perf
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo apt-get install -y --no-install-recommends linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y --no-install-recommends linux-tools-common linux-tools-azure
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+          perf --version
+          make -s compiler oracle-fonts
+      - name: Main pin's LLVM prerequisite
+        if: matrix.revision != 'head'
+        run: |
+          curl -fsSL --retry 3 -o /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 22 >/dev/null
+          sudo ln -sf /usr/bin/clang-22 /usr/bin/clang
+          /usr/bin/clang --version
+      - uses: actions/download-artifact@v4
+        with:
+          name: apollo11-diag-37727037303
+          run-id: 37727037303
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: build
+      - name: Verify the pinned apollo11 capture and block script
+        run: |
+          echo '1405f09a8888e2854ba8785a4da6b50dbd3951fb56ec9eca7f2e20aa3fe78dc4  build/research/concurrency/apollo11.html' | sha256sum -c
+          cat > build/inputs.sha256 <<'HASHES'
+          cc2e64f8f1706af7f505ec69b6c9807cb05a743f7887ccbf8c7e104e1f41a9f8  build/research/concurrency/apollo11-modules.css
+          a292ccfd0f47accce300fd2febc776a88c2cd18b82f3f4cc8fad01fbdb9ca1d8  build/research/concurrency/apollo11-site.css
+          b30996fe56e4323fa7fe442454871ecb599163ab011b94c28fe6c29bb1861e78  build/x5/scripts/apollo11-block.edits
+          HASHES
+          sha256sum -c build/inputs.sha256
+      - name: Sequential driver
+        run: |
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          time (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+      - name: Edit costs, then the profile of the same run
+        run: |
+          set -euo pipefail
+          mkdir -p build/q141
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          script=build/x5/scripts/apollo11-block.edits
+          time build/layout_oracle_seq edit "$script" "${args[@]}" > build/q141/block.raw
+          python3 research/investigations/incremental-layout/scripts/inctime.py --check "$script" build/q141/block.raw
+          python3 research/investigations/incremental-layout/scripts/inctime.py "$script" build/q141/block.raw > build/q141/block.summary || true
+          cat build/q141/block.summary
+          # The full build alone, for the share the 60 edits do not explain.
+          perf stat -e task-clock,page-faults -o build/q141/stat-full.txt build/layout_oracle_seq layout 1 "${args[@]}" > /dev/null
+          perf stat -e task-clock,page-faults -o build/q141/stat-edits.txt build/layout_oracle_seq edit "$script" "${args[@]}" > /dev/null
+          cat build/q141/stat-full.txt build/q141/stat-edits.txt
+          perf record -F 997 --call-graph dwarf,16384 -o build/q141/edits.perf build/layout_oracle_seq edit "$script" "${args[@]}" > /dev/null
+          perf report -i build/q141/edits.perf --no-children --stdio --percent-limit 0.4 -g none 2>/dev/null | grep -v '^$' | head -120 > build/q141/self.txt
+          perf report -i build/q141/edits.perf --children --stdio --percent-limit 1 -g none 2>/dev/null | grep -v '^$' | head -150 > build/q141/children.txt
+          perf report -i build/q141/edits.perf --children --stdio --percent-limit 5 -g caller,0.5,callee --max-stack 24 2>/dev/null | head -1500 > build/q141/callers.txt
+          head -60 build/q141/self.txt
+          head -80 build/q141/children.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q141-profile-${{ matrix.revision }}
+          path: |
+            build/q141/*.txt
+            build/q141/*.raw
+            build/q141/*.summary
