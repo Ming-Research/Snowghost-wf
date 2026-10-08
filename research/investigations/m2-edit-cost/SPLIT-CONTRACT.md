@@ -287,8 +287,11 @@ For a uniform exact suffix move, change each direct suffix entry by the requeste
 absolute displacement minus its owner's displacement; an intact Open retains
 its descendants' local origins and nested reductions. The replayed range and
 ancestor chains publish fresh results. Unchanged suffix scratch is never encoded
-as if fresh. Lined Text moves its paragraph; lineless scratch retains the
-reference exception. Placed atomic children move independently, including those
+as if fresh. Lined Text moves its paragraph; untouched lineless scratch retains the
+reference exception. A freshly stacked paragraph that has no lines resets its
+unplaced normal/resolved origins and beside flag to the fresh-build defaults.
+This includes a paragraph losing its last line: newly active empty sources must
+not inherit its preceding lined coordinates. Placed atomic children move independently, including those
 of a lineless paragraph. Positioned children resolve static axes from settled
 anchors, then the existing containing-block algorithm resolves explicit axes.
 Each coordinate is translated exactly once.
@@ -309,7 +312,7 @@ original order. Materialization and encoding preserve exact i64 differences and
 all i32 narrowing/saturating boundaries. Anchoring does not authorize reversing
 saturation or treating a previous raw rectangle as current reference output.
 The stack gives a finite Text natural only to a paragraph with lines. Lineless
-paragraph scratch therefore remains fixed with an absent natural; atomic child
+untouched paragraph scratch therefore remains fixed with an absent natural; atomic child
 anchors still move independently. For a raw fallback, a natural that saturates
 to MAX becomes absent and cannot be resurrected by a later negative shift.
 The boundary oracle exercises MAX-1, +1, -1 directly and requires both persistent
@@ -871,3 +874,8 @@ argument is source-audited and probed, not universally proved; its completeness
 and the full decomposition of HTML font cost remain unverified by this review.
 The owner's Q134/Q135/Q132 rulings stand; a failed acceptance result does not
 reopen the selected A/B representation. Approval remains with the owner.
+
+### Lined-to-lineless revival regression
+
+The admitted pre-line topology probe at 48b1cd0 failed its unmutated control
+([job 113136419249](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37723544963/job/113136419249)) on open-plain edits 8 and 13, both removing the last newline from an independent empty inline source. The preceding insertion placed the paragraph; removing its last line left those old coordinates behind, whereas a fresh full build never places a lineless paragraph. The repair clears the freshly stacked lineless paragraph to the construction defaults before source-fragment revival, without changing untouched prefix or suffix scratch. The same unchanged probe must pass after repair.
