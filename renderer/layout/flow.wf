@@ -222,6 +222,11 @@ fn innermost_block(frames: &Box<Slots<Frame>>) -> block: u32 reads(frames) {
 
 fn definite_block_height(styles: &Styles, style: StyleRef, basis_width: i32, basis_height: i32) -> height: i32 reads(styles) {
   doc "The content height established before laying out an ordinary block's contents, or unknown for an auto/content-dependent height. Resolve each percentage against its immediate containing block, then apply its own limits and box conversion in the full height resolver's order.";
+  let sizes = size_of(styles: styles, style: style);
+  let declared = size_value(value: sizes.height, basis: basis_height);
+  if declared < 0_i32 {
+    return unknown;
+  }
   let border = border_edges(styles: styles, style: style);
   let padding = padding_edges(styles: styles, style: style, basis: basis_width);
   let border_height = vertical(edges: border);
@@ -282,10 +287,10 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           set context^.blocks.inner[at].output.basis_height = height;
           set context^.blocks.inner[at].flow_at = here;
           let style = context^.blocks.inner[at].style;
-          let basis_input = containing_height_proof(context: context, styles: styles, owner: around, height: height);
+          let basis_input = fresh_containing_proof(context: context, owner: around, height: height);
           let proof = resolve_height_proof(styles: styles, style: style, input: basis_input, width: width, height: height, forced: unknown);
           set context^.blocks.inner[at].height_proof = proof;
-          let relative = height_relative(styles: styles, style: style);
+          let relative = proof.read_mask != 0_u8;
           let absolute_height = bnot(relative);
           set free = band(free, absolute_height);
           set flow_free = band(flow_free, absolute_height);
@@ -338,13 +343,13 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
                 let child_at = cvt::<u32, u64>(child);
                 if child_at < context^.children.inner.len {
                   let yes = True();
-                  let basis_input = containing_height_proof(context: context, styles: styles, owner: around, height: height);
+                  let basis_input = fresh_containing_proof(context: context, owner: around, height: height);
                   let proof = resolve_height_proof(styles: styles, style: context^.children.inner[child_at].style, input: basis_input, width: width, height: height, forced: unknown);
                   set_height_input(child: &context^.children.inner[child_at], proof: proof);
                   set context^.children.inner[child_at].space = child_space(available: width, basis_width: width, basis_height: height, shrink: yes);
                   set context^.children.inner[child_at].flow_at = here;
                   set context^.children.inner[child_at].block = around;
-                  let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+                  let relative = proof.read_mask != 0_u8;
                   let independent = bnot(relative);
                   set free = band(free, independent);
                   set flow_free = band(flow_free, independent);
@@ -368,7 +373,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           let table = kind == ctx_table;
           let replaced = kind == ctx_replaced;
           let fits = bor(table, replaced);
-          let basis_input = containing_height_proof(context: context, styles: styles, owner: around, height: height);
+          let basis_input = fresh_containing_proof(context: context, owner: around, height: height);
           let proof = resolve_height_proof(styles: styles, style: context^.children.inner[at].style, input: basis_input, width: width, height: height, forced: unknown);
           set_height_input(child: &context^.children.inner[at], proof: proof);
           set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: height, shrink: fits);
@@ -376,7 +381,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           set context^.children.inner[at].x = left;
           set context^.children.inner[at].flow_at = here;
           set context^.children.inner[at].block = around;
-          let child_relative = height_relative(styles: styles, style: context^.children.inner[at].style);
+          let child_relative = proof.read_mask != 0_u8;
           let child_absolute = bnot(child_relative);
           set free = band(free, child_absolute);
           set flow_free = band(flow_free, child_absolute);
@@ -386,7 +391,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
         let at = cvt::<u32, u64>(c);
         if at < context^.children.inner.len {
           let yes = True();
-          let basis_input = containing_height_proof(context: context, styles: styles, owner: around, height: height);
+          let basis_input = fresh_containing_proof(context: context, owner: around, height: height);
           let proof = resolve_height_proof(styles: styles, style: context^.children.inner[at].style, input: basis_input, width: width, height: height, forced: unknown);
           set_height_input(child: &context^.children.inner[at], proof: proof);
           set context^.children.inner[at].space = child_space(available: width, basis_width: width, basis_height: height, shrink: yes);
@@ -394,7 +399,7 @@ fn prepare_spaces(context: &Context, events: &[Flow], styles: &Styles, content_w
           set context^.children.inner[at].x = left;
           set context^.children.inner[at].flow_at = here;
           set context^.children.inner[at].block = around;
-          let child_relative = height_relative(styles: styles, style: context^.children.inner[at].style);
+          let child_relative = proof.read_mask != 0_u8;
           let child_absolute = bnot(child_relative);
           set free = band(free, child_absolute);
           set flow_free = band(flow_free, child_absolute);
@@ -432,8 +437,10 @@ fn lay_out_child(child: &Context, styles: &Styles, document: &Document, fonts: &
   if updating {
     let marked = child^.dirty;
     let same = equivalent_space(styles: styles, style: child^.style, first: child^.laid, second: child^.space);
-    let provenance_kept = context_height_current(context: child, styles: styles);
-    set same = band(same, provenance_kept);
+    if same {
+      let provenance_kept = keep_height_proof(context: child, styles: styles);
+      set same = provenance_kept;
+    }
     let flowing = child^.kind == ctx_flow;
     let unmarked = bnot(marked);
     let kept = band(same, unmarked);

@@ -1,4 +1,5 @@
 alias Document = pkg::dom::Document;
+alias SizeGroup = pkg::css::values::SizeGroup;
 alias Styles = pkg::style::Styles;
 alias sizing_value = pkg::css::values::sizing_value;
 
@@ -57,9 +58,40 @@ fn context_height_current(context: &Context, styles: &Styles) -> same: Bool read
   return current;
 }
 
-fn height_read_mask(styles: &Styles, style: StyleRef) -> mask: u8 reads(styles) {
+fn keep_height_proof(context: &Context, styles: &Styles) -> kept: Bool reads(styles), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(context.height_input), writes(context.height_proof) {
+  doc "Decides whether retained geometry may stay under the current incoming edge. A changed source, kind or definiteness state needs fresh layout, so descendants derive their records again. Under the same edge, stale style keys or unequal but equivalent resolution inputs only refresh this record, because the caller's space comparison already decides geometry; a refresh that changes this record's own state, content height or reads is treated like a changed edge, since descendants derive their bases from those.";
+  let old = context^.height_proof;
+  let old_input = height_input_of(proof: old);
+  let same_edge = same_height_input(first: old_input, second: context^.height_input);
+  if same_edge {
+  } else {
+    return False();
+  }
+  let current = height_proof_current(proof: old, styles: styles, style: context^.style, width: context^.space.basis_width, height: context^.space.basis_height, forced: context^.space.forced_height);
+  if current {
+    return True();
+  }
+  refresh_context_height_proof(context: context, styles: styles);
+  let renewed = context^.height_proof;
+  let valid = eeq(renewed.valid, old.valid);
+  if valid {
+  } else {
+    return False();
+  }
+  if renewed.state != old.state {
+    return False();
+  }
+  if renewed.content_height != old.content_height {
+    return False();
+  }
+  if renewed.read_mask != old.read_mask {
+    return False();
+  }
+  return True();
+}
+
+fn size_read_mask(sizes: SizeGroup) -> mask: u8 pure {
   doc "Counts expressions by has_percent, including a zero coefficient; height, minimum and maximum remain distinct inputs.";
-  let sizes = size_of(styles: styles, style: style);
   let mask = 0_u8;
   if sizes.height.kind == sizing_value {
     if sizes.height.value.has_percent {
@@ -124,16 +156,22 @@ fn resolve_height_proof(styles: &Styles, style: StyleRef, input: HeightProof, wi
   doc "Records the full resolver's immediate input and its unchanged style keys. An ordinary specified chain is independent only when every percentage read has an independent definite input. Forced sizes are layout results unless the caller names the viewport or a certified private external input.";
   let made = input;
   let computed = computed_of(styles: styles, style: style);
-  let mask = height_read_mask(styles: styles, style: style);
-  let content = definite_block_height(styles: styles, style: style, basis_width: width, basis_height: height);
-  if forced >= 0_i32 {
+  let sizes = size_of(styles: styles, style: style);
+  let mask = size_read_mask(sizes: sizes);
+  let declared = size_value(value: sizes.height, basis: height);
+  let content = if forced >= 0_i32 {
     let border = border_edges(styles: styles, style: style);
     let padding = padding_edges(styles: styles, style: style, basis: width);
     let borders = vertical(edges: border);
     let paddings = vertical(edges: padding);
     let frame = borders +sat paddings;
     let inner = forced -sat frame;
-    set content = imax(inner, 0_i32);
+    give imax(inner, 0_i32);
+  } else if declared < 0_i32 {
+    give unknown;
+  } else {
+    let resolved = definite_block_height(styles: styles, style: style, basis_width: width, basis_height: height);
+    give resolved;
   }
   let state = height_dependency_state(content: content, mask: mask, basis_state: input.basis_state, forced: forced, source_kind: input.source_kind);
   set made.consumer = style;
@@ -261,6 +299,37 @@ fn containing_height_proof(context: &Context, styles: &Styles, owner: u32, heigh
         return made;
       }
       set source = block^.height_proof;
+    } else {
+      return made;
+    }
+  }
+  set made.source_element = source.consumer.element;
+  if source.valid {
+    if source.content_height == height {
+      set made.basis_state = source.state;
+    }
+  }
+  return made;
+}
+
+fn fresh_containing_proof(context: &Context, owner: u32, height: i32) -> made: HeightProof reads(context.height_proof), reads(context.slot), reads(context.blocks.inner), reads(context.retired) {
+  doc "containing_height_proof inside the flow pre-pass, which resolved the context's record and every open block's record earlier in the same pass from the inputs it now passes down; only the currentness checks those writes establish are omitted.";
+  let made = absent_height_proof();
+  set made.source_context = context^.slot;
+  set made.source_owner = owner;
+  set made.source_kind = 2_u8;
+  set made.basis_height = height;
+  let source = context^.height_proof;
+  if context^.retired {
+    return made;
+  }
+  if owner != no_index {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      if context^.blocks.inner[at].entry_slot == no_index {
+        return made;
+      }
+      set source = context^.blocks.inner[at].height_proof;
     } else {
       return made;
     }

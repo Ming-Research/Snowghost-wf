@@ -28,7 +28,7 @@ CASES = {
     'fixed-limits': ('section{height:200px}.half{height:80%;min-height:25%;max-height:50%}', '<section><div class="half">' + BASE + '</div><aside>Outer tail.</aside></section><aside>Outside.</aside>', 0),
     'sibling-limits': ('section{height:200px}.minimum{min-height:50%}.maximum{max-height:25%}.maximum p{height:100px}', '<section><div>' + BASE + '</div><aside class="minimum">Minimum.</aside><aside class="maximum"><p>Maximum.</p></aside></section>', 0),
     'inactive-maximum-margin': ('section{height:200px}.maximum{max-height:1000px}.maximum p{height:20px;margin:0 0 30px}', '<section><div>' + BASE + '</div><div class="maximum"><p>Margin.</p></div><aside>Outside.</aside></section>', 0),
-    'sibling-width-percent': ('section{height:200px;width:300px}.sibling{height:50%;padding:3% 2%;margin:4% 1%;box-sizing:border-box}', '<section><div>' + BASE + '</div><aside class="sibling">Width based.</aside></section>', 0),
+    'sibling-width-percent': ('section{height:200px;width:300px}.sibling{height:50%;padding:3% 2%;margin:4% 1%;box-sizing:border-box}', '<section><div>' + BASE + '</div><aside class="sibling">Width based.</aside><aside>After the sibling.</aside></section>', 0),
     'private-reader': ('section{height:200px}p{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'zero-reader': ('section{height:200px}p{height:0%;min-height:20px}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'expression-reader': ('section{height:200px}p{height:calc(25% + 10px)}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
