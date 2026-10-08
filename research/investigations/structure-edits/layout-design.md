@@ -3237,3 +3237,26 @@ All compared drivers receive those same bytes, fonts and generated edits.
 The temporary timing workflow can reuse already built hosted artifacts when
 only its harness changes; this retry remains a pilot on the recorded old
 revision, and cannot establish final-revision performance.
+
+### Q139 validation scope finding, 2026-10-08
+
+The source review finds that the current whole-context unproved-reader count
+includes unsupported percentage reads in unrelated flex interiors. Those
+reads can prevent descent to an existing positive flex case. The argument
+requires all reused readers to be proved, but Q128 can recompute a changed
+interior; the current summary does not express that distinction. This is an
+open architectural choice, not an acceptable change to positive expectations.
+The original combination path assertions remain intact to expose it in CI.
+The recommended repair distinguishes reused interiors from recomputed ones;
+using the old percentage-free guard as an alternative certificate would
+instead qualify the argument's explicit indefinite-reader refusal rule.
+That choice awaits the owner; work independent of it continues.
+
+Review also identifies missing operational invalidation omissions and
+percentage-wrapped mutation combinations. Pure comparator falsifiers alone
+do not discharge those lifetime obligations. They remain required work.
+The temporary oracle workflow now uses an explicit `[q139]` marker or manual
+dispatch so evidence-only edits do not queue duplicate renderer compilations;
+the project gate still runs on every push. Falsifiers use the project's
+native per-function compiler cache, shared from their immutable baseline
+artifact, without changing their separately restored source trees or checks.
