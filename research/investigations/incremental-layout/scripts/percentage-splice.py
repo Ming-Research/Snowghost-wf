@@ -30,6 +30,10 @@ CASES = {
     'sibling-width-percent': ('section{height:200px;width:300px}.sibling{height:50%;padding:3% 2%;margin:4% 1%;box-sizing:border-box}', '<section><div>' + BASE + '</div><aside class="sibling">Width based.</aside></section>', 0),
     'private-reader': ('section{height:200px}p{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'private-chain': ('section{height:200px}p{height:50%}p::before{display:block;height:50%;content:"New child."}p.old{height:40px}p.old::before{content:none}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section><aside>Outside.</aside>', 0),
+    'partial-restyle': ('html,body{height:auto}section{height:200px}.holder{height:100px}', '<section><div class="holder">' + BASE + '</div></section><aside>Outside.</aside>', 0),
+    'equal-state': ('section{height:200px}.holder{height:50%}p{height:50px}.remainder{height:100px}', '<section><div class="holder">' + BASE + '</div><aside class="remainder">Remainder.</aside></section><aside>Outside.</aside>', 0),
+    'quirks': ('', '<section>' + BASE + '</section><aside>Outside.</aside>', 7),
+    'layout-stretch': ('.flex{display:flex;align-items:stretch}.flex>section,.flex>aside{width:300px}.reader{height:50%}', '<div class="flex"><section>' + BASE + '</section><aside><div class="reader">Stretch.</div></aside></div>', 7),
     'auto-owner': ('section{height:50%}', '<div><section>' + BASE + '</section></div>', 7),
     'auto-earlier-reader': ('.reader{height:50%}', '<div><aside class="reader">Earlier.</aside><section>' + BASE + '</section></div>', 7),
     'auto-later-reader': ('.reader{height:50%}', '<div><section>' + BASE + '</section><aside class="reader">Later.</aside></div>', 7),
@@ -72,6 +76,7 @@ def main():
     parser.add_argument('directory', type=Path)
     parser.add_argument('--extract', type=Path)
     parser.add_argument('--case', choices=CASES, default='root')
+    parser.add_argument('--lifetime', action='store_true')
     args = parser.parse_args()
     directory = args.directory
     directory.mkdir(parents=True, exist_ok=True)
@@ -81,6 +86,8 @@ def main():
     page = directory / 'case.html'
     css, body, reason = CASES[args.case]
     source = WRAPPER.format(css=css, body=body)
+    if args.case == 'quirks':
+        source = source.replace('<!doctype html>', '')
     page.write_text(source.replace('{insert}', ''))
     (directory / 'inserted.html').write_text(source.replace('{insert}', '<p>Q139 inserted.</p>'))
     nodes = directory / 'case.nodes'
@@ -92,8 +99,44 @@ def main():
         raise ValueError('fixture must have one tail marker')
     tail = tree.by_node[tails[0]['parent']]
     script = 'P 0\nP 1\nP 2\nB %d %d Q139 inserted.\nX %d\n' % (tail['parent'], tail['node'], tree.arena)
+    paths = [(1, int(reason == 0), reason), (2, int(reason == 0), reason)]
+    if args.lifetime:
+        retained = next(text for text in tree.texts if text['data'] == b'Q139 retained.')
+        owner = tree.by_node[tail['parent']]
+        basis = tree.by_node[owner['parent']] if args.case in ('partial-restyle', 'equal-state') else owner
+        next_node = tree.arena + 2
+        commands = [line for line in script.splitlines() if line.startswith(('B ', 'X '))]
+        def block_pair(expected_reason):
+            nonlocal next_node
+            commands.append('B %d %d Q139 inserted.' % (tail['parent'], tail['node']))
+            paths.append((len(commands), int(expected_reason == 0), expected_reason))
+            # Exercise the new record and route before retirement; text is not
+            # restored by a full layout between these commands.
+            commands.extend(('T %d 0 fresh ' % (next_node + 1),
+                             'D %d 0 6' % (next_node + 1),
+                             'T %d 0 retained ' % retained['node'],
+                             'D %d 0 9' % retained['node']))
+            commands.append('X %d' % next_node)
+            paths.append((len(commands), int(expected_reason == 0), expected_reason))
+            next_node += 2
+        block_pair(reason)
+        # An explicit source change followed by another structural edit must
+        # see renewed metadata. This targets the percentage-free partial
+        # restyle path as well as the percentage-dependent full pre-pass.
+        for token in ('basis-tall', 'basis-width'):
+            commands.append('C %d %s' % (basis['node'], token))
+            block_pair(reason)
+            commands.append('K %d %s' % (basis['node'], token))
+            block_pair(reason)
+        if args.case == 'equal-state':
+            commands.append('C %d basis-auto' % basis['node'])
+            block_pair(7)
+            commands.append('K %d basis-auto' % basis['node'])
+            block_pair(0)
+        sheet = 'S .basis-tall{height:300px!important}.basis-width{width:300px!important}.basis-auto{height:auto!important}\n'
+        script = sheet + 'P 0\nP 1\nP 2\n' + '\n'.join(commands) + '\n'
     (directory / 'case.edits').write_text(script)
-    (directory / 'case.edits.paths').write_text(''.join('structure path %d splice %d reason %d\n' % (number, int(reason == 0), reason) for number in (1, 2)))
+    (directory / 'case.edits.paths').write_text(''.join('structure path %d splice %d reason %d\n' % row for row in paths))
     print('%s: %s insertion/removal, required reason %d' % (directory, args.case, reason))
 
 
