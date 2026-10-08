@@ -7,7 +7,9 @@ The workflow reuses its semantic mutation checker and unmutated negative control
 Generated pages are isolated from the established case fixtures. The sparse case additionally requires the
 three dirty paragraphs to be prepared/broken without a whole-context event walk.
 Legacy-driver runs exercise marking with already validated stable style tables;
-they do not test old/new construction-compatibility rejection.
+they do not test old/new construction-compatibility rejection. Frame-left/top
+also discriminate a certificate overwritten before the completed flow is
+replayed: current styles cannot supply the old content origin.
 """
 import argparse
 import re
@@ -17,9 +19,11 @@ from pathlib import Path
 import inctime
 from edits import Tree
 
+# Equal-height top-aligned leaf groups do not extend the strut's ascent/descent
+# differently when font size changes; glyph advances and rectangles still change.
 BASE = ('html,body{margin:0;padding:0}html{font-size:16px}'
         'body{font:32px/40px monospace}section{display:flow-root;width:600px}'
-        'p{margin:0;font:32px/40px monospace}.leaf{font-size:1rem}')
+        'p{margin:0;font:32px/40px monospace}.leaf{font-size:1rem;vertical-align:top}')
 
 
 def page(body, css=''):
@@ -69,8 +73,17 @@ def fixtures():
             css += 'section{box-sizing:border-box}.middle{background:#def}'
         yield name, page(simple, css), toggle
     yield 'interior-block', page(simple, '.changed .middle{padding-top:27px;padding-left:25px}.changed .leaf{font-size:24px}'), toggle
-    multiline = '<section><p><span class="leaf">First baseline.</span><br>Fixed final baseline.</p><p><span class="leaf">Second first.</span><br>Second final.</p></section>'
-    yield 'stationary-first-line', page(multiline, 'p{font-size:16px}.changed .leaf{font-size:24px}'), toggle
+    # Child font output changes while the parent's marked line extents and frame
+    # remain fixed. A parent transaction must not clear itself over this work.
+    child = '<section><p><span class="leaf">First.</span></p><aside>Child glyphs.</aside><p><span class="leaf">Last.</span></p></section>'
+    yield 'marked-child', page(child, 'aside{display:flow-root;width:600px}.changed aside{font-size:24px}.changed .leaf{font-size:24px}'), toggle
+    # Zero paragraph/br struts leave each explicit 40px span as its whole line.
+    # First-line ascent changes with its font; the final fixed line keeps the
+    # paragraph's 80px advance and last baseline independent of that ascent.
+    multiline = '<section><p><span class="leaf">First baseline.</span><br><span class="fixed">Fixed final baseline.</span></p><p><span class="leaf">Second first.</span><br><span class="fixed">Second final.</span></p></section>'
+    first_line_css = ('p{font-size:0;line-height:0}.leaf{vertical-align:baseline;line-height:40px}'
+                      '.fixed{font-size:16px;line-height:40px}.changed .leaf{font-size:24px}')
+    yield 'stationary-first-line', page(multiline, first_line_css), toggle
     baseline = '<article><section>Hg</section><aside>Hg</aside></article>'
     baseline_css = ('article{display:flex;flex-direction:row;align-items:baseline;width:600px;font:16px/40px sans-serif}'
                     'section,aside{display:flow-root;box-sizing:border-box;flex:0 0 300px;width:300px;min-width:0;margin:0;padding:0;border:0}'
@@ -83,18 +96,31 @@ def fixtures():
     yield 'transient-flex-space', page(flex, css), lambda tree: toggle(tree, 'article')
     parent_space = '<article>' + simple + '</article>'
     yield 'parent-space', page(parent_space, 'article{width:600px}section{width:100%}.changed{width:120px}.changed .leaf{font-size:24px}'), lambda tree: toggle(tree, 'article')
+    # Both short lines fit beside the 80px float at either font size. The fixed
+    # strut retains height/baseline; omitting exclusions changes glyph x by 80px.
     for name, extra in [('float-dependent', '<aside style="float:left;width:80px;height:90px">Float.</aside>'),
                         ('atomic-child', '<span style="display:inline-block;width:30px;height:20px">A</span>')]:
         body = '<section>' + extra + '<p><span class="leaf">First.</span></p><p><span class="leaf">Last.</span></p></section>'
         if name == 'atomic-child':
-            body = body.replace('<section>' + extra + '<p>', '<section><p>' + extra)
+            body = body.replace('<section>' + extra + '<p>', '<section><p>')
+            body = body.replace('First.</span>', 'First.</span>' + extra)
         yield name, page(body, '.changed .leaf{font-size:24px}'), toggle
     yield 'positioned-containing-box', page(simple.replace('</section>', '<aside style="position:absolute;bottom:0;height:50%;width:20px">Out.</aside></section>'),
         'section{position:relative;border-top:10px solid;padding-top:10px}.changed{border-top-width:0;padding-top:20px;min-height:230px}.changed .leaf{font-size:24px}'), toggle
+    # Equal 200px column measure and 600px border width; only the fragmentation
+    # shape changes. A fixed column-width alone would be redistributed when the
+    # gap changes, and the flow-width guard would hide omission of column guards.
+    columns = '<section>' + ''.join('<p>Column %d.</p>' % i for i in range(6)) + '</section>'
+    yield 'active-columns', page(columns, 'section{column-count:3;column-gap:0}.changed{column-count:2;column-gap:200px}'), toggle
     def empty_edits(tree):
         node = text(tree, '\t\t')['node']
         return [f'T {node} 0 \\n', f'D {node} 0 1'] + toggle(tree) + [f'T {node} 0 \\n', f'D {node} 0 1']
-    yield 'lineless', page('<section><span style="white-space:pre-line">\t\t</span><p><span class="leaf">First.</span></p><p><span class="leaf">Last.</span></p></section>', '.changed .leaf{font-size:24px}'), empty_edits
+    yield 'lineless', page('<section><p><span class="leaf">First.</span></p><span class="leaf" style="white-space:pre-line">\t\t</span><p><span class="leaf">Last.</span></p></section>', '.changed .leaf{font-size:24px}'), empty_edits
+    # The first speculative break grows; another marked leaf remains lineless.
+    # Re-probing the first paragraph would read its fresh height as the old one,
+    # permit a false zero-delta convergence and leave later owners unmoved.
+    refused = '<section><p><span class="leaf wrap">Several words cross the narrow measure.</span></p><span class="leaf" style="white-space:pre-line">\t\t</span><p><span class="leaf">Last.</span></p></section>'
+    yield 'refused-leaf-replay', page(refused, 'section{width:180px}.changed .leaf{font-size:24px}.changed .wrap{font-size:32px}'), toggle
     def source_edits(tree):
         section = first(tree, 'section')
         marker = text(tree, 'Retained marker.')['parent']
@@ -110,14 +136,14 @@ def fixtures():
     yield 'source-reconstruction', page('<section><div><span>Removed split.<div>Split head.</div>Trailing source.</span></div><p><span class="leaf">First.</span></p><p><span class="leaf">Last.</span></p></section>', '.changed .leaf{font-size:24px}'), reconstruct_edits
 
 
-def sparse_counts(raw):
+def sparse_counts(raw, expected_paragraphs=3, expected_records=4):
     records = re.findall(r'^style edit (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)(?: .*)?$', raw, re.M)
-    if len(records) != 4:
-        raise ValueError('sparse frontier lacks four style-count records')
+    if len(records) != expected_records:
+        raise ValueError(('stationary frontier has missing style-count records', expected_records, len(records)))
     for edit, prepared, contexts, paragraphs, held, entries in records:
-        if (int(prepared), int(paragraphs), int(held)) != (3, 3, 0) or int(entries) >= 32:
-            raise ValueError(('sparse frontier did not consume exactly three leaves without context replay', edit, prepared, contexts, paragraphs, held, entries))
-    print('sparse frontier: all four edits prepare/break three leaves, held entries zero, total entries below 32', flush=True)
+        if (int(prepared), int(paragraphs), int(held)) != (expected_paragraphs, expected_paragraphs, 0) or int(entries) >= 32:
+            raise ValueError(('stationary frontier did not consume the expected leaves without context replay', edit, prepared, contexts, paragraphs, held, entries))
+    print('stationary frontier:', expected_records, 'edits prepare/break', expected_paragraphs, 'leaves, held entries zero, total entries below 32', flush=True)
 
 
 def run(args):
@@ -142,6 +168,8 @@ def run(args):
         inctime.read(str(protocol), operations, checking=True, require_paths=True)
         if name == 'sparse-root':
             sparse_counts(raw)
+        if name == 'stationary-first-line':
+            sparse_counts(raw, expected_paragraphs=2, expected_records=2)
         print(name, 'edits', len(operations), 'differences', different, flush=True)
     if not selected:
         raise ValueError('no frontier cases selected')
