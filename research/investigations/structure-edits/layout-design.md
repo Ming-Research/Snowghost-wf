@@ -3543,3 +3543,20 @@ context root first. These remove dense-record work along with dense storage.
 The width mutation targets the two remaining reader writers (pre-pass and
 reference publication); the percentage-free restyle path has no record to
 refresh and is no longer a mutation site.
+
+
+The compact candidate passes `make check` ([37834644358](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644358)),
+`layout-check` ([37834644250](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644250))
+and Q139 fixtures ([37834644324](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644324))
+at `3fdd2ee`. The fixture run passes all 34 cases in both modes, all four
+original/viewport sequential/parallel flex runs retain their 9 required
+paths, and all 60 Apollo block edits in each mode match full rebuilds and
+refuse with reason 2; none splice or refuse with reason 7.
+
+The width-refresh mutation initially failed to compile because its inserted
+body kept its previous indentation after moving under the reader branch.
+Both refresh mutations now use their new source indentation. This compiler
+failure is not counted as detection. The permanent mutation workflow allows
+selecting Q139 rows for a focused retry, reusing a hosted baseline only after
+a source diff establishes that the renderer and compiler pin are identical;
+this avoids rebuilding unchanged drivers or rerunning already-green rows.

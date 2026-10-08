@@ -7,6 +7,15 @@ on:
     branches: [main, research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix, research/m2-q139]
 
   workflow_dispatch:
+    inputs:
+      q139_mutations:
+        description: Comma-separated Q139 rows to retry; empty runs all M2 and Q139 rows
+        required: false
+        default: ''
+      baseline_run:
+        description: Reuse a q139-baseline artifact only when renderer source is identical
+        required: false
+        default: ''
 
 jobs:
   check-machinery:
@@ -289,7 +298,7 @@ jobs:
           PYEOF
   falsify:
     needs: q139-baseline
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]')
+    if: inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -678,13 +687,40 @@ jobs:
           submodules: true
       - name: Mutation inventory and detector controls
         id: inventory
+        env:
+          SELECTED_MUTATIONS: ${{ inputs.q139_mutations }}
         run: |
           set -euo pipefail
           s=research/investigations/incremental-layout/scripts/percentage-falsify.py
           python3 "$s" self-test
-          names=$(python3 "$s" list | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')
-          echo "mutations=$names" >> "$GITHUB_OUTPUT"
+          python3 - <<'PYEOF'
+          import json, os, subprocess
+          names = subprocess.check_output(['python3', 'research/investigations/incremental-layout/scripts/percentage-falsify.py', 'list'], text=True).split()
+          selected = os.environ['SELECTED_MUTATIONS']
+          if selected:
+              wanted = selected.split(',')
+              if not wanted or len(set(wanted)) != len(wanted) or set(wanted) - set(names):
+                  raise SystemExit('unknown or repeated Q139 mutation')
+              names = wanted
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('mutations=' + json.dumps(names) + '\n')
+          PYEOF
+      - uses: actions/download-artifact@v4
+        if: inputs.baseline_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.baseline_run }}
+          name: q139-baseline
+          path: build
+      - name: Require the same renderer for a reused baseline
+        if: inputs.baseline_run != ''
+        run: |
+          set -euo pipefail
+          baseline=$(head -1 build/baseline-revision.txt)
+          git fetch origin "$baseline"
+          git diff --exit-code "$baseline" -- renderer whitefoot.pin
       - name: Unmutated driver
+        if: inputs.baseline_run == ''
         run: |
           set -euo pipefail
           sudo apt-get update
