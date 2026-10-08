@@ -10,12 +10,21 @@ from pathlib import Path
 
 
 def replace_body(source, name, body):
+    """Replace one function's body through its closing brace at column 0.
+
+    The language requires a function's declared effects to be exactly those
+    its body uses, so a body that no longer reads or writes anything is
+    declared pure; a body that still calls the resolver keeps its row.
+    """
     start = source.index('fn ' + name + '(')
     brace = source.index(' {\n', start)
-    next_function = source.find('\nfn ', brace)
-    end = len(source) if next_function < 0 else next_function
-    suffix = '\n' if next_function < 0 else '\n'
-    return source[:brace + 3] + body.rstrip() + '\n}' + suffix + source[end:]
+    end = source.index('\n}\n', brace) + 2
+    signature = source[start:brace]
+    if 'styles' not in body and 'context' not in body:
+        arrow = signature.index(') -> ')
+        result = signature[arrow + 5:].split(' ')
+        signature = signature[:arrow + 5] + ' '.join(result[:2]) + ' pure'
+    return source[:start] + signature + ' {\n' + body.rstrip() + '\n}' + source[end:]
 
 
 path = Path('renderer/layout/height_basis.wf')
