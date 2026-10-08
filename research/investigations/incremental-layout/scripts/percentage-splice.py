@@ -29,6 +29,7 @@ CASES = {
     'inactive-maximum-margin': ('section{height:200px}.maximum{max-height:1000px}.maximum p{height:20px;margin:0 0 30px}', '<section><div>' + BASE + '</div><div class="maximum"><p>Margin.</p></div><aside>Outside.</aside></section>', 0),
     'sibling-width-percent': ('section{height:200px;width:300px}.sibling{height:50%;padding:3% 2%;margin:4% 1%;box-sizing:border-box}', '<section><div>' + BASE + '</div><aside class="sibling">Width based.</aside></section>', 0),
     'private-reader': ('section{height:200px}p{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
+    'private-chain': ('section{height:200px}p{height:50%}p::before{display:block;height:50%;content:"New child."}p.old{height:40px}p.old::before{content:none}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section><aside>Outside.</aside>', 0),
     'auto-owner': ('section{height:50%}', '<div><section>' + BASE + '</section></div>', 7),
     'auto-earlier-reader': ('.reader{height:50%}', '<div><aside class="reader">Earlier.</aside><section>' + BASE + '</section></div>', 7),
     'auto-later-reader': ('.reader{height:50%}', '<div><section>' + BASE + '</section><aside class="reader">Later.</aside></div>', 7),
@@ -39,7 +40,7 @@ CASES = {
     'auto-intermediate': ('.outer{height:200px}section{height:50%}', '<div class="outer"><div><section>' + BASE + '</section></div></div>', 7),
     'cross-minimum': ('.outer{height:200px}section{min-height:50%}', '<div class="outer"><section>' + BASE + '</section><aside>Outside.</aside></div>', 7),
     'cross-maximum': ('.outer{height:200px}section{max-height:50%}', '<div class="outer"><section>' + BASE + '</section><aside>Outside.</aside></div>', 7),
-    'new-indefinite-reader': ('p{height:50%}', '<section>' + BASE + '</section>', 7),
+    'new-indefinite-reader': ('p{height:50%}p.old{height:40px}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section>', 7),
 }
 
 
