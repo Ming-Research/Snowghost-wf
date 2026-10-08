@@ -145,11 +145,11 @@ def fixtures():
     # A float in the suffix keeps a natural floor that a later edit reads.
     def floors(tree):
         on, off = grow(tree, 'P00.')
-        later_on, later_off = grow(tree, 'P03.')
-        wrap_on, wrap_off = wrap(tree, 'P04.')
+        later_on, later_off = grow(tree, 'M00.')
+        wrap_on, wrap_off = wrap(tree, 'M01.')
         return on + later_on + wrap_on + off + wrap_off + later_off
     body = ('<section>' + paragraphs(3) + '<div style="float:left;width:60px;height:30px">F.</div>' +
-            paragraphs(3) + '<div style="clear:both">' + paragraphs(2, 'C') + '</div>' + paragraphs(3, 'T') + '</section>')
+            paragraphs(3, 'M') + '<div style="clear:both">' + paragraphs(2, 'C') + '</div>' + paragraphs(3, 'T') + '</section>')
     yield 'natural-floor', page(body), floors
 
     # Percentage heights read the latest basis assignment when a splice
@@ -162,7 +162,7 @@ def fixtures():
             later = tree.by_node[later]['parent']
         created = tree.arena
         return on + [f'B {section} {later} Spliced.', f'X {created}'] + off + [f'B {section} {later} Again.', f'X {created + 2}']
-    body = '<section style="height:600px">' + paragraphs(2) + ''.join('<div style="height:10%">H%02d.</div>' % i for i in range(4)) + '</section>'
+    body = '<section style="height:600px">' + paragraphs(2) + ''.join('<div style="height:10%%">H%02d.</div>' % i for i in range(4)) + '</section>'
     yield 'basis-splice', page(body), basis
 
     # A wide private relocation forces the full bridge before hybrid replay.
