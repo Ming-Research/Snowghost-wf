@@ -332,17 +332,17 @@ margin changes and must be falsified by removing its settlement. The
 percentage-height and grid refusals retain their existing scope. All builds
 and checks run in GitHub-hosted CI, with no local validation.
 
-The source-level candidate is `finish_reference_scope`: it publishes a
-converged suffix only when `scope.delta != 0`. In the captured edit, paragraph
+The defect was in `finish_reference_scope`: it published a converged suffix
+only when `scope.delta != 0`. In the captured edit, paragraph
 1646 moves from y=2951.84375 to 2977.84375 and shrinks from 130 to 104 px;
 following paragraph 1653 therefore stays at y=3097.84375 in the full rebuild.
 Its enclosing section moves down 26 px. Skipping suffix encoding retains
 paragraph 1653's old owner-relative origin, producing y=3123.84375 instead.
 The repair publishes the suffix of every nonempty reference scope, including
 zero displacement, through the existing direct-owner traversal. It preserves
-unchanged descendant interiors and the reference arithmetic order. The
-reduced-case comparison is intended to reject this account if restoring the
-old guard does not reproduce the mismatch.
+unchanged descendant interiors and the reference arithmetic order. Restoring
+the old guard reproduces both reduced-case mismatches, while the repair
+restores full-build identity on the reduced and original inputs.
 
 The reason-6 completion certifies the retained direct ordinary sibling
 immediately following the seam, with unchanged horizontal geometry,
@@ -350,13 +350,13 @@ top/bottom frames, bottom margin, static positioning and height constraints.
 The style delta must be boxes-only, and the current display, float, overflow
 and column state must still construct a neutral plain flow block. The
 sibling-context edit script requires reason 6 when first-child membership
-changes the retained paragraph from a block to a flow context. The sibling's observed
-natural edge must coincide with its normal origin, and an unframed interior
-must expose no leading margin, preserving that equality after the change.
-Its changed top margin joins the private suffix transfer before seam and ancestor validation, so
-removal compares the combined structural and margin change with the old
-exposed strut. Each independent suffix calculation uses that replacement in
-its cached prefix, and publication writes the measured margin, transfer and
+changes the retained paragraph from a block to a flow context. The sibling's
+observed natural edge must coincide with its normal origin, and an unframed
+interior must expose no leading margin, preserving that equality after the change.
+Its changed top margin joins the private suffix transfer before seam and
+ancestor validation, so removal compares the combined structural and margin
+change with the old exposed strut. Each independent suffix calculation uses
+that replacement in its cached prefix, and publication writes the measured margin, transfer and
 direct origin together. No retained text needs preparation or style replay.
 A mutation omitting that sibling's direct move must expose stale geometry.
 Other changed retained styles keep reason 6; percentage-height and grid
@@ -380,3 +380,85 @@ on diagnostic-only revision `5642361`, reproduced exactly sentence edits
 31–32 as `inc DIFF` and the six original reason-6 structural edits in both
 modes. That run remains intentionally failed; its main job was the Clang
 prerequisite failure superseded by run 37732411321.
+
+### Repair evidence
+
+Hosted run [37736036220](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37736036220)
+at `b86c2e90883455e46b13ff8913daeb1331653afb` passed the exact captured Apollo
+sentence and block scripts, 60 edits each in seq and par. Sentence edits
+31–32 now report `inc same`. The six block edits 7–8, 29–30 and 43–44 now
+reach `splice 0 reason 7`: retained sibling style no longer refuses them,
+but the unchanged html/body percentage-height preflight still does. This
+matches the prior diagnosis's margin-control result; no percentage-height
+or grid guard was relaxed.
+
+The same run built a comparator restoring only `reference.wf` from
+`cf12c609`. Both edits of
+[`sentence-convergence-case.edits`](../incremental-layout/scripts/sentence-convergence-case.edits)
+on its [HTML fixture](../incremental-layout/scripts/sentence-convergence-case.html)
+report `inc DIFF` in the sequential pre-fix comparator and `inc same` in
+both repaired seq/par drivers.
+The case isolates an edited paragraph before a moved section whose inner
+paragraph crosses a stationary float; suffix positions converge while the
+section origin changes.
+
+Both insertion and removal in
+[`sibling-margin-case.edits`](../incremental-layout/scripts/sibling-margin-case.edits)
+on its [HTML fixture](../incremental-layout/scripts/sibling-margin-case.html)
+report `inc same`, `splice 1 reason 0` in seq and par. The separate
+[`sibling-context-case.edits`](../incremental-layout/scripts/sibling-context-case.edits)
+uses that HTML to test a first-child change that creates a formatting context;
+both required reason-6 paths and full-build identity pass in seq and par.
+
+### Final validation and review
+
+At `b86c2e90883455e46b13ff8913daeb1331653afb`, hosted
+[`make check`](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37736036284)
+passed, including the DOM self-test, 21 design-checker tests and design lint.
+The complete hosted
+[`[oracles]` run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37736036234)
+passed all 14 jobs. Every X5 kind (word, sentence, block, colour, fontsize and
+rootfont) matched full rebuilds on ecma262 and html5, with seq/par equality.
+The pages' 20 and 60 block edits respectively all reported `splice 1 reason 0`
+in both modes. Full-build page and layout-case dumps stayed identical to the
+base, and existing case/fixture checks plus the three new edit scripts passed.
+The oracle expectations and existing permitted refusals were not weakened.
+
+The complete hosted
+[`[falsify]` run](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37736036323)
+passed all 46 mutation jobs and its check-machinery job on the same revision.
+The new `zero-suffix` mutation restores the old reference guard; the new
+`sibling-frontier` mutation suppresses the retained sibling's direct move.
+Each produces `inc DIFF` on both edits of its corresponding new fixture,
+while the unmutated baselines pass. Existing mutations remain detected.
+
+One separate read-only review, using GPT-6 Astra, inspected the complete
+`cf12c609..e8594aa` diff, the local counter repair through `b86c2e9`, and the
+final evidence-only investigation changes. It checked groups A/D/C/T/R/M/V
+and applicable G1–G3/DC1–DC4 against the pipeline, layout and relevant style
+decisions, including actual CI logs and mutation evidence. All applicable
+items passed within scope; node-edit and approach-retirement obligations
+were inapplicable because this task changes neither. The PR clauses were
+inapplicable under the owner's explicit no-PR instruction. The CI lint
+reports seven nodes, depth one, 59 decisions and 24 rejections against its
+main-relative base; this task changes no tree nodes. No local validation or
+green-suite rerun was performed by the reviewer. General certificate
+soundness beyond inspected arguments and tested cases remains unverified;
+the review is not a formal proof.
+
+The review's two findings were fixed: R1, an uncounted retained-block opening
+in `splice_sibling_ready`, now charges the existing boundary counter once
+per opening; R2, ambiguous pre-fix mode wording, now states explicitly that
+the reduced pre-fix comparator was sequential and the repaired drivers ran
+both modes. No finding remains open. The construction-state guard and its
+negative fixture also keep a changed formatting context outside this margin
+certificate. The sentence defect and covered sibling-frontier gap are fixed;
+percentage-height and grid locality remain outside this repair as directed,
+and other retained-style frontiers remain in the existing TODO.
+
+The latest M2 head was fetched and merged before final validation; it remained
+`cf12c609`, already included. Only `research/m2-apollo11-fix` was pushed and no
+PR was opened. All builds and checks ran on GitHub-hosted runners. No
+Whitefoot gap was encountered, and the compiler pin and submodules were
+unchanged. The temporary diagnosis workflow remains for reproducibility on
+this work branch and is removed before integration, as its header requires.
