@@ -1,0 +1,104 @@
+# Temporary Q138 source/evidence diagnostic; remove after its captured evidence.
+# Prior criterion: a large flow with unchanged completed frame/space and no marked
+# interior supports investigating own-constraint admission. Changed effective
+# inputs or a marked interior reject that explanation for that context. Stable
+# endpoints do not exclude transient flex widths. Instrumented time is never
+# performance evidence; one 12px/undo sample is bounded before any expansion.
+# Uses the checked-in production compiler pin; the historical timing cohort's
+# wf-0b7f5c5b9854 pin is separate and is not used for this diagnostic.
+name: root-frame-probe
+
+on:
+  push:
+    branches: [research/m2-frag-a]
+
+jobs:
+  probe:
+    if: contains(github.event.head_commit.message, '[root-probe]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Record source and install compiler prerequisites and fonts
+        run: |
+          set -euo pipefail
+          mkdir -p build/root-probe/source
+          git rev-parse HEAD > build/root-probe/source/revision.txt
+          git submodule status > build/root-probe/source/submodules.txt
+          cp whitefoot.pin build/root-probe/source/original-whitefoot.pin
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          curl -fsSL --retry 3 -o /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash /tmp/llvm.sh 22 > build/root-probe/llvm-install.log
+          sudo ln -sf /usr/bin/clang-22 /usr/bin/clang
+          sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld
+          uname -a > build/root-probe/machine.txt
+          lscpu >> build/root-probe/machine.txt
+          cat /etc/os-release >> build/root-probe/machine.txt
+          clang --version >> build/root-probe/machine.txt
+          cp whitefoot.pin build/root-probe/source/whitefoot.pin
+      - name: Inject diagnostic only in hosted checkout and build sequential oracle
+        run: |
+          set -euo pipefail
+          python3 research/investigations/m2-edit-cost/root-probe-inject.py
+          git add -N renderer/layout/root_probe.wf
+          git diff -- whitefoot.pin renderer/layout/module.wfm renderer/layout/root_probe.wf renderer/oracle/layout/edit.wf > build/root-probe/source/injected.patch
+          cp renderer/layout/root_probe.wf build/root-probe/source/
+          cp renderer/layout/module.wfm build/root-probe/source/layout-module.wfm
+          cp renderer/oracle/layout/edit.wf build/root-probe/source/oracle-edit.wf
+          cp research/investigations/m2-edit-cost/root-probe-*.py build/root-probe/source/
+          sha256sum build/root-probe/source/* > build/root-probe/source-sha256.txt
+          make -s compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          sha256sum "$wfc" >> build/root-probe/source-sha256.txt
+          (cd renderer && "$wfc" --cache "$HOME/wf-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_seq")
+          sha256sum build/layout_oracle_seq >> build/root-probe/source-sha256.txt
+      - name: Prepare frozen page and first root-font pair
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh prepare ecma262
+          head -n 3 build/x5/scripts/ecma262-rootfont.edits > build/root-probe/rootfont.edits
+          sha256sum build/root-probe/rootfont.edits build/x5/scripts/ecma262-rootfont.edits build/research/concurrency/ecma262.html build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css renderer/style/ua.css > build/root-probe/input-sha256.txt
+          cp build/x5/ecma262.nodes build/root-probe/ecma262.nodes
+      - name: One bounded diagnostic pair with independent full comparator
+        run: |
+          set -euo pipefail
+          probe_status=0
+          if /usr/bin/time -p -o build/root-probe/sample-wall.txt timeout 60s env WF_WORKERS=4 build/layout_oracle_seq edit build/root-probe/rootfont.edits build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > build/root-probe/raw.txt 2> build/root-probe/stderr.txt; then
+            :
+          else
+            probe_status=$?
+          fi
+          printf '%s\n' "$probe_status" > build/root-probe/process-exit.txt
+          cat build/root-probe/sample-wall.txt
+          if [ "$probe_status" -ne 0 ]; then
+            cat build/root-probe/stderr.txt
+            exit "$probe_status"
+          fi
+          python3 research/investigations/m2-edit-cost/root-probe-check.py build/root-probe/raw.txt --ordinary build/root-probe/ordinary.txt --frames build/root-probe/frames.txt --summary build/root-probe/summary.json --omit-marked build/root-probe/missing-snapshot.txt > build/root-probe/probe-check.txt
+          cat build/root-probe/probe-check.txt
+          python3 research/investigations/incremental-layout/scripts/inctime.py --check build/root-probe/rootfont.edits build/root-probe/ordinary.txt > build/root-probe/oracle-check.txt
+          cat build/root-probe/oracle-check.txt
+      - name: Demonstrate diagnostic completeness failure
+        run: |
+          set -euo pipefail
+          if python3 research/investigations/m2-edit-cost/root-probe-check.py build/root-probe/missing-snapshot.txt > build/root-probe/omission-falsifier.txt 2>&1; then
+            echo 'missing snapshot was incorrectly accepted'
+            exit 1
+          else
+            rejected=$?
+          fi
+          printf '%s\n' "$rejected" > build/root-probe/omission-exit.txt
+          grep -F 'snapshot set differs' build/root-probe/omission-falsifier.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: root-frame-probe-evidence
+          path: build/root-probe/

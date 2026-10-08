@@ -1269,3 +1269,20 @@ Direct fusion of movement and publication is not a local repair: movement preced
 At the integrated source, a local style change sets `restyled`; bounded update refuses it, update_flow materializes the entire event sequence, the steady reference path excludes it, and nonpartial completion publishes all transfers and owned geometry. Existing Context space/width/output fields do not retain the completed FlowFrame's content origin, definite content height and column inputs. The apparent previous-frame calculation reads current styles with previous space/width, so it cannot establish old-frame equality after a local restyle. Static source-domain split indexes now survive this replay, but dynamic split joins/roles, boundary leaves/reductions/publication and origin encoding still cover the full context.
 
 A source-level counterexample to general old-frame reconstruction is an empty fixed 200-by-100 border box with horizontal padding sum 20: old padding 0/20 versus 20/0 retains the same outer outputs and empty transfers but different old content-left inputs; either can become 10/10. Empty content itself can trivially skip, so this example does not prove that every useful restriction requires a cache. It shows why equal outer size and current styles alone cannot justify the general bypass. Q140 remains a new admission/state choice; a hosted before/after frame probe can determine whether the measured large context actually has unchanged effective inputs before selecting that change.
+
+### Hosted effective-input diagnostic: criterion before capture
+
+The temporary `root-frame-probe` workflow injects a read-only all-context API only
+in its hosted checkout, before building a sequential oracle with the production
+pin. For the correctly styled ECMA262 first 12px/undo pair, it records old styles
+before restyle, current styles after marks at retained dimensions, and completed
+frames after update. A large flow with unchanged completed frame/space and no
+marked interior supports investigating own-constraint admission; changed effective
+inputs or marked interiors reject that explanation for that context. Equal
+endpoints do not exclude transient flex widths, so they alone cannot justify a
+production bypass. The API changes no retained state or admission and adds no
+module dependency. Instrumented elapsed time only bounds this two-edit sample;
+it is not performance evidence. The ordinary independent full comparator remains
+required, and a deliberately omitted snapshot must fail the diagnostic checker.
+The workflow and its two scripts are removed after the captured source, inputs
+and results are retained in the artifact and summarized here.
