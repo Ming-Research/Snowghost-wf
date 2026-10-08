@@ -72,9 +72,9 @@ example apart from the renderer code that exposed it
   ledger, and retain seq/par dump equality. The temporary flat-walk writes
   remain uncertified until then. Q138's bounded owner-motion traversal exposes
   this same gap for independent direct suffix targets: it avoids descendant
-  scans but still orders sibling writes. Q139 is open; finish correctness/cost
-  evidence without claiming maximal parallelism, and hold adoption for the
-  owner's disposition. No sorting or inverse-array proof workaround is adopted.
+  scans but still orders sibling writes. The owner selected waiting for the
+  Whitefoot field-step range-proof fix; keep these serial writes explicitly
+  pending and hold adoption even when performance acceptance passes. No sorting or inverse-array proof workaround is adopted.
 
 - **A write through indices the program knows are distinct needs its
   facts derived again in each pass.** Minimal example: a tree in an arena,
@@ -344,7 +344,7 @@ example apart from the renderer code that exposed it
   topology replacement. Source-preserving geometry replay retains structural
   indexes. The Apollo11 layout-line repair is integrated with both behaviors
   preserved. Adoption still requires all correctness gates, the unchanged
-  two-round same-host gate and disposition of independent writes under Q139.
+  two-round same-host gate and the Whitefoot field-step range-proof fix for independent writes.
   The [integrated comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#integrated-six-cohort-acceptance-at-6bf0d0e)
   fails ECMA262 root-font, HTML5 font-size and seven literal block cells.
   No adoption merge is made. The zero-displacement omission initially escaped
@@ -365,7 +365,8 @@ example apart from the renderer code that exposed it
   every payload visit; control variation and reversed sequential results do
   not establish a general latency gain. Q141 proposes retained sequence-range
   displacement, including old/current readers, reductions, rotations, splice
-  lifetimes and saturation. It is not adopted. Reopen on the owner's ruling;
+  lifetimes and saturation. The owner selected this direction after dirty-frontier
+  processing, with the complete contract before implementation;
   validate all X5 identity/splice and omission gates plus a complete same-host
   comparison. Q139 separately covers the natural independent-write proof that
   the pinned Whitefoot stored-field grammar cannot express.
@@ -386,7 +387,9 @@ example apart from the renderer code that exposed it
   Intermediate flex spaces remain unverified. The mandatory floor includes
   style invalidation and affected text/layout work; main's observed full path
   is the comparison, not a proved numeric lower bound. No new cache is adopted;
-  reopen on the owner's Q140 ruling and require full gates and matched timing.
+  the owner selected the input/invalidation/consumer contract first, then bounded
+  dirty-paragraph processing before range displacement, with premise falsifiers,
+  full gates and matched before/after timing against twins.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and

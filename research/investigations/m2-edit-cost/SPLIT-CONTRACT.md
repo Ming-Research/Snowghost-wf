@@ -1,7 +1,7 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
 Current outcome: [Q138 acceptance](#integrated-six-cohort-acceptance-at-6bf0d0e) fails; option A
-is not merged into research/m2-layout.
+is not merged into research/m2-layout. The owner selected retained effective inputs with a dirty frontier first, then range displacement, each contract before implementation. Adoption also waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -22,9 +22,7 @@ independently built same-source base twin, using identical scripts, compiler,
 host and settings. The owner's Q138 continuation requires word, sentence, colour, font-size and
 root-font medians at most twice main in each page/mode/round, and block no
 worse than cf12c609. This supersedes the earlier word threshold recorded in
-the historical completion comparison below. Only a
-passing result authorizes a merge commit into research/m2-layout followed by
-layout-check and check. Failure is reported to the owner without merging.
+the historical completion comparison below. A passing result is necessary but no longer sufficient for adoption: the owner requires the Whitefoot field-step range-proof fix first. Only research/m2-frag-a may be pushed in this continuation; no adoption merge is authorized.
 
 ## Q138 continuation and root-font bisect
 
@@ -759,10 +757,9 @@ presented as bounded repair for all edit kinds.
 - Q138 A (previous report label Q136): approved continuation. Complete the
   compatibility-suffix and bounded topology work, and investigate/remove the
   earlier M2 root-font regression; acceptance remains required before merging.
-- Q139: open; independent owner-motion publication reopens the stored-field
-  proof requirement. No sorting or inverse-array workaround is adopted.
-- Q140: open; retained effective flow-input admission for unchanged interiors.
-- Q141: open; retained sequence-range displacement for direct suffix siblings.
+- Independent owner-motion writes (Q139 A): owner-selected wait for the Whitefoot field-step range-proof fix. Keep the serial prototype explicitly waiting; no adoption even if performance passes, and no sorting or inverse-array workaround.
+- Effective flow inputs and dirty frontier (Q140 A): owner-selected contract first, then bounded marked-paragraph processing, including fixtures and falsifiers for every premise. Implement this before range displacement.
+- Sequence-range displacement (Q141 A): owner-selected exact contract first, then implementation and falsifiers. The contract covers old/current readers, reductions, rotations, splice lifetimes and saturation order.
 
 ---
 
@@ -791,7 +788,7 @@ presented as bounded repair for all edit kinds.
 
 ### Q139: independent owner-motion writes and the stored-field proof gap
 
-Q139 is open. The bounded suffix traversal skips unchanged descendant interiors,
+The owner selected A: wait for the Whitefoot field-step range-proof fix before adoption, retaining the explicitly pending serial writes. The bounded suffix traversal skips unchanged descendant interiors,
 but its left/node/right writes share the context and touched-slot lists. Direct
 sibling moves have no CSS dependency on one another. A read-only preparation
 phase, independent target writes, then reduction is the natural dependency order;
@@ -923,7 +920,7 @@ this diagnostic job, which is removed after its evidence is captured.
 
 ### Q140: unchanged effective flow inputs
 
-Q140 is open. The hosted effective-input diagnostic below finds unchanged
+The owner selected A: settle the complete input/invalidation/consumer contract, then implement bounded dirty-paragraph processing before range displacement. The hosted effective-input diagnostic below finds unchanged
 completed frame and space in ECMA262's 112,817-event flow, but 41 paragraphs
 are marked on both the first 12px edit and its undo. This rejects skipping an
 entirely untouched interior: the dirty paragraphs must still be processed.
@@ -949,7 +946,7 @@ processing of the marked frontier, not merely an equality test or a cache.
 
 ### Q141: retained suffix-range displacement
 
-Q141 is open. After one edited paragraph followed by N direct block siblings,
+The owner selected A: settle the exact range-displacement contract, then implement it after dirty-frontier processing. After one edited paragraph followed by N direct block siblings,
 current owner-relative geometry requires N sibling origins and cached transfer
 updates even though each block's interior is unchanged. Native independent
 scatter (Q139) would expose parallelism but would not remove these visits.
@@ -968,7 +965,7 @@ of these payload updates, without establishing a general latency gain.
 - Confidence 4/5 that removing the linear visits needs a changed representation;
   their complete timing contribution and achievable acceptance remain empirical.
 
-Q139 remains open; Q140 or Q141 does not silently supersede it.
+The independent-write ruling remains binding: both implementation directions proceed, but neither permits adoption before the Whitefoot proof fix.
 
 ### Q138 four-cohort acceptance at 0dc2e5e
 
@@ -1404,3 +1401,22 @@ R3/G2/DC2 retain the stored-field inverse-proof finding. The pipeline decision r
 Review findings led to repairs of lineless-origin behavior/documentation, an overstated universal root-style floor, fragment mapping lifetime/sentinel documentation, the first constant-publication fixture, and artificial chains in pure owner comparison and source-union helpers. The missing coverage of zero-displacement cached publication is fixed by the independent nested-owner case, with both unmutated success and compiled omission detection verified in hosted CI. No additional defect was found in the cursor reuse, root-input diagnostic or subsequent prose. The final local documentation repair (RV7, D3/V2) names the actual frozen dump comparator ddfd63d rather than conflating it with timing main 8fbc160; the passing dump evidence is unchanged. Empty touched-registry reconstruction is explicitly deferred in the TODO until native allocation evidence makes it material. Approval remains with the owner.
 
 The incoming layout-line guidance commit 95ea4a1 was merged without source conflicts as a816ae0; its layout-check 37760214214 and check 37760214253 pass. The later review/guidance commit 13ac2b1 also passes layout-check 37763120951 and check 37763120875. The runtime integration remains the Apollo merge 48cfbeb, followed by cursor reuse 6bf0d0e and the independent publication oracle 3edbfd9. No adoption merge into research/m2-layout is made. The effective-input/marked-frontier and range-displacement proposals remain unimplemented owner decisions, as does the independent-write proof disposition. Production whitefoot.pin and both submodules are unchanged; the temporary diagnostic workflow and scripts have been removed. The design-log entry still waits for the approval of [PR #49, the layout-line design approval](https://github.com/Ming-Research/Snowghost-wf/pull/49).
+
+
+### Retained effective inputs and dirty-paragraph transaction
+
+The owner selected this contract-first implementation under Q140 A. This section defines the implementation contract, not a timing result. Its first admission is the ordinary, stationary dirty frontier; a changed placement or an input outside that admission runs the existing reference algorithm. The later range work does not change this contract.
+
+**Completed inputs.** A flow context retains a valid bit, the actual `Space`, its used border-box width, and `FlowFrame` from its last completed publication. The frame is the content left/top, flow width, definite content height, and column state/shape. Compare actual inputs at every `update_flow` invocation, after the parent supplies its current space, including flex final-size and stretch calls. Never reconstruct old inputs from new styles. Preparation, a temporary fresh space, or an outer-output snapshot does not overwrite this certificate. Full flow layout and successful incremental publication replace it; reset, interior reconstruction and structural splice invalidate it. Copying outer outputs into rebuilt content does not copy the certificate. A refused attempt leaves the old certificate valid until reference publication completes.
+
+**Admission and invalidation.** The initial frontier path requires completed owner-relative geometry, no pending boundary repair, equal actual space and used width, equal content left/top, flow width and definite height, and old/new non-column flow. Inactive column-count/width/gap values do not invalidate ordinary flow. It rejects intrinsic demand/held intrinsic inputs, shrink-to-fit space, marked child contexts, changed interior blocks, and positioned descendants. Own-style invalidation may pass only after these effective inputs are checked. Both exact-route and legacy dense style marking must classify changed blocks; zero block marks cannot be inferred from the legacy `restyled` flag. Structural reconstruction never qualifies on its copied outer dimensions. The paragraph admission additionally requires unchanged source identity, retained positive-height lines, no float dependency and no atomic children. The width and left edge supplied by the old completed prepass therefore remain effective. Lineless paragraphs and line-presence transitions retain their existing topology/empty-source repair path.
+
+**Frontier ownership.** Each context owns a sparse binary set over its stable paragraph slots in `[0, item_ceiling)`. An empty branch means no pending paragraph in that interval; a leaf denotes exactly one dirty paragraph; internal nodes partition their interval in halves. This is a semantic dirty-work index, used by preparation, independent breaking and retirement, not an inverse array introduced only for a write proof. Marking inserts once on the clean-to-dirty transition. Exact text/style routes insert their known slot; legacy dense marking and newly rebuilt content construct the equivalent set while already examining their paragraphs. Structural replacement retires the old set with its paragraph domain. A splice that preserves unrelated slots preserves their marks and invalidates the completed input certificate. No fixed dirty-count cap or whole-array rebuild is introduced when a new slot appears.
+
+**Independent work and dependency order.** Frontier visitors prune empty intervals and pass disjoint paragraph slices to the two subtrees. Preparation and admitted line breaking read shared document/style/font/unchanged-child data and write only their own paragraphs. Their result reductions combine after both branches. This gives work proportional to marked slots and their directory paths, with no scan between sparse marks. Preparation retains marks until layout consumes them. Before a speculative break, capture the old positive line extent and last baseline; the break always regenerates glyph fragments, even when placement is unchanged. The new paragraph transfer is produced independently. Only when every candidate preserves its solid advance and last baseline may the transaction publish stationary transfers. Publication updates the retained leaf transfer and ancestor reductions, including first-baseline and intrinsic contributions; equal outer geometry alone never skips it. Existing owner writes remain serial pending Q139's Whitefoot proof fix; this is not a claim that distinct owner writes have a true algorithmic dependency.
+
+**Failure and completion.** An admission refusal changes no geometry. If independent breaks reveal changed placement, all marks remain and the caller enters full reference replay directly; it must not run another old-output probe against the newly broken lines. That full replay resets spaces, breaks dirty paragraphs and republishes the complete geometry, so speculative results cannot masquerade as old geometry. The failed attempt is counted. A successful stationary batch recomputes the context's used height from retained content height under current styles, derives baseline visibility under current overflow, refreshes its own rectangle, and lets its caller resolve margins. It does not copy the previous border-box result. It clears only the frontier it consumed and publishes the new completed-input certificate after all transfers and fragments are valid. The no-positioned-descendant admission is essential: equal interior frame does not imply an unchanged positioned containing box after border/padding redistribution.
+
+**Consumers and floor.** Dirty preparation and retirement consume the frontier; the line breaker consumes effective paragraph width/left, new shaped text/strut and unchanged child inputs; transfer publication consumes the new line output and retained owner topology; outer settlement consumes current own sizing/overflow styles and retained content result. Parent flex/grid/flow algorithms still consume the resulting dimensions, margins and baseline, and may call again with different inputs. Root-font still performs its real style invalidation and every marked paragraph's preparation/break/publication. The avoided work is unchanged-context event materialization, child snapshots, prepass, stacking and transfer republishing. Main's measured style-plus-edit path remains the practical full-cost comparator; there is no asserted universal numeric floor.
+
+**Required discriminators.** Hosted fixtures/falsifiers must cover: omission of a sparse dirty leaf; reuse with changed content width/offset or transient parent space; changed interior block styles through the legacy marking API; current minimum-height/overflow settlement despite equal interior inputs; dirty glyph/first-baseline publication despite stationary last-baseline/height; changed placement falling through to reference replay; lineless transitions; and source replacement retiring old input/frontier identities. Existing incremental/full, sequential/parallel, split/topology, saturation and structural oracles remain wired. Counter evidence must distinguish visited dirty paths from whole-context replay. The per-edit experiment interleaves the source before this change, its twin, the changed source, main and cf12c609 with a twin on the same hosted runner; failure to separate from the before twin is not reported as a speedup.
