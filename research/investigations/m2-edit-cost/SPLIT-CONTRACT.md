@@ -1286,3 +1286,5 @@ it is not performance evidence. The ordinary independent full comparator remains
 required, and a deliberately omitted snapshot must fail the diagnostic checker.
 The workflow and its two scripts are removed after the captured source, inputs
 and results are retained in the artifact and summarized here.
+
+The first diagnostic run, [37753206438](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37753206438), failed before execution because the workflow paired production f949 with the timing cohort's LLVM 22; Clang rejected the `llvm.coro.end` return type. The repeat uses the existing production oracle's Ubuntu toolchain with the unchanged production pin. This is a workflow compatibility correction, not a renderer or language workaround; the failed run supplies no frame or timing evidence.
