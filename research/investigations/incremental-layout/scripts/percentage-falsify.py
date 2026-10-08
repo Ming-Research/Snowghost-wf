@@ -3,7 +3,8 @@
 Wired to the temporary falsify-m2 workflow. Source edits require one exact
 match in the named function. Compiler failures and unrelated driver errors
 are never detection. Certificate rows isolate one premise when integration
-has another conservative guard; policy rows require loss of reason 7 itself.
+has another conservative guard; policy rows require loss of reason 7 itself
+or a geometry difference, never an unrelated earlier refusal.
 """
 import argparse
 import importlib.util

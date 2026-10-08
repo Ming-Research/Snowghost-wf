@@ -2573,7 +2573,7 @@ Q139 A and Q145 C authorize this argument first: retain each percentage
 height's basis, prove that no basis belongs to the edit's growing ancestor
 chain, and otherwise refuse and count it. This section specifies that
 certificate; it does not implement it or claim fixture, mutation or timing
-results. The existing `flow_definite_free` refusal remains in the source.
+results. When it was written, the `flow_definite_free` refusal remained in the source; the implementation replaces it with the record checks below.
 The [layout decision](../../../design/pipeline/layout.md) owns the splice;
 this argument extends its percentage-input premise without relaxing the
 other Q128/Q129 certificates. Implementation and its corresponding live-tree
@@ -3109,9 +3109,9 @@ remains an additional obligation; this small sample cannot establish it.
 
 
 The draft provenance implementation separates the parent's incoming edge from
-the child's last certified input. Geometry reuse compares both, so a changed
-identity or definiteness state triggers fresh layout even when dimensions
-are equal. Ordinary block records are resolved top down; live-source checks
+the child's last certified input. Geometry reuse first compared both
+exactly; the [record reuse rule](#paired-edit-cost-and-record-reuse-2026-10-08)
+below narrows that comparison. Ordinary block records are resolved top down; live-source checks
 include the stable context, owner, consumer style and nonretired entry slot.
 Their cached summaries are published bottom up through the existing owner
 index. A splice checks its enclosing sources and preserves unrelated
@@ -3400,18 +3400,31 @@ admission query:
 - Each pre-pass and reference publication resolved every block's record
   again although nothing it depends on had changed.
 
-A retained context now keeps its geometry under an equivalent incoming
-edge and refreshes a stale record in place. Fresh layout follows only
-when the edge's source changes, or when the record or its basis gains or
-loses content independence (state 2), the only state descendants test;
-auto and layout-supplied states are equally unproved for every
-descendant. A record whose edge, consumer, numeric inputs and style keys
-are unchanged is reused instead of resolved, and a child's incoming edge
-is written from the containing record without resolving the child.
-These change no admission rule; the matrix, restyle probes and Chromium
-rectangles pass unchanged at `afc8028` (run 37810231653).
+A retained context now keeps its geometry and refreshes a stale record
+in place when its incoming edge keeps the same source context, owner,
+element and kind and the same content independence (state 2). Fresh
+layout follows when any of those changes, or when the refresh changes the
+record's validity, its reads or its own content independence. Only
+state 2 proves a descendant's basis: a record left in another unproved
+state, a changed content height or a descendant edge still keyed to the
+previous record can only fail a currentness check and refuse admission,
+never prove a reader. That conservative staleness inside a kept context
+is not visible to the oracle, which compares dumps and the root counts;
+whether it costs admissions after a text edit is unmeasured. A record
+whose edge, consumer, numeric inputs and style keys are unchanged is
+reused instead of resolved, which relies on a restyle appending to the
+kept group tables, and a child's incoming edge is written from the
+containing record without resolving the child. These change no admission
+rule; the matrix, restyle probes and Chromium rectangles pass unchanged
+at `afc8028` (run 37810231653).
 
-The comparison at `afc8028` (run 37810231789, same protocol) leaves
-ratios between 1.00 and 1.12 against M2, with twin ranges near 1.0; the
-larger sample that decides them is recorded with the full-build cost
-below.
+A larger sample at `afc8028` (run 37814247123: two forward/inverse pairs
+per kind, four interleaved rounds, the drivers of run 37810231789) has
+three median paired ratios against M2 whose range excludes both 1.0 and
+the twin's median: ecma262 root font 1.082 sequential and 1.045 with four
+workers, and html5 root font 1.014 sequential. Every other median lies
+between 0.95 and 1.11 with a range that includes the twin's median, so
+this sample cannot separate it from noise; apollo11 root font sequential,
+1.019, excludes 1.0 but not the twin's 1.003. The root font edits take
+the full relayout path, so their remaining cost is the record work that
+the full-build comparison measures.

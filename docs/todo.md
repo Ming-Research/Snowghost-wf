@@ -201,6 +201,16 @@ example apart from the renderer code that exposed it
   with relative-position correctness work; this lies outside Q139's height
   provenance admission and remains unverified.
 
+- **Remove `flow_definite_free` or give it a reader.** Q139 replaced the
+  splice's only read of it with height records, but the flow pre-pass
+  still computes it, splice publication combines it and the Context doc
+  describes it. Impact: one dead field and pre-pass work per flow
+  context. Change: delete the field, its writes in `prepare_spaces`,
+  `publish_splice_payloads` and the empty splice context, and its Context
+  doc clause; validate with `make check` and the Q139 matrix. Reopen after
+  research/m2-frag-a merges, since it changes the same splice files, and
+  after the owner rules on the Q139 inventory scope, whose direct-reader
+  alternative counts direct readers by other means.
 
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences

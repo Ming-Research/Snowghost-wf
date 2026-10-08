@@ -36,6 +36,7 @@ source = replace_body(source, 'resolve_height_proof', '''  let content = definit
 source = replace_body(source, 'containing_height_proof', '  return absent_height_proof();')
 source = replace_body(source, 'fresh_containing_proof', '  return absent_height_proof();')
 source = replace_body(source, 'keep_height_proof', '  return True();')
+source = replace_body(source, 'renewed_height_proof', '  let made = resolve_height_proof(styles: styles, style: style, input: input, width: width, height: height, forced: forced);\n  return made;')
 for name in ('height_proof_summary', 'context_height_summary', 'retained_height_summary', 'child_height_summaries'):
     source = replace_body(source, name, '  return empty_height_summary();')
 for name in ('context_height_current', 'height_proof_current'):
