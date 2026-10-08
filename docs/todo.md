@@ -354,8 +354,8 @@ example apart from the renderer code that exposed it
 - **HTML font edits still translate dense compatibility suffixes.** Q134's
   two split-fragment prototypes leave this broader work in place. In the
   [hosted repeated-pair profile](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#remaining-cost-profile-result),
-  A's pairs 23/24 and 43/44 retained 7/10 entries but visited tens of thousands
-  of entries, while dense suffix translation was the largest layout self-time
+  A's pairs 23/24 and 43/44 retained 7/10 entries but reported 84,675/54,285
+  logical entries, while dense suffix translation was the largest layout self-time
   symbol. Impact: neither fused prototype met HTML font-size acceptance in
   the ordinary two-round comparison. The profile covers two pairs and includes
   startup, so the remaining share is not fully isolated. Change: establish
