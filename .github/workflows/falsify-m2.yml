@@ -10,7 +10,7 @@ name: falsify-m2
 
 on:
   push:
-    branches: [research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix]
+    branches: [research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix, research/m2-q139]
 
 jobs:
   check-machinery:
@@ -667,3 +667,73 @@ jobs:
             build/*-case.edits*
             build/*-case.*.raw
             build/*-case.*.err
+  q139-baseline:
+    if: contains(github.event.head_commit.message, '[q139-falsify]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      mutations: ${{ steps.inventory.outputs.mutations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Mutation inventory and detector controls
+        id: inventory
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts/percentage-falsify.py
+          python3 "$s" self-test
+          names=$(python3 "$s" list | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))')
+          echo "mutations=$names" >> "$GITHUB_OUTPUT"
+      - name: Unmutated driver
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: q139-baseline
+          path: build/layout_base
+  q139-falsify:
+    needs: q139-baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: ${{ fromJSON(needs.q139-baseline.outputs.mutations) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Toolchain and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+          chmod +x build/layout_base
+      - name: Apply exactly one mutation and compile it
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/percentage-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+      - name: Require the focused observation and negative control
+        run: |
+          python3 research/investigations/incremental-layout/scripts/percentage-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutated build/q139-mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-${{ matrix.mutation }}
+          path: |
+            build/q139-mutation/
+            build/mutation.diff

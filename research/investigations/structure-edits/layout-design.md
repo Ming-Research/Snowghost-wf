@@ -3173,3 +3173,16 @@ Every restyle prefix now requests dumps to preserve both sides of a mismatch.
 The edit oracle also supports a full viewport refresh between edits; root
 and nested lifetime probes resize, rebuild normally, then require another
 local insert/remove pair at the new viewport and after restoration.
+
+The mutation harness is being extended on the Q139 branch itself. Initial
+rows target reader inventory, immediate/auto-intermediate basis resolution,
+indefinite and layout-sized inputs, growing-set classification, individual
+freshness fields, fixed/clamped transfer, private publication, float common
+motion and constrained struts. Pure classification and input-equality helpers
+are shared with the implementation so isolated assertions exercise the real
+predicates; their extraction changes no admission rule. No mutation is counted
+as detected before a hosted run compiles and executes its driver. Remaining
+rows include retired dependencies, arithmetic reassociation, width-frame
+resolution, output-equality and path-report mutations, plus the original
+conjunctive-certificate matrix. The complete fixture runner is prepared but
+will not replace the required first successful timed root splice pair.
