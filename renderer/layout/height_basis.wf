@@ -397,3 +397,69 @@ fn fixed_height_transfer(proof: HeightProof, block: BlockSnapshot, measured: Blo
   let same = height == measured.height;
   return same;
 }
+
+
+fn refresh_percentage_free_child(context: &Context, styles: &Styles, child: u32, height: i32) -> result: unit reads(styles), writes(context) {
+  let at = cvt::<u32, u64>(child);
+  if at < context^.children.inner.len {
+    let owner = context^.children.inner[at].block;
+    let basis = containing_height(context: context, styles: styles, owner: owner, context_height: height);
+    let input = containing_height_proof(context: context, styles: styles, owner: owner, height: basis);
+    set context^.children.inner[at].height_input = height_input_of(proof: input);
+    set context^.children.inner[at].space.basis_height = basis;
+    refresh_context_height_proof(context: &context^.children.inner[at], styles: styles);
+  }
+  return unit;
+}
+
+fn refresh_local_height_proofs(context: &Context, events: &[Flow], styles: &Styles, from: u64, until: u64, height: i32) -> result: unit reads(events), reads(styles), writes(context) {
+  doc "The admitted percentage-free restyle range already has current widths. Refresh source records before consumers in its true containing-block order, before the reference publisher reduces outputs in the opposite order. Direct child geometry is unchanged because the caller proved all height reads absent.";
+  let end = until +sat 1_u64;
+  for (entry in from..end) {
+    let item = reference_event(context: context, events: events, at: entry);
+    match item {
+      Open(block: b) => {
+        let at = cvt::<u32, u64>(b);
+        if at < context^.blocks.inner.len {
+          let parent = context^.blocks.inner[at].parent;
+          let basis = containing_height(context: context, styles: styles, owner: parent, context_height: height);
+          let input = containing_height_proof(context: context, styles: styles, owner: parent, height: basis);
+          let proof = resolve_height_proof(styles: styles, style: context^.blocks.inner[at].style, input: input, width: context^.blocks.inner[at].avail_width, height: basis, forced: unknown);
+          set context^.blocks.inner[at].height_proof = proof;
+          set context^.blocks.inner[at].output.basis_height = basis;
+        }
+      }
+      Child(context: c) => {
+        refresh_percentage_free_child(context: context, styles: styles, child: c, height: height);
+      }
+      Float(context: c) => {
+        refresh_percentage_free_child(context: context, styles: styles, child: c, height: height);
+      }
+      Text(paragraph: p) => {
+        let at = cvt::<u32, u64>(p);
+        if at < context^.paragraphs.inner.len {
+          let marks = context^.paragraphs.inner[at].marks.inner.len;
+          for (m in 0_u64..marks) {
+            let mark = context^.paragraphs.inner[at].marks.inner[m];
+            match mark {
+              Atomic(context: c, ..) => {
+                refresh_percentage_free_child(context: context, styles: styles, child: c, height: height);
+              }
+              Open(..) => {
+              }
+              Close(..) => {
+              }
+              Node(..) => {
+              }
+            }
+          }
+        }
+      }
+      Close(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return unit;
+}
