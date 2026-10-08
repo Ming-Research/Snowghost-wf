@@ -196,46 +196,46 @@ fn frontier_clear(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
   return unit;
 }
 
-fn frontier_paragraph_ready(paragraph: &Paragraph) -> ready: Bool reads(paragraph) {
+fn frontier_paragraph_ready(paragraph: &Paragraph) -> (ready: Bool, reason: u32) reads(paragraph) {
   doc "Admits one leaf independently of other leaves: positive solid lines, retained width and left edge, no float or atomic dependence.";
   if paragraph^.dirty {
   } else {
-    return False();
+    return False(), 1_u32;
   }
   if paragraph^.lines.inner.len == 0_u64 {
-    return False();
+    return False(), 2_u32;
   }
   if paragraph^.height <= 0_i32 {
-    return False();
+    return False(), 4_u32;
   }
   if paragraph^.beside {
-    return False();
+    return False(), 8_u32;
   }
   if paragraph^.atomics.inner.len != 0_u64 {
-    return False();
+    return False(), 16_u32;
   }
   if paragraph^.width != paragraph^.broken_width {
-    return False();
+    return False(), 32_u32;
   }
   if paragraph^.left != paragraph^.broken_left {
-    return False();
+    return False(), 64_u32;
   }
-  return True();
+  return True(), 0_u32;
 }
 
-fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion]) -> (stationary: Bool, broken: u64, visited: u64) reads(children), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(frontier), writes(paragraphs) {
+fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion]) -> (stationary: Bool, broken: u64, visited: u64, refusals: u64, reasons: u32) reads(children), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(frontier), writes(paragraphs) {
   doc "Each leaf independently checks its inputs, breaks when admitted and retains its fresh transfer without publication or mark retirement. A leaf refusal or changed placement leaves full replay all dirty inputs, including other leaves already broken. visited counts paragraph admission reads, excluding directory nodes.";
   let count = paragraphs^.len;
   match frontier^ {
     Vacant() => {
-      return True(), 0_u64, 0_u64;
+      return True(), 0_u64, 0_u64, 0_u64, 0_u32;
     }
     Mark(..) => {
       if 0_u64 < count {
-        let ready = frontier_paragraph_ready(paragraph: &paragraphs^[0_u64]);
+        let (ready, reason) = frontier_paragraph_ready(paragraph: &paragraphs^[0_u64]);
         if ready {
         } else {
-          return False(), 0_u64, 1_u64;
+          return False(), 0_u64, 1_u64, 1_u64, reason;
         }
         let old_height = paragraphs^[0_u64].height;
         let old_baseline = last_line_baseline(paragraph: &paragraphs^[0_u64]);
@@ -248,19 +248,38 @@ fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
         let same_baseline = old_baseline == new_baseline;
         let same_extent = band(same_height, same_baseline);
         let kept = band(solid, same_extent);
-        return kept, 1_u64, 1_u64;
+        let reasons = 0_u32;
+        if fresh.through {
+          set reasons = ior(reasons, 256_u32);
+        }
+        if same_height {
+        } else {
+          set reasons = ior(reasons, 512_u32);
+        }
+        if same_baseline {
+        } else {
+          set reasons = ior(reasons, 1024_u32);
+        }
+        let refused = if kept {
+          give 0_u64;
+        } else {
+          give 1_u64;
+        }
+        return kept, 1_u64, 1_u64, refused, reasons;
       }
-      return False(), 0_u64, 0_u64;
+      return False(), 0_u64, 0_u64, 1_u64, 128_u32;
     }
     Fork(left: left_tree, right: right_tree) => {
       let half = span / 2_u64;
       let middle = imin(half, count);
-      let (left_same, left_count, left_visits) = frontier_break(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
-      let (right_same, right_count, right_visits) = frontier_break(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
+      let (left_same, left_count, left_visits, left_refusals, left_reasons) = frontier_break(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
+      let (right_same, right_count, right_visits, right_refusals, right_reasons) = frontier_break(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
       let both_same = band(left_same, right_same);
       let total_count = left_count +sat right_count;
       let total_visits = left_visits +sat right_visits;
-      return both_same, total_count, total_visits;
+      let total_refusals = left_refusals +sat right_refusals;
+      let total_reasons = ior(left_reasons, right_reasons);
+      return both_same, total_count, total_visits, total_refusals, total_reasons;
     }
   }
 }
@@ -367,8 +386,10 @@ fn stationary_frontier(context: &Context, styles: &Styles, document: &Document, 
   let child_count = context^.children.inner.len;
   let none = slots_new::<Exclusion, 0>();
   let frontier_span = context^.frontier_span;
-  let (stationary, broken, visited) = frontier_break(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: frontier_span, children: &context^.children.inner[0_u64..child_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none[0_u64..0_u64]);
+  let (stationary, broken, visited, refusals, reasons) = frontier_break(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: frontier_span, children: &context^.children.inner[0_u64..child_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none[0_u64..0_u64]);
   set counts.paragraphs = broken;
+  set counts.work.frontier_refusals = refusals;
+  set counts.work.frontier_reasons = reasons;
   let paragraph_pair = broken +sat broken;
   let broken_opens = paragraph_pair +sat broken;
   let paragraph_opens = visited +sat broken_opens;
@@ -456,6 +477,36 @@ fn frontier_check_transfer(slot: u32, first: i64, minimum: i32, maximum: i32) ->
 fn frontier_check() -> passed: Bool pure {
   doc "Independent constants check sparse slots 0, 32 and 64, duplicate insertion, exact retirement and fresh-domain ownership. Three ten-unit solids place their last baseline at 28 and retain total advance 30. Stationary publication must change the first baseline to 3 and intrinsic maxima to 13 and 27 without changing paragraph origins or context dimensions. Slot 16 is an intentionally unconsumed dirty sentinel: clearing the three-leaf frontier must preserve it, and rebuilding the frontier must select only that sentinel. Copying outer outputs to fresh content must preserve neither the old certificate nor its source frontier. Font preparation and actual breaking are separately covered by hosted edit fixtures.";
   let style = element_ref(element: no_index);
+  let empty_pieces = box_slots_new::<Piece>(capacity: 0_u64);
+  let counter_leaf = new_paragraph(style: style, pieces: move empty_pieces, reserve: 0_u64);
+  let (clean_ready, clean_reason) = frontier_paragraph_ready(paragraph: &counter_leaf);
+  if clean_ready {
+    return False();
+  }
+  if clean_reason != 1_u32 {
+    return False();
+  }
+  set counter_leaf.dirty = True();
+  let (lineless_ready, lineless_reason) = frontier_paragraph_ready(paragraph: &counter_leaf);
+  if lineless_ready {
+    return False();
+  }
+  if lineless_reason != 2_u32 {
+    return False();
+  }
+  let first_counts = no_boundary_visits();
+  set first_counts.frontier_refusals = 2_u64;
+  set first_counts.frontier_reasons = 512_u32;
+  let second_counts = no_boundary_visits();
+  set second_counts.frontier_refusals = 3_u64;
+  set second_counts.frontier_reasons = 1024_u32;
+  let combined_counts = add_boundary_visits(first: first_counts, second: second_counts);
+  if combined_counts.frontier_refusals != 5_u64 {
+    return False();
+  }
+  if combined_counts.frontier_reasons != 1536_u32 {
+    return False();
+  }
   let context = new_context(kind: ctx_flow, style: style);
   set context.width = 100_i32;
   set context.height = 30_i32;

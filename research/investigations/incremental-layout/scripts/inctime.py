@@ -20,13 +20,17 @@ Structural path records distinguish local splices from reason-coded fallbacks.
 filtered reparse logs may omit the entire set; a partial set is invalid.
 Historical logs may omit the entire boundary-count suffix. Current logs
 must supply all five fields together; timings retain and compare those
-counts, and reject mixed old/new timing records within one run.
+counts, and reject mixed old/new timing records within one run. The optional
+frontier_refusals/frontier_reasons pair follows the complete boundary suffix;
+it records observed leaf refusals and their reason-bit union, not inferred
+geometry changes. Both fields must be present together.
 """
 import re
 import sys
 
 BOUNDARY = (r'(?: boundary_entries (\d+) boundary_blocks (\d+) boundary_indexes (\d+)'
-            r' boundary_fallbacks (\d+) boundary_reason (\d+))?')
+            r' boundary_fallbacks (\d+) boundary_reason (\d+)'
+            r'(?: frontier_refusals (\d+) frontier_reasons (\d+))?)?')
 TIMED = re.compile(r'edit (\d+) us (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)' + BOUNDARY + '$')
 OTHER = re.compile(r'edit (\d+) (inc refused|full)$')
 HASH = re.compile(r'edit (\d+) hash [0-9a-f]{16} bytes \d+(?: inc (same|DIFF|refused))?$')
@@ -57,6 +61,16 @@ def script_operations(path):
     return operations
 
 
+def frontier_record(match):
+    """Validate the complete optional leaf-refusal suffix, including its meaning."""
+    refused, reasons = match.groups()[-2:]
+    if refused is None and reasons is None:
+        return
+    refused, reasons = int(refused), int(reasons)
+    if reasons & ~2047 or (refused == 0) != (reasons == 0):
+        raise ValueError('inconsistent dirty-frontier refusal count/reasons')
+
+
 def read(path, operations, checking=False, require_paths=False):
     timed, other, styled, built = {}, {}, {}, {}
     seen, auxiliary, structural = set(), set(), set()
@@ -73,6 +87,8 @@ def read(path, operations, checking=False, require_paths=False):
             continue
         style = (STYLE_COUNTS if checking else STYLE_TIME).fullmatch(line)
         if style:
+            if checking:
+                frontier_record(style)
             edit = int(style.group(1))
             if edit in auxiliary or not 1 <= edit <= len(operations) or operations[edit - 1] not in RESTYLED:
                 raise ValueError('%s:%d: unexpected style edit' % (path, line_number))
@@ -130,6 +146,7 @@ def read(path, operations, checking=False, require_paths=False):
             if not incremental and status is not None:
                 raise ValueError('%s: edit %d: an edit of no incremental kind reported an incremental status' % (path, edit))
         elif match:
+            frontier_record(match)
             if not incremental:
                 raise ValueError('%s: edit %d: unexpected timed structural edit' % (path, edit))
             timed[edit] = [int(value) for value in match.groups()[1:] if value is not None]
@@ -246,9 +263,11 @@ def main():
     widths = {len(values) for values in first_timed.values()}
     if len(widths) != 1:
         raise ValueError('mixed legacy and boundary count records')
-    if widths == {11}:
+    if widths in ({11}, {13}):
         names += ['boundary_entries', 'boundary_blocks', 'boundary_indexes',
                   'boundary_fallbacks', 'boundary_reason']
+    if widths == {13}:
+        names += ['frontier_refusals', 'frontier_reasons']
     for k, name in enumerate(names):
         values = [first_timed[edit][k + 1] for edit in first_timed]
         print('%s min %d median %d max %d' % (name, min(values), rank(values, 0.5), max(values)))

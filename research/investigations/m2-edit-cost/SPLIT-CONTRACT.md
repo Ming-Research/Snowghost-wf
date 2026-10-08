@@ -1672,3 +1672,34 @@ at aa560f9. Behavioral validation and latency remain unverified until the
 resubmitted oracle, range-falsification and ten-cohort runs complete. The
 one-use initial profile workflow is retired after its captured evidence above;
 the same phase-checked profiler remains wired to the reader comparison.
+
+
+### Root-font refusal: criterion before capture
+
+The reader-only implementation is frozen for its ten-cohort comparison before
+adding this diagnostic. The next hosted sample runs the correctly styled
+ECMA262 first root-font edit and undo with the production compiler and native
+Ubuntu toolchain, retaining the independent full-layout comparison. The new
+leaf counters record actual failed guards, rather than inferring a cause from
+final extents. Each independently processed leaf returns a refusal count and
+reason bits; disjoint branches reduce the counts by addition and reasons by
+bitwise union. No shared counter write orders leaf work. The failed attempt's
+counts survive the following full replay through `UpdateCounts` aggregation.
+
+The public `frontier_counts` contract owns the bit meanings: clean, lineless,
+nonpositive-height, float, atomic, changed-width, changed-left, missing-slot,
+new-through-output, changed-height and changed-last-baseline. Admission reports
+its first failed guard; after a completed break, height and baseline changes
+can both be recorded. Context-input refusals are outside these leaf counters.
+The oracle appends both fields together after its boundary counts; historical
+logs remain readable, while partial, contradictory and unknown-bit diagnostic
+records are rejected. Independent constants cover clean/lineless reason codes
+and multi-branch count/bit reduction; hosted protocol cases reject missing
+fields and inconsistent records.
+
+Changed-extent refusal is supported only if the observed bits include changed
+height or last baseline after a speculative break. Admission-only refusal
+rejects that explanation and must be addressed before treating non-stationary
+restacking as the root-font remedy. Equal final dumps do not establish that
+dirty work can be skipped. This diagnostic changes no admission or publication
+rule and makes no new latency claim.

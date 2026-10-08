@@ -1,4 +1,4 @@
-"""Temporary hosted-only range reader profile; called by range-profile.yml."""
+"""Temporary hosted-only range reader profile; called by bisect-hosted.yml after native timing."""
 import gzip
 import json
 import os
