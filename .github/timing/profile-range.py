@@ -114,13 +114,18 @@ def parse_counts(path):
     relevant = [dict(caller=a, callee=b, calls=n, instructions=ir)
                 for (a, b), (n, ir) in edges.items()
                 if any(term in a or term in b for term in
-                       ('range_inherited', 'slot_view', 'owner_inherited', 'range_expose'))]
-    inherited_calls = sum(n for (a, b), (n, ir) in edges.items() if 'range_inherited' in b)
+                       ('range_inherited', 'range_geometry', 'slot_view', 'slot_geometry', 'owner_inherited', 'owner_geometry', 'range_expose'))]
+    def inherited(name):
+        return 'range_inherited' in name or 'range_geometry' in name
+    def slot_reader(name):
+        return 'slot_view' in name or 'slot_geometry' in name
+    inherited_calls = sum(n for (a, b), (n, ir) in edges.items() if inherited(b))
     return dict(summary=summary, thread=thread, inherited_calls=inherited_calls,
+                geometry_calls=sum(n for (a, b), (n, ir) in edges.items() if 'range_geometry' in b),
                 inherited_node_reads=sum(n for (a, b), (n, ir) in edges.items()
-                                         if 'range_inherited' in a and 'slot_view' in b),
+                                         if inherited(a) and slot_reader(b)),
                 directory_recursions=sum(n for (a, b), (n, ir) in edges.items()
-                                         if 'slot_view' in a and 'slot_view' in b),
+                                         if slot_reader(a) and slot_reader(b)),
                 edges=relevant, self_instructions=sorted(selfs.items(), key=lambda x: -x[1]))
 
 
@@ -148,6 +153,32 @@ for source_call, missing in [('calls=3 1', 'inherited_node_reads'),
                              ('calls=2 1', 'directory_recursions')]:
     probe.write_text(probe.read_text().replace(source_call, 'calls=0 1'))
     assert parse_counts(probe)[missing] == 0, missing
+probe.write_text("""positions: line
+events: Ir
+summary: 16
+fn=(1) wf_layout.block_local
+1 3
+cfn=(2) wf_layout.range_geometry
+calls=1 1
+1 13
+fn=(2)
+1 5
+cfn=(3) wf_layout.slot_geometry
+calls=2 1
+1 8
+fn=(3)
+1 8
+""")
+geometry_expected = parse_counts(probe)
+assert geometry_expected['inherited_node_reads'] == 2, geometry_expected
+assert geometry_expected['geometry_calls'] == 1, geometry_expected
+assert geometry_expected['inherited_calls'] == 1, geometry_expected
+assert sum(value for _, value in geometry_expected['self_instructions']) == 16, geometry_expected
+probe.write_text(probe.read_text().replace('calls=1 1', 'calls=0 1'))
+assert parse_counts(probe)['geometry_calls'] == 0
+assert parse_counts(probe)['inherited_calls'] == 0
+probe.write_text(probe.read_text().replace('calls=2 1', 'calls=0 1'))
+assert parse_counts(probe)['inherited_node_reads'] == 0
 probe.unlink()
 print('counter decoder detects known and omitted call edges', flush=True)
 

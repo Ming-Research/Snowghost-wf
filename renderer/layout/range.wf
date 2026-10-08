@@ -114,6 +114,91 @@ fn slot_store_actions(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, act
   return unit;
 }
 
+fn slot_geometry(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, own: Bool) -> (parent: u32, applies: Bool, action: Origin) reads(pages) {
+  doc "Reads only the parent and the requested geometry channel. Own geometry requires a live placed member; pending-child geometry requires a live ancestor. Semantic, basis and unrelated topology fields are not query outputs.";
+  let zero = zero_origin();
+  if slot >= span {
+    return no_index, False(), zero;
+  }
+  match pages^ {
+    Vacant() => {
+      return no_index, False(), zero;
+    }
+    Page(values: page) => {
+      let at = cvt::<u32, u64>(slot);
+      if at < page^.inner.len {
+        if page^.inner[at].links.live {
+          if own {
+            let placed = page^.inner[at].own.placed > 0_u64;
+            return page^.inner[at].links.parent, placed, page^.inner[at].actions.own_geometry;
+          }
+          return page^.inner[at].links.parent, True(), page^.inner[at].actions.child_geometry;
+        }
+      }
+      return no_index, False(), zero;
+    }
+    Fork(left: left_page, right: right_page) => {
+      let half = span / 2_u32;
+      if slot < half {
+        let (parent, applies, action) = slot_geometry(pages: &left_page^.inner, slot: slot, span: half, own: own);
+        return parent, applies, action;
+      }
+      let later = slot - half;
+      let (parent, applies, action) = slot_geometry(pages: &right_page^.inner, slot: later, span: half, own: own);
+      return parent, applies, action;
+    }
+  }
+}
+
+fn range_geometry(sequence: &EntrySequence, slot: u32) -> made: Origin reads(sequence.range_actions), reads(sequence.nodes), reads(sequence.span) {
+  doc "Resolves only a placed payload's own and inherited geometry. Strict ancestors retain their previous association, followed by the own action. The absent-parent terminator performs no slot lookup.";
+  if sequence^.range_actions {
+  } else {
+    return zero_origin();
+  }
+  let own_field = True();
+  let (parent, placed, own) = slot_geometry(pages: &sequence^.nodes, slot: slot, span: sequence^.span, own: own_field);
+  if placed {
+  } else {
+    return zero_origin();
+  }
+  let inherited = zero_origin();
+  let cursor = parent;
+  let child_field = False();
+  for (level in 0_u64..64_u64) {
+    if cursor == no_index {
+      break;
+    }
+    let (above, live, pending) = slot_geometry(pages: &sequence^.nodes, slot: cursor, span: sequence^.span, own: child_field);
+    if live {
+    } else {
+      break;
+    }
+    set inherited = origin_accumulate(owner: inherited, local: pending);
+    set cursor = above;
+  }
+  return origin_accumulate(owner: own, local: inherited);
+}
+
+fn owner_geometry(context: &Context, owner: u32, slot: u32) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner) {
+  doc "Resolves the geometry-only query in its immutable owner sequence; inactive contexts, absent slots and inactive owners return the identity.";
+  if context^.range_actions {
+  } else {
+    return zero_origin();
+  }
+  if slot == no_index {
+    return zero_origin();
+  }
+  if owner == no_index {
+    return range_geometry(sequence: &context^.entries, slot: slot);
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    return range_geometry(sequence: &context^.blocks.inner[at].entries, slot: slot);
+  }
+  return zero_origin();
+}
+
 fn range_inherited(sequence: &EntrySequence, slot: u32) -> made: RangeInherited reads(sequence.range_actions), reads(sequence.nodes), reads(sequence.span) {
   doc "Skips an owner without retained actions; otherwise collects one stable slot's own actions and its ancestors' pending child actions through the index parent path. Each edge contributes once; the walk is bounded by the AVL height.";
   if sequence^.range_actions {
@@ -195,8 +280,7 @@ fn block_local(context: &Context, at: u64) -> made: Origin reads(context.range_a
     } else {
       return base;
     }
-    let view = owner_inherited(context: context, owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot);
-    let action = view_geometry(view: view);
+    let action = owner_geometry(context: context, owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot);
     return origin_accumulate(owner: base, local: action);
   }
   return zero_origin();
@@ -210,8 +294,7 @@ fn paragraph_local(context: &Context, at: u64) -> made: Origin reads(context.ran
     } else {
       return base;
     }
-    let view = owner_inherited(context: context, owner: context^.paragraphs.inner[at].block, slot: context^.paragraphs.inner[at].entry_slot);
-    let action = view_geometry(view: view);
+    let action = owner_geometry(context: context, owner: context^.paragraphs.inner[at].block, slot: context^.paragraphs.inner[at].entry_slot);
     return origin_accumulate(owner: base, local: action);
   }
   return zero_origin();
@@ -231,8 +314,7 @@ fn child_local(context: &Context, at: u64) -> made: Origin reads(context.range_a
     if context^.children.inner[at].viewport_origin {
       return base;
     }
-    let view = owner_inherited(context: context, owner: context^.children.inner[at].block, slot: context^.children.inner[at].entry_slot);
-    let action = view_geometry(view: view);
+    let action = owner_geometry(context: context, owner: context^.children.inner[at].block, slot: context^.children.inner[at].entry_slot);
     return origin_accumulate(owner: base, local: action);
   }
   return zero_origin();
@@ -778,7 +860,17 @@ fn range_check_point(sequence: &EntrySequence, slot: u32, floor: i64, moved: i64
   }
   let view = range_inherited(sequence: sequence, slot: slot);
   let action = view_geometry(view: view);
-  return action.y == moved;
+  if action.y != moved {
+    return False();
+  }
+  let geometry = range_geometry(sequence: sequence, slot: slot);
+  let expected_y = geometry.y == moved;
+  let no_x = geometry.x == 0_i64;
+  let no_dx = geometry.dx == 0_i64;
+  let no_dy = geometry.dy == 0_i64;
+  let normal = band(expected_y, no_x);
+  let visual = band(no_dx, no_dy);
+  return band(normal, visual);
 }
 
 fn range_check_slot(slots: &[u32], at: u64) -> slot: u32 reads(slots) {

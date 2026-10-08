@@ -1915,8 +1915,13 @@ reads; a shared cache would instead require invalidation and publication not
 needed for this repair. The existing serial certificate publication remains
 unchanged pending the recorded Whitefoot proof gap.
 
-The existing nested positioned, relative-inset, fixed-axis, content-adjustment
-and moved-owner fixtures compare with independent full layout in both modes.
+The existing nested positioned, relative-inset, fixed-axis and moved-owner
+fixtures compare with independent full layout in both modes. Nonzero context
+content adjustment in the new published reader remains unverified by a
+discriminating fixture: the table atomic case contains no positioned child,
+and table ancestry refuses before the local splice. Its prior green result
+covers the full/raw bridge. The shared reader preserves the content-adjustment
+expression and order in source; that is not execution evidence for this path.
 Omitting either accumulator must cause a behavioral difference; if these
 fixtures do not distinguish it, add a specific independent fixture before
 claiming coverage. The matched profile must show fewer `block_local` inherited
@@ -1925,3 +1930,85 @@ cost beyond its paired controls. Otherwise the shared walk is insufficient.
 The complete acceptance remains sentence/block no slower than the patched
 frontier, preservation of font-size gains, and all X5 cells within the
 unchanged main/cf12 gates; a promising pilot is not acceptance.
+
+
+### Shared positioned ancestry: pilot result
+
+[Hosted pilot 37859507860](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507860)
+compares 6424e28ee94f7196518b9f3f8dfc910d3a727985 with the same-counter before
+f402783aa7e6f14224e96b52ad3d9af2836e18b4 and the patched frontier, each with an
+independent twin, on an AMD EPYC 9V45 runner exposing four CPUs. The Ubuntu
+24.04 / Linux 6.17.0-1022-azure, wf-0b7f5c5b9854, LLVM 22 and WF_WORKERS=4
+settings match within this run. The six-build pilot has 72 raw files and
+4,320 edits, covering HTML5 sentence, font-size and block in two interleaved
+forward/reverse rounds. Values are upper-median microseconds, round 1/round 2:
+
+| Kind | Mode | Before | Before twin | Frontier | Frontier twin | Shared walk | Shared twin |
+|---|---|---:|---:|---:|---:|---:|---:|
+| sentence | seq | 274/283 | 277/290 | 195/179 | 188/197 | 219/227 | 258/252 |
+| sentence | par | 328/358 | 324/317 | 195/189 | 191/193 | 304/309 | 334/319 |
+| fontsize | seq | 594/585 | 582/598 | 1128/1032 | 956/1058 | 590/614 | 631/624 |
+| fontsize | par | 1028/1029 | 1002/1071 | 1261/1284 | 1275/1224 | 941/1056 | 1029/1020 |
+| block | seq | 354/363 | 358/360 | 361/357 | 352/370 | 318/302 | 316/322 |
+| block | par | 422/425 | 433/431 | 428/387 | 426/391 | 395/430 | 414/401 |
+
+Sequential sentence improves beyond the paired control spread, but its
+219/227 us and twin 258/252 remain above frontier 195/179 and 188/197.
+Parallel sentence still trails frontier substantially; overlapping before
+and after twins do not establish a general parallel gain. Block sequential
+improves, while its parallel difference lies within control variation. The
+font-size gain over frontier survives. The pilot rejects completion of the
+reader repair and supplies no new main/cf12 acceptance claim.
+
+The 60-part sequential profile reports 177,967,660 before instructions and
+154,817,770 after. Inherited calls fall from 179,067 to 114,357; node-read
+calls from 407,096 to 243,326. Inherited self plus slot-reader instructions
+fall from 44,182,629 to 26,617,149 (14,731,037 self and 11,886,112 callees).
+Of the remaining chain, 25,577,694 instructions come through `block_local`.
+The before total differs from the earlier fdc2308 profile because this before
+includes diagnostic counters; the inherited counts are identical. These
+instruction observations do not explain all native latency variation.
+
+The shared-walk revision passes [make check 37859507784](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507784)
+and [layout-check 37859507884](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507884).
+Both [new mutation jobs 37859507855](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507855)
+compile and each produces 18 incremental/full differences on the positioned
+fixture, against a clean baseline and its six required splice paths. The
+step-5 oracle job in [37859507852](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507852)
+passes, including 20 ECMA262 and 60 HTML5 block edits using local splices;
+the broader oracle run is still pending. Read-only review found and fixed
+the mutation step's missing selector and an overbroad content-adjustment
+coverage claim; nonzero adjustment on this new path remains unverified.
+No arithmetic or dependency finding remains in the inspected shared walk.
+
+### Geometry-only inherited reads: criterion before implementation
+
+The remaining geometry readers request `RangeInherited`, which resolves and
+returns every geometry, semantic and basis channel even though `block_local`,
+`paragraph_local` and `child_local` consume only geometry. The next repair
+gives that query its own field-narrow reader: one slot lookup returns its
+parent, applicability and the requested own or pending-child geometry. The
+geometry walk stops at the absent parent without another directory lookup,
+skips non-placed anchors, and retains the owner-local presence bound. It
+accumulates strict-ancestor geometry separately and adds the own geometry
+last, preserving the existing association rather than relying on cancellation.
+Semantic and duplicated Open readers keep the existing complete view.
+
+Both candidates follow the same immutable parent chain; reading a single
+channel adds no cross-child dependency, cache, shared counter or publication
+stage. The distinction is the data each query asks for, not a change to range
+membership or action lifetimes. The public placement consumers keep their
+existing frame, applicability and saturation contracts. This introduces no
+proof-only representation, alias check or substitute for unsupported writes.
+
+The existing independent range constants must exercise both the complete and
+geometry-only queries against the same explicit expected displacement, and
+separate omissions of own and inherited geometry must each fail. Ordinary
+range, rotation, insertion, removal, point-retirement and full-normalization
+fixtures remain wired. Passive profile counters count both inherited-reader
+functions and both slot-reader functions, with independent decoder examples
+for the new edge names; renaming a path must not look like removing its work.
+The prior criterion is lower inherited-query instructions than the shared
+walk and native sentence cost outside its before/twin spread. Sentence and
+block must still recover frontier cost, font-size gains must remain, and the
+final ten-cohort comparison must report every X5 acceptance cell.

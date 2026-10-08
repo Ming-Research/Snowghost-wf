@@ -400,9 +400,12 @@ example apart from the renderer code that exposed it
   [completed comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#owner-local-reader-bound-ten-cohort-result-and-remaining-path)
   halves inherited node reads and lowers HTML5 sentence to 495/490 us
   sequential, still above frontier 353/346. Parallel block recovers cf12 cost;
-  sequential block and the sentence target remain open. The next reader repair
-  shares each positioned plan's duplicate immutable ancestry walk, preserving
-  both accumulation orders and independent child plans. The splice plan's
+  sequential block and the sentence target remain open. The shared positioned ancestry walk reduces inherited reads again, but its
+  [pilot](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#shared-positioned-ancestry-pilot-result)
+  still trails the frontier on sentence edits. Geometry consumers will next
+  query only their consumed action channel, preserving applicability and
+  accumulation order; the complete-view and geometry-only counters must both
+  be included in the after profile. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.
