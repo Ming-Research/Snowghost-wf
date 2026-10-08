@@ -34,7 +34,13 @@ fn direct_slot(sequence: &EntrySequence, rank: u64, visits: &BoundaryVisits) -> 
 }
 
 fn range_output(sequence: &EntrySequence, root: u32, from: u64, until: u64, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
-  doc "Reduces a direct rank interval using cached subtrees, with no payload reads. Only the two interval boundary paths are opened.";
+  doc "Reduces a direct rank interval of a whole owner sequence from its root, which inherits no pending range action.";
+  let made = inherited_range_output(sequence: sequence, root: root, from: from, until: until, inherited: 0_i64, visits: visits);
+  return made;
+}
+
+fn inherited_range_output(sequence: &EntrySequence, root: u32, from: u64, until: u64, inherited: i64, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
+  doc "Reduces a direct rank interval using cached subtrees, with no payload reads. Only the two interval boundary paths are opened. Each recursive call receives the semantic displacement its ancestors still hold, rather than repeating a root lookup.";
   let empty = empty_output();
   if from >= until {
     return empty;
@@ -51,16 +57,20 @@ fn range_output(sequence: &EntrySequence, root: u32, from: u64, until: u64, visi
   let own_field = True();
   if from == 0_u64 {
     if until >= node.total_count {
-      let total = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+      let stored_total = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
+      let total = shift_motion(output: stored_total, delta: inherited);
       return total;
     }
   }
+  let (links, actions, placed, opens) = slot_view(pages: &sequence^.nodes, slot: root, span: sequence^.span);
+  let below = inherited +sat actions.child_semantic;
   let left = boundary_node(sequence: sequence, slot: node.left, visits: visits);
-  let prefix = range_output(sequence: sequence, root: node.left, from: from, until: until, visits: visits);
+  let prefix = inherited_range_output(sequence: sequence, root: node.left, from: from, until: until, inherited: below, visits: visits);
   let through = prefix;
   if from <= left.total_count {
     if left.total_count < until {
-      let own = boundary_output(sequence: sequence, slot: root, own: own_field, visits: visits);
+      let stored_own = boundary_output(sequence: sequence, slot: root, own: own_field, visits: visits);
+      let own = shift_motion(output: stored_own, delta: inherited);
       let joined = join_output(left: &prefix, right: &own);
       set through = joined;
     }
@@ -68,7 +78,7 @@ fn range_output(sequence: &EntrySequence, root: u32, from: u64, until: u64, visi
   let after = left.total_count +sat 1_u64;
   let right_from = from -sat after;
   let right_until = until -sat after;
-  let suffix = range_output(sequence: sequence, root: node.right, from: right_from, until: right_until, visits: visits);
+  let suffix = inherited_range_output(sequence: sequence, root: node.right, from: right_from, until: right_until, inherited: below, visits: visits);
   let output = join_output(left: &through, right: &suffix);
   return output;
 }
@@ -220,7 +230,7 @@ fn preview_sequence(sequence: &EntrySequence, slot: u32, output: SequenceOutput,
   return made;
 }
 
-fn preview_boundary(context: &Context, owner: u32, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), writes(visits) {
+fn preview_boundary(context: &Context, owner: u32, slot: u32, output: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), reads(context.range_actions), writes(visits) {
   doc "Previews a changed entry through only its block ancestor chain, using the same lift as publication.";
   let cursor = owner;
   let changed = slot;
@@ -238,18 +248,18 @@ fn preview_boundary(context: &Context, owner: u32, slot: u32, output: SequenceOu
       return invalid;
     }
     set visits^.blocks = visits^.blocks +sat 1_u64;
-    let block = &context^.blocks.inner[at];
-    let inside = preview_sequence(sequence: &block^.entries, slot: changed, output: outgoing, visits: visits);
-    let lifted = lift_block_output(inside: &inside, measured: block^.output);
+    let inside = preview_sequence(sequence: &context^.blocks.inner[at].entries, slot: changed, output: outgoing, visits: visits);
+    let measured = block_measured(context: context, at: at);
+    let lifted = lift_block_output(inside: &inside, measured: measured);
     set outgoing = lifted;
-    set changed = block^.entry_slot;
-    set cursor = block^.parent;
+    set changed = context^.blocks.inner[at].entry_slot;
+    set cursor = context^.blocks.inner[at].parent;
   }
   let invalid = pending_output(events: 0_u64);
   return invalid;
 }
 
-fn preview_owner(context: &Context, owner: u32, inside: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), writes(visits) {
+fn preview_owner(context: &Context, owner: u32, inside: SequenceOutput, visits: &BoundaryVisits) -> made: SequenceOutput reads(context.blocks.inner), reads(context.entries), reads(context.range_actions), writes(visits) {
   doc "Starts a splice preview from the already composed owner sequence, then shares replacement preflight with ordinary boundary updates.";
   if owner == no_index {
     return inside;
@@ -257,9 +267,9 @@ fn preview_owner(context: &Context, owner: u32, inside: SequenceOutput, visits: 
   let at = cvt::<u32, u64>(owner);
   if at < context^.blocks.inner.len {
     set visits^.blocks = visits^.blocks +sat 1_u64;
-    let block = &context^.blocks.inner[at];
-    let lifted = lift_block_output(inside: &inside, measured: block^.output);
-    let root = preview_boundary(context: context, owner: block^.parent, slot: block^.entry_slot, output: lifted, visits: visits);
+    let measured = block_measured(context: context, at: at);
+    let lifted = lift_block_output(inside: &inside, measured: measured);
+    let root = preview_boundary(context: context, owner: context^.blocks.inner[at].parent, slot: context^.blocks.inner[at].entry_slot, output: lifted, visits: visits);
     return root;
   }
   let invalid = pending_output(events: 0_u64);

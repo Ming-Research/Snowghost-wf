@@ -11,11 +11,13 @@ struct ReferenceScope {
 }
 
 fn full_reference_publication(context: &Context, events: &[Flow], styles: &Styles, basis_height: i32) -> result: unit reads(events), reads(styles), writes(context) {
-  doc "Uses the unchanged full reference publisher and exact geometry encoder, materializing a stream only when the caller supplied the virtual event view.";
+  doc "Uses the unchanged full reference publisher and exact geometry encoder, materializing a stream only when the caller supplied the virtual event view. Retained range actions are folded first, because full publication replaces every stored transfer.";
+  retire_range_descriptors(context: context);
   if context^.reference_phase != 0_u8 {
     let synchronize = True();
     reference_geometry(context: context, synchronize: synchronize);
   }
+  normalize_range_actions(context: context);
   if events^.len == 0_u64 {
     let materialized = materialize_flow(context: context);
     let count = materialized.inner.len;
@@ -141,13 +143,13 @@ fn publish_reference_positioned(context: &Context, events: &[Flow], styles: &Sty
 fn reference_owner_output(context: &Context, owner: u32, slot: u32, own: Bool) -> made: SequenceOutput reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), writes(context.boundary_visits) {
   doc "Reads a cached own or total transfer from one stable owner slot, charging its metadata opening without traversing index parents.";
   if owner == no_index {
-    let root_output = boundary_output(sequence: &context^.entries, slot: slot, own: own, visits: &context^.boundary_visits);
+    let root_output = effective_output(sequence: &context^.entries, slot: slot, own: own, visits: &context^.boundary_visits);
     return root_output;
   }
   let at = cvt::<u32, u64>(owner);
   if at < context^.blocks.inner.len {
     set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-    let block_output_value = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: slot, own: own, visits: &context^.boundary_visits);
+    let block_output_value = effective_output(sequence: &context^.blocks.inner[at].entries, slot: slot, own: own, visits: &context^.boundary_visits);
     return block_output_value;
   }
   let empty = empty_output();
@@ -280,6 +282,7 @@ fn reference_motion_fits(origin: i32, travel: i64, delta: i32) -> fits: Bool pur
 fn finish_reference_scope(context: &Context, events: &[Flow], styles: &Styles, basis_height: i32, scope: ReferenceScope) -> result: unit reads(events), reads(styles), writes(context) {
   doc "Finishes a reference update with fresh affected scratch and owner-relative untouched geometry in the settled frame. Replayed events publish in postorder; a bounded uniform suffix repairs direct entries without visiting unchanged descendant interiors. Old root travel certifies that suffix before publication changes it, strictly below the natural-position sentinel as well as saturation. A zero-displacement suffix still publishes when a replayed owner moved, so convergence does not preserve a stale owner-relative offset. Endpoint and positioned-child ancestor chains are repaired before owner-relative geometry becomes authoritative again.";
   if scope.published {
+    retire_range_descriptors(context: context);
     return unit;
   }
   if context^.reference_phase != 0_u8 {
@@ -287,6 +290,7 @@ fn finish_reference_scope(context: &Context, events: &[Flow], styles: &Styles, b
   }
   if scope.partial {
   } else {
+    retire_range_descriptors(context: context);
     full_reference_publication(context: context, events: events, styles: styles, basis_height: basis_height);
     return unit;
   }
@@ -301,6 +305,7 @@ fn finish_reference_scope(context: &Context, events: &[Flow], styles: &Styles, b
     let bounded = reference_suffix_fits(origin: origin, travel: budget);
     if bounded {
     } else {
+      retire_range_descriptors(context: context);
       full_reference_publication(context: context, events: events, styles: styles, basis_height: basis_height);
       return unit;
     }
@@ -331,8 +336,13 @@ fn finish_reference_scope(context: &Context, events: &[Flow], styles: &Styles, b
   if suffix_moves {
     let suffix = scope.until +sat 1_u64;
     let suffix_delta = cvt::<i32, i64>(scope.delta);
-    publish_reference_suffix(context: context, styles: styles, delta: suffix_delta, basis_height: basis_height, first: suffix, count: count);
+    if context^.range_descriptors.inner.len > 0_u64 {
+      publish_reference_ranges(context: context, basis_height: basis_height);
+    } else {
+      publish_reference_suffix(context: context, styles: styles, delta: suffix_delta, basis_height: basis_height, first: suffix, count: count);
+    }
   }
+  retire_range_descriptors(context: context);
   encode_reference_ancestors(context: context, owner: first_owner);
   publish_reference_ancestors(context: context, owner: first_owner, styles: styles, basis_height: basis_height);
   if last_owner != first_owner {
@@ -572,12 +582,7 @@ fn translate_reference_suffix(context: &Context, after: u64, delta: i32) -> resu
   if context^.reference_phase != 0_u8 {
     set context^.reference_phase = 2_u8;
     let sparse_first = after +sat 1_u64;
-    let sparse_root = context^.entries.root;
-    if sparse_root != no_index {
-      set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
-    }
-    let sparse_cursor = reference_owner_cursor(context: context, owner: no_index, slot: sparse_root);
-    move_reference_owner_suffix(context: context, owner: no_index, root: sparse_root, held: sparse_cursor, skip: sparse_first, delta: delta);
+    install_reference_geometry(context: context, first: sparse_first, delta: delta);
     return unit;
   }
   let first = after +sat 1_u64;
@@ -603,154 +608,174 @@ fn translate_reference_suffix(context: &Context, after: u64, delta: i32) -> resu
   return unit;
 }
 
-fn moved_reference_origin(value: Origin, delta: i32) -> made: Origin pure {
-  doc "Moves a certified exact reference origin by the walker's common suffix displacement, retaining normal and visual displacement separately.";
-  let normal = origin_normal(value: value);
-  let visual = origin_visual(value: value);
-  let normal_y = normal.y +sat delta;
-  let visual_y = visual.y +sat delta;
-  return origin_from_resolved(nx: normal.x, ny: normal_y, vx: visual.x, vy: visual_y);
+fn owner_frame(context: &Context, owner: u32, previous: Bool) -> made: Origin reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span) {
+  doc "The old (captured) or settled frame of one cut-chain owner; the context root is its own zero frame.";
+  if owner == no_index {
+    return zero_origin();
+  }
+  if previous {
+    let old = retained_block_origin(context: context, block: owner, previous: previous);
+    return old;
+  }
+  let current = block_origin(context: context, block: owner);
+  return current;
 }
 
-fn move_reference_child(context: &Context, at: u64, delta: i32) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.children.inner), writes(context.children.inner[at].anchor), writes(context.boundary_visits.entries) {
-  doc "Moves one direct child anchor from old absolute placement to the settled owner frame, without touching the child's descendants.";
-  if at < context^.children.inner.len {
-    set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
+fn install_reference_geometry(context: &Context, first: u64, delta: i32) -> result: unit writes(context) {
+  doc "After convergence, computes each cut-chain owner's exact local action from its captured old frame O and settled frame C, (O.x - C.x, O.y + delta - C.y, O.dx - C.dx, O.dy - C.dy), before installing any new geometry action, then installs it on that owner's direct suffix range. An intact nested Open moves once in its parent's sequence and its own sequence receives nothing; only the Open that contains the cut is descended. Positioned entries of each range are settled explicitly: block-owned anchors take the owner action and viewport anchors only the ordinary movement. Each range is retained as a transient descriptor until its semantic publication.";
+  let owner = no_index;
+  let skip = first;
+  let wide_delta = cvt::<i32, i64>(delta);
+  let viewport_action = Origin(x: 0_i64, y: wide_delta, dx: 0_i64, dy: 0_i64);
+  let limit = context^.blocks.inner.len +sat 1_u64;
+  for (level in 0_u64..limit) {
     let previous = True();
-    let old_owner = if context^.children.inner[at].viewport_origin {
-      give zero_origin();
+    let current = False();
+    let old = owner_frame(context: context, owner: owner, previous: previous);
+    let settled = owner_frame(context: context, owner: owner, previous: current);
+    let rebase = origin_relative(value: old, owner: settled);
+    let action = origin_accumulate(owner: rebase, local: viewport_action);
+    let root = if owner == no_index {
+      give context^.entries.root;
     } else {
-      give retained_block_origin(context: context, block: context^.children.inner[at].block, previous: previous);
+      let owner_at = cvt::<u32, u64>(owner);
+      if owner_at < context^.blocks.inner.len {
+        give context^.blocks.inner[owner_at].entries.root;
+      } else {
+        give no_index;
+      }
     }
-    let current_owner = if context^.children.inner[at].viewport_origin {
-      give zero_origin();
+    if root == no_index {
+      return unit;
+    }
+    let held = reference_owner_cursor(context: context, owner: owner, slot: root);
+    if skip >= held.total_events {
+      return unit;
+    }
+    let (slot, offset) = owner_select(context: context, owner: owner, event: skip);
+    if slot == no_index {
+      return unit;
+    }
+    let rank = owner_rank(context: context, owner: owner, slot: slot);
+    let start = if offset == 0_u64 {
+      give rank;
     } else {
-      give block_origin(context: context, block: context^.children.inner[at].block);
+      give rank +sat 1_u64;
     }
-    let old = origin_accumulate(owner: old_owner, local: context^.children.inner[at].anchor);
-    let moved = moved_reference_origin(value: old, delta: delta);
-    let local = origin_relative(value: moved, owner: current_owner);
-    set context^.children.inner[at].anchor = local;
-  }
-  return unit;
-}
-
-fn move_reference_payload(context: &Context, item: Flow, delta: i32) -> result: unit writes(context) {
-  doc "Moves one intact suffix payload in the settled frame. An Open captures its old frame and changes only its direct origin; lineless paragraph scratch remains fixed while atomic child anchors move independently. stack_flow gives a finite Text natural only to a paragraph with lines; lineless Text retains the absent sentinel.";
-  let child_slot = no_index;
-  match item {
-    Open(block: b) => {
-      let at = cvt::<u32, u64>(b);
-      if at < context^.blocks.inner.len {
+    let no = False();
+    let installed = RangeAction(geometry: action, semantic: 0_i64, basis: 0_i32, basis_set: no);
+    let positioned = box_slots_new::<EntryHandle>(capacity: 0_u64);
+    if owner == no_index {
+      let total = install_range(sequence: &context^.entries, root: root, skip: start, action: installed, visits: &context^.boundary_visits);
+      range_positioned(sequence: &context^.entries, root: root, skip: start, owner: owner, handles: &positioned, visits: &context^.boundary_visits);
+    } else {
+      let owner_at = cvt::<u32, u64>(owner);
+      if owner_at < context^.blocks.inner.len {
         set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-        capture_reference_block(context: context, at: at);
-        let old = context^.blocks.inner[at].reference_old;
-        let owner = block_origin(context: context, block: context^.blocks.inner[at].parent);
-        let moved = moved_reference_origin(value: old, delta: delta);
-        let local = origin_relative(value: moved, owner: owner);
-        set context^.blocks.inner[at].x = local.x;
-        set context^.blocks.inner[at].y = local.y;
-        set context^.blocks.inner[at].dx = local.dx;
-        set context^.blocks.inner[at].dy = local.dy;
+        let total = install_range(sequence: &context^.blocks.inner[owner_at].entries, root: root, skip: start, action: installed, visits: &context^.boundary_visits);
+        range_positioned(sequence: &context^.blocks.inner[owner_at].entries, root: root, skip: start, owner: owner, handles: &positioned, visits: &context^.boundary_visits);
       }
     }
-    Text(paragraph: p) => {
-      let at = cvt::<u32, u64>(p);
-      if at < context^.paragraphs.inner.len {
-        set context^.boundary_visits.entries = context^.boundary_visits.entries +sat 1_u64;
-        if context^.paragraphs.inner[at].lines.inner.len > 0_u64 {
-          let previous = True();
-          let old_owner = retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
-          let owner = block_origin(context: context, block: context^.paragraphs.inner[at].block);
-          let held = Origin(x: context^.paragraphs.inner[at].x, y: context^.paragraphs.inner[at].top, dx: context^.paragraphs.inner[at].dx, dy: context^.paragraphs.inner[at].dy);
-          let old = origin_accumulate(owner: old_owner, local: held);
-          let moved = moved_reference_origin(value: old, delta: delta);
-          let local = origin_relative(value: moved, owner: owner);
-          set context^.paragraphs.inner[at].x = local.x;
-          set context^.paragraphs.inner[at].top = local.y;
-          set context^.paragraphs.inner[at].dx = local.dx;
-          set context^.paragraphs.inner[at].dy = local.dy;
-        }
-        let atomics = context^.paragraphs.inner[at].atomics.inner.len;
-        for (k in 0_u64..atomics) {
-          let atomic_item = context^.paragraphs.inner[at].atomics.inner[k];
-          let atomic_at = cvt::<u32, u64>(atomic_item.context);
-          move_reference_child(context: context, at: atomic_at, delta: delta);
-        }
+    let identity = origin_identity(value: action);
+    if identity {
+    } else {
+      set context^.range_actions = True();
+      set context^.reference_dense = False();
+    }
+    let selected = positioned.inner.len;
+    for (k in 0_u64..selected) {
+      let handle = positioned.inner[k];
+      move_positioned_anchor(context: context, slot: handle.slot, owner: owner, action: action, viewport_action: viewport_action);
+    }
+    let descriptor = RangeDescriptor(owner: owner, first: start, action: action);
+    let kept = push_item::<RangeDescriptor>(cell: &context^.range_descriptors, value: descriptor, ceiling: item_ceiling);
+    if offset == 0_u64 {
+      return unit;
+    }
+    let item = reference_owner_payload(context: context, owner: owner, slot: slot);
+    match item {
+      Open(block: b) => {
+        set owner = b;
+        set skip = offset - 1_u64;
       }
-    }
-    Child(context: c) => {
-      set child_slot = c;
-    }
-    Float(context: f) => {
-      set child_slot = f;
-    }
-    Out(context: o) => {
-      set child_slot = o;
-    }
-    Close(..) => {
+      Close(..) => {
+        return unit;
+      }
+      Text(..) => {
+        return unit;
+      }
+      Child(..) => {
+        return unit;
+      }
+      Float(..) => {
+        return unit;
+      }
+      Out(..) => {
+        return unit;
+      }
     }
   }
-  let child_at = cvt::<u32, u64>(child_slot);
-  move_reference_child(context: context, at: child_at, delta: delta);
   return unit;
 }
 
-fn move_reference_owner_suffix(context: &Context, owner: u32, root: u32, held: SequenceCursor, skip: u64, delta: i32) -> result: unit writes(context) {
-  doc "Visits the direct owner suffix and only the cut ancestor chain using the caller's cursor snapshot, skipping every intact nested owner interior through cached event counts. Geometry changes no topology, so the left cursor used for rank selection also serves its recursive call. Counters charge each actual cursor and payload lookup and each selected direct payload; ancestry resolution retains the shared geometry-reader scope.";
-  if held.live {
-  } else {
-    return unit;
+fn owner_select(context: &Context, owner: u32, event: u64) -> (slot: u32, offset: u64) reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span), reads(context.blocks.inner) {
+  doc "Selects the direct entry of one owner containing a virtual event rank.";
+  if owner == no_index {
+    let (root_slot, root_offset) = sequence_select(sequence: &context^.entries, event: event);
+    return root_slot, root_offset;
   }
-  if skip >= held.total_events {
-    return unit;
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let (block_slot, block_offset) = sequence_select(sequence: &context^.blocks.inner[at].entries, event: event);
+    return block_slot, block_offset;
   }
-  if held.left != no_index {
-    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+  return no_index, 0_u64;
+}
+
+fn owner_rank(context: &Context, owner: u32, slot: u32) -> rank: u64 reads(context.entries.nodes), reads(context.entries.root), reads(context.entries.span), reads(context.blocks.inner), writes(context.boundary_visits) {
+  doc "The transient direct rank of one owner slot, counted as physical index work.";
+  if owner == no_index {
+    let root_rank = boundary_rank(sequence: &context^.entries, slot: slot, visits: &context^.boundary_visits);
+    return root_rank;
   }
-  let left = reference_owner_cursor(context: context, owner: owner, slot: held.left);
-  let before = left.total_events;
-  move_reference_owner_suffix(context: context, owner: owner, root: held.left, held: left, skip: skip, delta: delta);
-  let after = before +sat held.own_events;
-  if skip < after {
-    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
-    let item = reference_owner_payload(context: context, owner: owner, slot: root);
-    let own_skip = skip -sat before;
-    if own_skip == 0_u64 {
-      move_reference_payload(context: context, item: item, delta: delta);
-    } else {
-      match item {
-        Open(block: b) => {
-          let at = cvt::<u32, u64>(b);
-          if at < context^.blocks.inner.len {
-            set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
-            let nested_root = context^.blocks.inner[at].entries.root;
-            let nested_skip = own_skip - 1_u64;
-            if nested_root != no_index {
-              set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
-            }
-            let nested_cursor = reference_owner_cursor(context: context, owner: b, slot: nested_root);
-            move_reference_owner_suffix(context: context, owner: b, root: nested_root, held: nested_cursor, skip: nested_skip, delta: delta);
-          }
-        }
-        Text(..) => {
-        }
-        Child(..) => {
-        }
-        Float(..) => {
-        }
-        Out(..) => {
-        }
-        Close(..) => {
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    let block_rank = boundary_rank(sequence: &context^.blocks.inner[at].entries, slot: slot, visits: &context^.boundary_visits);
+    return block_rank;
+  }
+  return 0_u64;
+}
+
+fn publish_reference_ranges(context: &Context, basis_height: i32) -> result: unit writes(context) {
+  doc "Publishes each transient cut-chain range's semantic displacement, the local y of its geometry action, and the latest basis assignment for its Opens, then retires the descriptors. Exact common translation commutes with the natural-floor and float-reach reductions; plain Text, in-flow Child, float and atomic travel are invariant, and positioned transfers are regenerated after positioned settlement. Old semantic reductions stay readable until this stage.";
+  let count = context^.range_descriptors.inner.len;
+  let zero = zero_origin();
+  let yes = True();
+  for (k in 0_u64..count) {
+    if k < context^.range_descriptors.inner.len {
+      let descriptor = context^.range_descriptors.inner[k];
+      let action = RangeAction(geometry: zero, semantic: descriptor.action.y, basis: basis_height, basis_set: yes);
+      if descriptor.owner == no_index {
+        let root = context^.entries.root;
+        let total = install_range(sequence: &context^.entries, root: root, skip: descriptor.first, action: action, visits: &context^.boundary_visits);
+      } else {
+        let owner_at = cvt::<u32, u64>(descriptor.owner);
+        if owner_at < context^.blocks.inner.len {
+          set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+          let root = context^.blocks.inner[owner_at].entries.root;
+          let total = install_range(sequence: &context^.blocks.inner[owner_at].entries, root: root, skip: descriptor.first, action: action, visits: &context^.boundary_visits);
         }
       }
     }
   }
-  let right_skip = skip -sat after;
-  if held.right != no_index {
-    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
-  }
-  let right = reference_owner_cursor(context: context, owner: owner, slot: held.right);
-  move_reference_owner_suffix(context: context, owner: owner, root: held.right, held: right, skip: right_skip, delta: delta);
+  set context^.range_actions = True();
+  retire_range_descriptors(context: context);
+  return unit;
+}
+
+fn retire_range_descriptors(context: &Context) -> result: unit writes(context.range_descriptors) {
+  doc "Retires one transaction's transient range descriptors.";
+  let empty = box_slots_new::<RangeDescriptor>(capacity: 0_u64);
+  set context^.range_descriptors = move empty;
   return unit;
 }

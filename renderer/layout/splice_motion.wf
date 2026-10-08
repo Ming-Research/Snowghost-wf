@@ -105,43 +105,6 @@ fn entry_motion(context: &Context, item: Flow, styles: &Styles) -> made: Sequenc
   return output;
 }
 
-fn sequence_motion_suffix(sequence: &EntrySequence, root: u32, skip: u64, delta: i64, moves: &Box<Slots<BoundaryMove>>, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.payloads), reads(sequence.span), writes(sequence.nodes), writes(moves), writes(visits) {
-  doc "Shifts the observed bounds of each direct suffix entry once and emits its unchanged payload in sequence order. Cached direct counts exclude the prefix; each intersected AVL node joins left, own and right once in the retained association, without opening nested block entries or repairing the same ancestor per sibling.";
-  let held = boundary_node(sequence: sequence, slot: root, visits: visits);
-  let own_field = True();
-  let total_field = False();
-  if held.live {
-  } else {
-    let empty = empty_output();
-    return empty;
-  }
-  if skip >= held.total_count {
-    let unchanged = boundary_output(sequence: sequence, slot: root, own: total_field, visits: visits);
-    return unchanged;
-  }
-  let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
-  let prefix_count = left_node.total_count;
-  let left = sequence_motion_suffix(sequence: sequence, root: held.left, skip: skip, delta: delta, moves: moves, visits: visits);
-  let own_output = boundary_output(sequence: sequence, slot: root, own: own_field, visits: visits);
-  if skip <= prefix_count {
-    let shifted = shift_motion(output: own_output, delta: delta);
-    set own_output = shifted;
-    slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &own_output, own: own_field);
-    let missing = Flow::Close(block: no_index);
-    let item = slot_read::<Flow>(pages: &sequence^.payloads, slot: root, span: sequence^.span, missing: missing);
-    set visits^.entries = visits^.entries +sat 1_u64;
-    let translation = BoundaryMove(item: item, delta: delta);
-    let kept = push_item::<BoundaryMove>(cell: moves, value: translation, ceiling: item_ceiling);
-  }
-  let after = prefix_count +sat 1_u64;
-  let right_skip = skip -sat after;
-  let right = sequence_motion_suffix(sequence: sequence, root: held.right, skip: right_skip, delta: delta, moves: moves, visits: visits);
-  let prefix = join_output(left: &left, right: &own_output);
-  let total = join_output(left: &prefix, right: &right);
-  slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &total, own: total_field);
-  return total;
-}
-
 fn inherited_float_reach(context: &Context, owner: u32, visits: &BoundaryVisits) -> reach: i64 reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.reference_phase), writes(visits) {
   doc "Collects only prefix reductions on the enclosing owner chain. Their floats are unchanged by an edit inside the owner; coordinates are lifted through normal block origins.";
   let cursor = owner;
@@ -336,14 +299,19 @@ fn child_motion_travel_with_owner(context: &Context, at: u64, owner: Origin) -> 
   doc "Charges child motion against an already resolved parent block origin. The caller must keep that parent frame unchanged through this read; positioned child settlement writes only the child, and preceding zero-delta certificate publication changes summaries without moving any parent origin. Hybrid placement still resolves through the reference reader.";
   if at < context^.children.inner.len {
     let child = &context^.children.inner[at];
+    let source = cvt::<u32, u64>(child^.placement_paragraph);
     let resolved = if context^.local_geometry {
       let placement_owner = if child^.viewport_origin {
         let viewport_owner = zero_origin();
         give viewport_owner;
+      } else if source < context^.paragraphs.inner.len {
+        let paragraph_offset = paragraph_local(context: context, at: source);
+        give origin_accumulate(owner: owner, local: paragraph_offset);
       } else {
         give owner;
       }
-      let placed = origin_accumulate(owner: placement_owner, local: child^.anchor);
+      let anchor = child_local(context: context, at: at);
+      let placed = origin_accumulate(owner: placement_owner, local: anchor);
       give placed;
     } else {
       let reference = child_origin(context: context, at: at);
