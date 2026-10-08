@@ -3305,3 +3305,37 @@ counted as detection. The mutation writer now removes whitespace-only lines
 within its one edited function; each mutant still must compile and reach its
 specific runtime observation. New source-owner and child-context rebase
 omissions use the immediate nested edit to expose stale published identities.
+
+### Full-build collection-cost comparison, before measurement
+
+Question: what work does retaining and checking the immediate basis records
+add to a full build on the same source? The hosted control keeps the corrected
+numerical height resolver and the record representation, but disables proof
+collection/currentness checks and summary reductions. It is used only for
+full builds; every sequential/four-worker page dump must match the unmodified
+source before timing. A difference rejects the control rather than becoming
+an expected result. It isolates collection work, not empty record storage;
+native LLVM record sizes and whole-process peak RSS are reported separately.
+The control's identical-binary twin and M2's independently built twin expose
+process/order noise; all candidates share the exact captures and fonts.
+
+Each page/mode first measures zero and one full layout repetition, then picks
+at most ten repetitions with a half-second target for layout work; the cap
+may leave fast pages below that target, requiring inspection of spread.
+Three rounds reverse build order. Subtracting the zero-repetition setup
+excludes parsing/style initialization, so these observations are full layout-pipeline
+costs (font matching, boxes, text preparation, layout and destruction), not a claim that M2's full style-and-layout criterion is established.
+A regression beyond twin spread rejects a no-regression claim; an unresolved
+spread requires a longer paired sample. No measurement result is claimed yet.
+The native ABI inspector asks clang to evaluate sizes from emitted LLVM types
+rather than inferring padding from field sums. All compilation and execution
+are confined to the hosted temporary workflow.
+
+The first pilot used the default compiler code-generation mode on all four
+candidates. Subsequent cached falsifier drivers use per-function fragments;
+they cannot be mixed with that pilot's historical binaries for an attributed
+source comparison. The next all-candidate run rebuilds every side with the
+same per-function mode before the full-cost comparison consumes its artifacts.
+Driver revisions and compiler/native toolchain identities accompany the
+full-cost artifact. The recorded control-reference dump hash is explicitly
+head/control evidence, not a dump hash claimed for historical builds.

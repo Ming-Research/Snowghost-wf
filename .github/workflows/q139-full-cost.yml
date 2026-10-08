@@ -1,0 +1,85 @@
+# Temporary collection-cost and native representation evidence; removed before ready.
+name: q139-full-cost
+on:
+  push:
+    branches: [research/m2-q139]
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Hosted q139-baseline artifact with the candidate and compiler cache
+        required: true
+      driver_run:
+        description: Hosted main/M2/twin drivers with the same compiler
+        required: true
+jobs:
+  full-cost:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run }}
+          name: q139-baseline
+          path: build
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run }}
+          pattern: driver-*
+          path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37727037303
+          name: apollo11-diag-37727037303
+          path: build/apollo-archive
+      - name: Same-source control and native record types
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/full-cost
+          git rev-parse HEAD > build/full-cost/revision.txt
+          cat whitefoot.pin >> build/full-cost/revision.txt
+          clang --version >> build/full-cost/revision.txt
+          sha256sum "$wfc" >> build/full-cost/revision.txt
+          cp -r build/drivers build/full-cost/driver-records
+          rm build/full-cost/driver-records/driver-*/layout_oracle_*
+          cp build/baseline-revision.txt build/full-cost/baseline-revision.txt
+          # Require identical production source; evidence scripts may differ.
+          baseline=$(head -1 build/baseline-revision.txt)
+          git fetch origin "$baseline"
+          git diff --exit-code "$baseline" -- renderer
+          cp build/layout_base build/drivers/driver-head/layout_oracle_seq
+          cp build/layout_base_par build/drivers/driver-head/layout_oracle_par
+          (cd renderer && "$wfc" --emit-llvm --graph modules.wfg --entry layout_oracle -o ../build/full-cost/record-types.ll)
+          python3 research/investigations/incremental-layout/scripts/percentage-abi.py build/full-cost/record-types.ll build/full-cost/abi
+          python3 research/investigations/incremental-layout/scripts/percentage-record-control.py
+          git diff -- renderer > build/full-cost/control.diff
+          mkdir -p build/drivers/driver-control build/drivers/driver-controltwin
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/drivers/driver-control/layout_oracle_seq)
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/drivers/driver-control/layout_oracle_par)
+          cp build/drivers/driver-control/layout_oracle_* build/drivers/driver-controltwin/
+          chmod +x build/drivers/driver-*/layout_oracle_*
+      - name: Workload identity and interleaved full-build samples
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          cp build/apollo-archive/research/concurrency/apollo11* build/research/concurrency/
+          sha256sum -c build/apollo-archive/apollo11-inputs.sha256
+          uname -a > build/full-cost/machine.txt
+          lscpu >> build/full-cost/machine.txt
+          sha256sum build/research/concurrency/*.html build/research/concurrency/*.css build/drivers/driver-*/layout_oracle_* > build/full-cost/inputs.sha256
+          python3 research/investigations/incremental-layout/scripts/percentage-full-cost.py build/full-cost/samples
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-full-cost
+          path: build/full-cost/
