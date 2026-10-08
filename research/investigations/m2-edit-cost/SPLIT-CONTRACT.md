@@ -529,7 +529,12 @@ implementation completeness and acceptance are separate from that selection.
 The owner instructed that the design log entry wait until
 [pull request #49](https://github.com/Ming-Research/Snowghost-wf/pull/49) is approved;
 this work opens no pull request.
-The following dated prototype evidence predates the completion validation. Independent contract
+
+### Historical prototype evidence before Q138
+
+The following prototype evidence predates Q138's bounded topology and owner-motion
+implementation. Its topology limitations are historical, not the current contract.
+Independent contract
 review found and fixed the empty-source line-presence/identity dependency,
 publication order separate from storage identity, and the Child margin case.
 
@@ -820,7 +825,7 @@ prototype, but its serial sibling publication is not reported as intrinsic.
 - Confidence 4/5: the pinned range grammar excludes the natural proof; a native
   admitted proof that needs no proof-only representation could overturn this.
 
-## Completion correctness and review
+## Earlier Q134 completion correctness and review
 
 The runtime bodies are unchanged between correctness revision
 75c20f5df74775e21fee5ad7ddc8389aa80d43b0 and measured revision
@@ -1014,3 +1019,25 @@ For HTML5 font-size pair 23/24, base and twin spend 21.72/21.71% self samples in
 For the first HTML5 block pair, base/twin/A upper medians were 294/294/327 us over 60,000 edits each. Separating insertion and removal gives 315/315/349 us and 243/243/277 us. A's `retained_block_origin` accounts for 10.07% self samples, while both controls' largest costs remain splice positioning. The new phase-aware origin reader is therefore a candidate for the approximately 34 us paired overhead, not yet an isolated cause.
 
 Before the repair experiment: ordinary owned geometry depends only on local x/y/dx/dy and parent links. Both production setters of `local_geometry = True()` first call `finish_reference_geometry`, clearing touched replay flags and selecting phase zero. Captured origins, freshness flags and raw replay scratch are outside that phase's input closure. Separate this ordinary traversal from the unchanged old/current replay traversal, and extend the independent frame oracle through publication and retirement. This removes unnecessary state reads; it is not an attempt to respell the same operations to hide a compiler limitation. Compare the same source immediately before/after this change, with an independently built before twin and unchanged compiler/inputs on one hosted runner. Reject the cost hypothesis if block timings do not separate from control spread; preserve all old/current frame and suffix omission checks. Root-font and indexed suffix-range proposals remain awaiting Q140/Q141.
+
+### Block-only attribution after the six-cohort comparison
+
+The db46e92 six-cohort comparison rejects the ordinary-origin block-cost
+hypothesis: A's block medians overlap its immediate-before twin or are slower,
+and seven block cells still exceed cf12c609. No isolated block improvement is
+claimed. The earlier whole-process profile cannot separate startup from edit
+samples, although source inspection confirms owner reads occur in both.
+
+Before another repair: sample the frozen final base, base twin and db46e92
+drivers on the same repeated first HTML5 block pair, delaying perf collection
+by five seconds. Timestamp the base record and first edit on stdout and require
+both before the delay, so the sampled interval excludes startup by observed
+evidence. Keep the existing two single-pair samples and bounded repetition
+calculation. This diagnostic is not the full X5 acceptance script. Reject a
+remaining owner-walk attribution if those symbols are absent after startup.
+`child_motion_travel` currently obtains its owner then `child_origin` repeats
+that ancestry in the ordinary phase; reuse of the same immutable origin would
+remove duplicate work without changing representation, viewport ownership or
+saturation order, but its cost contribution is not yet established. No compiler
+limitation or new block representation is inferred from function percentages.
+The temporary profile job is removed after its evidence is captured.

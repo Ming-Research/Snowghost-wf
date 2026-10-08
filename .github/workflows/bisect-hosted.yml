@@ -144,3 +144,133 @@ jobs:
             build/x5/scripts/
             build/drivers/driver-*/revision.txt
             build/drivers/driver-*/pin-only.patch
+
+  profile-block:
+    if: contains(github.event.head_commit.message, '[block-profile]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Frozen acceptance drivers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for name in base twin a; do
+            gh run download 37728270804 -n "driver-$name" --dir "build/drivers/driver-$name"
+          done
+          chmod +x build/drivers/driver-*/layout_oracle_*
+      - name: Fonts and sampled profiler
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo sysctl kernel.perf_event_paranoid=-1
+          uname -a | tee build/machine.txt
+          lscpu | tee -a build/machine.txt
+          perf --version | tee -a build/machine.txt
+      - name: Matched HTML5 samples
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          test -s build/research/concurrency/html5.html
+          make -s oracle-fonts
+          cp build/drivers/driver-base/layout_oracle_seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare html5
+          mkdir -p build/block-profile
+          sha256sum build/research/concurrency/html5.html renderer/style/ua.css build/x5/scripts/html5-block.edits > build/block-profile/inputs.sha256
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          for kind in ('block',):
+              source = Path(f'build/x5/scripts/html5-{kind}.edits').read_text().splitlines(True)
+              setup = [line for line in source if line.startswith('S ')]
+              edits = [line for line in source if line.startswith(('B ', 'X ', 'C ', 'K '))]
+              pair = edits[:2] if kind == 'block' else edits[22:24]
+              assert len(pair) == 2
+              Path(f'build/block-profile/{kind}-sample.edits').write_text(''.join(setup + pair))
+          PYEOF
+      - name: Bound each workload and compare profiles
+        run: |
+          set -euo pipefail
+          for kind in block; do
+            for name in base a; do
+              for sample in 1 2; do
+                output=build/block-profile/$kind-$name-sample-$sample
+                WF_WORKERS=4 /usr/bin/time -p -o "$output.time" build/drivers/driver-$name/layout_oracle_seq edittime "build/block-profile/$kind-sample.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$output.raw"
+              done
+            done
+            KIND="$kind" python3 - <<'PYEOF'
+          import os, re
+          from pathlib import Path
+          root = Path('build/block-profile')
+          kind = os.environ['KIND']
+          costs = []
+          walls = []
+          for name in ('base', 'a'):
+              for sample in (1, 2):
+                  raw = (root / f'{kind}-{name}-sample-{sample}.raw').read_text()
+                  values = list(map(int, re.findall(r'^edit \d+ us (\d+)', raw, re.M)))
+                  assert len(values) == 2
+                  costs.append(sum(values))
+                  walls.append(float((root / f'{kind}-{name}-sample-{sample}.time').read_text().splitlines()[0].split()[1]))
+          assert max(walls) < 60 and min(costs) > 0, (walls, costs)
+          repeats = min(30000, max(2, int(45000000 / max(costs))))
+          lines = (root / f'{kind}-sample.edits').read_text().splitlines(True)
+          setup = [line for line in lines if line.startswith('S ')]
+          pair = [line for line in lines if not line.startswith('S ')]
+          if kind == 'block':
+              assert pair[0].startswith('B ') and pair[1].startswith('X ')
+              first_node = int(pair[1].split()[1])
+              repeated = [line for n in range(repeats) for line in (pair[0], f'X {first_node + 2 * n}\n')]
+          else:
+              repeated = pair * repeats
+          (root / f'{kind}.edits').write_text(''.join(setup + repeated))
+          (root / f'{kind}-scale.txt').write_text(f'wall_seconds={walls}; pair_edit_us={costs}; repeats={repeats}\n')
+          PYEOF
+            for name in base twin a; do
+              output=build/block-profile/$kind-$name
+              OUTPUT="$output" NAME="$name" WF_WORKERS=4 python3 - <<'PYEOF'
+          import json, os, subprocess, time
+          from pathlib import Path
+          output = Path(os.environ['OUTPUT'])
+          command = ['perf', 'record', '--delay', '5000', '-F', '499', '--call-graph', 'dwarf,4096', '-o', str(output) + '.data', '--', f"build/drivers/driver-{os.environ['NAME']}/layout_oracle_seq", 'edittime', 'build/block-profile/block.edits', 'build/research/concurrency/html5.html', 'renderer/style/ua.css']
+          start = time.monotonic()
+          base_time = None
+          first_edit_time = None
+          with open(str(output) + '.raw', 'wb') as destination:
+              process = subprocess.Popen(command, stdout=subprocess.PIPE)
+              for line in process.stdout:
+                  elapsed = time.monotonic() - start
+                  if line.startswith(b'base hash '):
+                      base_time = elapsed
+                  if line.startswith(b'edit 1 us '):
+                      first_edit_time = elapsed
+                  destination.write(line)
+              status = process.wait()
+          elapsed = time.monotonic() - start
+          evidence = dict(base_seconds=base_time, first_edit_seconds=first_edit_time, total_seconds=elapsed, status=status, sample_delay_seconds=5)
+          Path(str(output) + '.phase.json').write_text(json.dumps(evidence, indent=2) + '\n')
+          print(evidence)
+          def admitted(value):
+              return value['status'] == 0 and value['base_seconds'] is not None and value['first_edit_seconds'] is not None and 0 <= value['base_seconds'] <= value['first_edit_seconds'] < 5 and value['total_seconds'] > 10
+          assert admitted(evidence), evidence
+          assert not admitted(dict(evidence, first_edit_seconds=6)), 'late startup was admitted'
+          assert not admitted(dict(evidence, base_seconds=None)), 'missing startup marker was admitted'
+          print('late and missing startup controls rejected')
+          PYEOF
+              perf report -i "$output.data" --stdio --no-children --percent-limit 0.5 > "$output-self.txt"
+              perf report -i "$output.data" --stdio --children --percent-limit 1 > "$output-callers.txt"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: block-profile-evidence
+          path: |
+            build/machine.txt
+            build/block-profile/
+            build/drivers/driver-*/revision.txt
+            build/drivers/driver-*/pin-only.patch
