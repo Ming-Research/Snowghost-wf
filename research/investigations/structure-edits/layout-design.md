@@ -3513,7 +3513,7 @@ The Q139 fixtures and layout floor now run from the permanent `q139`
 workflow on pushes to this branch and main, affected pull requests, and
 manual dispatch. `percentage-cases.py`, `percentage-splice.py` and
 `percentage-matrix.py` keep that caller; `percentage-falsify.py` keeps the
-permanent `falsify-m2` caller, whose main/manual runs include both inventories
+permanent `falsify-m2` caller, whose main/manual runs include the M2 and Q139 sets
 of semantic mutations. The nested-reader omission now targets a direct
 reader in the route context, because off-route nested readers are expressly
 outside the approved inventory. All existing M2 mutation expectations stay.
