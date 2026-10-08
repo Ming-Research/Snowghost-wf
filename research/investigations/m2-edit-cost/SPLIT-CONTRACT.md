@@ -1591,3 +1591,74 @@ path before selecting a repair. A reader change must then preserve the
 existing range/freshness contract and pass the complete gates and twin-controlled
 six-kind comparison. No performance or refusal cause is inferred from source
 inspection alone.
+
+### Matched inherited-reader verdict and owner-local bound
+
+[Hosted profile 37838048934](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37838048934)
+uses the two frozen drivers built in
+[37833182001](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37833182001):
+3393042 plus `frontier-span.patch`, and 58b16da, both with wf-0b7f5c5b9854
+and LLVM 22. The capture ran on an AMD EPYC 7763 hosted runner, Linux
+6.17.0-1022-azure, Valgrind 3.22.0, with the same frozen HTML5 page, fonts,
+UA stylesheet and 60 sentence edits. Native parallel runs used four workers;
+instruction attribution used sequential builds. Both cohorts produced exactly
+60 update-return parts on thread 2, each with summed self instructions equal
+to its summary. The threaded allocation probe retained exactly 2 and 5 reader
+calls and excluded all 400 calls outside those updates.
+
+| Across 60 updates | Patched frontier | Range head |
+|---|---:|---:|
+| Total instructions | 200,312,065 | 216,949,190 |
+| Inherited-reader calls | 0 | 179,067 |
+| Node-read calls from inherited readers | 0 | 822,700 |
+| Native upper median, sequential, microseconds | 340 | 671 |
+| Native upper median, four workers, microseconds | 367 | 626 |
+
+The hypothesis survives: inherited readers execute 78,862,686 instructions,
+36.35% of the range update cost and 4.74 times the net added 16,637,125
+instructions. Removed suffix work offsets much of that addition. This
+attribution is `range_inherited`'s 40,810,663 self instructions plus 38,052,023
+instructions in its `slot_view` callees; it excludes 279,310 `slot_view`
+instructions from other callers. `block_local` accounts for 68,152,224 of the
+inherited-reader instructions (86.42%). The diagnostic observes no recursive
+`slot_view` call edges; this does not establish zero directory work, because
+compiled call edges do not count inlined or loop-lowered operations. Native
+timings reproduce the regression but are exploratory, without twins or
+interleaved rounds; they are not acceptance measurements.
+
+**Reader repair contract.** Each owner sequence conservatively records whether
+it may retain any geometry, semantic or basis action. Fresh construction starts
+inactive. The outer `install_range` activates the owner before its recursive
+mutation, even for an empty or identity range; recursive branches only read
+that bit. Point retirement, exposure, rotations, insertion and removal never
+clear it. A full normalization clears it only after folding every action of
+that sequence. Reconstruction gets a fresh sequence and fresh bit. An inactive
+owner's `range_inherited`, `range_expose` and `range_distribute` return the
+identity/no operation before reading its index. Topology/applicability readers
+such as `owner_view` remain unconditional. Active owners retain the existing
+bounded AVL path and exact action rules; this change makes no shorter-path
+claim for them.
+
+**Dependencies and alternatives.** A read depends on its owner's published
+bit and actions, with no new mutable cache shared by readers. Activation
+precedes the action it advertises, and clearing follows complete consumption;
+these are the true validity dependencies. A per-pass placement table would
+require collecting its demanded domain before consumers run; a whole-context
+table would also introduce unrelated work. The owner-local bit instead prunes
+provably inactive domains while preserving independent immutable reads.
+Existing serial owner-motion writes remain unchanged pending the recorded
+Whitefoot gap. The bit represents retained state, not a proof-only ownership
+array or an alias test.
+
+**Falsification and acceptance.** Existing independent range constants and
+range fixtures cover installation, inherited geometry/semantic reads, point
+replacement, rewiring, opposite shifts and full normalization. Omitting
+activation must fail their nonzero expected actions; premature clearing must
+fail retained-action reads. The after profile must reduce inherited node-read
+calls; otherwise this bound has not addressed the observed cause. The timing
+comparison retains main and cf12c609, replaces the old pre-frontier cohort
+with 58b16da for a direct reader before/after, and keeps the patched frontier;
+each has a twin, and every X5 kind is interleaved in both modes and two rounds.
+HTML5 sentence/block must recover the patched-frontier cost while retaining
+the font-size gain. Until these measurements pass, the reader repair is a
+proposal, not a reported speedup.

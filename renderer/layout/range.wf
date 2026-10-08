@@ -114,8 +114,12 @@ fn slot_store_actions(pages: &SlotPages<SequenceNode>, slot: u32, span: u32, act
   return unit;
 }
 
-fn range_inherited(sequence: &EntrySequence, slot: u32) -> made: RangeInherited reads(sequence.nodes), reads(sequence.span) {
-  doc "Collects one stable slot's own actions and its ancestors' pending child actions through the index parent path. Each edge contributes once; the walk is bounded by the AVL height.";
+fn range_inherited(sequence: &EntrySequence, slot: u32) -> made: RangeInherited reads(sequence.range_actions), reads(sequence.nodes), reads(sequence.span) {
+  doc "Skips an owner without retained actions; otherwise collects one stable slot's own actions and its ancestors' pending child actions through the index parent path. Each edge contributes once; the walk is bounded by the AVL height.";
+  if sequence^.range_actions {
+  } else {
+    return no_inheritance();
+  }
   let (links, own, placed, opens) = slot_view(pages: &sequence^.nodes, slot: slot, span: sequence^.span);
   let made = no_inheritance();
   if links.live {
@@ -144,8 +148,8 @@ fn range_inherited(sequence: &EntrySequence, slot: u32) -> made: RangeInherited 
   return made;
 }
 
-fn owner_inherited(context: &Context, owner: u32, slot: u32) -> made: RangeInherited reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner) {
-  doc "Resolves a payload's range state in its owner sequence; a context with no retained actions reads nothing.";
+fn owner_inherited(context: &Context, owner: u32, slot: u32) -> made: RangeInherited reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.entries.range_actions) {
+  doc "Resolves a payload's range state only within an owner sequence that may retain actions; an inactive context or owner reads no index path.";
   if context^.range_actions {
   } else {
     return no_inheritance();
@@ -183,7 +187,7 @@ fn view_semantic(view: RangeInherited) -> displacement: i64 pure {
   return 0_i64;
 }
 
-fn block_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner) {
+fn block_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.entries.range_actions) {
   doc "A block's effective owner-relative origin: its retained base plus its range actions.";
   if at < context^.blocks.inner.len {
     let base = Origin(x: context^.blocks.inner[at].x, y: context^.blocks.inner[at].y, dx: context^.blocks.inner[at].dx, dy: context^.blocks.inner[at].dy);
@@ -198,7 +202,7 @@ fn block_local(context: &Context, at: u64) -> made: Origin reads(context.range_a
   return zero_origin();
 }
 
-fn paragraph_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.paragraphs.inner) {
+fn paragraph_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.paragraphs.inner), reads(context.entries.range_actions) {
   doc "A paragraph's effective owner-relative origin. Lineless paragraphs are not placed anchors, so their unplaced base resolves no action.";
   if at < context^.paragraphs.inner.len {
     let base = Origin(x: context^.paragraphs.inner[at].x, y: context^.paragraphs.inner[at].top, dx: context^.paragraphs.inner[at].dx, dy: context^.paragraphs.inner[at].dy);
@@ -213,7 +217,7 @@ fn paragraph_local(context: &Context, at: u64) -> made: Origin reads(context.ran
   return zero_origin();
 }
 
-fn child_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.children.inner) {
+fn child_local(context: &Context, at: u64) -> made: Origin reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.children.inner), reads(context.entries.range_actions) {
   doc "A child's effective anchor in its placement frame. Atomic anchors are paragraph-relative and follow their paragraph; viewport and positioned anchors are settled explicitly and resolve no range action.";
   if at < context^.children.inner.len {
     let base = context^.children.inner[at].anchor;
@@ -234,7 +238,7 @@ fn child_local(context: &Context, at: u64) -> made: Origin reads(context.range_a
   return zero_origin();
 }
 
-fn block_boundary(context: &Context, at: u64) -> made: SequenceOutput reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner) {
+fn block_boundary(context: &Context, at: u64) -> made: SequenceOutput reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.entries.range_actions) {
   doc "The effective Open transfer of a block: its duplicated boundary plus the semantic displacement it still lacks.";
   if at < context^.blocks.inner.len {
     let raw = context^.blocks.inner[at].boundary;
@@ -250,7 +254,7 @@ fn block_boundary(context: &Context, at: u64) -> made: SequenceOutput reads(cont
   return empty_output();
 }
 
-fn block_measured(context: &Context, at: u64) -> made: BlockOutput reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner) {
+fn block_measured(context: &Context, at: u64) -> made: BlockOutput reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.blocks.inner), reads(context.entries.range_actions) {
   doc "The effective measured output of a block: its offset includes published semantic displacement and its basis height the latest applicable assignment.";
   if at < context^.blocks.inner.len {
     let raw = context^.blocks.inner[at].output;
@@ -273,7 +277,7 @@ fn block_measured(context: &Context, at: u64) -> made: BlockOutput reads(context
   return empty_block_output();
 }
 
-fn effective_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), writes(visits) {
+fn effective_output(sequence: &EntrySequence, slot: u32, own: Bool, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.nodes), reads(sequence.span), reads(sequence.range_actions), writes(visits) {
   doc "Reads an externally addressed own or total transfer with the semantic displacement its ancestors still hold. A root read collects nothing.";
   let stored = boundary_output(sequence: sequence, slot: slot, own: own, visits: visits);
   let view = range_inherited(sequence: sequence, slot: slot);
@@ -340,8 +344,12 @@ fn range_receive(sequence: &EntrySequence, slot: u32, geometry: Origin, semantic
   return unit;
 }
 
-fn range_distribute(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+fn range_distribute(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.range_actions), reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Pushes one node's pending child actions into its two children before its membership or children's stored transfers change. Distribution uses the masks of the members that received the action.";
+  if sequence^.range_actions {
+  } else {
+    return unit;
+  }
   if slot == no_index {
     return unit;
   }
@@ -365,8 +373,12 @@ fn range_distribute(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits
   return unit;
 }
 
-fn range_expose(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.span), writes(sequence.nodes), writes(visits) {
+fn range_expose(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) -> result: unit reads(sequence.range_actions), reads(sequence.span), writes(sequence.nodes), writes(visits) {
   doc "Distributes pending child actions from the root down to and including one slot, so that slot inherits nothing and its children's stored transfers are relative to it. Only the bounded index path is visited.";
+  if sequence^.range_actions {
+  } else {
+    return unit;
+  }
   if slot == no_index {
     return unit;
   }
@@ -382,7 +394,7 @@ fn range_expose(sequence: &EntrySequence, slot: u32, visits: &BoundaryVisits) ->
   return unit;
 }
 
-fn owner_expose(context: &Context, owner: u32, slot: u32) -> result: unit reads(context.range_actions), reads(context.entries.span), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
+fn owner_expose(context: &Context, owner: u32, slot: u32) -> result: unit reads(context.range_actions), reads(context.entries.span), reads(context.entries.range_actions), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
   doc "Exposes one owner slot's index path before a point replacement; a context without retained actions has nothing to distribute.";
   if context^.range_actions {
   } else {
@@ -402,7 +414,7 @@ fn owner_expose(context: &Context, owner: u32, slot: u32) -> result: unit reads(
   return unit;
 }
 
-fn retire_point_geometry(context: &Context, owner: u32, slot: u32) -> result: unit reads(context.range_actions), reads(context.entries.span), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
+fn retire_point_geometry(context: &Context, owner: u32, slot: u32) -> result: unit reads(context.range_actions), reads(context.entries.span), reads(context.entries.range_actions), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
   doc "Prepares a point geometry replacement: after exposure the point inherits nothing, and its own geometry action is retired because the caller encodes a complete new base in the effective owner frame. Semantic channels are untouched.";
   if context^.range_actions {
   } else {
@@ -419,7 +431,7 @@ fn retire_point_geometry(context: &Context, owner: u32, slot: u32) -> result: un
   return unit;
 }
 
-fn settle_open_semantics(context: &Context, at: u64) -> result: unit reads(context.range_actions), reads(context.entries.span), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
+fn settle_open_semantics(context: &Context, at: u64) -> result: unit reads(context.range_actions), reads(context.entries.span), reads(context.entries.range_actions), writes(context.entries.nodes), writes(context.blocks.inner), writes(context.boundary_visits) {
   doc "Makes one Open's duplicated offset, boundary and basis height equal to its effective view before a semantic point publication overwrites them: exposes its path, folds its own semantic displacement and basis assignment into the raw fields, then retires those own channels. Geometry channels are untouched.";
   if context^.range_actions {
   } else {
@@ -454,7 +466,13 @@ fn settle_open_semantics(context: &Context, at: u64) -> result: unit reads(conte
   return unit;
 }
 
-fn install_range(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAction, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.span), writes(sequence.nodes), writes(visits) {
+fn install_range(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAction, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.span), writes(sequence.nodes), writes(sequence.range_actions), writes(visits) {
+  doc "Activates this owner before installing an action. The bit is conservative for empty or identity ranges and stays set through point retirement and rewiring; recursive branches only read it and do not share a flag write.";
+  set sequence^.range_actions = True();
+  return install_range_subtree(sequence: sequence, root: root, skip: skip, action: action, visits: visits);
+}
+
+fn install_range_subtree(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAction, visits: &BoundaryVisits) -> made: SequenceOutput reads(sequence.span), reads(sequence.range_actions), writes(sequence.nodes), writes(visits) {
   doc "Installs one exact action on every direct entry from rank skip onward. Fully covered subtrees receive it in O(1); the boundary path distributes its pending actions before descending and joins left, own and right once in the retained association. Returns the subtree's new stored total.";
   let total_field = False();
   let own_field = True();
@@ -476,7 +494,7 @@ fn install_range(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAc
   let left_node = boundary_node(sequence: sequence, slot: held.left, visits: visits);
   let prefix_count = left_node.total_count;
   let left = if skip < prefix_count {
-    give install_range(sequence: sequence, root: held.left, skip: skip, action: action, visits: visits);
+    give install_range_subtree(sequence: sequence, root: held.left, skip: skip, action: action, visits: visits);
   } else {
     give boundary_output(sequence: sequence, slot: held.left, own: total_field, visits: visits);
   }
@@ -504,7 +522,7 @@ fn install_range(sequence: &EntrySequence, root: u32, skip: u64, action: RangeAc
   }
   let after = prefix_count +sat 1_u64;
   let right_skip = skip -sat after;
-  let right = install_range(sequence: sequence, root: held.right, skip: right_skip, action: action, visits: visits);
+  let right = install_range_subtree(sequence: sequence, root: held.right, skip: right_skip, action: action, visits: visits);
   let prefix = join_output(left: &left, right: &own);
   let total = join_output(left: &prefix, right: &right);
   slot_store_output(pages: &sequence^.nodes, slot: root, span: sequence^.span, output: &total, own: total_field);
@@ -721,12 +739,16 @@ fn normalize_range_actions(context: &Context) -> result: unit writes(context) {
   let no = False();
   let root_slot = context^.entries.root;
   normalize_owner(context: context, owner: no_index, slot: root_slot, geometry: zero, semantic: 0_i64, basis: 0_i32, basis_set: no);
+  set context^.entries.range_actions = False();
   let blocks = context^.blocks.inner.len;
   for (b in 0_u64..blocks) {
     if b < context^.blocks.inner.len {
       let owner = flow_index(at: b);
       let root = context^.blocks.inner[b].entries.root;
       normalize_owner(context: context, owner: owner, slot: root, geometry: zero, semantic: 0_i64, basis: 0_i32, basis_set: no);
+      if b < context^.blocks.inner.len {
+        set context^.blocks.inner[b].entries.range_actions = False();
+      }
     }
   }
   set context^.range_actions = False();
@@ -746,7 +768,7 @@ fn range_check_output(floor: i64) -> made: SequenceOutput pure {
   return output;
 }
 
-fn range_check_point(sequence: &EntrySequence, slot: u32, floor: i64, moved: i64) -> passed: Bool reads(sequence.nodes), reads(sequence.span) {
+fn range_check_point(sequence: &EntrySequence, slot: u32, floor: i64, moved: i64) -> passed: Bool reads(sequence.nodes), reads(sequence.span), reads(sequence.range_actions) {
   doc "Compares one slot's effective natural floor and resolved vertical action with independently stated constants.";
   let visits = no_boundary_visits();
   let own = True();
