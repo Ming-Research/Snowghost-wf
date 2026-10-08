@@ -46,6 +46,14 @@ is paragraph 3090 in the lead section 2154. The text describes Armstrong
 walking on the Moon and Aldrin following nineteen minutes later.
 The existing TODO's earlier sentence31–32 *performance* observation does not
 establish the cause of this newly recorded identity failure.
+A subsequent hosted dump capture in run
+[37729474890](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37729474890)
+shows 380 differing element/text rows for each edit. The first is element
+index 1653, a following paragraph: full y=3097.84375, incremental y=3123.84375
+for edit 31 and y=3071.84375 for edit 32 (±26 px). Both final heights remain
+54677 px, so a height-only comparison would miss the defect. The dumps locate
+the affected geometry; they do not establish the faulty dependency.
+
 
 Both builds' block paths are exactly 54 `splice 0 reason 7` and six
 `splice 0 reason 6`, with no other reasons and no local splice. The path
@@ -315,3 +323,71 @@ one cannot certify it. A broad height/min/max override supplies a bounded
 control for other retained height dependencies. Reason 2 after the joint
 override would support the simultaneous-height account; no change would
 reject it. The full 60-edit script checks whether the first pair generalizes.
+
+### Control results and causal limit
+
+Hosted run [37730165607](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37730165607)
+at `e8140cd89ace6ec82676d4c76ea819ed842cb979` completed these sequential
+input controls, all with `inc same`. The baseline two-edit sample took
+1.338 seconds before expansion; the joint-height full script took 20.151
+seconds. These elapsed values selected experiment scale, not performance.
+
+| Input control | Edits | Structure outcomes |
+| --- | --- | --- |
+| Original baseline | 1–2 | 2 × reason 7 |
+| html and body both `height:auto` | 1–2 | 2 × reason 2 |
+| Joint override, restore html `height:100%` | 1–2 | 2 × reason 7 |
+| Joint override, restore body `height:100%` | 1–2 | 2 × reason 7 |
+| Joint override, both grid ancestors become blocks | 1–2 | 2 × reason 9 |
+| All elements auto height / zero min-height / no max-height | 1–2 | 2 × reason 2 |
+| All-height override plus both grids become blocks | 1–2 | 2 × reason 9 |
+| Joint html/body override | All 60 | 54 × reason 2; original six × reason 6 |
+
+Every outcome is `splice 0`. Together with the prior one-at-a-time controls,
+the restoration tests isolate two simultaneous percentage-height blockers:
+removing both, and only both, exposes the grid-container refusal. The full
+script establishes the same transition for every original reason-7 edit.
+This agrees with the anonymous root and html/body flow ancestry constructed
+by `build_boxes`, the in-flow percentage-height fact in `prepare_spaces`,
+and the top-down `splice_inputs` preflight. It is not evidence that arbitrary
+percentage heights can safely be ignored. The generic numeric/travel and
+other reason-7 predicates remain necessary even though they are not the
+first refusal for these original edits.
+
+Changing both grids to blocks then reaches float-suffix reason 9 for the
+first pair. That control changes formatting-context boundaries and geometry;
+it does **not** establish a float refusal on the original grid page, or
+identify an infobox as its owner. It shows why removing just one reported
+guard would not establish local-splice coverage. The individual float/reach
+predicate and any later mixed-inline refusal remain unisolated. A new grid
+propagation implementation must measure the unchanged page again rather
+than treating this altered-topology control as its expected outcome.
+
+## Contract, stages and disposition
+
+The owner-facing choice is whether to extend locality to the dependencies
+found here; the existing fallback is the specified behavior, not a rendering
+subset reduction. The relevant live node is
+[the layout decision](../../../design/pipeline/layout.md), with the
+[splice transaction](layout-design.md#the-splice-transaction) and
+[Q128/Q129 extension](layout-design.md#q128-semantic-extension-constituent-inventory-and-proof-boundary)
+as its detailed grounds. No decision or renderer code changes in this task.
+
+| Cause or dependency | Contract and implementation relation | Disposition |
+| --- | --- | --- |
+| Retained sibling margin changes, reason 6 | Inserting before a blockquote's first `p` changes that retained sibling's `margin-top` from 0 to 8 px; removal restores it. `structure_splice` refuses any changed retained style outside the inserted subtree before the ancestor preflight. The margin override eliminates all six reason-6 paths. The transaction expressly puts changed sibling uses in the dirty frontier. | Covered by the existing sibling-frontier contract; completing its implementation needs no new semantic scope decision. It would still expose the later ancestor refusals, not by itself make these edits local. |
+| In-flow percentage-height dependence, a reason-7 predicate | `prepare_spaces` records `flow_definite_free` across ordinary blocks, child contexts and floats; `splice_context_ready` refuses when false. html and body both specify `height:100%`. Q128's positioned stage deliberately excludes only `Out` entries from this fact because `position_one` settles those again. It does not authorize ignoring retained in-flow height dependencies. | A new scope decision and dependency proof are needed to admit this case, potentially by distinguishing an unchanged resolved basis from a true growing-height dependency. Do not simply remove the guard. |
+| Enclosing grid contexts | `splice_context_ready` admits ordinary flow and the certified flex path; grid remains reason 2 when reached. The common ancestor chain contains two grids. Q128 B adds flex-container recomputation, not grid track/item propagation. | New scope decision for grid propagation. Existing grid fallback is intentional; the original reason-7 rows alone do not prove that this later guard was reached. |
+| Citation pair 35–36's inline old `p` | The first contract requires complete block entries without an inline run crossing the seam; the existing citation child is `display:inline`. Mixed-inline repair remains a separately deferred certificate. | New scope decision if a local path needs mixed-inline repair. This is a masked prospective seam dependency, not the observed reason-7 cause. |
+| Retained positioned boxes, floats and clearance | Relative ancestors and off-path infobox/table/float content are present, but the edited parents are ordinary sections, blockquotes or the citation div. Q128 handles positioned/atomic anchors; Q129 A handles stationary earlier float reach and common translation of later floats, including clearance checks. | Covered within those certificates; an implementation gap inside them can be fixed without new scope. A failed stationary-reach or changed-export condition would need a wider argument. No original reason 9 identifies such a structural refusal here, so no float-specific cause is established. |
+| Lists and counters | The inserted/removed paragraphs introduce no list/counter operations; the retained parser-output counter reset lies outside them. The contract requires neutrality, not absence of all counters elsewhere. | No additional counter scope is indicated by these block edits; reason 5 never occurs. Non-neutral reader propagation would still be a separate owner choice if another workload requires it. |
+| Sentence full/retained mismatch | Full-dump identity is mandatory even when a certificate refuses; equality of final page height is insufficient. | Correctness repair is covered by the existing contract. Deferred to a renderer task because this task explicitly forbids renderer changes; cause not yet isolated. |
+| Font-size boundary replay | Different edit sites reach list/table and fragmented owners; all identity checks pass, with boundary fallbacks but no structure reconstruction. | Profiling and fixes within the existing propagation decisions require no new scope. A broader certificate needs a decision only if profiling identifies an explicitly excluded dependency; current counters cannot decide that. |
+
+The two incidental defects have entries in `docs/todo.md`: sentence identity
+is deferred to a correctness task; preserving every timing round's raw rows
+is deferred to the next timing-harness change. Neither expected result was
+weakened. No Whitefoot gap was encountered, and no compiler pin or submodule
+was moved. The temporary workflow and its one caller-owned helper remain on
+this diagnostic branch for reproducibility and must be removed before any
+integration; no pull request was opened.

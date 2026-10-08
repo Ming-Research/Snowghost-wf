@@ -222,8 +222,8 @@ example apart from the renderer code that exposed it
   Impact: Apollo cannot be claimed incrementally equivalent to a full rebuild.
   Cause is unverified; the older sentence31–32 float-restacking performance
   item below is not proof of the same correctness cause. Change: minimize
-  Text NodeId 3126's insert/delete at byte 137 and repair the lost geometry
-  dependency, retaining the original identity expectation. Reopen in the next
+  Text NodeId 3126's insert/delete at byte 137 and repair the retained/full geometry
+  mismatch, retaining the original identity expectation. Reopen in the next
   renderer correctness task; require fail-before/pass-after on the captured
   input, seq/par full-dump identity and a focused case. Deferred here because
   the owner requested diagnosis with no renderer changes.
@@ -240,6 +240,16 @@ example apart from the renderer code that exposed it
   base; no timing rerun or renderer change is needed for the current result.
 
 - **M2 splice scope beyond the certified page paths.**
+  The [Apollo diagnosis](../research/investigations/structure-edits/apollo11-blocks.md#contract-stages-and-disposition)
+  records all 60 block edits falling back: six retained sibling-margin
+  changes and 54 simultaneous html/body percentage-height dependencies;
+  removing the latter exposes the two enclosing grids. Completing the
+  sibling dirty frontier is within the existing contract; admitting in-flow
+  percentage-height dependencies and grid propagation needs owner scope
+  decisions and dependency proofs. Reopen when Apollo local splicing is
+  selected; preserve all original edit sites, full-dump identity and reason
+  assertions, including the masked inline citation seam. Deferred here:
+  diagnosis only, and no renderer change is authorized.
   Q128 B and Q129 A extend local splicing through positioned and atomic
   anchors, enclosing flex containers, expired earlier floats and uniformly
   translated later floats, lined markers, and retained split fragments.
