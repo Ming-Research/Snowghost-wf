@@ -58,9 +58,12 @@ MUTATIONS = {
 }
 
 # A semantic omission with more than one writer is applied at every writer:
-# skipping width invalidation in only the pre-pass would be repaired by
+# skipping definiteness or width refresh only in the pre-pass is repaired by
 # the reference publisher, which writes the same record.
 EXTRA_SITES = {
+    'skip-definiteness-refresh': [
+        ('boundary', 'reference_item_output', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n          let was_fixed = old.state == 2_u8;\n          let now_auto = proof.state == 1_u8;\n          let changed = band(was_fixed, now_auto);\n          if changed {\n          } else {\n            store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n          }'),
+    ],
     'skip-width-refresh': [
         ('boundary', 'reference_item_output', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n          let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n          }'),
     ],
