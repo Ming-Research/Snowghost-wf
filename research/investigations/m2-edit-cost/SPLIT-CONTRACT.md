@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: [Q138 acceptance](#integrated-six-cohort-acceptance-at-6bf0d0e) fails; option A
+Current outcome: the [ten-cohort comparison](#ten-cohort-comparison-at-c5cae05) of the dirty frontier and range displacement still fails acceptance (ECMA262 root-font, HTML5 sentence and parallel font-size, and block); option A is not merged into research/m2-layout. The owner selected retained effective inputs with a dirty frontier first, then range displacement, each contract before implementation. Adoption also waits for the Whitefoot field-step range-proof fix even if timing passes.
 is not merged into research/m2-layout. The owner selected retained effective inputs with a dirty frontier first, then range displacement, each contract before implementation. Adoption also waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
@@ -1500,3 +1500,41 @@ Producers. Hybrid translation (`install_reference_geometry`) computes each cut-c
 Readers and lifetimes. Point readers (`block_local`, `paragraph_local`, `child_local`, `block_boundary`, `block_measured`, `effective_output`) collect ancestor actions on the owner index path only when the context holds actions; range reads (`inherited_range_output`) pass inherited displacement down. `boundary_set`, rotations, insertion, removal and successor extraction distribute pending actions first; point geometry encoding exposes its path and retires only its own geometry action; semantic point publication folds and retires only its own semantic and basis channels. Full bridges (`reference_geometry`, `own_geometry`, `full_reference_publication`) fold every action into bases, duplicated Open fields and stored transfers with one top-down traversal per owner before the existing dense loops; installation clears `reference_dense`.
 
 Remaining linear work, not changed by this implementation: the splice plan still certifies each suffix sibling independently (`splice_move`, logarithmic reads per sibling), the dense raw path at reference phase 0 still translates and publishes each payload, and `publish_reference_positioned` and `splice_position` still scan every child of a context that has positioned children. Their cost and any replacement are open.
+
+### Ten-cohort comparison at c5cae05
+
+[Hosted timing 37804579353](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37804579353) interleaves ten independently built drivers on one hosted Intel Xeon Platinum 8573C runner (Linux 6.17.0-1022-azure, wf-0b7f5c5b9854, LLVM 22, WF_WORKERS=4): main 8fbc160, cf12c609, the preceding runtime 593b2db, the frontier runtime 3393042 with the bounded root interval applied as `.github/timing/frontier-span.patch`, and the range head c5cae05 (renderer identical to the final head apart from startup constant checks), each with a twin. Values are upper-median update microseconds, round 1/round 2:
+
+| Page | Kind | Mode | Main | Main twin | cf12 | cf12 twin | Before | Before twin | Frontier | Frontier twin | Range | Range twin |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | word | seq | 95/94 | 93/86 | 103/89 | 95/88 | 101/93 | 98/90 | 90/101 | 90/89 | 98/93 | 91/98 |
+| ecma262 | word | par | 146/129 | 127/130 | 131/144 | 142/128 | 139/170 | 136/123 | 143/134 | 137/123 | 127/139 | 132/127 |
+| ecma262 | sentence | seq | 259/283 | 259/272 | 763/769 | 774/760 | 122/133 | 129/130 | 132/122 | 126/120 | 116/117 | 124/129 |
+| ecma262 | sentence | par | 333/308 | 290/300 | 710/695 | 688/651 | 193/201 | 196/191 | 192/193 | 192/215 | 219/207 | 206/199 |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | fontsize | seq | 1457/1520 | 1355/1461 | 7775/8562 | 8064/7465 | 1278/1224 | 1029/1153 | 500/446 | 466/441 | 441/466 | 442/438 |
+| ecma262 | fontsize | par | 1736/1858 | 1589/1646 | 7886/8585 | 9070/7819 | 1474/1284 | 1479/914 | 747/742 | 800/775 | 896/844 | 869/841 |
+| ecma262 | rootfont | seq | 18002/18744 | 16904/18183 | 74039/73770 | 77331/70185 | 78863/70181 | 69504/64840 | 83085/66211 | 73885/70132 | 73553/71432 | 68311/74841 |
+| ecma262 | rootfont | par | 53963/57466 | 50616/56967 | 234170/232308 | 222831/222073 | 183213/170723 | 180959/171409 | 183202/164626 | 181096/168196 | 194329/209828 | 200961/204039 |
+| ecma262 | block | seq | 427588/468962 | 431325/458027 | 102/97 | 103/92 | 102/105 | 96/99 | 104/114 | 100/113 | 104/107 | 102/99 |
+| ecma262 | block | par | 349469/346436 | 332995/340476 | 161/166 | 173/164 | 167/174 | 167/179 | 181/168 | 170/152 | 184/180 | 163/182 |
+| html5 | word | seq | 64/72 | 63/70 | 69/69 | 68/71 | 72/76 | 70/66 | 81/76 | 71/77 | 75/80 | 68/70 |
+| html5 | word | par | 95/90 | 89/90 | 93/96 | 103/98 | 103/98 | 100/91 | 96/101 | 98/94 | 96/109 | 96/99 |
+| html5 | sentence | seq | 183/187 | 181/197 | 299/289 | 286/295 | 294/293 | 298/301 | 334/305 | 330/304 | 567/573 | 554/577 |
+| html5 | sentence | par | 289/261 | 259/254 | 309/288 | 323/308 | 310/320 | 331/284 | 317/343 | 340/282 | 762/693 | 702/710 |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | fontsize | seq | 775/804 | 776/804 | 1811/1954 | 1866/1807 | 1657/1791 | 1676/1667 | 1343/1398 | 1386/1301 | 1155/1207 | 1126/1138 |
+| html5 | fontsize | par | 728/762 | 723/682 | 2114/2114 | 2246/2124 | 2209/1990 | 2149/2011 | 1872/1932 | 1803/1993 | 2018/1990 | 1992/2016 |
+| html5 | rootfont | seq | 559178/568704 | 565998/560263 | 677048/680430 | 690422/679892 | 701790/694895 | 696085/685451 | 724672/710714 | 716895/719402 | 718016/714285 | 711365/718640 |
+| html5 | rootfont | par | 324566/323833 | 324889/326038 | 541748/536977 | 535641/544031 | 507338/501864 | 500857/498908 | 516877/502163 | 514067/512955 | 541996/541983 | 545602/543639 |
+| html5 | block | seq | 529113/559531 | 577963/567829 | 587/580 | 572/592 | 608/576 | 585/587 | 596/597 | 597/543 | 633/643 | 641/643 |
+| html5 | block | par | 386501/415966 | 403109/433568 | 676/654 | 622/615 | 700/621 | 612/634 | 653/615 | 663/618 | 810/815 | 846/838 |
+
+Against the gate (every non-block cell at most twice main in each round; block no worse than cf12), the range head fails 9 of 24 page/kind/mode cells in both rounds: ECMA262 root-font (both modes), HTML5 sentence (both modes), HTML5 font-size parallel, and block on both pages in both modes. Its twin fails the same cells except ECMA262 block sequential in round 1. The patched frontier fails 6 cells: ECMA262 root-font, ECMA262 block, HTML5 font-size parallel and HTML5 block sequential.
+
+The bounded root interval removes the HTML5 root-font regression of the first frontier measurement: parallel 516,877/502,163 against 507,338/501,864 and 500,857/498,908 for the before twins. ECMA262 root-font still does not separate from the before twins in either mode.
+
+Range displacement reduces the counted work of every affected kind: the HTML5 sentence median falls from 199 boundary entries, 112 blocks and 1,458 index reads to 5, 8 and 1,090; HTML5 block from 1,854, 965 and 9,107 to 9, 18 and 2,686; HTML5 font-size from 1,735, 5,608 and 9,518 to 543, 587 and 1,894. It removes the long tail (HTML5 sentence p90 1,118 to 717 us; every edit under 1 ms) and improves HTML5 font-size sequential beyond twin spread (1,155/1,207 and 1,126/1,138 against the frontier's 1,343/1,398 and 1,386/1,301). Yet the typical cost rises: HTML5 sentence 567/573 against the frontier's 334/305 sequential, and 762/693 against 317/343 parallel; HTML5 block 633/643 against 596/597 sequential and 810/815 against 653/615 parallel. The counters do not charge the inherited-action path reads of point readers (`range_inherited` through `slot_view`) or path exposure. Hypothesis, not yet tested: once a context holds any action, every effective origin, transfer and Open read walks its owner index path, and the stacking, encoding and settlement readers that run on every edit multiply that fixed cost. A matched profile of the HTML5 sentence edit on the frontier and range drivers would test it; reject it if the range driver's added samples are not in the inherited-path readers.
+

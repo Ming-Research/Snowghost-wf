@@ -370,10 +370,19 @@ example apart from the renderer code that exposed it
   [range contract](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#sequence-range-displacement-contract)
   now specifies separate geometry/semantic actions, paragraph-relative atomic
   placement, membership-preserving rotations, effective cached readers and
-  exact saturation admission; implementation and falsifiers remain pending;
-  validate all X5 identity/splice and omission gates plus a complete same-host
-  comparison. Q139 separately covers the natural independent-write proof that
-  the pinned Whitefoot stored-field grammar cannot express.
+  exact saturation admission. The work branch implements it (`range.wf`) and
+  passes the identity oracles; 19 range falsifiers detect their omissions,
+  while the viewport-action and splice-frontier-transfer premises have no
+  behavioral discriminator yet. The [ten-cohort comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#ten-cohort-comparison-at-c5cae05)
+  shows far fewer counted visits and no long tail, but higher typical cost:
+  HTML5 sentence rises from about 320 to 570 us sequential and now fails the
+  2x gate, and block stays above cf12. Next: profile the HTML5 sentence edit
+  on the frontier and range drivers to test whether uncounted inherited-path
+  reads in point readers cause it; if so, consider resolving placement once
+  per pass or bounding the path, and re-measure. The splice plan's
+  per-sibling certification, the dense raw path and the positioned child
+  scans remain linear. Q139 separately covers the natural independent-write
+  proof that the pinned Whitefoot stored-field grammar cannot express.
 
 - **M2 root-font edits still need bounded marked-frontier work.** The Q138
   bisect first exposes a large regression at step 3a's virtual owner-order
@@ -392,10 +401,15 @@ example apart from the renderer code that exposed it
   style invalidation and affected text/layout work; main's observed full path
   is the comparison, not a proved numeric lower bound. The owner selected the input/invalidation/consumer contract first, then bounded
   dirty-paragraph processing before range displacement. The work branch now retains
-  completed effective inputs and a sparse paragraph frontier; hosted behavior,
-  premise falsifiers and matched before/after timing against twins are pending.
-  Context admission checks actual parent-supplied inputs; eligible leaves prepare
-  and break independently, and changed placement retains reference replay.
+  completed effective inputs and a sparse paragraph frontier, and its oracles and
+  frontier falsifiers pass. ECMA262 root-font does not separate from its before
+  twins: its 41 marked paragraphs are prepared and broken, then the stationary
+  transaction is refused and the 112,817 entries replay (the refusal reason is
+  not recorded; changed root-relative line extents are the expected cause).
+  The stationary frontier therefore does not reach this edit; it makes
+  ECMA262 font-size more than twice as fast. A bounded root interval per context fixed
+  a measured HTML5 root-font regression. Remaining root-font work needs a
+  bounded non-stationary restack of the marked paragraphs, an owner decision.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and
