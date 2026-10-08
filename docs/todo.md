@@ -192,6 +192,21 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **The splice commit assumes its inserted slot equals the precomputed one.**
+  `commit_splice_sequence` (`renderer/layout/splice_boundary.wf`) discards
+  the slot `insert_before` returns, while `relocate_splice`
+  (`splice_publish.wf`) has already written `input.allocated` into the
+  spliced target's `entry_slot`. They agree by construction today (slots are
+  allocated monotonically and never reused), but nothing checks it, and the
+  slot/target left inverse the owner-motion proof needs rests on it. Also,
+  `relocate_splice`'s paragraph loop never sets `entry_slot`; that is harmless
+  only while a spliced root entry cannot be `Text`. Change: return the slot
+  from the commit and use it for the target, or state the equality where the
+  stored-data invariant is introduced. Validate with the existing splice
+  oracles plus a falsifier that offsets `allocated`. Reopen with the
+  stored-field invariant work (Whitefoot proof-facts line). Found by source
+  reading on 2026-10-08; not observed at run time.
+
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences
   ([runs](../research/investigations/structure-edits/runs/full-14900k.txt),
