@@ -1,7 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
 Current outcome: the [ten-cohort comparison](#ten-cohort-comparison-at-c5cae05) of the dirty frontier and range displacement still fails acceptance (ECMA262 root-font, HTML5 sentence and parallel font-size, and block); option A is not merged into research/m2-layout. The owner selected retained effective inputs with a dirty frontier first, then range displacement, each contract before implementation. Adoption also waits for the Whitefoot field-step range-proof fix even if timing passes.
-is not merged into research/m2-layout. The owner selected retained effective inputs with a dirty frontier first, then range displacement, each contract before implementation. Adoption also waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -1544,3 +1543,31 @@ Range displacement reduces the counted work of every affected kind: the HTML5 se
 The renderer is unchanged from 15434d2 to the final head. [Oracles 37811959019](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37811959019) passes all 14 jobs, including the frontier and range fixtures in both modes and every X5 kind on both pages. [Falsify 37811959115](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37811959115) passes 82 of 84 jobs, among them all 19 range falsifiers and all frontier falsifiers. The two failures were stale mutations: `reference-suffix` still targeted the dense phase-0 publisher that hybrid replay no longer reaches, and `no-positioned-anchor` deleted a write so that the mutant's effect row no longer matched and did not compile. Migrated to the range code, both pass in [falsify 37820751348](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37820751348) at 2638d46; check and layout-check pass there (37820751349, 37820751318).
 
 Premises without a behavioral discriminator: the viewport-only action for viewport-owned positioned entries, the splice frontier's planned transfer after the range action, the ordinary path's semantic displacement and the latest basis assignment. Their mutations produced no difference on any generated or existing case and were withdrawn; the constant checks cover the semantic and basis channels of `install_range` and Open settlement independently of the producers.
+
+### Matched inherited-reader profile: criterion before capture
+
+The continuation profiles HTML5 sentence edits before changing the readers.
+The controls are the table's patched frontier (3393042 plus the retained
+frontier-span patch) and range head 58b16da, with the same wf-0b7f5c5b9854,
+LLVM 22, fonts, page, edit script and hosted runner. Both sequential and
+four-worker drivers receive the identical script. Two small native samples
+and an update-only instruction sample precede the full-script profile.
+Collection starts disabled and toggles only inside the layout update entry;
+startup, style preparation and output are excluded from instruction attribution.
+Native edit times remain separate from profiled times.
+
+The added diagnostic counters use callgrind's call edges: calls entering
+`range_inherited`, node reads from that function into `slot_view`, and the
+recursive directory reads inside `slot_view`. They count compiled calls under
+the update entry, without a shared counter write changing the dependency graph
+of immutable geometry readers. Inlining can hide calls, so symbol visibility
+and nonzero collection are checked before interpreting a missing edge as zero.
+The raw call graph and per-function self/inclusive instructions are retained.
+
+The hypothesis predicts that inherited readers account for the majority of
+the additional update instructions over the patched frontier. Reject it if
+those readers do not account for that increase; inspect the actual dominant
+path before selecting a repair. A reader change must then preserve the
+existing range/freshness contract and pass the complete gates and twin-controlled
+six-kind comparison. No performance or refusal cause is inferred from source
+inspection alone.
