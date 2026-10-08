@@ -59,6 +59,24 @@ fn content_position(value: Position, dx: i32, dy: i32) -> made: Position pure {
   return Position(x: shifted_x, y: shifted_y);
 }
 
+fn owned_block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner) {
+  doc "Resolves published owner-relative geometry using only local anchors and ancestry. Both publishers retire every replay capture and fresh flag before selecting local_geometry, so hybrid scratch and captured coordinates are not inputs in this phase.";
+  let cursor = block;
+  let accumulated = zero_origin();
+  let count = context^.blocks.inner.len;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      let local = Origin(x: context^.blocks.inner[at].x, y: context^.blocks.inner[at].y, dx: context^.blocks.inner[at].dx, dy: context^.blocks.inner[at].dy);
+      set accumulated = origin_accumulate(owner: local, local: accumulated);
+      set cursor = context^.blocks.inner[at].parent;
+    } else {
+      return accumulated;
+    }
+  }
+  return accumulated;
+}
+
 fn retained_block_origin(context: &Context, block: u32, previous: Bool) -> made: Origin reads(context.blocks.inner) {
   doc "Resolves retained ancestry, stopping at captured old origins for previous coordinates or completed fresh scratch for current coordinates.";
   let cursor = block;
@@ -89,8 +107,8 @@ fn retained_block_origin(context: &Context, block: u32, previous: Bool) -> made:
 fn block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase) {
   doc "Reads authoritative local geometry between passes, raw scratch for a touched replay payload, and old or settled owner geometry for untouched payloads according to the replay phase.";
   if context^.local_geometry {
-    let current = False();
-    return retained_block_origin(context: context, block: block, previous: current);
+    let owned = owned_block_origin(context: context, block: block);
+    return owned;
   }
   let at = cvt::<u32, u64>(block);
   if at < context^.blocks.inner.len {
@@ -114,10 +132,14 @@ fn block_position(context: &Context, at: u64) -> made: Position reads(context) {
 fn paragraph_origin(context: &Context, at: u64) -> made: Origin reads(context) {
   doc "Resolves one paragraph against the authoritative owner frame without requiring untouched suffix scratch.";
   if at < context^.paragraphs.inner.len {
+    if context^.local_geometry {
+      let placed_owner = owned_block_origin(context: context, block: context^.paragraphs.inner[at].block);
+      let placed_local = Origin(x: context^.paragraphs.inner[at].x, y: context^.paragraphs.inner[at].top, dx: context^.paragraphs.inner[at].dx, dy: context^.paragraphs.inner[at].dy);
+      let placed = origin_accumulate(owner: placed_owner, local: placed_local);
+      return placed;
+    }
     let full = context^.reference_phase == 0_u8;
-    let fresh = bor(full, context^.paragraphs.inner[at].reference_fresh);
-    let reference = bnot(context^.local_geometry);
-    let raw = band(reference, fresh);
+    let raw = bor(full, context^.paragraphs.inner[at].reference_fresh);
     if raw {
       return origin_from_resolved(nx: context^.paragraphs.inner[at].normal_x, ny: context^.paragraphs.inner[at].normal_top, vx: context^.paragraphs.inner[at].resolved_x, vy: context^.paragraphs.inner[at].resolved_top);
     }
@@ -148,10 +170,19 @@ fn paragraph_position(context: &Context, at: u64) -> made: Position reads(contex
 fn child_origin(context: &Context, at: u64) -> made: Origin reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.reference_phase) {
   doc "Resolves a child placement independently of the child's own formatting-context replay state; viewport anchors retain the zero owner.";
   if at < context^.children.inner.len {
+    if context^.local_geometry {
+      let placed_owner = if context^.children.inner[at].viewport_origin {
+        let viewport_owner = zero_origin();
+        give viewport_owner;
+      } else {
+        let local_owner = owned_block_origin(context: context, block: context^.children.inner[at].block);
+        give local_owner;
+      }
+      let placed = origin_accumulate(owner: placed_owner, local: context^.children.inner[at].anchor);
+      return placed;
+    }
     let full = context^.reference_phase == 0_u8;
-    let fresh = bor(full, context^.children.inner[at].placement_fresh);
-    let reference = bnot(context^.local_geometry);
-    let raw = band(reference, fresh);
+    let raw = bor(full, context^.children.inner[at].placement_fresh);
     if raw {
       return origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y);
     }

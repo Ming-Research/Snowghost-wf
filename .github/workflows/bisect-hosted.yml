@@ -1,7 +1,7 @@
 # Temporary: bisects the per-edit cost of M2's layout steps on hosted runners,
 # one job per build, in parallel. A regression of tens to hundreds of times
 # needs no precise machine; this hosted comparison is explicitly requested.
-# The frozen final cohort is built independently, including the same-source twin.
+# The frozen final cohort includes independent base and immediate-before twins.
 # Retired with the Q134 acceptance investigation; no expired run artifact is needed to reproduce it.
 name: bisect-hosted
 
@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [main=8fbc1601785cee70265da1eac4d99589fc6fb67c, base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, a=HEAD]
+        build: [main=8fbc1601785cee70265da1eac4d99589fc6fb67c, base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, before=03a3d3ebc2f826c3c40aa6179237aa5819c4b39b, beforetwin=03a3d3ebc2f826c3c40aa6179237aa5819c4b39b, a=HEAD]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,7 +76,7 @@ jobs:
           pattern: driver-*
           path: build/drivers
       - name: Select builds
-        run: echo "BUILD_NAMES=main base twin a" >> "$GITHUB_ENV"
+        run: echo "BUILD_NAMES=main base twin before beforetwin a" >> "$GITHUB_ENV"
       - name: Fonts
         run: |
           set -euo pipefail
@@ -142,107 +142,5 @@ jobs:
             build/machine.txt
             build/evidence/
             build/x5/scripts/
-            build/drivers/driver-*/revision.txt
-            build/drivers/driver-*/pin-only.patch
-
-  profile-suffix:
-    if: contains(github.event.head_commit.message, '[suffix-profile]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Frozen acceptance drivers
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for name in base twin a; do
-            gh run download 37722644051 -n "driver-$name" --dir "build/drivers/driver-$name"
-          done
-          chmod +x build/drivers/driver-*/layout_oracle_*
-      - name: Fonts and sampled profiler
-        run: |
-          set -euo pipefail
-          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
-          sudo sysctl kernel.perf_event_paranoid=-1
-          uname -a | tee build/machine.txt
-          lscpu | tee -a build/machine.txt
-          perf --version | tee -a build/machine.txt
-      - name: Matched HTML5 samples
-        run: |
-          set -euo pipefail
-          sh research/investigations/concurrency/run.sh fetch || true
-          test -s build/research/concurrency/html5.html
-          make -s oracle-fonts
-          cp build/drivers/driver-base/layout_oracle_seq build/layout_oracle_seq
-          sh research/investigations/incremental-layout/run.sh prepare html5
-          mkdir -p build/suffix-profile
-          sha256sum build/research/concurrency/html5.html renderer/style/ua.css build/x5/scripts/html5-{block,fontsize}.edits > build/suffix-profile/inputs.sha256
-          python3 - <<'PYEOF'
-          from pathlib import Path
-          for kind in ('block', 'fontsize'):
-              source = Path(f'build/x5/scripts/html5-{kind}.edits').read_text().splitlines(True)
-              setup = [line for line in source if line.startswith('S ')]
-              edits = [line for line in source if line.startswith(('B ', 'X ', 'C ', 'K '))]
-              pair = edits[:2] if kind == 'block' else edits[22:24]
-              assert len(pair) == 2
-              Path(f'build/suffix-profile/{kind}-sample.edits').write_text(''.join(setup + pair))
-          PYEOF
-      - name: Bound each workload and compare profiles
-        run: |
-          set -euo pipefail
-          for kind in block fontsize; do
-            for name in base a; do
-              for sample in 1 2; do
-                output=build/suffix-profile/$kind-$name-sample-$sample
-                WF_WORKERS=4 /usr/bin/time -p -o "$output.time" build/drivers/driver-$name/layout_oracle_seq edittime "build/suffix-profile/$kind-sample.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$output.raw"
-              done
-            done
-            KIND="$kind" python3 - <<'PYEOF'
-          import os, re
-          from pathlib import Path
-          root = Path('build/suffix-profile')
-          kind = os.environ['KIND']
-          costs = []
-          walls = []
-          for name in ('base', 'a'):
-              for sample in (1, 2):
-                  raw = (root / f'{kind}-{name}-sample-{sample}.raw').read_text()
-                  values = list(map(int, re.findall(r'^edit \d+ us (\d+)', raw, re.M)))
-                  assert len(values) == 2
-                  costs.append(sum(values))
-                  walls.append(float((root / f'{kind}-{name}-sample-{sample}.time').read_text().splitlines()[0].split()[1]))
-          assert max(walls) < 60 and min(costs) > 0, (walls, costs)
-          repeats = min(30000, max(2, int(45000000 / max(costs))))
-          lines = (root / f'{kind}-sample.edits').read_text().splitlines(True)
-          setup = [line for line in lines if line.startswith('S ')]
-          pair = [line for line in lines if not line.startswith('S ')]
-          if kind == 'block':
-              assert pair[0].startswith('B ') and pair[1].startswith('X ')
-              first_node = int(pair[1].split()[1])
-              repeated = [line for n in range(repeats) for line in (pair[0], f'X {first_node + 2 * n}\n')]
-          else:
-              repeated = pair * repeats
-          (root / f'{kind}.edits').write_text(''.join(setup + repeated))
-          (root / f'{kind}-scale.txt').write_text(f'wall_seconds={walls}; pair_edit_us={costs}; repeats={repeats}\n')
-          PYEOF
-            for name in base twin a; do
-              output=build/suffix-profile/$kind-$name
-              WF_WORKERS=4 perf record -F 499 --call-graph dwarf,4096 -o "$output.data" -- build/drivers/driver-$name/layout_oracle_seq edittime "build/suffix-profile/$kind.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$output.raw"
-              perf report -i "$output.data" --stdio --no-children --percent-limit 0.5 > "$output-self.txt"
-              perf report -i "$output.data" --stdio --children --percent-limit 1 > "$output-callers.txt"
-            done
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: suffix-profile-evidence
-          path: |
-            build/machine.txt
-            build/suffix-profile/
             build/drivers/driver-*/revision.txt
             build/drivers/driver-*/pin-only.patch
