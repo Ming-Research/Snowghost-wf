@@ -243,6 +243,7 @@ jobs:
             WF_WORKERS=4 python3 "$s/near-limit.py" build/layout_oracle_$build "build/near-limit-$build"
             WF_WORKERS=4 python3 "$s/split-limit.py" build/layout_oracle_$build "build/split-limit-$build"
             WF_WORKERS=4 python3 "$s/fragment-topology.py" build/layout_oracle_$build "build/fragment-topology-$build"
+            WF_WORKERS=4 python3 "$s/dirty-frontier.py" build/layout_oracle_$build "build/dirty-frontier-$build"
           done
           for case in block-case:2 style-case:6; do
             name=${case%%:*} allowed=${case#*:}
@@ -297,6 +298,26 @@ jobs:
               grep -E 'structure path| inc (same|DIFF|refused)$' "build/$kind-case.$build.raw"
             done
           done
+      - name: Retained frontier through legacy style marking
+        run: |
+          set -euo pipefail
+          git worktree add -q --detach build/frontier-legacy HEAD
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          path = Path('build/frontier-legacy/renderer/oracle/layout/edit.wf')
+          source = path.read_text()
+          old = '  let marked = marks_after(started: started, layout: &kept^.layout, traversal: &page^.traversal, changed: &done.changed.inner[0_u64..count]);'
+          new = '''  let legacy_removed = None<NodeId>();
+            let legacy_changed = propagate structure_flags(started: started, page: page, done: &done, removed: legacy_removed);
+            let legacy_count = legacy_changed.inner.len;
+            let legacy_attributes = slots_new::<AttributeChange, 0>();
+            let marked = styles_changed(layout: &kept^.layout, old: &kept^.state.styles, new: &kept^.state.styles, traversal: &page^.traversal, changed: &legacy_changed.inner[0_u64..legacy_count], attributes: &legacy_attributes[0_u64..0_u64]);'''
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
+          PYEOF
+          (cd build/frontier-legacy/renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_frontier_legacy")
+          python3 research/investigations/incremental-layout/scripts/dirty-frontier.py build/layout_frontier_legacy build/dirty-frontier-legacy
+
       - uses: actions/upload-artifact@v4
         with:
           name: page-identity-inputs
@@ -315,6 +336,7 @@ jobs:
             build/near-limit-*/
             build/split-limit-*/
             build/fragment-topology-*/
+            build/dirty-frontier-*/
             build/*.raw
             build/x5/out/*.raw
 

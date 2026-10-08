@@ -386,10 +386,12 @@ example apart from the renderer code that exposed it
   processing and changed-output propagation; it cannot skip the whole interior.
   Intermediate flex spaces remain unverified. The mandatory floor includes
   style invalidation and affected text/layout work; main's observed full path
-  is the comparison, not a proved numeric lower bound. No new cache is adopted;
-  the owner selected the input/invalidation/consumer contract first, then bounded
-  dirty-paragraph processing before range displacement, with premise falsifiers,
-  full gates and matched before/after timing against twins.
+  is the comparison, not a proved numeric lower bound. The owner selected the input/invalidation/consumer contract first, then bounded
+  dirty-paragraph processing before range displacement. The work branch now retains
+  completed effective inputs and a sparse paragraph frontier; hosted behavior,
+  premise falsifiers and matched before/after timing against twins are pending.
+  Context admission checks actual parent-supplied inputs; eligible leaves prepare
+  and break independently, and changed placement retains reference replay.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and

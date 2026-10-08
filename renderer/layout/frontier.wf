@@ -161,61 +161,47 @@ fn frontier_clear(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
   return unit;
 }
 
-fn frontier_ready(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64) -> ready: Bool reads(frontier), reads(paragraphs) {
-  doc "Preflights all leaves before any speculative break: positive solid lines, retained width and left edge, no float or atomic dependence.";
-  let count = paragraphs^.len;
-  match frontier^ {
-    Vacant() => {
-      return True();
-    }
-    Mark(..) => {
-      if 0_u64 < count {
-        if paragraphs^[0_u64].dirty {
-        } else {
-          return False();
-        }
-        if paragraphs^[0_u64].lines.inner.len == 0_u64 {
-          return False();
-        }
-        if paragraphs^[0_u64].height <= 0_i32 {
-          return False();
-        }
-        if paragraphs^[0_u64].beside {
-          return False();
-        }
-        if paragraphs^[0_u64].atomics.inner.len != 0_u64 {
-          return False();
-        }
-        if paragraphs^[0_u64].width != paragraphs^[0_u64].broken_width {
-          return False();
-        }
-        if paragraphs^[0_u64].left != paragraphs^[0_u64].broken_left {
-          return False();
-        }
-        return True();
-      }
-      return False();
-    }
-    Fork(left: left_tree, right: right_tree) => {
-      let half = span / 2_u64;
-      let middle = imin(half, count);
-      let left_ready = frontier_ready(frontier: &left_tree^.inner, paragraphs: &paragraphs^[0_u64..middle], span: half);
-      let right_ready = frontier_ready(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half);
-      let both_ready = band(left_ready, right_ready);
-      return both_ready;
-    }
+fn frontier_paragraph_ready(paragraph: &Paragraph) -> ready: Bool reads(paragraph) {
+  doc "Admits one leaf independently of other leaves: positive solid lines, retained width and left edge, no float or atomic dependence.";
+  if paragraph^.dirty {
+  } else {
+    return False();
   }
+  if paragraph^.lines.inner.len == 0_u64 {
+    return False();
+  }
+  if paragraph^.height <= 0_i32 {
+    return False();
+  }
+  if paragraph^.beside {
+    return False();
+  }
+  if paragraph^.atomics.inner.len != 0_u64 {
+    return False();
+  }
+  if paragraph^.width != paragraph^.broken_width {
+    return False();
+  }
+  if paragraph^.left != paragraph^.broken_left {
+    return False();
+  }
+  return True();
 }
 
 fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion]) -> (stationary: Bool, broken: u64, visited: u64) reads(children), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(frontier), writes(paragraphs) {
-  doc "Independently breaks admitted leaves and retains their fresh transfers without publication or mark retirement; failed placement leaves full replay all its dirty inputs.";
+  doc "Each leaf independently checks its inputs, breaks when admitted and retains its fresh transfer without publication or mark retirement. A leaf refusal or changed placement leaves full replay all dirty inputs, including other leaves already broken. visited counts paragraph admission reads, excluding directory nodes.";
   let count = paragraphs^.len;
   match frontier^ {
     Vacant() => {
-      return True(), 0_u64, 1_u64;
+      return True(), 0_u64, 0_u64;
     }
     Mark(..) => {
       if 0_u64 < count {
+        let ready = frontier_paragraph_ready(paragraph: &paragraphs^[0_u64]);
+        if ready {
+        } else {
+          return False(), 0_u64, 1_u64;
+        }
         let old_height = paragraphs^[0_u64].height;
         let old_baseline = last_line_baseline(paragraph: &paragraphs^[0_u64]);
         break_paragraph(paragraph: &paragraphs^[0_u64], children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions, origin_y: 0_i32);
@@ -229,7 +215,7 @@ fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
         let kept = band(solid, same_extent);
         return kept, 1_u64, 1_u64;
       }
-      return False(), 0_u64, 1_u64;
+      return False(), 0_u64, 0_u64;
     }
     Fork(left: left_tree, right: right_tree) => {
       let half = span / 2_u64;
@@ -238,8 +224,7 @@ fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
       let (right_same, right_count, right_visits) = frontier_break(frontier: &right_tree^.inner, paragraphs: &paragraphs^[middle..count], span: half, children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions);
       let both_same = band(left_same, right_same);
       let total_count = left_count +sat right_count;
-      let child_visits = left_visits +sat right_visits;
-      let total_visits = child_visits +sat 1_u64;
+      let total_visits = left_visits +sat right_visits;
       return both_same, total_count, total_visits;
     }
   }
@@ -344,17 +329,13 @@ fn stationary_frontier(context: &Context, styles: &Styles, document: &Document, 
     return no, no, counts;
   }
   let paragraph_count = context^.paragraphs.inner.len;
-  let ready = frontier_ready(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: item_ceiling);
-  if ready {
-  } else {
-    return no, no, counts;
-  }
   let child_count = context^.children.inner.len;
   let none = slots_new::<Exclusion, 0>();
   let (stationary, broken, visited) = frontier_break(frontier: &context^.paragraph_frontier, paragraphs: &context^.paragraphs.inner[0_u64..paragraph_count], span: item_ceiling, children: &context^.children.inner[0_u64..child_count], styles: styles, fonts: fonts, picks: picks, exclusions: &none[0_u64..0_u64]);
   set counts.paragraphs = broken;
   let paragraph_pair = broken +sat broken;
-  let paragraph_opens = paragraph_pair +sat paragraph_pair;
+  let broken_opens = paragraph_pair +sat broken;
+  let paragraph_opens = visited +sat broken_opens;
   set counts.work.entries = paragraph_opens;
   if stationary {
   } else {
