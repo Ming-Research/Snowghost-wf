@@ -16,9 +16,12 @@ for height in (60, 80, 100, 120, 140, 160):
         target = next(line.split()[1] for line in nodes.splitlines() if line.startswith('T ') and 'START' in line)
         edits.write_text(f'T {target} 0 added words words words \nD {target} 0 24\n')
         started = time.monotonic()
-        raw = subprocess.check_output(['build/layout_oracle_seq', 'edit', str(edits), str(html), 'renderer/style/ua.css'], text=True)
+        raw = subprocess.check_output(['build/layout_before', 'edit', str(edits), str(html), 'renderer/style/ua.css'], text=True)
         print(height, words, round(time.monotonic()-started, 3), raw, flush=True)
         if 'inc DIFF' in raw:
             (out / 'reduced.raw').write_text(raw)
+            fixed = subprocess.check_output(['build/layout_oracle_seq', 'edit', str(edits), str(html), 'renderer/style/ua.css'], text=True)
+            (out / 'reduced.fixed.raw').write_text(fixed)
+            assert fixed.count('inc same') == 2, fixed
             raise SystemExit(0)
 raise SystemExit('No failing candidate on this revision')

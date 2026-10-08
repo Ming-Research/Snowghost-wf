@@ -413,6 +413,76 @@ fn build_splice(document: &Document, styles: &Styles, atoms: &AtomTable, node: N
   return Ok<Context, LayoutError>(value: move fresh);
 }
 
+fn splice_sibling_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, sibling: u32, styles: &Styles) -> ready: Bool reads(context), reads(steps), reads(styles) {
+  doc "Certifies a retained direct ordinary block whose only changed layout input is its top margin. The structural style delta excludes construction changes and its boxes-only flag excludes text consumers; horizontal geometry, frames, relative displacement and height constraints must retain their old inputs. Its explicit style uses are marked after successful publication for normal frontier settlement.";
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      if context^.slot == route.parent {
+        if context^.children.inner[child].slot == route.slot {
+          let next = depth +sat 1_u64;
+          let found = splice_sibling_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, sibling: sibling, styles: styles);
+          return found;
+        }
+      }
+    }
+    return False();
+  }
+  let at = cvt::<u32, u64>(sibling);
+  if at < context^.blocks.inner.len {
+  } else {
+    return False();
+  }
+  if context^.blocks.inner[at].parent != owner {
+    return False();
+  }
+  let previous = context^.blocks.inner[at].output;
+  let boundary = context^.blocks.inner[at].boundary;
+  if previous.valid {
+  } else {
+    return False();
+  }
+  if boundary.ordinary {
+  } else {
+    return False();
+  }
+  let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
+  let width_kept = snapshot_keeps_width(block: snapshot, styles: styles);
+  if width_kept {
+  } else {
+    return False();
+  }
+  let lined = True();
+  let grows = snapshot_grows(block: snapshot, styles: styles, delta: 0_i32, basis_height: previous.basis_height, lines: lined);
+  if grows {
+  } else {
+    return False();
+  }
+  let border = border_edges(styles: styles, style: snapshot.style);
+  let padding = padding_edges(styles: styles, style: snapshot.style, basis: snapshot.avail_width);
+  let margins = margin_edges(styles: styles, style: snapshot.style, basis: snapshot.avail_width);
+  let top = border.top +sat padding.top;
+  let bottom = border.bottom +sat padding.bottom;
+  if top != previous.top_frame {
+    return False();
+  }
+  if bottom != previous.bottom_frame {
+    return False();
+  }
+  if margins.bottom != previous.margin_bottom {
+    return False();
+  }
+  let group = box_of(styles: styles, style: snapshot.style);
+  if group.position != position_static {
+    return False();
+  }
+  if group.clear != clear_none {
+    return False();
+  }
+  return True();
+}
+
 fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[u32], parent: NodeId, before: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, references_stable: Bool, fonts: &FontSet, picks: &FontPicks) -> result: Result<u32, LayoutError> reads(document), reads(styles), reads(traversal), reads(atoms), reads(changed), reads(fonts), reads(picks), writes(layout) {
   doc "Attempts a neutral complete-block seam transaction. Zero means published locally; codes 1 owner/route, 2 container, 3 inline seam, 4 generated references, 5 counters/quotes, 6 retained style frontier, 7 boundary dependency, 8 storage ceiling and 9 float suffix dependency refuse before retained geometry or routing changes. Reason 10 completes a published splice through reference layout after a flex output fails its outer certificate; the caller reconstructs from that complete current state. Private construction errors leave retained state untouched.";
   if references_stable {
@@ -451,6 +521,9 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
   if same_kind {
     return Ok<u32, LayoutError>(value: 1_u32);
   }
+  let steps = propagate path_steps(layout: layout, serial: owner.serial);
+  let depth = steps.inner.len;
+  let frontier = box_slots_new::<u32>(capacity: 0_u64);
   let changes = changed^.len;
   for (k in 0_u64..changes) {
     let bare = iand(changed^[k], 2147483647_u32);
@@ -470,14 +543,25 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
       }
       if within {
       } else {
-        return Ok<u32, LayoutError>(value: 6_u32);
+        let boxes = iand(changed^[k], changed_boxes_only);
+        if boxes == 0_u32 {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        let sibling = splice_owner(layout: layout, node: node);
+        if sibling.serial != owner.serial {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        let ready = splice_sibling_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: owner.block, sibling: sibling.block, styles: styles);
+        if ready {
+        } else {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        let appended = propagate push_or_fail::<u32>(cell: &frontier, value: changed^[k]);
       }
     } else {
       return Ok<u32, LayoutError>(value: 1_u32);
     }
   }
-  let steps = propagate path_steps(layout: layout, serial: owner.serial);
-  let depth = steps.inner.len;
   let ending = match before {
     Some(..) => {
       give False();
@@ -602,6 +686,8 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
   if published_work.fallbacks > 0_u64 {
     return Ok<u32, LayoutError>(value: 10_u32);
   }
+  let frontier_count = frontier.inner.len;
+  let marked = propagate styles_restyled(layout: layout, traversal: traversal, changed: &frontier.inner[0_u64..frontier_count]);
   return Ok<u32, LayoutError>(value: 0_u32);
 }
 
