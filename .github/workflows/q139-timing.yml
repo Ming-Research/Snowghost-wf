@@ -5,6 +5,14 @@ on:
     branches: [research/m2-q139]
   workflow_dispatch:
     inputs:
+      evidence_run:
+        description: Summarize an existing evidence artifact without remeasuring
+        default: ''
+        required: false
+      candidate_run:
+        description: Current q139-baseline artifact to replace the pilot candidate
+        default: ''
+        required: false
       driver_run:
         description: Existing hosted driver run for a harness-only retry
         default: ''
@@ -19,7 +27,7 @@ on:
         required: true
 jobs:
   build:
-    if: (github.event_name == 'workflow_dispatch' && inputs.driver_run == '') || contains(github.event.head_commit.message, '[q139-timing]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.driver_run == '' && inputs.evidence_run == '') || contains(github.event.head_commit.message, '[q139-timing]')
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -58,7 +66,7 @@ jobs:
             build/revision.txt
   measure:
     needs: build
-    if: ${{ !cancelled() && (needs.build.result == 'success' || inputs.driver_run != '') }}
+    if: ${{ !cancelled() && inputs.evidence_run == '' && (needs.build.result == 'success' || inputs.driver_run != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -77,6 +85,23 @@ jobs:
           run-id: 37727037303
           name: apollo11-diag-37727037303
           path: build/apollo-archive
+      - uses: actions/download-artifact@v4
+        if: inputs.candidate_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run }}
+          name: q139-baseline
+          path: build/current
+      - name: Adopt the current candidate driver
+        if: inputs.candidate_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp build/current/layout_base build/drivers/driver-head/layout_oracle_seq
+          cp build/current/layout_base_par build/drivers/driver-head/layout_oracle_par
+          gh api repos/${{ github.repository }}/actions/runs/${{ inputs.candidate_run }} --jq .head_sha > build/drivers/driver-head/revision.txt
+          cat whitefoot.pin >> build/drivers/driver-head/revision.txt
+          sha256sum build/drivers/driver-head/layout_oracle_* >> build/drivers/driver-head/revision.txt
       - name: Shared fonts, captures and edits
         run: |
           set -euo pipefail
@@ -133,3 +158,23 @@ jobs:
             build/x5/scripts/
             build/research/concurrency/
             build/drivers/driver-*/revision.txt
+
+  summarize:
+    if: github.event_name == 'workflow_dispatch' && inputs.evidence_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run }}
+          name: q139-edit-cost
+          path: build
+      - name: Paired whole-edit table and input controls
+        run: python3 research/investigations/incremental-layout/scripts/percentage-cost.py build/evidence build/x5/scripts --rounds '${{ inputs.rounds || 2 }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-cost-table
+          path: build/evidence/table.*
