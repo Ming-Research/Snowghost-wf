@@ -109,10 +109,16 @@ Applying the rule fixed above:
 - **The rest is `Paged`'s own allocation.** The remaining half of the box
   gap, and two thirds of the extra page faults, come with `Paged` itself.
   The profiles of e2 and nodeshf are both dominated by malloc/free/calloc;
-  nodeshf spends more in `finish_sequence` and calloc. This suggests
-  `Paged` touches (zero-fills) more memory per owner than the hand-written
-  pages do even with the same geometry. That is an inference from the
-  profiles, not yet tested.
+  nodeshf spends more in `finish_sequence` and calloc. The calloc is not
+  `Paged`'s: its lowering (Whitefoot #263, `compiler/src/backend/emitter/paged.rs`)
+  takes the cell and every page from plain malloc and writes only the header
+  and directory entries, as the Paged session checked. What `Paged` does
+  differently beyond E2's geometry is its directory, which starts at capacity
+  1 and reallocates on every doubling (the hand-written one starts at 4), and
+  allocating every page through the logical capacity at once. The Paged
+  session is building two lowering-only experiment releases to separate
+  these: a directory floor of 4 entries, and that plus pages allocated on
+  their first append.
 
 So the C3 loss of the like-for-like build is confined to the sequential box
 build: about 9%, half from page geometry and growth and half from `Paged`'s
