@@ -3532,3 +3532,14 @@ required positive path specifically to reason 7. The width-refresh omission
 uses the percentage-bearing `framed` fixture, because percentage-free boxes
 no longer have retained width keys to invalidate. These changes preserve the
 predicate under test and the existing unrelated-failure rejection.
+
+
+Percentage-free pre-pass boxes now call the existing definite-height resolver
+without constructing a stored record or resolving a provenance edge. Reference
+publication reuses its already resolved specified height to classify fixed
+transfer and publishes an empty reader summary. Only reader writers perform
+record renewal; source lookup derives only the actual containing box, not the
+context root first. These remove dense-record work along with dense storage.
+The width mutation targets the two remaining reader writers (pre-pass and
+reference publication); the percentage-free restyle path has no record to
+refresh and is no longer a mutation site.
