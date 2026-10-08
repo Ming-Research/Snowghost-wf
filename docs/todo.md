@@ -70,7 +70,11 @@ example apart from the renderer code that exposed it
   Reopen before accepting M2 step 1's parallelism; validate a minimal
   field-based scatter and a duplicate-slot rejection, inspect the parallel
   ledger, and retain seq/par dump equality. The temporary flat-walk writes
-  remain uncertified until then.
+  remain uncertified until then. Q138's bounded owner-motion traversal exposes
+  this same gap for independent direct suffix targets: it avoids descendant
+  scans but still orders sibling writes. Q139 is open; finish correctness/cost
+  evidence without claiming maximal parallelism, and hold adoption for the
+  owner's disposition. No sorting or inverse-array proof workaround is adopted.
 
 - **A write through indices the program knows are distinct needs its
   facts derived again in each pass.** Minimal example: a tree in an arena,

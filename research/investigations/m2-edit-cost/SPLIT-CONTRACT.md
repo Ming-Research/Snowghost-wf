@@ -580,6 +580,8 @@ presented as bounded repair for all edit kinds.
 - Q138 A (previous report label Q136): approved continuation. Complete the
   compatibility-suffix and bounded topology work, and investigate/remove the
   earlier M2 root-font regression; acceptance remains required before merging.
+- Q139: open; independent owner-motion publication reopens the stored-field
+  proof requirement. No sorting or inverse-array workaround is adopted.
 
 ---
 
@@ -605,6 +607,42 @@ presented as bounded repair for all edit kinds.
   first, but not turn these measurements into acceptance.
 
 ---
+
+### Q139: independent owner-motion writes and the stored-field proof gap
+
+Q139 is open. The bounded suffix traversal skips unchanged descendant interiors,
+but its left/node/right writes share the context and touched-slot lists. Direct
+sibling moves have no CSS dependency on one another. A read-only preparation
+phase, independent target writes, then reduction is the natural dependency order;
+the present traversal does not establish maximal parallelism.
+
+At the pinned Whitefoot f949e676acfa811f96b21afd07f02c06dcd14b51,
+[RANGE-1](https://github.com/Ming-Research/Whitefoot/blob/f949e676acfa811f96b21afd07f02c06dcd14b51/docs/spec.md)
+allows integer element reads but says a range place selects nothing below an
+element. The needed stored inverse has this form (a specification fragment,
+not an admitted complete program):
+
+```text
+payloads[order[k]].entry_slot == k
+```
+
+The maintained `range5-pos-scatter-through-left-inverse.wf` conformance case
+uses a separate integer inverse array. Adding proof-only inverse storage or
+sorting targets solely to obtain disjoint slices would hide the same existing
+Whitefoot requirement recorded in `docs/todo.md`; neither is adopted here.
+This finding comes from source/specification inspection, not a new compiler
+trial. Correctness and cost investigation can continue with the bounded
+prototype, but its serial sibling publication is not reported as intrinsic.
+
+- A (recommended): finish the independent evidence, hold the merge, and close
+  the Whitefoot field/enum inverse-proof gap before certifying these writes.
+  This preserves the project rule and delays adoption until a compiler fix
+  and its pin adoption are separately authorized.
+- B: explicitly accept temporary serial sibling publication while keeping the
+  language requirement open. This permits assessing adoption under the latency
+  gate but is a deliberate exception to maximal parallelism, not a language fix.
+- Confidence 4/5: the pinned range grammar excludes the natural proof; a native
+  admitted proof that needs no proof-only representation could overturn this.
 
 ## Completion correctness and review
 
