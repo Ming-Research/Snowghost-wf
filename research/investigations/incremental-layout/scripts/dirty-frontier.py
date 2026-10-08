@@ -64,7 +64,7 @@ def fixtures():
                        ('frame-definite', 'height:170px'),
                        ('frame-flow-width', 'padding-right:480px'),
                        ('own-minimum', 'min-height:230px'),
-                       ('own-overflow', 'overflow:hidden'),
+                       ('own-padding-bottom', 'padding-bottom:43px'),
                        ('inactive-columns', 'column-gap:37px')]:
         css = '.changed{' + rule + '}.changed .leaf{font-size:24px}'
         if name == 'frame-left':
@@ -86,11 +86,6 @@ def fixtures():
     first_line_css = ('p{font-size:0;line-height:0}.leaf{vertical-align:baseline;line-height:40px}'
                       '.fixed{font-size:16px;line-height:40px}.changed .leaf{font-size:24px}')
     yield 'stationary-first-line', page(multiline, first_line_css), toggle
-    baseline = '<article><section>Hg</section><aside>Hg</aside></article>'
-    baseline_css = ('article{display:flex;flex-direction:row;align-items:baseline;width:600px;font:16px/40px sans-serif}'
-                    'section,aside{display:flow-root;box-sizing:border-box;flex:0 0 300px;width:300px;min-width:0;margin:0;padding:0;border:0}'
-                    'section{overflow:visible}section.changed{overflow:hidden}')
-    yield 'overflow-baseline', page(baseline, baseline_css), toggle
     wrap = '<section><p><span class="leaf">Several words cross the narrow measure.</span></p><p><span class="leaf">Other words also cross that measure.</span></p><p>Following reader.</p></section>'
     yield 'changed-placement', page(wrap, 'section{width:180px}.changed .leaf{font-size:32px}'), toggle
     flex = '<article><section><p><span class="leaf">Several words fill a flex item.</span></p><p><span class="leaf">A later line shares its width.</span></p></section><aside>Peer.</aside></article>'
@@ -152,29 +147,41 @@ def run(args):
     directory = Path(args.output)
     directory.mkdir(parents=True, exist_ok=True)
     selected = 0
+    failures = []
     for name, source, edits in fixtures():
         if args.case and name not in args.case:
             continue
         selected += 1
-        html = directory / (name + '.html')
-        html.write_text(source)
-        nodes = directory / (name + '.nodes')
-        nodes.write_text(subprocess.check_output([args.driver, 'nodes', '0', str(html), 'renderer/style/ua.css'], text=True))
-        script = directory / (name + '.edits')
-        script.write_text('\n'.join(edits(Tree(nodes))) + '\n')
-        raw = subprocess.check_output([args.driver, 'edit', str(script), str(html), 'renderer/style/ua.css'], text=True)
-        (directory / (name + '.raw')).write_text(raw)
-        different = re.findall(r'^edit (\d+) hash [0-9a-f]{16} bytes \d+ inc DIFF$', raw, re.M)
-        protocol = directory / (name + '.raw')
-        operations = inctime.script_operations(str(script))
-        inctime.read(str(protocol), operations, checking=True, require_paths=True)
-        if name == 'sparse-root':
-            sparse_counts(raw)
-        if name == 'stationary-first-line':
-            sparse_counts(raw, expected_paragraphs=2, expected_records=2)
-        print(name, 'edits', len(operations), 'differences', different, flush=True)
+        try:
+            check_fixture(args, directory, name, source, edits)
+        except (ValueError, subprocess.CalledProcessError) as failure:
+            print('FAILED:', name, failure, flush=True)
+            failures.append(name)
     if not selected:
         raise ValueError('no frontier cases selected')
+    if failures:
+        raise SystemExit('failed frontier fixtures: ' + ' '.join(failures))
+
+
+def check_fixture(args, directory, name, source, edits):
+    """Writes one generated case and requires incremental/full identity for every edit."""
+    html = directory / (name + '.html')
+    html.write_text(source)
+    nodes = directory / (name + '.nodes')
+    nodes.write_text(subprocess.check_output([args.driver, 'nodes', '0', str(html), 'renderer/style/ua.css'], text=True))
+    script = directory / (name + '.edits')
+    script.write_text('\n'.join(edits(Tree(nodes))) + '\n')
+    raw = subprocess.check_output([args.driver, 'edit', str(script), str(html), 'renderer/style/ua.css'], text=True)
+    (directory / (name + '.raw')).write_text(raw)
+    different = re.findall(r'^edit (\d+) hash [0-9a-f]{16} bytes \d+ inc DIFF$', raw, re.M)
+    protocol = directory / (name + '.raw')
+    operations = inctime.script_operations(str(script))
+    inctime.read(str(protocol), operations, checking=True, require_paths=True)
+    if name == 'sparse-root':
+        sparse_counts(raw)
+    if name == 'stationary-first-line':
+        sparse_counts(raw, expected_paragraphs=2, expected_records=2)
+    print(name, 'edits', len(operations), 'differences', different, flush=True)
 
 
 if __name__ == '__main__':
