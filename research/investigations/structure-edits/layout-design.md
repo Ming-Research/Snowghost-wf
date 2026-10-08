@@ -3339,3 +3339,77 @@ same per-function mode before the full-cost comparison consumes its artifacts.
 Driver revisions and compiler/native toolchain identities accompany the
 full-cost artifact. The recorded control-reference dump hash is explicitly
 head/control evidence, not a dump hash claimed for historical builds.
+
+### Inventory scope evidence, 2026-10-08
+
+The candidate counts every percentage reader below a route context: a
+nested context contributes its whole subtree summary. A temporary hosted
+variant of the same source (run 37794801347, renderer of `4d5ca75`) lets
+each nested context contribute only its own record, so a route context
+counts its direct readers and readers inside a nested context are counted
+only when the route descends into it. Both builds compared every edit
+prefix with a fresh build, and every result below was identical to it.
+
+| Workload | Whole-subtree inventory (candidate) | Direct-reader variant |
+| --- | --- | --- |
+| apollo11, 60 block edits on the recorded capture | 60 refusals, reason 7 | 60 refusals, reason 2 at grid owners |
+| ecma262, 20 block edits | 20 splices | 20 splices |
+| html5, 60 block edits | 60 splices | 60 splices |
+| flex fixture, original and viewport chains | 9 required paths: 2 splices, six reason 2 and one reason 10 all become reason 7 | all 9 required paths match |
+| positioned, transfer and edit-cost fixtures, both chains | all required paths match | all required paths match |
+| Q139 matrix, 34 cases | all required paths match | `nested-context-reader` and `layout-stretch` splice instead of refusing; 32 cases unchanged |
+
+On apollo11 the only reader with an unproved basis outside html/body is
+the header link `a.mw-logo {display:flex; height:100%}` whose containing
+block is a flex item, plus absolutely positioned inputs that the summary
+excludes. One such reader therefore refuses every block edit on the page
+under the whole-subtree inventory, before the grid owners that
+[the diagnosis](https://github.com/Ming-Research/Snowghost-wf/blob/2b122a48d5a1798cbe58232db44df56a4072ea40/research/investigations/structure-edits/apollo11-blocks.md#control-results-and-causal-limit)
+expected Q139 to expose. The direct-reader variant reaches exactly those
+grid owners. It relies on the transfer certificate's unchanged space for
+an off-route nested context, the premise M2's percentage-free guard
+relied on, instead of the argument's rule that retained nested contexts
+contribute their readers; the argument's two negative rows for an
+indefinite nested reader and a stretched flex sibling would become
+admitted cases. That reverses a stated premise, so the choice is the
+owner's; the candidate keeps the argument's whole-subtree inventory and
+the flex fixture's expectations stay unchanged and failing until then.
+
+### Paired edit cost and record reuse, 2026-10-08
+
+The first all-kind hosted comparison at `4477e5e` (run 37782276771, one
+forward/inverse pair per kind, two interleaved rounds, ubuntu-24.04
+runners) measured the candidate against M2 `95ea4a1` with the twin as a
+noise control. Median paired ratios outside the twin's range: ecma262
+root font 3.47 sequential and 1.60 with four workers; apollo11 sentence
+9.9 and 10.7, word 2.8 and 3.4, font size 2.8 and 2.2, block 1.07 and
+1.10. Instruction counts under the layout update (callgrind, runs
+37797895873 and 37804054947) located three causes, none of them in the
+admission query:
+
+- Geometry reuse required exact equality of each context's record with
+  its current inputs. A root font change alters every font key, so every
+  context was laid out again (10,217 contexts per ecma262 root font edit
+  against M2's 4).
+- A grid measures an item with an unknown height and then lays it out at
+  its row height, so an item's record alternated between the auto and
+  layout-supplied states, and the reuse check laid every Apollo grid item
+  out again in both passes of each update.
+- Each pre-pass and reference publication resolved every block's record
+  again although nothing it depends on had changed.
+
+A retained context now keeps its geometry under an equivalent incoming
+edge and refreshes a stale record in place. Fresh layout follows only
+when the edge's source changes, or when the record or its basis gains or
+loses content independence (state 2), the only state descendants test;
+auto and layout-supplied states are equally unproved for every
+descendant. A record whose edge, consumer, numeric inputs and style keys
+are unchanged is reused instead of resolved, and a child's incoming edge
+is written from the containing record without resolving the child.
+These change no admission rule; the matrix, restyle probes and Chromium
+rectangles pass unchanged at `afc8028` (run 37810231653).
+
+The comparison at `afc8028` (run 37810231789, same protocol) leaves
+ratios between 1.00 and 1.12 against M2, with twin ranges near 1.0; the
+larger sample that decides them is recorded with the full-build cost
+below.
