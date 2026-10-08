@@ -1,7 +1,8 @@
 # Temporary: bisects the per-edit cost of M2's layout steps on hosted runners,
 # one job per build, in parallel. A regression of tens to hundreds of times
 # needs no precise machine; this hosted comparison is explicitly requested.
-# The merged-base source and its twin control host noise. Retired with Q134 experiments.
+# The frozen final cohort is built independently, including the same-source twin.
+# Retired with Q134 experiments; no expired run artifact is needed to reproduce it.
 name: bisect-hosted
 
 on:
@@ -16,14 +17,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [main=1fdb4050806ba08ca1ecd09c1e23b7cb77729ce9, base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, a=cf6dc4bfa3b07048392f68ddd34e5f3fbc9acf95, b=HEAD]
+        build: [main=1fdb4050806ba08ca1ecd09c1e23b7cb77729ce9, base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, a=cf6dc4bfa3b07048392f68ddd34e5f3fbc9acf95, b=caad62942c94e9b7abc3a97f8863f04bf0f88581]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: true
       - name: LLVM 22 and fonts
-        if: startsWith(matrix.build, 'a=') || startsWith(matrix.build, 'b=')
         run: |
           set -euo pipefail
           sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
@@ -35,22 +35,10 @@ jobs:
           sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld
           clang --version | head -1
       - name: Drivers of ${{ matrix.build }}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           pair='${{ matrix.build }}'
           name=${pair%%=*} ref=${pair#*=}
-          if [ "$name" = main ] || [ "$name" = base ] || [ "$name" = twin ]; then
-            gh run download 37679415595 -R Ming-Research/Snowghost-wf -n "driver-$name" --dir build
-            read -r saved_name saved_revision compiler_record < build/revision.txt
-            test "$saved_name" = "$name"
-            test "$saved_revision" = "$ref"
-            test "$compiler_record" = 'release = wf-0b7f5c5b9854'
-            cat build/revision.txt
-            echo "BUILD_NAME=$name" >> "$GITHUB_ENV"
-            exit 0
-          fi
           git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
           git worktree add -q --detach build/tree "$ref"
           (cd build/tree && git submodule update -q --init)
@@ -149,115 +137,3 @@ jobs:
             build/evidence/
             build/x5/scripts/
             build/drivers/driver-*/revision.txt
-
-  fragment-tail-profile:
-    if: contains(github.event.head_commit.message, '[fragment-tail-profile]')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Exact measured drivers and scripts
-        run: |
-          set -euo pipefail
-          for name in main base a b; do
-            gh run download 37684940686 -n "driver-$name" --dir "build/drivers/$name"
-          done
-          gh run download 37684940686 -n edit-cost-evidence --dir build/timing
-          chmod +x build/drivers/*/layout_oracle_*
-          mkdir -p build/fragment-tail
-          gh run view 37684940686 --job 113022750033 --log > build/fragment-tail/timing.log
-          cat build/drivers/*/revision.txt
-      - name: Fonts and sampling profiler
-        run: |
-          set -euo pipefail
-          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y --no-install-recommends linux-tools-$(uname -r) fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
-          sudo sysctl kernel.perf_event_paranoid=-1
-          uname -a | tee build/fragment-tail/machine.txt
-          lscpu | tee -a build/fragment-tail/machine.txt
-          perf --version | tee -a build/fragment-tail/machine.txt
-          sh research/investigations/concurrency/run.sh fetch || true
-          test -s build/research/concurrency/html5.html
-          make -s oracle-fonts
-      - name: Verify the measured page and prepare two diagnostic pairs
-        run: |
-          python3 - <<'PYEOF'
-          import hashlib
-          import re
-          from pathlib import Path
-          root = Path('build/fragment-tail')
-          log = (root / 'timing.log').read_text()
-          page = Path('build/research/concurrency/html5.html')
-          digest = hashlib.sha256(page.read_bytes()).hexdigest()
-          matches = re.findall(r'\b([0-9a-f]{64})\s+build/research/concurrency/html5.html', log)
-          assert digest in matches, (digest, matches)
-          (root / 'page.sha256').write_text(digest + '  html5.html\n')
-          source = Path('build/timing/x5/scripts/html5-fontsize.edits').read_text().splitlines(True)
-          setup = [line for line in source if line.startswith('S ')]
-          edits = [line for line in source if line.startswith(('C ', 'K '))]
-          for first in (23, 43):
-              pair = edits[first-1:first+1]
-              assert len(pair) == 2 and pair[0].startswith('C ') and pair[1].startswith('K ')
-              assert pair[0].split()[1:] == pair[1].split()[1:]
-              (root / f'pair{first}-sample.edits').write_text(''.join(setup + pair * 10))
-          PYEOF
-      - name: Time the small samples before expanding
-        run: |
-          set -euo pipefail
-          s=research/investigations/incremental-layout/scripts
-          for first in 23 43; do
-            for round in 1 2; do
-              output="build/fragment-tail/sample-$first-r$round"
-              /usr/bin/time -p -o "$output.time" build/drivers/a/layout_oracle_seq edittime "build/fragment-tail/pair$first-sample.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$output.raw"
-              python3 "$s/inctime.py" "build/fragment-tail/pair$first-sample.edits" "$output.raw"
-              cat "$output.time"
-            done
-          done
-          python3 - <<'PYEOF'
-          from pathlib import Path
-          values = [float(path.read_text().splitlines()[0].split()[1]) for path in Path('build/fragment-tail').glob('sample-*.time')]
-          assert len(values) == 4 and max(values) < 10, values
-          repeats = min(2000, max(10, int(600 / max(values))))
-          for first in (23, 43):
-              path = Path(f'build/fragment-tail/pair{first}-sample.edits')
-              lines = path.read_text().splitlines(True)
-              setup = [line for line in lines if line.startswith('S ')]
-              pair = [line for line in lines if line.startswith(('C ', 'K '))][:2]
-              Path(f'build/fragment-tail/pair{first}.edits').write_text(''.join(setup + pair * repeats))
-          Path('build/fragment-tail/scale.txt').write_text(f'{repeats} round trips per profile; sample seconds {values}\n')
-          print('sample wall seconds', values, '; chosen round trips per profile', repeats)
-          PYEOF
-      - name: Profile the retained edit work
-        run: |
-          set -euo pipefail
-          s=research/investigations/incremental-layout/scripts
-          for first in 23 43; do
-            for name in main base a b; do
-              output="build/fragment-tail/$name-pair$first"
-              WF_WORKERS=4 perf record -F 499 --call-graph dwarf,4096 -o "$output.data" -- "build/drivers/$name/layout_oracle_seq" edittime "build/fragment-tail/pair$first.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$output.raw"
-              python3 "$s/inctime.py" "build/fragment-tail/pair$first.edits" "$output.raw" > "$output-summary.txt"
-              perf report -i "$output.data" --stdio --no-children --percent-limit 0.5 > "$output-self.txt"
-              perf report -i "$output.data" --stdio --children --percent-limit 1 > "$output-callers.txt"
-            done
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fragment-tail-profile
-          path: |
-            build/fragment-tail/*.txt
-            build/fragment-tail/*.raw
-            build/fragment-tail/*.edits
-            build/fragment-tail/*.time
-            build/fragment-tail/*.sha256
-            build/drivers/*/revision.txt
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fragment-tail-perf-data
-          path: build/fragment-tail/*.data

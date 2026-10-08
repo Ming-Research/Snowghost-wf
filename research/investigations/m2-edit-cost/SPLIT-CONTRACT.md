@@ -218,8 +218,19 @@ is read once before partial stacking. A's exceptional fragment-only line repair
 is retired: it cannot repair saturated endpoint geometry, and both former
 call sites now require its exact-motion certificate before translation.
 The numeric admission omission replaces that unreachable repair omission;
-all existing fragment and targeted-cell falsifiers remain wired. Base comparison
-and corrected runtime validation are pending.
+all existing fragment and targeted-cell falsifiers remain wired. [The historical-base probe](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37696128952)
+also fails both growth and undo at cf12c609; its undo dump has the same lost
+head coordinate. Corrected runtime validation is pending.
+
+The numeric argument uses the existing conservative travel metadata: margins,
+frames, baseline components, constrained heights, relative displacement and
+atomic/float/positioned excursions are charged by absolute magnitude and
+summed without wrapping. Unchanged suffix placement therefore needs the old
+travel plus the proposed displacement and content-origin magnitude to remain
+strictly below the i32 sentinel. Changed prefix operations retain their
+reference order. The travel argument was audited in source; it is not a
+machine-checked arithmetic proof. Independent omissions are configured to exercise both new
+admission sites separately.
 
 ## Remaining-cost diagnostic question, before profiling
 
