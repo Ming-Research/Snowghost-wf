@@ -1,4 +1,7 @@
-# Split fragment dependency experiment (Q134; Q135 A)
+# Split fragment dependency contract (Q134 A; Q135 A)
+
+Current outcome: [completion acceptance](#completion-acceptance) fails; option A
+is not merged into research/m2-layout.
 
 ## Question and prior rejection criterion
 
@@ -342,3 +345,172 @@ the newer compiler's toolchain while selecting the branch pin for all drivers.
 The corrected workflow uses Ubuntu 24.04's native clang/lld, as this branch's
 correctness workflows do, with the same f949 compiler for main, base, twin and A.
 No renderer source or expected output is changed for this toolchain correction.
+
+## Completion acceptance
+
+[Hosted comparison 37711499602](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37711499602)
+completed both rounds at workflow/renderer revision
+4b37693262c7f109e23d7afd6e829ba1a318449b. Its successful job status means
+measurement completed, not that adoption passed. The four independently built
+cohorts are main 8fbc1601785cee70265da1eac4d99589fc6fb67c, base and twin
+cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, and A at the workflow revision.
+Current main's renderer tree is identical to the earlier comparator 1fdb4050.
+All use wf-f949e676acfa, Ubuntu Clang 18.1.3, function fragments, and the same
+pages, fonts and scripts on one Ubuntu 24.04 AMD EPYC 7763 runner with four
+vCPUs, Linux 6.17.0-1022-azure and WF_WORKERS=4. Round 1 runs main/base/twin/A;
+round 2 reverses that order. The two one-edit HTML root-font samples both took
+3.33 seconds including startup before the full batch was admitted.
+
+The artifact holds 192 raw per-edit files, with 20 ECMA262 or 60 HTML5 edits
+each, the generated scripts, revision records and machine settings. These are
+upper medians of the unchanged X5 `edit us` field in microseconds, round 1 /
+round 2; separately reported style timing is not added to that established
+metric. A zero is the driver's reported median, not a claim of free styling.
+
+| Page / edit / mode | main | cf12c609 | base twin | A |
+|---|---:|---:|---:|---:|
+| ecma262 / word / seq | 123/114 | 116/109 | 106/122 | 108/107 |
+| ecma262 / word / par | 181/178 | 181/192 | 185/178 | 172/173 |
+| ecma262 / sentence / seq | 257/247 | 823/803 | 946/812 | 453/484 |
+| ecma262 / sentence / par | 337/324 | 724/718 | 741/746 | 517/505 |
+| ecma262 / colour / seq | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 / colour / par | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 / fontsize / seq | 1701/1668 | 10290/9952 | 10857/10743 | 1519/1561 |
+| ecma262 / fontsize / par | 2043/2071 | 11058/9960 | 10755/10168 | 1372/1434 |
+| ecma262 / rootfont / seq | 33821/32827 | 117078/112876 | 117759/113303 | 115478/115150 |
+| ecma262 / rootfont / par | 73770/72261 | 228104/223820 | 229364/226936 | 224028/222388 |
+| ecma262 / block / seq | 574169/555342 | 125/115 | 116/117 | 122/129 |
+| ecma262 / block / par | 415012/396201 | 198/195 | 185/184 | 194/202 |
+| html5 / word / seq | 76/77 | 80/81 | 82/79 | 83/81 |
+| html5 / word / par | 128/128 | 134/134 | 132/136 | 134/124 |
+| html5 / sentence / seq | 237/233 | 344/337 | 378/352 | 335/350 |
+| html5 / sentence / par | 343/370 | 400/374 | 391/367 | 359/394 |
+| html5 / colour / seq | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 / colour / par | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 / fontsize / seq | 774/755 | 2406/2343 | 2259/2166 | 2314/2344 |
+| html5 / fontsize / par | 823/824 | 2502/2501 | 2783/2576 | 2668/2632 |
+| html5 / rootfont / seq | 663040/649378 | 811450/796922 | 807878/804012 | 807047/804858 |
+| html5 / rootfont / par | 386491/378454 | 593840/582971 | 593779/589958 | 584867/584278 |
+| html5 / block / seq | 664928/614113 | 611/573 | 588/578 | 583/589 |
+| html5 / block / par | 491170/444027 | 700/687 | 706/706 | 699/698 |
+
+Sentence edits meet the twice-main limit on both pages in both modes and rounds.
+ECMA262 font-size also meets it and improves substantially over the merged base.
+HTML5 font-size fails every combination: A/main is 2.99/3.10 sequential and
+3.24/3.19 parallel. Its 2,314–2,668 us medians remain near the base/twin costs,
+well above main's 755–824 us. The literal word/block condition is not uniformly
+met either: HTML word seq round 1 is 83 vs 80 us; round-2 block medians are
+129 vs 115 (ECMA seq), 202 vs 195 (ECMA par), 589 vs 573 (HTML seq), and
+698 vs 687 (HTML par). The independent twin shows small-control variability;
+these small overruns do not establish an isolated regression mechanism, but no
+noise allowance was authorized and they cannot be declared passes.
+
+Acceptance therefore fails and there is no merge into research/m2-layout.
+Retained-run A substantially reduces ECMA font edit cost in this comparison,
+but does not finish M2's broader edit-cost task.
+The existing two-pair profile and unchanged source identify dense reference
+suffix translation/publication as remaining work; they do not isolate all
+current HTML font edits' costs. In this run, A's sequential round-1 edits
+23/24 still report 7 held entries versus 84,675 logical entries and
+2,940/18,042/28,623 entry/block/index visits (reason 5); edits 43/44 report
+10 versus 54,285 and 1,654/8,624/13,634 visits (reason 6). These are the same
+frontiers as the earlier profile, not an isolated time attribution.
+Topology-changing replays also still reconstruct
+the context's runs. These limits remain in docs/todo.md rather than being
+presented as bounded repair for all edit kinds.
+
+### Owner ledger after measurement
+
+- Q132 A: approved; counted post-publication flex recovery is retained.
+- Q134 A: approved representation; adoption is blocked by acceptance, not by
+  an unresolved A/B choice.
+- Q135 A: approved; the dependency/validity contract is recorded above.
+- Q136: open. Extend A to the remaining compatibility-suffix and topology work,
+  or park the line at its validated work-branch revision.
+
+---
+
+**Q136 — Extend option A to finish the remaining bounded repair before adoption?**
+
+- **Background.** A passes the sentence and ECMA font-size timing limits, but
+  HTML font-size remains 2.99–3.24 times concurrent main, and several literal
+  word/block comparisons overrun the base slightly. The prior profile's two
+  HTML font pairs and current source still reach
+  `translate_dense_reference_suffix`; topology-changing edits also rebuild all
+  runs. The approved run representation alone therefore does not meet the
+  stated adoption gate.
+- **Options.** A (recommended): establish the retained owner-motion/legacy-reader
+  contract and bounded adjacency/topology replacement, implement the remaining
+  work in A, then repeat the unchanged acceptance gates. This needs further
+  investigation and implementation; other HTML costs may remain. B: park A
+  without merging and retain cf12c609 on the layout line. This avoids extending
+  the investigation now, but leaves the measured latency and bounded-topology
+  obligations unresolved.
+- **Confidence 4/5.** The same-run two-round acceptance failure is decisive.
+  The precise decomposition of remaining HTML font cost is not yet isolated;
+  further profiling could change which retained consumer should be addressed
+  first, but not turn these measurements into acceptance.
+
+---
+
+## Completion correctness and review
+
+The runtime bodies are unchanged between correctness revision
+75c20f5df74775e21fee5ad7ddc8389aa80d43b0 and measured revision
+4b37693262c7f109e23d7afd6e829ba1a318449b; the latter changes only a function's
+doc string within renderer/. The completion changes settle the contract,
+record the owner rulings, add the following-translation omission, and select
+and repair the hosted timing cohort/setup. They do not claim that the inherited
+prototype has gained bounded topology replacement.
+
+- [layout-check 37711499569](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37711499569)
+  and [check 37711499574](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37711499574)
+  pass at 4b37693, including the DOM self-test and 21 design-checker tests.
+  Design lint uses CI base 6f2235c25e01293299afd72a5fdaf5b51592b5ef and reports
+  nodes 7/base 7, depth 1/base 1, decisions 60/base 53, rejected 24/base 24.
+- [Oracles 37710841337](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37710841337)
+  passes all 14 jobs at 75c20f5. Page dumps match reference revision
+  ddfd63d0755e51f7c2972e0bb43b0c5d88fe30c7 and sequential/parallel outputs byte
+  for byte: ECMA262 19,024,863 bytes and HTML5 12,538,869 bytes. Five layout
+  fixture pages and the saturation fixture are also identical. All six X5
+  kinds on both pages match incremental/full and seq/par: 24 page/mode files,
+  960 edits, no difference or refusal. Every block edit is splice 1 reason 0:
+  20 ECMA262 and 60 HTML5 per mode. Existing case refusals remain exactly the
+  separately documented block/style cases; no case or fixture HTML changed.
+- [Falsify 37710841485](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37710841485)
+  passes all 48 jobs at 75c20f5: 46 matrix mutations, the job independently
+  omitting both numeric-admission sites, and check-machinery. All inherited
+  mutations stay wired. The two required added omissions are semantic
+  detections after successful compilation: missing affected-fragment repair
+  produces eight transfer-fixture differences; stale following spanning y
+  produces 54 transfer and 16 cascade differences. Both numeric omissions
+  fail growth and undo in high-origin atomic Open/Child cases while low-origin
+  controls remain identical, and the detector rejects the unmutated control.
+
+All compilation, checks and runtime measurements ran on GitHub-hosted CI.
+Local work was limited to editing, source/Git inspection and reading/analyzing
+CI evidence. Neither whitefoot.pin nor either submodule moved; no Whitefoot
+language gap was established or filed. The first timing attempt's toolchain
+mismatch is recorded above and supplies no performance evidence.
+
+A separate read-only reviewer using the inherited default model (identifier not
+exposed) examined cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 through 4b37693 plus
+this completion documentation: all 18 changed files, changed regions and direct
+geometry/reference/splice consumers, pipeline/layout nodes and ancestors, the
+style sibling, structural contracts, and actual CI logs/artifacts. It reran no
+suite. Checklist groups A/D/C/T/R/M/V and G1–G3/DC1–DC4 were covered; pin-move
+T4 and PR-action V3/V4 were inapplicable. Reported outcomes and evidence pass;
+M1/DC4 retain the explicitly incomplete bounded topology and adoption gate.
+
+Review findings and dispositions: D1/M1's process-only log-approval sentence was
+moved from the layout decision into this record's status section (fixed).
+The targeted-repair return/certificate distinction is now explicit; inspection
+found no reachable unmutated counterexample demanding a recovery path (clarified).
+Bounded topology replacement and failed timing acceptance remain open under
+Q136 (deferred pending the owner's direction). The broader reference-suffix
+cost is recorded in docs/todo.md with its validation and reopening condition.
+No additional correctness defect was found within scope. The general travel
+argument is source-audited and probed, not universally proved; its completeness
+and the full decomposition of HTML font cost remain unverified by this review.
+The owner's Q134/Q135/Q132 rulings stand; a failed acceptance result does not
+reopen the selected A/B representation. Approval remains with the owner.

@@ -337,7 +337,11 @@ example apart from the renderer code that exposed it
   and indexed affected-run repair. Q132 A retains counted post-publication
   flex recovery. Option B remains parked. Adoption into research/m2-layout
   requires all correctness/falsification gates and the two-round same-host
-  acceptance comparison against main and cf12c609; results are pending.
+  acceptance comparison against main and cf12c609. The
+  [completion comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#completion-acceptance)
+  passes sentence and ECMA font-size limits, but HTML font-size is 2.99–3.24
+  times main; small literal word/block overruns also remain. A is not merged.
+  Q136 asks whether to extend the remaining work or park the branch.
   Topology-preserving replays use the index; topology-changing replays still
   rebuild all runs. Bounded topology replacement remains incomplete: retain
   adjacency dependencies and replace only affected runs in source publication
@@ -350,16 +354,17 @@ example apart from the renderer code that exposed it
   [hosted repeated-pair profile](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#remaining-cost-profile-result),
   A's pairs 23/24 and 43/44 retained 7/10 entries but reported 84,675/54,285
   logical entries, while dense suffix translation was the largest layout self-time
-  symbol. Impact: neither fused prototype met HTML font-size acceptance in
-  the ordinary two-round comparison. The profile covers two pairs and includes
+  symbol. Impact: A still fails the completion two-round HTML font-size gate at
+  2.99–3.24 times concurrent main; its new same-host medians remain near the
+  base/twin. The earlier fused comparison failed for both prototypes. The profile covers two pairs and includes
   startup, so the remaining share is not fully isolated. Change: establish
   which legacy readers require resolved suffix scratch and replace broad
   translation/publication with retained exact owner motion and scoped access,
   preserving saturation order. Validate all X5 identity/splice gates, add a
   suffix-repair omission falsifier, and rerun the same-host two-round comparison
-  with an identical-source control. Q134 A is selected; reopen if its acceptance
-  run still fails,
-  before claiming the M2 edit-cost target complete.
+  with an identical-source control. Q134 A is selected and its acceptance
+  still fails; Q136 awaits the owner on extending this work before claiming
+  the M2 edit-cost target complete.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
