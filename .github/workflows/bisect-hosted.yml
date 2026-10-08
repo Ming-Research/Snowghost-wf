@@ -11,13 +11,13 @@ on:
 
 jobs:
   build:
-    if: contains(github.event.head_commit.message, '[timing]')
+    if: contains(github.event.head_commit.message, '[timing]') || contains(github.event.head_commit.message, '[reader-pilot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        build: [main=8fbc1601785cee70265da1eac4d99589fc6fb67c, maintwin=8fbc1601785cee70265da1eac4d99589fc6fb67c, base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, before=58b16dae2770a774189370d4d2e5b74abc1a2fd0, beforetwin=58b16dae2770a774189370d4d2e5b74abc1a2fd0, frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch, frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch, a=HEAD, atwin=HEAD]
+        build: ${{ contains(github.event.head_commit.message, '[reader-pilot]') && fromJSON('["before=f402783aa7e6f14224e96b52ad3d9af2836e18b4", "beforetwin=f402783aa7e6f14224e96b52ad3d9af2836e18b4", "frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "a=HEAD", "atwin=HEAD"]') || fromJSON('["main=8fbc1601785cee70265da1eac4d99589fc6fb67c", "maintwin=8fbc1601785cee70265da1eac4d99589fc6fb67c", "base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2", "twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2", "before=f402783aa7e6f14224e96b52ad3d9af2836e18b4", "beforetwin=f402783aa7e6f14224e96b52ad3d9af2836e18b4", "frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "a=HEAD", "atwin=HEAD"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,7 +80,18 @@ jobs:
           pattern: driver-*
           path: build/drivers
       - name: Select builds
-        run: echo "BUILD_NAMES=main maintwin base twin before beforetwin frontier frontiertwin a atwin" >> "$GITHUB_ENV"
+        run: |
+          if [ '${{ contains(github.event.head_commit.message, '[reader-pilot]') }}' = true ]; then
+            echo "BUILD_NAMES=before beforetwin frontier frontiertwin a atwin" >> "$GITHUB_ENV"
+            echo "PREPARE_BUILD=frontier" >> "$GITHUB_ENV"
+            echo "TIMING_PAGES=html5" >> "$GITHUB_ENV"
+            echo "TIMING_KINDS=sentence fontsize block" >> "$GITHUB_ENV"
+          else
+            echo "BUILD_NAMES=main maintwin base twin before beforetwin frontier frontiertwin a atwin" >> "$GITHUB_ENV"
+            echo "PREPARE_BUILD=main" >> "$GITHUB_ENV"
+            echo "TIMING_PAGES=ecma262 html5" >> "$GITHUB_ENV"
+            echo "TIMING_KINDS=word sentence colour fontsize rootfont block" >> "$GITHUB_ENV"
+          fi
       - name: Fonts
         run: |
           set -euo pipefail
@@ -99,10 +110,11 @@ jobs:
             test -s "build/research/concurrency/$file"
           done
           make -s oracle-fonts
-          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          cp "build/drivers/driver-$PREPARE_BUILD/layout_oracle_seq" build/layout_oracle_seq
           sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
           sha256sum build/x5/scripts/* build/research/concurrency/*.html
       - name: Bound the root-font batch with one edit per sample
+        if: ${{ !contains(github.event.head_commit.message, '[reader-pilot]') }}
         run: |
           set -euo pipefail
           mkdir -p build/evidence
@@ -127,8 +139,8 @@ jobs:
             if [ "$round" = 2 ]; then names=$(python3 -c 'import sys; print(" ".join(reversed(sys.argv[1:])))' $BUILD_NAMES); fi
             for name in $names; do
               cp build/drivers/driver-$name/layout_oracle_* build/
-              for page in ecma262 html5; do
-                for kind in word sentence colour fontsize rootfont block; do
+              for page in $TIMING_PAGES; do
+                for kind in $TIMING_KINDS; do
                   for mode in seq par; do
                     rm -rf build/x5/time
                     ALONE=1 WF_WORKERS=4 /usr/bin/time -p sh research/investigations/incremental-layout/run.sh time "$mode" "$page" "$kind" 1 > build/evidence/$name-$page-$kind-$mode-r$round.summary
@@ -144,7 +156,7 @@ jobs:
           set -euo pipefail
           mkdir -p build/range-profile
           sha256sum build/x5/scripts/html5-sentence.edits build/research/concurrency/html5.html renderer/style/ua.css > build/range-profile/inputs.sha256
-          PROFILE_BUILDS='frontier before a' python3 .github/timing/profile-range.py
+          PROFILE_BUILDS='before a' python3 .github/timing/profile-range.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

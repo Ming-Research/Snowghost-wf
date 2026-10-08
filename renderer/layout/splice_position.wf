@@ -24,6 +24,54 @@ fn empty_splice_position() -> made: SplicePosition pure {
   return SplicePosition(active: no, owner: origin, normal: point, visual: point, anchor_found: no, anchor_left: 0_i32, anchor_top: 0_i32, anchor_width: 0_i32, anchor_height: 0_i32);
 }
 
+fn splice_position_frame(context: &Context, styles: &Styles, block: u32) -> (owner: Origin, found: Bool, left: i32, top: i32, width: i32, height: i32) reads(context), reads(styles) {
+  doc "Resolves published owner and nearest positioned containing-block origins in one immutable parent walk. Separate accumulators preserve the original local-to-root association; each effective local origin is read once. Raw and hybrid phases retain their phase-specific readers.";
+  if context^.local_geometry {
+  } else {
+    let owner = block_origin(context: context, block: block);
+    let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
+    return owner, found, left, top, width, height;
+  }
+  let owner = zero_origin();
+  let anchor = zero_origin();
+  let anchor_at = no_index;
+  let cursor = block;
+  let count = context^.blocks.inner.len;
+  for (step in 0_u64..count) {
+    let at = cvt::<u32, u64>(cursor);
+    if at < context^.blocks.inner.len {
+      if anchor_at == no_index {
+        let group = box_of(styles: styles, style: context^.blocks.inner[at].style);
+        if group.position != position_static {
+          set anchor_at = cursor;
+        }
+      }
+      let local = block_local(context: context, at: at);
+      set owner = origin_accumulate(owner: local, local: owner);
+      if anchor_at != no_index {
+        set anchor = origin_accumulate(owner: local, local: anchor);
+      }
+      set cursor = context^.blocks.inner[at].parent;
+    } else {
+      break;
+    }
+  }
+  let at = cvt::<u32, u64>(anchor_at);
+  if at < context^.blocks.inner.len {
+    let edges = border_edges(styles: styles, style: context^.blocks.inner[at].style);
+    let visual = origin_visual(value: anchor);
+    let position = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+    let left = position.x +sat edges.left;
+    let top = position.y +sat edges.top;
+    let across = horizontal(edges: edges);
+    let down = vertical(edges: edges);
+    let width = context^.blocks.inner[at].width -sat across;
+    let height = context^.blocks.inner[at].height -sat down;
+    return owner, True(), left, top, width, height;
+  }
+  return owner, False(), 0_i32, 0_i32, 0_i32, 0_i32;
+}
+
 fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: SplicePosition reads(context), reads(styles) {
   doc "Reads only one child and its block ancestry. Its accumulated anchor preserves static-position axes after a direct or enclosing-block move; the final containing block supplies explicit-inset axes.";
   if at < context^.children.inner.len {
@@ -39,7 +87,7 @@ fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: Sp
     return empty_splice_position();
   }
   let block = context^.children.inner[at].block;
-  let owner = block_origin(context: context, block: block);
+  let (owner, found, left, top, width, height) = splice_position_frame(context: context, styles: styles, block: block);
   let basis = if context^.children.inner[at].viewport_origin {
     give zero_origin();
   } else {
@@ -50,7 +98,6 @@ fn splice_position_plan(context: &Context, styles: &Styles, at: u64) -> made: Sp
   let visual = origin_visual(value: accumulated);
   let moved_normal = content_position(value: normal, dx: context^.content_dx, dy: context^.content_dy);
   let moved_visual = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
-  let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
   let yes = True();
   return SplicePosition(active: yes, owner: owner, normal: moved_normal, visual: moved_visual, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
 }

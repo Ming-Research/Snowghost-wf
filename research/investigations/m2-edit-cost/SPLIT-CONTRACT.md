@@ -1669,8 +1669,8 @@ proposal, not a reported speedup.
 
 The reader implementation passes [layout-check 37843507652](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37843507652)
 at aa560f9. The subsequent oracle and range-falsification results are recorded
-under [reader validation](#reader-validation-and-review); latency remains
-unverified until the ten-cohort run completes. The
+under [reader validation](#reader-validation-and-review); the completed latency comparison below shows a partial repair, with sentence
+cost still above the patched frontier. The
 one-use initial profile workflow is retired after its captured evidence above;
 the same phase-checked profiler remains wired to the reader comparison.
 
@@ -1807,8 +1807,121 @@ selects the commit trailer explicitly for future synthetic timing commits,
 with no change to their source, compiler or the running comparison.
 
 There is no outstanding source finding within that review scope. The timing
-and after-profile verdict remain pending, and the root-font contract and
-implementation await the decision above. Finite fixtures and source inspection
+and after-profile result below establish a partial reader improvement, and the
+root-font contract and implementation await the decision above. Finite fixtures and source inspection
 do not prove the general layout arguments. The existing Whitefoot owner-write
 proof gap still blocks adoption, with serial owner writes unchanged; this work
 found no additional Whitefoot gap. No pull request or adoption merge is made.
+
+
+### Owner-local reader bound: ten-cohort result and remaining path
+
+[Hosted comparison 37844135644](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37844135644)
+measures the reader implementation at fdc230806e791a793217a3fd9185d446a0f34023
+before the diagnostic counters. Ten independent builds use wf-0b7f5c5b9854
+and LLVM 22 on one AMD EPYC 7763 runner exposing four CPUs, Ubuntu 24.04 /
+Linux 6.17.0-1022-azure, with WF_WORKERS=4. The same two forward/reverse rounds
+contain 480 raw timing files and 19,200 edit records: 20 edits per ECMA262
+kind and 60 per HTML5 kind. Main is 8fbc1601785cee70265da1eac4d99589fc6fb67c,
+cf12 is cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, range-before is
+58b16dae2770a774189370d4d2e5b74abc1a2fd0, and frontier is
+3393042d79efe1ada22129b950a610ffae4508aa with `frontier-span.patch`.
+Each has an independent twin. Values are upper-median update microseconds,
+round 1/round 2; these are same-host measurements, not comparisons of absolute
+numbers with earlier hosts.
+
+| Page | Kind | Mode | Main | Main twin | cf12 | cf12 twin | Range before | Before twin | Frontier | Frontier twin | Reader | Reader twin |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | word | seq | 101/99 | 119/99 | 106/106 | 116/119 | 106/107 | 106/108 | 111/123 | 108/120 | 107/107 | 107/106 |
+| ecma262 | word | par | 172/160 | 164/164 | 182/183 | 172/185 | 194/183 | 181/181 | 178/175 | 179/179 | 183/193 | 176/188 |
+| ecma262 | sentence | seq | 222/227 | 242/252 | 754/778 | 797/718 | 139/136 | 138/137 | 150/149 | 152/153 | 144/140 | 143/146 |
+| ecma262 | sentence | par | 298/294 | 327/328 | 681/745 | 706/673 | 237/230 | 236/236 | 240/233 | 245/246 | 238/219 | 232/227 |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | fontsize | seq | 1272/1150 | 1114/1240 | 9242/9005 | 9141/8261 | 500/494 | 491/470 | 530/497 | 502/507 | 522/491 | 466/509 |
+| ecma262 | fontsize | par | 1705/1796 | 1648/1477 | 9472/8922 | 9513/8786 | 825/837 | 1019/901 | 875/723 | 715/713 | 753/1006 | 742/731 |
+| ecma262 | rootfont | seq | 29885/28381 | 29683/28901 | 114617/111466 | 112371/111038 | 113039/112768 | 113047/116440 | 109407/109273 | 108782/111529 | 114297/115150 | 115889/114122 |
+| ecma262 | rootfont | par | 67086/66661 | 64904/63461 | 216157/215377 | 216183/214020 | 199556/197662 | 200385/200445 | 180679/178732 | 175295/180602 | 205130/205711 | 205475/206373 |
+| ecma262 | block | seq | 528758/525776 | 531171/526326 | 116/111 | 112/110 | 117/117 | 116/116 | 120/118 | 119/120 | 113/117 | 115/116 |
+| ecma262 | block | par | 376258/361573 | 375225/372235 | 186/183 | 189/184 | 211/198 | 204/186 | 195/197 | 209/187 | 190/194 | 189/192 |
+| html5 | word | seq | 74/76 | 73/75 | 82/79 | 78/78 | 82/80 | 81/81 | 84/83 | 82/82 | 82/82 | 83/82 |
+| html5 | word | par | 118/121 | 123/120 | 129/127 | 126/129 | 132/136 | 133/132 | 131/130 | 131/131 | 136/135 | 130/132 |
+| html5 | sentence | seq | 240/218 | 222/222 | 332/318 | 328/318 | 662/655 | 649/661 | 353/346 | 333/331 | 495/490 | 506/492 |
+| html5 | sentence | par | 344/321 | 314/332 | 373/390 | 353/353 | 604/614 | 619/603 | 367/353 | 353/349 | 512/542 | 541/538 |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | fontsize | seq | 755/729 | 663/720 | 1921/1916 | 1907/1684 | 1317/1326 | 1350/1315 | 1467/1771 | 1533/1576 | 960/997 | 1014/975 |
+| html5 | fontsize | par | 832/759 | 706/785 | 2313/2142 | 2239/2174 | 2115/2270 | 2133/2230 | 2025/2116 | 1998/1924 | 1650/1622 | 1696/1680 |
+| html5 | rootfont | seq | 615144/614068 | 617879/617138 | 766099/769813 | 759389/761600 | 802388/800519 | 804795/798973 | 796527/792803 | 787343/793048 | 808454/800712 | 805085/803271 |
+| html5 | rootfont | par | 358008/356089 | 358841/358907 | 557892/556175 | 556490/555626 | 560226/560106 | 563921/564332 | 538409/537190 | 537262/531986 | 564464/563306 | 561301/559857 |
+| html5 | block | seq | 599181/588656 | 604307/594482 | 558/569 | 563/589 | 729/741 | 729/745 | 589/606 | 585/569 | 597/594 | 581/576 |
+| html5 | block | par | 433331/431983 | 447035/421804 | 666/674 | 659/676 | 713/730 | 709/728 | 668/680 | 692/673 | 645/644 | 646/645 |
+
+The bound improves HTML5 sentence from 662/655 to 495/490 us sequential,
+and from 604/614 to 512/542 parallel, beyond the corresponding twin spread.
+It does not recover frontier's 353/346 and 367/353. HTML5 block parallel is
+645/644 against frontier 668/680 and cf12 666/674; sequential 597/594 overlaps
+frontier's 589/606 but remains above cf12 558/569. The HTML5 font-size gain is
+retained and enlarged: 960/997 sequential and 1,650/1,622 parallel, compared
+with frontier 1,467/1,771 and 2,025/2,116. Neither that observation nor lower
+instruction counts makes the reader step complete.
+
+The primary reader fails 12 literal round cells: ECMA262 root-font sequential
+and parallel in both rounds (3.83/4.06 and 3.06/3.09 times main); HTML5 sentence
+sequential in both rounds (2.06/2.25 times main); HTML5 font-size parallel in
+round 2 (2.14 times main); ECMA262 block sequential in round 2 (117 > 111 us),
+parallel in both rounds (190 > 186 and 194 > 183); and HTML5 block sequential
+in both rounds (597 > 558 and 594 > 569). The table retains all twins so small
+literal failures are not mistaken for an attributable regression.
+
+The sequential after-profile uses the same 60 update-return parts and
+phase-checking procedure, with Valgrind 3.22; every part's self sum equals its
+summary and each cohort has one update thread. Compiled inherited-reader
+calls remain 179,067. Node-read calls fall from 822,700 to 407,096 (50.5%).
+Inherited self instructions plus their slot-reader callees fall from
+78,862,686 to 44,182,629; total update instructions fall from 216,949,190 to
+177,409,407, against frontier's 200,312,065. This supports the causal reader
+improvement but leaves inherited reads at 24.9% of the new total. The profile
+is sequential attribution; native parallel timings are separate observations.
+
+Of the remaining inherited-chain instructions, 43,143,174 come through
+`block_local`. Positioned plans separately resolve their owning block and
+then the nearest positioned containing block: `splice_position_plan` calls
+`block_origin` 15,930 times for 35,872,670 inclusive instructions, while
+`chain_anchor` calls it 10,920 times for another 25,661,130. Their overlapping
+ancestry is immutable during plan creation. The 30 `splice_finish` calls
+spend 98,736,381 inclusive instructions in `splice_position`. These values
+identify the next reader work; they do not establish its future speedup.
+
+### Shared positioned ancestry: criterion before implementation
+
+The next reader repair resolves an independent positioned plan's owner and
+containing-block origins in one ancestry walk. It retains two accumulators:
+the owner starts at the child's formatting block, and the containing-block
+accumulator starts at the first non-static ancestor. Each effective local
+origin is read once and prepended to each applicable accumulator. It never
+subtracts a prefix from an accumulated total, so it preserves each original
+saturating association, late visual narrowing, one content adjustment and
+the subsequent border addition. The containing block's dimensions and style
+are read at the same nearest ancestor as `chain_anchor`.
+
+This combines the existing published-geometry readers only. Raw and hybrid
+reference phases keep their defined old/current readers. The true chain is
+block-parent discovery and the accumulation along that chain, followed by
+containing-block settlement before child writes. Independent child plans
+remain independent; no shared mutable cache, dense block scan or new order
+between children is introduced. Separate duplicate walks repeat immutable
+reads; a shared cache would instead require invalidation and publication not
+needed for this repair. The existing serial certificate publication remains
+unchanged pending the recorded Whitefoot proof gap.
+
+The existing nested positioned, relative-inset, fixed-axis, content-adjustment
+and moved-owner fixtures compare with independent full layout in both modes.
+Omitting either accumulator must cause a behavioral difference; if these
+fixtures do not distinguish it, add a specific independent fixture before
+claiming coverage. The matched profile must show fewer `block_local` inherited
+reads than the owner-local bound, and the native pilot must reduce sentence
+cost beyond its paired controls. Otherwise the shared walk is insufficient.
+The complete acceptance remains sentence/block no slower than the patched
+frontier, preservation of font-size gains, and all X5 cells within the
+unchanged main/cf12 gates; a promising pilot is not acceptance.

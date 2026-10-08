@@ -396,9 +396,13 @@ example apart from the renderer code that exposed it
   identifies inherited readers as the added cost: 78,862,686 instructions over
   60 updates, against a net increase of 16,637,125. The proposed reader repair
   skips index paths in owner sequences without retained actions; its
-  activation/retirement falsifiers and identity oracles now pass; the after
-  profile and twin-controlled six-kind timing still must establish whether
-  the regression is fixed. The splice plan's
+  activation/retirement falsifiers and identity oracles pass. The
+  [completed comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#owner-local-reader-bound-ten-cohort-result-and-remaining-path)
+  halves inherited node reads and lowers HTML5 sentence to 495/490 us
+  sequential, still above frontier 353/346. Parallel block recovers cf12 cost;
+  sequential block and the sentence target remain open. The next reader repair
+  shares each positioned plan's duplicate immutable ancestry walk, preserving
+  both accumulation orders and independent child plans. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.
