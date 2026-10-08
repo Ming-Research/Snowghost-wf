@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: [Q138 acceptance](#q138-six-cohort-acceptance-at-87baa10) fails; option A
+Current outcome: [Q138 acceptance](#integrated-six-cohort-acceptance-at-6bf0d0e) fails; option A
 is not merged into research/m2-layout.
 
 ## Question and prior rejection criterion
@@ -953,8 +953,9 @@ Q141 is open. After one edited paragraph followed by N direct block siblings,
 current owner-relative geometry requires N sibling origins and cached transfer
 updates even though each block's interior is unchanged. Native independent
 scatter (Q139) would expose parallelism but would not remove these visits.
-In the current 8ab7dc6 comparison HTML5 font-size takes 2,144–2,152 us parallel
-against main's 713–719 us.
+In the integrated 6bf0d0e comparison HTML5 font-size takes 1,991/1,859 us parallel
+against main's 761/526 us. Cursor reuse removes 14.28% of index reads but none
+of these payload updates, without establishing a general latency gain.
 
 - A (recommended): develop retained exact displacement on sequence-index
   ranges, including old/current reads, cached reductions, split endpoints,
@@ -1309,3 +1310,81 @@ Flex preparation can assign a preliminary space; the row path does not lay out t
 The full falsification run 37751546435 compiles the exact zero-suffix mutation but fails to detect it. The Apollo sentence fixture remains incrementally correct in the hybrid representation because movement already repairs rendered geometry; the missing publication can leave cached owner-relative offsets stale. The existing independent publication oracle has a nonzero displacement and does not distinguish this guard omission.
 
 Retain the guard mutation and the original sentence fixture, and add a nested-owner publication case through the real movement and finish paths. A parent moves from absolute y=20 to 21 while its untouched nested block stays at absolute y=25 with zero net flow displacement. Its local and published offsets must change from 5 to 4, and its owner-relative natural floor from 10 to 9 while absolute natural y=30 stays fixed. These independent numeric expectations test the original zero-displacement/moved-owner obligation; the existing nonzero-displacement case remains intact. Both unmutated success and compiled omission detection are required in hosted CI before calling this coverage repair complete.
+
+
+### Integrated six-cohort acceptance at 6bf0d0e
+
+[Hosted comparison 37751546759](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37751546759) completes all 288 raw files and 11,520 edits after integrating layout d13e18c. Every side runs on one AMD EPYC 9V74 hosted machine exposing four CPUs, Ubuntu 24.04/Linux 6.17.0-1022-azure, LLVM 22, wf-0b7f5c5b9854 and WF_WORKERS=4. Before and before twin are independent builds of integrated 48cfbeb. All six cohorts retain complete script ordinals: 20 ECMA262 and 60 HTML5 edits per file. Values are upper-median edit microseconds, round 1/round 2, excluding style.
+
+| Page | Kind | Mode | Main | cf12 | cf12 twin | Before | Before twin | A | Gate |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| ecma262 | word | seq | 82/90 | 86/88 | 98/87 | 102/88 | 87/94 | 94/88 | passes |
+| ecma262 | word | par | 125/122 | 143/141 | 134/137 | 134/135 | 138/144 | 134/137 | passes |
+| ecma262 | sentence | seq | 183/184 | 643/622 | 762/691 | 125/132 | 125/124 | 127/130 | passes |
+| ecma262 | sentence | par | 239/256 | 556/539 | 574/563 | 205/190 | 196/198 | 195/185 | passes |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| ecma262 | fontsize | seq | 1554/1659 | 10273/9461 | 10429/9617 | 608/643 | 551/607 | 589/600 | passes |
+| ecma262 | fontsize | par | 1866/1924 | 10666/9876 | 10871/9755 | 829/836 | 1124/714 | 714/992 | passes |
+| ecma262 | rootfont | seq | 31408/32225 | 120327/119462 | 122048/123690 | 120833/121690 | 120079/119532 | 122996/120811 | fails r1,r2 |
+| ecma262 | rootfont | par | 59846/59858 | 202808/198503 | 203728/200474 | 170136/170182 | 170676/169595 | 171711/170533 | fails r1,r2 |
+| ecma262 | block | seq | 538039/529701 | 105/102 | 103/101 | 109/114 | 107/113 | 108/108 | fails r1,r2 |
+| ecma262 | block | par | 362510/360339 | 159/156 | 165/160 | 164/165 | 159/160 | 167/168 | fails r1,r2 |
+| html5 | word | seq | 61/60 | 68/68 | 67/66 | 69/67 | 64/67 | 69/65 | passes |
+| html5 | word | par | 95/98 | 102/100 | 98/101 | 101/101 | 100/101 | 101/99 | passes |
+| html5 | sentence | seq | 177/179 | 283/278 | 275/278 | 277/289 | 275/277 | 283/276 | passes |
+| html5 | sentence | par | 260/233 | 307/293 | 285/297 | 283/286 | 297/286 | 294/295 | passes |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| html5 | fontsize | seq | 626/521 | 2447/2279 | 2446/1940 | 1468/1458 | 1501/1537 | 1412/1570 | fails r1,r2 |
+| html5 | fontsize | par | 761/526 | 2248/2022 | 2395/2159 | 2088/1998 | 2131/2271 | 1991/1859 | fails r1,r2 |
+| html5 | rootfont | seq | 546812/547987 | 700357/688240 | 697068/691013 | 701836/706486 | 706406/710203 | 702151/694936 | passes |
+| html5 | rootfont | par | 295779/297857 | 491860/487458 | 487779/488532 | 463824/468031 | 463630/472365 | 461551/468776 | passes |
+| html5 | block | seq | 628999/648082 | 527/497 | 509/519 | 504/540 | 504/553 | 511/524 | fails r2 |
+| html5 | block | par | 453512/457355 | 613/576 | 570/568 | 578/577 | 583/593 | 645/591 | fails r1,r2 |
+
+The strict gate fails 15 of 48 cells: all four ECMA262 root-font cells, all four HTML5 font-size cells and seven block cells. Word, sentence, colour, ECMA262 font-size and HTML5 root-font pass in both modes and rounds. Controls expose variation but do not waive literal block overruns; acceptance is not met and no adoption merge follows.
+
+Cursor reuse changes only physical index-read counters against both immediate-before builds; every other per-edit work counter is identical. Each HTML5 font-size mode/round drops from 1,016,526 to 871,350 index reads (145,176, or 14.28%, removed), affecting 56 of 60 edits. Block and root-font counters do not change. Parallel HTML font-size medians fall, but the second-round gain is within the before-twin spread, while the sequential direction reverses. This establishes less metadata work, not a general isolated latency gain. Direct sibling payload updates and full restyled-context publication remain.
+
+The paired style-plus-update medians below are computed per edit, not by adding separate medians. Both decisive failing kinds also fail this metric; eight block cells exceed cf12, for 16 failed cells total.
+
+| Page | Kind | Mode | Main | cf12 | cf12 twin | Before | Before twin | A | Gate |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| ecma262 | word | seq | 82/90 | 86/88 | 98/87 | 102/88 | 87/94 | 94/88 | passes |
+| ecma262 | word | par | 125/122 | 143/141 | 134/137 | 134/135 | 138/144 | 134/137 | passes |
+| ecma262 | sentence | seq | 183/184 | 643/622 | 762/691 | 125/132 | 125/124 | 127/130 | passes |
+| ecma262 | sentence | par | 239/256 | 556/539 | 574/563 | 205/190 | 196/198 | 195/185 | passes |
+| ecma262 | colour | seq | 14/13 | 12/13 | 12/12 | 14/14 | 14/14 | 14/14 | passes |
+| ecma262 | colour | par | 17/17 | 17/18 | 18/18 | 18/17 | 18/18 | 17/17 | passes |
+| ecma262 | fontsize | seq | 1823/1788 | 10386/9518 | 10508/9681 | 1331/1454 | 1253/1241 | 1204/1361 | passes |
+| ecma262 | fontsize | par | 2032/2134 | 10824/10001 | 11028/10169 | 1860/1901 | 1821/1731 | 1726/2036 | passes |
+| ecma262 | rootfont | seq | 35702/36545 | 124570/123793 | 126364/128020 | 125138/126162 | 124326/123879 | 127242/125148 | fails r1,r2 |
+| ecma262 | rootfont | par | 64677/64607 | 207520/203283 | 208548/205290 | 174947/175121 | 175570/174397 | 176615/175297 | fails r1,r2 |
+| ecma262 | block | seq | 538112/529772 | 120/118 | 118/118 | 128/129 | 125/128 | 126/128 | fails r1,r2 |
+| ecma262 | block | par | 362592/360371 | 182/180 | 193/184 | 189/211 | 190/188 | 192/192 | fails r1,r2 |
+| html5 | word | seq | 61/60 | 68/68 | 67/66 | 69/67 | 64/67 | 69/65 | passes |
+| html5 | word | par | 95/98 | 102/100 | 98/101 | 101/101 | 100/101 | 101/99 | passes |
+| html5 | sentence | seq | 177/179 | 283/278 | 275/278 | 277/289 | 275/277 | 283/276 | passes |
+| html5 | sentence | par | 260/233 | 307/293 | 285/297 | 283/286 | 297/286 | 294/295 | passes |
+| html5 | colour | seq | 14/13 | 14/14 | 14/14 | 13/14 | 14/14 | 13/14 | passes |
+| html5 | colour | par | 23/22 | 21/21 | 21/21 | 21/17 | 20/20 | 21/21 | passes |
+| html5 | fontsize | seq | 684/599 | 2508/2342 | 2539/2033 | 1568/1528 | 1545/1591 | 1511/1653 | fails r1,r2 |
+| html5 | fontsize | par | 871/655 | 2403/2129 | 2525/2274 | 2223/2100 | 2245/2421 | 2057/2007 | fails r1,r2 |
+| html5 | rootfont | seq | 805575/805911 | 962780/948609 | 960032/950103 | 961138/967920 | 965797/973600 | 965069/955361 | passes |
+| html5 | rootfont | par | 458471/462804 | 657571/652163 | 653741/654132 | 627982/633941 | 630483/638623 | 626007/633302 | passes |
+| html5 | block | seq | 629159/648194 | 617/609 | 625/616 | 610/619 | 612/626 | 618/613 | fails r1,r2 |
+| html5 | block | par | 453657/457478 | 698/685 | 679/704 | 694/714 | 705/708 | 741/693 | fails r1,r2 |
+
+The full-cost floor includes actual style invalidation, processing of changed text/layout inputs and propagation of changed outputs. The diagnostic's 41 marked ECMA paragraphs cannot be discarded merely because final dumps match. It does not require rebuilding every unchanged source index or publishing every retained transfer. No universal numeric lower bound has been proved. Main's same-host observed full path is the practical comparison: ECMA262 root-font 35,702/36,545 us sequential and 64,677/64,607 parallel, versus A 127,242/125,148 and 176,615/175,297. HTML5's much broader changed-text work costs main 805,575/805,911 us sequential and 458,471/462,804 parallel, versus A 965,069/955,361 and 626,007/633,302. The earlier bisect and profile identify the additional M2 context-maintenance path; the current input diagnostic narrows a proposed repair to a complete input certificate plus marked-frontier processing.
+
+Exact source and isolated pin-only children (not pushed or adopted):
+
+- `a source=6bf0d0e93e78f9ce7612a93089ac92e211b8d842 pin-commit=aa06c50f9a8cc5296b1f391569ca0520581ef186 release = wf-0b7f5c5b9854`
+- `base source=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 pin-commit=8feb65b28c1e0dd740c8f2582bcc719d6c858b93 release = wf-0b7f5c5b9854`
+- `before source=48cfbeb206214a93405f0d9ad300cbc150267ab4 pin-commit=542cbfd65edfa40241143683bc1c4a42fed6adc2 release = wf-0b7f5c5b9854`
+- `beforetwin source=48cfbeb206214a93405f0d9ad300cbc150267ab4 pin-commit=6668ea02f19598ff8fe62bcdd588627894d4e3d5 release = wf-0b7f5c5b9854`
+- `main source=8fbc1601785cee70265da1eac4d99589fc6fb67c pin-commit=2fc3d2acea1e398c115eef4a6598dc7f2210f228 release = wf-0b7f5c5b9854`
+- `twin source=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 pin-commit=5ec8c96b6ae4004a9385403eaad58962f285f1a4 release = wf-0b7f5c5b9854`
+
+All renderer edit-path bodies remain those measured at 6bf0d0e. The later 3edbfd9 change adds only an independent startup publication check and removes temporary diagnostic files; it does not supply another performance measurement. Layout-check and check pass at 6bf0d0e (37751546586/37751546384) and at 3edbfd9 (37756682338/37756682325). The 6bf oracle main/structural jobs passed before the full oracle and falsification runs were cancelled after the known zero-suffix coverage failure; they are partial evidence, not full passing gates. Full oracles 37756682278 and falsify 37756682384 rerun at 3edbfd9, including all Apollo cases and all 55 falsification jobs.

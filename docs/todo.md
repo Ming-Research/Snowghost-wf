@@ -337,81 +337,65 @@ example apart from the renderer code that exposed it
   M2 still needs a bounded link from changed endpoints to emitted runs.
   Q134 A was selected by the owner on 2026-10-07, with Q135 A requiring the
   [dependency contract](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md)
-  first: stable run-role slots, payload endpoints, owner-relative line offsets
-  and indexed affected-run repair. Q132 A retains counted post-publication
-  flex recovery. Option B remains parked. Adoption into research/m2-layout
-  requires all correctness/falsification gates and the two-round same-host
-  acceptance comparison against main and cf12c609. The
-  [six-cohort comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#q138-six-cohort-acceptance-at-8ab7dc6)
-  fails ECMA262 root-font, HTML5 font-size and five block cells. A is not merged.
-  Q138 A (called Q136 in the prior report) authorizes completing the remaining
-  work and investigating the M2 root-font regression. The gate is twice main
-  for word, sentence, colour, font-size and root-font, and block no worse than
-  cf12c609, in both modes and rounds.
-  The implementation retains adjacency dependencies and replaces selected
-  fixed run-role cells on topology changes. Source-preserving geometry replay
-  retains structural indexes while recomputing line-dependent joins and roles.
-  At db46e92 all correctness gates pass, including 384 seq/par topology edits
-  and the compiled join-publication omission's 48 detected differences. The
-  lined-to-lineless reset and shared-opening dependencies are fixed. The later
-  child-motion owner reuse requires its own gates. Keep adoption open until
-  complete correctness, acceptance and Q139's disposition permit it.
+  first. Q132 A retains counted post-publication flex recovery. Q138 A
+  continues bounded repair and the root-font regression investigation; option B
+  stays parked. The work branch implements stable run-role slots, payload
+  endpoints, owner-relative offsets, indexed affected-run repair and local
+  topology replacement. Source-preserving geometry replay retains structural
+  indexes. The Apollo11 layout-line repair is integrated with both behaviors
+  preserved. Adoption still requires all correctness gates, the unchanged
+  two-round same-host gate and disposition of independent writes under Q139.
+  The [integrated comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#integrated-six-cohort-acceptance-at-6bf0d0e)
+  fails ECMA262 root-font, HTML5 font-size and seven literal block cells.
+  No adoption merge is made. The zero-displacement omission initially escaped
+  the rendered-output check; a nested-owner cached-publication oracle now
+  preserves the exact mutation and checks the missing offset/floor update.
+  Full combined correctness/falsification gates at 3edbfd9 remain pending.
 
-- **HTML font edits still visit direct suffix siblings.** Q138 replaces
-  dense suffix translation with captured old/current owner frames, explicit
-  scratch validity and payload-relative natural offsets. Full correctness and
-  omission gates pass at db46e92, but the 8ab7dc6 six-cohort HTML5 font-size medians are
-  1,620–1,692 us sequential and 2,144–2,152 parallel, exceeding twice concurrent
-  main in all four cells. Direct following siblings are moved and published
-  separately even when their descendants are unchanged. The repeated-pair
-  profile confirms those operations remain after dense translation is removed;
-  it does not establish their entire full-script cost. Q141 proposes retained
-  sequence-range displacement, including old/current readers, reductions,
-  rotations, splice lifetimes and saturation. This is not adopted. Validate a
-  selected change with all X5 identity/splice gates, the unchanged omission
-  tests and the two-round full-script same-host comparison; reopen on the
-  owner's Q141 ruling. Q139 separately awaits disposition of independent writes
-  that the pinned Whitefoot stored-field proof grammar cannot certify.
+- **HTML font edits still visit direct suffix siblings.** Q138 replaces dense
+  suffix translation/publication with captured old/current owner frames,
+  explicit scratch validity and payload-relative natural offsets. Intact
+  descendant interiors are skipped, but direct following siblings still move
+  and publish separately. The integrated six-cohort font-size comparison takes
+  1,412/1,570 us sequential and 1,991/1,859 parallel, failing twice main in
+  both rounds. Cursor reuse removes 14.28% of its index reads while retaining
+  every payload visit; control variation and reversed sequential results do
+  not establish a general latency gain. Q141 proposes retained sequence-range
+  displacement, including old/current readers, reductions, rotations, splice
+  lifetimes and saturation. It is not adopted. Reopen on the owner's ruling;
+  validate all X5 identity/splice and omission gates plus a complete same-host
+  comparison. Q139 separately covers the natural independent-write proof that
+  the pinned Whitefoot stored-field grammar cannot express.
 
-- **M2 root-font edits still need a measured whole-context cost repair.**
-  The correctly styled Q138 ECMA profile identifies the first large regression
-  at step 3a's virtual owner-order lookups. Step 2d706 removes most of that
-  intermediate cost with shared flat events, but full context boundary reduction,
-  leaf publication and geometry conversion remain above main. The exact-route
-  membership hypothesis was rejected: profiled marking is about 70 us while
-  edit time remains about 110 ms. These are sampled diagnostic values, not
-  acceptance timings; see the [profile and floor](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#correctly-styled-ecma262-profile-membership-hypothesis-rejected).
-  Root font invalidates its style consumers, but ECMA's fixed body size means it need not
-  reprepare all text. Current Q138 removes repeated dense materialization and
-  source-index reconstruction. The 8ab7dc6 two-round full six-kind comparison
-  still fails ECMA262 root-font in both modes and rounds.
-  Q140 asks whether to retain completed effective flow inputs so unused
-  own-constraint changes can preserve interiors. That contract remains an
-  unimplemented proposal pending the owner; equal outer dimensions alone are
-  insufficient.
+- **M2 root-font edits still need bounded marked-frontier work.** The Q138
+  bisect first exposes a large regression at step 3a's virtual owner-order
+  lookups. Shared flat events recover most of it, but full-context boundary
+  reduction, publication and geometry conversion remain above main. The
+  exact-route membership hypothesis was rejected: marking takes only tens of
+  microseconds against roughly 110 ms of profiled edit work. See the
+  [profile and floor](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#correctly-styled-ecma262-profile-membership-hypothesis-rejected).
+  The integrated root-font comparison still fails ECMA262 in both modes and
+  rounds. The [effective-input probe](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#effective-input-result-and-remaining-root-font-contract)
+  finds unchanged completed frame/space in its 112,817-event flow, but 41
+  paragraphs are marked on both 12px and undo. Q140 therefore requires a
+  complete effective-input/consumer contract plus bounded marked-paragraph
+  processing and changed-output propagation; it cannot skip the whole interior.
+  Intermediate flex spaces remain unverified. The mandatory floor includes
+  style invalidation and affected text/layout work; main's observed full path
+  is the comparison, not a proved numeric lower bound. No new cache is adopted;
+  reopen on the owner's Q140 ruling and require full gates and matched timing.
 
-- **M2 block edits still exceed the cf12 cost gate.** The 8ab7dc6 six-cohort
-  comparison fails five of eight literal block cells. Ordinary owned-origin
-  specialization does not separate from its immediate-before twin; its block
-  speed hypothesis is rejected. The startup-separated profile still shows
-  owner reads during edits, but sample loss in both the original and the
-  lower-frequency, larger-buffer repeat prevents quantitative attribution. Source inspection
-  found duplicate immutable owner resolution in `child_motion_travel`; the
-  candidate reuses that owner with unchanged viewport and saturation behavior.
-  Its matched before/twin comparison improves HTML5 parallel block only;
-  sequential cells overlap or reverse and ECMA262 parallel is slower. Its full
-  correctness gates are pending. Inspect concrete remaining work and equivalent
-  native operations before attributing a compiler defect or choosing more retained state.
-  The next bounded candidate reuses the positioned plan's unchanged parent
-  origin during certificate publication, removing a duplicate ancestry walk
-  that also existed at cf12; it adds no retained state. No compiler cause or
-  new block representation is established. Reopen on the current experiment's
-  results; acceptance remains unchanged.
-  Source inspection also found empty touched registries reconstructed on fresh
-  insertion even when already empty (`finish_reference_geometry`). Its emitted
-  cost is unverified; defer that small cleanup until native allocation evidence
-  identifies it as material, then validate the same old/current reader and
-  arithmetic gates plus a matched block comparison.
+- **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
+  fails seven of eight literal block cells. Owner-read specializations and
+  duplicate-read removal establish no general block speed improvement against
+  their independent before twins. Both startup-separated profile attempts lose
+  samples, so they do not establish quantitative attribution or a compiler
+  defect. Investigate concrete remaining work before choosing more retained
+  state; acceptance remains unchanged. Source inspection also found empty
+  touched registries reconstructed on fresh insertion even when already empty
+  (`finish_reference_geometry`). Its emitted cost is unverified; defer that
+  cleanup until native allocation evidence identifies it as material, then
+  validate old/current reader and arithmetic gates plus matched block timing.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
