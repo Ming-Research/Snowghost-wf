@@ -188,19 +188,6 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
-- **Nested percentage-height resolution uses the wrong containing block.**
-  Hosted [Chromium comparison 37761041831](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37761041831)
-  at `480b7d5` confirms seven of fourteen block heights differ. The 200px →
-  50% → 50% chain is 200/100/50px in Chromium but 200/360/360px in
-  Snowghost; a 30px auto intermediate is incorrectly 360px. The committed
-  `tests/layout/percentage-height-cases.chromium.tsv` is Chromium's dump,
-  not a renderer-generated expectation. A candidate repair propagates each
-  immediate containing block's definite/indefinite height through the full
-  pre-pass and retained boundary consumers. Keep this item open until the
-  hosted regression passes sequentially and in parallel, then close it in
-  [Q139's evidence](../research/investigations/structure-edits/layout-design.md#q139-implementation-independent-full-layout-probe)
-  before percentage-height splice admission.
-
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences
   ([runs](../research/investigations/structure-edits/runs/full-14900k.txt),

@@ -3052,9 +3052,23 @@ workflow requires a fresh Chromium dump to agree before judging the fix.
 
 The baseline driver build took 6m59s and the focused dump 0.227s on the
 hosted runner; these observations size the next sequential/parallel fixture
-run, not a renderer performance comparison. Candidate validation is pending;
-an earlier candidate attempt stopped at a source-format error before any
-rendering and is not regression evidence.
+run, not a renderer performance comparison. The repaired revision
+`ed2d4114d6b4db98d2025b1278bf1d330261a3f4` passes in
+[hosted run 37764019799](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37764019799):
+all fourteen block boxes match Chromium exactly, sequential and four-worker
+dumps agree byte for byte, and every existing layout case floor passes
+unchanged. The [gate at the same revision](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37764019903)
+also passes. This closes the nested-height TODO before splice admission.
+The earlier source-format and effect-row failures produced no rendering
+results and are not regression evidence. Revision `03f8e43` additionally
+probes restyles of height, definiteness and width with ordinary, atomic and
+floated children. Its first 42 ordinary restyles pass, but
+[run 37765149668](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37765149668)
+then refuses the probe's display-changing class edit, as the style-only API
+requires topology reconstruction. Each display/float mode is therefore set
+by the initial stylesheet before its retained baseline; all height/width
+edits remain required, with no allowance for refused edits. Validation of
+those separate mode runs remains pending.
 
 Per the implementation task's machine constraint, all evidence and all
 performance comparisons use GitHub-hosted CI, including the comparison of
