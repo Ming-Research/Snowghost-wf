@@ -396,8 +396,9 @@ example apart from the renderer code that exposed it
   identifies inherited readers as the added cost: 78,862,686 instructions over
   60 updates, against a net increase of 16,637,125. The proposed reader repair
   skips index paths in owner sequences without retained actions; its
-  activation/retirement falsifiers, after profile and twin-controlled six-kind
-  timing remain to run before claiming the regression fixed. The splice plan's
+  activation/retirement falsifiers and identity oracles now pass; the after
+  profile and twin-controlled six-kind timing still must establish whether
+  the regression is fixed. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.

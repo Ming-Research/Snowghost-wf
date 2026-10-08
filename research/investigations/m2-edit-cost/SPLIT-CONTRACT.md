@@ -1668,8 +1668,9 @@ proposal, not a reported speedup.
 
 
 The reader implementation passes [layout-check 37843507652](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37843507652)
-at aa560f9. Behavioral validation and latency remain unverified until the
-resubmitted oracle, range-falsification and ten-cohort runs complete. The
+at aa560f9. The subsequent oracle and range-falsification results are recorded
+under [reader validation](#reader-validation-and-review); latency remains
+unverified until the ten-cohort run completes. The
 one-use initial profile workflow is retired after its captured evidence above;
 the same phase-checked profiler remains wired to the reader comparison.
 
@@ -1763,3 +1764,51 @@ not yet establish the fresh lineless outputs or their publication needs.
 The owner's choice is pending; neither option is an approved replacement.
 
 ---
+
+
+### Reader validation and review
+
+The reader implementation frozen at fdc230806e791a793217a3fd9185d446a0f34023
+passes [all 14 oracle jobs, 37844135717](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37844135717)
+and [all 19 focused range mutations, 37844135744](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37844135744).
+The page jobs compare every X5 kind in both modes: 20 edits per ECMA262 kind
+and 60 per HTML5 kind, with zero differences/refusals and identical sequential
+and parallel results. Both pages' block edits also pass zero-fallback checks.
+The broad job includes the generated frontier fixtures and legacy style-marking
+route. Each range mutation compiled and reached its intended behavioral
+detector; disabling activation and prematurely clearing it both fail the
+independent range constants. This is the focused range suite, not a rerun of
+every unrelated M2 mutation.
+
+The refusal-counter revision ddb4e6b passes the
+[counter-protocol checks, 37845453324](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37845453324),
+including missing fields, contradictory zero values and unknown reason bits;
+the two-edit root sample supplies its actual sequential runtime evidence.
+At ef54555cba11df90589525b1be5bf591e0b0e4de,
+[make check 37848126355](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37848126355)
+and [layout-check 37848126228](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37848126228)
+pass. The gate includes the document self-test, 21 design-checker tests and
+design lint. These later changes add diagnostic counters and repair prose;
+the reader timing binary remains the earlier frozen revision for attribution.
+No local build, test, check or performance measurement ran, and no adopted
+Whitefoot pin or submodule moved.
+
+A separate read-only review inspected the complete task diff from 58b16da,
+changed regions and directly affected consumers under every applicable
+A/D/C/T/R/M/V group, including G1–G3 and DC1–DC4, then reviewed the root
+result and local repairs. It read `design/pipeline.md` and
+`design/pipeline/layout.md`; the task adds one proposed decision without adding
+a node or approval log. The repaired findings are: recursion suppression and
+startup contamination in the profiler; overbroad parallel counter attribution;
+mutation effect rows that previously prevented behavioral execution; a TODO
+claim of speculative breaks unsupported by the old counts; and a reader
+comment that omitted active-owner parent walks. A later metadata-only repair
+selects the commit trailer explicitly for future synthetic timing commits,
+with no change to their source, compiler or the running comparison.
+
+There is no outstanding source finding within that review scope. The timing
+and after-profile verdict remain pending, and the root-font contract and
+implementation await the decision above. Finite fixtures and source inspection
+do not prove the general layout arguments. The existing Whitefoot owner-write
+proof gap still blocks adoption, with serial owner writes unchanged; this work
+found no additional Whitefoot gap. No pull request or adoption merge is made.
