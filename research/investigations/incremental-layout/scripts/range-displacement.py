@@ -109,13 +109,34 @@ def fixtures():
 
     # Atomic inlines follow their paragraph; a text edit before one re-encodes
     # it without moving siblings, between two opposite paragraph moves.
+    # A later splice dirties the boundary, so the next edit restores every
+    # payload through the full raw bridge, atomic inlines from the immutable
+    # paragraph-frame snapshot.
     def atomic(tree):
         on, off = grow(tree, 'P00.')
         before = text(tree, 'Before ')
-        return on + [f'T {before["node"]} 0 x', f'D {before["node"]} 0 1'] + off + [f'T {before["node"]} 0 y'] + on + off
+        section = first(tree, 'section')
+        lead = element_of(tree, 'P01.')
+        created = tree.arena
+        return (on + [f'T {before["node"]} 0 x', f'D {before["node"]} 0 1'] + off + [f'T {before["node"]} 0 y'] + on + off +
+                [f'B {section} {lead} Spliced before.'] + on + off + [f'X {created}'] + on + off)
     body = ('<section>' + paragraphs(3) + '<p>Before <span style="display:inline-block;width:30px;height:24px;'
             'border:1px solid">A</span> after.</p>' + paragraphs(6, 'Q') + '</section>')
     yield 'atomic-point', page(body), atomic
+
+    # A table cell's content adjustment applies once to an atomic inline
+    # restored from its paragraph frame; reading restored paragraph scratch
+    # would apply it twice.
+    def cell(tree):
+        on, off = grow(tree, 'P00.')
+        holder = first(tree, 'td')
+        lead = element_of(tree, 'P01.')
+        created = tree.arena
+        return on + off + [f'B {holder} {lead} Cell splice.'] + on + off + [f'X {created}'] + on + off
+    cell_body = ('<table><tr><td style="height:300px;vertical-align:middle;width:300px">' + paragraphs(3) +
+                 '<p>Before <span style="display:inline-block;width:30px;height:24px;border:1px solid">A</span> after.</p>' +
+                 paragraphs(2, 'Q') + '</td></tr></table>')
+    yield 'atomic-cell', page(cell_body), cell
 
     # Block-owned absolute and viewport-owned fixed entries in a moved suffix.
     def positioned(tree):
@@ -139,7 +160,10 @@ def fixtures():
             holder = tree.by_node[holder]['parent']
         on, off = grow(tree, 'Inner00.')
         return [f'C {holder} lift'] + on + off + [f'K {holder} lift'] + on + off
-    body = '<section>' + paragraphs(2) + '<div>' + paragraphs(1, 'Inner') + paragraphs(5, 'Kept') + '</div>' + paragraphs(4) + '</section>'
+    body = ('<section>' + paragraphs(2) + '<div>' + paragraphs(1, 'Inner') + paragraphs(2, 'Kept') +
+            '<span style="position:fixed;width:5px;height:5px">Fixed.</span>' +
+            '<span style="position:absolute;width:6px;height:6px">Abs.</span>' + paragraphs(3, 'Late') +
+            '</div>' + paragraphs(4) + '</section>')
     yield 'zero-rebase', page(body, '.lift{margin-top:-12px;padding-top:12px}'), rebase
 
     # A float in the suffix keeps a natural floor that a later edit reads.
