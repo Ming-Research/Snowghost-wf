@@ -210,9 +210,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
-          sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" linux-tools-common || sudo apt-get install -y --no-install-recommends linux-tools-azure linux-tools-common
-          sudo sysctl -w kernel.perf_event_paranoid=-1
-          sudo sysctl -w kernel.kptr_restrict=0
+          sudo apt-get install -y --no-install-recommends valgrind
           chmod +x build/drivers/driver-*/layout_oracle_*
           sh research/investigations/concurrency/run.sh fetch || true
           cp build/apollo-archive/research/concurrency/apollo11* build/research/concurrency/
@@ -221,23 +219,25 @@ jobs:
           cp build/drivers/driver-m2/layout_oracle_seq build/layout_oracle_seq
           sh research/investigations/incremental-layout/run.sh prepare ecma262 apollo11
           mkdir -p build/profile/scripts
-          python3 research/investigations/incremental-layout/scripts/edits.py apollo11 build/x5/apollo11.nodes build/profile/scripts --dump build/x5/apollo11.dump --count 60
+          python3 research/investigations/incremental-layout/scripts/edits.py apollo11 build/x5/apollo11.nodes build/profile/scripts --dump build/x5/apollo11.dump --count 8
           python3 research/investigations/incremental-layout/scripts/edits.py ecma262 build/x5/ecma262.nodes build/profile/scripts --dump build/x5/ecma262.dump --count 2
-      - name: Sampled edit profiles, M2 and candidate
+      - name: Instruction counts under the layout update, M2 and candidate
         run: |
           set -euo pipefail
           d=build/research/concurrency
-          for job in apollo11:sentence apollo11:word apollo11:fontsize ecma262:rootfont; do
+          for job in apollo11:sentence apollo11:word ecma262:rootfont; do
             page=${job%%:*} kind=${job#*:}
             sheets=(renderer/style/ua.css)
             if [ "$page" = ecma262 ]; then sheets+=(assets/css/ecmarkup.css=$d/ecma262-ecmarkup.css assets/css/print.css=$d/ecma262-print.css); fi
             if [ "$page" = apollo11 ]; then sheets+=("wikibase.client.init&only=styles&skin=vector-2022=$d/apollo11-modules.css" "modules=site.styles&only=styles&skin=vector-2022=$d/apollo11-site.css"); fi
             for name in m2 head; do
               out=build/profile/$page-$kind-$name
-              perf record -F 2500 --call-graph dwarf,65528 -o "$out.data" -- build/drivers/driver-$name/layout_oracle_seq edittime "build/profile/scripts/$page-$kind.edits" "$d/$page.html" "${sheets[@]}" > "$out.raw" || echo "perf record status $? for $out"
-              perf script -i "$out.data" -F ip,sym 2>/dev/null | gzip > "$out.stacks.gz" || echo "perf script status $? for $out"
-              echo "== $page $kind $name $(zcat "$out.stacks.gz" | wc -l) stack lines"
-              rm -f "$out.data"
+              valgrind --tool=callgrind --callgrind-out-file="$out.callgrind" --toggle-collect='wf_layout.update' --separate-threads=no build/drivers/driver-$name/layout_oracle_seq edittime "build/profile/scripts/$page-$kind.edits" "$d/$page.html" "${sheets[@]}" > "$out.raw" 2> "$out.valgrind" || echo "callgrind status $? for $out"
+              callgrind_annotate --inclusive=yes --threshold=99.5 "$out.callgrind" > "$out.inclusive.txt" 2>&1 || true
+              callgrind_annotate --inclusive=no --threshold=99 "$out.callgrind" > "$out.self.txt" 2>&1 || true
+              echo "== $page $kind $name"
+              head -40 "$out.inclusive.txt"
+              gzip "$out.callgrind"
             done
           done
       - uses: actions/upload-artifact@v4
