@@ -3039,7 +3039,22 @@ order; an auto-height block supplies an indefinite basis. The stacking pass,
 child spaces and boundary/growth consumers use that same input. A restyled
 block with percentage-dependent descendants requires the pre-pass before
 child layout; width equality alone cannot establish height-key equality.
-The full oracle result is pending; this is not a completion claim.
+The baseline [hosted run 37761041831](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37761041831)
+at `480b7d5180be244ed8844ea876cb4cea908e9fb7` confirms the defect:
+Chromium 141.0.7390.37 resolves 200/100/50px, while the renderer produces
+200/360/360px. The auto intermediate and its percentage child are both
+30px in Chromium and 360px in the renderer. The viewport chain gives
+html/body 720px, then 360/180px; the last renderer box is 360px. Across the
+formatting-context boundary, Chromium gives 200/100/50px and the renderer
+200/360/180px. Seven of fourteen block boxes match; the comparison exits 1.
+The committed `.chromium.tsv` is the downloaded reference artifact and the
+workflow requires a fresh Chromium dump to agree before judging the fix.
+
+The baseline driver build took 6m59s and the focused dump 0.227s on the
+hosted runner; these observations size the next sequential/parallel fixture
+run, not a renderer performance comparison. Candidate validation is pending;
+an earlier candidate attempt stopped at a source-format error before any
+rendering and is not regression evidence.
 
 Per the implementation task's machine constraint, all evidence and all
 performance comparisons use GitHub-hosted CI, including the comparison of

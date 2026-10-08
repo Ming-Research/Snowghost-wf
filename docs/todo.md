@@ -188,23 +188,18 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
-- **Nested percentage-height provenance may use the formatting-context
-  basis instead of the containing block.** Source inspection for
-  [Q139's argument](../research/investigations/structure-edits/layout-design.md#remaining-uncertainty-and-rejection-conditions)
-  finds `prepare_spaces` passing its single `content_height` into nested
-  child spaces and `stack_flow` resolving ordinary block heights against
-  its single `basis_height`; open-block frames track widths but no height
-  basis. Impact: full and incremental layout could agree on an incorrect
-  nested percentage height, invalidating an identity-only admission test.
-  The runtime mismatch is unverified; no fixture ran in the argument task.
-  Change: retain and propagate each actual containing block's definite or
-  indefinite basis through full resolution and its retained consumers,
-  preserving numeric order. Validate in hosted CI against independent
-  CSS/Chromium rectangles: a 200px box with nested 50% blocks must give
-  100px then 50px, while an intervening auto-height box breaks that chain;
-  compare full builds and insert/remove prefixes, sequentially and in
-  parallel. Reopen before implementing Q139 admission. Deferred because
-  the current task permits arguments and defect recording only.
+- **Nested percentage-height resolution uses the wrong containing block.**
+  Hosted [Chromium comparison 37761041831](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37761041831)
+  at `480b7d5` confirms seven of fourteen block heights differ. The 200px →
+  50% → 50% chain is 200/100/50px in Chromium but 200/360/360px in
+  Snowghost; a 30px auto intermediate is incorrectly 360px. The committed
+  `tests/layout/percentage-height-cases.chromium.tsv` is Chromium's dump,
+  not a renderer-generated expectation. A candidate repair propagates each
+  immediate containing block's definite/indefinite height through the full
+  pre-pass and retained boundary consumers. Keep this item open until the
+  hosted regression passes sequentially and in parallel, then close it in
+  [Q139's evidence](../research/investigations/structure-edits/layout-design.md#q139-implementation-independent-full-layout-probe)
+  before percentage-height splice admission.
 
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences
