@@ -1,0 +1,78 @@
+# Temporary diagnosis; remove before integration.
+name: apollo11-diag
+on:
+  push:
+    branches: [research/m2-apollo11-fix]
+  workflow_dispatch:
+jobs:
+  diagnose:
+    if: contains(github.event.head_commit.message, '[apollo]')
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [8fbc160, head]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Select renderer revision
+        run: |
+          if [ '${{ matrix.revision }}' != head ]; then
+            git checkout '${{ matrix.revision }}'
+            git submodule update --init
+          fi
+          git rev-parse HEAD
+          cat whitefoot.pin
+      - name: Toolchain and fonts
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+      - uses: actions/download-artifact@v4
+        with:
+          name: apollo11-diag-37727037303
+          run-id: 37727037303
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: build
+      - name: Verify original page and scripts
+        run: |
+          echo '1405f09a8888e2854ba8785a4da6b50dbd3951fb56ec9eca7f2e20aa3fe78dc4  build/research/concurrency/apollo11.html' | sha256sum -c
+          sha256sum build/research/concurrency/apollo11* build/x5/scripts/apollo11-*.edits
+      - name: Build pinned drivers
+        run: |
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          time (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          time (cd renderer && "$wfc" --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par)
+      - name: Sample then complete sentence and block diagnosis
+        env:
+          WF_WORKERS: 4
+        run: |
+          set -euo pipefail
+          mkdir -p build/apollo-fix
+          head -2 build/x5/scripts/apollo11-sentence.edits > build/apollo-fix/sample.edits
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          time build/layout_oracle_seq edit build/apollo-fix/sample.edits "${args[@]}" > build/apollo-fix/sample.raw
+          python3 research/investigations/incremental-layout/scripts/inctime.py --check build/apollo-fix/sample.edits build/apollo-fix/sample.raw
+          status=0
+          for kind in sentence block; do
+            for mode in seq par; do
+              time build/layout_oracle_$mode edit build/x5/scripts/apollo11-$kind.edits "${args[@]}" > build/apollo-fix/$kind.$mode.raw
+              python3 research/investigations/incremental-layout/scripts/inctime.py --check build/x5/scripts/apollo11-$kind.edits build/apollo-fix/$kind.$mode.raw || status=1
+              grep -E 'structure path| inc (same|DIFF|refused)$' build/apollo-fix/$kind.$mode.raw
+            done
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apollo-fix-${{ matrix.revision }}-${{ github.run_id }}
+          path: |
+            build/apollo-fix/
+            build/layout_oracle_seq
+            build/layout_oracle_par

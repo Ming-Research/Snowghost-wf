@@ -319,3 +319,15 @@ sparse list searched the same way, until the next full build merges them.
 Expected effect: the style part of a block edit drops from the full stage
 (114, 476 and 937 ms) to the set's size, while layout's structure + update
 (16, 239 and 259 ms) remains for steps 3 and 4.
+
+## Apollo sentence identity and sibling-margin repair
+
+The repair compares main `8fbc160` with the current M2 line using the exact
+Apollo HTML and X5 scripts preserved by hosted diagnosis run 37727037303.
+Both revisions build with their own compiler pins. Sentence edits 31 and 32
+must equal full rebuilds; equality on main would reject an inherited-defect
+account. A reduced HTML/edit fixture must fail before the renderer repair
+and pass after it. The sibling-frontier repair admits supported retained
+margin changes and must be falsified by removing its settlement. The
+percentage-height and grid refusals retain their existing scope. All builds
+and checks run in GitHub-hosted CI, with no local validation.
