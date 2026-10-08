@@ -923,23 +923,29 @@ this diagnostic job, which is removed after its evidence is captured.
 
 ### Q140: unchanged effective flow inputs
 
-Q140 is open. ECMA262 root-font prepares 41 paragraphs but still republishes a
-context spanning 112,823 reported entries; the current 8ab7dc6 comparison takes
-73,260–84,149 us sequential against main's 18,265–20,501 us. An own style
-constraint may change without changing the used flow inputs. The current
-`flow_frame` comparison computes both frames with current styles, so it cannot
-prove that a restyled context has the same old inputs.
+Q140 is open. The hosted effective-input diagnostic below finds unchanged
+completed frame and space in ECMA262's 112,817-event flow, but 41 paragraphs
+are marked on both the first 12px edit and its undo. This rejects skipping an
+entirely untouched interior: the dirty paragraphs must still be processed.
+The current `flow_frame` comparison computes both frames with current styles,
+so it cannot prove that a restyled context has the same old inputs. Stable
+snapshot endpoints do not establish that every intermediate flex input stayed
+unchanged. The proposal needs both a complete input certificate and bounded
+processing of the marked frontier, not merely an equality test or a cache.
 
 - A (recommended): retain the completed effective flow inputs and define the
   exact unchanged-input admission, invalidation and consumer contract before
-  implementing it. Unmarked interiors could retain geometry, naturals,
+  implementing it, including sparse dirty-paragraph processing and propagation
+  of changed outputs. Unmarked interiors could retain geometry, naturals,
   fragments and summaries. This adds per-context state and proof obligations;
   the achievable improvement still needs measurement.
 - B: retain full replay and investigate its metadata or compiler costs. This
   avoids a new cache but retains work proportional to the context.
 - C: park the branch without merging.
-- Confidence 3/5: the excess full-context work is measured; whether a sufficient
-  set of these edits has equal effective inputs remains to be demonstrated.
+- Confidence 3/5: unchanged completed inputs and the marked frontier are now
+  measured for one correctly styled pair. Transient-input admission, sparse
+  propagation and sufficient improvement across the complete workload remain
+  to be established.
 
 ### Q141: retained suffix-range displacement
 
@@ -1288,3 +1294,18 @@ The workflow and its two scripts are removed after the captured source, inputs
 and results are retained in the artifact and summarized here.
 
 The first diagnostic run, [37753206438](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37753206438), failed before execution because the workflow paired production f949 with the timing cohort's LLVM 22; Clang rejected the `llvm.coro.end` return type. The repeat uses the existing production oracle's Ubuntu toolchain with the unchanged production pin. This is a workflow compatibility correction, not a renderer or language workaround; the failed run supplies no frame or timing evidence.
+
+
+### Effective-input result and remaining root-font contract
+
+[Hosted diagnostic 37754371973](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37754371973) passes at aa3d3240025499c4227233991a116cb29c9e87a7 using production wf-f949e676acfa, native Clang 18.1.3 and an AMD EPYC 7763 runner exposing four CPUs (Ubuntu 24.04.5, Linux 6.17.0-1022-azure). The artifact retains the injection patch, exact source, compiler/driver/input hashes and all raw records. Six snapshots cover 10,217 live contexts, with clean before marks and stable post-edit/before-next-edit fields. The process exits zero; dropping the first marked snapshot is rejected with exit one for the intended missing-snapshot reason. The bounded sample takes 10.27 seconds including startup and instrumentation; this is only batch-sizing evidence.
+
+For both the first 12px root-font edit and undo, flow slot 91 (element 21173, under body flex slot 2) has 112,817 events, 41 marked paragraphs, no marked children or restyled blocks, and an own restyle mark. Its complete recorded frame and space are unchanged at marking and completion; outer size, baseline and content height also remain unchanged. All three dumps have hash `eb35ffcdb2ac7a51` and 19,024,863 bytes, with both edits matching independent full layout. The oracle reports 41 prepared/rebroken paragraphs, four contexts and 112,823 entries, including 112,817 held entries. The 41 marks reject the prior no-interior-marks criterion: no wholesale skip is justified. Q140 now explicitly requires bounded marked-frontier processing alongside a complete effective-input contract. The unchanged dump alone does not prove those marks unnecessary.
+
+Flex preparation can assign a preliminary space; the row path does not lay out there, while final sizing and stretch may issue layout calls. The probe does not capture the actual row/target/cross values or every update-entry space, so a generic transient-input claim remains unverified. The root/html frame's inactive column-gap field also changes with font size: comparing every stored field without its use conditions would overreject. Any selected input contract must account for the actual consumers. The temporary workflow and scripts are removed after this result; no diagnostic state, API, renderer mutation or compiler pin is adopted.
+
+### Integrated zero-displacement omission coverage
+
+The full falsification run 37751546435 compiles the exact zero-suffix mutation but fails to detect it. The Apollo sentence fixture remains incrementally correct in the hybrid representation because movement already repairs rendered geometry; the missing publication can leave cached owner-relative offsets stale. The existing independent publication oracle has a nonzero displacement and does not distinguish this guard omission.
+
+Retain the guard mutation and the original sentence fixture, and add a nested-owner publication case through the real movement and finish paths. A parent moves from absolute y=20 to 21 while its untouched nested block stays at absolute y=25 with zero net flow displacement. Its local and published offsets must change from 5 to 4, and its owner-relative natural floor from 10 to 9 while absolute natural y=30 stays fixed. These independent numeric expectations test the original zero-displacement/moved-owner obligation; the existing nonzero-displacement case remains intact. Both unmutated success and compiled omission detection are required in hosted CI before calling this coverage repair complete.
