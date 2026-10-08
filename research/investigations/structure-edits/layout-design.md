@@ -3197,3 +3197,19 @@ collapsed nested-percentage arithmetic, suppressed refusal rows and false
 successful-splice reporting. These remain prepared obligations until executed.
 The full pre-pass consumes the content height already returned by its proof's
 normal resolver instead of resolving the identical height a second time.
+
+The first reduced root splice passes at
+`2dde3c0b276aa95ab0422e64a1a6f23ac2aecc02`
+([run 37774886038](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37774886038)):
+both builds splice insertion and removal with reason 0, every prefix matches
+a fresh build, and Chromium matches every requested block exactly (6/7/6
+boxes before/inserted/removed). The driver pairs took 0.226s sequential and
+0.227s with four workers; the focused matrix can now expand on hosted CI.
+Existing Chromium layout floors also pass. The run remains failing because
+float restore edits 8/10/12 retain stale geometry. Requested dumps establish
+300/150px retained versus 100/50px fresh on edit 8, so the inventory-equality
+repair did not settle this failure. The new provenance-mismatch full-layout
+branch cleared descendant marks but left the updated context itself dirty;
+the next restyle therefore could not count it as newly marked. It now clears
+the whole settled subtree, matching the ordinary update's mark lifecycle.
+The next CI run must verify that repair; no expectation was changed.
