@@ -188,6 +188,20 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Verify percentage relative-position offsets against immediate containing height.**
+  Q139 inspection found ordinary block relative offsets still passing
+  `unknown` as their height basis in `block_relative_offset` and boundary
+  publication. A reduced probe is a 200px containing block with a child
+  `position:relative;top:50%`: verify its visual displacement with Chromium
+  before claiming a defect, including an auto intermediate and nested BFC.
+  Impact: a percentage `top`/`bottom` might be lost even though percentage
+  heights are now resolved correctly. Change the shared relative-offset
+  inputs and its full/incremental consumers if the independent oracle
+  confirms a mismatch; retain translation and saturation ordering. Reopen
+  with relative-position correctness work; this lies outside Q139's height
+  provenance admission and remains unverified.
+
+
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences
   ([runs](../research/investigations/structure-edits/runs/full-14900k.txt),

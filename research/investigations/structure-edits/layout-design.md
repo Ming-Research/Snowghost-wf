@@ -3124,3 +3124,29 @@ constrained siblings lost a collapsed bottom strut, and recorded source
 identities were not checked. The former now retains the full resolver's
 bottom-separation state; the latter is being addressed with live-link checks
 and separate incoming/certified inputs. Neither is claimed verified yet.
+
+
+The fixed-height float conjunction uses the existing no-new/no-deleted-export
+premise. At an absorber, an existing export moves either by the incoming
+displacement or by zero (a lower absorber can stop part of the displacement).
+Thus old global reach plus the positive part of the displacement bounds both
+old and proposed exports. Carry that bound outward after used-height delta
+becomes zero; every outer direct suffix's old/new natural minimum and the
+context flow end must remain beyond it. Existing known-motion and exact
+arithmetic checks still apply. This admits expired internal floats while
+refusing stationary outer flow that could newly intersect a moved float;
+no descendant traversal or active-float relayout is introduced. The focused
+`fixed-floats` and `fixed-float-reentry` fixtures discriminate these cases;
+execution and a bound-bypass mutation remain required.
+
+
+The initial full-layout repair used a context-wide percentage guard on local
+block restyles. The candidate narrows that guard to the affected subtree:
+every old and new ordinary-block read and every immediate Child/Float/Atomic
+read is checked, including unmarked entries. A percentage-free child keeps
+its own fixed or indefinite outgoing basis when its incoming containing
+height changes; its independently marked style/content update still settles
+normally. Readers outside the affected subtree cannot read a changed inner
+source. This avoids forcing unrelated edits through a full pre-pass solely
+because html/body uses a viewport percentage. The height/width restyle probes
+and all-kind paired costs must validate the narrowed path before adoption.

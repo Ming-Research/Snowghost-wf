@@ -2372,14 +2372,10 @@ fn snapshot_keeps_width(block: BlockSnapshot, styles: &Styles) -> kept: Bool rea
 }
 
 fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, unasked: Bool, scope: &ReferenceScope) -> (handled: Bool, counts: UpdateCounts) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(scope) {
-  doc "Re-stacks the nearest block containing the context's changed blocks, when every marked paragraph and every marked child context lies inside it. Independent width checks first establish whether the old pre-pass inputs hold; otherwise a subtree of blocks and text without child contexts or atomic inlines recomputes its widths locally. Percentage-dependent contents require the full pre-pass after a block restyle, even when widths hold, because containing height and definiteness are child keys too. For percentage-free contents a marked child's space is the one it was laid out in when the widths hold: a marked atomic inline is updated in that space before the re-stack, which breaks its paragraph again, and a marked in-flow child or float is settled by the re-stack at its entry, which reads its style there as a full pass would. Stacking must pass the block's Close before convergence, so no changed descendant or closing margin is skipped. Refusals leave the full update path available.";
+  doc "Re-stacks the nearest block containing the context's changed blocks, when every marked paragraph and every marked child context lies inside it. Independent width checks first establish whether the old pre-pass inputs hold; otherwise a subtree of blocks and text without child contexts or atomic inlines recomputes its widths locally. Old or new percentage reads in the affected block subtree and at every direct child entry, marked or unmarked, require the full pre-pass after a block restyle, even when widths hold. A percentage-free child shields its descendants because its outgoing definite or auto height does not depend on its incoming height; unrelated percentage readers outside the subtree keep their sources. For percentage-free contents a marked child's space is the one it was laid out in when the widths hold: a marked atomic inline is updated in that space before the re-stack, which breaks its paragraph again, and a marked in-flow child or float is settled by the re-stack at its entry, which reads its style there as a full pass would. Stacking must pass the block's Close before convergence, so no changed descendant or closing margin is skipped. Refusals leave the full update path available.";
   let refused = no_updates();
   let none = 18446744073709551615_u64;
   if frame.columned {
-    return False(), refused;
-  }
-  if context^.definite_free {
-  } else {
     return False(), refused;
   }
   let b = cvt::<u32, u64>(context^.restyled_block);
@@ -2433,9 +2429,11 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
                 if child_at < context^.children.inner.len {
                   if context^.children.inner[child_at].dirty {
                     set children_inside = children_inside +sat 1_u32;
-                    let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
-                    set child_relative = bor(child_relative, relative);
                   }
+                  let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+                  let previous_relative = context^.children.inner[child_at].height_proof.read_mask != 0_u8;
+                  let either = bor(relative, previous_relative);
+                  set child_relative = bor(child_relative, either);
                 }
               }
               Open(..) => {
@@ -2454,9 +2452,11 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
         if child_at < context^.children.inner.len {
           if context^.children.inner[child_at].dirty {
             set children_inside = children_inside +sat 1_u32;
-            let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
-            set child_relative = bor(child_relative, relative);
           }
+          let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+          let previous_relative = context^.children.inner[child_at].height_proof.read_mask != 0_u8;
+          let either = bor(relative, previous_relative);
+          set child_relative = bor(child_relative, either);
         }
       }
       Float(context: c) => {
@@ -2465,9 +2465,11 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
         if child_at < context^.children.inner.len {
           if context^.children.inner[child_at].dirty {
             set children_inside = children_inside +sat 1_u32;
-            let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
-            set child_relative = bor(child_relative, relative);
           }
+          let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+          let previous_relative = context^.children.inner[child_at].height_proof.read_mask != 0_u8;
+          let either = bor(relative, previous_relative);
+          set child_relative = bor(child_relative, either);
         }
       }
       Out(..) => {
@@ -2492,7 +2494,9 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
       let kept = block_keeps_width(context: context, styles: styles, b: nested);
       set widths_kept = band(widths_kept, kept);
       let relative = height_relative(styles: styles, style: context^.blocks.inner[nested].style);
-      set relative_height = bor(relative_height, relative);
+      let previous_relative = context^.blocks.inner[nested].height_proof.read_mask != 0_u8;
+      let either = bor(relative, previous_relative);
+      set relative_height = bor(relative_height, either);
     }
   }
   let empty_stable = True();

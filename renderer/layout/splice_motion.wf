@@ -304,8 +304,9 @@ fn owner_motion_ready(context: &Context, owner: u32, slot: u32, delta: i64, fixe
 }
 
 fn outward_motion_ready(context: &Context, owner: u32, delta: i32, fixed_reach: i64, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context.blocks.inner), reads(context.entries), reads(context.local_geometry), reads(context.style), reads(context.space), reads(context.width), reads(context.flow_end), reads(styles), writes(visits) {
-  doc "Checks each direct suffix outside the changed owner and the context's float-containing flow end. Only the block ancestor chain is ordered.";
+  doc "Checks each direct suffix outside the changed owner and the context's float-containing flow end. At a fixed-height absorber, old and proposed exported float reach must remain before every stationary outer natural minimum and the final flow end. No inserted or removed float export is admitted by the caller, so old reach plus positive displacement bounds both retained float sets. Only the block ancestor chain is ordered.";
   let cursor = owner;
+  let obstacle = fixed_reach;
   let change = cvt::<i32, i64>(delta);
   let limit = context^.blocks.inner.len +sat 1_u64;
   for (level in 0_u64..limit) {
@@ -316,7 +317,8 @@ fn outward_motion_ready(context: &Context, owner: u32, delta: i32, fixed_reach: 
       let top = cvt::<i32, i64>(frame.content_top);
       let ending = cvt::<i32, i64>(context^.flow_end);
       let floor = top +sat ending;
-      let ready = motion_above(reach: total.float_reach, floor: floor, delta: change);
+      let reach = imax(total.float_reach, obstacle);
+      let ready = motion_above(reach: reach, floor: floor, delta: change);
       return ready;
     }
     let at = cvt::<u32, u64>(cursor);
@@ -324,17 +326,34 @@ fn outward_motion_ready(context: &Context, owner: u32, delta: i32, fixed_reach: 
     } else {
       return False();
     }
+    set visits^.blocks = visits^.blocks +sat 1_u64;
+    let parent = context^.blocks.inner[at].parent;
     if context^.blocks.inner[at].output.fixed_height {
       if change != 0_i64 {
-        if context^.blocks.inner[at].boundary.floats > 0_u64 {
-          return False();
+        let output = context^.blocks.inner[at].boundary;
+        if output.floats > 0_u64 {
+          if output.motion_known {
+          } else {
+            return False();
+          }
+          let origin = block_origin(context: context, block: parent);
+          let positive = imax(change, 0_i64);
+          let moved_reach = output.float_reach +sat positive;
+          let reach = origin.y +sat moved_reach;
+          let extra = travel_absolute(value: change);
+          let budget = output.travel +sat extra;
+          let bounded = transfer_fits(origin: origin.y, travel: budget);
+          if bounded {
+          } else {
+            return False();
+          }
+          set obstacle = imax(obstacle, reach);
         }
       }
       set change = 0_i64;
     }
-    let parent = context^.blocks.inner[at].parent;
     let slot = context^.blocks.inner[at].entry_slot;
-    let ready = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, fixed_reach: fixed_reach, visits: visits);
+    let ready = owner_motion_ready(context: context, owner: parent, slot: slot, delta: change, fixed_reach: obstacle, visits: visits);
     if ready {
     } else {
       return False();
