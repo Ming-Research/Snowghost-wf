@@ -1,0 +1,98 @@
+# Temporary diagnosis on this branch only; remove before any integration.
+name: apollo11-diag
+
+on:
+  push:
+    branches: [research/m2-apollo11-diag]
+    paths: [.github/workflows/apollo11-diag.yml]
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Toolchain and fonts
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+      - name: Fetch live Apollo inputs and record identity
+        run: |
+          set -euo pipefail
+          if sh research/investigations/concurrency/run.sh fetch; then
+            echo 'All historical input hashes matched'
+          else
+            echo 'Fetch stopped; accept only Apollo live bytes for this diagnosis'
+          fi
+          # fetch stops on the first stale pin. Preserve its Apollo download
+          # and fetch any remaining Apollo sheets from the same URL inventory.
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          source = Path('research/investigations/concurrency/run.sh').read_text()
+          for line in source.splitlines():
+              if not line.startswith('apollo11') or ' https://' not in line:
+                  continue
+              name, url, historical_hash = line.split()
+              dest = Path('build/research/concurrency') / name
+              if not dest.exists():
+                  live = dest.with_name(name + '.unverified')
+                  if live.exists():
+                      live.rename(dest)
+                  else:
+                      subprocess.run(['curl', '-fsSL', '--retry', '3', '-o', str(dest), url], check=True)
+          PY
+          sha256sum build/research/concurrency/apollo11* > build/apollo11-inputs.sha256
+          cat build/apollo11-inputs.sha256
+          git rev-parse HEAD
+          cat whitefoot.pin
+          uname -a
+          lscpu
+      - name: Build pinned sequential driver and prepare X5
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          echo "WFC=$wfc" >> "$GITHUB_ENV"
+          time (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          time sh research/investigations/incremental-layout/run.sh prepare apollo11
+      - name: Smallest block pair before the batch
+        run: |
+          set -euo pipefail
+          head -2 build/x5/scripts/apollo11-block.edits > build/apollo11-sample.edits
+          time build/layout_oracle_seq edit build/apollo11-sample.edits build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css' > build/apollo11-sample.raw
+          cat build/apollo11-sample.raw
+          python3 research/investigations/incremental-layout/scripts/inctime.py --check build/apollo11-sample.edits build/apollo11-sample.raw
+      - name: Build pinned parallel driver
+        run: |
+          time (cd renderer && "$WFC" --par --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par)
+      - name: Every X5 edit against full rebuild, paths and counters
+        env:
+          WF_WORKERS: 4
+        run: |
+          set -euo pipefail
+          status=0
+          for kind in block word sentence colour fontsize rootfont; do
+            cat "build/x5/scripts/apollo11-$kind.edits"
+            for mode in seq par; do
+              if time sh research/investigations/incremental-layout/run.sh inc "$mode" apollo11 "$kind"; then :; else status=1; fi
+              cat "build/x5/out/apollo11-$kind.$mode.txt.raw"
+              # Incremental mode exposes counters for text edits too. These
+              # hosted times are incidental diagnostics, not 14900K timings.
+              if sh research/investigations/incremental-layout/run.sh time "$mode" apollo11 "$kind" 1; then :; else status=1; fi
+              cat "build/x5/time/apollo11-$kind.$mode.w4.r1.txt"
+            done
+            if sh research/investigations/incremental-layout/run.sh same apollo11 "$kind"; then :; else status=1; fi
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apollo11-diag-${{ github.run_id }}
+          path: |
+            build/apollo11-*
+            build/research/concurrency/apollo11*
+            build/x5/
