@@ -25,9 +25,10 @@ fn caller(order: &[Flow], targets: &[Block]) -> result: unit reads(order), write
 }
 ```
 
-The fact holds by construction in the renderer: every writer that stores a
-payload at an owner slot also stores that slot in the target's `entry_slot`
-(construction, insertion, relocation), and nothing else writes either field.
+The renderer intends this fact by construction: the writers found by source
+inspection that store a payload at an owner slot also store that slot in the
+target's `entry_slot` (construction, insertion, private relocation, and the
+outer-output copy to a rebuilt child). No checker verifies that intent today.
 The caller has no source form that carries this two-store invariant from
 those writers to the call: a `requires` on the caller only moves the
 obligation outward to `update` and the edit drivers, and a guard or checking
