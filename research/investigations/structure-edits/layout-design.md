@@ -2921,7 +2921,7 @@ mutation obligations are:
 
 | Premise | Mutation, and observation required to detect it |
 | --- | --- |
-| Complete consumer inventory (1) | Omit one direct percentage reader in the route context or a float, and independently ignore min-height and max-height reads. The focused negative must lose its required reason-7 path or produce wrong geometry. Instrument the selected predicate so an earlier guard cannot masquerade as detection. |
+| Complete consumer inventory (1) | Omit one direct percentage reader in the route context or a float, and independently ignore min-height and max-height reads. The focused negative must lose its required reason-7 path or produce wrong geometry; when missing optional records conservatively refuse, the positive reader fixture must instead lose its required splice specifically to reason 7. Instrument the selected predicate so an earlier guard cannot masquerade as detection. |
 | Correct immediate basis and full provenance (1–2) | Replace the immediate containing block with the context root, or flatten a nested chain past the auto-height intermediate. The independent 200/100/50 rectangle expectations or the broken-chain refusal must fail. |
 | Definite, content-independent basis (2) | Treat an indefinite old numeric height as definite; separately accept an old flex stretch target as immutable. The auto-height/flex negative must either violate its reuse/refusal assertion or differ after the growing edit. A fully recomputed flex interior is not a detection of this reuse mutation. |
 | Growing-chain exclusion (2) | Ignore one basis membership in `G`, or remove an unresolved layout-sized ancestor from `G` on equal old numbers. Use a certificate-level fixture for this predicate with other premises supplied, plus a flex-growth integration probe; demand an explicit assertion failure if another preflight conservatively masks the mutation. |
@@ -2943,9 +2943,9 @@ unconditional fallback. Full-build cost is a separate empirical gate.
 
 ### Retained data, dependencies and criterion 4
 
-The current boolean `flow_definite_free` says only that some percentage read
-exists; it cannot identify the basis or distinguish html from an edited
-auto-height ancestor. The later implementation needs the per-read records
+Before Q139, the boolean `flow_definite_free` said only that some percentage
+read existed; it could not identify the basis or distinguish html from an
+edited auto-height ancestor. The Q139 implementation needs the per-read records
 above, live provenance links and invalidation ownership, plus a summary that
 can answer whether any reused read has unknown/indefinite provenance or
 reaches `G`, without scanning unrelated descendants on every edit. Width
@@ -3506,7 +3506,7 @@ captures, fonts and edits in alternating order; full layout and peak RSS
 use the same drivers and inputs. Root-font cost outside the paired twin
 spread, or memory growth no smaller than the dense-record sample above,
 rejects the cost aim. Any admitted geometry mismatch, lost required path
-or undetected mutation rejects correctness. No cost result is claimed yet.
+or undetected mutation rejects correctness. The measurements below test this aim.
 
 
 The Q139 fixtures and layout floor now run from the permanent `q139`
@@ -3560,3 +3560,23 @@ failure is not counted as detection. The permanent mutation workflow allows
 selecting Q139 rows for a focused retry, reusing a hosted baseline only after
 a source diff establishes that the renderer and compiler pin are identical;
 this avoids rebuilding unchanged drivers or rerunning already-green rows.
+
+
+Compact full-layout and memory measurements, [hosted run 37838645880](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37838645880), use renderer `3fdd2ee`, main `8fbc160`, M2 and twin `95ea4a1`, compiler `wf-f949e676acfa` and Clang 18.1.3. The Ubuntu 24.04 runner exposes four logical CPUs (two cores) of an AMD EPYC 9V45. The candidate full dump is captured and hashed; this harness does not compare it with main/M2/twin dumps. Independent Q139 fixture identity is established separately above. A zero/one-build pilot selects one repetition for ECMA262/HTML5 and ten for Apollo; three alternating rounds subtract the zero-build process from the repeated-build process. These are layout costs, not compiler build times. Values are medians; each cell is main / M2 / twin / candidate.
+
+| page, mode | full layout ms | peak RSS MiB |
+| --- | --- | --- |
+| ecma262, seq | 682.6 / 985.5 / 964.9 / 969.2 | 437.9 / 473.9 / 473.9 / 481.2 |
+| ecma262, par | 408.8 / 691.1 / 699.9 / 718.8 | 422.9 / 460.9 / 461.8 / 469.5 |
+| html5, seq | 744.3 / 1024.0 / 1016.0 / 991.8 | 309.0 / 466.5 / 466.6 / 474.3 |
+| html5, par | 423.2 / 692.4 / 707.7 / 712.3 | 312.3 / 470.0 / 469.7 / 478.0 |
+| apollo11, seq | 43.8 / 55.3 / 53.0 / 54.2 | 65.2 / 65.8 / 65.5 / 65.7 |
+| apollo11, par | 29.5 / 40.6 / 41.2 / 45.4 | 70.6 / 74.3 / 73.8 / 74.3 |
+
+RSS is the median of three whole-process peaks, including parsing/style and retained layout state. Against M2 it grows 1.54%/1.86% on ECMA262 and 1.69%/1.70% on HTML5 (sequential/four workers), below the previous dense-record 3.6–3.7% growth; Apollo differs by less than 0.2 MiB. This supports the memory aim without claiming that RSS isolates record allocation. Full-layout candidate/M2 medians range from 0.969 to 1.119; Apollo parallel is 45.4 ms against M2 40.6 and twin 41.2, with candidate range 40.8–45.7 and twin 39.7–43.0 ms. The overlap leaves that small-page cost unresolved; this sample does not establish a speed improvement. Artifacts retain every process resource record, input/driver hashes and raw samples.
+
+
+The compact edit pilot ([37835285351](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37835285351), one forward/inverse pair and two alternating rounds) still separates ECMA262 sequential root-font cost from twin noise: paired candidate/M2 median 1.082, range 1.058–1.119, versus twin median 1.007, range 0.978–1.031. Other root-font comparisons overlap or border the twin range. The next sample uses two pairs and four rounds to resolve those overlaps and compare the remaining X5 kinds on the same scale as the previous dense-record sample. A hosted instruction profile compares M2 and candidate under the layout update; the question is whether remaining provenance operations explain the ECMA262 root-font difference. If their instruction contribution is too small, that explanation is rejected rather than removing correctness checks speculatively.
+
+
+The permanent Q139 job no longer downloads the one-use Apollo diagnostic archive: Actions artifacts expire, so that capture cannot be a permanent gate dependency. Its 60-edit evidence remains attached to run 37834644324. Permanent checked-in Q139 cases, the Chromium floor, existing certificate combinations and all mutation callers remain wired; ordinary page-identity coverage stays in `oracles-m2`.

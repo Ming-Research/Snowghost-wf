@@ -58,8 +58,8 @@ MUTATIONS = {
 }
 
 # A semantic omission with more than one writer is applied at every writer:
-# skipping width invalidation in only the partial-restyle refresh would be
-# repaired by the reference publisher, which writes the same record.
+# skipping width invalidation in only the pre-pass would be repaired by
+# the reference publisher, which writes the same record.
 EXTRA_SITES = {
     'skip-width-refresh': [
         ('boundary', 'reference_item_output', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n          let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n          }'),
