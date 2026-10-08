@@ -750,12 +750,48 @@ fn refresh_local_height_proofs(context: &Context, events: &[Flow], styles: &Styl
   return unit;
 }
 
+fn child_height_read_counts(children: &[Context]) -> (consumers: u64, unproved: u64) reads(children) {
+  let count = children^.len;
+  if count == 0_u64 {
+    return 0_u64, 0_u64;
+  }
+  if count == 1_u64 {
+    return interior_height_read_counts(context: &children^[0_u64]);
+  }
+  let middle = count / 2_u64;
+  let (first_reads, first_unproved) = child_height_read_counts(children: &children^[0_u64..middle]);
+  let (second_reads, second_unproved) = child_height_read_counts(children: &children^[middle..count]);
+  let consumers = first_reads +sat second_reads;
+  let unproved = first_unproved +sat second_unproved;
+  return consumers, unproved;
+}
+
+fn interior_height_read_counts(context: &Context) -> (consumers: u64, unproved: u64) reads(context) {
+  doc "The checking oracle visits every live context's cached direct inventory. A child context's own record is already counted by its parent's direct inventory where that algorithm includes it; only its interior is added here.";
+  if context^.retired {
+    return 0_u64, 0_u64;
+  }
+  let inside = context^.height_summary;
+  if context^.kind == ctx_flow {
+    let root = sequence_output(sequence: &context^.entries);
+    set inside = root.heights;
+  }
+  let count = context^.children.inner.len;
+  let (child_reads, child_unproved) = child_height_read_counts(children: &context^.children.inner[0_u64..count]);
+  let own_reads = cvt::<u32, u64>(inside.consumers);
+  let own_unproved = cvt::<u32, u64>(inside.unproved);
+  let consumers = own_reads +sat child_reads;
+  let unproved = own_unproved +sat child_unproved;
+  return consumers, unproved;
+}
+
 fn height_read_counts(layout: &Layout) -> (consumers: u64, unproved: u64) reads(layout) {
   let own = stored_height_summary(record: &layout^.root.height_proof);
-  let root = sequence_output(sequence: &layout^.root.entries);
-  let summary = join_height_summary(first: own, second: root.heights);
-  let consumers = cvt::<u32, u64>(summary.consumers);
-  let unproved = cvt::<u32, u64>(summary.unproved);
+  let (inside_reads, inside_unproved) = interior_height_read_counts(context: &layout^.root);
+  let own_reads = cvt::<u32, u64>(own.consumers);
+  let own_unproved = cvt::<u32, u64>(own.unproved);
+  let consumers = own_reads +sat inside_reads;
+  let unproved = own_unproved +sat inside_unproved;
   return consumers, unproved;
 }
 
