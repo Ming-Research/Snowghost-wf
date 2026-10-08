@@ -617,7 +617,7 @@ phase, independent target writes, then reduction is the natural dependency order
 the present traversal does not establish maximal parallelism.
 
 At the pinned Whitefoot f949e676acfa811f96b21afd07f02c06dcd14b51,
-[RANGE-1](https://github.com/Ming-Research/Whitefoot/blob/f949e676acfa811f96b21afd07f02c06dcd14b51/docs/spec.md)
+[RANGE-1](https://github.com/Ming-Research/Whitefoot/blob/f949e676acfa811f96b21afd07f02c06dcd14b51/spec/kernel-spec.md)
 allows integer element reads but says a range place selects nothing below an
 element. The needed stored inverse has this form (a specification fragment,
 not an admitted complete program):
