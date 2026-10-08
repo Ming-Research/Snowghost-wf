@@ -3213,3 +3213,11 @@ branch cleared descendant marks but left the updated context itself dirty;
 the next restyle therefore could not count it as newly marked. It now clears
 the whole settled subtree, matching the ordinary update's mark lifecycle.
 The next CI run must verify that repair; no expectation was changed.
+
+Mutation jobs share immutable sequential/four-worker baseline drivers built
+once from their workflow revision, while every mutant starts from a separate
+fresh checkout and changes one named predicate. This removes repeated baseline
+compilation, not an oracle or negative control. Each row still validates its
+unmutated focused fixture before accepting its intended failure. The detector
+has hosted machinery controls for identity differences, intended reason-7
+admission loss, missing rows, exact certificate assertions and unrelated errors.
