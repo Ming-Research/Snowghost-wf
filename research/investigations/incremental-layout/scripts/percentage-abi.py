@@ -18,11 +18,40 @@ args.directory.mkdir(parents=True, exist_ok=True)
 source = args.ir.read_text()
 headers = [line for line in source.splitlines() if line.startswith(('target datalayout', 'target triple'))]
 types = [line for line in source.splitlines() if re.match(r'^%.* = type ', line)]
-wanted = ('HeightProof', 'HeightInput', 'HeightSummary', 'SequenceOutput', 'BlockOutput', 'Block', 'Context', 'Before')
-selected = [line.split(' = type ')[0] for line in types if any(name in line.split(' = type ')[0] for name in wanted)]
-if not selected:
-    (args.directory / 'available-types.txt').write_text('\n'.join(types) + '\n')
-    raise SystemExit('No named layout types found; inspect available-types.txt instead of guessing sizes')
+(args.directory / 'available-types.txt').write_text('\n'.join(types) + '\n')
+bodies = dict(line.split(' = type ', 1) for line in types)
+
+
+def fields(body):
+    """Top-level members of an LLVM struct body."""
+    body = body.strip()
+    body = body[2:-2] if body.startswith('<{') else body[1:-1]
+    members, depth, current = [], 0, ''
+    for character in body:
+        depth += character in '[{<'
+        depth -= character in ']}>'
+        if character == ',' and depth == 0:
+            members.append(current.strip())
+            current = ''
+        else:
+            current += character
+    return members + ([current.strip()] if current.strip() else [])
+
+
+# The compiler names types by hash, so the records are found by their exact
+# member sequence from renderer/layout/module.wfm, and their holders (Block,
+# Context, SpliceInput) by containing them; an ambiguous match is refused.
+style_refs = {name for name, body in bodies.items() if fields(body) == ['i32', 'i32', 'i1']}
+proof_tail = ['i32', 'i32', 'i32', 'i8', 'i8', 'i32', 'i32', 'i32', 'i32', 'i8', 'i8', 'i32', 'i32', 'i32', 'i32', 'i32', 'i1']
+inputs = [name for name, body in bodies.items() if fields(body) == ['i32', 'i32', 'i32', 'i8', 'i8']]
+proofs = [name for name, body in bodies.items() if fields(body)[:1] and fields(body)[0] in style_refs and fields(body)[1:] == proof_tail]
+if len(inputs) != 1 or len(proofs) != 1:
+    raise SystemExit('expected one HeightInput and one HeightProof layout, found %r and %r' % (inputs, proofs))
+labels = {inputs[0]: 'HeightInput', proofs[0]: 'HeightProof'}
+for name, body in bodies.items():
+    if proofs[0] in fields(body):
+        labels[name] = 'holder of HeightProof (%d members)' % len(fields(body))
+selected = list(labels)
 ir = '\n'.join(headers + types) + '\n'
 c = '#include <stdio.h>\n'
 for number, name in enumerate(selected):
@@ -30,7 +59,7 @@ for number, name in enumerate(selected):
     c += f'extern unsigned long long q139_size_{number}(void);\n'
 c += 'int main(void) {\n'
 for number, name in enumerate(selected):
-    c += '  printf("%s\\t%llu\\n", ' + json.dumps(name) + f', q139_size_{number}());\n'
+    c += '  printf("%s\\t%s\\t%llu\\n", ' + json.dumps(labels[name]) + ', ' + json.dumps(name) + f', q139_size_{number}());\n'
 c += '  return 0;\n}\n'
 (args.directory / 'sizes.ll').write_text(ir)
 (args.directory / 'sizes.c').write_text(c)
