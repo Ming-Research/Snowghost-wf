@@ -350,7 +350,10 @@ example apart from the renderer code that exposed it
   No adoption merge is made. The zero-displacement omission initially escaped
   the rendered-output check; a nested-owner cached-publication oracle now
   preserves the exact mutation and checks the missing offset/floor update.
-  Full combined correctness/falsification gates at 3edbfd9 remain pending.
+  All 14 combined oracle jobs and all 55 falsification jobs pass at 3edbfd9,
+  including all six X5 kinds, both required fragment omissions, bounded
+  topology replacement and both Apollo omissions. Performance and the open
+  design decisions prevent adoption.
 
 - **HTML font edits still visit direct suffix siblings.** Q138 replaces dense
   suffix translation/publication with captured old/current owner frames,
