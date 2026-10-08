@@ -12,7 +12,7 @@ edits = out / 'sentence-convergence-case.edits'
 for height in (60, 80, 100, 120, 140, 160):
     for words in (6, 10, 14, 18, 22, 26, 30):
         html.write_text('<!doctype html><style>body{margin:0;width:400px;font:20px/20px monospace}p{margin:0}.float{float:right;width:200px;height:' + str(height) + 'px}</style><div class="float"></div><p>START words words</p><section><p>' + 'words ' * words + '</p><p>END</p></section>')
-        nodes = subprocess.check_output(['build/layout_oracle_seq', 'nodes', str(html), 'renderer/style/ua.css'], text=True)
+        nodes = subprocess.check_output(['build/layout_oracle_seq', 'nodes', '0', str(html), 'renderer/style/ua.css'], text=True)
         target = next(line.split()[1] for line in nodes.splitlines() if line.startswith('T ') and 'START' in line)
         edits.write_text(f'T {target} 0 added words words words \nD {target} 0 24\n')
         started = time.monotonic()
