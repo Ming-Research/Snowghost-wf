@@ -347,7 +347,10 @@ old guard does not reproduce the mismatch.
 The reason-6 completion certifies the retained direct ordinary sibling
 immediately following the seam, with unchanged horizontal geometry,
 top/bottom frames, bottom margin, static positioning and height constraints.
-The style delta must be boxes-only and nonstructural. The sibling's observed
+The style delta must be boxes-only, and the current display, float, overflow
+and column state must still construct a neutral plain flow block. The
+sibling-context edit script requires reason 6 when first-child membership
+changes the retained paragraph from a block to a flow context. The sibling's observed
 natural edge must coincide with its normal origin, and an unframed interior
 must expose no leading margin, preserving that equality after the change.
 Its changed top margin joins the private suffix transfer before seam and ancestor validation, so
@@ -359,3 +362,21 @@ A mutation omitting that sibling's direct move must expose stale geometry.
 Other changed retained styles keep reason 6; percentage-height and grid
 ancestor preflights retain their existing scope. This completes the existing
 sibling-frontier contract without adding a new dependency class.
+
+### Main comparison
+
+Hosted run [37732411321](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37732411321)
+built main `8fbc1601785cee70265da1eac4d99589fc6fb67c` with its own
+`wf-0b7f5c5b9854` pin and Ubuntu Clang 22.1.8. Every sentence and block edit
+matched its full rebuild in seq and par, including sentence edits 31–32.
+The HTML SHA-256 was checked against the diagnosis capture and the original
+scripts and stylesheets came from its preserved artifact. Main does not have
+this sentence defect. The preceding attempt with default Clang 18 could not
+compile that pin's LLVM syntax and supplied no rendering result.
+
+The unchanged M2 renderer at `cf12c609`, built by run
+[37731326544](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37731326544)
+on diagnostic-only revision `5642361`, reproduced exactly sentence edits
+31–32 as `inc DIFF` and the six original reason-6 structural edits in both
+modes. That run remains intentionally failed; its main job was the Clang
+prerequisite failure superseded by run 37732411321.
