@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: [Q138 acceptance](#q138-six-cohort-acceptance-at-db46e92) fails; option A
+Current outcome: [Q138 acceptance](#q138-six-cohort-acceptance-at-8ab7dc6) fails; option A
 is not merged into research/m2-layout.
 
 ## Question and prior rejection criterion
@@ -925,8 +925,8 @@ this diagnostic job, which is removed after its evidence is captured.
 ### Q140: unchanged effective flow inputs
 
 Q140 is open. ECMA262 root-font prepares 41 paragraphs but still republishes a
-context spanning 112,823 reported entries; the current measured A takes
-114,678–117,447 us sequential against main's 31,088–33,198 us. An own style
+context spanning 112,823 reported entries; the current 8ab7dc6 comparison takes
+73,260–84,149 us sequential against main's 18,265–20,501 us. An own style
 constraint may change without changing the used flow inputs. The current
 `flow_frame` comparison computes both frames with current styles, so it cannot
 prove that a restyled context has the same old inputs.
@@ -948,7 +948,8 @@ Q141 is open. After one edited paragraph followed by N direct block siblings,
 current owner-relative geometry requires N sibling origins and cached transfer
 updates even though each block's interior is unchanged. Native independent
 scatter (Q139) would expose parallelism but would not remove these visits.
-HTML5 font-size still takes 1,881–2,100 us parallel against main's 794–892 us.
+In the current 8ab7dc6 comparison HTML5 font-size takes 2,144–2,152 us parallel
+against main's 713–719 us.
 
 - A (recommended): develop retained exact displacement on sequence-index
   ranges, including old/current reads, cached reductions, split endpoints,
@@ -1163,3 +1164,49 @@ or compiler workaround was introduced.
 Post-startup samples include A's block-origin and child-motion-travel reads, so those operations are not confined to startup. However, perf reports 39,542/35,244/41,288 lost samples for base/twin/A. No quantitative attribution is accepted from these percentages. Repeat the same frozen comparison at 99 Hz with a 1,024-page buffer instead of the 499 Hz default-buffer setup; retain the observed startup markers and admission controls. This repeat repairs measurement loss, not a failed performance threshold, and cannot replace the full-script acceptance comparison.
 
 The [99 Hz repeat 37735300953](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37735300953) also completes, on an Intel Xeon Platinum 8573C hosted runner with four exposed vCPUs, Ubuntu 24.04/Linux 6.17.0-1022-azure. It uses the same wf-0b7f5c5b9854 drivers, WF_WORKERS=4, DWARF 4096-byte stacks and observed five-second delay. First edits arrive at 2.22–2.45 seconds, total runs last 20.03–22.03 seconds, and base/twin/A upper medians are 245/244/273 us over 60,000 edits each. The buffers reduce but do not eliminate loss: 3,354/2,498/5,991 samples are lost. Percentages still supply no reliable quantitative attribution. Both delayed runs establish that owner reads occur during the edit interval; neither establishes their exclusive cost. The source-level duplicate-walk removal is judged by its independent full-script before/twin comparison. No compiler defect is established, and no renderer spelling workaround follows from these profiles. The temporary profiling job is removed after capturing this evidence.
+
+### Q138 six-cohort acceptance at 8ab7dc6
+
+[Hosted run 37734202554](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37734202554) completes all 288 raw files and 11,520 edits at runtime revision 8ab7dc6151548a1268eff6be0af4db2bdc5f1d79. This is the current acceptance result. The runner is Intel Xeon Platinum 8573C with four exposed vCPUs, Ubuntu 24.04/Linux 6.17.0-1022-azure; LLVM 22, wf-0b7f5c5b9854 and WF_WORKERS=4 are shared across all cohorts. The workflow interleaves all six kinds in forward/reverse rounds. Values are upper-median edit microseconds, round 1/round 2; separate style time is excluded. Before and before twin are independently built db46e92. No result is compared numerically across hosted machines.
+
+| Page | Kind | Mode | Main | cf12 | cf12 twin | Before | Before twin | A | Failed rounds |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| ecma262 | word | seq | 83/88 | 92/105 | 89/96 | 87/88 | 88/92 | 88/87 | pass |
+| ecma262 | word | par | 114/134 | 123/153 | 125/124 | 122/120 | 119/121 | 124/124 | pass |
+| ecma262 | sentence | seq | 267/270 | 755/760 | 840/751 | 125/129 | 128/128 | 130/129 | pass |
+| ecma262 | sentence | par | 306/304 | 686/679 | 665/716 | 189/190 | 191/191 | 190/195 | pass |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| ecma262 | fontsize | seq | 1840/1778 | 8252/9271 | 7217/8863 | 1210/1278 | 1223/1069 | 1274/1023 | pass |
+| ecma262 | fontsize | par | 1859/1806 | 9282/9970 | 8445/9556 | 1297/1514 | 1275/1361 | 1282/1025 | pass |
+| ecma262 | rootfont | seq | 20501/18265 | 92296/90419 | 72139/85586 | 80919/79324 | 81403/66098 | 84149/73260 | 1,2 |
+| ecma262 | rootfont | par | 58137/54725 | 226287/235503 | 213490/227136 | 178271/184706 | 180536/174279 | 182446/171797 | 1,2 |
+| ecma262 | block | seq | 494459/479464 | 111/104 | 88/98 | 100/99 | 97/114 | 100/97 | pass |
+| ecma262 | block | par | 381958/365497 | 163/167 | 157/174 | 149/146 | 149/162 | 160/170 | 2 |
+| html5 | word | seq | 65/62 | 68/70 | 64/71 | 74/70 | 67/69 | 70/66 | pass |
+| html5 | word | par | 92/99 | 94/101 | 93/97 | 90/92 | 91/92 | 92/100 | pass |
+| html5 | sentence | seq | 215/194 | 284/306 | 317/280 | 320/307 | 315/315 | 310/302 | pass |
+| html5 | sentence | par | 258/254 | 286/275 | 282/291 | 355/327 | 311/366 | 386/354 | pass |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| html5 | fontsize | seq | 779/765 | 1834/1985 | 1907/2003 | 1641/1689 | 1682/1650 | 1692/1620 | 1,2 |
+| html5 | fontsize | par | 719/713 | 2134/2265 | 2213/2132 | 2165/2121 | 2104/2169 | 2152/2144 | 1,2 |
+| html5 | rootfont | seq | 555087/552385 | 666760/670845 | 665728/670486 | 672712/685475 | 682833/679418 | 679275/681699 | pass |
+| html5 | rootfont | par | 320095/321214 | 534921/541898 | 531449/536308 | 487662/494608 | 498398/496535 | 487359/487448 | pass |
+| html5 | block | seq | 557116/602209 | 534/572 | 584/540 | 576/583 | 567/581 | 550/597 | 1,2 |
+| html5 | block | par | 438537/450722 | 607/628 | 634/610 | 671/663 | 689/667 | 635/651 | 1,2 |
+
+Acceptance fails 13 of 48 cells: four ECMA262 root-font cells, four HTML5 font-size cells and five block cells. No merge is authorized. Word, sentence, colour, ECMA262 font-size and HTML5 root-font satisfy the unchanged twice-main threshold in both modes and rounds. Base-twin variation does not waive any block failure.
+
+The local child-owner reuse has a limited HTML5 parallel block improvement: A 635/651 us versus before 671/663 and before twin 689/667. It does not establish a general block improvement: ECMA262 parallel A 160/170 is above before 149/146 and before twin 149/162, and sequential results overlap controls or reverse between rounds. The general block-cost hypothesis is rejected; the change removes a source-level duplicate immutable ancestry walk while preserving viewport and saturation behavior. Full current correctness gates remain pending. Q140/Q141's unimplemented changes remain owner decisions; this result neither proves their sufficiency nor changes acceptance.
+
+Exact source and isolated pin children (not pushed or adopted):
+
+- `a source=8ab7dc6151548a1268eff6be0af4db2bdc5f1d79 pin-commit=1e14641538e83731dd4e0adea6d0a39bd53d32a1 release = wf-0b7f5c5b9854`
+- `base source=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 pin-commit=2fbd066f66c8898ccb9faff19db0b03519409120 release = wf-0b7f5c5b9854`
+- `before source=db46e9218eb3b53550148843a0c3f433e5c113e4 pin-commit=19591a42a64ba01436ea9a560a66df8da05dd01f release = wf-0b7f5c5b9854`
+- `beforetwin source=db46e9218eb3b53550148843a0c3f433e5c113e4 pin-commit=16dd9f02092fc83ae07e8f6ab9cab1709bff3a00 release = wf-0b7f5c5b9854`
+- `main source=8fbc1601785cee70265da1eac4d99589fc6fb67c pin-commit=9a0482d3d0ff6b278aa686299909fd16e0a88780 release = wf-0b7f5c5b9854`
+- `twin source=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 pin-commit=cc6cb9a271bb5bbb4bbd2086e78fae10254a1763 release = wf-0b7f5c5b9854`
+
+The current first-round counters confirm the same scope distinction: ECMA262 prepares 41 paragraphs on both main and A, while A reports 112,823 entries (112,817 held) versus main's one entry. The flex-accounting distinction still prevents interpreting this as a count of extra descendant reflows. HTML5 prepares 60,867–60,868 paragraphs on both and rebreaks 60,868 across 13,903 contexts and 105,989 reported entries. Separate style medians main/A are ECMA262 4,284/4,380 us sequential and 4,642/4,901 parallel; HTML5 260,910/255,110 sequential and 177,251/174,014 parallel. Full cost includes style plus edit work: the unavoidable work is actual style invalidation and changed preparation/dependent layout, not every retained metadata publication. Neither the counters nor these timings prove a universal numeric floor. Main's same-run path supplies the observed comparison; retained effective inputs under Q140 remain unproved and unimplemented.

@@ -342,8 +342,8 @@ example apart from the renderer code that exposed it
   flex recovery. Option B remains parked. Adoption into research/m2-layout
   requires all correctness/falsification gates and the two-round same-host
   acceptance comparison against main and cf12c609. The
-  [six-cohort comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#q138-six-cohort-acceptance-at-db46e92)
-  fails ECMA262 root-font, HTML5 font-size and seven block cells. A is not merged.
+  [six-cohort comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#q138-six-cohort-acceptance-at-8ab7dc6)
+  fails ECMA262 root-font, HTML5 font-size and five block cells. A is not merged.
   Q138 A (called Q136 in the prior report) authorizes completing the remaining
   work and investigating the M2 root-font regression. The gate is twice main
   for word, sentence, colour, font-size and root-font, and block no worse than
@@ -360,8 +360,8 @@ example apart from the renderer code that exposed it
 - **HTML font edits still visit direct suffix siblings.** Q138 replaces
   dense suffix translation with captured old/current owner frames, explicit
   scratch validity and payload-relative natural offsets. Full correctness and
-  omission gates pass at db46e92, but its six-cohort HTML5 font-size medians are
-  1,426–1,437 us sequential and 2,065–2,089 parallel, exceeding twice concurrent
+  omission gates pass at db46e92, but the 8ab7dc6 six-cohort HTML5 font-size medians are
+  1,620–1,692 us sequential and 2,144–2,152 parallel, exceeding twice concurrent
   main in all four cells. Direct following siblings are moved and published
   separately even when their descendants are unchanged. The repeated-pair
   profile confirms those operations remain after dense translation is removed;
@@ -383,24 +383,25 @@ example apart from the renderer code that exposed it
   acceptance timings; see the [profile and floor](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#correctly-styled-ecma262-profile-membership-hypothesis-rejected).
   Root font invalidates its style consumers, but ECMA's fixed body size means it need not
   reprepare all text. Current Q138 removes repeated dense materialization and
-  source-index reconstruction. The db46e92 two-round full six-kind comparison
+  source-index reconstruction. The 8ab7dc6 two-round full six-kind comparison
   still fails ECMA262 root-font in both modes and rounds.
   Q140 asks whether to retain completed effective flow inputs so unused
   own-constraint changes can preserve interiors. That contract remains an
   unimplemented proposal pending the owner; equal outer dimensions alone are
   insufficient.
 
-- **M2 block edits still exceed the cf12 cost gate.** The db46e92 six-cohort
-  comparison fails seven of eight literal block cells. Ordinary owned-origin
+- **M2 block edits still exceed the cf12 cost gate.** The 8ab7dc6 six-cohort
+  comparison fails five of eight literal block cells. Ordinary owned-origin
   specialization does not separate from its immediate-before twin; its block
   speed hypothesis is rejected. The startup-separated profile still shows
   owner reads during edits, but sample loss in both the original and the
   lower-frequency, larger-buffer repeat prevents quantitative attribution. Source inspection
   found duplicate immutable owner resolution in `child_motion_travel`; the
   candidate reuses that owner with unchanged viewport and saturation behavior.
-  Its full gates and matched before/twin comparison are pending. If that does
-  not separate from controls, inspect equivalent native operations and payload
-  strides before attributing a compiler defect or choosing more retained state.
+  Its matched before/twin comparison improves HTML5 parallel block only;
+  sequential cells overlap or reverse and ECMA262 parallel is slower. Its full
+  correctness gates are pending. Inspect concrete remaining work and equivalent
+  native operations before attributing a compiler defect or choosing more retained state.
   No compiler cause or new block representation is established. Reopen on the
   current experiment's results; acceptance remains unchanged.
 
