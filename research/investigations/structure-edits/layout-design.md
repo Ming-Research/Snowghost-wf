@@ -3359,11 +3359,13 @@ prefix with a fresh build, and every result below was identical to it.
 | positioned, transfer and edit-cost fixtures, both chains | all required paths match | all required paths match |
 | Q139 matrix, 34 cases | all required paths match | `nested-context-reader` and `layout-stretch` splice instead of refusing; 32 cases unchanged |
 
-On apollo11 the only reader with an unproved basis outside html/body is
-the header link `a.mw-logo {display:flex; height:100%}` whose containing
-block is a flex item, plus absolutely positioned inputs that the summary
-excludes. One such reader therefore refuses every block edit on the page
-under the whole-subtree inventory, before the grid owners that
+In the capture's computed styles (the diagnosis artifact's
+`apollo11-styles.tsv`), the only in-flow percentage height outside html
+and body is the header's flex-container link, `a.mw-logo` with
+`height:100%`; the other percentage heights belong to absolutely
+positioned inputs, which the summary excludes. One reader whose basis is
+not proved therefore refuses every block edit on the page under the
+whole-subtree inventory, before the grid owners that
 [the diagnosis](https://github.com/Ming-Research/Snowghost-wf/blob/2b122a48d5a1798cbe58232db44df56a4072ea40/research/investigations/structure-edits/apollo11-blocks.md#control-results-and-causal-limit)
 expected Q139 to expose. The direct-reader variant reaches exactly those
 grid owners. It relies on the transfer certificate's unchanged space for
