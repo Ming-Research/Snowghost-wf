@@ -1550,10 +1550,15 @@ The continuation profiles HTML5 sentence edits before changing the readers.
 The controls are the table's patched frontier (3393042 plus the retained
 frontier-span patch) and range head 58b16da, with the same wf-0b7f5c5b9854,
 LLVM 22, fonts, page, edit script and hosted runner. Both sequential and
-four-worker drivers receive the identical script. Two small native samples
+four-worker native drivers receive the identical script; instruction attribution
+uses the sequential drivers. Two small native samples
 and an update-only instruction sample precede the full-script profile.
-Collection starts disabled and toggles only inside the layout update entry;
-startup, style preparation and output are excluded from instruction attribution.
+Collection remains enabled; counters are zeroed before each layout-update entry
+and dumped after each return. Only those function-return parts are selected;
+the termination dump is discarded. Startup, style preparation and output are
+excluded. Disabling instruction collection alone does not stop call counts,
+and can leave uncollected call edges uncleared at zero-before. Parallel native
+times are retained, but instruction attribution uses one thread throughout.
 Native edit times remain separate from profiled times.
 
 The added diagnostic counters use callgrind's call edges: calls entering
@@ -1562,7 +1567,16 @@ recursive directory reads inside `slot_view`. They count compiled calls under
 the update entry, without a shared counter write changing the dependency graph
 of immutable geometry readers. Inlining can hide calls, so symbol visibility
 and nonzero collection are checked before interpreting a missing edge as zero.
-The raw call graph and per-function self/inclusive instructions are retained.
+Direct-recursion suppression is disabled. Each update's raw call graph and
+per-function self/inclusive instructions are retained; recursion-inclusive
+costs are not summed as disjoint costs. The hosted decoder checks an independent
+hand-counted graph and its missing-edge variants, checks that self instructions
+sum to the profile total, and requires one nonempty profile part per edit.
+A tiny hosted native probe additionally requires the zero/dump boundary to
+exclude 300 startup, inter-update and shutdown reader calls while retaining
+exactly two and five reader calls inside its two updates.
+The [profiler's collection and dump controls](https://valgrind.org/docs/manual/cl-manual.html#cl-manual.limits)
+define the measurement boundary.
 
 The hypothesis predicts that inherited readers account for the majority of
 the additional update instructions over the patched frontier. Reject it if

@@ -14,7 +14,7 @@ setup = [line for line in lines if line.startswith('S ')]
 edits = [line for line in lines if line.startswith(('T ', 'D ', 'C ', 'K '))]
 assert len(edits) >= 2, lines[:5]
 sample = root / 'sample.edits'
-sample.write_text(''.join(setup + edits[:2]))
+sample.write_text(''.join(setup + edits[34:36]))
 env = dict(os.environ, WF_WORKERS='4')
 
 
@@ -27,8 +27,9 @@ def run(name, mode, script, label, profiled=False):
     out = root / f'{name}-{mode}-{label}'
     args = command(name, mode, script)
     if profiled:
-        args = ['valgrind', '--tool=callgrind', '--collect-atstart=no',
-                '--toggle-collect=wf_layout.update', '--separate-threads=no',
+        args = ['valgrind', '--tool=callgrind', '--separate-threads=no',
+                '--skip-direct-rec=no', '--zero-before=wf_layout.update',
+                '--dump-after=wf_layout.update',
                 f'--callgrind-out-file={out}.callgrind'] + args
     begin = time.monotonic()
     with Path(f'{out}.raw').open('wb') as stdout, Path(f'{out}.err').open('wb') as stderr:
@@ -41,19 +42,24 @@ def run(name, mode, script, label, profiled=False):
     Path(f'{out}.time.json').write_text(json.dumps(data) + '\n')
     print(out, data, flush=True)
     if profiled:
-        path = Path(f'{out}.callgrind')
-        for inclusive in ('yes', 'no'):
-            with Path(f'{out}.inclusive-{inclusive}.txt').open('wb') as stdout:
-                subprocess.run(['callgrind_annotate', f'--inclusive={inclusive}',
-                                '--threshold=100', str(path)], stdout=stdout, check=True)
-        counters = parse_counts(path)
-        Path(f'{out}.counts.json').write_text(json.dumps(counters, indent=2) + '\n')
-        assert counters['summary'] > 0, 'collection did not include layout.update'
-        if name == 'ranges':
-            assert counters['inherited_calls'] > 0, 'inherited reader calls were not visible'
-        with gzip.open(str(path) + '.gz', 'wb') as packed:
-            packed.write(path.read_bytes())
-        path.unlink()
+        records = []
+        for path in sorted(root.glob(out.name + '.callgrind*')):
+            selected = 'Trigger: --dump-after=' in path.read_text()
+            if selected:
+                counters = parse_counts(path)
+                assert counters['summary'] > 0, path
+                assert sum(value for _, value in counters['self_instructions']) == counters['summary'], path
+                records.append(dict(part=path.name, **counters))
+                for inclusive in ('yes', 'no'):
+                    with Path(f'{path}.inclusive-{inclusive}.txt').open('wb') as stdout:
+                        subprocess.run(['callgrind_annotate', f'--inclusive={inclusive}',
+                                        '--threshold=100', str(path)], stdout=stdout, check=True)
+            with gzip.open(str(path) + '.gz', 'wb') as packed:
+                packed.write(path.read_bytes())
+            path.unlink()
+        assert len(records) == len(costs), ('expected one update dump per edit', out, len(records), len(costs))
+        assert sum(row['inherited_calls'] for row in records) > 0 if name == 'ranges' else True
+        Path(f'{out}.counts.json').write_text(json.dumps(records, indent=2) + '\n')
     return elapsed
 
 
@@ -106,10 +112,73 @@ def parse_counts(path):
                 edges=relevant, self_instructions=sorted(selfs.items(), key=lambda x: -x[1]))
 
 
+# Exercise the counter decoder in CI against independent, hand-counted call edges.
+probe = root / 'counter-probe.callgrind'
+probe.write_text("""positions: line
+events: Ir
+summary: 17
+fn=(1) wf_layout.range_inherited
+1 7
+cfn=(2) wf_layout.slot_view
+calls=3 1
+1 10
+fn=(2)
+1 10
+cfn=(2)
+calls=2 1
+1 4
+""")
+expected = parse_counts(probe)
+assert expected['inherited_node_reads'] == 3, expected
+assert expected['directory_recursions'] == 2, expected
+assert sum(value for _, value in expected['self_instructions']) == 17, expected
+for source_call, missing in [('calls=3 1', 'inherited_node_reads'),
+                             ('calls=2 1', 'directory_recursions')]:
+    probe.write_text(probe.read_text().replace(source_call, 'calls=0 1'))
+    assert parse_counts(probe)[missing] == 0, missing
+probe.unlink()
+print('counter decoder detects known and omitted call edges', flush=True)
+
+# Validate the profiler boundary itself with known startup/inter-update/shutdown
+# calls into the same readers, not only the decoder's input grammar.
+probe_c = root / 'phase-probe.c'
+probe_c.write_text(r"""
+__attribute__((noinline)) int slot_view(int depth) {
+  return depth ? slot_view(depth - 1) + 1 : 1;
+}
+__attribute__((noinline)) int range_inherited(void) { return slot_view(2); }
+__attribute__((noinline)) int profile_update(int count) {
+  int sum = 0;
+  for (int i = 0; i < count; ++i) sum += range_inherited();
+  return sum;
+}
+int main(void) {
+  volatile int sum = 0;
+  for (int i = 0; i < 100; ++i) sum += range_inherited();
+  sum += profile_update(2);
+  for (int i = 0; i < 100; ++i) sum += range_inherited();
+  sum += profile_update(5);
+  for (int i = 0; i < 100; ++i) sum += range_inherited();
+  return sum == 921 ? 0 : 1;
+}
+""")
+probe_exe = root / 'phase-probe'
+subprocess.run(['cc', '-O0', '-g', str(probe_c), '-o', str(probe_exe)], check=True)
+subprocess.run(['valgrind', '--tool=callgrind', '--skip-direct-rec=no',
+                '--zero-before=profile_update', '--dump-after=profile_update',
+                f'--callgrind-out-file={root}/phase-probe.callgrind', str(probe_exe)], check=True)
+phase_counts = []
+for path in root.glob('phase-probe.callgrind*'):
+    if 'Trigger: --dump-after=' in path.read_text():
+        row = parse_counts(path)
+        phase_counts.append((row['inherited_calls'], row['inherited_node_reads'], row['directory_recursions']))
+assert sorted(phase_counts) == [(2, 2, 4), (5, 5, 10)], phase_counts
+print('profiler excludes 300 reader calls outside the two selected updates:', phase_counts, flush=True)
+
 # Native samples establish the workload and observed spread before profiling it.
 for name in ('frontier', 'ranges'):
     symbols = subprocess.check_output(['nm', '-an', command(name, 'seq', sample)[0]], text=True)
-    assert 'wf_layout.update' in symbols, 'missing collection boundary'
+    assert any(line.split()[-1:] == ['wf_layout.update'] for line in symbols.splitlines()), 'missing exact collection boundary'
     (root / f'{name}.symbols.txt').write_text('\n'.join(
         line for line in symbols.splitlines() if any(x in line for x in ('layout.update', 'range_inherited', 'slot_view'))))
     for mode in ('seq', 'par'):
@@ -121,4 +190,4 @@ assert max(pilot) < 600, ('profile sample too slow for full batch', pilot)
 for name in ('frontier', 'ranges'):
     for mode in ('seq', 'par'):
         run(name, mode, source, 'native')
-        run(name, mode, source, 'profile', True)
+    run(name, 'seq', source, 'profile', True)
