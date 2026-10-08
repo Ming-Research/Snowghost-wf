@@ -1,3 +1,4 @@
+alias changed_boxes_only = pkg::style::changed_boxes_only;
 alias atom_find = pkg::base::atom::atom_find;
 alias AtomTable = pkg::base::atom::AtomTable;
 alias Document = pkg::dom::Document;
@@ -13,9 +14,24 @@ struct SpliceOwner {
   block: u32;
 }
 
+struct SpliceFrontier {
+  doc "The certified following sibling's private top-margin replacement at its old origin; an absent slot denotes an unchanged retained frontier.";
+  block: u32;
+  slot: u32;
+  output: SequenceOutput;
+  margin_top: i32;
+}
+
+fn empty_splice_frontier() -> made: SpliceFrontier pure {
+  doc "No retained sibling transfer needs replacement.";
+  let output = empty_output();
+  return SpliceFrontier(block: no_index, slot: no_index, output: output, margin_top: 0_i32);
+}
+
 struct SpliceInput {
   doc "Copied owner inputs and stable seam identities; no retained references cross private construction.";
   owner: u32;
+  frontier: SpliceFrontier;
   before: u32;
   removed: u32;
   allocated: u32;
@@ -314,7 +330,8 @@ fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u3
   let blocks = cvt.wrap::<u64, u32>(context^.blocks.inner.len);
   let paragraphs = cvt.wrap::<u64, u32>(context^.paragraphs.inner.len);
   let children = cvt.wrap::<u64, u32>(context^.children.inner.len);
-  let input = SpliceInput(owner: owner, before: no_index, removed: no_index, allocated: context^.entries.allocated, style: root_style, width: frame.flow_width, left: 0_i32, local_left: wide_left, first_edge: wide_top, basis_height: frame.definite, blocks: blocks, paragraphs: paragraphs, children: children);
+  let frontier = empty_splice_frontier();
+  let input = SpliceInput(owner: owner, frontier: frontier, before: no_index, removed: no_index, allocated: context^.entries.allocated, style: root_style, width: frame.flow_width, left: 0_i32, local_left: wide_left, first_edge: wide_top, basis_height: frame.definite, blocks: blocks, paragraphs: paragraphs, children: children);
   let total_field = False();
   let total = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
   if owner != no_index {
@@ -413,6 +430,137 @@ fn build_splice(document: &Document, styles: &Styles, atoms: &AtomTable, node: N
   return Ok<Context, LayoutError>(value: move fresh);
 }
 
+fn splice_sibling_ready(context: &Context, steps: &[ContextStep], depth: u64, owner: u32, sibling: u32, styles: &Styles, visits: &BoundaryVisits) -> ready: Bool reads(context), reads(steps), reads(styles), writes(visits) {
+  doc "Certifies a retained direct ordinary block whose only changed layout input is its top margin. The boxes-only flag excludes text consumers, while the current display, float, overflow and column state must still construct a neutral plain flow block; horizontal geometry, frames, relative displacement and height constraints must retain their old inputs. Its replacement joins the private seam plan before validation and is published with the direct suffix moves.";
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      if context^.slot == route.parent {
+        if context^.children.inner[child].slot == route.slot {
+          let next = depth +sat 1_u64;
+          let found = splice_sibling_ready(context: &context^.children.inner[child], steps: steps, depth: next, owner: owner, sibling: sibling, styles: styles, visits: visits);
+          return found;
+        }
+      }
+    }
+    return False();
+  }
+  let at = cvt::<u32, u64>(sibling);
+  if at < context^.blocks.inner.len {
+  } else {
+    return False();
+  }
+  set visits^.blocks = visits^.blocks +sat 1_u64;
+  if context^.blocks.inner[at].parent != owner {
+    return False();
+  }
+  let previous = context^.blocks.inner[at].output;
+  let boundary = context^.blocks.inner[at].boundary;
+  if previous.valid {
+  } else {
+    return False();
+  }
+  if boundary.ordinary {
+  } else {
+    return False();
+  }
+  let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
+  let width_kept = snapshot_keeps_width(block: snapshot, styles: styles);
+  if width_kept {
+  } else {
+    return False();
+  }
+  let lined = True();
+  let grows = snapshot_grows(block: snapshot, styles: styles, delta: 0_i32, basis_height: previous.basis_height, lines: lined);
+  if grows {
+  } else {
+    return False();
+  }
+  let border = border_edges(styles: styles, style: snapshot.style);
+  let padding = padding_edges(styles: styles, style: snapshot.style, basis: snapshot.avail_width);
+  let margins = margin_edges(styles: styles, style: snapshot.style, basis: snapshot.avail_width);
+  let top = border.top +sat padding.top;
+  let bottom = border.bottom +sat padding.bottom;
+  if top != previous.top_frame {
+    return False();
+  }
+  if bottom != previous.bottom_frame {
+    return False();
+  }
+  if margins.bottom != previous.margin_bottom {
+    return False();
+  }
+  let group = box_of(styles: styles, style: snapshot.style);
+  if group.display != display_block {
+    return False();
+  }
+  if group.float != float_none {
+    return False();
+  }
+  let independent = establishes(group: group);
+  if independent {
+    return False();
+  }
+  let columned = multicol(styles: styles, style: snapshot.style);
+  if columned {
+    return False();
+  }
+  if context^.blocks.inner[at].neutral {
+  } else {
+    return False();
+  }
+  if group.position != position_static {
+    return False();
+  }
+  if group.clear != clear_none {
+    return False();
+  }
+  return True();
+}
+
+fn splice_sibling_frontier(context: &Context, steps: &[ContextStep], depth: u64, sibling: u32, styles: &Styles, visits: &BoundaryVisits) -> made: SpliceFrontier reads(context), reads(steps), reads(styles), writes(visits) {
+  doc "Copies the certified sibling's new top-margin transfer without changing retained summaries or geometry. Its interior and measured geometry remain unchanged at this stage.";
+  if depth < steps^.len {
+    let route = steps^[depth];
+    let child = cvt::<u32, u64>(route.child);
+    if child < context^.children.inner.len {
+      let next = depth +sat 1_u64;
+      let found = splice_sibling_frontier(context: &context^.children.inner[child], steps: steps, depth: next, sibling: sibling, styles: styles, visits: visits);
+      return found;
+    }
+  } else {
+    let at = cvt::<u32, u64>(sibling);
+    if at < context^.blocks.inner.len {
+      set visits^.blocks = visits^.blocks +sat 1_u64;
+      let measured = context^.blocks.inner[at].output;
+      let style = context^.blocks.inner[at].style;
+      let margins = margin_edges(styles: styles, style: style, basis: measured.available);
+      set measured.margin_top = margins.top;
+      let total_field = False();
+      let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: context^.blocks.inner[at].entries.root, own: total_field, visits: visits);
+      if measured.natural != 0_i64 {
+        let unsupported = empty_splice_frontier();
+        return unsupported;
+      }
+      if measured.top_frame == 0_i32 {
+        let positive = inside.leading_positive != 0_i32;
+        let negative = inside.leading_negative != 0_i32;
+        let collapsing = bor(positive, negative);
+        if collapsing {
+          let unsupported = empty_splice_frontier();
+          return unsupported;
+        }
+      }
+      let output = lift_block_output(inside: &inside, measured: measured);
+      let slot = context^.blocks.inner[at].entry_slot;
+      return SpliceFrontier(block: sibling, slot: slot, output: output, margin_top: margins.top);
+    }
+  }
+  let empty = empty_splice_frontier();
+  return empty;
+}
+
 fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[u32], parent: NodeId, before: Option<NodeId>, inserted: Option<NodeId>, removed: Option<NodeId>, references_stable: Bool, fonts: &FontSet, picks: &FontPicks) -> result: Result<u32, LayoutError> reads(document), reads(styles), reads(traversal), reads(atoms), reads(changed), reads(fonts), reads(picks), writes(layout) {
   doc "Attempts a neutral complete-block seam transaction. Zero means published locally; codes 1 owner/route, 2 container, 3 inline seam, 4 generated references, 5 counters/quotes, 6 retained style frontier, 7 boundary dependency, 8 storage ceiling and 9 float suffix dependency refuse before retained geometry or routing changes. Reason 10 completes a published splice through reference layout after a flex output fails its outer certificate; the caller reconstructs from that complete current state. Private construction errors leave retained state untouched.";
   if references_stable {
@@ -451,6 +599,10 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
   if same_kind {
     return Ok<u32, LayoutError>(value: 1_u32);
   }
+  let steps = propagate path_steps(layout: layout, serial: owner.serial);
+  let depth = steps.inner.len;
+  let visits = no_boundary_visits();
+  let frontier_block = no_index;
   let changes = changed^.len;
   for (k in 0_u64..changes) {
     let bare = iand(changed^[k], 2147483647_u32);
@@ -470,14 +622,28 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
       }
       if within {
       } else {
-        return Ok<u32, LayoutError>(value: 6_u32);
+        let boxes = iand(changed^[k], changed_boxes_only);
+        if boxes == 0_u32 {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        let sibling = splice_owner(layout: layout, node: node);
+        if sibling.serial != owner.serial {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        let sibling_ready = splice_sibling_ready(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: owner.block, sibling: sibling.block, styles: styles, visits: &visits);
+        if sibling_ready {
+        } else {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        if frontier_block != no_index {
+          return Ok<u32, LayoutError>(value: 6_u32);
+        }
+        set frontier_block = sibling.block;
       }
     } else {
       return Ok<u32, LayoutError>(value: 1_u32);
     }
   }
-  let steps = propagate path_steps(layout: layout, serial: owner.serial);
-  let depth = steps.inner.len;
   let ending = match before {
     Some(..) => {
       give False();
@@ -488,7 +654,6 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
   }
   let before_item = splice_source(layout: layout, node: before, serial: owner.serial);
   let removed_item = splice_source(layout: layout, node: removed, serial: owner.serial);
-  let visits = no_boundary_visits();
   let input = match splice_inputs(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, owner: owner.block, before: before_item, removed: removed_item, ending: ending, removing: removing, styles: styles, visits: &visits) {
     Ok(value: found) => {
       give found;
@@ -496,6 +661,16 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
     Err(error: reason) => {
       return Ok<u32, LayoutError>(value: reason);
     }
+  }
+  if frontier_block != no_index {
+    let frontier = splice_sibling_frontier(context: &layout^.root, steps: &steps.inner[0_u64..depth], depth: 0_u64, sibling: frontier_block, styles: styles, visits: &visits);
+    if frontier.slot != input.before {
+      return Ok<u32, LayoutError>(value: 6_u32);
+    }
+    if frontier.slot == no_index {
+      return Ok<u32, LayoutError>(value: 6_u32);
+    }
+    set input.frontier = frontier;
   }
   let private_style = anonymous_of(style: input.style);
   let skipped_nodes = box_slots_new::<u32>(capacity: 0_u64);

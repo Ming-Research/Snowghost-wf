@@ -63,6 +63,16 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let old = boundary_output(sequence: sequence, slot: sequence^.root, own: total_field, visits: visits);
   let prefix = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: visits);
   let suffix = range_output(sequence: sequence, root: sequence^.root, from: after, until: root.total_count, visits: visits);
+  if input.frontier.slot != no_index {
+    let frontier_rank = boundary_rank(sequence: sequence, slot: input.frontier.slot, visits: visits);
+    if frontier_rank != after {
+      return Err<SplicePlan, u32>(error: 6_u32);
+    }
+    let beyond = after +sat 1_u64;
+    let later = range_output(sequence: sequence, root: sequence^.root, from: beyond, until: root.total_count, visits: visits);
+    let replacement = join_output(left: &input.frontier.output, right: &later);
+    set suffix = replacement;
+  }
   if prefix.fragment_last == 2_u8 {
     if suffix.fragment_first == 1_u8 {
     } else {
@@ -109,7 +119,7 @@ fn splice_sequence_plan(context: &Context, sequence: &EntrySequence, input: Spli
   let moves = box_array_filled::<SpliceMove>(count: count, value: empty_result);
   for (at in 0_u64..count) {
     let current_rank = after +sat at;
-    let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined, expected_delta: wide_delta);
+    let movement = splice_move(sequence: sequence, rank: current_rank, after: after, joined: joined, expected_delta: wide_delta, frontier: input.frontier);
     set moves.inner[at] = movement;
   }
   let (movement_visits, movements_supported, moved_output) = splice_moves_total(moves: &moves.inner[0_u64..count]);
@@ -390,6 +400,12 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
   publish_splice_payloads(context: context, fresh: fresh);
   let retired_count = retired.inner.len;
   let (lost_contexts, lost_paragraphs) = retire_splice_payloads(context: context, items: &retired.inner[0_u64..retired_count], paths: paths);
+  let frontier_at = cvt::<u32, u64>(input.frontier.block);
+  if frontier_at < context^.blocks.inner.len {
+    set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
+    set context^.blocks.inner[frontier_at].output.margin_top = input.frontier.margin_top;
+    set context^.blocks.inner[frontier_at].boundary = input.frontier.output;
+  }
   let moves = plan^.moves.inner.len;
   for (at in 0_u64..moves) {
     let movement = plan^.moves.inner[at];
@@ -431,7 +447,7 @@ struct SpliceMove {
   supported: Bool;
 }
 
-fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput, expected_delta: i64) -> made: SpliceMove reads(sequence) {
+fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: SequenceOutput, expected_delta: i64, frontier: SpliceFrontier) -> made: SpliceMove reads(sequence) {
   doc "Computes one direct sibling's new entering edge independently from cached prefixes. Every placed flow or float entry must share the final delta, preserving moved exclusions; positioned and lineless entries do not constrain that equality. Duplicated logarithmic metadata reads avoid ordering sibling computations.";
   let visits = no_boundary_visits();
   let slot = direct_slot(sequence: sequence, rank: rank, visits: &visits);
@@ -464,10 +480,22 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
     set supported = text;
   }
   let between = range_output(sequence: sequence, root: sequence^.root, from: after, until: rank, visits: &visits);
+  if frontier.slot != no_index {
+    if rank > after {
+      let beyond = after +sat 1_u64;
+      let later = range_output(sequence: sequence, root: sequence^.root, from: beyond, until: rank, visits: &visits);
+      let replacement = join_output(left: &frontier.output, right: &later);
+      set between = replacement;
+    }
+  }
+  let proposed_own = own;
+  if slot == frontier.slot {
+    set proposed_own = frontier.output;
+  }
   let previous = range_output(sequence: sequence, root: sequence^.root, from: 0_u64, until: rank, visits: &visits);
   let preceding = join_output(left: &joined, right: &between);
   let old_y = splice_edge(prefix: previous, own: own);
-  let new_y = splice_edge(prefix: preceding, own: own);
+  let new_y = splice_edge(prefix: preceding, own: proposed_own);
   let move_y = new_y -sat old_y;
   let uniform_required = match item {
     Out(..) => {
@@ -495,7 +523,7 @@ fn splice_move(sequence: &EntrySequence, rank: u64, after: u64, joined: Sequence
     set supported = band(supported, uniform);
   }
   let translation = BoundaryMove(item: item, delta: move_y);
-  let output = shift_motion(output: own, delta: move_y);
+  let output = shift_motion(output: proposed_own, delta: move_y);
   return SpliceMove(translation: translation, slot: slot, output: output, visits: visits, supported: supported);
 }
 
