@@ -1703,3 +1703,63 @@ rejects that explanation and must be addressed before treating non-stationary
 restacking as the root-font remedy. Equal final dumps do not establish that
 dirty work can be skipped. This diagnostic changes no admission or publication
 rule and makes no new latency claim.
+
+
+### Root-font refusal result and contract decision
+
+[Hosted diagnostic 37845453577](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37845453577)
+passed at ddb4e6b1ce5d397b9a3e8fe40d20fd0a2c027791 with production
+wf-f949e676acfa, Clang 18.1.3, on Ubuntu 24.04 / Linux 6.17.0-1022-azure,
+an AMD EPYC 9V45 host exposing four CPUs. This sequential correctness sample
+uses the first ECMA262 12px edit and undo, the page's ecmarkup/print sheets,
+and the ordinary full-layout comparator. It is not a latency comparison.
+The artifact retains source/pin, input and binary hashes, raw records and the
+exact two-edit script. The complete process took 7.05 seconds; no larger
+root-font diagnostic batch was needed to identify this guard.
+
+| Edit | Prepared | Frontier refused leaves | Reason bits | Boundary entries | Replay-held entries |
+|---|---:|---:|---:|---:|---:|
+| 12px | 41 | 41 | 2: no retained lines | 41 | 112,817 |
+| Undo | 41 | 41 | 2: no retained lines | 41 | 112,817 |
+
+All 41 refused leaves fail the lineless admission guard before speculative
+breaking. The reported 41 breaks belong to subsequent full replay; they do
+not show changed extents in the frontier. Neither changed-height bit 512 nor
+changed-last-baseline bit 1024 appears. The observed reason therefore rejects
+the earlier inference that changed extents caused this attempt's refusal; it
+does not establish what fresh outputs would do if the guard were broadened.
+Both incremental results match full layout and the base dump, with hash
+`eb35ffcdb2ac7a51` and 19,024,863 bytes. Equal dumps still do not justify
+skipping marked preparation, breaking or publication. The capture checker
+also rejected missing refusal/reason fields and a duplicate diagnostic row.
+
+The non-stationary implementation step is paused at the following choice;
+the reader comparison and its validation continue independently. The existing
+stationary contract explicitly excludes lineless paragraphs and line-presence
+transitions, so extending it requires a contract and its own falsifiers.
+No non-stationary admission or publication behavior has been changed.
+
+---
+
+**Should root-font work first handle retained lineless paragraphs?**
+
+**Background.** The measured refusal is 41 lineless leaves on both edits,
+not a post-break extent change. Full replay still holds 112,817 entries.
+The original restack rationale does not identify this guard's replacement.
+
+**Options.** A — First specify and implement bounded processing of retained
+lineless paragraphs, preserving preparation, breaking and publication, with
+explicit refusal for unsupported line/topology transitions. Recommended:
+it addresses the measured guard while preserving independent paragraph work;
+it requires new empty-source and line-transition falsifiers. B — Continue
+with general non-stationary restacking and extend that contract to lineless
+paragraphs too. This keeps the broader direction but adds convergence and
+range-displacement machinery without evidence that this edit needs it.
+Both options must state the true placement/publication dependencies and
+retain the existing serial owner writes pending the Whitefoot proof gap.
+
+**Confidence 4/5.** The observed counter settles the current guard. It does
+not yet establish the fresh lineless outputs or their publication needs.
+The owner's choice is pending; neither option is an approved replacement.
+
+---

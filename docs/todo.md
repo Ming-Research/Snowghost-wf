@@ -421,17 +421,19 @@ example apart from the renderer code that exposed it
   dirty-paragraph processing before range displacement. The work branch now retains
   completed effective inputs and a sparse paragraph frontier, and its oracles and
   frontier falsifiers pass. ECMA262 root-font does not separate from its before
-  twins: its 41 marked paragraphs are prepared and broken, then the stationary
-  transaction is refused and the 112,817 entries replay (the refusal reason is
-  not recorded; changed root-relative line extents are the expected cause).
-  The stationary frontier therefore does not reach this edit; it makes
-  ECMA262 font-size more than twice as fast. A bounded root interval per context fixed
-  a measured HTML5 root-font regression. Remaining root-font work needs a
-  bounded non-stationary restack of the marked paragraphs. The owner selected
-  that direction after the range-reader diagnosis and repair: first record the
-  actual refusal, then specify convergence, displacement, dependencies and
-  refusals before implementation. Changed extents remain a hypothesis until
-  the counter observes them.
+  twins. The [actual refusal diagnostic](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#root-font-refusal-result-and-contract-decision)
+  now records 41 lineless admission refusals on both the first 12px edit and
+  undo, before any speculative break; the 41 reported breaks happen in the
+  following 112,817-entry replay. Both results match full layout. This rejects
+  changed extents as the observed refusal cause, without proving that fresh
+  lineless outputs can be skipped. The stationary frontier still improves
+  ECMA262 font-size, and its bounded root interval fixed a measured HTML5
+  root-font regression. The owner selected non-stationary restacking after
+  the range-reader repair, starting with actual refusal evidence. That evidence
+  now leaves a contract choice awaiting the owner: first add bounded retained
+  lineless processing (recommended), or include it in general non-stationary
+  restacking. Both need explicit line/source-topology refusal and publication
+  coverage; neither is implemented or approved by this diagnostic.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and
