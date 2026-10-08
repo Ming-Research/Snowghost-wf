@@ -3110,7 +3110,7 @@ remains an additional obligation; this small sample cannot establish it.
 
 The draft provenance implementation separates the parent's incoming edge from
 the child's last certified input. Geometry reuse first compared both
-exactly; the [record reuse rule](#paired-edit-cost-and-record-reuse-2026-10-08)
+exactly; the [record reuse rule](#paired-edit-cost-and-record-reuse)
 below narrows that comparison. Ordinary block records are resolved top down; live-source checks
 include the stable context, owner, consumer style and nonretired entry slot.
 Their cached summaries are published bottom up through the existing owner
@@ -3377,9 +3377,9 @@ admitted cases. That reverses a stated premise, so the choice is the
 owner's; the candidate keeps the argument's whole-subtree inventory and
 the flex fixture's expectations stay unchanged and failing until then.
 
-### Paired edit cost and record reuse, 2026-10-08
+### Paired edit cost and record reuse
 
-The first all-kind hosted comparison at `4477e5e` (run 37782276771, one
+On 2026-10-08 the first all-kind hosted comparison at `4477e5e` (run 37782276771, one
 forward/inverse pair per kind, two interleaved rounds, ubuntu-24.04
 runners) measured the candidate against M2 `95ea4a1` with the twin as a
 noise control. Median paired ratios outside the twin's range: ecma262
