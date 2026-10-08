@@ -35,7 +35,7 @@ CASES = {
     'private-chain': ('section{height:200px}div{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'private-context-chain': ('section{height:200px}div{display:flow-root;height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'partial-restyle': ('html,body{height:auto}section{height:200px}.holder{height:100px}', '<section><div class="holder">' + BASE + '</div></section><aside>Outside.</aside>', 0),
-    'equal-state': ('section{height:200px}.holder{height:50%}p{height:50px}.remainder{height:100px}', '<section><div class="holder">' + BASE + '</div><aside class="remainder">Remainder.</aside></section><aside>Outside.</aside>', 0),
+    'equal-state': ('section{height:200px}.holder{height:50%;min-height:0%}p{height:50px}.remainder{height:100px}', '<section><div class="holder">' + BASE + '</div><aside class="remainder">Remainder.</aside></section><aside>Outside.</aside>', 0),
     'quirks': ('', '<section>' + BASE + '</section><aside>Outside.</aside>', 7),
     'layout-stretch': ('.flex{display:flex;align-items:stretch}.flex>section,.flex>aside{width:300px}.reader{height:50%}', '<div class="flex"><section>' + BASE + '</section><aside><div class="reader">Stretch.</div></aside></div>', 0),
     'fixed-floats': ('body{margin:0}.fixed{height:200px}.early,.later{float:left;width:20px;height:10px}.spacer{height:40px}p{height:20px}', '<div class="fixed"><div class="early"></div><div class="spacer"></div><section>' + BASE + '</section><div class="later"></div><p>Inside tail.</p></div><p>Outside tail.</p>', 0),

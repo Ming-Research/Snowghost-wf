@@ -3632,3 +3632,6 @@ The direct-scope mutation run exposed a checking gap: `omit-private-publication`
 
 
 The repaired definiteness-refresh mutation compiled but survived when it omitted only the pre-pass writer: reference publication legitimately renewed the same block record later. Like the existing width-refresh omission, it now omits the definite-to-auto renewal at both remaining block-record writers. The fixture and identity requirement are unchanged. The fault under test is failure to renew the retained record, not omission of one redundant write that another writer repairs; compilation or an unrelated refusal still cannot count as detection.
+
+
+The equal-number definiteness fixture now also gives the same holder a zero-percent minimum. Its initial/final rectangles and required splice/refusal paths stay unchanged, but two percentage reads distinguish a fresh indefinite inventory (two unproved readers) from a stale definite record rejected by the currentness check (one additional blocker). With only one read those aggregate counts coincide, so even omitting both writers can be masked without proving renewal correct. This adds a real percentage property to the existing state-transition case; it changes neither the detector nor renderer behavior and keeps the unmutated negative control mandatory.
