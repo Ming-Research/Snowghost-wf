@@ -46,7 +46,7 @@ spread identifies the regression interval, not yet its cause. Inspect its
 per-edit counters and profile the responsible path before attributing cost.
 Reject the hypothesis that retained metadata alone explains the regression if
 its work does not rise at that interval or a same-source removal does not
-improve the measured root-font edit. Root font still restyles the document;
+improve the measured root-font edit. Root font still invalidates its actual style consumers;
 paragraph preparation, changed inherited metrics and actual reflow are not
 assumed removable. Compare that floor with main's path explicitly.
 
@@ -81,7 +81,7 @@ sets `body { font-size:18px }` and
 `8bef2688107197ac28abe81b62a61100904cec548e223d03a10ac7ea7b6b2fc7`, matching
 `research/investigations/concurrency/run.sh`'s pinned input.
 
-Source inference, pending per-edit counters: a global root-font restyle does
+Source inference, pending per-edit counters: a root-font invalidation does
 not imply that every paragraph's computed font or used line width changes.
 The fixed body size can retain text preparation, while a rem-valued container
 constraint changes; a changed constraint that does not change its used width
@@ -89,7 +89,12 @@ need not rebreak that container's unchanged lines. This is a dependency claim,
 not a page-specific admission rule or a measurement of how many consumers the
 current scripts change.
 
-Separate style time remains the global restyle floor. The measured edit time
+The existing [style decision](../../../design/pipeline/style.md) queues actual
+root-font readers and inherited changes, then may rebuild without matching when
+readers or visited elements exceed a sixty-fourth of the document. A root-font
+edit therefore does not unconditionally recompute every style. These timing
+records do not count visited style elements, so they establish separate style
+cost, not which threshold path each edit took or a global restyle floor. The measured edit time
 includes marking actual changed consumers, font picks, preparing or rescaling
 text whose inputs changed, rebreaking changed line inputs, dependent placement,
 and publication of changed geometry and summaries. Compare main and every M2
@@ -214,7 +219,7 @@ Upper medians in microseconds, round 1 / round 2. Layout subtracts each edit's m
 
 The ordinary runs confirm the first major interval at step 2 to step 3a: ECMA262 grows from 31–33 ms to 2.81 s sequential and 70–71 ms to 3.89–3.91 s parallel; HTML5 grows from 658–659 ms to 5.12–5.13 s sequential and 410–414 ms to 5.91–5.94 s parallel. Shared event materialization and revised publication recover most of this by 2d706ba, but ECMA262 remains above twice main there and at cf12c609/A/repair. The exact-route repair leaves ECMA262 unchanged in scale. HTML5 marking falls from A's 39.9–41.9 ms to 36.5–38.6 ms; that local reduction does not remove the broader whole-context costs or establish acceptance for the current implementation. The independent cf12 twin quantifies control spread without authorizing a relaxed threshold.
 
-The unavoidable work is dependency work, not a measured time lower bound. ECMA262 globally restyles in about 4.1–5.1 ms in these runs (outside edit time) and prepares 41 paragraphs; preparation and any changed layout inputs require handling, but their isolated minimum cost was not measured. Main's 26.9–28.0 ms sequential and 64.7–65.0 ms parallel edit times are comparison-path costs, not proof that every operation on that path is necessary. Its unused-constraint handling may itself do avoidable work.
+The unavoidable work is dependency work, not a measured time lower bound. ECMA262 reports style time of about 4.1–5.1 ms in these runs (outside edit time) and prepares 41 paragraphs; preparation and any changed layout inputs require handling, but their isolated minimum cost was not measured. Main's 26.9–28.0 ms sequential and 64.7–65.0 ms parallel edit times are comparison-path costs, not proof that every operation on that path is necessary. Its unused-constraint handling may itself do avoidable work.
 
 HTML5 prepares 60,867 or 60,868 paragraphs, rebreaks 60,868, updates 13,903 contexts and walks 105,989 entries in every cohort and mode. Its root-font change therefore has extensive actual text/layout consequences: style costs about 289.8–295.2 ms sequential or 201.4–205.0 ms parallel, while main edit costs 632.5–636.0 ms sequential or 390.1–390.6 ms parallel. These observed operations and times are the full-cost comparison; they do not prove a universal timing floor. Cached preparation may reuse shaping, and unchanged dependency outputs can still stop propagation. The ECMA262 flex-counter caveat above remains: earlier counters omitted descendant work that later versions report, so their zero rebreak count is not evidence that no descendant lines were broken.
 

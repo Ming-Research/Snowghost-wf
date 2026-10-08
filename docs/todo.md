@@ -385,7 +385,7 @@ example apart from the renderer code that exposed it
   membership hypothesis was rejected: profiled marking is about 70 us while
   edit time remains about 110 ms. These are sampled diagnostic values, not
   acceptance timings; see the [profile and floor](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#correctly-styled-ecma262-profile-membership-hypothesis-rejected).
-  Root font globally restyles, but ECMA's fixed body size means it need not
+  Root font invalidates its style consumers, but ECMA's fixed body size means it need not
   reprepare all text. Current Q138 removes repeated dense materialization and
   source-index reconstruction. Validate its two-round full six-kind comparison;
   if whole-context replay remains above twice main, examine actual retained
