@@ -115,6 +115,25 @@ their source paragraph's last lineless scratch semantics and are not suffix
 rectangles. They can be retained only under the explicit empty-source stability
 condition.
 
+### Targeted certificate invariant
+
+`repair_anchored_fragments` returns whether the targeted path executed, while
+`fragments_valid` records the comparison result. Its admitted unmutated path
+must produce true: `geometry_update_reference` first materializes nonzero
+context adjustments and clears them; topology validity supplies live first/last
+payloads and split slots; dirty line offsets are published before leaf repair.
+For each mode, repair and evaluation then read the same immutable endpoints
+and apply the same ordered i32 operations. The mode-2 i64 difference reconstructs
+the freshly stacked i32 line exactly; mode 1 uses first top, mode 3 uses last
+bottom minus first top, and mode 4 uses last bottom plus the repaired margin.
+Untouched roles retain their prior certificates under the topology and exact
+motion conditions above. Thus a failed targeted field comparison is an internal
+invariant failure, exposed by the full/incremental oracle, rather than a supported
+route to valid raw suffix rectangles. The omission falsifiers intentionally
+break this invariant; there is no recovery that hides their missing work.
+The normal full publisher differs: all its raw rectangles are freshly generated,
+so a non-representable anchor may legitimately leave raw output authoritative.
+
 ## Candidate data, invariants and true order
 
 A retains a run slot within a retained topology, its first/last split endpoints, explicit
@@ -178,6 +197,9 @@ identities. Existing saturation and structural falsifiers remain enabled.
 
 The contract preceded the prototype. Q134 A and Q135 A are owner-approved;
 implementation completeness and acceptance are separate from that selection.
+The owner instructed that the design log entry wait until
+[pull request #49](https://github.com/Ming-Research/Snowghost-wf/pull/49) is approved;
+this work opens no pull request.
 The following dated prototype evidence predates the completion validation. Independent contract
 review found and fixed the empty-source line-presence/identity dependency,
 publication order separate from storage identity, and the Child margin case.
@@ -310,3 +332,13 @@ HTML font edit pairs; it does not prove every HTML font edit has the same cost.
 The ordinary two-round workload remains the acceptance test. A bounded
 reference-suffix representation/consumer contract is deferred in the TODO;
 neither prototype claims to have solved it.
+
+## Completion validation setup
+
+The first completion timing attempt, [37710841463](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37710841463),
+failed all four driver builds before measurement: the pinned f949 compiler's
+`llvm.coro.end` return type was rejected by Clang 22. The workflow had retained
+the newer compiler's toolchain while selecting the branch pin for all drivers.
+The corrected workflow uses Ubuntu 24.04's native clang/lld, as this branch's
+correctness workflows do, with the same f949 compiler for main, base, twin and A.
+No renderer source or expected output is changed for this toolchain correction.
