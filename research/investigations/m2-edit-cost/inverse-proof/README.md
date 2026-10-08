@@ -19,8 +19,20 @@ formation gap; acceptance of `today.wf` isolates it from the executable body.
   `make compiler` to download and verify the release in `whitefoot.pin`,
   runs `whitefootc --check` on both files, prints every diagnostic and exit
   status, and uploads them as `inverse-proof-diagnostics`. The job requires
-  acceptance of `today.wf` and a RANGE-1 refusal of `natural.wf`. Remove the
-  workflow when the gap is closed and the case is maintained in Whitefoot.
+  acceptance of `today.wf` and the specific RANGE-1 refusal of `natural.wf`;
+  it also verifies that wrong statuses and diagnostic text fail that check.
+  Remove the workflow when the gap is closed and the case is maintained in
+  Whitefoot.
+
+Hosted [run 37770691288](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37770691288)
+checked these files at `2e213a7426ce9ed0b31e8af085775cbf30865307` with
+`wf-f949e676acfa`: `today.wf` exited 0 and `natural.wf` exited 1. The latter
+reported `11:58: error[RANGE-1]: InvalidRangeClause`, with reason
+`a range term selects below an element` and mechanical fix
+`end the term at the integer element it reads`. The first refusal is the
+guard's `order^[k].Open.block` projection; it does not reach the target's
+`entry_slot` projection or the independence certificate. This confirms the
+formation gap, not a verdict about a future extended proof language.
 
 This reduces `translate_reference_owner_suffix` / `translate_reference_payload`
 in [reference.wf](../../../../renderer/layout/reference.wf) to one owner's
