@@ -1,5 +1,5 @@
 alias Document = pkg::dom::Document;
-alias SizeGroup = pkg::css::values::SizeGroup;
+alias Sizing = pkg::css::values::Sizing;
 alias Styles = pkg::style::Styles;
 alias sizing_value = pkg::css::values::sizing_value;
 
@@ -59,7 +59,7 @@ fn context_height_current(context: &Context, styles: &Styles) -> same: Bool read
 }
 
 fn keep_height_proof(context: &Context, styles: &Styles) -> kept: Bool reads(styles), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind), reads(context.height_input), writes(context.height_proof) {
-  doc "Decides whether retained geometry may stay under the current incoming edge. A changed source, kind or definiteness state needs fresh layout, so descendants derive their records again. Under the same edge, stale style keys or unequal but equivalent resolution inputs only refresh this record, because the caller's space comparison already decides geometry; a refresh that changes this record's own state, content height or reads is treated like a changed edge, since descendants derive their bases from those.";
+  doc "Decides whether retained geometry may stay under the current incoming edge. A changed source, kind or definiteness state needs fresh layout, so descendants derive their records again. Under the same edge, stale style keys or changed resolution numbers only refresh this record: the caller's update or space comparison decides geometry, and a changed definite content height re-prepares any direct reader (definite_free) while stale descendant numbers fail their own currentness. A refresh that changes this record's own state or reads is treated like a changed edge, since descendants derive their basis state from it.";
   let old = context^.height_proof;
   let old_input = height_input_of(proof: old);
   let same_edge = same_height_input(first: old_input, second: context^.height_input);
@@ -81,30 +81,44 @@ fn keep_height_proof(context: &Context, styles: &Styles) -> kept: Bool reads(sty
   if renewed.state != old.state {
     return False();
   }
-  if renewed.content_height != old.content_height {
-    return False();
-  }
   if renewed.read_mask != old.read_mask {
     return False();
   }
   return True();
 }
 
-fn size_read_mask(sizes: SizeGroup) -> mask: u8 pure {
+fn height_sizings(styles: &Styles, style: StyleRef, size: u32) -> (height: Sizing, minimum: Sizing, maximum: Sizing) reads(styles) {
+  doc "The three height-axis sizings of size_of's group, read from the computed size id the caller already holds instead of copying the whole group; an anonymous box's are the initial ones.";
+  let auto = auto_sizing();
+  let none = none_sizing();
+  if style.anonymous {
+    return auto, auto, none;
+  }
+  let at = cvt::<u32, u64>(size);
+  if at < styles^.sizes.inner.len {
+    let height = styles^.sizes.inner[at].height;
+    let minimum = styles^.sizes.inner[at].min_height;
+    let maximum = styles^.sizes.inner[at].max_height;
+    return height, minimum, maximum;
+  }
+  return auto, auto, none;
+}
+
+fn sizing_read_mask(height: Sizing, minimum: Sizing, maximum: Sizing) -> mask: u8 pure {
   doc "Counts expressions by has_percent, including a zero coefficient; height, minimum and maximum remain distinct inputs.";
   let mask = 0_u8;
-  if sizes.height.kind == sizing_value {
-    if sizes.height.value.has_percent {
+  if height.kind == sizing_value {
+    if height.value.has_percent {
       set mask = mask + 1_u8;
     }
   }
-  if sizes.min_height.kind == sizing_value {
-    if sizes.min_height.value.has_percent {
+  if minimum.kind == sizing_value {
+    if minimum.value.has_percent {
       set mask = mask + 2_u8;
     }
   }
-  if sizes.max_height.kind == sizing_value {
-    if sizes.max_height.value.has_percent {
+  if maximum.kind == sizing_value {
+    if maximum.value.has_percent {
       set mask = mask + 4_u8;
     }
   }
@@ -156,9 +170,9 @@ fn resolve_height_proof(styles: &Styles, style: StyleRef, input: HeightProof, wi
   doc "Records the full resolver's immediate input and its unchanged style keys. An ordinary specified chain is independent only when every percentage read has an independent definite input. Forced sizes are layout results unless the caller names the viewport or a certified private external input.";
   let made = input;
   let computed = computed_of(styles: styles, style: style);
-  let sizes = size_of(styles: styles, style: style);
-  let mask = size_read_mask(sizes: sizes);
-  let declared = size_value(value: sizes.height, basis: height);
+  let (height_sizing, minimum_sizing, maximum_sizing) = height_sizings(styles: styles, style: style, size: computed.size);
+  let mask = sizing_read_mask(height: height_sizing, minimum: minimum_sizing, maximum: maximum_sizing);
+  let declared = size_value(value: height_sizing, basis: height);
   let content = if forced >= 0_i32 {
     let border = border_edges(styles: styles, style: style);
     let padding = padding_edges(styles: styles, style: style, basis: width);
