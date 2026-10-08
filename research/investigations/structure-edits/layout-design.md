@@ -2043,7 +2043,7 @@ indefinite basis. Positioned inputs are excluded from this fact because
 publication combines the old and inserted facts; local style updates that
 introduce any height dependency conservatively invalidate it until the
 reference pre-pass recomputes the fact. This changes admission, not the
-meaning of the existing update cutoff's `definite_free` flag.
+meaning of the existing update cutoff's `definite_free` flag. The [Q139 extension](#q139-percentage-heights-whose-basis-the-edit-cannot-change) below supersedes this coarse refusal fact with direct-reader provenance and removes the unused field.
 
 
 Publication also preserves `has_out` by combining retained and inserted
@@ -3580,3 +3580,49 @@ The compact edit pilot ([37835285351](https://github.com/Ming-Research/Snowghost
 
 
 The permanent Q139 job no longer downloads the one-use Apollo diagnostic archive: Actions artifacts expire, so that capture cannot be a permanent gate dependency. Its 60-edit evidence remains attached to run 37834644324. Permanent checked-in Q139 cases, the Chromium floor, existing certificate combinations and all mutation callers remain wired; ordinary page-identity coverage stays in `oracles-m2`.
+
+
+The retained-style-key premise has source support at `3fdd2ee`: `restyle_level` in `renderer/style/incremental.wf` calls `intern_nodes` with the retained `state.styles`; `intern_values` in `renderer/style/intern.wf` interns box/size/spacing/border/font groups into those existing tables. Each group interner returns the position of an equal old value or appends a new value, while index rehashing preserves table positions. Thus the compared group IDs retain their meaning during these restyles; a future table-compaction change must invalidate or translate retained keys. This source examination does not certify the whole Q139 argument.
+
+
+The larger compact edit sample ([37840130509](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37840130509)) uses two forward/inverse pairs per kind and four alternating rounds, the same four revisions/compiler above, on a hosted Ubuntu 24.04 AMD EPYC 9V45 exposing four logical CPUs. Each cell below gives median whole-edit microseconds for main / M2 / twin / candidate. Ratios discussed below are medians of paired edit/round ratios, not ratios of these independently pooled medians.
+
+| page, kind | sequential µs | four workers µs |
+| --- | --- | --- |
+| ecma262 word | 94 / 98 / 101 / 100 | 140 / 146 / 143 / 160 |
+| ecma262 sentence | 548 / 1093 / 1132 / 1090 | 366 / 915 / 919 / 947 |
+| ecma262 colour | 22 / 18 / 18 / 19 | 29 / 23 / 24 / 24 |
+| ecma262 fontsize | 1644 / 5884 / 5236 / 4901 | 1888 / 6074 / 5990 / 5874 |
+| ecma262 rootfont | 31756 / 106222 / 106509 / 110486 | 52987 / 158106 / 158285 / 163930 |
+| ecma262 block | 428873 / 86 / 91 / 96 | 287828 / 136 / 126 / 148 |
+| html5 word | 366 / 554 / 456 / 608 | 349 / 620 / 622 / 710 |
+| html5 sentence | 270 / 241 / 316 / 336 | 330 / 338 / 341 / 341 |
+| html5 colour | 40 / 38 / 40 / 38 | 58 / 66 / 58 / 66 |
+| html5 fontsize | 797 / 1807 / 1890 / 2154 | 958 / 2090 / 2135 / 2193 |
+| html5 rootfont | 634554 / 757572 / 759624 / 760721 | 376012 / 526084 / 527842 / 533389 |
+| html5 block | 403946 / 693 / 774 / 802 | 300986 / 790 / 822 / 814 |
+| apollo11 word | 200 / 234 / 242 / 242 | 276 / 356 / 340 / 364 |
+| apollo11 sentence | 120 / 149 / 154 / 158 | 168 / 242 / 234 / 250 |
+| apollo11 colour | 26 / 26 / 26 / 28 | 34 / 34 / 35 / 34 |
+| apollo11 fontsize | 167 / 457 / 482 / 502 | 410 / 1293 / 1290 / 1347 |
+| apollo11 rootfont | 59578 / 66227 / 65560 / 67290 | 49922 / 58519 / 59086 / 58802 |
+| apollo11 block | 16417 / 23752 / 23649 / 24322 | 14678 / 23948 / 24588 / 24242 |
+
+Root-font candidate/M2 paired medians and ranges, compared with twin/M2:
+
+| page, mode | candidate median [min, max] | twin median [min, max] |
+| --- | --- | --- |
+| ecma262, seq | 1.045 [1.008, 1.080] | 0.997 [0.986, 1.042] |
+| ecma262, par | 1.053 [0.950, 1.118] | 1.000 [0.932, 1.298] |
+| html5, seq | 1.003 [0.958, 1.109] | 1.002 [0.961, 1.088] |
+| html5, par | 1.006 [0.951, 1.091] | 0.989 [0.948, 1.037] |
+| apollo11, seq | 1.017 [0.970, 1.078] | 0.997 [0.956, 1.017] |
+| apollo11, par | 1.002 [0.931, 1.070] | 1.005 [0.951, 1.186] |
+
+ECMA262 sequential root-font remains 4.5% above M2 by the paired median, just above the twin's 4.2% upper sample; the pilot also separated that case. Thus compaction meets the reduced-memory aim but does not establish the root-font aim. Other root-font medians lie within, or at Apollo sequential's upper edge of, the twin range. Every non-root-font candidate range overlaps its twin range in this larger sample, including the ECMA262/Apollo parallel font-size cases separated in the pilot; the broad HTML5 font-size/block spreads do not establish cost equivalence. These are workload-specific hosted observations, not precise hardware performance claims or satisfaction of M2's separate full-build criterion against M1.
+
+The hosted instruction diagnostic ([37840134642](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37840134642)) captured all four ECMA262 root-font edits under `layout.update`. Callgrind 3.22.0 counted 2,090,606,461 candidate instructions against 1,951,545,352 for M2 (7.13% more). Largest self-count increases include `join_output` (+26,885,648), memcpy (+12,638,138), `prepare_spaces` (+11,679,648), `height_relative` (+11,056,308), sequence reduction (+9,564,224) and block-output lifting (+8,458,512). The added work spans summary propagation/copies and height handling; it is not concentrated in retained-record allocation. Instruction counts do not attribute wall-time percentages. Both runs emit Valgrind's brk-segment limitation warning but complete all four edits; treat this as diagnostic evidence, not a native timing result or proof of a compiler defect. No additional representation or admission change is selected from it.
+
+The two one-use measurement helpers (`percentage-cost.py`, `percentage-full-cost.py`) and their temporary timing/full-cost workflows are removed after recording these results. Their exact sources remain at the linked run revisions, and the artifacts retain raw samples, driver revisions, hashes and machine records. They served this finite experiment rather than a permanent gate. Together with the earlier ABI/control removals and permanent callers for the other four helpers and the Q139 floor, this closes review F9 without weakening any semantic fixture or mutation requirement.
+
+The complete [oracles-m2 run 37834644269](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644269) passes its fixture job and all twelve page-identity jobs. ECMA262 retains 20/20 block splices and HTML5 60/60, sequential and four workers, with no full-rebuild differences or structural fallbacks.
