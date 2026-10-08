@@ -159,3 +159,112 @@ jobs:
             build/apollo-archive/apollo11-inputs.sha256
             build/oracle/layout/
             build/research/layout/
+  scope-variant:
+    # Evidence for the owner's Q139 scope decision, not a candidate: the same
+    # source with each context's inventory limited to its own direct readers
+    # (nested contexts contribute only their own record), against the
+    # whole-subtree inventory. Reports paths; it does not gate.
+    if: contains(github.event.head_commit.message, '[q139-scope]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37727037303
+          name: apollo11-diag-37727037303
+          path: build/apollo-archive
+      - name: Whole-subtree and direct-reader drivers
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/scope
+          (cd renderer && "$wfc" --cache ../build/scope-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/scope/subtree)
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          own = '''
+          fn own_height_summary(context: &Context, styles: &Styles) -> made: HeightSummary reads(context), reads(styles) {
+            let own = height_proof_summary(proof: context^.height_proof);
+            let current = context_height_current(context: context, styles: styles);
+            if current {
+            } else {
+              set own.unproved = own.unproved +sat 1_u64;
+            }
+            return own;
+          }
+          '''
+          own = '\n'.join(line[10:] if line.startswith('          ') else line for line in own.strip('\n').splitlines()) + '\n'
+          sites = [
+              ('renderer/layout/boundary.wf', 'set output.heights = context_height_summary(context: child, styles: styles);', 'set output.heights = own_height_summary(context: child, styles: styles);'),
+              ('renderer/layout/splice_motion.wf', 'let heights = context_height_summary(context: &context^.children.inner[child_at], styles: styles);', 'let heights = own_height_summary(context: &context^.children.inner[child_at], styles: styles);'),
+              ('renderer/layout/splice_motion.wf', 'set output.heights = context_height_summary(context: &context^.children.inner[at], styles: styles);', 'set output.heights = own_height_summary(context: &context^.children.inner[at], styles: styles);'),
+              ('renderer/layout/height_basis.wf', 'let made = context_height_summary(context: child, styles: styles);\n    return made;', 'let made = own_height_summary(context: child, styles: styles);\n    return made;'),
+          ]
+          for path, old, new in sites:
+              p = Path(path)
+              s = p.read_text()
+              assert s.count(old) == 1, (path, old)
+              p.write_text(s.replace(old, new))
+          p = Path('renderer/layout/height_basis.wf')
+          p.write_text(p.read_text() + '\n' + own)
+          print('direct-reader inventory variant applied')
+          PYEOF
+          git diff --stat
+          (cd renderer && "$wfc" --cache ../build/scope-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/scope/direct)
+      - name: Existing fixture paths and Q139 cases under both inventories
+        run: |
+          set -uo pipefail
+          s=research/investigations/incremental-layout/scripts
+          for variant in subtree direct; do
+            d=build/scope/$variant-cases
+            mkdir -p "$d"
+            for kind in positioned positioned-isolated flex transfer edit-cost; do
+              page=$kind
+              case "$kind" in positioned-isolated) page=positioned ;; edit-cost) page=transfer ;; esac
+              python3 "$s/splice-cases.py" build/scope/subtree "$kind" "$d/$kind.edits" > /dev/null
+              for chain in original viewport; do
+                script=$d/$kind-$chain.edits
+                if [ "$chain" = viewport ]; then echo 'S html,body{height:100%}' > "$script"; cat "$d/$kind.edits" >> "$script"; else cp "$d/$kind.edits" "$script"; fi
+                build/scope/$variant edit "$script" "$s/$page-case.html" renderer/style/ua.css > "$d/$kind-$chain.raw"
+                identity=$(python3 "$s/inctime.py" --check "$script" "$d/$kind-$chain.raw" > /dev/null 2>&1 && echo identical || echo DIFFERENT)
+                paths=$(python3 "$s/splice-cases.py" --check-paths "$d/$kind.edits.paths" "$d/$kind-$chain.raw" 2>&1 | tail -1)
+                echo "$variant $kind $chain: $identity; $paths"
+              done
+            done
+            for case in $(python3 -c "import importlib.util,sys; sys.path.insert(0,'$s'); spec=importlib.util.spec_from_file_location('f','$s/percentage-splice.py'); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(' '.join(m.CASES))"); do
+              c=$d/q139-$case
+              python3 "$s/percentage-splice.py" build/scope/subtree "$c" --case "$case" > /dev/null
+              build/scope/$variant edit "$c/case.edits" "$c/case.html" renderer/style/ua.css > "$c/edits.raw"
+              identity=$(python3 "$s/inctime.py" --check "$c/case.edits" "$c/edits.raw" > /dev/null 2>&1 && echo identical || echo DIFFERENT)
+              paths=$(grep -o 'structure path [0-9]* splice [01] reason [0-9]*' "$c/edits.raw" | awk '{print $5 "/" $7}' | sort | uniq -c | tr '\n' ' ')
+              echo "$variant q139 $case: $identity; paths $paths; required $(awk '{print $5 "/" $7}' "$c/case.edits.paths" | sort | uniq -c | tr '\n' ' ')"
+            done
+          done
+      - name: Page block edits under both inventories
+        run: |
+          set -uo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          cp build/apollo-archive/research/concurrency/apollo11* build/research/concurrency/
+          sha256sum -c build/apollo-archive/apollo11-inputs.sha256
+          cp build/scope/subtree build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
+          for variant in subtree direct; do
+            cp build/scope/$variant build/layout_oracle_seq
+            for page in ecma262 html5 apollo11; do
+              sh research/investigations/incremental-layout/run.sh inc seq "$page" block | sed "s/^/$variant: /"
+              cp "build/x5/out/$page-block.seq.txt.raw" "build/scope/$variant-$page-block.raw"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-scope-variant
+          path: |
+            build/scope/*-cases/
+            build/scope/*.raw
