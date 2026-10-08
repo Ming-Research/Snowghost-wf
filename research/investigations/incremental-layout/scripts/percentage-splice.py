@@ -51,6 +51,7 @@ CASES = {
     'cross-maximum': ('.outer{height:200px}section{max-height:50%}', '<div class="outer"><section>' + BASE + '</section><aside>Outside.</aside></div>', 7),
     'new-indefinite-reader': ('p{height:50%}p.old{height:40px}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section>', 7),
     'auto-zero-reader': ('.reader{height:0%}', '<div><section>' + BASE + '</section><aside class="reader">Zero.</aside></div>', 7),
+    'near-limit': ('section{height:calc(50% + 2147483647px)}', '<section>' + BASE + '</section><aside>Outside.</aside>', 7),
 }
 
 

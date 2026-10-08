@@ -21,8 +21,8 @@ MUTATIONS = {
     'omit-maximum-reader': ('height_basis', 'height_read_mask', 'set mask = mask + 4_u8;', 'set mask = mask + 0_u8;', 'auto-maximum', 'path'),
     'omit-nested-reader': ('height_basis', 'context_height_summary', 'set inside = total.heights;', 'set inside = empty_height_summary();', 'nested-context-reader', 'path'),
     'omit-float-reader': ('splice_motion', 'entry_motion', 'set output.heights = context_height_summary(context: &context^.children.inner[at], styles: styles);', 'set output.heights = empty_height_summary();', 'float-reader', 'path'),
-    'context-height-basis': ('flow', 'prepare_spaces', 'set height = definite_block_height(styles: styles, style: style, basis_width: saved.width, basis_height: saved.basis_height);', 'set height = content_height;', 'nested', 'chromium'),
-    'flatten-auto-basis': ('flow', 'prepare_spaces', 'set height = definite_block_height(styles: styles, style: style, basis_width: saved.width, basis_height: saved.basis_height);', 'let resolved_height = definite_block_height(styles: styles, style: style, basis_width: saved.width, basis_height: saved.basis_height);\n          if resolved_height >= 0_i32 {\n            set height = resolved_height;\n          }', 'auto-intermediate', 'chromium'),
+    'context-height-basis': ('flow', 'prepare_spaces', 'set height = proof.content_height;', 'set height = content_height;', 'nested', 'chromium'),
+    'flatten-auto-basis': ('flow', 'prepare_spaces', 'set height = proof.content_height;', 'if proof.content_height >= 0_i32 {\n            set height = proof.content_height;\n          }', 'auto-intermediate', 'chromium'),
     'indefinite-numeric-basis': ('height_basis', 'height_proof_summary', 'if proof.basis_state != 2_u8 {\n    return HeightSummary(consumers: readers, unproved: readers);\n  }', '', 'auto-later-reader', 'certificate'),
     'immutable-stretch': ('height_basis', 'height_dependency_state', 'return 3_u8;\n  }\n  if content', 'return 2_u8;\n  }\n  if content', 'layout-stretch', 'certificate'),
     'omit-growing-basis': ('height_basis', 'height_dependency_state', 'if basis_state != 2_u8 {\n      return 3_u8;\n    }', '', 'auto-intermediate', 'certificate'),
@@ -43,7 +43,46 @@ MUTATIONS = {
     'fixed-float-common-motion': ('splice_motion', 'outward_motion_ready', 'set obstacle = imax(obstacle, reach);', 'set obstacle = obstacle;', 'fixed-float-reentry', 'path'),
     'constrained-strut': ('boundary', 'lift_block_output', 'if measured.bottom_separates {', 'if measured.constrained_height {', 'inactive-maximum-margin', 'certificate'),
     'skip-viewport-refresh': ('oracle', 'run_edits', 'set kept = move resized;', 'let ignored = move resized;', 'root', 'identity'),
+    'retired-dependency': ('splice_boundary', 'splice_sequence_plan', 'set output.motion_known = motion_total.motion_known;', 'set output.motion_known = motion_total.motion_known;\n  if removing {\n    set output.heights = old.heights;\n  }', 'private-reader', 'identity'),
+    'stop-fixed-output-equality': ('boundary', 'propagate_boundary', 'let stable = band(same, size_same);', 'let stable = size_same;', 'private-reader', 'identity'),
+    'height-based-padding': ('flow', 'prepare_spaces', 'let padding = padding_edges(styles: styles, style: style, basis: width);', 'let padding = padding_edges(styles: styles, style: style, basis: height);', 'sibling-width-percent', 'full'),
+    'height-based-margins': ('flow', 'stack_flow', 'let margins = margin_edges(styles: styles, style: style, basis: outer_width);', 'let margins = margin_edges(styles: styles, style: style, basis: frame.basis_height);', 'sibling-width-percent', 'full'),
+    'suppress-refusal-row': ('oracle', 'put_structure_path', 'put_text(buffer: buffer, text: &structure_path_label[0_u64..15_u64]);', 'if reason == 7_u32 {\n    return unit;\n  }\n  put_text(buffer: buffer, text: &structure_path_label[0_u64..15_u64]);', 'auto-later-reader', 'protocol'),
+    'count-refusal-as-splice': ('oracle', 'put_structure_path', 'put_text(buffer: buffer, text: &structure_path_label[0_u64..15_u64]);', 'if reason == 7_u32 {\n    set reason = 0_u32;\n  }\n  put_text(buffer: buffer, text: &structure_path_label[0_u64..15_u64]);', 'auto-later-reader', 'path'),
+    'collapse-percentage-chain': ('flow', 'stack_flow', 'let specified = specified_height(styles: styles, style: style, basis: block_basis, frame: vertical_frame);', 'let specified = specified_height(styles: styles, style: style, basis: block_basis, frame: vertical_frame);\n          let fused = fused_percentage_height(context: context, styles: styles, at: at);\n          if fused >= 0_i32 {\n            set specified = fused;\n          }', 'rounding', 'full'),
 }
+
+FUSION = '''
+fn fused_percentage_height(context: &Context, styles: &Styles, at: u64) -> made: i32 reads(context), reads(styles) {
+  if at < context^.blocks.inner.len {
+    let child = &context^.blocks.inner[at];
+    let parent_at = cvt::<u32, u64>(child^.parent);
+    if parent_at < context^.blocks.inner.len {
+      let parent = &context^.blocks.inner[parent_at];
+      let own = size_of(styles: styles, style: child^.style);
+      let outer = size_of(styles: styles, style: parent^.style);
+      if own.height.kind == sizing_value {
+        if outer.height.kind == sizing_value {
+          if own.height.value.has_percent {
+            if outer.height.value.has_percent {
+              let basis = parent^.output.basis_height;
+              if basis >= 0_i32 {
+                let grand = pixels(raw: basis);
+                let combined = fmul.strict(own.height.value.percent, outer.height.value.percent);
+                let ratio = fdiv.strict(combined, 1.0e4_f32);
+                let resolved = fmul.strict(grand, ratio);
+                let raw = units(px: resolved);
+                return raw;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return unknown;
+}
+'''
 
 
 def function_span(source, function):
@@ -61,6 +100,9 @@ def apply(name):
     if body.count(old) != 1:
         raise ValueError('%s: expected one mutation site, got %d' % (name, body.count(old)))
     path.write_text(source[:start] + body.replace(old, new) + source[end:])
+    if name == 'collapse-percentage-chain':
+        helper = Path('renderer/layout/height_basis.wf')
+        helper.write_text(helper.read_text() + FUSION)
     print('applied', name, path, function)
 
 
@@ -80,7 +122,14 @@ def classify(status, output, error, script, mode, baseline_paths):
     normalized_path = script.parent / 'normalized.raw'
     normalized_path.write_text(normalized)
     checker = module('inctime')
-    checker.read(str(normalized_path), checker.script_operations(str(script)), checking=True, require_paths=True)
+    try:
+        checker.read(str(normalized_path), checker.script_operations(str(script)), checking=True, require_paths=True)
+    except ValueError as error:
+        if mode == 'protocol' and 'partial structural path records' in str(error):
+            return True
+        raise
+    if mode == 'protocol':
+        return False
     if differences:
         return True
     if mode == 'path':
@@ -116,7 +165,14 @@ def verify(name, baseline, mutant, directory):
     checker = module('inctime')
     checker.read(str(directory / 'baseline.raw'), checker.script_operations(str(script)), checking=True, require_paths=True)
     subprocess.run([sys.executable, str(HERE / 'splice-cases.py'), '--check-paths', str(script) + '.paths', str(directory / 'baseline.raw')], check=True)
-    if mode == 'chromium':
+    if mode == 'full':
+        args = ['dump', '1', str(directory / 'case.html'), 'renderer/style/ua.css']
+        fresh = run_driver(baseline, args, directory / 'baseline-full')
+        wrong = run_driver(mutant, args, directory / 'mutated-full')
+        if fresh.returncode or fresh.stderr or wrong.returncode or wrong.stderr:
+            raise ValueError('full dump failed')
+        detected = fresh.stdout != wrong.stdout
+    elif mode == 'chromium':
         args = ['dump', '1', 'tests/layout/percentage-height-cases.html', 'renderer/style/ua.css']
         wrong = run_driver(mutant, args, directory / 'mutated')
         if wrong.returncode or wrong.stderr:
@@ -152,6 +208,8 @@ def self_test():
         assert classify(2, '', 'boundary transfer check failed\n', script, 'certificate', paths)
         assert not classify(2, '', 'unrelated error', script, 'certificate', paths)
         assert not classify(2, good, 'boundary transfer check failed\n', script, 'certificate', paths)
+        assert classify(0, good.replace(rows[2] + '\n', ''), '', script, 'protocol', paths)
+        assert not classify(0, good, '', script, 'protocol', paths)
         for status, output, error in ((9, '', 'crash'), (0, good + 'bad protocol\n', ''),
                                       (0, good.replace(rows[2] + '\n', ''), '')):
             try:

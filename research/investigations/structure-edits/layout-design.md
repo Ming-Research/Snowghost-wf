@@ -3186,3 +3186,14 @@ rows include retired dependencies, arithmetic reassociation, width-frame
 resolution, output-equality and path-report mutations, plus the original
 conjunctive-certificate matrix. The complete fixture runner is prepared but
 will not replace the required first successful timed root splice pair.
+
+The next evidence pass keeps the original positioned, flex, float, clearance,
+split and edit-cost fixture path assertions, and repeats them under the
+html/body viewport chain. This exposes any interaction between the new
+conservative inventory and the old successful paths without silently changing
+an expectation. The mutation inventory now also covers retired dependencies,
+fixed-height output cutoffs, height substituted for width in spacing,
+collapsed nested-percentage arithmetic, suppressed refusal rows and false
+successful-splice reporting. These remain prepared obligations until executed.
+The full pre-pass consumes the content height already returned by its proof's
+normal resolver instead of resolving the identical height a second time.

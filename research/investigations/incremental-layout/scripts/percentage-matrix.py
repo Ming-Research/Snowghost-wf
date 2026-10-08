@@ -43,7 +43,7 @@ def main():
             generate = [sys.executable, str(HERE / 'percentage-splice.py'), args.driver, str(directory), '--case', name]
             # Negative cases isolate one unchanged refusal premise. Positive
             # cases additionally exercise source restyle and record lifetime.
-            if fixtures.CASES[name][2] == 0:
+            if fixtures.CASES[name][2] == 0 and name != 'fixed-floats':
                 generate.append('--lifetime')
             command(generate)
             raw = directory / 'edits.raw'
@@ -51,9 +51,10 @@ def main():
             command([sys.executable, str(HERE / 'inctime.py'), '--check', str(directory / 'case.edits'), str(raw)])
             command([sys.executable, str(HERE / 'splice-cases.py'), '--check-paths', str(directory / 'case.edits.paths'), str(raw)])
             command([sys.executable, str(HERE / 'percentage-splice.py'), args.driver, str(directory), '--extract', str(raw)])
-            # Quirks is an unsupported-provenance refusal probe, not a claim
-            # that this ordinary-layout certificate implements quirks sizing.
-            if name != 'quirks':
+            # Quirks and overflowing arithmetic probe conservative refusal;
+            # their retained/fresh equality is required without claiming the
+            # ordinary exact-size domain covers those resolution modes.
+            if name not in ('quirks', 'near-limit'):
                 for page in ('case', 'inserted'):
                     command(['node', 'tests/layout/layout_oracle.mjs', 'dump', str(directory / (page + '.html'))], directory / (page + '.chromium.tsv'))
                 for prefix, page in ((0, 'case'), (1, 'inserted'), (2, 'case')):

@@ -82,6 +82,39 @@ jobs:
             cmp "build/research/layout/$name.seq.tsv" "build/research/layout/$name.par.tsv"
           done
           sh research/investigations/layout/run.sh judge "${pages[@]}"
+      - name: Existing conjunctive certificates with the viewport chain
+        if: ${{ !cancelled() && steps.drivers.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          mkdir -p build/percentage-combinations
+          failed=0
+          for kind in positioned positioned-isolated flex transfer edit-cost edit-baseline edit-height edit-cascade; do
+            page=$kind
+            case "$kind" in
+              positioned-isolated) page=positioned ;;
+              edit-cost|edit-cascade) page=transfer ;;
+              edit-baseline|edit-height) page=style ;;
+            esac
+            script="build/percentage-combinations/$kind.edits"
+            python3 "$s/splice-cases.py" build/layout_oracle_seq "$kind" "$script"
+            for chain in original viewport; do
+              variant="build/percentage-combinations/$kind-$chain.edits"
+              if [ "$chain" = viewport ]; then
+                echo 'S html,body{height:100%}' > "$variant"
+                cat "$script" >> "$variant"
+              else
+                cp "$script" "$variant"
+              fi
+              for mode in seq par; do
+                raw="build/percentage-combinations/$kind-$chain-$mode.raw"
+                WF_WORKERS=4 "build/layout_oracle_$mode" edit "$variant" "$s/$page-case.html" renderer/style/ua.css > "$raw" || { failed=1; continue; }
+                python3 "$s/inctime.py" --check "$variant" "$raw" || failed=1
+                python3 "$s/splice-cases.py" --check-paths "$script.paths" "$raw" || failed=1
+              done
+            done
+          done
+          test "$failed" -eq 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
