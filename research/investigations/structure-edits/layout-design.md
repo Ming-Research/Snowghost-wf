@@ -3260,3 +3260,29 @@ dispatch so evidence-only edits do not queue duplicate renderer compilations;
 the project gate still runs on every push. Falsifiers use the project's
 native per-function compiler cache, shared from their immutable baseline
 artifact, without changing their separately restored source trees or checks.
+
+### Expanded hosted evidence and harness repair, 2026-10-08
+
+Run 37777880652 at `5bc2838` passes the frozen Chromium regression, all
+252 ordinary/atomic/float restyle prefixes, the root splice pair, and all
+existing Chromium floors. Thus clearing the child's own marks after the
+provenance-triggered full layout repairs the observed float restore defect.
+The expanded matrix passes 28 of 33 named cases in both builds; four root/
+nested/framed lifetime cases fail after viewport refresh because the oracle
+adopted dense rebuilt styles while restoring its prior stable-slot traversal.
+The viewport operation now adopts the rebuilt traversal together with its
+state; DOM node identities and edit numbering still stay unchanged. This
+is a harness correction, not a change to the renderer's percentage rule.
+The viewport falsifier retains a correctly rebuilt state/traversal pair but
+uses the obsolete viewport, so an unrelated style-stage failure cannot count
+as detection. Its corrected execution is pending.
+
+The remaining private-chain fixture uses newly generated pseudo-elements;
+that reaches the existing structural-style membership fallback before Q139.
+It needs a genuine nested DOM insertion probe through the ordinary splice
+API; accepting that earlier refusal would not test private-chain admission.
+The flex combination confirms the review's scope issue: even the existing
+required reason-2 route and positive paths are masked by reason 7. Existing
+expectations remain unchanged. Added operational mutations skip the actual
+publication on definite-to-auto and width changes; their execution remains
+pending and does not replace the pure predicate falsifiers.

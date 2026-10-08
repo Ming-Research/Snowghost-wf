@@ -34,6 +34,8 @@ MUTATIONS = {
     'stale-resolution-mode': ('height_basis', 'same_height_input', 'if first.kind != second.kind {\n    return False();\n  }', '', 'layout-stretch', 'certificate'),
     'stale-viewport': ('height_basis', 'height_resolution_current', 'if proof.basis_height != height {\n    return False();\n  }', '', 'root', 'certificate'),
     'stale-width': ('height_basis', 'height_resolution_current', 'if proof.basis_width != width {\n    return False();\n  }', '', 'framed', 'certificate'),
+    'skip-definiteness-refresh': ('flow', 'prepare_spaces', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let was_fixed = old.state == 2_u8;\n          let now_auto = proof.state == 1_u8;\n          let changed = band(was_fixed, now_auto);\n          if changed {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }', 'equal-state', 'identity'),
+    'skip-width-refresh': ('height_basis', 'refresh_local_height_proofs', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }', 'partial-restyle', 'positive-path'),
     'missing-record': ('height_basis', 'height_resolution_current', 'if proof.valid {\n  } else {\n    return False();\n  }', '', 'nested', 'certificate'),
     'grow-fixed-height': ('boundary', 'propagate_boundary', 'let outgoing_delta = if measured.fixed_height {\n      give 0_i32;', 'let outgoing_delta = if measured.fixed_height {\n      give geometry_narrow(value: wide_delta);', 'root', 'identity'),
     'grow-auto-clamp': ('update', 'snapshot_grows', 'if maximum >= 0_i32 {\n    return False();\n  }\n  if minimum > frame {\n    return False();\n  }', '', 'cross-minimum', 'identity'),
@@ -42,7 +44,7 @@ MUTATIONS = {
     'omit-metadata-equality': ('boundary', 'same_transfer', 'if first.heights.consumers != second.heights.consumers {\n    return False();\n  }\n  if first.heights.unproved != second.heights.unproved {\n    return False();\n  }', '', 'private-reader', 'certificate'),
     'fixed-float-common-motion': ('splice_motion', 'outward_motion_ready', 'set obstacle = imax(obstacle, reach);', 'set obstacle = obstacle;', 'fixed-float-reentry', 'path'),
     'constrained-strut': ('boundary', 'lift_block_output', 'if measured.bottom_separates {', 'if measured.constrained_height {', 'inactive-maximum-margin', 'certificate'),
-    'skip-viewport-refresh': ('oracle', 'run_edits', 'set kept = move resized;', 'let ignored = move resized;', 'root', 'identity'),
+    'skip-viewport-refresh': ('oracle', 'run_edits', 'let resized = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport, preserve: preserve)', 'let stale_viewport = Viewport(width: 1.28e3_f32, height: 7.2e2_f32);\n        let resized = match build_page(page: page, fonts: fonts, environment: environment, viewport: stale_viewport, preserve: preserve)', 'root', 'identity'),
     'retired-dependency': ('splice_boundary', 'splice_sequence_plan', 'set output.motion_known = motion_total.motion_known;', 'set output.motion_known = motion_total.motion_known;\n  if removing {\n    set output.heights = old.heights;\n  }', 'private-reader', 'identity'),
     'stop-fixed-output-equality': ('boundary', 'propagate_boundary', 'let stable = band(same, size_same);', 'let stable = size_same;', 'private-reader', 'identity'),
     'height-based-padding': ('flow', 'prepare_spaces', 'let padding = padding_edges(styles: styles, style: style, basis: width);', 'let padding = padding_edges(styles: styles, style: style, basis: height);', 'sibling-width-percent', 'full'),
@@ -132,10 +134,13 @@ def classify(status, output, error, script, mode, baseline_paths):
         return False
     if differences:
         return True
-    if mode == 'path':
+    if mode in ('path', 'positive-path'):
         actual = {int(n): (int(local), int(reason)) for n, local, reason in re.findall(r'^structure path (\d+) splice ([01]) reason (\d+)$', output, re.M)}
         # Only loss of this premise's required refusal counts; an unrelated
         # earlier refusal must not count as a policy mutation detection.
+        if mode == 'positive-path':
+            return any(expected == (1, 0) and actual[number] == (0, 7)
+                       for number, expected in baseline_paths.items())
         return any(expected == (0, 7) and actual[number] == (1, 0)
                    for number, expected in baseline_paths.items())
     return False
@@ -153,7 +158,7 @@ def verify(name, baseline, mutant, directory):
     directory.mkdir(parents=True, exist_ok=True)
     _, _, _, _, case, mode = MUTATIONS[name]
     args = [sys.executable, str(HERE / 'percentage-splice.py'), baseline, str(directory), '--case', case]
-    if case in ('root', 'nested', 'framed', 'private-reader', 'private-chain', 'equal-state'):
+    if case in ('root', 'nested', 'framed', 'private-reader', 'private-chain', 'equal-state', 'partial-restyle'):
         args.append('--lifetime')
     subprocess.run(args, check=True)
     script = directory / 'case.edits'
@@ -204,6 +209,10 @@ def self_test():
         assert not classify(0, good, '', script, 'path', paths)
         assert classify(0, good.replace('splice 0 reason 7', 'splice 1 reason 0'), '', script, 'path', paths)
         assert not classify(0, good.replace('reason 7', 'reason 9'), '', script, 'path', paths)
+        positives = {1: (1, 0), 2: (1, 0)}
+        assert classify(0, good, '', script, 'positive-path', positives)
+        assert not classify(0, good.replace('reason 7', 'reason 9'), '', script, 'positive-path', positives)
+        assert not classify(0, good.replace('splice 0 reason 7', 'splice 1 reason 0'), '', script, 'positive-path', positives)
         assert classify(0, good.replace('inc same', 'inc DIFF'), '', script, 'identity', paths)
         assert classify(2, '', 'boundary transfer check failed\n', script, 'certificate', paths)
         assert not classify(2, '', 'unrelated error', script, 'certificate', paths)
