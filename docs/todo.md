@@ -188,6 +188,24 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **Nested percentage-height provenance may use the formatting-context
+  basis instead of the containing block.** Source inspection for
+  [Q139's argument](../research/investigations/structure-edits/layout-design.md#remaining-uncertainty-and-rejection-conditions)
+  finds `prepare_spaces` passing its single `content_height` into nested
+  child spaces and `stack_flow` resolving ordinary block heights against
+  its single `basis_height`; open-block frames track widths but no height
+  basis. Impact: full and incremental layout could agree on an incorrect
+  nested percentage height, invalidating an identity-only admission test.
+  The runtime mismatch is unverified; no fixture ran in the argument task.
+  Change: retain and propagate each actual containing block's definite or
+  indefinite basis through full resolution and its retained consumers,
+  preserving numeric order. Validate in hosted CI against independent
+  CSS/Chromium rectangles: a 200px box with nested 50% blocks must give
+  100px then 50px, while an intervening auto-height box breaks that chain;
+  compare full builds and insert/remove prefixes, sequentially and in
+  parallel. Reopen before implementing Q139 admission. Deferred because
+  the current task permits arguments and defect recording only.
+
 - **M2's full build is 10 to 30 percent slower than step 2.** After three
   repair rounds of step 3's entry sequences
   ([runs](../research/investigations/structure-edits/runs/full-14900k.txt),

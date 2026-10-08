@@ -2566,3 +2566,455 @@ alone do not detect semantic mutations; the split-line-refresh optimization
 contract is the explicitly argued exception above. CI run records and their
 raw artifacts are the evidence for these gates. No renderer was compiled or
 executed locally, and no timing or complete-M2 claim follows from this work.
+
+## Q139: percentage heights whose basis the edit cannot change
+
+Q139 A and Q145 C authorize this argument first: retain each percentage
+height's basis, prove that no basis belongs to the edit's growing ancestor
+chain, and otherwise refuse and count it. This section specifies that
+certificate; it does not implement it or claim fixture, mutation or timing
+results. The existing `flow_definite_free` refusal remains in the source.
+The [layout decision](../../../design/pipeline/layout.md) owns the splice;
+this argument extends its percentage-input premise without relaxing the
+other Q128/Q129 certificates. Implementation and its corresponding live-tree
+update belong to the later task.
+
+The motivation is the [apollo11 diagnosis at its recorded branch revision](https://github.com/Ming-Research/Snowghost-wf/blob/2b122a48d5a1798cbe58232db44df56a4072ea40/research/investigations/structure-edits/apollo11-blocks.md#control-results-and-causal-limit):
+54 of 60 block edits refused with structural reason 7; removing both
+`html` and `body` percentage heights exposed reason 2 at grid ancestors.
+Restoring either height restored reason 7. This establishes a masked
+dependency, not a successful splice on the original page. Q140's grid scope
+is independent; accepting this certificate must not report that grid work
+as local. The other six edits had a retained-style refusal.
+
+### Percentage inputs and the precise admission condition
+
+For ordinary in-flow blocks, a percentage `height` uses the containing
+block's content height; an indefinite content-dependent basis makes it
+behave as `auto`. The root uses the initial containing block, whose size
+comes from the viewport in this continuous-media scope. Percentage
+`min-height` and `max-height` also use the containing height; CSS 2.1 treats
+them as zero and no maximum respectively when that basis is indefinite.
+These are different properties, not three spellings of `height:auto`.
+See [CSS 2.1 containing blocks](https://www.w3.org/TR/CSS21/visudet.html#containing-block-details),
+[height](https://www.w3.org/TR/CSS21/visudet.html#the-height-property), and
+[minimum/maximum height](https://www.w3.org/TR/CSS21/visudet.html#min-max-heights).
+
+[CSS Sizing 3's definition of definite size](https://www.w3.org/TR/css-sizing-3/#definite)
+includes a percentage resolved solely from definite sizes; its
+[nested-percentage example](https://www.w3.org/TR/css-sizing-3/#percentage-sizing)
+therefore supplies the induction used below. Definite does not universally
+mean independent of this edit: layout modes can provide a definite size
+after layout, and the containing block of an absolutely positioned box is
+definite for that box. The [cyclic-percentage rules](https://www.w3.org/TR/css-sizing-3/#cyclic-percentage-contribution)
+also have layout-mode exceptions. This certificate covers ordinary block
+resolution, not quirks-mode ancestor skipping, orthogonal writing modes,
+table rules, or a flex/grid size merely because its last numeric value is
+known. Unsupported provenance is a refusal, not an invented fixed basis.
+
+Use these sets and records, based on layout identities rather than DOM
+preorder numbers or the nearest formatting-context root:
+
+- `A` is the complete enclosing block/context path from the changed owner
+  through every boundary whose outputs must be settled. It includes fixed
+  height ancestors: their content extent, baseline or float export may
+  change even when their used height cannot.
+- `G` is the conservative **growing chain** within `A`: every ancestor
+  whose used content height may change, including shrinkage on removal and
+  sizes not knowable before flex settlement. Remove an ancestor from `G`
+  only after proving its used height content-independent from unchanged
+  inputs. Do not remove it because its old and guessed new numbers match,
+  because the current delta is zero, or because a clamp is active today.
+  Thus `html` and `body` with a proven viewport-based `height:100%` belong
+  to `A` but not `G`. A lexical ancestor test alone would reject the very
+  case this extension is intended to admit.
+- `R` is the retained in-flow geometry whose percentage inputs the splice
+  proposes to reuse, including blocks, child contexts, floats, and their
+  retained descendant dependency summaries in every affected scope.
+  Earlier siblings count too. It is not just the edited parent's style.
+  Out-of-flow boxes that Q128 actually settles again are excluded from
+  this reuse claim; their inputs and arithmetic charges still follow Q128.
+- For every percentage-bearing `height`, `min-height` and `max-height`
+  read in `R`, retain the consumer identity and property, its actual
+  containing-block identity (or explicit initial-containing-block token),
+  axis and box edge, definite/indefinite/unknown resolution state, resolved
+  basis value, and **provenance**. Provenance names the source of that value:
+  viewport, content-independent specified size with its limits and box
+  conversion, another resolved percentage with a link to its basis, or
+  content/layout-dependent or unsupported. Record every intermediate
+  containing block; flattening a chain to "viewport" would lose an
+  intervening clamp or restyle. Percentage-bearing expressions, including
+  supported length-plus-percentage expressions, count as reads.
+
+Admission requires all the following premises before retained publication:
+
+1. **Complete, current inputs.** The seam, style frontier and stable routes
+   pass the existing checks. Every reused percentage read has a live basis
+   record and unchanged resolution inputs: containing-block identity,
+   property/expression, style and font inputs, width/box-sizing inputs,
+   viewport and layout mode. Relevant invalidation or missing metadata is
+   failure, not absence of a dependency. Retained nested contexts contribute
+   summaries even when their entry itself has no percentage style.
+2. **Definite, edit-independent provenance.** Every such read has a definite
+   basis, and every height-producing link in its provenance terminates in
+   an unchanged external size or content-independent specified size.
+   No link's basis belongs to `G`; no link depends on changed content,
+   unresolved intrinsic sizing, a changed clamp, or a flex/grid result
+   still to be computed. Both numeric value and definiteness must be
+   preserved. An indefinite basis is conservatively refused by this first
+   certificate even if ordinary CSS would make its percentage ineffective;
+   proving stable auto behavior is not needed to admit the approved case.
+3. **Correct ancestor transfer.** Each ancestor in `A` has either the
+   existing exact auto-growth transfer or a content-independent used-height
+   transfer. In the latter case settle its changed content summary but keep
+   its resolved used height; its outgoing size delta is zero. A percentage
+   min/max constraint with a fixed basis is a fixed *limit*, not proof that
+   an auto height stays fixed or grows by the child's delta. Such auto-height
+   ancestors still need the existing growth certificate; an active or
+   crossed clamp remains refused. No new general clamp transfer is implied.
+4. **Private construction and all other certificates.** Resolve percentages
+   inside the inserted subtree using the same containing-block inputs and
+   rules as a fresh build. Record its new dependencies before publication,
+   and apply premises 1–3 to external basis links and the proposed enclosing
+   outputs. Internal definite chains can be resolved wholly in private
+   storage. An indefinite/unsupported link or dependence on `G` refuses
+   here too. Preserve the existing arithmetic, width, margin, marker,
+   float/clearance, flex, positioned and split-fragment conditions.
+
+The test is sufficient, not necessary. Unknown classification goes into
+`G` or fails provenance; no speculative reuse is admitted on equal old
+numbers. Removed consumers need no new layout, but their metadata must be
+removed and surviving readers must still pass. A percentage-free edit uses
+the old certificate. Every failed Q139 premise produces a counted
+pre-publication structural refusal with reason 7 when that check is reached;
+an earlier independent reason keeps its existing precedence. Do not relabel
+Q129 float refusals or Q130's post-flex reason 10 as percentage failures.
+
+### Correctness argument and its boundary
+
+Fix a successful preflight and compare the proposed result with fresh layout
+of the edited document at the same viewport. First prove basis invariance,
+top down in the provenance graph. External leaves are unchanged by premise 1.
+A content-independent specified-size link has identical style, limits,
+width-dependent frame and input bases, so its used content height is
+identical. A percentage link then applies the same expression, rounding,
+box conversion and constraints to the same input; its result and
+definiteness are identical. Premise 2 excludes a back edge through changed
+content, so induction covers nested percentages without a circular
+assumption that the ancestor is unchanged because its child is unchanged.
+No multiplication of percentages into a shortcut is allowed: preserving
+each resolution step also preserves rounding and saturation behavior.
+
+Consequently each reused percentage height is constant. Each reused
+percentage minimum/maximum resolves to the same limit. Outside `A` the
+consumer's content, width and all other size inputs are unchanged, so
+applying that same limit leaves its used height unchanged as well. On `A`
+the content can change: premise 3, not the basis test, establishes the
+ancestor's exact output. For example `height:auto; min-height:50%` can leave
+its minimum when a child is inserted, although its minimum's basis never
+changes. It is unsound to add the child's delta to that ancestor or to
+declare it fixed solely from a retained clamp result.
+
+Percentage padding and margins, including top and bottom, read containing
+**width** in this horizontal ordinary-flow scope, as specified by
+[CSS 2.1 margins](https://www.w3.org/TR/CSS21/box.html#margin-properties) and
+[padding](https://www.w3.org/TR/CSS21/box.html#padding-properties).
+Width equality therefore keeps their values and the frame conversion fixed.
+It does not by itself prove unchanged collapsing-margin state: the existing
+strut and through/solid certificates still do that. In particular the
+current `snapshot_grows` rejects percentage vertical padding outright;
+Q139 does not silently delete that additional refusal. A retained sibling
+with fixed width can nevertheless retain percentage padding/margins under
+its existing translation certificate. A width change requires its existing
+fallback, regardless of the height basis.
+
+Inside the inserted subtree there is no cached geometry to preserve. Its
+private layout consumes proven enclosing bases, resolves any internal
+definite chain in dependency order, and supplies the same size and boundary
+outputs as fresh layout. Its new reads are part of the published metadata,
+not hidden by combining only old boolean flags. Removal subtracts them.
+The next insert, removal, text edit or restyle must see the current records;
+an insert/remove roundtrip proves nothing about stale identities by itself.
+
+For the root example, let the viewport content height be `V`. With default
+content-box sizing and zero frame, `html {height:100%}` resolves against the
+initial containing block to `V`; `body {height:100%}` resolves against html
+to `V`. Additional nested `height:50%` containers successively resolve
+against their immediate containing blocks. Inserting content changes
+neither `V` nor those containing heights. Content can overflow them; that
+overflow is not a new percentage basis. Normal html/body margins and frames
+must still be resolved normally, not removed as an admission workaround.
+A fixed-height ancestor absorbs the *used-height* delta, while its changed
+content extent, baseline, anchored fragments and exclusions remain subject
+to normal propagation. It is not a stop-on-height-equality rule.
+
+For positions, apply the existing boundary-transfer induction from the seam
+outward. At each ancestor, its recomputed changed child output and unchanged
+prefix state determine the direct suffix's new origins. An unchanged
+suffix entry has unchanged width, used height and normalized boundary input,
+so it needs exactly its certified translation; its descendants retain local
+origins. Beyond a fixed-height ancestor the size delta can be zero, but all
+other outputs must still settle. No new percentage-driven relayout of a
+retained off-path subtree is needed.
+
+The precise preservation claim distinguishes the splice's existing update
+sets. Let `T` be the existing direct suffix translations and boxes moved by
+those anchors, and `U` its changed subtree, ancestor settlement, flex/positioned
+recomputation and anchored-fragment updates. Every retained box outside
+`T union U` keeps its used height and position; boxes in `T` that are only
+translated keep used heights and local geometry. The literal claim that
+*every* box outside `T` is unchanged would already be false for an auto-height
+ancestor or a Q128 positioned child. Q139 adds no new off-path update set;
+it proves that percentage inputs cannot add one. Split rectangles spanning
+changed endpoints likewise belong to the existing anchor-update set.
+
+The conjunction with the existing certificates is essential:
+
+- **Floats and clearance.** Invariant percentage heights keep each retained
+  float's height and exclusion shape fixed. Q129 still compares old and
+  proposed suffix natural minima with stationary reach, including negative
+  margins, clearance and float floor, and still forbids new/deleted float
+  exports. All mutually interacting moved floats and flow must share its
+  certified delta. A fixed-height ancestor may change an inner suffix by a
+  nonzero delta while its outer suffix stays put; if those regions share
+  float influence and no existing certificate separates them, refuse under
+  Q129. Do not infer common motion from the newly constant height, or stop
+  exporting float reach at a fixed-height block that is not a BFC.
+- **Flex.** Q128 still recomputes the container algorithm and checks complete
+  preparation/space keys, stretch, wrapping, free space and actual outputs.
+  A size supplied by the changed flex result cannot be certified unchanged
+  before that result exists: a reused percentage consumer of that size fails
+  premise 2. Recomputed item interiors remain the flex algorithm's work,
+  not reuse authorized here. Q130 still owns an outward failure after flex
+  publication. Grid/table/multicol scope does not expand.
+- **Positioned and atomic content.** Q128 settles the relevant anchors,
+  recomputes positioned percentage sizes against the settled containing
+  block, and refreshes their arithmetic charges. A changing positioned
+  basis is not evidence against this proof about *reused in-flow* geometry.
+  Atomic reuse must still satisfy its actual Space, baseline and paragraph
+  rules; Q139 cannot invent a definite atomic basis where that path supplies
+  an indefinite one.
+- **Split fragments, arithmetic and margins.** Retain source-removal,
+  seam-topology and endpoint-selector certificates and update the same
+  stable anchors and line offsets. A fixed used height does not freeze a
+  spanning fragment's endpoints. Content extent, measured constrained height,
+  old/new travel and visual excursions all remain charged. Percentage
+  resolution uses the full builder's numeric order and fails the existing
+  bounds when necessary; equal basis values cannot justify reassociation.
+
+For comparison only, Chromium's
+[`layout_utils.cc` at the inspected revision](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/layout_utils.cc#101)
+reads `DependsOnPercentageBlockSize()` from the `LayoutResult`'s physical
+fragment and compares old/new `PercentageResolutionBlockSize()` when that
+flag is set. Its surrounding cache logic also checks sizing mode,
+definiteness and other constraints. Q139 proves **before splice publication**
+that the relevant old/new bases must be equal, using retained provenance and
+the growing chain, rather than computing a new layout merely to compare
+them. Both distinguish having a percentage dependency from changing its
+basis; neither flag alone proves cache reuse. This is an analogy, not an
+independent correctness oracle for Snowghost's transfer implementation.
+
+### Refusals and minimal negative examples
+
+These are HTML fragments for later fixture construction, not executed
+fixtures. Unless a row says otherwise, place the fragment in a standards-mode
+document with `body {margin:0}` and `p {margin:0}`, insert a line-bearing
+`<p>new</p>` at the indicated comment, and also remove a pre-existing block.
+Retain line-bearing content and a separator so a mixed-inline or through
+seam does not accidentally supply the refusal being tested. Each Q139
+failure is reason 7 if reached; variants exercising other guards must assert
+their own reason rather than manufacturing a reason-7 result.
+
+| Failure | Minimal fragment / edit | Why refusal remains necessary |
+| --- | --- | --- |
+| Indefinite basis on the growing chain | `<section id="a"><p>old</p><!-- insert --><div style="height:50%"><p>tail</p></div></section>` | `a` has content-driven auto height and is in `G`. The percentage behaves as auto here; reusing a numeric old height as a definite basis is invalid. This conservative refusal does not claim CSS requires a cycle or a changed percentage result. |
+| Indefinite basis even off the growing chain | `<section><p>old</p><!-- insert --></section><aside><div style="height:50%"><p>tail</p></div></aside>` | The retained aside subtree contains an unresolved basis, although aside is not edited. A proposed summary that says only "basis not in G" would miss the definiteness premise. No stable-indefinite certificate is added here. |
+| A broken intermediate percentage chain | `<div style="height:200px"><section style="height:50%"><div id="a"><p>old</p><!-- insert --><div style="height:50%"><p>tail</p></div></div></section></div>` | The inner percentage's immediate basis is auto-height `a`, not the outer 200px box. Retaining only the terminal definite ancestor would incorrectly admit it. |
+| Percentage minimum on an auto-height ancestor | `<div style="height:200px"><section style="min-height:50%"><p style="height:80px">old</p><!-- insert 40px block --></section></div>` | The minimum stays 100px, but the section changes from 100px to 120px, not by the inserted 40px. An active clamp on the growing path is outside the existing transfer. Removal crosses the boundary in reverse. |
+| Percentage maximum on an auto-height ancestor | `<div style="height:200px"><section style="max-height:50%"><p style="height:80px">old</p><!-- insert 40px block --></section></div>` | The maximum stays 100px, but the section grows by 20px and then overflows. Same-basis equality is insufficient; an active/crossed clamp remains reason 7. |
+| Layout-supplied definite basis may change | `<div style="display:flex;align-items:stretch"><section><p>old</p><!-- insert tall block --></section><aside><div style="height:50%"><p>tail</p></div></aside></div>` | The changed flex line can stretch aside to a different height and re-resolve its child. A reused interior cannot treat the old stretch target as an external constant. Q128 may instead recompute that interior; Q139 cannot certify it before settlement. Where an enclosing unsupported entry refuses earlier, that earlier reason remains. |
+| New percentage read with no admissible external basis | `<section><p>old</p><!-- insert <div style="height:50%"><p>new</p></div> --><p>tail</p></section>` | Looking only at retained reads would miss the inserted box's auto/content-driven basis. Private construction must fail this certificate before publishing any routes or geometry. |
+| Changed source, resolution mode, or stale provenance | `<div id="basis" style="height:200px"><section style="height:50%"><p>old</p><!-- insert --></section></div>`; first change `basis` to `height:auto` or `height:300px`, then insert, without an intervening retained-record refresh in the fault injection | The old identity/value/definiteness record is not current. The legitimate style path must invalidate or republish it; missing records after a reference rebuild or slot replacement are equally unknown. A combined retained restyle may correctly refuse earlier with reason 6. |
+| Changed viewport input | `html,body {height:100%}` with `<section><p>old</p><!-- insert --></section>`; resize the viewport before attempting reuse | The terminal external value is no longer equal. Normal resize layout must refresh it, or this preflight refuses. HTML alone cannot express stale retained viewport state. |
+| Width/box-conversion input not preserved | `<div id="basis" style="width:200px;height:200px"><section style="height:50%;box-sizing:border-box;padding-top:10%"><p>old</p><!-- insert --></section></div>`; change `basis` width to 300px before reuse | Equal height basis does not keep the section's content height or padding fixed. Width/style invalidation must run; a stale record cannot pass premise 1. Existing width or style guards can refuse first. |
+| Uncertified resolution mode or numeric transfer | `<section style="height:calc(50% + 2147483647px)"><p>old</p><!-- insert --></section>` under a definite viewport-based body; separately put the first row in a document without a standards-mode doctype | A percentage expression does not waive travel/overflow limits. The quirks variant cannot borrow the ordinary containing-block proof. These are conservative refusal probes, not assertions that their CSS has no full-layout result. |
+
+Indefinite percentage min/max cases use the first row with `min-height:50%`
+or `max-height:50%` in place of `height:50%` and retain reason 7 for this
+certificate. A dangling basis handle, omitted descendant record, unsupported
+provenance link, or cycle without a definite external derivation also fails
+premise 1 or 2. Such metadata faults require injection into a real fixture;
+there is no HTML declaration that directly creates a dangling layout handle.
+The nonzero percentage in these negative probes must not be erased from
+the record merely because its current used result happens to be zero.
+
+### Required fixtures and falsifiers for the implementation task
+
+The comparison is every incremental edit prefix against a fresh full build,
+plus independent CSS/Chromium rectangle expectations for basis resolution.
+Either a geometry difference on an admitted prefix or admission outside
+these premises rejects the implementation. If full and incremental agree
+but disagree with the independent expected containing block, both are wrong;
+do not bless that output as a fixture. Begin in hosted CI with one reduced
+insertion/removal pair before expanding the matrix. These are obligations,
+not new files or completed validation in this argument-only task.
+
+Positive fixtures must include:
+
+- **Reduced apollo11 root chain:** standards mode, `html,body {height:100%}`,
+  an ordinary auto-height section with old/inserted/later paragraphs and a
+  later sibling; no grids. Assert successful local insertion and removal,
+  constant html/body used heights, inner suffix motion and content overflow.
+  Use enough content to cross the viewport height in both directions.
+  Repeat with normal body margins, and a viewport change followed by a
+  proper full refresh. The unchanged real apollo11 input still exposes Q140.
+- **Nested definite chain:** a 200px containing block, a 50% child and a 50%
+  grandchild, with complete block seams inside the grandchild and later
+  siblings at each level. Expect 100px then 50px content heights with zero
+  frame. Include a parallel sibling chain with a different percentage,
+  nonzero border/padding and border-box variants; use a nonintegral
+  percentage/basis combination to catch changed rounding order.
+- **Limits on unchanged geometry:** retained sibling boxes with percentage
+  min-height and max-height against a fixed basis, including active limits;
+  and a content-independent percentage-height ancestor with fixed resolved
+  limits. Their used heights stay constant. Do not use an auto ancestor
+  crossing a clamp as a positive case.
+- **Width percentages and private readers:** percentage top/bottom margins
+  and padding on retained translated siblings at fixed width; an inserted
+  definite percentage chain with a valid external basis. Repeat insertion
+  before one old sibling, remove both new and old blocks, then edit retained
+  and inserted text and restyle a basis. Confirm records are renewed after
+  full fallback, with no stale slots or basis shortcuts.
+- **Certificate combinations:** place the root/nested chain around each
+  supported Q129 stationary-expired-float/later-float/clearance case, Q128
+  positioned/atomic and flex cases, and the anchored split cases. Claim a
+  positive splice only where all their old conditions still hold. Fixed
+  height with a moving internal float and stationary interacting outer flow
+  needs a negative companion, not a widened float certificate.
+
+Negative fixtures cover every row above, both min/max indefinite variants,
+unchanged-numeric-value but changed-definiteness state, a missing or retired
+basis handle, and a percentage reader in a nested retained context whose own
+entry is percentage-free. Retain the existing float-floor negative-margin,
+flex changed-space, split-topology and near-limit negatives. Attribute the
+first refusal to the guard actually reached; preserve full rendering on all
+fallbacks and assert unchanged retained state at a reason-7 preflight exit.
+
+Extend the existing temporary `falsify-m2` workflow on the implementation
+branch. Apply each mutation separately to a restored baseline, require that
+the intended fixture reaches that predicate, and retain raw path and dump
+logs. Do not accept a compile error, unrelated earlier refusal or a crashed
+driver as detection. The workflow's branch trigger must include that branch;
+adding a mutation name without execution is no evidence. The premise-to-
+mutation obligations are:
+
+| Premise | Mutation, and observation required to detect it |
+| --- | --- |
+| Complete consumer inventory (1) | Omit one percentage reader in a retained nested context or a float, and independently ignore min-height and max-height reads. The focused negative must lose its required reason-7 path or produce wrong geometry. Instrument the selected predicate so an earlier guard cannot masquerade as detection. |
+| Correct immediate basis and full provenance (1–2) | Replace the immediate containing block with the context root, or flatten a nested chain past the auto-height intermediate. The independent 200/100/50 rectangle expectations or the broken-chain refusal must fail. |
+| Definite, content-independent basis (2) | Treat an indefinite old numeric height as definite; separately accept an old flex stretch target as immutable. The auto-height/flex negative must either violate its reuse/refusal assertion or differ after the growing edit. A fully recomputed flex interior is not a detection of this reuse mutation. |
+| Growing-chain exclusion (2) | Ignore one basis membership in `G`, or remove an unresolved layout-sized ancestor from `G` on equal old numbers. Use a certificate-level fixture for this predicate with other premises supplied, plus a flex-growth integration probe; demand an explicit assertion failure if another preflight conservatively masks the mutation. |
+| Freshness, identity and external inputs (1–2) | Skip invalidation after changing a basis from definite to auto, after replacing its stable handle, and after a viewport/width change, one at a time. A subsequent edit must fail the freshness assertion or produce a dump/independent-rectangle difference. Compare state as well as the numeric basis. |
+| Exact constrained ancestor transfer (3) | Propagate content delta into a fixed percentage height; independently treat an auto-height percentage clamp as exact growth. Root overflow and the 80px + 40px limit probes must differ at an ancestor or its later sibling. Also mutate the output-equality cutoff to ignore changed extent/baseline with equal used height. |
+| Private subtree and metadata lifetime (4) | Resolve a fresh reader using the context basis instead of its containing block; separately omit its dependency publication or fail to remove a retired dependency. Nested private rectangles, a subsequent basis edit, and a removal followed by another local insertion must detect these respectively. Missing publication must not be hidden by an intervening full rebuild. |
+| Width-dependent frame and unchanged margin transfer (1,4) | Use height instead of width for percentage padding/margins, or reuse their old resolved value after a width change; separately ignore an exposed-strut change. Non-square geometry and the existing margin probes must differ or violate refusal. |
+| All existing certificates remain conjunctive (4) | Independently bypass stationary-float reach, common-motion equality across a fixed-height boundary, flex Space equality/stretch layout, split-topology protection, positioned charge refresh and numeric travel checks. Their focused combination cases must detect each bypass; run the existing mutation rows as well. |
+| Numeric resolution and counted refusal (2,4) | Collapse nested percentage arithmetic into one multiplication, then independently suppress a reason-7 path row or count it as a successful splice. The rounding fixture and existing malformed-path assertions must detect the respective changes. |
+
+These include semantic mutations and conservative admission-policy
+mutations. The latter may leave rendering correct; their detection is an
+explicit basis/certificate or required-path assertion, as in the existing
+seam and path-log falsifiers, not a claim of a rendering defect. A guard
+with no reachable integration counterexample still needs an isolated
+certificate assertion varying that premise while keeping the others fixed.
+Positive-path assertions also prevent replacing the whole extension by
+unconditional fallback. Full-build cost is a separate empirical gate.
+
+### Retained data, dependencies and criterion 4
+
+The current boolean `flow_definite_free` says only that some percentage read
+exists; it cannot identify the basis or distinguish html from an edited
+auto-height ancestor. The later implementation needs the per-read records
+above, live provenance links and invalidation ownership, plus a summary that
+can answer whether any reused read has unknown/indefinite provenance or
+reaches `G`, without scanning unrelated descendants on every edit. Width
+inputs and fixed-used-height versus content-output fields must stay distinct.
+The record describes actual resolution, not a second CSS resolver maintained
+only for splice admission.
+
+Let `N` be live layout boxes, `P` percentage-property reads, `D` enclosing
+depth, and `K` the dependency-summary/index records visited by an edit.
+There are at most three direct height-property reads per box here; repeated
+copies of each read at every ancestor would nevertheless cost `O(P D)`.
+Retain shared provenance edges, not expanded ancestor lists. Missing metadata
+must safely fall back, but must not become the way the positive fixtures
+quietly evade the intended admission.
+
+| Candidate | Actual dependencies and costs | Disposition |
+| --- | --- | --- |
+| Per-box records with an edit-time scan of every retained consumer | Full-build record writes depend on that box's existing style/containing-block resolution; independent children write disjoint records. Once ancestor inputs are known, all edit-time membership queries can run independently and reduce with a balanced OR. Storage and build work are `O(N + P)`; each edit reads `O(P)` consumers even when it changes one paragraph. | A correctness reference for CI, not the final local splice. Parallel scanning removes no page-wide work and fails the existing locality criterion. |
+| Locally owned records and composable dependency summaries over the existing owner/index tree | Style and containing-block identity precede each record; a definite percentage depends on its basis value, giving true top-down edges through nested percentage chains. Sibling records are independent once those inputs exist. Parent summaries depend on child summaries and combine by balanced reductions, not a document-order fold. Edit queries read immutable summaries after `A/G` classification; disjoint query results reduce independently, and publication joins only changed index ancestors. | Recommended direction: retain direct provenance once and use queryable summaries to avoid unrelated consumer leaves. Exact set/range representation, `K` bound and byte cost remain implementation obligations, not a claim that one bit or a constant-sized exact basis set suffices. Summaries may conservatively refuse; they must still admit the required definite chains. |
+| Per-basis reverse reader lists, filled by shared append | Each reader must first resolve its basis. Shared mutation then orders otherwise independent readers of the same viewport/root basis; repairs can fan out to all its readers. A dense page-sized reverse table also charges percentage-free full builds. | Not recommended: the append order is not a layout dependency. If exact reverse grouping proves necessary, disjoint emission followed by balanced grouping is the parallel alternative; its extra storage/work and reader traversal still need comparison with owner summaries. |
+
+Constructing `G` requires proving independence, not first recomputing the
+whole page: follow already recorded basis links from unchanged terminals.
+Then read the changed owner's outward path and conservatively classify
+content/layout-dependent sizes. Private subtree resolution can overlap
+independent retained-summary queries once enclosing inputs are known.
+Boundary output propagation waits for the changed child and its containing
+algorithm, as before. Shared cache insertion, a global allocation counter
+on the dependency path, and sibling-by-sibling record validation add no
+necessary dependency and are not the recommendation.
+
+The records charge the full build for provenance writes, summary construction,
+storage initialization and retained memory, even on a frame with no edits.
+Percentage-free boxes should incur only the representation's empty-state
+cost, not allocated reader lists or a second traversal. Reuse the existing
+resolution pass where possible; doing so is not proof that the added cost is
+negligible. Report actual fields/bytes, allocations, record and index visits,
+and any full-build pass added in the implementation task.
+
+[M2 criterion 4](DESIGN.md#criterion) still requires full style and layout
+within 5 percent of M1's `8b8612f` on every page; this extension receives no
+extra allowance. Before measuring, record the comparison of the same source
+with/without record collection, interleaved runs and a twin base noise
+control, on the 14900K through CI with identical compiler, captures and
+settings. Compare sequential and four-worker full builds and per-edit costs;
+begin with the smallest useful sample and expand only if its spread cannot
+settle the question. Exceeding criterion 4, scanning unchanged descendants,
+or introducing an unnecessary sibling dependency rejects the implementation
+choice even when its geometry is correct. No cost has been measured here.
+
+### Remaining uncertainty and rejection conditions
+
+The argument is conditional on exact containing-block provenance and the
+existing transfer certificates; it does not establish that today's full
+builder already supplies those facts. Source inspection finds
+`prepare_spaces` passing a context-wide `content_height` into nested child
+spaces, and `stack_flow` passing its single `basis_height` to ordinary block
+height resolution. Its open-block frames track widths but not a nested
+height basis. That is a concrete risk for the nested 200/100/50 fixture,
+recorded in [the TODO](../../../docs/todo.md); no local run establishes the
+actual mismatch. Before implementing admission, CI must compare nested and
+auto-intermediate full builds with independent expected rectangles. If they
+disagree, repair full resolution and its consumers; do not encode the wrong
+context-wide basis as an invariant or narrow the required nested fixture.
+
+Other open evidence is whether the supported numeric/box-sizing paths,
+fixed-height ancestor output summaries and cross-boundary float certificates
+can implement these premises without extra descendant work, and which
+summary representation meets criterion 4. Those are later implementation
+and measurement obligations, not owner decisions made by this prose. No
+new choice is requested beyond Q139 A and Q145 C. A need to admit changing
+bases, stable indefinite percentages, general clamp transitions or a wider
+float/flex scope would require another argument and an owner ruling.
+
+An admitted edit that changes a supposedly invariant basis, off-path used
+height or position overturns the proof's premises or its transfer argument.
+A specification/reference-browser exception in the claimed ordinary scope,
+an overlooked provenance edge, or a full-layout result that depends on
+content despite the asserted definite derivation has the same consequence.
+Keep the counted fallback until the discrepancy is resolved. A surviving
+mutation overturns the claimed evidence; a slow full build overturns the
+representation choice, not the CSS induction. This task changes no renderer,
+pin or submodule, files no Whitefoot gap, and supplies no execution results.
