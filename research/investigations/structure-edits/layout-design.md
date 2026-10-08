@@ -3068,7 +3068,9 @@ then refuses the probe's display-changing class edit, as the style-only API
 requires topology reconstruction. Each display/float mode is therefore set
 by the initial stylesheet before its retained baseline; all height/width
 edits remain required, with no allowance for refused edits. Validation of
-those separate mode runs remains pending.
+those separate mode runs passes at `c0ffc6979d9090dcaa2f55de12d54610f32c2c41`
+in [run 37767223590](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37767223590):
+42 edits per mode, each in sequential and four-worker builds.
 
 Per the implementation task's machine constraint, all evidence and all
 performance comparisons use GitHub-hosted CI, including the comparison of
@@ -3104,3 +3106,21 @@ the candidate, sharing exact page captures, fonts and edit scripts. Start with
 one forward/inverse pair per kind in two interleaved rounds, then select scale
 from its observed duration and spread. The full-build and storage comparison
 remains an additional obligation; this small sample cannot establish it.
+
+
+The draft provenance implementation separates the parent's incoming edge from
+the child's last certified input. Geometry reuse compares both, so a changed
+identity or definiteness state triggers fresh layout even when dimensions
+are equal. Ordinary block records are resolved top down; live-source checks
+include the stable context, owner, consumer style and nonretired entry slot.
+Their cached summaries are published bottom up through the existing owner
+index. A splice checks its enclosing sources and preserves unrelated
+certificates only under invariant source inputs; retirement removes owned
+consumers through the same index. No edit-time descendant scan is intended.
+This is implementation reasoning, pending the lifetime fixtures and review.
+
+The draft review found two issues before successful admission validation:
+constrained siblings lost a collapsed bottom strut, and recorded source
+identities were not checked. The former now retains the full resolver's
+bottom-separation state; the latter is being addressed with live-link checks
+and separate incoming/certified inputs. Neither is claimed verified yet.
