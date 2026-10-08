@@ -1665,3 +1665,10 @@ each has a twin, and every X5 kind is interleaved in both modes and two rounds.
 HTML5 sentence/block must recover the patched-frontier cost while retaining
 the font-size gain. Until these measurements pass, the reader repair is a
 proposal, not a reported speedup.
+
+
+The reader implementation passes [layout-check 37843507652](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37843507652)
+at aa560f9. Behavioral validation and latency remain unverified until the
+resubmitted oracle, range-falsification and ten-cohort runs complete. The
+one-use initial profile workflow is retired after its captured evidence above;
+the same phase-checked profiler remains wired to the reader comparison.
