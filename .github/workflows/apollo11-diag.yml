@@ -18,7 +18,7 @@ jobs:
       - name: Toolchain and fonts
         run: |
           sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo apt-get install -y --no-install-recommends clang lld python3-html5lib fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
           make -s compiler oracle-fonts
       - name: Fetch live Apollo inputs and record identity
         run: |
@@ -59,6 +59,44 @@ jobs:
           echo "WFC=$wfc" >> "$GITHUB_ENV"
           time (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
           time sh research/investigations/incremental-layout/run.sh prepare apollo11
+      - name: Computed styles and edit-owner inventory
+        run: |
+          set -euo pipefail
+          time (cd renderer && "$WFC" --graph modules.wfg --entry style_oracle -o ../build/style_oracle)
+          build/style_oracle dump 1 build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css' > build/apollo11-styles.tsv
+          /usr/bin/python3 - <<'PYEOF' > build/apollo11-owners.txt
+          import csv, sys
+          from pathlib import Path
+          import html5lib
+          sys.path.insert(0, 'research/investigations/incremental-layout/scripts')
+          from edits import Tree
+          tree = Tree('build/x5/apollo11.nodes')
+          styles = list(csv.DictReader(open('build/apollo11-styles.tsv'), delimiter='\t'))
+          styles = {int(s['index']): s for s in styles if not s['name'].startswith('::')}
+          dom = html5lib.parse(Path('build/research/concurrency/apollo11.html').read_bytes(), namespaceHTMLElements=False)
+          elements = [e for e in dom.iter() if isinstance(e.tag, str)]
+          # Attribute labels are used only if the complete preorder agrees.
+          aligned = [e.tag for e in elements] == [e['name'] for e in tree.elements]
+          print('html5lib tag preorder matches Snowghost:', aligned)
+          keys = 'display position float clear width height min-height max-height overflow-x overflow-y column-count column-width counter-reset counter-increment counter-set'.split()
+          for kind in ('block', 'fontsize'):
+              lines = Path(f'build/x5/scripts/apollo11-{kind}.edits').read_text().splitlines()
+              operations = [l.split() for l in lines if l and l[0] != 'S']
+              for number, op in enumerate(operations, 1):
+                  if op[0] not in ('B', 'C'):
+                      continue
+                  node = int(op[1])
+                  print('edit', kind, number, 'operation', ' '.join(op[:3]))
+                  while node is not None:
+                      e = tree.by_node[node]
+                      style = styles[e['index']]
+                      if style['name'] != e['name']:
+                          raise ValueError('node/style preorder differs')
+                      attrs = elements[e['index']].attrib if aligned else {}
+                      print(node, e['name'], {k: attrs[k] for k in ('id', 'class', 'style') if k in attrs}, {k: style[k] for k in keys if k in style})
+                      node = e['parent']
+          PYEOF
+          cat build/apollo11-owners.txt
       - name: Smallest block pair before the batch
         run: |
           set -euo pipefail
