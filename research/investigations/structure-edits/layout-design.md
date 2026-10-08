@@ -3426,5 +3426,42 @@ workers, and html5 root font 1.014 sequential. Every other median lies
 between 0.95 and 1.11 with a range that includes the twin's median, so
 this sample cannot separate it from noise; apollo11 root font sequential,
 1.019, excludes 1.0 but not the twin's 1.003. The root font edits take
-the full relayout path, so their remaining cost is the record work that
-the full-build comparison measures.
+the update path over most of the page; the full-build comparison below
+separates that from a full build.
+
+The full-build comparison at the same renderer (run 37827316476, drivers
+of run 37810231789 for main, M2 and twin, the candidate from the mutation
+baseline of `ed3cec0`; ubuntu-24.04, three rounds in alternating order,
+milliseconds per full layout with the zero-repetition setup subtracted,
+medians with ranges) is:
+
+| Page, mode | main `8fbc160` | M2 `95ea4a1` | M2 twin | candidate |
+| --- | --- | --- | --- | --- |
+| ecma262 sequential | 1126.4 [1100.8, 1142.0] | 1537.8 [1503.5, 1547.5] | 1509.7 [1506.0, 1525.4] | 1529.7 [1524.2, 1567.0] |
+| ecma262 four workers | 621.6 [614.6, 624.1] | 1028.0 [1014.5, 1085.8] | 1032.3 [1028.1, 1041.5] | 1039.2 [1031.1, 1045.4] |
+| html5 sequential | 1245.4 [1242.8, 1253.8] | 1570.3 [1561.2, 1614.3] | 1612.5 [1593.6, 1618.2] | 1594.3 [1580.9, 1626.8] |
+| html5 four workers | 707.4 [675.7, 717.5] | 1052.8 [1034.9, 1081.1] | 1055.0 [1028.0, 1074.9] | 1060.7 [1053.3, 1078.2] |
+| apollo11 sequential | 75.5 [74.3, 76.9] | 86.5 [84.5, 86.5] | 86.2 [85.5, 87.3] | 85.7 [85.5, 86.9] |
+| apollo11 four workers | 49.9 [49.3, 50.0] | 65.4 [64.2, 66.1] | 64.9 [64.3, 66.4] | 65.7 [64.5, 66.7] |
+
+Every candidate median lies within about one percent of M2's and inside
+or next to the twin's range, so this sample finds no full-build
+regression from Q139 beyond the twin's noise; it does not settle a
+difference below one percent. Sequential peak resident memory of the
+whole process grows from 485,384 to 503,384 KiB on ecma262 (3.7 percent)
+and from 477,660 to 494,792 KiB on html5 (3.6 percent), and by at most
+1,232 KiB on apollo11. The native sizes from the same run are 72 bytes per
+`HeightProof`, 16 per `HeightInput`, 568 per `Block` and 976 per
+`Context`. M2's distance from main, 37 to 65 percent on these pages, is
+the existing criterion-4 gap recorded in the TODO, not a Q139 cost. The
+collection-off control did not compile: stubbing the record functions
+changes their effect rows, which every caller's declared row must then
+match, so collection work is not separated from the record storage and
+the Part 1 resolver repair.
+
+The root font edits, which lay out most of the page through the update
+path rather than a full build, stay 5 to 8 percent slower than M2 in
+every paired sample above; that path refreshes and republishes records
+in addition to laying out. Smaller per-edit medians of 1 to 7 percent on
+text, style and block edits fall inside wide ranges that include the
+twin's medians and are not separated from noise by these samples.
