@@ -59,7 +59,7 @@ def fixtures():
                               '.small{font-size:12px}.large{font-size:24px}'), root_pairs
     simple = '<section><p><span class="leaf">First.</span></p><p class="middle">Middle.</p><p><span class="leaf">Last.</span></p></section>'
     for name, rule in [('frame-width', 'width:90px'),
-                       ('frame-left', 'padding-left:29px'),
+                       ('frame-left', 'padding-left:29px;padding-right:0'),
                        ('frame-top', 'padding-top:31px'),
                        ('frame-definite', 'height:170px'),
                        ('frame-flow-width', 'padding-right:480px'),
@@ -67,6 +67,8 @@ def fixtures():
                        ('own-overflow', 'overflow:hidden'),
                        ('inactive-columns', 'column-gap:37px')]:
         css = '.changed{' + rule + '}.changed .leaf{font-size:24px}'
+        if name == 'frame-left':
+            css += 'section{box-sizing:border-box;padding-right:29px}'
         if name == 'frame-definite':
             css += '.middle{height:50%}'
         if name == 'frame-flow-width':
@@ -117,8 +119,8 @@ def fixtures():
         return [f'T {node} 0 \\n', f'D {node} 0 1'] + toggle(tree) + [f'T {node} 0 \\n', f'D {node} 0 1']
     yield 'lineless', page('<section><p><span class="leaf">First.</span></p><span class="leaf" style="white-space:pre-line">\t\t</span><p><span class="leaf">Last.</span></p></section>', '.changed .leaf{font-size:24px}'), empty_edits
     # The first speculative break grows; another marked leaf remains lineless.
-    # Re-probing the first paragraph would read its fresh height as the old one,
-    # permit a false zero-delta convergence and leave later owners unmoved.
+    # Every mark must survive the failed batch for full replay. The existing
+    # old-output probes also refuse this batch because several leaves are marked.
     refused = '<section><p><span class="leaf wrap">Several words cross the narrow measure.</span></p><span class="leaf" style="white-space:pre-line">\t\t</span><p><span class="leaf">Last.</span></p></section>'
     yield 'refused-leaf-replay', page(refused, 'section{width:180px}.changed .leaf{font-size:24px}.changed .wrap{font-size:32px}'), toggle
     def source_edits(tree):
