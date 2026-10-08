@@ -300,7 +300,7 @@ jobs:
       matrix:
         # reassociate-saturation is out until docs/todo.md's item on it is resolved.
         # Step 4's descendant-scan mutation waits for the visit sentinels (docs/todo.md).
-        mutation: ${{ contains(github.event.head_commit.message, '[fragment]') && !contains(github.event.head_commit.message, '[falsify]') && fromJSON('["no-anchored-fragment-repair","no-following-fragment-translation","no-split-anchor","no-split-line-refresh","stale-split-ranks"]') || fromJSON('["no-anchored-fragment-repair","no-following-fragment-translation","reference-origin","reference-suffix","reference-sentinel","reference-dense","stationary-height","stationary-baseline","omit-ancestor","relative-twice","shift-table-descendants","column-map-early","collapse-strut","clear-floats-at-close","stop-on-height","unchecked-baseline","omit-ancestor-height","skip-seam","omit-edge","no-sibling-move","live-count-insert","live-count-remove","lose-text-route","synthetic-checkpoint","stale-class-frontier","unsafe-admission","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]') }}
+        mutation: ${{ contains(github.event.head_commit.message, '[fragment]') && !contains(github.event.head_commit.message, '[falsify]') && fromJSON('["no-topology-replacement","no-owner-motion","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-split-anchor","no-split-line-refresh","stale-split-ranks"]') || fromJSON('["no-topology-replacement","no-owner-motion","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","reference-origin","reference-suffix","reference-sentinel","reference-dense","stationary-height","stationary-baseline","omit-ancestor","relative-twice","shift-table-descendants","column-map-early","collapse-strut","clear-floats-at-close","stop-on-height","unchecked-baseline","omit-ancestor-height","skip-seam","omit-edge","no-sibling-move","live-count-insert","live-count-remove","lose-text-route","synthetic-checkpoint","stale-class-frontier","unsafe-admission","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -335,7 +335,7 @@ jobs:
           elif m == "reference-origin":
               swap("renderer/layout/geometry.wf", "  let child_slot = no_index;\n  match item {", "  if context^.local_geometry {\n  } else {\n    return unit;\n  }\n  let child_slot = no_index;\n  match item {")
           elif m == "reference-dense":
-              swap("renderer/layout/reference.wf", "    shift_paragraph(paragraph: paragraph, delta: delta);", "    shift_paragraph(paragraph: paragraph, delta: 0_i32);")
+              swap("renderer/layout/reference.wf", "          set context^.paragraphs.inner[at].top = local.y;", "")
           elif m == "reference-sentinel":
               swap("renderer/layout/reference.wf", "  let fits = bound < 2147483647_i64;", "  let fits = bound <= 2147483647_i64;")
           elif m == "reference-suffix":
@@ -390,8 +390,16 @@ jobs:
           elif m == "no-atomic-retirement":
               old = "          let children = context^.children.inner.len;\n          let (removed_contexts, removed_paragraphs) = retire_splice_atomics(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..children], paths: paths);\n          set contexts = contexts +sat removed_contexts;\n          set paragraphs = paragraphs +sat removed_paragraphs;\n"
               swap("renderer/layout/splice_publish.wf", old, "")
+          elif m == "no-owner-motion":
+              swap("renderer/layout/reference.wf", "        set context^.blocks.inner[at].y = local.y;", "")
+          elif m == "no-old-reference-frame":
+              swap("renderer/layout/geometry.wf", "  let previous = context^.reference_phase == 1_u8;\n  return retained_block_origin(context: context, block: block, previous: previous);", "  let previous = False();\n  return retained_block_origin(context: context, block: block, previous: previous);")
+          elif m == "no-reference-natural-floor":
+              swap("renderer/layout/flow.wf", "    return origin.y +sat output.natural_floor;", "    return 9223372036854775807_i64;")
+          elif m == "no-topology-replacement":
+              swap("renderer/layout/fragment_topology.wf", '  let published_joins = update_split_joins(targets: &candidates.inner[0_u64..selected], values: &changed_joins.inner[0_u64..selected], offset: 0_u64, count: count, joins: &context^.split_joins.inner[0_u64..join_nodes]);\n', "")
           elif m == "no-anchored-fragment-repair":
-              swap("renderer/layout/fragment_repair.wf", '        repair_fragment_cell(context: context, styles: styles, content_left: content_left, fragment: &fragments^[0_u64], anchor: &anchors^[0_u64]);\n', "")
+              swap("renderer/layout/fragment_repair.wf", '  repair_fragment_cell(context: context, styles: styles, content_left: content_left, fragment: fragment, anchor: anchor);\n', "")
           elif m == "no-following-fragment-translation":
               swap("renderer/layout/fragment_geometry.wf", "    set fragment.y = top;\n    set fragment.height = bottom -sat top;", "    set fragment.height = bottom -sat top;")
           elif m == "no-split-anchor":
@@ -463,8 +471,22 @@ jobs:
           fi
           grep 'unsafe arithmetic admission produced no rebuild difference' build/near-limit-negative.log
           python3 research/investigations/incremental-layout/scripts/near-limit.py build/layout_mutated build/near-limit-unsafe --unsafe
+      - name: Detect topology replacement omission
+        if: matrix.mutation == 'no-topology-replacement'
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts
+          python3 "$s/fragment-topology.py" build/layout_base build/topology-base
+          negative=0
+          python3 "$s/fragment-topology.py" build/layout_base build/topology-negative --detect-omission > build/topology-negative.log 2>&1 || negative=$?
+          if [ "$negative" = 0 ]; then
+            echo 'the topology detector accepted the unmutated renderer' >&2
+            exit 1
+          fi
+          grep 'topology omission produced no rebuild difference' build/topology-negative.log
+          python3 "$s/fragment-topology.py" build/layout_mutated build/topology-mutated --detect-omission
       - name: Detect semantic extension mutations
-        if: contains(fromJSON('["no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
+        if: contains(fromJSON('["no-owner-motion","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         run: |
           set -euo pipefail
           cat > build/semantic-falsify.py <<'PYEOF'
@@ -571,7 +593,7 @@ jobs:
             exit 1
           fi
       - name: Detect
-        if: matrix.mutation != 'unsafe-admission' && !contains(fromJSON('["no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
+        if: matrix.mutation != 'unsafe-admission' && matrix.mutation != 'no-topology-replacement' && !contains(fromJSON('["no-owner-motion","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         run: |
           set +e
           detected=""
@@ -639,7 +661,7 @@ jobs:
             build/near-limit-*/
             build/near-limit-negative.log
       - uses: actions/upload-artifact@v4
-        if: always() && contains(fromJSON('["no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
+        if: always() && contains(fromJSON('["no-owner-motion","no-old-reference-frame","no-reference-natural-floor","no-anchored-fragment-repair","no-following-fragment-translation","no-positioned-anchor","no-stretch","no-free-space","no-wrap-rebreak","no-float-floor","stale-intrinsic-margins","omit-transfer-travel","omit-transfer-natural-floor","omit-transfer-float-reach","omit-transfer-free-transfer","omit-transfer-motion-known","no-moving-float-anchor","no-positioned-retirement","no-atomic-retirement","no-split-anchor","no-split-line-refresh","stale-split-ranks","omit-transfer-fragment-sources","omit-transfer-fragment-first","omit-transfer-fragment-last"]'), matrix.mutation)
         with:
           name: semantic-${{ matrix.mutation }}
           path: |

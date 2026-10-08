@@ -59,27 +59,51 @@ fn content_position(value: Position, dx: i32, dy: i32) -> made: Position pure {
   return Position(x: shifted_x, y: shifted_y);
 }
 
-fn block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner), reads(context.local_geometry) {
-  doc "Accumulates a block origin through parent links reading only the fields of each origin branch without copying the reference walker's geometry/style snapshot.";
+fn retained_block_origin(context: &Context, block: u32, previous: Bool) -> made: Origin reads(context.blocks.inner) {
+  doc "Resolves retained ancestry, stopping at captured old origins for previous coordinates or completed fresh scratch for current coordinates.";
   let cursor = block;
   let accumulated = zero_origin();
   let count = context^.blocks.inner.len;
   for (step in 0_u64..count) {
     let at = cvt::<u32, u64>(cursor);
     if at < context^.blocks.inner.len {
-      if context^.local_geometry {
-        let local = Origin(x: context^.blocks.inner[at].x, y: context^.blocks.inner[at].y, dx: context^.blocks.inner[at].dx, dy: context^.blocks.inner[at].dy);
-        set accumulated = origin_accumulate(owner: local, local: accumulated);
-        set cursor = context^.blocks.inner[at].parent;
+      if previous {
+        if context^.blocks.inner[at].reference_captured {
+          let saved = context^.blocks.inner[at].reference_old;
+          return origin_accumulate(owner: saved, local: accumulated);
+        }
       } else {
-        let resolved = origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y);
-        return resolved;
+        if context^.blocks.inner[at].reference_fresh {
+          let raw = origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y);
+          return origin_accumulate(owner: raw, local: accumulated);
+        }
       }
+      let local = Origin(x: context^.blocks.inner[at].x, y: context^.blocks.inner[at].y, dx: context^.blocks.inner[at].dx, dy: context^.blocks.inner[at].dy);
+      set accumulated = origin_accumulate(owner: local, local: accumulated);
+      set cursor = context^.blocks.inner[at].parent;
     } else {
       return accumulated;
     }
   }
   return accumulated;
+}
+
+fn block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase) {
+  doc "Reads authoritative local geometry between passes, raw scratch for a touched replay payload, and old or settled owner geometry for untouched payloads according to the replay phase.";
+  if context^.local_geometry {
+    let current = False();
+    return retained_block_origin(context: context, block: block, previous: current);
+  }
+  let at = cvt::<u32, u64>(block);
+  if at < context^.blocks.inner.len {
+    let full = context^.reference_phase == 0_u8;
+    let raw = bor(full, context^.blocks.inner[at].reference_fresh);
+    if raw {
+      return origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y);
+    }
+  }
+  let previous = context^.reference_phase == 1_u8;
+  return retained_block_origin(context: context, block: block, previous: previous);
 }
 
 fn block_position(context: &Context, at: u64) -> made: Position reads(context) {
@@ -90,14 +114,19 @@ fn block_position(context: &Context, at: u64) -> made: Position reads(context) {
 }
 
 fn paragraph_origin(context: &Context, at: u64) -> made: Origin reads(context) {
+  doc "Resolves one paragraph against the authoritative owner frame without requiring untouched suffix scratch.";
   if at < context^.paragraphs.inner.len {
-    let paragraph = &context^.paragraphs.inner[at];
-    if context^.local_geometry {
-      let owner = block_origin(context: context, block: paragraph^.block);
-      let local = Origin(x: paragraph^.x, y: paragraph^.top, dx: paragraph^.dx, dy: paragraph^.dy);
-      return origin_accumulate(owner: owner, local: local);
+    let full = context^.reference_phase == 0_u8;
+    let fresh = bor(full, context^.paragraphs.inner[at].reference_fresh);
+    let reference = bnot(context^.local_geometry);
+    let raw = band(reference, fresh);
+    if raw {
+      return origin_from_resolved(nx: context^.paragraphs.inner[at].normal_x, ny: context^.paragraphs.inner[at].normal_top, vx: context^.paragraphs.inner[at].resolved_x, vy: context^.paragraphs.inner[at].resolved_top);
     }
-    return origin_from_resolved(nx: paragraph^.normal_x, ny: paragraph^.normal_top, vx: paragraph^.resolved_x, vy: paragraph^.resolved_top);
+    let previous = context^.reference_phase == 1_u8;
+    let owner = retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
+    let local = Origin(x: context^.paragraphs.inner[at].x, y: context^.paragraphs.inner[at].top, dx: context^.paragraphs.inner[at].dx, dy: context^.paragraphs.inner[at].dy);
+    return origin_accumulate(owner: owner, local: local);
   }
   return zero_origin();
 }
@@ -118,23 +147,31 @@ fn paragraph_position(context: &Context, at: u64) -> made: Position reads(contex
   return visual;
 }
 
-fn child_position(context: &Context, at: u64) -> made: Position reads(context) {
+fn child_origin(context: &Context, at: u64) -> made: Origin reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.reference_phase) {
+  doc "Resolves a child placement independently of the child's own formatting-context replay state; viewport anchors retain the zero owner.";
   if at < context^.children.inner.len {
-    let child = &context^.children.inner[at];
-    let visual = if context^.local_geometry {
-      let owner = if child^.viewport_origin {
-        give zero_origin();
-      } else {
-        give block_origin(context: context, block: child^.block);
-      }
-      let accumulated = origin_accumulate(owner: owner, local: child^.anchor);
-      give origin_visual(value: accumulated);
-    } else {
-      give Position(x: child^.x, y: child^.y);
+    let full = context^.reference_phase == 0_u8;
+    let fresh = bor(full, context^.children.inner[at].placement_fresh);
+    let reference = bnot(context^.local_geometry);
+    let raw = band(reference, fresh);
+    if raw {
+      return origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y);
     }
-    return content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+    let previous = context^.reference_phase == 1_u8;
+    let owner = if context^.children.inner[at].viewport_origin {
+      give zero_origin();
+    } else {
+      give retained_block_origin(context: context, block: context^.children.inner[at].block, previous: previous);
+    }
+    return origin_accumulate(owner: owner, local: context^.children.inner[at].anchor);
   }
-  return Position(x: 0_i32, y: 0_i32);
+  return zero_origin();
+}
+
+fn child_position(context: &Context, at: u64) -> made: Position reads(context) {
+  let origin = child_origin(context: context, at: at);
+  let visual = origin_visual(value: origin);
+  return content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
 }
 
 fn geometry_snapshot(context: &Context) -> made: Box<Array<Origin>> reads(context) {
@@ -221,6 +258,9 @@ fn store_block_origin(block: &Block, origins: &[Origin]) -> result: unit reads(o
   set block^.y = local.y;
   set block^.dx = local.dx;
   set block^.dy = local.dy;
+  let natural = cvt::<i32, i64>(block^.natural);
+  let normal = cvt::<i32, i64>(block^.normal_y);
+  set block^.natural_offset = natural -sat normal;
   return unit;
 }
 
@@ -232,6 +272,9 @@ fn store_paragraph_origin(paragraph: &Paragraph, origins: &[Origin]) -> result: 
   set paragraph^.top = local.y;
   set paragraph^.dx = local.dx;
   set paragraph^.dy = local.dy;
+  let natural = cvt::<i32, i64>(paragraph^.natural);
+  let normal = cvt::<i32, i64>(paragraph^.normal_top);
+  set paragraph^.natural_offset = natural -sat normal;
   return unit;
 }
 
@@ -243,12 +286,21 @@ fn store_child_origin(child: &Context, origins: &[Origin]) -> result: unit reads
   }
   let absolute = origin_from_resolved(nx: child^.normal_x, ny: child^.normal_y, vx: child^.x, vy: child^.y);
   set child^.anchor = origin_relative(value: absolute, owner: owner);
+  let natural = cvt::<i32, i64>(child^.placement_natural);
+  let normal = cvt::<i32, i64>(child^.normal_y);
+  set child^.placement_natural_offset = natural -sat normal;
   return unit;
 }
 
-fn encode_reference_block(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), writes(context.blocks.inner[at]) {
+fn encode_reference_block(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), writes(context.blocks.inner[at]) {
   doc "Encodes one block from valid resolved reference scratch while local_geometry is False. Reading the resolved parent is independent of local-origin writes, so no context-wide snapshot is needed.";
   if at < context^.blocks.inner.len {
+    if context^.reference_phase != 0_u8 {
+      if context^.blocks.inner[at].reference_fresh {
+      } else {
+        return unit;
+      }
+    }
     let held = block_snapshot(block: &context^.blocks.inner[at]);
     let owner = block_origin(context: context, block: held.parent);
     let absolute = origin_from_resolved(nx: held.normal_x, ny: held.normal_y, vx: held.resolved_x, vy: held.resolved_y);
@@ -257,13 +309,22 @@ fn encode_reference_block(context: &Context, at: u64) -> result: unit reads(cont
     set context^.blocks.inner[at].y = local.y;
     set context^.blocks.inner[at].dx = local.dx;
     set context^.blocks.inner[at].dy = local.dy;
+    let natural = cvt::<i32, i64>(context^.blocks.inner[at].natural);
+    let normal = cvt::<i32, i64>(held.normal_y);
+    set context^.blocks.inner[at].natural_offset = natural -sat normal;
   }
   return unit;
 }
 
-fn encode_reference_child(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), writes(context.children.inner) {
+fn encode_reference_child(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), writes(context.children.inner) {
   doc "Encodes one child anchor from valid resolved reference scratch while local_geometry is False, retaining the zero owner for viewport placement and leaving the child's own contents untouched.";
   if at < context^.children.inner.len {
+    if context^.reference_phase != 0_u8 {
+      if context^.children.inner[at].placement_fresh {
+      } else {
+        return unit;
+      }
+    }
     let owner = if context^.children.inner[at].viewport_origin {
       give zero_origin();
     } else {
@@ -272,6 +333,9 @@ fn encode_reference_child(context: &Context, at: u64) -> result: unit reads(cont
     let absolute = origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y);
     let local = origin_relative(value: absolute, owner: owner);
     set context^.children.inner[at].anchor = local;
+    let natural = cvt::<i32, i64>(context^.children.inner[at].placement_natural);
+    let normal = cvt::<i32, i64>(context^.children.inner[at].normal_y);
+    set context^.children.inner[at].placement_natural_offset = natural -sat normal;
   }
   return unit;
 }
@@ -289,6 +353,12 @@ fn encode_reference_item(context: &Context, item: Flow) -> result: unit writes(c
     Text(paragraph: p) => {
       let paragraph_at = cvt::<u32, u64>(p);
       if paragraph_at < context^.paragraphs.inner.len {
+        if context^.reference_phase != 0_u8 {
+          if context^.paragraphs.inner[paragraph_at].reference_fresh {
+          } else {
+            return unit;
+          }
+        }
         let owner = block_origin(context: context, block: context^.paragraphs.inner[paragraph_at].block);
         let absolute = origin_from_resolved(nx: context^.paragraphs.inner[paragraph_at].normal_x, ny: context^.paragraphs.inner[paragraph_at].normal_top, vx: context^.paragraphs.inner[paragraph_at].resolved_x, vy: context^.paragraphs.inner[paragraph_at].resolved_top);
         let local = origin_relative(value: absolute, owner: owner);
@@ -296,6 +366,9 @@ fn encode_reference_item(context: &Context, item: Flow) -> result: unit writes(c
         set context^.paragraphs.inner[paragraph_at].top = local.y;
         set context^.paragraphs.inner[paragraph_at].dx = local.dx;
         set context^.paragraphs.inner[paragraph_at].dy = local.dy;
+        let natural = cvt::<i32, i64>(context^.paragraphs.inner[paragraph_at].natural);
+        let normal = cvt::<i32, i64>(context^.paragraphs.inner[paragraph_at].normal_top);
+        set context^.paragraphs.inner[paragraph_at].natural_offset = natural -sat normal;
         let atomics = context^.paragraphs.inner[paragraph_at].atomics.inner.len;
         for (atomic_at in 0_u64..atomics) {
           let placed = context^.paragraphs.inner[paragraph_at].atomics.inner[atomic_at];
@@ -370,6 +443,8 @@ fn own_geometry(context: &Context, synchronize: Bool) -> result: unit writes(con
   for (c in 0_u64..children) {
     store_child_origin(child: &context^.children.inner[c], origins: &origins.inner[0_u64..blocks]);
   }
+  finish_reference_geometry(context: context);
+  set context^.reference_dense = True();
   set context^.local_geometry = True();
   return unit;
 }
@@ -379,6 +454,9 @@ fn restore_block_origin(block: &Block, absolute: Origin, dx: i32, dy: i32) -> re
   let visual = origin_visual(value: absolute);
   let moved_normal = content_position(value: normal, dx: dx, dy: dy);
   let moved_visual = content_position(value: visual, dx: dx, dy: dy);
+  let natural_wide = absolute.y +sat block^.natural_offset;
+  let natural = geometry_narrow(value: natural_wide);
+  set block^.natural = natural;
   set block^.normal_x = moved_normal.x;
   set block^.normal_y = moved_normal.y;
   set block^.resolved_x = moved_visual.x;
@@ -405,6 +483,9 @@ fn restore_paragraph_origin(paragraph: &Paragraph, origins: &[Origin], dx: i32, 
   } else {
     give visual;
   }
+  let natural_wide = absolute.y +sat paragraph^.natural_offset;
+  let natural = geometry_narrow(value: natural_wide);
+  set paragraph^.natural = natural;
   set paragraph^.normal_x = moved_normal.x;
   set paragraph^.normal_top = moved_normal.y;
   set paragraph^.resolved_x = moved_visual.x;
@@ -423,6 +504,9 @@ fn restore_child_origin(child: &Context, origins: &[Origin], dx: i32, dy: i32) -
   let moved = content_position(value: visual, dx: dx, dy: dy);
   let normal = origin_normal(value: absolute);
   let moved_normal = content_position(value: normal, dx: dx, dy: dy);
+  let natural_wide = absolute.y +sat child^.placement_natural_offset;
+  let natural = geometry_narrow(value: natural_wide);
+  set child^.placement_natural = natural;
   set child^.normal_x = moved_normal.x;
   set child^.normal_y = moved_normal.y;
   set child^.x = moved.x;
@@ -440,10 +524,31 @@ fn geometry_reference(context: &Context) -> result: unit writes(context) {
 
 fn reference_geometry(context: &Context, synchronize: Bool) -> result: unit writes(context) {
   doc "Materializes the compatibility walker's scratch coordinates before a full or partial replay. Kept owner-relative geometry is authoritative between passes. The snapshot separates independent payload writes from ancestor reads.";
-  if context^.local_geometry {
+  let hybrid = context^.reference_phase != 0_u8;
+  let restore = bor(context^.local_geometry, hybrid);
+  if restore {
   } else {
     return unit;
   }
+  let no_blocks = context^.reference_blocks.inner.len == 0_u64;
+  let no_paragraphs = context^.reference_paragraphs.inner.len == 0_u64;
+  let no_children = context^.reference_children.inner.len == 0_u64;
+  let no_first = band(no_blocks, no_paragraphs);
+  let untouched = band(no_first, no_children);
+  let no_dx = context^.content_dx == 0_i32;
+  let no_dy = context^.content_dy == 0_i32;
+  let no_adjustment = band(no_dx, no_dy);
+  let certified = band(context^.reference_dense, no_adjustment);
+  let dense_untouched = band(certified, untouched);
+  if dense_untouched {
+    finish_reference_geometry(context: context);
+    set context^.local_geometry = False();
+    return unit;
+  }
+  if hybrid {
+    set context^.reference_phase = 2_u8;
+  }
+  preserve_reference_naturals(context: context);
   let origins = geometry_snapshot(context: context);
   let blocks = origins.inner.len;
   let dx = context^.content_dx;
@@ -465,6 +570,15 @@ fn reference_geometry(context: &Context, synchronize: Bool) -> result: unit writ
       }
     }
   }
+  if synchronize {
+  } else {
+    let role_count = context^.split_roles.inner.len;
+    for (role_at in 0_u64..role_count) {
+      translate_raw_split_roles(roles: &context^.split_roles.inner[role_at], dx: dx, dy: dy);
+    }
+    let source_paragraphs = context^.paragraphs.inner.len;
+    translate_empty_fragment_sources(paragraphs: &context^.paragraphs.inner[0_u64..source_paragraphs], dx: dx, dy: dy);
+  }
   if blocks <= context^.blocks.inner.len {
     for (b in 0_u64..blocks) {
       restore_block_origin(block: &context^.blocks.inner[b], absolute: origins.inner[b], dx: dx, dy: dy);
@@ -480,12 +594,14 @@ fn reference_geometry(context: &Context, synchronize: Bool) -> result: unit writ
   }
   set context^.content_dx = 0_i32;
   set context^.content_dy = 0_i32;
+  finish_reference_geometry(context: context);
+  set context^.reference_dense = True();
   set context^.local_geometry = False();
   return unit;
 }
 
 fn geometry_update_reference(context: &Context) -> result: unit writes(context) {
-  doc "Reuses the reference coordinates left by the preceding full or reference update when no owned boundary edit or table content adjustment has invalidated them. Preparation changes paragraph contents, not origins. A boundary edit or content shift still materializes the exact reference bridge.";
+  doc "Starts bounded hybrid replay without reading stale suffix scratch; a known full update reuses dense raw geometry only while its explicit certificate holds. Structural ranks and content adjustments retain full reference materialization.";
   set context^.fragment_repaired = False();
   if context^.boundary_dirty {
     geometry_reference(context: context);
@@ -499,6 +615,240 @@ fn geometry_update_reference(context: &Context) -> result: unit writes(context) 
     geometry_reference(context: context);
     return unit;
   }
+  let dense_full = band(context^.restyled, context^.reference_dense);
+  if dense_full {
+    set context^.reference_phase = 0_u8;
+  } else {
+    set context^.reference_phase = 1_u8;
+  }
   set context^.local_geometry = False();
   return unit;
+}
+
+fn capture_reference_block(context: &Context, at: u64) -> result: unit writes(context) {
+  doc "Captures one old absolute block origin before its first replay or direct suffix mutation, recording only that block for bounded cleanup.";
+  if context^.reference_phase == 0_u8 {
+    return unit;
+  }
+  if at < context^.blocks.inner.len {
+    if context^.blocks.inner[at].reference_captured {
+      return unit;
+    }
+    let slot = flow_index(at: at);
+    let previous = True();
+    let old = retained_block_origin(context: context, block: slot, previous: previous);
+    set context^.blocks.inner[at].reference_old = old;
+    set context^.blocks.inner[at].reference_captured = True();
+    let added = push_item::<u32>(cell: &context^.reference_blocks, value: slot, ceiling: item_ceiling);
+  }
+  return unit;
+}
+
+fn materialize_reference_block(context: &Context, at: u64) -> result: unit writes(context) {
+  doc "Materializes a replayed block once from its old captured origin before the walker changes scratch; descendants retain their old frame.";
+  if context^.reference_phase == 0_u8 {
+    return unit;
+  }
+  if at < context^.blocks.inner.len {
+    if context^.blocks.inner[at].reference_fresh {
+      return unit;
+    }
+    capture_reference_block(context: context, at: at);
+    let old = context^.blocks.inner[at].reference_old;
+    let natural = old.y +sat context^.blocks.inner[at].natural_offset;
+    let narrowed = geometry_narrow(value: natural);
+    set context^.blocks.inner[at].natural = narrowed;
+    restore_block_origin(block: &context^.blocks.inner[at], absolute: old, dx: 0_i32, dy: 0_i32);
+    set context^.blocks.inner[at].reference_fresh = True();
+  }
+  return unit;
+}
+
+fn materialize_reference_child(context: &Context, at: u64) -> result: unit writes(context) {
+  doc "Restores one parent-owned placement before a legacy reader or writer, retaining the zero owner for fully viewport-anchored children.";
+  if context^.reference_phase == 0_u8 {
+    return unit;
+  }
+  if at < context^.children.inner.len {
+    if context^.children.inner[at].placement_fresh {
+      return unit;
+    }
+    let previous = context^.reference_phase == 1_u8;
+    let owner = if context^.children.inner[at].viewport_origin {
+      give zero_origin();
+    } else {
+      give retained_block_origin(context: context, block: context^.children.inner[at].block, previous: previous);
+    }
+    let absolute = origin_accumulate(owner: owner, local: context^.children.inner[at].anchor);
+    let normal = origin_normal(value: absolute);
+    let visual = origin_visual(value: absolute);
+    let wide_natural = absolute.y +sat context^.children.inner[at].placement_natural_offset;
+    let natural = geometry_narrow(value: wide_natural);
+    set context^.children.inner[at].placement_natural = natural;
+    set context^.children.inner[at].normal_x = normal.x;
+    set context^.children.inner[at].normal_y = normal.y;
+    set context^.children.inner[at].x = visual.x;
+    set context^.children.inner[at].y = visual.y;
+    set context^.children.inner[at].placement_fresh = True();
+    let slot = flow_index(at: at);
+    let added = push_item::<u32>(cell: &context^.reference_children, value: slot, ceiling: item_ceiling);
+  }
+  return unit;
+}
+
+fn materialize_reference_paragraph(context: &Context, at: u64) -> result: unit writes(context) {
+  doc "Restores one paragraph before line preparation can change its line-presence exception, and restores each of its independently block-owned atomic placements.";
+  if context^.reference_phase == 0_u8 {
+    return unit;
+  }
+  if at < context^.paragraphs.inner.len {
+    if context^.paragraphs.inner[at].reference_fresh {
+      return unit;
+    }
+    let previous = context^.reference_phase == 1_u8;
+    let owner = retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
+    let local = Origin(x: context^.paragraphs.inner[at].x, y: context^.paragraphs.inner[at].top, dx: context^.paragraphs.inner[at].dx, dy: context^.paragraphs.inner[at].dy);
+    let absolute = origin_accumulate(owner: owner, local: local);
+    let normal = origin_normal(value: absolute);
+    let visual = origin_visual(value: absolute);
+    let wide_natural = absolute.y +sat context^.paragraphs.inner[at].natural_offset;
+    let natural = geometry_narrow(value: wide_natural);
+    set context^.paragraphs.inner[at].natural = natural;
+    if context^.paragraphs.inner[at].lines.inner.len > 0_u64 {
+      set context^.paragraphs.inner[at].normal_x = normal.x;
+      set context^.paragraphs.inner[at].normal_top = normal.y;
+      set context^.paragraphs.inner[at].resolved_x = visual.x;
+      set context^.paragraphs.inner[at].resolved_top = visual.y;
+    }
+    set context^.paragraphs.inner[at].reference_fresh = True();
+    let slot = flow_index(at: at);
+    let added = push_item::<u32>(cell: &context^.reference_paragraphs, value: slot, ceiling: item_ceiling);
+    let count = context^.paragraphs.inner[at].atomics.inner.len;
+    for (k in 0_u64..count) {
+      let placed = context^.paragraphs.inner[at].atomics.inner[k];
+      let child = cvt::<u32, u64>(placed.context);
+      materialize_reference_child(context: context, at: child);
+    }
+  }
+  return unit;
+}
+
+fn materialize_reference_item(context: &Context, item: Flow) -> result: unit writes(context) {
+  doc "Routes one touched flow event to its bounded scratch materialization; Close reuses its already opened block.";
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      materialize_reference_block(context: context, at: at);
+    }
+    Close(block: closed) => {
+      let at = cvt::<u32, u64>(closed);
+      materialize_reference_block(context: context, at: at);
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      materialize_reference_paragraph(context: context, at: at);
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      materialize_reference_child(context: context, at: at);
+    }
+    Float(context: f) => {
+      let at = cvt::<u32, u64>(f);
+      materialize_reference_child(context: context, at: at);
+    }
+    Out(context: o) => {
+      let at = cvt::<u32, u64>(o);
+      materialize_reference_child(context: context, at: at);
+    }
+  }
+  return unit;
+}
+
+fn finish_reference_geometry(context: &Context) -> result: unit writes(context) {
+  doc "Clears only touched payloads, using one unique-slot list per storage domain so list admission follows that domain's existing ceiling.";
+  let blocks = context^.reference_blocks.inner.len;
+  for (k in 0_u64..blocks) {
+    let slot = context^.reference_blocks.inner[k];
+    let at = cvt::<u32, u64>(slot);
+    if at < context^.blocks.inner.len {
+      set context^.blocks.inner[at].reference_captured = False();
+      set context^.blocks.inner[at].reference_fresh = False();
+    }
+  }
+  let paragraphs = context^.reference_paragraphs.inner.len;
+  for (k in 0_u64..paragraphs) {
+    let slot = context^.reference_paragraphs.inner[k];
+    let at = cvt::<u32, u64>(slot);
+    if at < context^.paragraphs.inner.len {
+      set context^.paragraphs.inner[at].reference_fresh = False();
+    }
+  }
+  let children = context^.reference_children.inner.len;
+  for (k in 0_u64..children) {
+    let slot = context^.reference_children.inner[k];
+    let at = cvt::<u32, u64>(slot);
+    if at < context^.children.inner.len {
+      set context^.children.inner[at].placement_fresh = False();
+    }
+  }
+  let empty_blocks = box_slots_new::<u32>(capacity: 0_u64);
+  let empty_paragraphs = box_slots_new::<u32>(capacity: 0_u64);
+  let empty_children = box_slots_new::<u32>(capacity: 0_u64);
+  set context^.reference_blocks = move empty_blocks;
+  set context^.reference_paragraphs = move empty_paragraphs;
+  set context^.reference_children = move empty_children;
+  set context^.reference_phase = 0_u8;
+  return unit;
+}
+
+fn preserve_reference_naturals(context: &Context) -> result: unit writes(context) {
+  doc "Encodes freshly stacked placements and natural offsets before hybrid current state is fully materialized; unchanged payloads retain their exact offsets.";
+  let blocks = context^.reference_blocks.inner.len;
+  for (k in 0_u64..blocks) {
+    let slot = context^.reference_blocks.inner[k];
+    let at = cvt::<u32, u64>(slot);
+    encode_reference_block(context: context, at: at);
+  }
+  let paragraphs = context^.reference_paragraphs.inner.len;
+  for (k in 0_u64..paragraphs) {
+    let slot = context^.reference_paragraphs.inner[k];
+    let item = Flow::Text(paragraph: slot);
+    encode_reference_item(context: context, item: item);
+  }
+  let children = context^.reference_children.inner.len;
+  for (k in 0_u64..children) {
+    let slot = context^.reference_children.inner[k];
+    let at = cvt::<u32, u64>(slot);
+    encode_reference_child(context: context, at: at);
+  }
+  return unit;
+}
+
+fn reference_owners_moved(context: &Context) -> moved: Bool reads(context.blocks.inner), reads(context.reference_blocks.inner) {
+  doc "Detects absolute motion of replayed owner frames after stacking, including a zero net flow-height delta that still requires rebasing an intact suffix.";
+  let count = context^.reference_blocks.inner.len;
+  for (k in 0_u64..count) {
+    let slot = context^.reference_blocks.inner[k];
+    let at = cvt::<u32, u64>(slot);
+    if at < context^.blocks.inner.len {
+      if context^.blocks.inner[at].reference_fresh {
+        let old = context^.blocks.inner[at].reference_old;
+        let normal = origin_normal(value: old);
+        let visual = origin_visual(value: old);
+        if normal.x != context^.blocks.inner[at].normal_x {
+          return True();
+        }
+        if normal.y != context^.blocks.inner[at].normal_y {
+          return True();
+        }
+        if visual.x != context^.blocks.inner[at].resolved_x {
+          return True();
+        }
+        if visual.y != context^.blocks.inner[at].resolved_y {
+          return True();
+        }
+      }
+    }
+  }
+  return False();
 }

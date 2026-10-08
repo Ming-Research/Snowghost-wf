@@ -1,0 +1,943 @@
+alias Styles = pkg::style::Styles;
+
+fn empty_fragment_roles() -> made: FragmentRoles pure {
+  doc "Creates the three inactive cells reserved by one stable split slot; the source slot, not a packed output index, owns their lifetime.";
+  let absent = Flow::Close(block: no_index);
+  let no = False();
+  let rectangle = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  let anchor = FragmentAnchor(active: no, mode: 0_u8, first: absent, last: absent, split: no_index, margin: 0_i32, last_split: no_index, leading_line: no);
+  return FragmentRoles(leading: rectangle, spanning: rectangle, trailing: rectangle, leading_anchor: anchor, spanning_anchor: anchor, trailing_anchor: anchor);
+}
+
+fn split_key_slot(key: u64) -> made: u64 pure {
+  doc "Reads a stable split slot from an owner/order key without interpreting the absent sentinel as a live identity.";
+  return iand(key, 4294967295_u64);
+}
+
+fn split_key_position(keys: &[u64], key: u64) -> found: u64 reads(keys) {
+  doc "Finds the first retained key not less than key in logarithmic read-only work.";
+  let low = 0_u64;
+  let high = keys^.len;
+  for (step in 0_u64..64_u64) {
+    if low >= high {
+      break;
+    }
+    let distance = high - low;
+    let half = distance / 2_u64;
+    let middle = low + half;
+    if middle < keys^.len {
+      if keys^[middle] < key {
+        set low = middle +sat 1_u64;
+      } else {
+        set high = middle;
+      }
+    } else {
+      return keys^.len;
+    }
+  }
+  return low;
+}
+
+fn split_gap_possible(context: &Context, events: &[Flow], previous: u64, current: u64) -> possible: Bool reads(context), reads(events) {
+  doc "Certifies a source-domain gap contains only Text entries, ignoring their changing line presence. A permanent non-Text barrier can never join these same-owner splits during retained-source replay.";
+  if previous < context^.splits.inner.len {
+  } else {
+    return False();
+  }
+  if current < context^.splits.inner.len {
+  } else {
+    return False();
+  }
+  let after = cvt::<u32, u64>(context^.splits.inner[previous].close);
+  let end = cvt::<u32, u64>(context^.splits.inner[current].open);
+  let first = after +sat 1_u64;
+  if first > end {
+    return False();
+  }
+  for (rank in first..end) {
+    let item = reference_event(context: context, events: events, at: rank);
+    match item {
+      Text(..) => {
+      }
+      Open(..) => {
+        return False();
+      }
+      Close(..) => {
+        return False();
+      }
+      Child(..) => {
+        return False();
+      }
+      Float(..) => {
+        return False();
+      }
+      Out(..) => {
+        return False();
+      }
+    }
+  }
+  return True();
+}
+
+fn split_source_link(context: &Context, events: &[Flow], keys: &[u64], at: u64) -> made: SplitLink reads(context), reads(events), reads(keys) {
+  doc "Computes one split's immutable same-owner neighbors and owner-order position independently of other link writes.";
+  let no = False();
+  let empty = SplitLink(previous: no_index, next: no_index, order: no_index, gap_possible: no);
+  if at < context^.splits.inner.len {
+  } else {
+    return empty;
+  }
+  let owner = cvt::<u32, u64>(context^.splits.inner[at].owner);
+  let high = ishl(owner, 32_u32);
+  let key = ior(high, at);
+  let order = split_key_position(keys: keys, key: key);
+  if order < keys^.len {
+  } else {
+    return empty;
+  }
+  let previous = no_index;
+  let next = no_index;
+  let possible = False();
+  if order > 0_u64 {
+    let before = order - 1_u64;
+    let before_key = keys^[before];
+    let before_owner = ishr(before_key, 32_u32);
+    if before_owner == owner {
+      let before_slot = split_key_slot(key: before_key);
+      set previous = flow_index(at: before_slot);
+      let can_join = split_gap_possible(context: context, events: events, previous: before_slot, current: at);
+      set possible = can_join;
+    }
+  }
+  let after = order +sat 1_u64;
+  if after < keys^.len {
+    let after_key = keys^[after];
+    let after_owner = ishr(after_key, 32_u32);
+    if after_owner == owner {
+      let after_slot = split_key_slot(key: after_key);
+      set next = flow_index(at: after_slot);
+    }
+  }
+  let position = flow_index(at: order);
+  return SplitLink(previous: previous, next: next, order: position, gap_possible: possible);
+}
+
+fn split_join_combine(left: SplitJoin, right: SplitJoin) -> made: SplitJoin pure {
+  doc "Combines the first and last broken incoming edges of two adjacent owner-order ranges.";
+  let first = if left.first == no_index {
+    give right.first;
+  } else {
+    give left.first;
+  }
+  let last = if right.last == no_index {
+    give left.last;
+  } else {
+    give right.last;
+  }
+  return SplitJoin(first: first, last: last);
+}
+
+fn split_incoming_join(context: &Context, events: &[Flow], at: u64) -> joined: Bool reads(context), reads(events) {
+  doc "Reads the actual line-presence dependency of one possible incoming edge; source barriers remain broken without scanning their interiors.";
+  if at < context^.split_links.inner.len {
+  } else {
+    return False();
+  }
+  let link = context^.split_links.inner[at];
+  if link.gap_possible {
+  } else {
+    return False();
+  }
+  let previous = cvt::<u32, u64>(link.previous);
+  if previous < context^.splits.inner.len {
+    if at < context^.splits.inner.len {
+      let joined = gap_lineless(context: context, events: events, after: context^.splits.inner[previous].close, before: context^.splits.inner[at].open);
+      return joined;
+    }
+  }
+  return False();
+}
+
+fn fill_split_joins(context: &Context, events: &[Flow], keys: &[u64], offset: u64, joins: &[SplitJoin]) -> made: SplitJoin reads(context), reads(events), reads(keys), writes(joins) {
+  doc "Builds the balanced incoming-edge summary independently in disjoint slices; only each parent waits for its two child summaries.";
+  let count = keys^.len;
+  let empty = SplitJoin(first: no_index, last: no_index);
+  if count == 0_u64 {
+    return empty;
+  }
+  if count == 1_u64 {
+    let at = split_key_slot(key: keys^[0_u64]);
+    let joined = split_incoming_join(context: context, events: events, at: at);
+    let position = flow_index(at: offset);
+    let made = if joined {
+      give empty;
+    } else {
+      give SplitJoin(first: position, last: position);
+    }
+    if 0_u64 < joins^.len {
+      set joins^[0_u64] = made;
+    }
+    return made;
+  }
+  let half = count / 2_u64;
+  let twice = half +sat half;
+  let left_nodes = twice -sat 1_u64;
+  let root = joins^.len -sat 1_u64;
+  if half <= count {
+    if left_nodes <= root {
+      if root < joins^.len {
+        let right_offset = offset +sat half;
+        let left = fill_split_joins(context: context, events: events, keys: &keys^[0_u64..half], offset: offset, joins: &joins^[0_u64..left_nodes]);
+        let right = fill_split_joins(context: context, events: events, keys: &keys^[half..count], offset: right_offset, joins: &joins^[left_nodes..root]);
+        let combined = split_join_combine(left: left, right: right);
+        set joins^[root] = combined;
+        return combined;
+      }
+    }
+  }
+  return empty;
+}
+
+fn query_split_joins(joins: &[SplitJoin], offset: u64, count: u64, from: u64, end: u64) -> made: SplitJoin reads(joins) {
+  doc "Returns broken incoming-edge extrema inside an owner-order interval, pruning disjoint subtrees and reading complete covered summaries directly.";
+  let empty = SplitJoin(first: no_index, last: no_index);
+  let limit = offset +sat count;
+  if limit <= from {
+    return empty;
+  }
+  if offset >= end {
+    return empty;
+  }
+  let nodes = joins^.len;
+  if nodes == 0_u64 {
+    return empty;
+  }
+  let root = nodes - 1_u64;
+  if offset >= from {
+    if limit <= end {
+      return joins^[root];
+    }
+  }
+  if count <= 1_u64 {
+    return joins^[root];
+  }
+  let half = count / 2_u64;
+  let twice = half +sat half;
+  let left_nodes = twice -sat 1_u64;
+  if left_nodes <= root {
+    let right_offset = offset +sat half;
+    let right_count = count - half;
+    let left = query_split_joins(joins: &joins^[0_u64..left_nodes], offset: offset, count: half, from: from, end: end);
+    let right = query_split_joins(joins: &joins^[left_nodes..root], offset: right_offset, count: right_count, from: from, end: end);
+    let combined = split_join_combine(left: left, right: right);
+    return combined;
+  }
+  return empty;
+}
+
+fn split_run_bounds(context: &Context, at: u64) -> (first: u64, last: u64) reads(context.split_links.inner), reads(context.split_keys.inner), reads(context.split_joins.inner) {
+  doc "Finds a retained run's first and last source split in logarithmic owner-order summary queries, without walking the unchanged members of a long run.";
+  let count = context^.split_keys.inner.len;
+  if at < context^.split_links.inner.len {
+  } else {
+    return count, count;
+  }
+  let position = cvt::<u32, u64>(context^.split_links.inner[at].order);
+  if position < count {
+  } else {
+    return count, count;
+  }
+  let after = position +sat 1_u64;
+  let nodes = context^.split_joins.inner.len;
+  let before = query_split_joins(joins: &context^.split_joins.inner[0_u64..nodes], offset: 0_u64, count: count, from: 0_u64, end: after);
+  let following = query_split_joins(joins: &context^.split_joins.inner[0_u64..nodes], offset: 0_u64, count: count, from: after, end: count);
+  let first_order = cvt::<u32, u64>(before.last);
+  let last_order = if following.first == no_index {
+    give count -sat 1_u64;
+  } else {
+    let boundary = cvt::<u32, u64>(following.first);
+    give boundary -sat 1_u64;
+  }
+  if first_order < count {
+    if last_order < count {
+      let first = split_key_slot(key: context^.split_keys.inner[first_order]);
+      let last = split_key_slot(key: context^.split_keys.inner[last_order]);
+      return first, last;
+    }
+  }
+  return count, count;
+}
+
+fn split_dependency_join(splits: &[Split], left: FragmentRange, right: FragmentRange) -> made: FragmentRange reads(splits) {
+  doc "Combines source dependency bounds; an absent first means the start of the context, while last is always a real split endpoint in a nonempty subtree.";
+  let first = if left.first == no_index {
+    give no_index;
+  } else if right.first == no_index {
+    give no_index;
+  } else {
+    give imin(left.first, right.first);
+  }
+  let last = left.last;
+  let left_at = cvt::<u32, u64>(left.last);
+  let right_at = cvt::<u32, u64>(right.last);
+  if left_at < splits^.len {
+    if right_at < splits^.len {
+      if splits^[right_at].close > splits^[left_at].close {
+        set last = right.last;
+      }
+    }
+  }
+  return FragmentRange(first: first, last: last);
+}
+
+fn fill_split_dependencies(links: &[SplitLink], splits: &[Split], offset: u64, ranges: &[FragmentRange]) -> made: FragmentRange reads(links), reads(splits), writes(ranges) {
+  doc "Builds immutable source-domain dependency intervals. The previous distinct global opening bounds the backward sibling selector for every owner sharing the current opening; a possible incoming gap also depends on the previous same-owner split. The current close plus its following event bounds trailing visibility.";
+  let count = links^.len;
+  let empty = FragmentRange(first: no_index, last: no_index);
+  if count == 0_u64 {
+    return empty;
+  }
+  if count == 1_u64 {
+    let link = links^[0_u64];
+    let previous = if offset == 0_u64 {
+      give no_index;
+    } else {
+      let before = offset - 1_u64;
+      let slot = flow_index(at: before);
+      give slot;
+    }
+    if link.gap_possible {
+      if link.previous < previous {
+        set previous = link.previous;
+      }
+    }
+    let last = flow_index(at: offset);
+    let made = FragmentRange(first: previous, last: last);
+    if 0_u64 < ranges^.len {
+      set ranges^[0_u64] = made;
+    }
+    return made;
+  }
+  let half = count / 2_u64;
+  let twice = half +sat half;
+  let left_nodes = twice -sat 1_u64;
+  let root = ranges^.len -sat 1_u64;
+  if half <= count {
+    if left_nodes <= root {
+      if root < ranges^.len {
+        let right_offset = offset +sat half;
+        let left = fill_split_dependencies(links: &links^[0_u64..half], splits: splits, offset: offset, ranges: &ranges^[0_u64..left_nodes]);
+        let right = fill_split_dependencies(links: &links^[half..count], splits: splits, offset: right_offset, ranges: &ranges^[left_nodes..root]);
+        let combined = split_dependency_join(splits: splits, left: left, right: right);
+        set ranges^[root] = combined;
+        return combined;
+      }
+    }
+  }
+  return empty;
+}
+
+fn build_split_topology(context: &Context, events: &[Flow]) -> result: unit reads(events), writes(context) {
+  doc "Creates source-domain metadata once on full construction. Each split reserves exactly three role fields in one cell, preserving the existing split-count limit without a three-times larger indexed domain.";
+  let keys = split_keys(context: context);
+  let count = keys.inner.len;
+  let no = False();
+  let empty_link = SplitLink(previous: no_index, next: no_index, order: no_index, gap_possible: no);
+  let links = box_array_filled::<SplitLink>(count: count, value: empty_link);
+  for (at in 0_u64..count) {
+    let link = split_source_link(context: context, events: events, keys: &keys.inner[0_u64..count], at: at);
+    set links.inner[at] = link;
+  }
+  set context^.split_keys = move keys;
+  set context^.split_links = move links;
+  let twice = count +sat count;
+  let nodes = twice -sat 1_u64;
+  let empty_join = SplitJoin(first: no_index, last: no_index);
+  let joins = box_array_filled::<SplitJoin>(count: nodes, value: empty_join);
+  let key_count = context^.split_keys.inner.len;
+  let joined = fill_split_joins(context: context, events: events, keys: &context^.split_keys.inner[0_u64..key_count], offset: 0_u64, joins: &joins.inner[0_u64..nodes]);
+  set context^.split_joins = move joins;
+  let empty_range = FragmentRange(first: no_index, last: no_index);
+  let dependencies = box_array_filled::<FragmentRange>(count: nodes, value: empty_range);
+  let split_count = context^.splits.inner.len;
+  let link_count = context^.split_links.inner.len;
+  let filled = fill_split_dependencies(links: &context^.split_links.inner[0_u64..link_count], splits: &context^.splits.inner[0_u64..split_count], offset: 0_u64, ranges: &dependencies.inner[0_u64..nodes]);
+  set context^.split_dependencies = move dependencies;
+  return unit;
+}
+
+fn retained_split_owner(keys: &[u64], owner: u32) -> found: Bool reads(keys) {
+  doc "Tests whether a source owner has split heads in this context's retained source domain.";
+  let wide = cvt::<u32, u64>(owner);
+  let key = ishl(wide, 32_u32);
+  let position = split_key_position(keys: keys, key: key);
+  if position < keys^.len {
+    let found_owner = ishr(keys^[position], 32_u32);
+    return found_owner == wide;
+  }
+  return False();
+}
+
+fn refresh_empty_paragraph(paragraph: &Paragraph, keys: &[u64]) -> present: Bool reads(keys), writes(paragraph) {
+  doc "Publishes one paragraph's context-coordinate empty-inline sources in fixed mark slots. Line appearance toggles activity without changing paragraph-plus-mark identity; lineless y remains the reference scratch value.";
+  if paragraph^.lines.inner.len > 0_u64 {
+    set paragraph^.empty_fragment = False();
+    return False();
+  }
+  if paragraph^.retired {
+    set paragraph^.empty_fragment = False();
+    return False();
+  }
+  let no = False();
+  let rectangle = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  let empty = EmptyFragment(active: no, value: rectangle);
+  let count = paragraph^.marks.inner.len;
+  let cells = box_array_filled::<EmptyFragment>(count: count, value: empty);
+  let present = False();
+  let lineless = paragraph^.lines.inner.len == 0_u64;
+  let live = bnot(paragraph^.retired);
+  let eligible = band(lineless, live);
+  if eligible {
+    for (at in 0_u64..count) {
+      let mark = paragraph^.marks.inner[at];
+      match mark {
+        Open(style: selected, ..) => {
+          let plain = bnot(selected.anonymous);
+          let own = selected.pseudo == no_pseudo;
+          let shown = band(plain, own);
+          let interrupted = retained_split_owner(keys: keys, owner: selected.element);
+          let uninterrupted = bnot(interrupted);
+          let active = band(shown, uninterrupted);
+          if active {
+            let value = Fragment(kind: placed_element, owner: selected.element, x: paragraph^.left, y: paragraph^.resolved_top, width: 0_i32, height: 0_i32);
+            set cells.inner[at] = EmptyFragment(active: active, value: value);
+          }
+        }
+        Close(..) => {
+        }
+        Atomic(..) => {
+        }
+        Node(..) => {
+        }
+      }
+    }
+    let found = empty_cells_present(cells: &cells.inner[0_u64..count]);
+    set present = found;
+  }
+  set paragraph^.empty_fragments = move cells;
+  set paragraph^.empty_fragment = present;
+  return present;
+}
+
+fn empty_cells_present(cells: &[EmptyFragment]) -> present: Bool reads(cells) {
+  doc "Reduces independent empty-source visibility bits without ordering their construction.";
+  let count = cells^.len;
+  if count == 0_u64 {
+    return False();
+  }
+  if count == 1_u64 {
+    return cells^[0_u64].active;
+  }
+  let half = count / 2_u64;
+  if half <= count {
+    let left = empty_cells_present(cells: &cells^[0_u64..half]);
+    let right = empty_cells_present(cells: &cells^[half..count]);
+    return bor(left, right);
+  }
+  return False();
+}
+
+fn refresh_all_empty_sources(paragraphs: &[Paragraph], keys: &[u64]) -> sources: u64 reads(keys), writes(paragraphs) {
+  doc "Refreshes all paragraph-local empty-source cells only during full construction, with disjoint paragraph writes and a balanced live-source count.";
+  let count = paragraphs^.len;
+  if count == 0_u64 {
+    return 0_u64;
+  }
+  if count == 1_u64 {
+    let present = refresh_empty_paragraph(paragraph: &paragraphs^[0_u64], keys: keys);
+    if present {
+      return 1_u64;
+    }
+    return 0_u64;
+  }
+  let half = count / 2_u64;
+  if half <= count {
+    let left = refresh_all_empty_sources(paragraphs: &paragraphs^[0_u64..half], keys: keys);
+    let right = refresh_all_empty_sources(paragraphs: &paragraphs^[half..count], keys: keys);
+    return left +sat right;
+  }
+  return 0_u64;
+}
+
+fn split_sibling_above(context: &Context, events: &[Flow], flow: u64) -> found: Bool reads(context), reads(events) {
+  doc "Reads the reference backward sibling selector from stable split-head flags instead of allocating a context-wide closing bitmap.";
+  for (back in 0_u64..flow) {
+    let before = flow - back;
+    let at = before - 1_u64;
+    let item = reference_event(context: context, events: events, at: at);
+    match item {
+      Text(..) => {
+        let empty = lineless(context: context, events: events, flow: at);
+        if empty {
+        } else {
+          return False();
+        }
+      }
+      Open(..) => {
+        return False();
+      }
+      Close(block: closed) => {
+        let slot = cvt::<u32, u64>(closed);
+        if slot < context^.blocks.inner.len {
+          return bnot(context^.blocks.inner[slot].split_head);
+        }
+        return True();
+      }
+      Child(..) => {
+        return True();
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  return False();
+}
+
+fn make_split_roles(context: &Context, events: &[Flow], styles: &Styles, content_left: i32, at: u64) -> made: FragmentRoles reads(context), reads(events), reads(styles) {
+  doc "Prepares one stable split's complete role record from current run boundaries. Non-head cells become inactive; a head reads exactly the full generator's owner marks, sibling selector, width, endpoints and trailing margin.";
+  let made = empty_fragment_roles();
+  let (first_at, last_at) = split_run_bounds(context: context, at: at);
+  if first_at == at {
+  } else {
+    return made;
+  }
+  if first_at < context^.splits.inner.len {
+  } else {
+    return made;
+  }
+  if last_at < context^.splits.inner.len {
+  } else {
+    return made;
+  }
+  let first = context^.splits.inner[first_at];
+  let last = context^.splits.inner[last_at];
+  let first_line = split_reference_line(context: context, split: first);
+  let (top, first_bottom) = entry_extent(context: context, events: events, flow: first.open);
+  let (last_top, bottom) = entry_extent(context: context, events: events, flow: last.close);
+  let x = content_left +sat first.left;
+  let height = bottom -sat top;
+  let run_open = cvt::<u32, u64>(first.open);
+  let run_close = cvt::<u32, u64>(last.close);
+  let split_index = flow_index(at: first_at);
+  let last_split = flow_index(at: last_at);
+  let yes = True();
+  let no = False();
+  let has_before = if run_open > 0_u64 {
+    let before = run_open - 1_u64;
+    let shown = shows_owner(context: context, events: events, flow: before, owner: first.owner, opening: no);
+    give shown;
+  } else {
+    give False();
+  }
+  if bnot(has_before) {
+    let sibling = split_sibling_above(context: context, events: events, flow: run_open);
+    let line_y = if first_line == no_line {
+      give top;
+    } else if sibling {
+      give top;
+    } else {
+      give first_line;
+    }
+    let mode = if first_line == no_line {
+      give 1_u8;
+    } else if sibling {
+      give 1_u8;
+    } else {
+      give 2_u8;
+    }
+    let leading_line = bnot(sibling);
+    set made.leading = Fragment(kind: placed_element, owner: first.owner, x: x, y: line_y, width: 0_i32, height: 0_i32);
+    set made.leading_anchor = FragmentAnchor(active: yes, mode: mode, first: first.opening, last: last.opening, split: split_index, margin: 0_i32, last_split: last_split, leading_line: leading_line);
+  }
+  set made.spanning = Fragment(kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
+  set made.spanning_anchor = FragmentAnchor(active: yes, mode: 3_u8, first: first.opening, last: last.opening, split: split_index, margin: 0_i32, last_split: last_split, leading_line: no);
+  let after = run_close +sat 1_u64;
+  let has_after = shows_owner(context: context, events: events, flow: after, owner: first.owner, opening: yes);
+  if bnot(has_after) {
+    let margin = entry_margin(context: context, events: events, styles: styles, flow: last.close, basis: first.width, below: yes);
+    let line_bottom = bottom +sat margin;
+    set made.trailing = Fragment(kind: placed_element, owner: first.owner, x: x, y: line_bottom, width: 0_i32, height: 0_i32);
+    set made.trailing_anchor = FragmentAnchor(active: yes, mode: 4_u8, first: first.opening, last: last.opening, split: split_index, margin: margin, last_split: last_split, leading_line: no);
+  }
+  return made;
+}
+
+fn split_dependency_candidates(context: &Context, ranges: &[FragmentRange], offset: u64, count: u64, from: u64, until: u64) -> made: Box<Array<u64>> reads(context), reads(ranges) {
+  doc "Collects only intersecting source-domain dependency leaves. Independent halves own their result arrays; concatenation copies only selected identities, never the unchanged split domain.";
+  let empty = box_array_filled::<u64>(count: 0_u64, value: 0_u64);
+  let nodes = ranges^.len;
+  if nodes == 0_u64 {
+    return move empty;
+  }
+  let root = nodes - 1_u64;
+  let range = ranges^[root];
+  let first = cvt::<u32, u64>(range.first);
+  let last = cvt::<u32, u64>(range.last);
+  if first < context^.splits.inner.len {
+    let low = cvt::<u32, u64>(context^.splits.inner[first].open);
+    if low > until {
+      return move empty;
+    }
+  }
+  if last < context^.splits.inner.len {
+    let close = cvt::<u32, u64>(context^.splits.inner[last].close);
+    let high = close +sat 1_u64;
+    if high < from {
+      return move empty;
+    }
+  } else {
+    return move empty;
+  }
+  if count == 1_u64 {
+    if offset < context^.split_links.inner.len {
+      let position = cvt::<u32, u64>(context^.split_links.inner[offset].order);
+      let high_key = ishl(position, 32_u32);
+      let key = ior(high_key, offset);
+      let selected = box_array_filled::<u64>(count: 1_u64, value: key);
+      return move selected;
+    }
+    return move empty;
+  }
+  let half = count / 2_u64;
+  let twice = half +sat half;
+  let left_nodes = twice -sat 1_u64;
+  if left_nodes <= root {
+    let right_offset = offset +sat half;
+    let right_count = count -sat half;
+    let left = split_dependency_candidates(context: context, ranges: &ranges^[0_u64..left_nodes], offset: offset, count: half, from: from, until: until);
+    let right = split_dependency_candidates(context: context, ranges: &ranges^[left_nodes..root], offset: right_offset, count: right_count, from: from, until: until);
+    let left_count = left.inner.len;
+    let right_size = right.inner.len;
+    let size = left_count +sat right_size;
+    let made = box_array_filled::<u64>(count: size, value: 0_u64);
+    for (at in 0_u64..left_count) {
+      if at < made.inner.len {
+        set made.inner[at] = left.inner[at];
+      }
+    }
+    for (at in 0_u64..right_size) {
+      let target = left_count +sat at;
+      if target < made.inner.len {
+        set made.inner[target] = right.inner[at];
+      }
+    }
+    return move made;
+  }
+  return move empty;
+}
+
+fn split_order_target(keys: &[u64], position: u64) -> found: u64 reads(keys) {
+  doc "Splits selected owner-order keys at one subtree boundary by binary search.";
+  let target = ishl(position, 32_u32);
+  let position = split_key_position(keys: keys, key: target);
+  return position;
+}
+
+fn update_split_joins(targets: &[u64], values: &[SplitJoin], offset: u64, count: u64, joins: &[SplitJoin]) -> made: SplitJoin reads(targets), reads(values), writes(joins) {
+  doc "Publishes prepared incoming-edge changes and only their balanced ancestors. Sorted unique owner-order targets partition writes into disjoint subtrees.";
+  let empty = SplitJoin(first: no_index, last: no_index);
+  let nodes = joins^.len;
+  if nodes == 0_u64 {
+    return empty;
+  }
+  let root = nodes - 1_u64;
+  if targets^.len == 0_u64 {
+    return joins^[root];
+  }
+  if count == 1_u64 {
+    if 0_u64 < values^.len {
+      set joins^[root] = values^[0_u64];
+      return values^[0_u64];
+    }
+    return joins^[root];
+  }
+  let half = count / 2_u64;
+  let twice = half +sat half;
+  let left_nodes = twice -sat 1_u64;
+  let middle = offset +sat half;
+  let split_at = split_order_target(keys: targets, position: middle);
+  let selected = targets^.len;
+  if split_at <= selected {
+    if selected <= values^.len {
+      if left_nodes <= root {
+        let right_count = count -sat half;
+        let left = update_split_joins(targets: &targets^[0_u64..split_at], values: &values^[0_u64..split_at], offset: offset, count: half, joins: &joins^[0_u64..left_nodes]);
+        let right = update_split_joins(targets: &targets^[split_at..selected], values: &values^[split_at..selected], offset: middle, count: right_count, joins: &joins^[left_nodes..root]);
+        let combined = split_join_combine(left: left, right: right);
+        set joins^[root] = combined;
+        return combined;
+      }
+    }
+  }
+  return joins^[root];
+}
+
+fn merge_split_head_count(first: &[u64], second: &[u64], ceiling: u64) -> count: u64 reads(first), reads(second) {
+  doc "Counts distinct live run-head nominees from sorted before/after sets so the result allocates only changed heads and cannot exceed the split source domain.";
+  let left = 0_u64;
+  let right = 0_u64;
+  let count = 0_u64;
+  let previous = ceiling;
+  let steps = first^.len +sat second^.len;
+  for (step in 0_u64..steps) {
+    let a = if left < first^.len {
+      give first^[left];
+    } else {
+      give ceiling;
+    }
+    let b = if right < second^.len {
+      give second^[right];
+    } else {
+      give ceiling;
+    }
+    let selected = imin(a, b);
+    if selected >= ceiling {
+      break;
+    }
+    if a == selected {
+      set left = left +sat 1_u64;
+    }
+    if b == selected {
+      set right = right +sat 1_u64;
+    }
+    if selected != previous {
+      set count = count +sat 1_u64;
+      set previous = selected;
+    }
+  }
+  return count;
+}
+
+fn merge_split_heads(first: &[u64], second: &[u64], ceiling: u64) -> made: Box<Array<u64>> reads(first), reads(second) {
+  doc "Forms the bounded sorted union of old and new run heads; coincident endpoints never merge identities, only equal source slots do.";
+  let count = merge_split_head_count(first: first, second: second, ceiling: ceiling);
+  let made = box_array_filled::<u64>(count: count, value: ceiling);
+  let left = 0_u64;
+  let right = 0_u64;
+  let out = 0_u64;
+  let previous = ceiling;
+  let steps = first^.len +sat second^.len;
+  for (step in 0_u64..steps) {
+    let a = if left < first^.len {
+      give first^[left];
+    } else {
+      give ceiling;
+    }
+    let b = if right < second^.len {
+      give second^[right];
+    } else {
+      give ceiling;
+    }
+    let selected = imin(a, b);
+    if selected >= ceiling {
+      break;
+    }
+    if a == selected {
+      set left = left +sat 1_u64;
+    }
+    if b == selected {
+      set right = right +sat 1_u64;
+    }
+    if selected != previous {
+      if out < made.inner.len {
+        set made.inner[out] = selected;
+      }
+      set out = out +sat 1_u64;
+      set previous = selected;
+    }
+  }
+  return move made;
+}
+
+fn publish_split_roles(targets: &[u64], values: &[FragmentRoles], offset: u64, roles: &[FragmentRoles]) -> result: unit reads(targets), reads(values), writes(roles) {
+  doc "Scatters prepared replacement heads through disjoint stable source slices. Untargeted role cells retain both storage identity and values.";
+  let selected = targets^.len;
+  if selected == 0_u64 {
+    return unit;
+  }
+  let count = roles^.len;
+  if count == 1_u64 {
+    if 0_u64 < values^.len {
+      set roles^[0_u64] = values^[0_u64];
+    }
+    return unit;
+  }
+  let half = count / 2_u64;
+  let middle = offset +sat half;
+  let split_at = split_key_position(keys: targets, key: middle);
+  if split_at <= selected {
+    if selected <= values^.len {
+      if half <= count {
+        publish_split_roles(targets: &targets^[0_u64..split_at], values: &values^[0_u64..split_at], offset: offset, roles: &roles^[0_u64..half]);
+        publish_split_roles(targets: &targets^[split_at..selected], values: &values^[split_at..selected], offset: middle, roles: &roles^[half..count]);
+      }
+    }
+  }
+  return unit;
+}
+
+fn refresh_selected_empty_sources(paragraphs: &[Paragraph], keys: &[u64], targets: &[u64], offset: u64) -> (removed: u64, added: u64) reads(keys), reads(targets), writes(paragraphs) {
+  doc "Updates only selected paragraph-mark domains and returns a balanced before/after count; unrelated paragraphs and their empty-source cells are untouched.";
+  let selected = targets^.len;
+  let count = paragraphs^.len;
+  if selected == 0_u64 {
+    return 0_u64, 0_u64;
+  }
+  if count == 0_u64 {
+    return 0_u64, 0_u64;
+  }
+  if count == 1_u64 {
+    let removed = if paragraphs^[0_u64].empty_fragment {
+      give 1_u64;
+    } else {
+      give 0_u64;
+    }
+    let present = refresh_empty_paragraph(paragraph: &paragraphs^[0_u64], keys: keys);
+    let added = if present {
+      give 1_u64;
+    } else {
+      give 0_u64;
+    }
+    return removed, added;
+  }
+  let half = count / 2_u64;
+  let middle = offset +sat half;
+  let split_at = split_key_position(keys: targets, key: middle);
+  if split_at <= selected {
+    if half <= count {
+      let (removed_left, added_left) = refresh_selected_empty_sources(paragraphs: &paragraphs^[0_u64..half], keys: keys, targets: &targets^[0_u64..split_at], offset: offset);
+      let (removed_right, added_right) = refresh_selected_empty_sources(paragraphs: &paragraphs^[half..count], keys: keys, targets: &targets^[split_at..selected], offset: middle);
+      let removed = removed_left +sat removed_right;
+      let added = added_left +sat added_right;
+      return removed, added;
+    }
+  }
+  return 0_u64, 0_u64;
+}
+
+fn refresh_replayed_empty_sources(context: &Context, events: &[Flow], from: u64, until: u64) -> result: unit reads(events), writes(context) {
+  doc "Selects replayed paragraph identities from the actual affected event interval, then refreshes their independent mark cells and the live-source aggregate.";
+  let event_count = reference_length(context: context, events: events);
+  let after = until +sat 1_u64;
+  let end = imin(after, event_count);
+  if from >= end {
+    return unit;
+  }
+  let count = end - from;
+  let paragraphs = context^.paragraphs.inner.len;
+  let targets = box_array_filled::<u64>(count: count, value: paragraphs);
+  for (at in 0_u64..count) {
+    let rank = from +sat at;
+    let item = reference_event(context: context, events: events, at: rank);
+    match item {
+      Text(paragraph: p) => {
+        let slot = cvt::<u32, u64>(p);
+        set targets.inner[at] = slot;
+      }
+      Open(..) => {
+      }
+      Close(..) => {
+      }
+      Child(..) => {
+      }
+      Float(..) => {
+      }
+      Out(..) => {
+      }
+    }
+  }
+  sort_keys(keys: &targets);
+  let selected = split_key_position(keys: &targets.inner[0_u64..count], key: paragraphs);
+  let keys = context^.split_keys.inner.len;
+  if selected <= count {
+    let (removed, added) = refresh_selected_empty_sources(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs], keys: &context^.split_keys.inner[0_u64..keys], targets: &targets.inner[0_u64..selected], offset: 0_u64);
+    let remaining = context^.empty_fragment_sources -sat removed;
+    set context^.empty_fragment_sources = remaining +sat added;
+  }
+  return unit;
+}
+
+fn replace_fragment_topology(context: &Context, events: &[Flow], styles: &Styles, content_left: i32, from: u64, until: u64) -> replaced: Bool reads(events), reads(styles), writes(context) {
+  doc "Repairs incoming join edges selected by changed source dependencies, prepares only old/new affected run heads, publishes their fixed role cells, and repairs only affected interval ancestors. Empty-inline sources refresh in their own paragraph-mark domains.";
+  let count = context^.splits.inner.len;
+  if count != context^.split_links.inner.len {
+    return False();
+  }
+  if count != context^.split_roles.inner.len {
+    return False();
+  }
+  if count != context^.split_keys.inner.len {
+    return False();
+  }
+  if context^.fragments_valid {
+  } else {
+    return False();
+  }
+  let split_from = split_lower_bound(splits: &context^.splits.inner[0_u64..count], rank: from);
+  let split_until = until +sat 1_u64;
+  let split_end = split_lower_bound(splits: &context^.splits.inner[0_u64..count], rank: split_until);
+  let no_origins = slots_new::<Origin, 0>();
+  if split_end <= count {
+    for (split_at in split_from..split_end) {
+      own_split_line(context: context, origins: &no_origins[0_u64..0_u64], split: &context^.splits.inner[split_at]);
+    }
+  }
+  let nodes = context^.split_dependencies.inner.len;
+  let candidates = split_dependency_candidates(context: context, ranges: &context^.split_dependencies.inner[0_u64..nodes], offset: 0_u64, count: count, from: from, until: until);
+  sort_keys(keys: &candidates);
+  let selected = candidates.inner.len;
+  let old_heads = box_array_filled::<u64>(count: selected, value: count);
+  let empty_join = SplitJoin(first: no_index, last: no_index);
+  let changed_joins = box_array_filled::<SplitJoin>(count: selected, value: empty_join);
+  for (at in 0_u64..selected) {
+    let key = candidates.inner[at];
+    let slot = split_key_slot(key: key);
+    let (head, tail) = split_run_bounds(context: context, at: slot);
+    set old_heads.inner[at] = head;
+    let joined = split_incoming_join(context: context, events: events, at: slot);
+    if joined {
+    } else {
+      let position = ishr(key, 32_u32);
+      let edge = flow_index(at: position);
+      set changed_joins.inner[at] = SplitJoin(first: edge, last: edge);
+    }
+  }
+  let join_nodes = context^.split_joins.inner.len;
+  let published_joins = update_split_joins(targets: &candidates.inner[0_u64..selected], values: &changed_joins.inner[0_u64..selected], offset: 0_u64, count: count, joins: &context^.split_joins.inner[0_u64..join_nodes]);
+  let new_heads = box_array_filled::<u64>(count: selected, value: count);
+  for (at in 0_u64..selected) {
+    let slot = split_key_slot(key: candidates.inner[at]);
+    let (head, tail) = split_run_bounds(context: context, at: slot);
+    set new_heads.inner[at] = head;
+  }
+  sort_keys(keys: &old_heads);
+  sort_keys(keys: &new_heads);
+  let heads = merge_split_heads(first: &old_heads.inner[0_u64..selected], second: &new_heads.inner[0_u64..selected], ceiling: count);
+  let changed = heads.inner.len;
+  let empty_roles = empty_fragment_roles();
+  let replacements = box_array_filled::<FragmentRoles>(count: changed, value: empty_roles);
+  for (at in 0_u64..changed) {
+    let made = make_split_roles(context: context, events: events, styles: styles, content_left: content_left, at: heads.inner[at]);
+    set replacements.inner[at] = made;
+  }
+  let certified = fragment_roles_certificates(context: context, origins: &no_origins[0_u64..0_u64], roles: &replacements.inner[0_u64..changed]);
+  set context^.fragments_valid = certified;
+  publish_split_roles(targets: &heads.inner[0_u64..changed], values: &replacements.inner[0_u64..changed], offset: 0_u64, roles: &context^.split_roles.inner[0_u64..count]);
+  let ranges = context^.fragment_ranges.inner.len;
+  let splits = context^.splits.inner.len;
+  let refreshed = refresh_fragment_ranges(targets: &heads.inner[0_u64..changed], roles: &context^.split_roles.inner[0_u64..count], splits: &context^.splits.inner[0_u64..splits], offset: 0_u64, ranges: &context^.fragment_ranges.inner[0_u64..ranges]);
+  refresh_replayed_empty_sources(context: context, events: events, from: from, until: until);
+  return True();
+}

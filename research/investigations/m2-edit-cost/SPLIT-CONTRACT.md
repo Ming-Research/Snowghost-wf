@@ -19,8 +19,10 @@ page block edit splice 1 reason 0, and all existing falsifiers plus omissions
 of affected-fragment repair and following-fragment translation. Two hosted
 rounds compare A with main, cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 and an
 independently built same-source base twin, using identical scripts, compiler,
-host and settings. Sentence and font-size medians must be at most twice main
-in each page/mode/round; word and block must be no worse than the base. Only a
+host and settings. The owner's Q138 continuation requires word, sentence, colour, font-size and
+root-font medians at most twice main in each page/mode/round, and block no
+worse than cf12c609. This supersedes the earlier word threshold recorded in
+the historical completion comparison below. Only a
 passing result authorizes a merge commit into research/m2-layout followed by
 layout-check and check. Failure is reported to the owner without merging.
 
@@ -68,6 +70,79 @@ requested release pin, so its pin-only commit exits with no change. Recovery
 allows that no-op commit and reuses only the other successfully built exact
 cohort artifacts; their revision and pin patches remain in the evidence. This
 setup failure supplies no performance evidence.
+
+### Bounded topology dependency audit
+
+The retained geometry interval is not a topology certificate. In particular,
+two split heads of one owner separated by a lineless paragraph form one run;
+adding visible text makes two. The new run needs roles that did not previously
+exist. A lined paragraph immediately before/after a run also controls whether
+that run emits an empty role, and a backward sibling query controls its leading
+position. Those negative dependencies can lie outside first-open..last-close.
+The current compact aligned arrays cannot insert a role without shifting later
+slots, and `stacked.fragments_same=False` therefore clears the entire domain.
+
+The continuation's implementation target reserves three independently active
+roles in one record at every stable split slot, with a run using its first
+split's cells. A single record per split preserves the source-count limit;
+a flat array of three times the split count could reject previously admitted
+source domains solely because some inactive roles acquired capacity.
+Same-owner adjacency and indexed join edges identify only the runs intersecting
+a changed dependency. Empty-inline sources retain paragraph/mark ownership,
+separately from split cells. Publication emits only active records in the
+existing phases and source order; physical capacity must never stand in for a
+live-fragment count. A local run replacement retires only its changed records;
+source-domain reconstruction still retires every handle and dependency index.
+This is an implementation target, not a claim that bounded replacement is wired.
+
+### Owner motion and legacy-reader transaction
+
+The selected continuation retains owner-relative geometry as durable state.
+Reference scratch has a transaction-local freshness obligation rather than a
+promise that every suffix descendant has been materialized. A context has three
+phases: ordinary retained state, replay with old-frame reads for untouched
+payloads, and settled replay with current-frame reads. These states distinguish
+temporal inputs; a single `local_geometry=False` bit cannot distinguish them.
+
+Before a replay writes a block, it captures that block's old absolute origin
+and materializes its raw fields. Untouched payloads during replay resolve their
+retained local fields through old ancestry, stopping at a captured old origin;
+they must not inherit a still-open block's temporary stacking coordinates.
+Fresh targets continue to expose the raw values the reference walker expects.
+After stacking finishes, current-frame resolution uses settled fresh ancestors.
+Moved intact suffix Opens also capture old origins before local mutation, so
+later old-frame queries cannot accidentally observe updated locals. A bounded
+list of touched payloads clears freshness and captures after publication; no
+wrapping generation or whole-context reset is required. A child's parent-owned
+placement freshness is distinct from its own context's replay phase.
+
+For a uniform exact suffix move, change each direct suffix entry by the requested
+absolute displacement minus its owner's displacement; an intact Open retains
+its descendants' local origins and nested reductions. The replayed range and
+ancestor chains publish fresh results. Unchanged suffix scratch is never encoded
+as if fresh. Lined Text moves its paragraph; lineless scratch retains the
+reference exception. Placed atomic children move independently, including those
+of a lineless paragraph. Positioned children resolve static axes from settled
+anchors, then the existing containing-block algorithm resolves explicit axes.
+Each coordinate is translated exactly once.
+
+Natural positions also retain a presence bit and an exact i64 offset from the
+payload's normal origin. Open, Text, Child and Float resolve through the same
+old/current frame as their geometry; Close and Out remain absent. The natural
+sentinel is never converted to an offset or identity. Replayed natural values
+stay raw until their payload settles. This removes the separate dense
+`shift_naturals` obligation rather than moving the suffix scan into another
+reader. Full replay may materialize the complete current state because it
+actually visits it; local replay must not set `boundary_dirty` merely because
+unvisited raw scratch is stale and thereby force the next edit to rebuild it.
+
+The existing origin/travel admission still precedes suffix motion and partial
+convergence. Unsafe arithmetic executes the reference operations in their
+original order. Materialization and encoding preserve exact i64 differences and
+all i32 narrowing/saturating boundaries. Anchoring does not authorize reversing
+saturation or treating a previous raw rectangle as current reference output.
+These are implementation obligations under Q138 A; hosted semantic and omission
+evidence is required before claiming the new transaction is complete.
 
 ## Contract before implementation
 
@@ -188,11 +263,12 @@ A retains a run slot within a retained topology, its first/last split endpoints,
 fragment roles, horizontal inputs, trailing margin, leading selector and
 owner-relative line offset. A reverse dependency index maps changed sources
 and adjacency intervals to runs. Distinct runs never alias through coordinates.
-Run slots remain stable while topology survives; replacement retires the old
-topology's slot domain together with every index that can name it. Internal
-references do not escape that domain, so reused storage cannot be observed
-through an old reference. Identity is context plus topology lifetime plus local
-slot; the lifetime needs no stored or wrapping global generation counter.
+Split slots remain stable while the source domain survives; local joins and
+splits replace only their old and new run heads' role records. Rebuilding the
+source domain retires its slots together with every index that can name them.
+Internal references do not escape that domain, so reused storage cannot be
+observed through an old reference. Identity is context plus source-domain
+lifetime plus local split and role; the lifetime needs no stored or wrapping global generation counter.
 Logical publication order is separate from storage identity: the context own
 rectangle comes first, runs follow first-split source order, each emits leading,
 spanning and trailing roles in that order when present, then empty-inline
@@ -470,12 +546,13 @@ presented as bounded repair for all edit kinds.
 - Q134 A: approved representation; adoption is blocked by acceptance, not by
   an unresolved A/B choice.
 - Q135 A: approved; the dependency/validity contract is recorded above.
-- Q136: open. Extend A to the remaining compatibility-suffix and topology work,
-  or park the line at its validated work-branch revision.
+- Q138 A (previous report label Q136): approved continuation. Complete the
+  compatibility-suffix and bounded topology work, and investigate/remove the
+  earlier M2 root-font regression; acceptance remains required before merging.
 
 ---
 
-**Q136 — Extend option A to finish the remaining bounded repair before adoption?**
+**Q138 — Extend option A to finish the remaining bounded repair before adoption? (A approved)**
 
 - **Background.** A passes the sentence and ECMA font-size timing limits, but
   HTML font-size remains 2.99–3.24 times concurrent main, and several literal
@@ -552,7 +629,7 @@ moved from the layout decision into this record's status section (fixed).
 The targeted-repair return/certificate distinction is now explicit; inspection
 found no reachable unmutated counterexample demanding a recovery path (clarified).
 Bounded topology replacement and failed timing acceptance remain open under
-Q136 (deferred pending the owner's direction). The broader reference-suffix
+Q138 A (now reopened by the owner's continuation). The broader reference-suffix
 cost is recorded in docs/todo.md with its validation and reopening condition.
 No additional correctness defect was found within scope. The general travel
 argument is source-audited and probed, not universally proved; its completeness

@@ -341,7 +341,10 @@ example apart from the renderer code that exposed it
   [completion comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#completion-acceptance)
   passes sentence and ECMA font-size limits, but HTML font-size is 2.99–3.24
   times main; small literal word/block overruns also remain. A is not merged.
-  Q136 asks whether to extend the remaining work or park the branch.
+  Q138 A (called Q136 in the prior report) now authorizes completing this
+  remaining work and investigating the M2 root-font regression. The current
+  gate is twice main for word, sentence, colour, font-size and root-font, and
+  block no worse than cf12c609, in both modes and rounds.
   Topology-preserving replays use the index; topology-changing replays still
   rebuild all runs. Bounded topology replacement remains incomplete: retain
   adjacency dependencies and replace only affected runs in source publication
@@ -363,7 +366,7 @@ example apart from the renderer code that exposed it
   preserving saturation order. Validate all X5 identity/splice gates, add a
   suffix-repair omission falsifier, and rerun the same-host two-round comparison
   with an identical-source control. Q134 A is selected and its acceptance
-  still fails; Q136 awaits the owner on extending this work before claiming
+  still fails; Q138 A authorizes this work before claiming
   the M2 edit-cost target complete.
 
 - **M2 fallback routing and append-only storage still grow with the session.**

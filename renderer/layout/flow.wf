@@ -740,51 +740,6 @@ fn lineless(context: &Context, events: &[Flow], flow: u64) -> empty: Bool reads(
   return False();
 }
 
-fn closes_split(closing: &Box<Array<u8>>, flow: u64) -> found: Bool reads(closing) {
-  doc "Tells whether flow entry flow closes a block that interrupts an inline box (split_closings' flag for it), so that the line after it holds that box's end.";
-  if flow < closing^.inner.len {
-    let made = closing^.inner[flow] != 0_u8;
-    return made;
-  }
-  return False();
-}
-
-fn sibling_above(context: &Context, events: &[Flow], closing: &Box<Array<u8>>, flow: u64) -> found: Bool reads(context), reads(events), reads(closing) {
-  doc "Tells whether a closed block that interrupts no inline box, or a child context, precedes flow in its container with only paragraphs without lines between, so that the margins above flow collapse with that sibling's; a paragraph with lines, a block that interrupts an inline box (whose end opens a line) or the container's own opening entry first tells no.";
-  for (back in 0_u64..flow) {
-    let before = flow - back;
-    let at = before - 1_u64;
-    let flow_bound_744 = reference_length(context: context, events: events);
-    if at < flow_bound_744 {
-      let item = reference_event(context: context, events: events, at: at);
-      match item {
-        Text(..) => {
-          let empty = lineless(context: context, events: events, flow: at);
-          if empty {
-          } else {
-            return False();
-          }
-        }
-        Open(..) => {
-          return False();
-        }
-        Close(..) => {
-          let interrupting = closes_split(closing: closing, flow: at);
-          return bnot(interrupting);
-        }
-        Child(..) => {
-          return True();
-        }
-        Float(..) => {
-        }
-        Out(..) => {
-        }
-      }
-    }
-  }
-  return False();
-}
-
 fn gap_lineless(context: &Context, events: &[Flow], after: u32, before: u32) -> empty: Bool reads(context), reads(events) {
   doc "Tells whether every flow entry strictly between after and before is a paragraph without lines.";
   let low = cvt::<u32, u64>(after);
@@ -932,184 +887,21 @@ fn entry_margin(context: &Context, events: &[Flow], styles: &Styles, flow: u32, 
 }
 
 fn split_fragments(context: &Context, events: &[Flow], styles: &Styles, content_left: i32) -> result: unit reads(events), reads(styles), writes(context) {
-  doc "Builds all split and empty-inline fragments in a full pass.";
-  let none = slots_new::<Fragment, 0>();
-  let no = False();
-  split_fragments_with_empty(context: context, events: events, styles: styles, content_left: content_left, kept: &none[0_u64..0_u64], preserve_empty: no);
-  return unit;
-}
-
-fn split_fragments_with_empty(context: &Context, events: &[Flow], styles: &Styles, content_left: i32, kept: &[Fragment], preserve_empty: Bool) -> result: unit reads(events), reads(styles), reads(kept), writes(context) {
-  doc "Adds the rectangles the reference reports for inline boxes that blocks interrupt (CSS 2.2 9.2.1.1): one per run of their blocks, as wide as the content box the blocks sit in, from the first block's top to the last one's bottom (blocks separated only by paragraphs without lines form one run), and an empty one where the line before the run would start (after the margins before it collapse) or at its bottom margin edge where the inline box has no line before or after it; and an empty one for each inline box of a paragraph without lines whose element no block interrupts. The splits sorted by owner (split_keys) give each split the next one of the same owner and answer whether an owner is interrupted, and a flag per flow entry (split_closings) whether a block closing there interrupts an inline box, so a full pass costs O(S log S + F) for S splits and F flow entries. When preserve_empty holds, kept contains the previous context fragments without its own box; fragments whose owners are not split owners are the unchanged empty-inline tail and are copied without inspecting their paragraphs. Each emitted split rectangle publishes aligned stable endpoint metadata. Empty source flags are refreshed on a full pass and retained with preserved empty fragments. Rank queries borrow the context pass's event slice.";
-  if preserve_empty {
-  } else {
-    let paragraph_count = context^.paragraphs.inner.len;
-    for (paragraph_at in 0_u64..paragraph_count) {
-      set context^.paragraphs.inner[paragraph_at].empty_fragment = False();
-    }
-  }
+  doc "Builds the full source domain's fixed split-role cells and paragraph-local empty sources. Run geometry is prepared independently and published in first-split order only by the output reader.";
+  build_split_topology(context: context, events: events);
   let count = context^.splits.inner.len;
-  let bounded = imin(count, item_ceiling);
-  let keys = split_keys(context: context);
-  let closing = split_closings(context: context);
-  let next_same = box_array_filled::<u64>(count: bounded, value: bounded);
-  let sorted = keys.inner.len;
-  for (i in 1_u64..sorted) {
-    let previous = i - 1_u64;
-    let before = keys.inner[previous];
-    let here = keys.inner[i];
-    let before_owner = ishr(before, 32_u32);
-    let here_owner = ishr(here, 32_u32);
-    if before_owner == here_owner {
-      let from = iand(before, 4294967295_u64);
-      let to = iand(here, 4294967295_u64);
-      if from < next_same.inner.len {
-        set next_same.inner[from] = to;
-      }
-    }
+  let empty = empty_fragment_roles();
+  let roles = box_array_filled::<FragmentRoles>(count: count, value: empty);
+  for (at in 0_u64..count) {
+    let made = make_split_roles(context: context, events: events, styles: styles, content_left: content_left, at: at);
+    set roles.inner[at] = made;
   }
-  let used = box_array_filled::<u8>(count: bounded, value: 0_u8);
-  for (k in 0_u64..bounded) {
-    if k < used.inner.len {
-      if used.inner[k] == 0_u8 {
-        if k < context^.splits.inner.len {
-          let first = context^.splits.inner[k];
-          let first_line = split_reference_line(context: context, split: first);
-          let last_close = first.close;
-          let last_opening = first.opening;
-          let last_split = flow_index(at: k);
-          let split_index = flow_index(at: k);
-          let j = k;
-          for (step in 0_u64..bounded) {
-            if j < next_same.inner.len {
-              set j = next_same.inner[j];
-            } else {
-              break;
-            }
-            if j < context^.splits.inner.len {
-              let next = context^.splits.inner[j];
-              let joined = gap_lineless(context: context, events: events, after: last_close, before: next.open);
-              if joined {
-                set last_close = next.close;
-                set last_opening = next.opening;
-                set last_split = flow_index(at: j);
-                if j < used.inner.len {
-                  set used.inner[j] = 1_u8;
-                }
-              } else {
-                break;
-              }
-            } else {
-              break;
-            }
-          }
-          let (top, first_bottom) = entry_extent(context: context, events: events, flow: first.open);
-          let (last_top, bottom) = entry_extent(context: context, events: events, flow: last_close);
-          let x = content_left +sat first.left;
-          let height = bottom -sat top;
-          let run_open = cvt::<u32, u64>(first.open);
-          let run_close = cvt::<u32, u64>(last_close);
-          let yes = True();
-          let no = False();
-          let has_before = if run_open > 0_u64 {
-            let before = run_open - 1_u64;
-            let shown_before = shows_owner(context: context, events: events, flow: before, owner: first.owner, opening: no);
-            give shown_before;
-          } else {
-            give False();
-          }
-          if bnot(has_before) {
-            let sibling = sibling_above(context: context, events: events, closing: &closing, flow: run_open);
-            let line_y = if first_line == no_line {
-              give top;
-            } else if sibling {
-              give top;
-            } else {
-              give first_line;
-            }
-            let leading_mode = if first_line == no_line {
-              give 1_u8;
-            } else if sibling {
-              give 1_u8;
-            } else {
-              give 2_u8;
-            }
-            let leading_line = bnot(sibling);
-            let leading_at = context^.fragments.inner.len;
-            let leading_anchor = FragmentAnchor(mode: leading_mode, first: first.opening, last: last_opening, split: split_index, margin: 0_i32, last_split: last_split, leading_line: leading_line);
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_y, width: 0_i32, height: 0_i32);
-            anchor_fragment(context: context, at: leading_at, anchor: leading_anchor);
-          }
-          let main_at = context^.fragments.inner.len;
-          let main_anchor = FragmentAnchor(mode: 3_u8, first: first.opening, last: last_opening, split: split_index, margin: 0_i32, last_split: last_split, leading_line: no);
-          add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: top, width: first.width, height: height);
-          anchor_fragment(context: context, at: main_at, anchor: main_anchor);
-          let after = run_close +sat 1_u64;
-          let has_after = shows_owner(context: context, events: events, flow: after, owner: first.owner, opening: yes);
-          if bnot(has_after) {
-            let beneath = entry_margin(context: context, events: events, styles: styles, flow: last_close, basis: first.width, below: yes);
-            let line_bottom = bottom +sat beneath;
-            let trailing_at = context^.fragments.inner.len;
-            let trailing_anchor = FragmentAnchor(mode: 4_u8, first: first.opening, last: last_opening, split: split_index, margin: beneath, last_split: last_split, leading_line: no);
-            add_fragment(context: context, kind: placed_element, owner: first.owner, x: x, y: line_bottom, width: 0_i32, height: 0_i32);
-            anchor_fragment(context: context, at: trailing_at, anchor: trailing_anchor);
-          }
-        }
-      }
-    }
-  }
-  if preserve_empty {
-    let count_kept = kept^.len;
-    for (f in 0_u64..count_kept) {
-      let fragment = kept^[f];
-      let interrupted = split_owner(keys: &keys, owner: fragment.owner);
-      if bnot(interrupted) {
-        add_fragment(context: context, kind: fragment.kind, owner: fragment.owner, x: fragment.x, y: fragment.y, width: fragment.width, height: fragment.height);
-      }
-    }
-  } else {
-    let entries = reference_length(context: context, events: events);
-    for (k in 0_u64..entries) {
-      let empty = lineless(context: context, events: events, flow: k);
-      if empty {
-        empty_inline_fragments(context: context, events: events, keys: &keys, flow: k);
-      }
-    }
-  }
+  set context^.split_roles = move roles;
+  let paragraphs = context^.paragraphs.inner.len;
+  let keys = context^.split_keys.inner.len;
+  let sources = refresh_all_empty_sources(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs], keys: &context^.split_keys.inner[0_u64..keys]);
+  set context^.empty_fragment_sources = sources;
   return unit;
-}
-
-fn split_owner(keys: &Box<Array<u64>>, owner: u32) -> found: Bool reads(keys) {
-  doc "Tells whether a block interrupts owner's inline box in this context, by binary search over split_keys' sorted keys, whose high half is the owner.";
-  let wide = cvt::<u32, u64>(owner);
-  let low = 0_u64;
-  let high = keys^.inner.len;
-  for (step in 0_u64..64_u64) {
-    if low >= high {
-      break;
-    }
-    let span = high - low;
-    let half = span / 2_u64;
-    let middle = low + half;
-    if middle < keys^.inner.len {
-      let key = keys^.inner[middle];
-      let found = ishr(key, 32_u32);
-      if found < wide {
-        set low = middle +sat 1_u64;
-      } else {
-        set high = middle;
-      }
-    } else {
-      break;
-    }
-  }
-  if low < keys^.inner.len {
-    let key = keys^.inner[low];
-    let found = ishr(key, 32_u32);
-    let made = found == wide;
-    return made;
-  }
-  return False();
 }
 
 fn sort_keys(keys: &Box<Array<u64>>) -> result: unit writes(keys) {
@@ -1214,92 +1006,6 @@ fn split_keys(context: &Context) -> keys: Box<Array<u64>> reads(context) {
   }
   sort_keys(keys: &keys);
   return move keys;
-}
-
-fn split_closings(context: &Context) -> closing: Box<Array<u8>> reads(context) {
-  doc "A flag per flow entry of the context, set where a block that interrupts an inline box closes.";
-  let entries = flow_length(context: context);
-  let bounded = imin(entries, item_ceiling);
-  let closing = box_array_filled::<u8>(count: bounded, value: 0_u8);
-  let count = context^.splits.inner.len;
-  for (k in 0_u64..count) {
-    let at = cvt::<u32, u64>(context^.splits.inner[k].close);
-    if at < closing.inner.len {
-      set closing.inner[at] = 1_u8;
-    }
-  }
-  return move closing;
-}
-
-fn empty_inline_fragments(context: &Context, events: &[Flow], keys: &Box<Array<u64>>, flow: u64) -> result: unit reads(events), reads(keys), writes(context) {
-  doc "Adds an empty rectangle, at the paragraph's origin, for each inline box that opens in the paragraph at flow entry flow, which has no lines, when no block interrupts its element here.";
-  let flow_bound_1189 = reference_length(context: context, events: events);
-  if flow < flow_bound_1189 {
-  } else {
-    return unit;
-  }
-  let item = reference_event(context: context, events: events, at: flow);
-  let paragraph = match item {
-    Text(paragraph: p) => {
-      give cvt::<u32, u64>(p);
-    }
-    Open(..) => {
-      give 18446744073709551615_u64;
-    }
-    Close(..) => {
-      give 18446744073709551615_u64;
-    }
-    Child(..) => {
-      give 18446744073709551615_u64;
-    }
-    Float(..) => {
-      give 18446744073709551615_u64;
-    }
-    Out(..) => {
-      give 18446744073709551615_u64;
-    }
-  }
-  if paragraph < context^.paragraphs.inner.len {
-  } else {
-    return unit;
-  }
-  let left = context^.paragraphs.inner[paragraph].left;
-  let geometry_read_4 = paragraph_position(context: context, at: paragraph);
-  let top = geometry_read_4.y;
-  let marks = context^.paragraphs.inner[paragraph].marks.inner.len;
-  for (m in 0_u64..marks) {
-    if paragraph < context^.paragraphs.inner.len {
-      if m < context^.paragraphs.inner[paragraph].marks.inner.len {
-        let mark = context^.paragraphs.inner[paragraph].marks.inner[m];
-        match mark {
-          Open(style: s, ..) => {
-            let plain = bnot(s.anonymous);
-            let own = s.pseudo == no_pseudo;
-            let shown = band(plain, own);
-            if shown {
-              let interrupted = split_owner(keys: keys, owner: s.element);
-              if bnot(interrupted) {
-                let empty_before = context^.fragments.inner.len;
-                add_fragment(context: context, kind: placed_element, owner: s.element, x: left, y: top, width: 0_i32, height: 0_i32);
-                if context^.fragments.inner.len > empty_before {
-                  if paragraph < context^.paragraphs.inner.len {
-                    set context^.paragraphs.inner[paragraph].empty_fragment = True();
-                  }
-                }
-              }
-            }
-          }
-          Close(..) => {
-          }
-          Atomic(..) => {
-          }
-          Node(..) => {
-          }
-        }
-      }
-    }
-  }
-  return unit;
 }
 
 fn mark_lines(frames: &Box<Slots<Frame>>) -> result: unit writes(frames) {
@@ -1561,56 +1267,202 @@ fn settle_open(context: &Context, frames: &Box<Slots<Frame>>, plan: Restack, con
   return unit;
 }
 
-fn prepare_naturals(context: &Context, count: u64) -> result: unit writes(context) {
-  doc "Makes the context's naturals one per flow entry, each the largest i32 until the stacking pass writes it; a list of that length already is left as it is (a re-stack reads the previous pass's).";
-  let held = context^.naturals.inner.len;
-  if held == count {
-    return unit;
+fn set_natural(context: &Context, item: Flow, y: i32) -> result: unit writes(context) {
+  doc "Records an event's pre-clearance stacking position on its stable payload; the largest i32 retains its absent-sentinel meaning.";
+  let known = y != 2147483647_i32;
+  let child_slot = no_index;
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        set context^.blocks.inner[at].natural = y;
+        set context^.blocks.inner[at].natural_known = known;
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set context^.paragraphs.inner[at].natural = y;
+        set context^.paragraphs.inner[at].natural_known = known;
+      }
+    }
+    Child(context: c) => {
+      set child_slot = c;
+    }
+    Float(context: f) => {
+      set child_slot = f;
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
   }
-  let bounded = imin(count, item_ceiling);
-  let fresh = box_slots_new::<i32>(capacity: bounded);
-  for (k in 0_u64..bounded) {
-    let pushed = push_item::<i32>(cell: &fresh, value: 2147483647_i32, ceiling: item_ceiling);
+  let child_at = cvt::<u32, u64>(child_slot);
+  if child_at < context^.children.inner.len {
+    set context^.children.inner[child_at].placement_natural = y;
+    set context^.children.inner[child_at].placement_natural_known = known;
   }
-  set context^.naturals = move fresh;
   return unit;
 }
 
-fn set_natural(context: &Context, at: u64, y: i32) -> result: unit writes(context) {
-  doc "Records where flow entry at started from before floats and clearance moved it.";
-  if at < context^.naturals.inner.len {
-    set context^.naturals.inner[at] = y;
+fn reference_natural(context: &Context, item: Flow) -> made: i32 reads(context) {
+  doc "Resolves a stable payload's natural position from its own normal origin, or reads fresh raw stacking output. Absent positions remain sentinels without arithmetic.";
+  let child_slot = no_index;
+  let full = context^.reference_phase == 0_u8;
+  let reference = bnot(context^.local_geometry);
+  match item {
+    Open(block: b) => {
+      let at = cvt::<u32, u64>(b);
+      if at < context^.blocks.inner.len {
+        if context^.blocks.inner[at].natural_known {
+          let fresh = bor(full, context^.blocks.inner[at].reference_fresh);
+          let raw = band(reference, fresh);
+          if raw {
+            return context^.blocks.inner[at].natural;
+          }
+          let origin = block_origin(context: context, block: b);
+          let value = origin.y +sat context^.blocks.inner[at].natural_offset;
+          return geometry_narrow(value: value);
+        }
+      }
+    }
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        if context^.paragraphs.inner[at].natural_known {
+          let fresh = bor(full, context^.paragraphs.inner[at].reference_fresh);
+          let raw = band(reference, fresh);
+          if raw {
+            return context^.paragraphs.inner[at].natural;
+          }
+          let origin = paragraph_origin(context: context, at: at);
+          let value = origin.y +sat context^.paragraphs.inner[at].natural_offset;
+          return geometry_narrow(value: value);
+        }
+      }
+    }
+    Child(context: c) => {
+      set child_slot = c;
+    }
+    Float(context: f) => {
+      set child_slot = f;
+    }
+    Out(..) => {
+    }
+    Close(..) => {
+    }
   }
-  return unit;
+  let child_at = cvt::<u32, u64>(child_slot);
+  if child_at < context^.children.inner.len {
+    if context^.children.inner[child_at].placement_natural_known {
+      let fresh = bor(full, context^.children.inner[child_at].placement_fresh);
+      let raw = band(reference, fresh);
+      if raw {
+        return context^.children.inner[child_at].placement_natural;
+      }
+      let origin = child_origin(context: context, at: child_at);
+      let value = origin.y +sat context^.children.inner[child_at].placement_natural_offset;
+      return geometry_narrow(value: value);
+    }
+  }
+  return 2147483647_i32;
 }
 
-fn later_floors(context: &Context, plan: Restack) -> floors: Box<Array<i32>> reads(context) {
-  doc "For a re-stack from plan.from, for each entry k from there on (index k - plan.from) the lowest of the previous pass's naturals of the entries after k, one backward pass over the naturals; empty for a full pass, or when the naturals do not cover the flow (then a re-stack never stops).";
-  let entries = flow_length(context: context);
-  let held = context^.naturals.inner.len;
-  let covered = held == entries;
-  let usable = band(plan.partial, covered);
-  if usable {
+fn reference_floor_output(context: &Context, owner: u32, root: u32, own: Bool) -> made: SequenceOutput reads(context) {
+  doc "Reads an immutable pre-replay transfer for a suffix natural-floor query; stacking does not publish these cached reductions.";
+  if owner == no_index {
+    return slot_output(pages: &context^.entries.nodes, slot: root, span: context^.entries.span, own: own);
+  }
+  let at = cvt::<u32, u64>(owner);
+  if at < context^.blocks.inner.len {
+    return slot_output(pages: &context^.blocks.inner[at].entries.nodes, slot: root, span: context^.blocks.inner[at].entries.span, own: own);
+  }
+  return empty_output();
+}
+
+fn reference_owner_floor(context: &Context, owner: u32, root: u32, skip: u64) -> floor: i64 reads(context) {
+  doc "Reduces only the cut path of an old virtual suffix. Published totals remain unchanged throughout stacking and include each Open natural plus nested minima. An intact subtree uses that total in its captured old owner frame; unknown motion returns a conservative low floor, never admission.";
+  let cursor = reference_owner_cursor(context: context, owner: owner, slot: root);
+  if cursor.live {
   } else {
-    let empty = box_array_filled::<i32>(count: 0_u64, value: 0_i32);
-    return move empty;
+    return 9223372036854775807_i64;
   }
-  let span = entries -sat plan.from;
-  let bounded = imin(span, item_ceiling);
-  let floors = box_array_filled::<i32>(count: bounded, value: 2147483647_i32);
-  let lowest = 2147483647_i32;
-  for (step in 0_u64..bounded) {
-    let back = bounded - step;
-    let index = back - 1_u64;
-    if index < floors.inner.len {
-      set floors.inner[index] = lowest;
+  if skip >= cursor.total_events {
+    return 9223372036854775807_i64;
+  }
+  if skip == 0_u64 {
+    let total = False();
+    let output = reference_floor_output(context: context, owner: owner, root: root, own: total);
+    if output.motion_known {
+    } else {
+      return -9223372036854775807_i64;
     }
-    let place = plan.from +sat index;
-    if place < context^.naturals.inner.len {
-      set lowest = imin(lowest, context^.naturals.inner[place]);
+    if output.natural_floor == 9223372036854775807_i64 {
+      return output.natural_floor;
+    }
+    let previous = True();
+    let origin = retained_block_origin(context: context, block: owner, previous: previous);
+    return origin.y +sat output.natural_floor;
+  }
+  let left_cursor = reference_owner_cursor(context: context, owner: owner, slot: cursor.left);
+  let before = left_cursor.total_events;
+  let left = reference_owner_floor(context: context, owner: owner, root: cursor.left, skip: skip);
+  let after = before +sat cursor.own_events;
+  let middle = 9223372036854775807_i64;
+  if skip < after {
+    let own_skip = skip -sat before;
+    if own_skip == 0_u64 {
+      let own = True();
+      let output = reference_floor_output(context: context, owner: owner, root: root, own: own);
+      if output.motion_known {
+      } else {
+        return -9223372036854775807_i64;
+      }
+      if output.natural_floor != 9223372036854775807_i64 {
+        let previous = True();
+        let origin = retained_block_origin(context: context, block: owner, previous: previous);
+        set middle = origin.y +sat output.natural_floor;
+      }
+    } else {
+      let item = reference_owner_payload(context: context, owner: owner, slot: root);
+      match item {
+        Open(block: b) => {
+          let at = cvt::<u32, u64>(b);
+          if at < context^.blocks.inner.len {
+            let nested_root = context^.blocks.inner[at].entries.root;
+            let nested_skip = own_skip - 1_u64;
+            set middle = reference_owner_floor(context: context, owner: b, root: nested_root, skip: nested_skip);
+          }
+        }
+        Text(..) => {
+        }
+        Child(..) => {
+        }
+        Float(..) => {
+        }
+        Out(..) => {
+        }
+        Close(..) => {
+        }
+      }
     }
   }
-  return move floors;
+  let right_skip = skip -sat after;
+  let right = reference_owner_floor(context: context, owner: owner, root: cursor.right, skip: right_skip);
+  let first = imin(left, middle);
+  return imin(first, right);
+}
+
+fn later_floor(context: &Context, after: u64, content_top: i32) -> floor: i32 reads(context) {
+  doc "Returns the old stack-coordinate suffix minimum, preserving the absent sentinel and the old content-origin arithmetic without allocating a suffix-sized array.";
+  let first = after +sat 1_u64;
+  let absolute = reference_owner_floor(context: context, owner: no_index, root: context^.entries.root, skip: first);
+  if absolute == 9223372036854775807_i64 {
+    return 2147483647_i32;
+  }
+  let origin = cvt::<i32, i64>(content_top);
+  let relative = absolute -sat origin;
+  return geometry_narrow(value: relative);
 }
 
 fn block_relative_offset(context: &Context, styles: &Styles, block: u32) -> (dx: i32, dy: i32) reads(context), reads(styles) {
@@ -1824,7 +1676,7 @@ fn resume_float_state(context: &Context, events: &[Flow], styles: &Styles, stack
   return True();
 }
 
-fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Frame>>, block: u32, content_top: i32) -> usable: Bool reads(context), reads(styles), writes(context.blocks.inner), writes(frames) {
+fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Frame>>, block: u32, content_top: i32) -> usable: Bool reads(styles), writes(context), writes(frames) {
   doc "Recovers the open ancestor frames after a paragraph with lines. Such a paragraph resolved every ancestor top and marked every ancestor as containing lines. Checks all inverse positions before returning the blocks to stacking coordinates.";
   let parents = box_slots_new::<u32>(capacity: 8_u64);
   let count = context^.blocks.inner.len;
@@ -1848,6 +1700,7 @@ fn resume_open_frames(context: &Context, styles: &Styles, frames: &Box<Slots<Fra
     let b = parents.inner[i];
     let at = cvt::<u32, u64>(b);
     if at < context^.blocks.inner.len {
+      materialize_reference_block(context: context, at: at);
       let held = block_snapshot(block: &context^.blocks.inner[at]);
       let held_position = block_position(context: context, at: at);
       let border = border_edges(styles: styles, style: held.style);
@@ -1918,16 +1771,16 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
   let fragments_same = plan.empty_stable;
   let none = box_slots_new::<Exclusion>(capacity: 0_u64);
   let flow_count = reference_length(context: context, events: events);
-  let floors = box_array_filled::<i32>(count: 0_u64, value: 0_i32);
-  prepare_naturals(context: context, count: flow_count);
   let restart = 0_u64;
   if plan.partial {
     let p = previous_stacked_paragraph(context: context, events: events, from: plan.from);
     if p < context^.paragraphs.inner.len {
       let position = context^.paragraphs.inner[p].flow_at;
       let flow = cvt::<u32, u64>(position);
-      if flow < context^.naturals.inner.len {
-        let natural = context^.naturals.inner[flow];
+      if flow < flow_count {
+        let paragraph_slot = flow_index(at: p);
+        let prior_item = Flow::Text(paragraph: paragraph_slot);
+        let natural = reference_natural(context: context, item: prior_item);
         let after = flow +sat 1_u64;
         let floats_ready = resume_float_state(context: context, events: events, styles: styles, stack: &stack, from: after, content_left: content_left, content_top: content_top);
         let frames_ready = if floats_ready {
@@ -1989,6 +1842,11 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
       }
     }
     let item = reference_event(context: context, events: events, at: k);
+    materialize_reference_item(context: context, item: item);
+    if replay {
+    } else {
+      set_natural(context: context, item: item, y: 2147483647_i32);
+    }
     let waiting_line = pending_margin(stack: &stack);
     let line_offset = stack.cursor +sat waiting_line;
     let line_at = content_top +sat line_offset;
@@ -2028,7 +1886,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
           }
           let natural_term = pending_margin(stack: &stack);
           let natural = stack.cursor +sat natural_term;
-          set_natural(context: context, at: k, y: natural);
+          set_natural(context: context, item: item, y: natural);
           let cleared = clear_floor > natural;
           let unknown_top = False();
           let saved = Frame(block: b, left: left, width: width, top_frame: top_frame, known: unknown_top, dx: total_dx, dy: total_dy, lines: unknown_top);
@@ -2218,7 +2076,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
           let y = stack.cursor +sat waiting;
           if replay {
           } else {
-            set_natural(context: context, at: k, y: y);
+            set_natural(context: context, item: item, y: y);
           }
           resolve_open(context: context, frames: &frames, y: y);
           mark_lines(frames: &frames);
@@ -2268,16 +2126,11 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
               let different_floats = bor(different_shift, nonuniform);
               let changed_floats = band(any_float, different_floats);
               let need_floor = bor(moved, changed_floats);
-              if need_floor {
+              let floor = if need_floor {
                 if stack.floats.inner.len > 0_u64 {
-                  if floors.inner.len == 0_u64 {
-                    set floors = later_floors(context: context, plan: plan);
-                  }
+                  give later_floor(context: context, after: k, content_top: content_top);
                 }
-              }
-              let floor_at = k -sat plan.from;
-              let floor = if floor_at < floors.inner.len {
-                give floors.inner[floor_at];
+                give -2147483647_i32;
               } else {
                 give -2147483647_i32;
               }
@@ -2416,7 +2269,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
             add_margin(stack: &stack, margin: margin_bottom);
           }
           set stack.cursor = y +sat child_height;
-          set_natural(context: context, at: k, y: natural);
+          set_natural(context: context, item: item, y: natural);
         }
       }
       Float(context: c) => {
@@ -2432,7 +2285,7 @@ fn stack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Do
           }
           let float_term = pending_margin(stack: &stack);
           let float_start = stack.cursor +sat float_term;
-          set_natural(context: context, at: k, y: float_start);
+          set_natural(context: context, item: item, y: float_start);
           let previous_y = if at < context^.children.inner.len {
             let geometry_read_18 = child_position(context: context, at: at);
             give geometry_read_18.y;
@@ -2948,6 +2801,7 @@ fn position_out_children(context: &Context, events: &[Flow], styles: &Styles, do
       let out = band(out_kind, this_child);
       if out {
         let (found, left, top, width, height) = chain_anchor(context: context, styles: styles, block: block);
+        materialize_reference_child(context: context, at: at);
         let got = position_child(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, border: border, at: at, anchor_found: found, anchor_left: left, anchor_top: top, anchor_width: width, anchor_height: height);
         set counted = add_counts(first: counted, second: got);
       }
@@ -3513,6 +3367,41 @@ fn place_context(context: &Context, x: i32, y: i32, map: &[ColumnPiece], map_y: 
     if f < context^.fragments.inner.len {
       let fragment = placed_context_fragment(context: context, origins: &origins.inner[0_u64..origin_count], at: f);
       place_fragment(context: context, fragment: fragment, x: x, y: y, map: map, map_y: map_y, out: out);
+    }
+  }
+  let split_cells = context^.split_roles.inner.len;
+  for (at_split in 0_u64..split_cells) {
+    let roles = context^.split_roles.inner[at_split];
+    if roles.leading_anchor.active {
+      let leading = placed_fragment_value(context: context, origins: &origins.inner[0_u64..origin_count], raw: roles.leading, anchor: roles.leading_anchor);
+      place_fragment(context: context, fragment: leading, x: x, y: y, map: map, map_y: map_y, out: out);
+    }
+    if roles.spanning_anchor.active {
+      let spanning = placed_fragment_value(context: context, origins: &origins.inner[0_u64..origin_count], raw: roles.spanning, anchor: roles.spanning_anchor);
+      place_fragment(context: context, fragment: spanning, x: x, y: y, map: map, map_y: map_y, out: out);
+    }
+    if roles.trailing_anchor.active {
+      let trailing = placed_fragment_value(context: context, origins: &origins.inner[0_u64..origin_count], raw: roles.trailing, anchor: roles.trailing_anchor);
+      place_fragment(context: context, fragment: trailing, x: x, y: y, map: map, map_y: map_y, out: out);
+    }
+  }
+  for (empty_entry in 0_u64..entries) {
+    let empty_paragraph = paragraph_at_entry(context: context, events: events, at_entry: empty_entry);
+    if empty_paragraph < context^.paragraphs.inner.len {
+      if context^.paragraphs.inner[empty_paragraph].empty_fragment {
+        let empty_cells = context^.paragraphs.inner[empty_paragraph].empty_fragments.inner.len;
+        for (empty_slot in 0_u64..empty_cells) {
+          if empty_slot < context^.paragraphs.inner[empty_paragraph].empty_fragments.inner.len {
+            let source = context^.paragraphs.inner[empty_paragraph].empty_fragments.inner[empty_slot];
+            if source.active {
+              let rectangle = source.value;
+              set rectangle.x = rectangle.x +sat context^.content_dx;
+              set rectangle.y = rectangle.y +sat context^.content_dy;
+              place_fragment(context: context, fragment: rectangle, x: x, y: y, map: map, map_y: map_y, out: out);
+            }
+          }
+        }
+      }
     }
   }
   let children = context^.children.inner.len;

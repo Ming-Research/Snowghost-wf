@@ -1012,6 +1012,9 @@ fn shift_paragraph(paragraph: &Paragraph, delta: i32) -> result: unit writes(par
   if lines > 0_u64 {
     set paragraph^.resolved_top = paragraph^.resolved_top +sat delta;
     set paragraph^.normal_top = paragraph^.normal_top +sat delta;
+    if paragraph^.natural_known {
+      set paragraph^.natural = paragraph^.natural +sat delta;
+    }
   }
   return unit;
 }
@@ -1031,6 +1034,9 @@ fn shift_reference_block(block: &Block, delta: i32) -> result: unit writes(block
   doc "Moves a block down by delta.";
   set block^.resolved_y = block^.resolved_y +sat delta;
   set block^.normal_y = block^.normal_y +sat delta;
+  if block^.natural_known {
+    set block^.natural = block^.natural +sat delta;
+  }
   return unit;
 }
 
@@ -1070,6 +1076,7 @@ fn translate_fragments(context: &Context, top: i32, bottom: i32, delta: i32) -> 
   for (f in own_count..count) {
     translate_fragment(fragment: &context^.fragments.inner[f], top: top, bottom: bottom, delta: delta);
   }
+  translate_extra_fragments(context: context, top: top, bottom: bottom, delta: delta);
   return unit;
 }
 
@@ -1162,6 +1169,7 @@ fn break_in_place(context: &Context, styles: &Styles, fonts: &FontSet, picks: &F
   } else {
     return 0_u64, 0_u64, 0_i32, 0_i32;
   }
+  materialize_reference_paragraph(context: context, at: at);
   let old_height = context^.paragraphs.inner[at].height;
   let old_lines = context^.paragraphs.inner[at].lines.inner.len;
   let old_base = last_line_baseline(paragraph: &context^.paragraphs.inner[at]);
@@ -1188,6 +1196,14 @@ fn break_in_place(context: &Context, styles: &Styles, fonts: &FontSet, picks: &F
 
 fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, measured: Bool, previous: ParagraphBefore, child_before: ChildBefore, scope: &ReferenceScope) -> (handled: Bool, counts: UpdateCounts) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(scope) {
   doc "Updates a marked flow context whose geometry and space are those of its previous layout without its pre-pass or stacking pass (decision 1 of X5's step 3b), when text_changed marked at most one of its child contexts and at most one of its paragraphs. When its intrinsic sizes were computed in this update (measured), this path refreshes every child's margins from its current space before updating the marked entry. Then the marked child, an atomic inline or an in-flow child no earlier float reaches, is updated in the space it was laid out in; the one entry whose layout then changed (the marked paragraph, broken again, the paragraph holding the child when it is an atomic inline whose outputs changed, or the in-flow child when its outputs changed) keeps its place, and when its height changed by delta and no float placed before it reaches below its top, every block around it grows by delta with it (blocks_grow), both old and proposed suffix natural minima stay beyond earlier floats, the margins it leaves below are unchanged and a line box lies in it as before, every later entry moves down by delta (translate_reference_after); then finish_in_place gives the context its content height, height, own fragment and out-of-flow children, and its baseline follows the entry it is read from. The fragments of the context's own list move or grow with it (translate_fragments). False when any of that does not hold, when the entry had no height, or when the context has columns; whatever it already updated (the child, the marked paragraph broken again, its mark then cleared, the paragraph holding a changed atomic inline, broken again for it) its caller's passes keep, since breaking again in them would give the same lines, and the counts it returns are the child's and the paragraph's.";
+  if context^.marked_paragraphs == 1_u32 {
+    let paragraph_at = cvt::<u32, u64>(context^.marked_paragraph);
+    materialize_reference_paragraph(context: context, at: paragraph_at);
+  }
+  if context^.marked_children == 1_u32 {
+    let child_at = cvt::<u32, u64>(context^.marked_child);
+    materialize_reference_child(context: context, at: child_at);
+  }
   let boundary_work = no_boundary_visits();
   let none = no_updates();
   if frame.columned {
@@ -1438,7 +1454,6 @@ fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document
   let walked = if moved {
     translate_reference_after(context: context, flow_at: change.flow_at, delta: change.delta);
     let changed_at = cvt::<u32, u64>(change.flow_at);
-    shift_naturals(context: context, after: changed_at, delta: change.delta);
     grow_blocks(context: context, first: change.block, delta: change.delta);
     let changed_rank = cvt::<u32, u64>(change.flow_at);
     let repaired = repair_anchored_fragments(context: context, styles: styles, content_left: frame.content_left, from: changed_rank, until: changed_rank, delta: change.delta);
@@ -1479,7 +1494,7 @@ fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Attempts bounded boundary propagation before touching the reference coordinate bridge. A prior ordinary edit invalidates legacy natural-position scratch, so a later refusal forces full stacking before republishing boundary outputs.";
+  doc "Attempts bounded owner propagation before hybrid reference replay. Natural positions follow their payload origins; only a structural change invalidates compatibility event ranks.";
   let extra_rank = 18446744073709551615_u64;
   if context^.marked_children == 1_u32 {
     let child_at = cvt::<u32, u64>(context^.marked_child);
@@ -1682,6 +1697,10 @@ fn update_flow_reference(context: &Context, events: &[Flow], styles: &Styles, do
 
 fn update_flow_reference_full(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, child_before: ChildBefore, unasked: Bool, frame: FlowFrame, same_flow: Bool, marked_paragraphs: Bool, early: UpdateCounts) -> counts: UpdateCounts reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Runs the unchanged full reference preparation and layout after a bounded attempt refused, with one shared materialized event slice. Scope stays incomplete so full transfer publication and exact geometry encoding follow.";
+  if context^.reference_phase != 0_u8 {
+    let synchronize = True();
+    reference_geometry(context: context, synchronize: synchronize);
+  }
   let nothing = no_updates();
   let children = context^.children.inner.len;
   let bounded = imin(children, item_ceiling);
@@ -1825,6 +1844,7 @@ fn restack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
   let held = context^.children.inner.len;
   let none = box_slots_new::<Exclusion>(capacity: 0_u64);
   if at < context^.paragraphs.inner.len {
+    materialize_reference_paragraph(context: context, at: at);
     break_paragraph(paragraph: &context^.paragraphs.inner[at], children: &context^.children.inner[0_u64..held], styles: styles, fonts: fonts, picks: picks, exclusions: &none.inner[0_u64..0_u64], origin_y: 0_i32);
   }
   let old_entry = context^.baseline_entry;
@@ -1835,14 +1855,19 @@ fn restack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
   let yes = True();
   let plan = Restack(partial: yes, from: from, until: until, empty_stable: empty_stable, unasked: unasked, old_top: old_top, old_height: old_height, old_lines: old_lines, old_flow_end: old_end);
   let stacked = stack_flow(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, content_left: frame.content_left, content_top: frame.content_top, content_width: frame.flow_width, basis_height: frame.definite, plan: plan);
+  if context^.reference_phase != 0_u8 {
+    set context^.reference_phase = 2_u8;
+  }
   let baseline = stacked.baseline;
   let has_baseline = stacked.has_baseline;
   let content = if stacked.stopped {
     let delta = stacked.delta;
     let stop = flow_index(at: stacked.stop_at);
-    if delta != 0_i32 {
+    let owners_moved = reference_owners_moved(context: context);
+    let flow_moved = delta != 0_i32;
+    let suffix_moves = bor(flow_moved, owners_moved);
+    if suffix_moves {
       translate_reference_after(context: context, flow_at: stop, delta: delta);
-      shift_naturals(context: context, after: stacked.stop_at, delta: delta);
     }
     let raw = old_raw +sat delta;
     set context^.content_raw = raw;
@@ -1883,12 +1908,18 @@ fn restack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
   let no_splits = context^.splits.inner.len == 0_u64;
   let unchanged_fragments = band(no_splits, stacked.fragments_same);
   let converged = band(stacked.stopped, stacked.fragments_same);
-  let repaired = if stacked.fragments_same {
-    let repair_until = if stacked.stopped {
-      give stacked.stop_at;
-    } else {
-      give 18446744073709551615_u64;
-    }
+  let repair_until = if stacked.stopped {
+    give stacked.stop_at;
+  } else {
+    give 18446744073709551615_u64;
+  }
+  let topology_ready = if stacked.fragments_same {
+    give True();
+  } else {
+    let replaced = replace_fragment_topology(context: context, events: events, styles: styles, content_left: frame.content_left, from: stacked.start_at, until: repair_until);
+    give replaced;
+  }
+  let repaired = if topology_ready {
     let made = repair_anchored_fragments(context: context, styles: styles, content_left: frame.content_left, from: stacked.start_at, until: repair_until, delta: stacked.delta);
     give made;
   } else {
@@ -1920,17 +1951,9 @@ fn restack_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
     swap(first: &context^.fragments, second: &previous_fragments);
     clear_fragment_anchors(context: context);
     add_own_fragment(context: context);
-    let owned = owns_fragment(style: context^.style);
-    let old_count = previous_fragments.inner.len;
-    let first_kept = if owned {
-      give imin(old_count, 1_u64);
-    } else {
-      give 0_u64;
-    }
-    if first_kept <= old_count {
-      split_fragments_with_empty(context: context, events: events, styles: styles, content_left: frame.content_left, kept: &previous_fragments.inner[first_kept..old_count], preserve_empty: stacked.fragments_same);
-    }
+    split_fragments(context: context, events: events, styles: styles, content_left: frame.content_left);
   }
+
   let total = flow_length(context: context);
   let walked = if stacked.stopped {
     let after = stacked.stop_at +sat 1_u64;
@@ -2128,33 +2151,6 @@ fn translatable_fragments(context: &Context, events: &[Flow], converged: Bool, f
   }
 }
 
-fn shift_naturals(context: &Context, after: u64, delta: i32) -> result: unit writes(context) {
-  doc "Moves the natural position of every flow entry after after by delta, leaving the largest i32 of an entry no float moves as it is.";
-  let count = context^.naturals.inner.len;
-  let first = after +sat 1_u64;
-  for (k in first..count) {
-    shift_natural(natural: &context^.naturals.inner[k], delta: delta);
-  }
-  return unit;
-}
-
-fn shift_natural(natural: &i32, delta: i32) -> result: unit writes(natural) {
-  doc "Moves one natural position by delta unless it is the largest i32.";
-  if natural^ != 2147483647_i32 {
-    set natural^ = natural^ +sat delta;
-  }
-  return unit;
-}
-
-struct LocalWidth {
-  doc "A block's horizontal geometry, computed from its containing block alone.";
-  avail_left: i32;
-  avail_width: i32;
-  x: i32;
-  width: i32;
-  left: i32;
-  inner: i32;
-}
 
 fn local_width(style: StyleRef, styles: &Styles, left: i32, width: i32) -> geometry: LocalWidth reads(styles) {
   doc "The pre-pass's horizontal geometry of one block.";
@@ -2204,7 +2200,6 @@ fn local_ancestor_width(blocks: &[WidthBlock], styles: &Styles, from: u64, at_en
 
 fn write_local_block(block: &Block, geometry: LocalWidth) -> result: unit writes(block) {
   doc "Writes the same horizontal fields as the full pre-pass, leaving vertical geometry for stacking.";
-  set block^.resolved_x = geometry.x;
   set block^.inner_x = geometry.x;
   set block^.width = geometry.width;
   set block^.avail_left = geometry.avail_left;

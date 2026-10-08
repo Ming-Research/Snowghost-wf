@@ -267,6 +267,12 @@ struct Block {
   y: i64;
   dx: i64;
   dy: i64;
+  reference_old: Origin;
+  reference_captured: Bool;
+  reference_fresh: Bool;
+  natural: i32;
+  natural_offset: i64;
+  natural_known: Bool;
   normal_x: i32;
   normal_y: i32;
   resolved_x: i32;
@@ -356,6 +362,7 @@ struct Split {
 
 struct FragmentAnchor {
   doc "A context fragment's dependency: mode 0 keeps raw scratch, 1 uses the first head visual top, 2 its Split.line normal offset, 3 spans first visual top through last visual bottom, and 4 uses last visual bottom plus margin. Stable Flow identities survive rank changes; split and last_split identify a run independently of owner/rectangle coincidence. leading_line records the topology-dependent sibling selector separately from the changing line sentinel. Slots live within this fragment topology and no mapping survives clear_fragment_anchors; roles remain in first-split source order.";
+  active: Bool;
   mode: u8;
   first: Flow;
   last: Flow;
@@ -363,6 +370,36 @@ struct FragmentAnchor {
   margin: i32;
   last_split: u32;
   leading_line: Bool;
+}
+
+struct FragmentRoles {
+  doc "Three independently active role cells at one stable split slot. A live run owns its first split's leading, spanning and trailing records; unused roles do not consume source identities or publish rectangles. The array has one cell per split, avoiding a three-times source-count limit.";
+  leading: Fragment;
+  spanning: Fragment;
+  trailing: Fragment;
+  leading_anchor: FragmentAnchor;
+  spanning_anchor: FragmentAnchor;
+  trailing_anchor: FragmentAnchor;
+}
+
+struct SplitLink {
+  doc "Stable same-owner predecessor and successor split slots and this split's position in the immutable owner-sorted key array; no_index denotes absence.";
+  previous: u32;
+  next: u32;
+  order: u32;
+  gap_possible: Bool;
+}
+
+struct SplitJoin {
+  doc "The first and last broken incoming-edge positions in one balanced owner-order subtree, or no_index when every edge joins. Independent edge changes repair only their index ancestors.";
+  first: u32;
+  last: u32;
+}
+
+struct EmptyFragment {
+  doc "One paragraph-mark-owned context rectangle, active only for an eligible Open mark in a lineless paragraph. The mark slot remains stable while its source pieces survive; inactive capacity is never published.";
+  active: Bool;
+  value: Fragment;
 }
 
 struct FragmentRange {
@@ -385,6 +422,7 @@ struct Paragraph {
   doc "An inline formatting context's content inside a flow context, its anonymous block: its owned pieces in inline source order, recorded by the walk, become text, runs, run_styles and marks in the preparation loop, which also shapes the text; layout fills lines, its fragments relative to its origin, and its height. The pre-pass gives it width and left, the content-box offset its lines break at, and records its flow entry (flow_at) and the block it sits in (block, no_index for none); x and top store its normal origin relative to block as exact i64 differences, dx/dy its separate effective relative displacement; normal_x/normal_top and resolved_x/resolved_top are the compatibility walker's context-coordinate scratch. empty_fragment marks a paragraph that generated a context-level empty-inline rectangle, preventing retirement without fragment ownership publication. A lineless paragraph has no placed origin: readers preserve its last resolved scratch position, as the reference walker does. The stacking pass also gives it beside, whether a float placed before it reaches below its top. broken_width and broken_left hold the width and left supplied to its last line break, so a new pre-pass can compare its actual inputs before keeping the lines.";
   retired: Bool;
   empty_fragment: Bool;
+  empty_fragments: Box<Array<EmptyFragment>>;
   style: StyleRef;
   pieces: Box<Slots<Piece>>;
   text: Box<Slots<u32>>;
@@ -400,6 +438,10 @@ struct Paragraph {
   top: i64;
   dx: i64;
   dy: i64;
+  reference_fresh: Bool;
+  natural: i32;
+  natural_offset: i64;
+  natural_known: Bool;
   normal_x: i32;
   normal_top: i32;
   resolved_top: i32;
@@ -526,6 +568,15 @@ struct Context {
   walk_exact: Bool;
   neutral: Bool;
   local_geometry: Bool;
+  reference_phase: u8;
+  reference_dense: Bool;
+  reference_blocks: Box<Slots<u32>>;
+  reference_paragraphs: Box<Slots<u32>>;
+  reference_children: Box<Slots<u32>>;
+  placement_fresh: Bool;
+  placement_natural: i32;
+  placement_natural_offset: i64;
+  placement_natural_known: Bool;
   boundary_visits: BoundaryVisits;
   boundary_dirty: Bool;
   content_dx: i32;
@@ -553,6 +604,12 @@ struct Context {
   fragment_repaired: Bool;
   fragments_anchored: Bool;
   fragment_ranges: Box<Array<FragmentRange>>;
+  split_roles: Box<Array<FragmentRoles>>;
+  split_links: Box<Array<SplitLink>>;
+  split_keys: Box<Array<u64>>;
+  split_joins: Box<Array<SplitJoin>>;
+  split_dependencies: Box<Array<FragmentRange>>;
+  empty_fragment_sources: u64;
   column_map: Box<Slots<ColumnPiece>>;
   space: Space;
   margin_top: i32;
@@ -591,7 +648,6 @@ struct Context {
   held_min: i32;
   held_max: i32;
   flow_end: i32;
-  naturals: Box<Slots<i32>>;
   restyled: Bool;
   restyled_block: u32;
   restyled_blocks: u32;

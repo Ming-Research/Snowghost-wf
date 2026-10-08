@@ -1,4 +1,4 @@
-fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (normal: i32, top: i32, bottom: i32) reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.content_dy), reads(origins) {
+fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (normal: i32, top: i32, bottom: i32) reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dy), reads(origins) {
   doc "Resolves a stable split head from a placement snapshot, preserving the reference visual-top then height saturation order. Reference scratch already contains the resolved i32 coordinates, so that branch reads them directly without an owned-origin round trip. The context content adjustment is applied once before the extent.";
   match item {
     Open(block: b) => {
@@ -6,8 +6,11 @@ fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (norm
       if at < context^.blocks.inner.len {
         if context^.local_geometry {
         } else {
-          let normal_reference = context^.blocks.inner[at].normal_y +sat context^.content_dy;
-          let top_reference = context^.blocks.inner[at].resolved_y +sat context^.content_dy;
+          let resolved = block_origin(context: context, block: b);
+          let raw_normal = origin_normal(value: resolved);
+          let raw_visual = origin_visual(value: resolved);
+          let normal_reference = raw_normal.y +sat context^.content_dy;
+          let top_reference = raw_visual.y +sat context^.content_dy;
           let bottom_reference = top_reference +sat context^.blocks.inner[at].height;
           return normal_reference, top_reference, bottom_reference;
         }
@@ -26,8 +29,11 @@ fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (norm
         let child = &context^.children.inner[at];
         if context^.local_geometry {
         } else {
-          let normal_reference = child^.normal_y +sat context^.content_dy;
-          let top_reference = child^.y +sat context^.content_dy;
+          let resolved = child_origin(context: context, at: at);
+          let raw_normal = origin_normal(value: resolved);
+          let raw_visual = origin_visual(value: resolved);
+          let normal_reference = raw_normal.y +sat context^.content_dy;
+          let top_reference = raw_visual.y +sat context^.content_dy;
           let bottom_reference = top_reference +sat child^.height;
           return normal_reference, top_reference, bottom_reference;
         }
@@ -53,7 +59,7 @@ fn fragment_endpoint(context: &Context, origins: &[Origin], item: Flow) -> (norm
   return 0_i32, 0_i32, 0_i32;
 }
 
-fn anchored_fragment_value(context: &Context, origins: &[Origin], raw: Fragment, anchor: FragmentAnchor) -> made: Fragment reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.content_dx), reads(context.content_dy), reads(origins) {
+fn anchored_fragment_value(context: &Context, origins: &[Origin], raw: Fragment, anchor: FragmentAnchor) -> made: Fragment reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dx), reads(context.content_dy), reads(origins) {
   doc "Evaluates one retained role from value arguments and immutable endpoint inputs, so its caller need not read another repair's rectangle or anchor slot.";
   let fragment = raw;
   set fragment.x = fragment.x +sat context^.content_dx;
@@ -115,26 +121,128 @@ fn fragment_representation_same(raw: Fragment, resolved: Fragment, dx: i32, dy: 
   return band(place_same, size_same);
 }
 
-fn placed_context_fragment(context: &Context, origins: &[Origin], at: u64) -> made: Fragment reads(context), reads(origins) {
-  doc "Uses certified anchors only while owner-relative geometry is authoritative; otherwise preserves the actual reference rectangles.";
+fn placed_fragment_value(context: &Context, origins: &[Origin], raw: Fragment, anchor: FragmentAnchor) -> made: Fragment reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dx), reads(context.content_dy), reads(context.fragments_valid), reads(context.fragments_anchored), reads(origins) {
+  doc "Uses the shared anchor authority contract for both sparse split roles and legacy own/table rectangles.";
   let use_anchor = band(context^.local_geometry, context^.fragments_valid);
   if context^.fragments_anchored {
     set use_anchor = context^.fragments_valid;
   }
   if use_anchor {
-    let resolved = anchored_context_fragment(context: context, origins: origins, at: at);
+    let resolved = anchored_fragment_value(context: context, origins: origins, raw: raw, anchor: anchor);
     return resolved;
   }
+  let fragment = raw;
+  set fragment.x = fragment.x +sat context^.content_dx;
+  set fragment.y = fragment.y +sat context^.content_dy;
+  return fragment;
+}
+
+fn placed_context_fragment(context: &Context, origins: &[Origin], at: u64) -> made: Fragment reads(context), reads(origins) {
+  doc "Loads a legacy own/table cell through the same authority evaluator as split roles.";
+  let empty = Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
   if at < context^.fragments.inner.len {
-    let fragment = context^.fragments.inner[at];
+    let raw = context^.fragments.inner[at];
+    if at < context^.fragment_anchors.inner.len {
+      let anchor = context^.fragment_anchors.inner[at];
+      let resolved = placed_fragment_value(context: context, origins: origins, raw: raw, anchor: anchor);
+      return resolved;
+    }
+    let fragment = raw;
     set fragment.x = fragment.x +sat context^.content_dx;
     set fragment.y = fragment.y +sat context^.content_dy;
     return fragment;
   }
-  return Fragment(kind: placed_element, owner: no_index, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32);
+  return empty;
 }
 
-fn own_split_line(context: &Context, origins: &[Origin], split: &Split) -> result: unit reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.content_dy), reads(origins), writes(split) {
+fn fragment_role_certificate(context: &Context, origins: &[Origin], raw: Fragment, anchor: FragmentAnchor) -> valid: Bool reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dx), reads(context.content_dy), reads(origins) {
+  doc "Checks an active role's exact reference fields; reserved inactive cells impose no geometric claim.";
+  if anchor.active {
+    let resolved = anchored_fragment_value(context: context, origins: origins, raw: raw, anchor: anchor);
+    let same = fragment_representation_same(raw: raw, resolved: resolved, dx: context^.content_dx, dy: context^.content_dy);
+    return same;
+  }
+  return True();
+}
+
+fn fragment_roles_certificates(context: &Context, origins: &[Origin], roles: &[FragmentRoles]) -> valid: Bool reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dx), reads(context.content_dy), reads(origins), reads(roles) {
+  doc "Certifies prepared role records through independent leaf comparisons and a balanced validity join.";
+  let count = roles^.len;
+  if count == 0_u64 {
+    return True();
+  }
+  if count == 1_u64 {
+    let record = roles^[0_u64];
+    let leading = fragment_role_certificate(context: context, origins: origins, raw: record.leading, anchor: record.leading_anchor);
+    let spanning = fragment_role_certificate(context: context, origins: origins, raw: record.spanning, anchor: record.spanning_anchor);
+    let trailing = fragment_role_certificate(context: context, origins: origins, raw: record.trailing, anchor: record.trailing_anchor);
+    let ends = band(leading, trailing);
+    return band(ends, spanning);
+  }
+  let half = count / 2_u64;
+  if half <= count {
+    let left = fragment_roles_certificates(context: context, origins: origins, roles: &roles^[0_u64..half]);
+    let right = fragment_roles_certificates(context: context, origins: origins, roles: &roles^[half..count]);
+    return band(left, right);
+  }
+  return False();
+}
+
+fn reference_split_roles(context: &Context, origins: &[Origin], roles: FragmentRoles) -> made: FragmentRoles reads(context.blocks.inner), reads(context.children.inner), reads(context.splits.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dx), reads(context.content_dy), reads(context.fragments_valid), reads(context.fragments_anchored), reads(origins) {
+  doc "Materializes one sparse record only at a full legacy-reader boundary, leaving inactive capacity unobserved.";
+  let made = roles;
+  if roles.leading_anchor.active {
+    let leading = placed_fragment_value(context: context, origins: origins, raw: roles.leading, anchor: roles.leading_anchor);
+    set made.leading = leading;
+  }
+  if roles.spanning_anchor.active {
+    let spanning = placed_fragment_value(context: context, origins: origins, raw: roles.spanning, anchor: roles.spanning_anchor);
+    set made.spanning = spanning;
+  }
+  if roles.trailing_anchor.active {
+    let trailing = placed_fragment_value(context: context, origins: origins, raw: roles.trailing, anchor: roles.trailing_anchor);
+    set made.trailing = trailing;
+  }
+  return made;
+}
+
+fn translate_raw_split_roles(roles: &FragmentRoles, dx: i32, dy: i32) -> result: unit writes(roles) {
+  doc "Materializes a context content adjustment in raw sparse cells at a full reconstruction boundary; local owner movement never calls this loop.";
+  if roles^.leading_anchor.active {
+    set roles^.leading.x = roles^.leading.x +sat dx;
+    set roles^.leading.y = roles^.leading.y +sat dy;
+  }
+  if roles^.spanning_anchor.active {
+    set roles^.spanning.x = roles^.spanning.x +sat dx;
+    set roles^.spanning.y = roles^.spanning.y +sat dy;
+  }
+  if roles^.trailing_anchor.active {
+    set roles^.trailing.x = roles^.trailing.x +sat dx;
+    set roles^.trailing.y = roles^.trailing.y +sat dy;
+  }
+  return unit;
+}
+
+fn translate_empty_fragment_sources(paragraphs: &[Paragraph], dx: i32, dy: i32) -> result: unit writes(paragraphs) {
+  doc "Materializes a full context's content adjustment for active lineless scratch records; inactive or absent source storage remains untouched.";
+  let count = paragraphs^.len;
+  for (at in 0_u64..count) {
+    if paragraphs^[at].empty_fragment {
+      let cells = paragraphs^[at].empty_fragments.inner.len;
+      for (slot in 0_u64..cells) {
+        if slot < paragraphs^[at].empty_fragments.inner.len {
+          if paragraphs^[at].empty_fragments.inner[slot].active {
+            set paragraphs^[at].empty_fragments.inner[slot].value.x = paragraphs^[at].empty_fragments.inner[slot].value.x +sat dx;
+            set paragraphs^[at].empty_fragments.inner[slot].value.y = paragraphs^[at].empty_fragments.inner[slot].value.y +sat dy;
+          }
+        }
+      }
+    }
+  }
+  return unit;
+}
+
+fn own_split_line(context: &Context, origins: &[Origin], split: &Split) -> result: unit reads(context.blocks.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.content_dy), reads(origins), writes(split) {
   doc "Publishes one split's exact line offset from its settled endpoint. Endpoint reads exclude every split, so independent split writes need no temporary offset array.";
   if split^.line_dirty {
   } else {
@@ -183,7 +291,10 @@ fn own_fragment_geometry(context: &Context, origins: &[Origin]) -> result: unit 
   let fragments = context^.fragments.inner.len;
   let matches = fragment_certificates(context: context, origins: origins, first: 0_u64, end: fragments);
   let aligned = context^.fragment_anchors.inner.len == fragments;
-  let valid = band(matches, aligned);
+  let role_count = context^.split_roles.inner.len;
+  let roles_match = fragment_roles_certificates(context: context, origins: origins, roles: &context^.split_roles.inner[0_u64..role_count]);
+  let legacy_valid = band(matches, aligned);
+  let valid = band(legacy_valid, roles_match);
   set context^.fragments_valid = valid;
   build_fragment_ranges(context: context);
   return unit;
@@ -203,6 +314,13 @@ fn reference_fragment_geometry(context: &Context, origins: &[Origin]) -> result:
   for (at in first..count) {
     let value = placed_context_fragment(context: context, origins: origins, at: at);
     set values.inner[at] = value;
+  }
+  let role_count = context^.split_roles.inner.len;
+  let empty_roles = empty_fragment_roles();
+  let role_values = box_array_filled::<FragmentRoles>(count: role_count, value: empty_roles);
+  for (at in 0_u64..role_count) {
+    let value = reference_split_roles(context: context, origins: origins, roles: context^.split_roles.inner[at]);
+    set role_values.inner[at] = value;
   }
   let splits = context^.splits.inner.len;
   let absent = Flow::Close(block: no_index);
@@ -235,6 +353,43 @@ fn reference_fragment_geometry(context: &Context, origins: &[Origin]) -> result:
       set context^.splits.inner[at] = restored.inner[at];
     }
   }
+  for (at in 0_u64..role_count) {
+    if at < context^.split_roles.inner.len {
+      set context^.split_roles.inner[at] = role_values.inner[at];
+    }
+  }
+  let paragraphs = context^.paragraphs.inner.len;
+  translate_empty_fragment_sources(paragraphs: &context^.paragraphs.inner[0_u64..paragraphs], dx: context^.content_dx, dy: context^.content_dy);
   set context^.fragments_anchored = False();
+  return unit;
+}
+
+fn translate_extra_fragments(context: &Context, top: i32, bottom: i32, delta: i32) -> result: unit writes(context.split_roles), writes(context.paragraphs) {
+  doc "Preserves the legacy raw-fragment translation operation for explicit compatibility fallback, across sparse roles and paragraph-local empty sources.";
+  let count = context^.split_roles.inner.len;
+  for (at in 0_u64..count) {
+    if context^.split_roles.inner[at].leading_anchor.active {
+      translate_fragment(fragment: &context^.split_roles.inner[at].leading, top: top, bottom: bottom, delta: delta);
+    }
+    if context^.split_roles.inner[at].spanning_anchor.active {
+      translate_fragment(fragment: &context^.split_roles.inner[at].spanning, top: top, bottom: bottom, delta: delta);
+    }
+    if context^.split_roles.inner[at].trailing_anchor.active {
+      translate_fragment(fragment: &context^.split_roles.inner[at].trailing, top: top, bottom: bottom, delta: delta);
+    }
+  }
+  let paragraphs = context^.paragraphs.inner.len;
+  for (p in 0_u64..paragraphs) {
+    if context^.paragraphs.inner[p].empty_fragment {
+      let cells = context^.paragraphs.inner[p].empty_fragments.inner.len;
+      for (slot in 0_u64..cells) {
+        if slot < context^.paragraphs.inner[p].empty_fragments.inner.len {
+          if context^.paragraphs.inner[p].empty_fragments.inner[slot].active {
+            translate_fragment(fragment: &context^.paragraphs.inner[p].empty_fragments.inner[slot].value, top: top, bottom: bottom, delta: delta);
+          }
+        }
+      }
+    }
+  }
   return unit;
 }
