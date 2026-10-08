@@ -171,12 +171,8 @@ fn store_reference_output(context: &Context, owner: u32, slot: u32, output: Sequ
   return unit;
 }
 
-fn publish_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip: u64, delta: i64, styles: &Styles, basis_height: i32) -> made: SequenceOutput reads(styles), writes(context) {
-  doc "Publishes one virtual suffix through the retained owner AVL. Excluded prefixes return cached totals, intact translated Opens keep their nested reductions, and a partially intersected Open waits for its nested suffix. Each intersected node stores its own transfer once and joins left, own and right once in the existing tree association.";
-  if root != no_index {
-    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
-  }
-  let held = reference_owner_cursor(context: context, owner: owner, slot: root);
+fn publish_reference_owner_suffix(context: &Context, owner: u32, root: u32, held: SequenceCursor, skip: u64, delta: i64, styles: &Styles, basis_height: i32) -> made: SequenceOutput reads(styles), writes(context) {
+  doc "Publishes one virtual suffix through the retained owner AVL using the caller's cursor snapshot. Transfer publication preserves topology and event counts, so the left cursor used for rank selection also serves its recursive call. Excluded prefixes return cached totals, intact translated Opens keep their nested reductions, and a partially intersected Open waits for its nested suffix. Each intersected node stores its own transfer once and joins left, own and right once in the existing tree association.";
   let total_field = False();
   let own_field = True();
   if held.live {
@@ -194,7 +190,7 @@ fn publish_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip
   let left_node = reference_owner_cursor(context: context, owner: owner, slot: held.left);
   let before = left_node.total_events;
   let after = before +sat held.own_events;
-  let left = publish_reference_owner_suffix(context: context, owner: owner, root: held.left, skip: skip, delta: delta, styles: styles, basis_height: basis_height);
+  let left = publish_reference_owner_suffix(context: context, owner: owner, root: held.left, held: left_node, skip: skip, delta: delta, styles: styles, basis_height: basis_height);
   let prior = reference_owner_output(context: context, owner: owner, slot: root, own: own_field);
   let own_output = prior;
   if skip < after {
@@ -213,7 +209,11 @@ fn publish_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip
             set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
             let nested_root = context^.blocks.inner[at].entries.root;
             let nested_skip = own_skip - 1_u64;
-            let nested_total = publish_reference_owner_suffix(context: context, owner: b, root: nested_root, skip: nested_skip, delta: delta, styles: styles, basis_height: basis_height);
+            if nested_root != no_index {
+              set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+            }
+            let nested_cursor = reference_owner_cursor(context: context, owner: b, slot: nested_root);
+            let nested_total = publish_reference_owner_suffix(context: context, owner: b, root: nested_root, held: nested_cursor, skip: nested_skip, delta: delta, styles: styles, basis_height: basis_height);
             encode_reference_item(context: context, item: item);
             let prepared = reference_item_output(context: context, item: item, styles: styles, basis_height: basis_height);
             set own_output = prepared;
@@ -234,7 +234,11 @@ fn publish_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip
     store_reference_output(context: context, owner: owner, slot: root, output: own_output, own: own_field);
   }
   let right_skip = skip -sat after;
-  let right = publish_reference_owner_suffix(context: context, owner: owner, root: held.right, skip: right_skip, delta: delta, styles: styles, basis_height: basis_height);
+  if held.right != no_index {
+    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+  }
+  let right_node = reference_owner_cursor(context: context, owner: owner, slot: held.right);
+  let right = publish_reference_owner_suffix(context: context, owner: owner, root: held.right, held: right_node, skip: right_skip, delta: delta, styles: styles, basis_height: basis_height);
   let prefix = join_output(left: &left, right: &own_output);
   let total = join_output(left: &prefix, right: &right);
   store_reference_output(context: context, owner: owner, slot: root, output: total, own: total_field);
@@ -247,7 +251,11 @@ fn publish_reference_suffix(context: &Context, styles: &Styles, delta: i64, basi
     return unit;
   }
   let root = context^.entries.root;
-  let total = publish_reference_owner_suffix(context: context, owner: no_index, root: root, skip: first, delta: delta, styles: styles, basis_height: basis_height);
+  if root != no_index {
+    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+  }
+  let held = reference_owner_cursor(context: context, owner: no_index, slot: root);
+  let total = publish_reference_owner_suffix(context: context, owner: no_index, root: root, held: held, skip: first, delta: delta, styles: styles, basis_height: basis_height);
   return unit;
 }
 
@@ -565,7 +573,11 @@ fn translate_reference_suffix(context: &Context, after: u64, delta: i32) -> resu
     set context^.reference_phase = 2_u8;
     let sparse_first = after +sat 1_u64;
     let sparse_root = context^.entries.root;
-    move_reference_owner_suffix(context: context, owner: no_index, root: sparse_root, skip: sparse_first, delta: delta);
+    if sparse_root != no_index {
+      set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+    }
+    let sparse_cursor = reference_owner_cursor(context: context, owner: no_index, slot: sparse_root);
+    move_reference_owner_suffix(context: context, owner: no_index, root: sparse_root, held: sparse_cursor, skip: sparse_first, delta: delta);
     return unit;
   }
   let first = after +sat 1_u64;
@@ -684,12 +696,8 @@ fn move_reference_payload(context: &Context, item: Flow, delta: i32) -> result: 
   return unit;
 }
 
-fn move_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip: u64, delta: i32) -> result: unit writes(context) {
-  doc "Visits the direct owner suffix and only the cut ancestor chain, skipping every intact nested owner interior through cached event counts. Counters charge each cursor and payload lookup and each selected direct payload; ancestry resolution retains the shared geometry-reader scope.";
-  if root != no_index {
-    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
-  }
-  let held = reference_owner_cursor(context: context, owner: owner, slot: root);
+fn move_reference_owner_suffix(context: &Context, owner: u32, root: u32, held: SequenceCursor, skip: u64, delta: i32) -> result: unit writes(context) {
+  doc "Visits the direct owner suffix and only the cut ancestor chain using the caller's cursor snapshot, skipping every intact nested owner interior through cached event counts. Geometry changes no topology, so the left cursor used for rank selection also serves its recursive call. Counters charge each actual cursor and payload lookup and each selected direct payload; ancestry resolution retains the shared geometry-reader scope.";
   if held.live {
   } else {
     return unit;
@@ -702,7 +710,7 @@ fn move_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip: u
   }
   let left = reference_owner_cursor(context: context, owner: owner, slot: held.left);
   let before = left.total_events;
-  move_reference_owner_suffix(context: context, owner: owner, root: held.left, skip: skip, delta: delta);
+  move_reference_owner_suffix(context: context, owner: owner, root: held.left, held: left, skip: skip, delta: delta);
   let after = before +sat held.own_events;
   if skip < after {
     set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
@@ -718,7 +726,11 @@ fn move_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip: u
             set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
             let nested_root = context^.blocks.inner[at].entries.root;
             let nested_skip = own_skip - 1_u64;
-            move_reference_owner_suffix(context: context, owner: b, root: nested_root, skip: nested_skip, delta: delta);
+            if nested_root != no_index {
+              set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+            }
+            let nested_cursor = reference_owner_cursor(context: context, owner: b, slot: nested_root);
+            move_reference_owner_suffix(context: context, owner: b, root: nested_root, held: nested_cursor, skip: nested_skip, delta: delta);
           }
         }
         Text(..) => {
@@ -735,6 +747,10 @@ fn move_reference_owner_suffix(context: &Context, owner: u32, root: u32, skip: u
     }
   }
   let right_skip = skip -sat after;
-  move_reference_owner_suffix(context: context, owner: owner, root: held.right, skip: right_skip, delta: delta);
+  if held.right != no_index {
+    set context^.boundary_visits.indexes = context^.boundary_visits.indexes +sat 1_u64;
+  }
+  let right = reference_owner_cursor(context: context, owner: owner, slot: held.right);
+  move_reference_owner_suffix(context: context, owner: owner, root: held.right, held: right, skip: right_skip, delta: delta);
   return unit;
 }
