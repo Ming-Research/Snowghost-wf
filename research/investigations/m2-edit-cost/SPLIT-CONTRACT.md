@@ -71,6 +71,36 @@ allows that no-op commit and reuses only the other successfully built exact
 cohort artifacts; their revision and pin patches remain in the evidence. This
 setup failure supplies no performance evidence.
 
+### Root-font cost floor: source hypothesis before counters
+
+The X5 root-font script changes the html element among 12px, 20px and 24px,
+then removes each class. The captured ECMA262
+[ecmarkup.css at 24620d3341aaf1a59440fde65343cda3e3f0ad4c](https://github.com/tc39/ecma262/blob/24620d3341aaf1a59440fde65343cda3e3f0ad4c/assets/css/ecmarkup.css)
+sets `body { font-size:18px }` and
+`#spec-container { max-width:80rem }`. The inspected bytes have SHA-256
+`8bef2688107197ac28abe81b62a61100904cec548e223d03a10ac7ea7b6b2fc7`, matching
+`research/investigations/concurrency/run.sh`'s pinned input.
+
+Source inference, pending per-edit counters: a global root-font restyle does
+not imply that every paragraph's computed font or used line width changes.
+The fixed body size can retain text preparation, while a rem-valued container
+constraint changes; a changed constraint that does not change its used width
+need not rebreak that container's unchanged lines. This is a dependency claim,
+not a page-specific admission rule or a measurement of how many consumers the
+current scripts change.
+
+Separate style time remains the global restyle floor. The measured edit time
+includes marking actual changed consumers, font picks, preparing or rescaling
+text whose inputs changed, rebreaking changed line inputs, dependent placement,
+and publication of changed geometry and summaries. Compare main and every M2
+cohort's `prepared`, `paragraphs`, `contexts`, `held_entries` and `entries` with
+`delta_us`, `picks_us` and the remaining layout time before attributing the
+regression. Main has no M2 owner-index summary publication or geometry bridge.
+M2 must retain valid summaries, but unchanged flow topology, route membership
+and split endpoint identities require no reconstruction. A narrower replay or
+publication path must follow actual changed dependencies on any document;
+ECMA262's identity or a root-font edit label must never select it.
+
 ### Bounded topology dependency audit
 
 The retained geometry interval is not a topology certificate. In particular,
