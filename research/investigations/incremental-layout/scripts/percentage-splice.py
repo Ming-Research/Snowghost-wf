@@ -23,6 +23,7 @@ CASES = {
     'root-zero-margin': ('body{margin:0} p{height:300px}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'nested': ('section{height:200px}.half,.quarter{height:50%}', '<section><div class="half"><div class="quarter">' + BASE + '</div><aside>Half tail.</aside></div><aside>Outer tail.</aside></section><aside>Outside.</aside>', 0),
     'framed': ('section{height:200px;width:300px}.half{height:50%;box-sizing:border-box;border:3px solid;padding:5px}.quarter{height:50%}', '<section><div class="half"><div class="quarter">' + BASE + '</div></div></section><aside>Outside.</aside>', 0),
+    'ancestor-width-padding': ('section{height:200px;width:300px}.half{height:50%;box-sizing:border-box;padding-top:10%}', '<section><div class="half">' + BASE + '</div></section><aside>Outside.</aside>', 7),
     'rounding': ('section{height:101px}.half{height:33.33%}.quarter{height:20000%}', '<section><div class="half"><div class="quarter">' + BASE + '</div></div></section><aside>Outside.</aside>', 0),
     'fixed-limits': ('section{height:200px}.half{height:80%;min-height:25%;max-height:50%}', '<section><div class="half">' + BASE + '</div><aside>Outer tail.</aside></section><aside>Outside.</aside>', 0),
     'sibling-limits': ('section{height:200px}.minimum{min-height:50%}.maximum{max-height:25%}.maximum p{height:100px}', '<section><div>' + BASE + '</div><aside class="minimum">Minimum.</aside><aside class="maximum"><p>Maximum.</p></aside></section>', 0),

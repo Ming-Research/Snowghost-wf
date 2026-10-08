@@ -3150,3 +3150,12 @@ normally. Readers outside the affected subtree cannot read a changed inner
 source. This avoids forcing unrelated edits through a full pre-pass solely
 because html/body uses a viewport percentage. The height/width restyle probes
 and all-kind paired costs must validate the narrowed path before adoption.
+
+The fixed-height transfer preserves the existing vertical-percentage-padding
+refusal, as required by the argument; `ancestor-width-padding` isolates it.
+Retained siblings with unchanged width still use their translation certificate.
+The narrow read-only review of the float bound and subtree restyle refinement
+found no concrete defect within those changes; execution and mutation coverage
+remain pending. The hosted draft gate passed at `96cf59e178e0040bf478226c9d186eec3769f8ac`
+([run 37773447136](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37773447136));
+this is compilation/static evidence, not completion of Q139's admission probes.
