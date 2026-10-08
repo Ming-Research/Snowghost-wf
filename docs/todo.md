@@ -360,8 +360,9 @@ example apart from the renderer code that exposed it
   by the source-only step-5 implementation.
 
 - **M2 splice frontier and instrumentation remain narrower than final locality.**
-  `structure_splice` refuses changed retained styles (reason 6), changing
-  exposed margin struts, float/intrinsic/definite-height dependencies and
+  `structure_splice` admits a certified top-margin change of the retained
+  direct ordinary sibling immediately following the seam in its private plan. Other retained style
+  changes remain reason 6; changed exposed margin struts, float/intrinsic/definite-height dependencies and
   other nonordinary boundary state (reason 7). These take the existing
   context rebuild; they are not successful local splices. New boundary
   counters cover splice metadata, direct payload operations and AVL repair,

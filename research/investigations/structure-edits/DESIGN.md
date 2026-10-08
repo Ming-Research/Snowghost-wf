@@ -331,3 +331,31 @@ and pass after it. The sibling-frontier repair admits supported retained
 margin changes and must be falsified by removing its settlement. The
 percentage-height and grid refusals retain their existing scope. All builds
 and checks run in GitHub-hosted CI, with no local validation.
+
+The source-level candidate is `finish_reference_scope`: it publishes a
+converged suffix only when `scope.delta != 0`. In the captured edit, paragraph
+1646 moves from y=2951.84375 to 2977.84375 and shrinks from 130 to 104 px;
+following paragraph 1653 therefore stays at y=3097.84375 in the full rebuild.
+Its enclosing section moves down 26 px. Skipping suffix encoding retains
+paragraph 1653's old owner-relative origin, producing y=3123.84375 instead.
+The repair publishes the suffix of every nonempty reference scope, including
+zero displacement, through the existing direct-owner traversal. It preserves
+unchanged descendant interiors and the reference arithmetic order. The
+reduced-case comparison is intended to reject this account if restoring the
+old guard does not reproduce the mismatch.
+
+The reason-6 completion certifies the retained direct ordinary sibling
+immediately following the seam, with unchanged horizontal geometry,
+top/bottom frames, bottom margin, static positioning and height constraints.
+The style delta must be boxes-only and nonstructural. The sibling's observed
+natural edge must coincide with its normal origin, and an unframed interior
+must expose no leading margin, preserving that equality after the change.
+Its changed top margin joins the private suffix transfer before seam and ancestor validation, so
+removal compares the combined structural and margin change with the old
+exposed strut. Each independent suffix calculation uses that replacement in
+its cached prefix, and publication writes the measured margin, transfer and
+direct origin together. No retained text needs preparation or style replay.
+A mutation omitting that sibling's direct move must expose stale geometry.
+Other changed retained styles keep reason 6; percentage-height and grid
+ancestor preflights retain their existing scope. This completes the existing
+sibling-frontier contract without adding a new dependency class.
