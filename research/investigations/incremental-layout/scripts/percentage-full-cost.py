@@ -16,7 +16,7 @@ import statistics
 import subprocess
 import time
 
-PAGES = ('ecma262', 'html5', 'apollo11')
+PAGES = ('apollo11',)
 NAMES = tuple(name for name in ('main', 'm2', 'twin', 'control', 'controltwin', 'head') if Path('build/drivers/driver-' + name).is_dir())
 
 
