@@ -27,14 +27,14 @@ concurrency:
 
 env:
   # name=ref: each build is compiled from its own checkout of ref.
-  BUILDS: ${{ inputs.builds || 'base=origin/main' }}
+  BUILDS: ${{ inputs.builds || 'pages=8d5fab0f1586 twin=8d5fab0f1586 e1=483ef804fba0 e2=0f2d9e1 nodeshf=3abffd812bb4' }}
   # The names avoid PAGES, MODES and RUNS, which the run.sh scripts read.
-  PAGE_LIST: ${{ inputs.page_list || 'ecma262 html5 apollo11' }}
-  EDIT_KINDS: ${{ inputs.edit_kinds || 'word sentence colour fontsize rootfont block' }}
+  PAGE_LIST: ${{ inputs.page_list || 'html5' }}
+  EDIT_KINDS: ${{ inputs.edit_kinds || '' }}
   # seq, or par4: the --par build at WF_WORKERS=4.
   EDIT_MODES: ${{ inputs.edit_modes || 'seq par4' }}
   EDIT_RUNS: "3"
-  CHROMIUM: ${{ inputs.chromium || '1' }}
+  CHROMIUM: ${{ inputs.chromium || '0' }}
   # 1 also times every build's full style and layout stages (style/run.sh
   # time and layout/run.sh time, par at four workers).
   FULL: ${{ inputs.full || '1' }}
@@ -42,7 +42,7 @@ env:
   # full stages with one run each and every edit script with one process run
   # each, so the builds interleave. Two names for one ref give the noise
   # control. A positive integer.
-  ROUNDS: ${{ inputs.rounds || '1' }}
+  ROUNDS: ${{ inputs.rounds || '3' }}
   # 0 only builds and keeps the drivers. A build's drivers are kept in
   # ~/snowghost-data/drivers under its commit and pin and reused from there,
   # so a compiler upgrade can be timed after the runner's clang changed:
@@ -50,7 +50,13 @@ env:
   # (whitefoot-kit/downstream.md).
   TIME: ${{ inputs.time || '1' }}
   # Names from BUILDS whose box build on html5 is profiled with perf (temporary).
-  PROFILE: ${{ inputs.profile || '' }}
+  PROFILE: ${{ inputs.profile || 'pages e1 e2 nodeshf' }}
+  # C3 attribution (temporary): the full-stage table covers PAGE_LIST at
+  # FULL_REPS repetitions and FULL_MODES only, without the style stage, and
+  # the profile covers PROFILE_MODES.
+  FULL_REPS: "10"
+  FULL_MODES: boxes layout
+  PROFILE_MODES: boxes layout
 
 jobs:
   time:
@@ -234,11 +240,13 @@ jobs:
           page=build/research/concurrency/html5.html
           for name in $PROFILE; do
             drv="build/drivers/$name-seq"
-            LD_LIBRARY_PATH=$lib "$perf" stat -e task-clock,instructions,cycles,cache-misses,page-faults -o "results/perf-stat-$name.txt" "$drv" boxes 20 "$page" renderer/style/ua.css > /dev/null
-            LD_LIBRARY_PATH=$lib "$perf" record -F 1999 -g -o "build/$name.perf" "$drv" boxes 20 "$page" renderer/style/ua.css > /dev/null
-            LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name.perf" --no-children --stdio --percent-limit 0.5 -g none 2>/dev/null | grep -v '^$' | head -70 > "results/perf-boxes-$name.txt"
-            LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name.perf" --children --stdio --percent-limit 2 -g none 2>/dev/null | grep -v '^$' | head -60 > "results/perf-boxes-children-$name.txt"
-            echo "== $name"; cat "results/perf-stat-$name.txt"; head -45 "results/perf-boxes-$name.txt"
+            for mode in $PROFILE_MODES; do
+              LD_LIBRARY_PATH=$lib "$perf" stat -e task-clock,page-faults -o "results/perf-stat-$mode-$name.txt" "$drv" "$mode" "$FULL_REPS" "$page" renderer/style/ua.css > /dev/null
+              LD_LIBRARY_PATH=$lib "$perf" record -F 1999 -g -o "build/$name-$mode.perf" "$drv" "$mode" "$FULL_REPS" "$page" renderer/style/ua.css > /dev/null
+              LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name-$mode.perf" --no-children --stdio --percent-limit 0.5 -g none 2>/dev/null | grep -v '^$' | head -70 > "results/perf-$mode-$name.txt"
+              LD_LIBRARY_PATH=$lib "$perf" report -i "build/$name-$mode.perf" --children --stdio --percent-limit 2 -g none 2>/dev/null | grep -v '^$' | head -60 > "results/perf-$mode-children-$name.txt"
+              echo "== $name $mode"; cat "results/perf-stat-$mode-$name.txt"; head -30 "results/perf-$mode-$name.txt"
+            done
           done
 
       - name: Time the full stages
@@ -261,8 +269,7 @@ jobs:
             for pair in $BUILDS; do
               name=${pair%%=*}
               tree=build/trees/$name
-              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 sh research/investigations/style/run.sh time) | tee "results/full-style-$name-$round.txt"
-              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 sh research/investigations/layout/run.sh time) | tee "results/full-layout-$name-$round.txt"
+              (cd "$tree" && BUILT=1 RUNS=$runs WORKERS=4 MODES="$FULL_MODES" sh research/investigations/layout/run.sh time "$PAGE_LIST" "$FULL_REPS") | tee "results/full-layout-$name-$round.txt"
             done
           done
 
