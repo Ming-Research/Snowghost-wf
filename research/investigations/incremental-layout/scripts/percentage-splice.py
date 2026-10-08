@@ -148,9 +148,11 @@ def main():
         # see renewed metadata. This targets the percentage-free partial
         # restyle path as well as the percentage-dependent full pre-pass.
         for token in ('basis-tall', 'basis-width'):
-            commands.append('C %d %s' % (basis['node'], token))
+            # The framed reader's record tracks its parent's content width.
+            source = tree.by_node[owner['parent']] if args.case == 'framed' and token == 'basis-width' else basis
+            commands.append('C %d %s' % (source['node'], token))
             block_pair(reason)
-            commands.append('K %d %s' % (basis['node'], token))
+            commands.append('K %d %s' % (source['node'], token))
             block_pair(reason)
         if args.case == 'equal-state':
             commands.append('C %d basis-auto' % basis['node'])
@@ -175,7 +177,8 @@ def main():
                 commands.append('X %d' % next_node)
                 paths.append((operation + 1, 1, 0))
                 next_node += 2
-        sheet = 'S .basis-tall{height:300px!important}.basis-width{width:300px!important}.basis-auto{height:auto!important}\n'
+        changed_width = 420 if args.case == 'framed' else 300
+        sheet = 'S .basis-tall{height:300px!important}.basis-width{width:%dpx!important}.basis-auto{height:auto!important}\n' % changed_width
         script = sheet + 'P 0\nP 1\nP 2\n' + '\n'.join(commands) + '\n'
     (directory / 'case.edits').write_text(script)
     (directory / 'case.edits.paths').write_text(''.join('structure path %d splice %d reason %d\n' % row for row in paths))
