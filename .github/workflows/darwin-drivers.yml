@@ -1,0 +1,74 @@
+# Temporary: builds layout_oracle drivers for macOS arm64 on hosted runners,
+# and packs the oracle fonts and pages from Linux, so that timing (and only
+# timing) can run on the owner's M5 Air under Whitefoot's host lock while the
+# 14900K is down. Removed with this temporary branch.
+name: darwin-drivers
+
+on:
+  workflow_dispatch:
+    inputs:
+      builds: {type: string, required: true}
+
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      builds: ${{ steps.m.outputs.builds }}
+    steps:
+      - id: m
+        run: |
+          printf 'builds=%s\n' "$(printf '%s\n' ${{ inputs.builds }} | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')" >> "$GITHUB_OUTPUT"
+
+  drivers:
+    needs: matrix
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(needs.matrix.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Drivers of ${{ matrix.build }}
+        run: |
+          set -euo pipefail
+          pair='${{ matrix.build }}'
+          name=${pair%%=*} ref=${pair#*=}
+          git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+          git worktree add -q --detach build/tree "$ref"
+          (cd build/tree && git submodule update -q --init)
+          /usr/bin/clang --version | head -1
+          make -s -C build/tree compiler
+          wfc=$(cd build/tree && pwd)/$(cd build/tree && ls build/whitefoot/*/whitefootc | head -1)
+          mkdir -p out
+          (cd build/tree/renderer && "$wfc" --cache "$HOME/wf-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/out/$name-seq")
+          (cd build/tree/renderer && "$wfc" --cache "$HOME/wf-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/out/$name-par")
+          echo "$name $ref $(cat build/tree/whitefoot.pin) $(shasum -a 256 out/$name-seq | cut -c1-16)" | tee out/$name.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drivers-${{ strategy.job-index }}
+          path: out/
+
+  data:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Fonts and pages
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s oracle-fonts
+          sh research/investigations/concurrency/run.sh fetch >/dev/null 2>&1 || true
+          mkdir -p data
+          tar -czf data/data.tar.gz build/fonts build/research/concurrency/ecma262.html build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css build/research/concurrency/html5.html renderer/style/ua.css
+          ls -la data
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data
+          path: data/
