@@ -1567,14 +1567,20 @@ recursive directory reads inside `slot_view`. They count compiled calls under
 the update entry, without a shared counter write changing the dependency graph
 of immutable geometry readers. Inlining can hide calls, so symbol visibility
 and nonzero collection are checked before interpreting a missing edge as zero.
-Direct-recursion suppression is disabled. Each update's raw call graph and
+Direct-recursion and PLT suppression are disabled, and threads are dumped
+separately. The sequential runtime enters the program on a pthread; only its
+update-return parts enter the comparison. Each update's raw call graph and
 per-function self/inclusive instructions are retained; recursion-inclusive
 costs are not summed as disjoint costs. The hosted decoder checks an independent
 hand-counted graph and its missing-edge variants, checks that self instructions
 sum to the profile total, and requires one nonempty profile part per edit.
 A tiny hosted native probe additionally requires the zero/dump boundary to
-exclude 300 startup, inter-update and shutdown reader calls while retaining
-exactly two and five reader calls inside its two updates.
+exclude 400 startup, inter-update and shutdown reader calls while retaining
+exactly two and five reader calls inside its two updates on a pthread. Shared
+allocation calls before and inside those updates test that skipped-function
+costs cannot survive a reset. An initial capture failed the self-total equality
+check on its first update and is excluded from attribution; this strengthened
+probe and separate-thread capture address that measurement defect.
 The [profiler's collection and dump controls](https://valgrind.org/docs/manual/cl-manual.html#cl-manual.limits)
 define the measurement boundary.
 
