@@ -3286,3 +3286,22 @@ required reason-2 route and positive paths are masked by reason 7. Existing
 expectations remain unchanged. Added operational mutations skip the actual
 publication on definite-to-auto and width changes; their execution remains
 pending and does not replace the pure predicate falsifiers.
+
+### Private subtree and mutation harness completion, 2026-10-08
+
+The oracle's J command inserts a paragraph wrapped by a specified number of
+nested div elements as one detached DOM subtree. It uses the same structural
+restyle, splice and full comparator as B; only fixture construction differs.
+This replaces the private-chain pseudo-element attempt with real nested
+ordinary and flow-root boxes. The lifetime sequence immediately inserts
+inside the newly published basis, before any text edit can refresh it, then
+removes that edit and exercises text, restyle and retirement. Chromium's
+independently constructed initial/inserted pages still own their rectangles.
+The driver command and its strict X5 protocol handling require hosted checks.
+
+Initial deletion-based falsifiers in run 37777880469 stopped at canonical
+whitespace diagnostics, not their intended observations. No such result is
+counted as detection. The mutation writer now removes whitespace-only lines
+within its one edited function; each mutant still must compile and reach its
+specific runtime observation. New source-owner and child-context rebase
+omissions use the immediate nested edit to expose stale published identities.

@@ -32,7 +32,8 @@ CASES = {
     'private-reader': ('section{height:200px}p{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'zero-reader': ('section{height:200px}p{height:0%;min-height:20px}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'expression-reader': ('section{height:200px}p{height:calc(25% + 10px)}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
-    'private-chain': ('section{height:200px}p{height:50%}p::before{display:block;height:50%;content:"New child."}p.old{height:40px}p.old::before{content:none}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section><aside>Outside.</aside>', 0),
+    'private-chain': ('section{height:200px}div{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
+    'private-context-chain': ('section{height:200px}div{display:flow-root;height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'partial-restyle': ('html,body{height:auto}section{height:200px}.holder{height:100px}', '<section><div class="holder">' + BASE + '</div></section><aside>Outside.</aside>', 0),
     'equal-state': ('section{height:200px}.holder{height:50%}p{height:50px}.remainder{height:100px}', '<section><div class="holder">' + BASE + '</div><aside class="remainder">Remainder.</aside></section><aside>Outside.</aside>', 0),
     'quirks': ('', '<section>' + BASE + '</section><aside>Outside.</aside>', 7),
@@ -96,7 +97,11 @@ def main():
     if args.case == 'quirks':
         source = source.replace('<!doctype html>', '')
     page.write_text(source.replace('{insert}', ''))
-    (directory / 'inserted.html').write_text(source.replace('{insert}', '<p>Q139 inserted.</p>'))
+    nested = args.case in ('private-chain', 'private-context-chain')
+    inserted = '<p>Q139 inserted.</p>'
+    if nested:
+        inserted = '<div><div>' + inserted + '</div></div>'
+    (directory / 'inserted.html').write_text(source.replace('{insert}', inserted))
     nodes = directory / 'case.nodes'
     with nodes.open('w') as output:
         subprocess.run([args.driver, 'nodes', '0', str(page), 'renderer/style/ua.css'], stdout=output, check=True)
@@ -105,27 +110,39 @@ def main():
     if len(tails) != 1:
         raise ValueError('fixture must have one tail marker')
     tail = tree.by_node[tails[0]['parent']]
-    script = 'P 0\nP 1\nP 2\nB %d %d Q139 inserted.\nX %d\n' % (tail['parent'], tail['node'], tree.arena)
+    def insertion(parent, before, text):
+        return ('J %d %s 2 %s' if nested else 'B %d %s %s') % (parent, before, text)
+    slots = 4 if nested else 2
+    script = 'P 0\nP 1\nP 2\n' + insertion(tail['parent'], tail['node'], 'Q139 inserted.') + '\nX %d\n' % tree.arena
     paths = [(1, int(reason == 0), reason), (2, int(reason == 0), reason)]
     if args.lifetime:
         retained = next(text for text in tree.texts if text['data'] == b'Q139 retained.')
         owner = tree.by_node[tail['parent']]
         basis = tree.by_node[owner['parent']] if args.case in ('partial-restyle', 'equal-state') else owner
-        next_node = tree.arena + 2
-        commands = [line for line in script.splitlines() if line.startswith(('B ', 'X '))]
+        next_node = tree.arena + slots
+        commands = [line for line in script.splitlines() if line.startswith(('B ', 'J ', 'X '))]
         def block_pair(expected_reason):
             nonlocal next_node
-            commands.append('B %d %d Q139 inserted.' % (tail['parent'], tail['node']))
+            commands.append(insertion(tail['parent'], tail['node'], 'Q139 inserted.'))
             paths.append((len(commands), int(expected_reason == 0), expected_reason))
             # Exercise the new record and route before retirement; text is not
             # restored by a full layout between these commands.
-            commands.extend(('T %d 0 fresh ' % (next_node + 1),
-                             'D %d 0 6' % (next_node + 1),
+            extra = 0
+            if nested:
+                # Enter the freshly published basis before any text/restyle
+                # refresh can conceal a missing provenance rebase.
+                commands.append('B %d - Inside new basis.' % (next_node + 1))
+                paths.append((len(commands), 1, 0))
+                commands.append('X %d' % (next_node + slots))
+                paths.append((len(commands), 1, 0))
+                extra = 2
+            commands.extend(('T %d 0 fresh ' % (next_node + slots - 1),
+                             'D %d 0 6' % (next_node + slots - 1),
                              'T %d 0 retained ' % retained['node'],
                              'D %d 0 9' % retained['node']))
             commands.append('X %d' % next_node)
             paths.append((len(commands), int(expected_reason == 0), expected_reason))
-            next_node += 2
+            next_node += slots + extra
         block_pair(reason)
         # An explicit source change followed by another structural edit must
         # see renewed metadata. This targets the percentage-free partial
@@ -144,11 +161,11 @@ def main():
         # before the still-live tail. No rebuilt state is adopted on success.
         commands.append('X %d' % retained['parent'])
         paths.append((len(commands), int(reason == 0), reason))
-        commands.append('B %d %d After retirement.' % (tail['parent'], tail['node']))
+        commands.append(insertion(tail['parent'], tail['node'], 'After retirement.'))
         paths.append((len(commands), int(reason == 0), reason))
         commands.append('X %d' % next_node)
         paths.append((len(commands), int(reason == 0), reason))
-        next_node += 2
+        next_node += slots
         if args.case in ('root', 'root-zero-margin', 'nested', 'framed'):
             for width, height in ((1200, 900), (1280, 720)):
                 commands.append('V %d %d' % (width, height))

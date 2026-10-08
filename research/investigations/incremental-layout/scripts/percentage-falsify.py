@@ -36,6 +36,8 @@ MUTATIONS = {
     'stale-width': ('height_basis', 'height_resolution_current', 'if proof.basis_width != width {\n    return False();\n  }', '', 'framed', 'certificate'),
     'skip-definiteness-refresh': ('flow', 'prepare_spaces', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let was_fixed = old.state == 2_u8;\n          let now_auto = proof.state == 1_u8;\n          let changed = band(was_fixed, now_auto);\n          if changed {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }', 'equal-state', 'identity'),
     'skip-width-refresh': ('height_basis', 'refresh_local_height_proofs', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }', 'partial-restyle', 'positive-path'),
+    'skip-private-context-rebase': ('splice_publish', 'relocate_splice', 'set child^.height_proof.source_context = input.serial;', '', 'private-context-chain', 'positive-path'),
+    'skip-private-owner-rebase': ('splice_publish', 'relocate_splice', 'set block^.height_proof.source_owner = block^.height_proof.source_owner +sat input.blocks;', '', 'private-chain', 'positive-path'),
     'missing-record': ('height_basis', 'height_resolution_current', 'if proof.valid {\n  } else {\n    return False();\n  }', '', 'nested', 'certificate'),
     'grow-fixed-height': ('boundary', 'propagate_boundary', 'let outgoing_delta = if measured.fixed_height {\n      give 0_i32;', 'let outgoing_delta = if measured.fixed_height {\n      give geometry_narrow(value: wide_delta);', 'root', 'identity'),
     'grow-auto-clamp': ('update', 'snapshot_grows', 'if maximum >= 0_i32 {\n    return False();\n  }\n  if minimum > frame {\n    return False();\n  }', '', 'cross-minimum', 'identity'),
@@ -101,7 +103,12 @@ def apply(name):
     body = source[start:end]
     if body.count(old) != 1:
         raise ValueError('%s: expected one mutation site, got %d' % (name, body.count(old)))
-    path.write_text(source[:start] + body.replace(old, new) + source[end:])
+    changed = body.replace(old, new)
+    # Removing a clause must not leave a whitespace-only line inside a
+    # function: the language requires canonical trivia even for mutants.
+    changed = '\n'.join(line for line in changed.splitlines() if line.strip())
+    changed += '\n\n' if end < len(source) else '\n'
+    path.write_text(source[:start] + changed + source[end:])
     if name == 'collapse-percentage-chain':
         helper = Path('renderer/layout/height_basis.wf')
         helper.write_text(helper.read_text() + FUSION)
@@ -158,7 +165,7 @@ def verify(name, baseline, mutant, directory):
     directory.mkdir(parents=True, exist_ok=True)
     _, _, _, _, case, mode = MUTATIONS[name]
     args = [sys.executable, str(HERE / 'percentage-splice.py'), baseline, str(directory), '--case', case]
-    if case in ('root', 'nested', 'framed', 'private-reader', 'private-chain', 'equal-state', 'partial-restyle'):
+    if case in ('root', 'nested', 'framed', 'private-reader', 'private-chain', 'private-context-chain', 'equal-state', 'partial-restyle'):
         args.append('--lifetime')
     subprocess.run(args, check=True)
     script = directory / 'case.edits'
