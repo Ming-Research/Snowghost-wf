@@ -20,6 +20,7 @@ on:
       rounds: {type: string, required: false}
       time: {type: string, required: false}
       profile: {type: string, required: false}
+      pair: {type: string, required: false}
 
 concurrency:
   group: time-14900k
@@ -55,6 +56,9 @@ env:
   # FULL_REPS repetitions and FULL_MODES only, without the style stage, and
   # the profile covers PROFILE_MODES.
   FULL_REPS: "5"
+  # The gran session's edit pair (research/gran-diag/pair.edits), timed per
+  # build at seq W1 and par W1/W2/W4, interleaved over three rounds (temporary).
+  PAIR: ${{ inputs.pair || '0' }}
   FULL_MODES: boxes text layout
   PROFILE_MODES: boxes layout
 
@@ -164,6 +168,34 @@ jobs:
           cp "build/drivers/$first-seq" build/layout_oracle_seq
           sh research/investigations/incremental-layout/run.sh prepare $PAGE_LIST
           wc -l build/x5/scripts/*.edits
+
+      - name: Time the gran edit pair (temporary)
+        if: env.PAIR == '1'
+        run: |
+          set -euo pipefail
+          mkdir -p results/pair
+          git fetch -q origin research/gran-diag
+          git show origin/research/gran-diag:research/gran-diag/pair.edits > build/pair.edits
+          data=build/research/concurrency
+          for round in 1 2 3; do
+            for pair in $BUILDS; do
+              name=${pair%%=*}
+              for setting in seq-1 par-1 par-2 par-4; do
+                kind=${setting%%-*} workers=${setting#*-}
+                WF_WORKERS=$workers "build/drivers/$name-$kind" edittime build/pair.edits "$data/ecma262.html" renderer/style/ua.css "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css" "assets/css/print.css=$data/ecma262-print.css" > "results/pair/$name-$setting-$round.raw"
+              done
+            done
+          done
+          python3 - <<'PY'
+          import glob, re, statistics, collections
+          v = collections.defaultdict(list)
+          for f in sorted(glob.glob('results/pair/*.raw')):
+              name, setting, rnd = re.match(r'.*/(\w+)-(\w+-\d)-(\d)\.raw$', f).groups()
+              us = [int(x) for x in re.findall(r'^edit \d+ us (\d+)', open(f).read(), re.M)]
+              v[(name, setting)].append(statistics.median(us))
+          for k in sorted(v):
+              print(k[0], k[1], 'median us/edit per round', v[k], 'best', min(v[k]))
+          PY
 
       - name: Time Snowghost
         if: env.TIME == '1'
