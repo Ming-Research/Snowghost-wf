@@ -349,15 +349,17 @@ example apart from the renderer code that exposed it
   remaining work and investigating the M2 root-font regression. The current
   gate is twice main for word, sentence, colour, font-size and root-font, and
   block no worse than cf12c609, in both modes and rounds.
-  Topology-preserving replays use the index; topology-changing replays still
-  rebuild all runs. Bounded topology replacement remains incomplete: retain
-  adjacency dependencies and replace only affected runs in source publication
-  order. Validate line-presence changes splitting/joining runs of one owner,
-  including coincident rectangles, negative margins and endpoint retirement.
-  Reopen this remaining work before claiming bounded topology repair complete.
+  The Q138 prototype now retains adjacency dependencies and replaces selected
+  fixed run-role cells on topology changes. Full source-preserving geometry
+  replay retains structural indexes while recomputing line-dependent joins and
+  roles. Hosted validation is pending for pre-line newline changes that split
+  and join runs, nested owners sharing an opening, coincident rectangles,
+  negative margins and empty-source lifetimes. The first visible-text probe
+  was refused by existing text admission and supplies no topology evidence.
+  Keep this item open until the complete correctness and acceptance gates pass.
 
-- **HTML font edits still translate dense compatibility suffixes.** Q134's
-  two split-fragment prototypes leave this broader work in place. In the
+- **HTML font edits need bounded compatibility suffix maintenance.** The
+  Q134 prototypes measured before Q138 left dense suffix work in place. In the
   [hosted repeated-pair profile](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#remaining-cost-profile-result),
   A's pairs 23/24 and 43/44 retained 7/10 entries but reported 84,675/54,285
   logical entries, while dense suffix translation was the largest layout self-time
@@ -369,9 +371,27 @@ example apart from the renderer code that exposed it
   translation/publication with retained exact owner motion and scoped access,
   preserving saturation order. Validate all X5 identity/splice gates, add a
   suffix-repair omission falsifier, and rerun the same-host two-round comparison
-  with an identical-source control. Q134 A is selected and its acceptance
-  still fails; Q138 A authorizes this work before claiming
-  the M2 edit-cost target complete.
+  with an identical-source control. The Q138 prototype now uses captured
+  old/current owner frames, direct suffix movement and payload-relative natural
+  offsets, with explicit raw-scratch validity. The new gates remain pending;
+  Q139 also requires the owner's disposition of independent sibling writes
+  that the pinned Whitefoot stored-field proof grammar cannot certify.
+
+- **M2 root-font edits still need a measured whole-context cost repair.**
+  The correctly styled Q138 ECMA profile identifies the first large regression
+  at step 3a's virtual owner-order lookups. Step 2d706 removes most of that
+  intermediate cost with shared flat events, but full context boundary reduction,
+  leaf publication and geometry conversion remain above main. The exact-route
+  membership hypothesis was rejected: profiled marking is about 70 us while
+  edit time remains about 110 ms. These are sampled diagnostic values, not
+  acceptance timings; see the [profile and floor](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#correctly-styled-ecma262-profile-membership-hypothesis-rejected).
+  Root font globally restyles, but ECMA's fixed body size means it need not
+  reprepare all text. Current Q138 removes repeated dense materialization and
+  source-index reconstruction. Validate its two-round full six-kind comparison;
+  if whole-context replay remains above twice main, examine actual retained
+  flow inputs for unused own-constraint edits rather than assume every restyle
+  requires interior publication. Any new retained-input contract needs an owner
+  decision before adoption.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes

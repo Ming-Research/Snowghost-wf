@@ -158,6 +158,68 @@ context to including the child's `flex_counts`. They do not establish that
 those descendants were newly visited. Correctly timed full-cohort evidence and
 a dependency-based removal of unnecessary context work remain required.
 
+### Ordinary hosted root-font bisect: complete timing, cancelled profile
+
+[Run 37718501510](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37718501510) completed all 64 ordinary root-font timing files before its 60-minute measurement-job limit cancelled the subsequent profiler. The always-run artifact upload preserved all 2,560 numbered edit records: 20 ECMA262 and 60 HTML5 edits for each of eight cohorts, two modes and two forward/reverse rounds. This is complete timing evidence, not a successful workflow or correctness gate. The partial original ECMA262 profiles have the stylesheet mismatch described above; no HTML5 profile completed. The separate corrected ECMA262 profile supplies the available sampled attribution.
+
+Timing used one Ubuntu 24.04 Intel Xeon Platinum 8370C hosted runner exposing four vCPUs, Linux 6.17.0-1022-azure, WF_WORKERS=4, function fragments, wf-0b7f5c5b9854 and Ubuntu Clang 22.1.8. Frozen source and pin-only child revisions are preserved in the artifact:
+
+| Cohort | Source revision | Pin-only child |
+|---|---|---|
+| main | `8fbc1601785cee70265da1eac4d99589fc6fb67c` | `ef9a1e47d64059c5609abc692827ebc9876fff02` |
+| s2 | `0e2a0931f630f156bf99bcc9596d37acea787ca8` | `faff8fe85c09978e60cfe064158a48824160642b` |
+| s3a | `db5d98c8675ab7ead43d829a802abb9bc32f9562` | `5860a0ab17b05b659c7310e6e40b9802fb9862f5` |
+| m2 | `2d706ba252c80336ba1926c3d77054714046586d` | `a12772f3ad66b3be11379cba5cdf6f8749948429` |
+| base | `cf12c609e1c00f86bb431fab4e92f5dca2bf94f2` | `318b327c85458c86b40ea6d999d3ed60b523bd56` |
+| twin | `cf12c609e1c00f86bb431fab4e92f5dca2bf94f2` | `8a2172b9d3cee9b1800928ad687fcd526b063f5c` |
+| a | `08576333ed5ecfd84d790cd810324b403bdcf95a` | `3fbe84071d6e71ed25256e3a2aeaf30ca4ed4e65` |
+| fixed | `b31a1b1233fe86b3da66fc1c2027d621ada6b0d4` | `08434d3e31c62abea59f5c208021a4e1fa323e02` |
+
+Upper medians in microseconds, round 1 / round 2. Layout subtracts each edit's marking and picks before taking its median. Style remains separately reported and excluded from edit time; picks medians are 0–1 microseconds.
+
+| Page / mode / cohort | Edit | Marking | Style | Layout |
+|---|---:|---:|---:|---:|
+| ecma262 / seq / main | 27,971/26,865 | 1,731/1,656 | 4,481/4,130 | 26,181/25,188 |
+| ecma262 / seq / s2 | 32,593/31,390 | 11/10 | 4,470/4,127 | 32,581/31,380 |
+| ecma262 / seq / s3a | 2,805,168/2,807,622 | 15/15 | 4,155/4,312 | 2,805,148/2,807,599 |
+| ecma262 / seq / m2 | 81,849/81,234 | 60/60 | 4,246/4,139 | 81,790/81,174 |
+| ecma262 / seq / base | 113,424/113,568 | 64/63 | 4,369/4,262 | 113,360/113,505 |
+| ecma262 / seq / twin | 113,270/117,174 | 64/66 | 4,349/4,436 | 113,210/117,100 |
+| ecma262 / seq / a | 107,989/107,931 | 60/61 | 4,158/4,204 | 107,926/107,873 |
+| ecma262 / seq / fixed | 108,095/111,047 | 61/63 | 4,139/4,387 | 108,023/110,986 |
+| ecma262 / par / main | 65,039/64,658 | 1,938/1,968 | 4,879/4,959 | 63,120/62,677 |
+| ecma262 / par / s2 | 71,334/69,987 | 18/16 | 5,112/4,801 | 71,316/69,970 |
+| ecma262 / par / s3a | 3,911,243/3,887,471 | 19/19 | 4,860/4,945 | 3,911,223/3,887,452 |
+| ecma262 / par / m2 | 160,372/157,919 | 77/77 | 4,800/4,887 | 160,294/157,842 |
+| ecma262 / par / base | 232,214/234,144 | 79/76 | 5,000/4,940 | 232,135/234,070 |
+| ecma262 / par / twin | 220,551/230,247 | 76/76 | 5,085/5,030 | 220,475/230,173 |
+| ecma262 / par / a | 232,118/222,682 | 74/77 | 4,861/4,951 | 232,033/222,605 |
+| ecma262 / par / fixed | 211,026/220,233 | 77/77 | 4,887/4,857 | 210,948/220,155 |
+| html5 / seq / main | 636,041/632,503 | 4,718/4,768 | 292,928/292,233 | 631,326/627,936 |
+| html5 / seq / s2 | 659,375/657,612 | 16,922/16,878 | 291,176/289,774 | 642,430/640,587 |
+| html5 / seq / s3a | 5,124,109/5,126,274 | 18,794/18,782 | 291,734/291,948 | 5,105,197/5,107,211 |
+| html5 / seq / m2 | 734,410/732,907 | 38,395/38,210 | 295,230/292,234 | 695,888/694,783 |
+| html5 / seq / base | 768,128/771,479 | 39,997/40,145 | 292,697/293,573 | 727,771/731,183 |
+| html5 / seq / twin | 770,413/763,210 | 40,126/39,833 | 293,186/290,377 | 730,606/723,465 |
+| html5 / seq / a | 770,016/772,543 | 39,868/39,955 | 293,425/293,231 | 729,919/732,765 |
+| html5 / seq / fixed | 760,823/761,223 | 36,484/36,618 | 290,465/290,114 | 724,478/724,705 |
+| html5 / par / main | 390,073/390,646 | 4,204/4,263 | 204,166/203,502 | 385,593/386,377 |
+| html5 / par / s2 | 410,442/413,817 | 17,166/17,355 | 203,685/204,472 | 393,470/396,527 |
+| html5 / par / s3a | 5,935,147/5,914,202 | 18,739/18,555 | 204,058/203,472 | 5,916,629/5,895,635 |
+| html5 / par / m2 | 524,367/525,260 | 40,433/40,377 | 202,403/201,401 | 483,895/484,993 |
+| html5 / par / base | 600,447/590,885 | 41,412/41,556 | 203,886/204,545 | 558,841/549,347 |
+| html5 / par / twin | 585,124/599,593 | 41,660/41,575 | 204,995/204,934 | 543,139/558,286 |
+| html5 / par / a | 598,453/600,015 | 41,946/41,457 | 204,520/204,651 | 556,612/558,662 |
+| html5 / par / fixed | 582,187/580,373 | 38,573/38,468 | 204,259/204,031 | 543,682/541,913 |
+
+The ordinary runs confirm the first major interval at step 2 to step 3a: ECMA262 grows from 31–33 ms to 2.81 s sequential and 70–71 ms to 3.89–3.91 s parallel; HTML5 grows from 658–659 ms to 5.12–5.13 s sequential and 410–414 ms to 5.91–5.94 s parallel. Shared event materialization and revised publication recover most of this by 2d706ba, but ECMA262 remains above twice main there and at cf12c609/A/repair. The exact-route repair leaves ECMA262 unchanged in scale. HTML5 marking falls from A's 39.9–41.9 ms to 36.5–38.6 ms; that local reduction does not remove the broader whole-context costs or establish acceptance for the current implementation. The independent cf12 twin quantifies control spread without authorizing a relaxed threshold.
+
+The unavoidable work is dependency work, not a measured time lower bound. ECMA262 globally restyles in about 4.1–5.1 ms in these runs (outside edit time) and prepares 41 paragraphs; preparation and any changed layout inputs require handling, but their isolated minimum cost was not measured. Main's 26.9–28.0 ms sequential and 64.7–65.0 ms parallel edit times are comparison-path costs, not proof that every operation on that path is necessary. Its unused-constraint handling may itself do avoidable work.
+
+HTML5 prepares 60,867 or 60,868 paragraphs, rebreaks 60,868, updates 13,903 contexts and walks 105,989 entries in every cohort and mode. Its root-font change therefore has extensive actual text/layout consequences: style costs about 289.8–295.2 ms sequential or 201.4–205.0 ms parallel, while main edit costs 632.5–636.0 ms sequential or 390.1–390.6 ms parallel. These observed operations and times are the full-cost comparison; they do not prove a universal timing floor. Cached preparation may reuse shaping, and unchanged dependency outputs can still stop propagation. The ECMA262 flex-counter caveat above remains: earlier counters omitted descendant work that later versions report, so their zero rebreak count is not evidence that no descendant lines were broken.
+
+The generic possible next design is to retain the actual completed effective flow inputs and admit an own-constraint-only edit when those inputs and used outputs are equal and no interior consumer is marked. That could retain unchanged origins, natural-position offsets, fragment roles and boundary summaries without replay or publication. It is a proposal only: recomputing a previous frame with current styles does not establish equality with the old inputs, and equal outer dimensions alone do not establish equal interiors. No such cache or admission was implemented as part of this bisect. The current continuation's full six-kind acceptance must decide whether another owner decision is needed.
+
 ### Bounded topology dependency audit
 
 The retained geometry interval is not a topology certificate. In particular,
