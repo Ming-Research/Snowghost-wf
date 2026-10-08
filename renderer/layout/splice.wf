@@ -30,7 +30,9 @@ fn empty_splice_frontier() -> made: SpliceFrontier pure {
 
 struct SpliceInput {
   doc "Copied owner inputs and stable seam identities; no retained references cross private construction.";
+  serial: u32;
   owner: u32;
+  height_proof: HeightProof;
   frontier: SpliceFrontier;
   before: u32;
   removed: u32;
@@ -233,6 +235,10 @@ fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVis
   if context^.kind == ctx_flex {
     let ready = splice_container_ready(context: context);
     if ready {
+      let heights = context_height_summary(context: context, styles: styles);
+      if heights.unproved != 0_u64 {
+        return 7_u32;
+      }
       return 0_u32;
     }
     return 2_u32;
@@ -252,8 +258,8 @@ fn splice_context_ready(context: &Context, styles: &Styles, visits: &BoundaryVis
   } else {
     return 7_u32;
   }
-  if context^.flow_definite_free {
-  } else {
+  let heights = context_height_summary(context: context, styles: styles);
+  if heights.unproved != 0_u64 {
     return 7_u32;
   }
   let width_stable = splice_width_stable(context: context, styles: styles);
@@ -331,7 +337,8 @@ fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u3
   let paragraphs = cvt.wrap::<u64, u32>(context^.paragraphs.inner.len);
   let children = cvt.wrap::<u64, u32>(context^.children.inner.len);
   let frontier = empty_splice_frontier();
-  let input = SpliceInput(owner: owner, frontier: frontier, before: no_index, removed: no_index, allocated: context^.entries.allocated, style: root_style, width: frame.flow_width, left: 0_i32, local_left: wide_left, first_edge: wide_top, basis_height: frame.definite, blocks: blocks, paragraphs: paragraphs, children: children);
+  let basis_input = containing_height_proof(context: context, owner: no_index, height: frame.definite);
+  let input = SpliceInput(serial: context^.slot, owner: owner, height_proof: basis_input, frontier: frontier, before: no_index, removed: no_index, allocated: context^.entries.allocated, style: root_style, width: frame.flow_width, left: 0_i32, local_left: wide_left, first_edge: wide_top, basis_height: frame.definite, blocks: blocks, paragraphs: paragraphs, children: children);
   let total_field = False();
   let total = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: total_field, visits: visits);
   if owner != no_index {
@@ -341,6 +348,9 @@ fn splice_inputs(context: &Context, steps: &[ContextStep], depth: u64, owner: u3
       let snapshot = block_snapshot(block: &context^.blocks.inner[at]);
       let output = context^.blocks.inner[at].output;
       set input.style = snapshot.style;
+      let owner_height = definite_block_height(styles: styles, style: snapshot.style, basis_width: snapshot.avail_width, basis_height: output.basis_height);
+      set input.basis_height = owner_height;
+      set input.height_proof = containing_height_proof(context: context, owner: owner, height: owner_height);
       set input.width = snapshot.content_width;
       set input.left = snapshot.content_left;
       let local = snapshot.content_left -sat snapshot.inner_x;
@@ -418,6 +428,9 @@ fn build_splice(document: &Document, styles: &Styles, atoms: &AtomTable, node: N
   let no = False();
   let space = Space(available: input.width, basis_width: input.width, basis_height: input.basis_height, forced_width: input.width, forced_height: input.basis_height, shrink: no);
   set fresh.space = space;
+  let external = input.height_proof;
+  set external.source_kind = 4_u8;
+  set fresh.height_proof = external;
   let prepared = prepare_context(context: &fresh, document: document, styles: styles, fonts: fonts, picks: picks);
   if prepared {
   } else {
@@ -705,6 +718,9 @@ fn structure_splice(layout: &Layout, document: &Document, styles: &Styles, trave
       return Ok<u32, LayoutError>(value: 3_u32);
     }
     if output.through {
+      return Ok<u32, LayoutError>(value: 7_u32);
+    }
+    if output.heights.unproved != 0_u64 {
       return Ok<u32, LayoutError>(value: 7_u32);
     }
     let first = splice_payload(sequence: &fresh.entries, slot: fresh.entries.root, visits: &visits);
