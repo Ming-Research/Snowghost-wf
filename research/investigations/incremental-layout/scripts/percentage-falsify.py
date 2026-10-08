@@ -107,7 +107,8 @@ def apply(name):
     # Removing a clause must not leave a whitespace-only line inside a
     # function: the language requires canonical trivia even for mutants.
     changed = '\n'.join(line for line in changed.splitlines() if line.strip())
-    changed += '\n\n' if end < len(source) else '\n'
+    changed += '\n'
+    # source[end:] retains the separator newline before the next fn.
     path.write_text(source[:start] + changed + source[end:])
     if name == 'collapse-percentage-chain':
         helper = Path('renderer/layout/height_basis.wf')
