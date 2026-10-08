@@ -16,6 +16,8 @@ in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
 Structural path records distinguish local splices from reason-coded fallbacks.
+V WIDTH HEIGHT is a full viewport refresh between edits, not a timed edit;
+the next edit compares against a fresh build at that viewport.
 --check requires them for every structural edit. Historical timing and
 filtered reparse logs may omit the entire set; a partial set is invalid.
 Historical logs may omit the entire boundary-count suffix. Current logs
@@ -48,9 +50,9 @@ def script_operations(path):
         if not line:
             continue
         kind = line[:1]
-        if kind not in (b'S', b'P', b'T', b'D', b'C', b'K', b'B', b'X') or line[1:2] != b' ':
+        if kind not in (b'S', b'P', b'V', b'T', b'D', b'C', b'K', b'B', b'X') or line[1:2] != b' ':
             raise ValueError('%s:%d: unreadable operation' % (path, number))
-        if kind not in (b'S', b'P'):
+        if kind not in (b'S', b'P', b'V'):
             operations.append(kind.decode('ascii'))
     if not operations:
         raise ValueError(path + ': no edits')

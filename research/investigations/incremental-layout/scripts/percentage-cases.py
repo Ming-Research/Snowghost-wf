@@ -39,7 +39,8 @@ def main():
         for token in ('basis-tall', 'basis-auto', 'basis-frame'):
             lines.extend(('C %d %s' % (element['node'], token),
                           'K %d %s' % (element['node'], token)))
-    args.output.write_text('\n'.join(lines) + '\n')
+    dumps = ['P %d' % number for number in range(len(lines))]
+    args.output.write_text('\n'.join(dumps + lines) + '\n')
     print('%s: %d restyles' % (args.output, len(lines) - 1))
 
 

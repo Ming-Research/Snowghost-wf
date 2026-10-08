@@ -30,6 +30,8 @@ CASES = {
     'inactive-maximum-margin': ('section{height:200px}.maximum{max-height:1000px}.maximum p{height:20px;margin:0 0 30px}', '<section><div>' + BASE + '</div><div class="maximum"><p>Margin.</p></div><aside>Outside.</aside></section>', 0),
     'sibling-width-percent': ('section{height:200px;width:300px}.sibling{height:50%;padding:3% 2%;margin:4% 1%;box-sizing:border-box}', '<section><div>' + BASE + '</div><aside class="sibling">Width based.</aside></section>', 0),
     'private-reader': ('section{height:200px}p{height:50%}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
+    'zero-reader': ('section{height:200px}p{height:0%;min-height:20px}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
+    'expression-reader': ('section{height:200px}p{height:calc(25% + 10px)}', '<section>' + BASE + '</section><aside>Outside.</aside>', 0),
     'private-chain': ('section{height:200px}p{height:50%}p::before{display:block;height:50%;content:"New child."}p.old{height:40px}p.old::before{content:none}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section><aside>Outside.</aside>', 0),
     'partial-restyle': ('html,body{height:auto}section{height:200px}.holder{height:100px}', '<section><div class="holder">' + BASE + '</div></section><aside>Outside.</aside>', 0),
     'equal-state': ('section{height:200px}.holder{height:50%}p{height:50px}.remainder{height:100px}', '<section><div class="holder">' + BASE + '</div><aside class="remainder">Remainder.</aside></section><aside>Outside.</aside>', 0),
@@ -48,6 +50,7 @@ CASES = {
     'cross-minimum': ('.outer{height:200px}section{min-height:50%}', '<div class="outer"><section>' + BASE + '</section><aside>Outside.</aside></div>', 7),
     'cross-maximum': ('.outer{height:200px}section{max-height:50%}', '<div class="outer"><section>' + BASE + '</section><aside>Outside.</aside></div>', 7),
     'new-indefinite-reader': ('p{height:50%}p.old{height:40px}', '<section>' + BASE.replace('<p>', '<p class="old">') + '</section>', 7),
+    'auto-zero-reader': ('.reader{height:0%}', '<div><section>' + BASE + '</section><aside class="reader">Zero.</aside></div>', 7),
 }
 
 
@@ -136,6 +139,24 @@ def main():
             block_pair(7)
             commands.append('K %d basis-auto' % basis['node'])
             block_pair(0)
+        # Retire a pre-existing complete block, then allocate another reader
+        # before the still-live tail. No rebuilt state is adopted on success.
+        commands.append('X %d' % retained['parent'])
+        paths.append((len(commands), int(reason == 0), reason))
+        commands.append('B %d %d After retirement.' % (tail['parent'], tail['node']))
+        paths.append((len(commands), int(reason == 0), reason))
+        commands.append('X %d' % next_node)
+        paths.append((len(commands), int(reason == 0), reason))
+        next_node += 2
+        if args.case in ('root', 'root-zero-margin', 'nested', 'framed'):
+            for width, height in ((1200, 900), (1280, 720)):
+                commands.append('V %d %d' % (width, height))
+                commands.append('B %d %d After viewport refresh.' % (tail['parent'], tail['node']))
+                operation = sum(not command.startswith('V ') for command in commands)
+                paths.append((operation, 1, 0))
+                commands.append('X %d' % next_node)
+                paths.append((operation + 1, 1, 0))
+                next_node += 2
         sheet = 'S .basis-tall{height:300px!important}.basis-width{width:300px!important}.basis-auto{height:auto!important}\n'
         script = sheet + 'P 0\nP 1\nP 2\n' + '\n'.join(commands) + '\n'
     (directory / 'case.edits').write_text(script)

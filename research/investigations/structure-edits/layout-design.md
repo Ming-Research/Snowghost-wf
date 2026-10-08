@@ -3159,3 +3159,17 @@ found no concrete defect within those changes; execution and mutation coverage
 remain pending. The hosted draft gate passed at `96cf59e178e0040bf478226c9d186eec3769f8ac`
 ([run 37773447136](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37773447136));
 this is compilation/static evidence, not completion of Q139's admission probes.
+
+The first compiled provenance draft kept the independent full-layout boxes
+but failed the floated-container restyle inventory on restoring its percentage
+style ([run 37772936762](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37772936762),
+`5edd410d4830c34e2cd7c301f1978eee650eda9a`, edits 8, 10 and 12).
+The parent equality cutoff predates retained height inventories. Its `Before`
+record now snapshots the published inventory and equality compares both
+consumer and unproved counts, so unchanged geometry cannot suppress metadata
+publication. A read-only inspection confirmed the missing equality input;
+the hosted rerun must establish whether this repairs the observed failures.
+Every restyle prefix now requests dumps to preserve both sides of a mismatch.
+The edit oracle also supports a full viewport refresh between edits; root
+and nested lifetime probes resize, rebuild normally, then require another
+local insert/remove pair at the new viewport and after restoration.
