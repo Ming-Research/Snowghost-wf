@@ -366,7 +366,11 @@ example apart from the renderer code that exposed it
   not establish a general latency gain. Q141 proposes retained sequence-range
   displacement, including old/current readers, reductions, rotations, splice
   lifetimes and saturation. The owner selected this direction after dirty-frontier
-  processing, with the complete contract before implementation;
+  processing, with the complete contract before implementation. The
+  [range contract](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#sequence-range-displacement-contract)
+  now specifies separate geometry/semantic actions, paragraph-relative atomic
+  placement, membership-preserving rotations, effective cached readers and
+  exact saturation admission; implementation and falsifiers remain pending;
   validate all X5 identity/splice and omission gates plus a complete same-host
   comparison. Q139 separately covers the natural independent-write proof that
   the pinned Whitefoot stored-field grammar cannot express.
