@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: [Q138 acceptance](#q138-six-cohort-acceptance-at-8ab7dc6) fails; option A
+Current outcome: [Q138 acceptance](#q138-six-cohort-acceptance-at-87baa10) fails; option A
 is not merged into research/m2-layout.
 
 ## Question and prior rejection criterion
@@ -81,7 +81,7 @@ sets `body { font-size:18px }` and
 `8bef2688107197ac28abe81b62a61100904cec548e223d03a10ac7ea7b6b2fc7`, matching
 `research/investigations/concurrency/run.sh`'s pinned input.
 
-Source inference, pending per-edit counters: a root-font invalidation does
+Source inference, supported by the preparation counts below: a root-font invalidation does
 not imply that every paragraph's computed font or used line width changes.
 The fixed body size can retain text preparation, while a rem-valued container
 constraint changes; a changed constraint that does not change its used width
@@ -865,8 +865,7 @@ CI evidence. Neither whitefoot.pin nor either submodule moved; no Whitefoot
 language gap was established or filed. The first timing attempt's toolchain
 mismatch is recorded above and supplies no performance evidence.
 
-A separate read-only reviewer using the inherited default model (identifier not
-exposed) examined cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 through 4b37693 plus
+A separate read-only reviewer examined cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 through 4b37693 plus
 this completion documentation: all 18 changed files, changed regions and direct
 geometry/reference/splice consumers, pipeline/layout nodes and ancestors, the
 style sibling, structural contracts, and actual CI logs/artifacts. It reran no
@@ -1128,8 +1127,7 @@ Old-frame and natural-floor omissions are also detected. No mutation or expected
 result was weakened. The lineless reset, source-retention lifetime and cached
 publication regressions are fixed within their exercised scope.
 
-A separate read-only reviewer (inherited Codex model, deployment identifier not
-exposed) inspected the full 30-file cf12c609..db46e92 diff, changed regions and
+A separate read-only reviewer inspected the full 30-file cf12c609..db46e92 diff, changed regions and
 direct consumers, the pipeline/layout, pipeline, style and scope decisions,
 and the actual hosted logs/artifacts. No suite was rerun. RV1–RV3 corrected
 lineless-coordinate, style-floor and source-index lifetime documentation. RV4
@@ -1216,3 +1214,42 @@ The current first-round counters confirm the same scope distinction: ECMA262 pre
 The positioned-child plan already captures the owning block's resolved origin. Child settlement writes only that child; preceding certificate publication propagates a zero geometric delta, so neither step changes the captured parent frame. Pass that existing origin into the exact travel computation instead of resolving its ancestry again. This adds no retained state or new invalidation rule. The helper preserves its guarded read, viewport placement, hybrid reader fallback and every saturating operation in order. Preparation, independent child writes and dependent certificate reductions retain their existing dependencies. This duplicate walk existed at cf12 as well: removing it is a general cost reduction, not an established cause of the block regression.
 
 Compare the complete six-kind two-round workload at the candidate against 8ab7dc6 and an independently built 8ab7dc6 twin, alongside main/cf12/cf12 twin on one hosted runner. Reject a general block improvement if the result does not separate from both before controls across pages/modes/rounds. Preserve all positioned/atomic, arithmetic, old/current reader and omission gates; a passing measurement workflow alone is not task acceptance.
+
+### Validation of the preceding child-owner reuse at 8ab7dc6
+
+[Oracles 37734202620](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37734202620) completes all 14 jobs at 8ab7dc6. The main dump and fixture evidence is unchanged; all six X5 kinds yield 24 raw files, 960 incremental/full matches, no differences/refusals, and 12 byte-equal normalized sequential/parallel pairs. Every block path is splice 1 reason 0 (20 ECMA262 and 60 HTML5 per mode). Topology, split-limit and near-limit artifacts contain 384, 32 and 40 matches respectively. The separate reviewer independently verified these artifacts and the 288-file timing result. Layout-check 37734202492 and check 37734202410 pass at this revision. Falsify 37734202403 was cancelled with only a partial result when the next source revision superseded it; it is not a passing full gate. Revision 87baa10 runs all 53 unchanged falsification jobs and all other gates afresh.
+
+### Q138 six-cohort acceptance at 87baa10
+
+[Hosted run 37740867583](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37740867583) completes 288 raw files and 11,520 edits at 87baa109d4d3eb26c4a6726a43a26d3a5a061d28. All cohorts use one AMD EPYC 9V74 hosted runner exposing four CPUs, Ubuntu 24.04/Linux 6.17.0-1022-azure, LLVM 22, wf-0b7f5c5b9854 and WF_WORKERS=4. Before/before twin are independent builds of 8ab7dc6. Values below are upper-median edit microseconds, round 1/round 2, excluding separate style time.
+
+| Page | Kind | Mode | Main | cf12 | cf12 twin | Before | Before twin | A | Failed rounds |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| ecma262 | word | seq | 81/81 | 86/85 | 86/86 | 88/88 | 87/87 | 87/88 | pass |
+| ecma262 | word | par | 137/125 | 134/134 | 146/133 | 135/133 | 134/134 | 135/144 | pass |
+| ecma262 | sentence | seq | 190/201 | 603/638 | 609/615 | 126/131 | 128/129 | 128/126 | pass |
+| ecma262 | sentence | par | 240/249 | 493/550 | 534/485 | 186/192 | 201/190 | 191/200 | pass |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| ecma262 | fontsize | seq | 1346/1791 | 8027/9540 | 9579/8233 | 535/497 | 537/594 | 525/944 | pass |
+| ecma262 | fontsize | par | 1492/1956 | 8752/9275 | 8520/8497 | 953/1165 | 854/694 | 729/856 | pass |
+| ecma262 | rootfont | seq | 30358/31682 | 118645/118871 | 118474/118220 | 118605/117731 | 117499/119200 | 116646/118377 | 1,2 |
+| ecma262 | rootfont | par | 59360/59535 | 200266/202178 | 200658/198647 | 168721/169760 | 168544/171063 | 172196/170613 | 1,2 |
+| ecma262 | block | seq | 524782/530055 | 102/103 | 102/101 | 107/110 | 106/105 | 107/105 | 1,2 |
+| ecma262 | block | par | 348380/353444 | 171/159 | 158/159 | 162/159 | 163/168 | 158/159 | pass |
+| html5 | word | seq | 60/60 | 66/66 | 69/68 | 68/65 | 64/66 | 65/69 | pass |
+| html5 | word | par | 98/95 | 99/100 | 105/103 | 100/100 | 100/100 | 99/100 | pass |
+| html5 | sentence | seq | 176/177 | 291/285 | 282/291 | 294/292 | 304/303 | 274/276 | pass |
+| html5 | sentence | par | 236/264 | 288/293 | 285/285 | 309/301 | 298/317 | 312/305 | pass |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | pass |
+| html5 | fontsize | seq | 508/533 | 1857/2383 | 1673/1883 | 1411/1331 | 1359/1370 | 1369/1365 | 1,2 |
+| html5 | fontsize | par | 512/521 | 1931/2058 | 1928/1858 | 1830/1732 | 1767/1840 | 1849/1805 | 1,2 |
+| html5 | rootfont | seq | 541017/543334 | 679527/693070 | 682739/681402 | 691355/696390 | 690703/694283 | 684408/689985 | pass |
+| html5 | rootfont | par | 291044/292823 | 483197/487761 | 480868/485056 | 459842/458468 | 459428/459935 | 457711/465139 | pass |
+| html5 | block | seq | 612555/615238 | 496/511 | 506/512 | 524/537 | 516/537 | 503/531 | 1,2 |
+| html5 | block | par | 417127/433287 | 576/584 | 565/575 | 592/587 | 592/607 | 565/577 | pass |
+
+The strict per-round edit-only comparison fails 12 of 48 cells: ECMA262 root-font and HTML5 font-size in both modes/rounds, and both pages' sequential block cells. Parallel block cells pass. Twin spread is recorded but does not independently waive the literal block gate. The owner's best-round style-plus-update numbers are also reproduced: ECMA262 root-font A/main 120,848/34,668 us sequential and 175,407/63,953 parallel; HTML5 font-size 1,442/574 sequential and 1,933/633 parallel. These are paired per-edit style-plus-update medians, not sums of separately computed medians, and both failing kinds remain above twice main. The certificate-owner reuse establishes no general improvement over before and its twin.
+
+All correctness gates pass at this runtime revision: [layout-check](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37740867579), [check](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37740867746), [oracles](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37740867504) and [falsify](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37740867651). The 14 oracle jobs retain byte-identical page and fixture dumps, 960 X5 matches without differences/refusals, 12 equal seq/par pairs and all page block paths splice 1 reason 0. Topology/split-limit/near-limit probes retain 384/32/40 matches. All 53 falsification jobs pass, including the required omissions. A separate read-only reviewer independently verified the complete measurement and identity artifacts. No merge into the layout line follows this failed acceptance.

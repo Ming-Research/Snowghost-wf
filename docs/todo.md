@@ -402,8 +402,16 @@ example apart from the renderer code that exposed it
   sequential cells overlap or reverse and ECMA262 parallel is slower. Its full
   correctness gates are pending. Inspect concrete remaining work and equivalent
   native operations before attributing a compiler defect or choosing more retained state.
-  No compiler cause or new block representation is established. Reopen on the
-  current experiment's results; acceptance remains unchanged.
+  The next bounded candidate reuses the positioned plan's unchanged parent
+  origin during certificate publication, removing a duplicate ancestry walk
+  that also existed at cf12; it adds no retained state. No compiler cause or
+  new block representation is established. Reopen on the current experiment's
+  results; acceptance remains unchanged.
+  Source inspection also found empty touched registries reconstructed on fresh
+  insertion even when already empty (`finish_reference_geometry`). Its emitted
+  cost is unverified; defer that small cleanup until native allocation evidence
+  identifies it as material, then validate the same old/current reader and
+  arithmetic gates plus a matched block comparison.
 
 - **M2 fallback routing and append-only storage still grow with the session.**
   Step 5 gives text/style/context lookup tables paged storage and publishes
