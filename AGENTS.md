@@ -43,7 +43,7 @@ speed decides only between candidates of equal dependencies.
 
 ## References and evidence
 
-- Status board: [Snowghost 进度板](https://claude.ai/artifact/HyBCyDX7btc9qK4RpAwP1M),
+- Shared status board: [project progress](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip),
   kept as the owner-wide instructions' "Status board" section describes.
 - `design/` holds the decisions Snowghost is built on. A design decision is a
   choice between viable alternatives that changes rendered behavior, a safety
