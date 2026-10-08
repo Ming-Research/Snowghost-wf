@@ -1,0 +1,66 @@
+# Temporary, for the Whitefoot grain session: where the edit pair's time goes
+# at one and four workers (profiles only, hosted; no timing comparison).
+# Removed with this branch.
+name: gran-profile
+
+on:
+  push:
+    branches: [research/gran-profile]
+  workflow_dispatch:
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Toolchain, fonts and perf
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo apt-get install -y --no-install-recommends linux-tools-common "linux-tools-$(uname -r)" || sudo apt-get install -y --no-install-recommends linux-tools-common linux-tools-azure
+          sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
+          perf --version
+          make -s compiler oracle-fonts
+      - name: Pages
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          for f in ecma262.html ecma262-ecmarkup.css ecma262-print.css; do test -s "build/research/concurrency/$f"; done
+          sha256sum build/research/concurrency/ecma262*
+      - name: Drivers and the --par ledger
+        run: |
+          set -euo pipefail
+          mkdir -p build/gran
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_seq)
+          (cd renderer && "$wfc" --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par > ../build/gran/par-ledger.txt 2> ../build/gran/par-ledger.stderr)
+          wc -l build/gran/par-ledger.txt build/gran/par-ledger.stderr
+      - name: Profiles and counters
+        run: |
+          set -euo pipefail
+          data=build/research/concurrency
+          args=("$data/ecma262.html" renderer/style/ua.css "assets/css/ecmarkup.css=$data/ecma262-ecmarkup.css" "assets/css/print.css=$data/ecma262-print.css")
+          full=research/gran-profile/pair.edits
+          head -2 "$full" > build/gran/setup.edits
+          for name in full setup; do
+            script=$full
+            if [ "$name" = setup ]; then script=build/gran/setup.edits; fi
+            perf record -F 4999 -g -o "build/gran/seq-$name.perf" build/layout_oracle_seq edittime "$script" "${args[@]}" > "build/gran/seq-$name.raw"
+            perf report -i "build/gran/seq-$name.perf" --no-children -n --sort sym --percent-limit 0.05 --stdio 2>/dev/null > "build/gran/seq-$name-self.txt"
+            perf report -i "build/gran/seq-$name.perf" --children -n --sort sym --percent-limit 0.5 --stdio 2>/dev/null > "build/gran/seq-$name-children.txt"
+            head -30 "build/gran/seq-$name-self.txt"
+          done
+          for workers in 1 4; do
+            WF_SCHED_REPORT=2 WF_WORKERS=$workers perf stat -e task-clock,context-switches -o "build/gran/par-w$workers-stat.txt" build/layout_oracle_par edittime "$full" "${args[@]}" > "build/gran/par-w$workers.raw" 2> "build/gran/par-w$workers-sched.txt"
+            cat "build/gran/par-w$workers-stat.txt" "build/gran/par-w$workers-sched.txt"
+          done
+          rm -f build/gran/*.perf
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gran-profile
+          path: build/gran/
