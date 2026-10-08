@@ -17,7 +17,7 @@ import subprocess
 import time
 
 PAGES = ('ecma262', 'html5', 'apollo11')
-NAMES = ('main', 'm2', 'twin', 'control', 'controltwin', 'head')
+NAMES = tuple(name for name in ('main', 'm2', 'twin', 'control', 'controltwin', 'head') if Path('build/drivers/driver-' + name).is_dir())
 
 
 def arguments(page):
@@ -56,7 +56,7 @@ def main():
             def driver(name):
                 return 'build/drivers/driver-' + name + '/layout_oracle_' + mode
             hashes = []
-            for name in ('head', 'control', 'controltwin'):
+            for name in ('head', 'control', 'controltwin') if 'control' in NAMES else ('head',):
                 stem = args.directory / (page + '-' + mode + '-' + name + '-dump')
                 invoke([driver(name), 'dump', '1'] + arguments(page), stem)
                 hashes.append(hashlib.sha256(stem.with_suffix('.stdout').read_bytes()).hexdigest())
