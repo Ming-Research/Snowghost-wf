@@ -25,9 +25,13 @@ on:
         description: Interleaved rounds, alternating build order
         default: '2'
         required: true
+      profile_run:
+        description: Hosted driver run whose m2 and head drivers are profiled instead of timed
+        default: ''
+        required: false
 jobs:
   build:
-    if: (github.event_name == 'workflow_dispatch' && inputs.driver_run == '' && inputs.evidence_run == '') || contains(github.event.head_commit.message, '[q139-timing]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.driver_run == '' && inputs.evidence_run == '' && inputs.profile_run == '') || contains(github.event.head_commit.message, '[q139-timing]')
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
@@ -66,7 +70,7 @@ jobs:
             build/revision.txt
   measure:
     needs: build
-    if: ${{ !cancelled() && inputs.evidence_run == '' && (needs.build.result == 'success' || inputs.driver_run != '') }}
+    if: ${{ !cancelled() && inputs.evidence_run == '' && inputs.profile_run == '' && (needs.build.result == 'success' || inputs.driver_run != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -178,3 +182,68 @@ jobs:
         with:
           name: q139-cost-table
           path: build/evidence/table.*
+
+  profile:
+    # Diagnosis of the paired edit-cost regressions: where M2 and the
+    # candidate spend the same edits' time. Sampling only; no timing claim.
+    if: github.event_name == 'workflow_dispatch' && inputs.profile_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.profile_run }}
+          pattern: driver-*
+          path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37727037303
+          name: apollo11-diag-37727037303
+          path: build/apollo-archive
+      - name: Profiler, fonts, captures and edits
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)" linux-tools-common || sudo apt-get install -y --no-install-recommends linux-tools-azure linux-tools-common
+          sudo sysctl -w kernel.perf_event_paranoid=-1
+          sudo sysctl -w kernel.kptr_restrict=0
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          sh research/investigations/concurrency/run.sh fetch || true
+          cp build/apollo-archive/research/concurrency/apollo11* build/research/concurrency/
+          sha256sum -c build/apollo-archive/apollo11-inputs.sha256
+          make -s oracle-fonts
+          cp build/drivers/driver-m2/layout_oracle_seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 apollo11
+          mkdir -p build/profile/scripts
+          python3 research/investigations/incremental-layout/scripts/edits.py apollo11 build/x5/apollo11.nodes build/profile/scripts --dump build/x5/apollo11.dump --count 40
+          python3 research/investigations/incremental-layout/scripts/edits.py ecma262 build/x5/ecma262.nodes build/profile/scripts --dump build/x5/ecma262.dump --count 2
+      - name: Sampled edit profiles, M2 and candidate
+        run: |
+          set -euo pipefail
+          d=build/research/concurrency
+          for job in apollo11:sentence apollo11:word apollo11:fontsize ecma262:rootfont; do
+            page=${job%%:*} kind=${job#*:}
+            sheets=(renderer/style/ua.css)
+            if [ "$page" = ecma262 ]; then sheets+=(assets/css/ecmarkup.css=$d/ecma262-ecmarkup.css assets/css/print.css=$d/ecma262-print.css); fi
+            if [ "$page" = apollo11 ]; then sheets+=("wikibase.client.init&only=styles&skin=vector-2022=$d/apollo11-modules.css" "modules=site.styles&only=styles&skin=vector-2022=$d/apollo11-site.css"); fi
+            for name in m2 head; do
+              out=build/profile/$page-$kind-$name
+              perf record -F 4000 -g -o "$out.data" -- build/drivers/driver-$name/layout_oracle_seq edittime "build/profile/scripts/$page-$kind.edits" "$d/$page.html" "${sheets[@]}" > "$out.raw"
+              perf report -i "$out.data" --stdio --no-children --sort symbol --percent-limit 0.3 > "$out.self.txt" 2>/dev/null
+              perf report -i "$out.data" --stdio --children --sort symbol --percent-limit 0.5 -g none > "$out.children.txt" 2>/dev/null
+              echo "== $page $kind $name"
+              grep -v '^#' "$out.self.txt" | grep -v '^$' | head -25
+              rm "$out.data"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-profile
+          path: build/profile/

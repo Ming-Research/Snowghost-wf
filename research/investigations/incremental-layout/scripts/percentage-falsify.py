@@ -90,9 +90,11 @@ fn fused_percentage_height(context: &Context, styles: &Styles, at: u64) -> made:
 
 
 def function_span(source, function):
+    """The function through its closing brace at column 0, excluding the
+    separator and any following struct, alias or function."""
     start = source.index('fn ' + function + '(')
-    end = source.find('\nfn ', start + 1)
-    return start, len(source) if end < 0 else end
+    end = source.index('\n}\n', start) + 2
+    return start, end
 
 
 def apply(name):
@@ -107,8 +109,8 @@ def apply(name):
     # Removing a clause must not leave a whitespace-only line inside a
     # function: the language requires canonical trivia even for mutants.
     changed = '\n'.join(line for line in changed.splitlines() if line.strip())
-    changed += '\n'
-    # source[end:] retains the separator newline before the next fn.
+    # source[end:] keeps the newline after the closing brace and the blank
+    # separator before whatever item follows.
     path.write_text(source[:start] + changed + source[end:])
     if name == 'collapse-percentage-chain':
         helper = Path('renderer/layout/height_basis.wf')
