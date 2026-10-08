@@ -258,9 +258,13 @@ fn store_block_origin(block: &Block, origins: &[Origin]) -> result: unit reads(o
   set block^.y = local.y;
   set block^.dx = local.dx;
   set block^.dy = local.dy;
-  let natural = cvt::<i32, i64>(block^.natural);
-  let normal = cvt::<i32, i64>(block^.normal_y);
-  set block^.natural_offset = natural -sat normal;
+  if block^.natural_known {
+    let natural = cvt::<i32, i64>(block^.natural);
+    let normal = cvt::<i32, i64>(block^.normal_y);
+    set block^.natural_offset = natural -sat normal;
+  } else {
+    set block^.natural_offset = 0_i64;
+  }
   return unit;
 }
 
@@ -272,9 +276,13 @@ fn store_paragraph_origin(paragraph: &Paragraph, origins: &[Origin]) -> result: 
   set paragraph^.top = local.y;
   set paragraph^.dx = local.dx;
   set paragraph^.dy = local.dy;
-  let natural = cvt::<i32, i64>(paragraph^.natural);
-  let normal = cvt::<i32, i64>(paragraph^.normal_top);
-  set paragraph^.natural_offset = natural -sat normal;
+  if paragraph^.natural_known {
+    let natural = cvt::<i32, i64>(paragraph^.natural);
+    let normal = cvt::<i32, i64>(paragraph^.normal_top);
+    set paragraph^.natural_offset = natural -sat normal;
+  } else {
+    set paragraph^.natural_offset = 0_i64;
+  }
   return unit;
 }
 
@@ -286,14 +294,18 @@ fn store_child_origin(child: &Context, origins: &[Origin]) -> result: unit reads
   }
   let absolute = origin_from_resolved(nx: child^.normal_x, ny: child^.normal_y, vx: child^.x, vy: child^.y);
   set child^.anchor = origin_relative(value: absolute, owner: owner);
-  let natural = cvt::<i32, i64>(child^.placement_natural);
-  let normal = cvt::<i32, i64>(child^.normal_y);
-  set child^.placement_natural_offset = natural -sat normal;
+  if child^.placement_natural_known {
+    let natural = cvt::<i32, i64>(child^.placement_natural);
+    let normal = cvt::<i32, i64>(child^.normal_y);
+    set child^.placement_natural_offset = natural -sat normal;
+  } else {
+    set child^.placement_natural_offset = 0_i64;
+  }
   return unit;
 }
 
 fn encode_reference_block(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), writes(context.blocks.inner[at]) {
-  doc "Encodes one block from valid resolved reference scratch while local_geometry is False. Reading the resolved parent is independent of local-origin writes, so no context-wide snapshot is needed.";
+  doc "Encodes one fresh block from completed raw scratch against its settled parent frame. Untouched hybrid blocks retain their local origins; no context-wide snapshot is needed.";
   if at < context^.blocks.inner.len {
     if context^.reference_phase != 0_u8 {
       if context^.blocks.inner[at].reference_fresh {
@@ -309,15 +321,19 @@ fn encode_reference_block(context: &Context, at: u64) -> result: unit reads(cont
     set context^.blocks.inner[at].y = local.y;
     set context^.blocks.inner[at].dx = local.dx;
     set context^.blocks.inner[at].dy = local.dy;
-    let natural = cvt::<i32, i64>(context^.blocks.inner[at].natural);
-    let normal = cvt::<i32, i64>(held.normal_y);
-    set context^.blocks.inner[at].natural_offset = natural -sat normal;
+    if context^.blocks.inner[at].natural_known {
+      let natural = cvt::<i32, i64>(context^.blocks.inner[at].natural);
+      let normal = cvt::<i32, i64>(held.normal_y);
+      set context^.blocks.inner[at].natural_offset = natural -sat normal;
+    } else {
+      set context^.blocks.inner[at].natural_offset = 0_i64;
+    }
   }
   return unit;
 }
 
 fn encode_reference_child(context: &Context, at: u64) -> result: unit reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), writes(context.children.inner) {
-  doc "Encodes one child anchor from valid resolved reference scratch while local_geometry is False, retaining the zero owner for viewport placement and leaving the child's own contents untouched.";
+  doc "Encodes a fresh child placement against the settled owner frame, retaining the zero owner for viewport placement and leaving its independent contents untouched.";
   if at < context^.children.inner.len {
     if context^.reference_phase != 0_u8 {
       if context^.children.inner[at].placement_fresh {
@@ -333,15 +349,19 @@ fn encode_reference_child(context: &Context, at: u64) -> result: unit reads(cont
     let absolute = origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y);
     let local = origin_relative(value: absolute, owner: owner);
     set context^.children.inner[at].anchor = local;
-    let natural = cvt::<i32, i64>(context^.children.inner[at].placement_natural);
-    let normal = cvt::<i32, i64>(context^.children.inner[at].normal_y);
-    set context^.children.inner[at].placement_natural_offset = natural -sat normal;
+    if context^.children.inner[at].placement_natural_known {
+      let natural = cvt::<i32, i64>(context^.children.inner[at].placement_natural);
+      let normal = cvt::<i32, i64>(context^.children.inner[at].normal_y);
+      set context^.children.inner[at].placement_natural_offset = natural -sat normal;
+    } else {
+      set context^.children.inner[at].placement_natural_offset = 0_i64;
+    }
   }
   return unit;
 }
 
 fn encode_reference_item(context: &Context, item: Flow) -> result: unit reads(context.local_geometry), reads(context.reference_phase), writes(context.blocks.inner), writes(context.paragraphs.inner), writes(context.children.inner) {
-  doc "Encodes only a reference event's resolved payload and a Text event's placed atomic child anchors. The caller keeps local_geometry False with globally valid resolved scratch throughout the scoped pass; lineless paragraphs use the same exact conversion as the full encoder, and no scratch coordinate or geometry mode changes.";
+  doc "Encodes only a fresh reference payload and its placed atomic anchors after stacking has settled. Untouched suffix payloads retain local geometry; lineless scratch and absent-natural sentinels preserve the full encoder's semantics.";
   let child_slot = no_index;
   match item {
     Open(block: b) => {
@@ -366,9 +386,13 @@ fn encode_reference_item(context: &Context, item: Flow) -> result: unit reads(co
         set context^.paragraphs.inner[paragraph_at].top = local.y;
         set context^.paragraphs.inner[paragraph_at].dx = local.dx;
         set context^.paragraphs.inner[paragraph_at].dy = local.dy;
-        let natural = cvt::<i32, i64>(context^.paragraphs.inner[paragraph_at].natural);
-        let normal = cvt::<i32, i64>(context^.paragraphs.inner[paragraph_at].normal_top);
-        set context^.paragraphs.inner[paragraph_at].natural_offset = natural -sat normal;
+        if context^.paragraphs.inner[paragraph_at].natural_known {
+          let natural = cvt::<i32, i64>(context^.paragraphs.inner[paragraph_at].natural);
+          let normal = cvt::<i32, i64>(context^.paragraphs.inner[paragraph_at].normal_top);
+          set context^.paragraphs.inner[paragraph_at].natural_offset = natural -sat normal;
+        } else {
+          set context^.paragraphs.inner[paragraph_at].natural_offset = 0_i64;
+        }
         let atomics = context^.paragraphs.inner[paragraph_at].atomics.inner.len;
         for (atomic_at in 0_u64..atomics) {
           let placed = context^.paragraphs.inner[paragraph_at].atomics.inner[atomic_at];
@@ -397,7 +421,7 @@ fn encode_reference_item(context: &Context, item: Flow) -> result: unit reads(co
 }
 
 fn encode_reference_ancestors(context: &Context, owner: u32) -> result: unit writes(context) {
-  doc "Encodes an affected owner's ancestor chain from valid resolved reference scratch while local_geometry is False. Only discovering the next parent orders this walk; local-origin writes do not change any resolved origin read by later conversions.";
+  doc "Encodes fresh members of an affected owner's ancestor chain against completed current frames. Only discovering the next parent orders this walk; untouched ancestors retain their local origins.";
   let cursor = owner;
   let count = context^.blocks.inner.len;
   for (step in 0_u64..count) {
@@ -454,8 +478,12 @@ fn restore_block_origin(block: &Block, absolute: Origin, dx: i32, dy: i32) -> re
   let visual = origin_visual(value: absolute);
   let moved_normal = content_position(value: normal, dx: dx, dy: dy);
   let moved_visual = content_position(value: visual, dx: dx, dy: dy);
-  let natural_wide = absolute.y +sat block^.natural_offset;
-  let natural = geometry_narrow(value: natural_wide);
+  let natural = if block^.natural_known {
+    let natural_wide = absolute.y +sat block^.natural_offset;
+    give geometry_narrow(value: natural_wide);
+  } else {
+    give 2147483647_i32;
+  }
   set block^.natural = natural;
   set block^.normal_x = moved_normal.x;
   set block^.normal_y = moved_normal.y;
@@ -483,8 +511,12 @@ fn restore_paragraph_origin(paragraph: &Paragraph, origins: &[Origin], dx: i32, 
   } else {
     give visual;
   }
-  let natural_wide = absolute.y +sat paragraph^.natural_offset;
-  let natural = geometry_narrow(value: natural_wide);
+  let natural = if paragraph^.natural_known {
+    let natural_wide = absolute.y +sat paragraph^.natural_offset;
+    give geometry_narrow(value: natural_wide);
+  } else {
+    give 2147483647_i32;
+  }
   set paragraph^.natural = natural;
   set paragraph^.normal_x = moved_normal.x;
   set paragraph^.normal_top = moved_normal.y;
@@ -504,8 +536,12 @@ fn restore_child_origin(child: &Context, origins: &[Origin], dx: i32, dy: i32) -
   let moved = content_position(value: visual, dx: dx, dy: dy);
   let normal = origin_normal(value: absolute);
   let moved_normal = content_position(value: normal, dx: dx, dy: dy);
-  let natural_wide = absolute.y +sat child^.placement_natural_offset;
-  let natural = geometry_narrow(value: natural_wide);
+  let natural = if child^.placement_natural_known {
+    let natural_wide = absolute.y +sat child^.placement_natural_offset;
+    give geometry_narrow(value: natural_wide);
+  } else {
+    give 2147483647_i32;
+  }
   set child^.placement_natural = natural;
   set child^.normal_x = moved_normal.x;
   set child^.normal_y = moved_normal.y;
@@ -655,9 +691,6 @@ fn materialize_reference_block(context: &Context, at: u64) -> result: unit reads
     }
     capture_reference_block(context: context, at: at);
     let old = context^.blocks.inner[at].reference_old;
-    let natural = old.y +sat context^.blocks.inner[at].natural_offset;
-    let narrowed = geometry_narrow(value: natural);
-    set context^.blocks.inner[at].natural = narrowed;
     restore_block_origin(block: &context^.blocks.inner[at], absolute: old, dx: 0_i32, dy: 0_i32);
     set context^.blocks.inner[at].reference_fresh = True();
   }
@@ -682,8 +715,12 @@ fn materialize_reference_child(context: &Context, at: u64) -> result: unit reads
     let absolute = origin_accumulate(owner: owner, local: context^.children.inner[at].anchor);
     let normal = origin_normal(value: absolute);
     let visual = origin_visual(value: absolute);
-    let wide_natural = absolute.y +sat context^.children.inner[at].placement_natural_offset;
-    let natural = geometry_narrow(value: wide_natural);
+    let natural = if context^.children.inner[at].placement_natural_known {
+      let wide_natural = absolute.y +sat context^.children.inner[at].placement_natural_offset;
+      give geometry_narrow(value: wide_natural);
+    } else {
+      give 2147483647_i32;
+    }
     set context^.children.inner[at].placement_natural = natural;
     set context^.children.inner[at].normal_x = normal.x;
     set context^.children.inner[at].normal_y = normal.y;
@@ -711,8 +748,12 @@ fn materialize_reference_paragraph(context: &Context, at: u64) -> result: unit r
     let absolute = origin_accumulate(owner: owner, local: local);
     let normal = origin_normal(value: absolute);
     let visual = origin_visual(value: absolute);
-    let wide_natural = absolute.y +sat context^.paragraphs.inner[at].natural_offset;
-    let natural = geometry_narrow(value: wide_natural);
+    let natural = if context^.paragraphs.inner[at].natural_known {
+      let wide_natural = absolute.y +sat context^.paragraphs.inner[at].natural_offset;
+      give geometry_narrow(value: wide_natural);
+    } else {
+      give 2147483647_i32;
+    }
     set context^.paragraphs.inner[at].natural = natural;
     if context^.paragraphs.inner[at].lines.inner.len > 0_u64 {
       set context^.paragraphs.inner[at].normal_x = normal.x;

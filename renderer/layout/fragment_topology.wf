@@ -378,6 +378,43 @@ fn retained_split_owner(keys: &[u64], owner: u32) -> found: Bool reads(keys) {
   return False();
 }
 
+fn empty_marks_present(marks: &[Mark], keys: &[u64]) -> present: Bool reads(marks), reads(keys) {
+  doc "Finds a live empty-source candidate without allocating storage for ordinary whitespace or lined paragraphs; independent mark halves reduce to one visibility bit.";
+  let count = marks^.len;
+  if count == 0_u64 {
+    return False();
+  }
+  if count == 1_u64 {
+    let mark = marks^[0_u64];
+    match mark {
+      Open(style: selected, ..) => {
+        let plain = bnot(selected.anonymous);
+        let own = selected.pseudo == no_pseudo;
+        let shown = band(plain, own);
+        let interrupted = retained_split_owner(keys: keys, owner: selected.element);
+        let uninterrupted = bnot(interrupted);
+        return band(shown, uninterrupted);
+      }
+      Close(..) => {
+        return False();
+      }
+      Atomic(..) => {
+        return False();
+      }
+      Node(..) => {
+        return False();
+      }
+    }
+  }
+  let half = count / 2_u64;
+  if half <= count {
+    let left = empty_marks_present(marks: &marks^[0_u64..half], keys: keys);
+    let right = empty_marks_present(marks: &marks^[half..count], keys: keys);
+    return bor(left, right);
+  }
+  return False();
+}
+
 fn refresh_empty_paragraph(paragraph: &Paragraph, keys: &[u64]) -> present: Bool reads(keys), writes(paragraph) {
   doc "Publishes one paragraph's context-coordinate empty-inline sources in fixed mark slots. Line appearance toggles activity without changing paragraph-plus-mark identity; lineless y remains the reference scratch value.";
   if paragraph^.lines.inner.len > 0_u64 {
@@ -385,6 +422,13 @@ fn refresh_empty_paragraph(paragraph: &Paragraph, keys: &[u64]) -> present: Bool
     return False();
   }
   if paragraph^.retired {
+    set paragraph^.empty_fragment = False();
+    return False();
+  }
+  let potential_marks = paragraph^.marks.inner.len;
+  let possible = empty_marks_present(marks: &paragraph^.marks.inner[0_u64..potential_marks], keys: keys);
+  if possible {
+  } else {
     set paragraph^.empty_fragment = False();
     return False();
   }
@@ -641,8 +685,8 @@ fn split_dependency_candidates(context: &Context, ranges: &[FragmentRange], offs
 fn split_order_target(keys: &[u64], position: u64) -> found: u64 reads(keys) {
   doc "Splits selected owner-order keys at one subtree boundary by binary search.";
   let target = ishl(position, 32_u32);
-  let position = split_key_position(keys: keys, key: target);
-  return position;
+  let boundary = split_key_position(keys: keys, key: target);
+  return boundary;
 }
 
 fn update_split_joins(targets: &[u64], values: &[SplitJoin], offset: u64, count: u64, joins: &[SplitJoin]) -> made: SplitJoin reads(targets), reads(values), writes(joins) {
