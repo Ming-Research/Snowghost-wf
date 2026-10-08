@@ -11,6 +11,10 @@ The original design exercises used Snowghost
 `49c138aa666c3c8e474267fe4d24ae1ae92c2419`; both W1 excerpts require that layout
 module, absent from this base. Test their exact source with extracted original
 dependencies and an entry point; do not substitute fake library implementations.
+The two proposals, as written against that commit, are in
+[proposals/alpha](proposals/alpha/design.md) and
+[proposals/beta](proposals/beta/design.md); each holds its brief, design,
+friction log, today's-Whitefoot assessment and W1-W8 mocks.
 
 - C1: grow an outer directory of owned fixed-capacity pages, then read and write
   selected fields. Inspect emitted growth code for payload movement. Compare a
