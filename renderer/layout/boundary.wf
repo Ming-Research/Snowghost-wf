@@ -23,7 +23,8 @@ fn add_boundary_visits(first: BoundaryVisits, second: BoundaryVisits) -> made: B
 fn empty_block_output() -> made: BlockOutput pure {
   doc "An unpublished block boundary cannot authorize a cutoff.";
   let no = False();
-  let empty = BlockOutput(valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no, fragment_source: no, own_barriers: 0_u32, own_free: no, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: no);
+  let heights = empty_height_summary();
+  let empty = BlockOutput(heights: heights, fixed_height: no, valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no, fragment_source: no, own_barriers: 0_u32, own_free: no, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: no);
   return empty;
 }
 
@@ -151,6 +152,7 @@ fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: Se
   }
   let trailing = margin_output(margin: measured.margin_bottom);
   let output = join_output(left: &closed, right: &trailing);
+  set output.heights = join_height_summary(first: inside^.heights, second: measured.heights);
   set output.count = 1_u64;
   set output.events = inside^.events +sat 2_u64;
   if measured.fragment_source {
@@ -197,7 +199,17 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
   let specified = specified_height(styles: styles, style: held.style, basis: resolved_basis, frame: frame);
   let (minimum, maximum) = height_limits(styles: styles, style: held.style, basis: resolved_basis, frame: frame);
   let yes = True();
-  let measured = BlockOutput(valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: resolved_basis, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats, fragment_source: block^.split_head, own_barriers: 0_u32, own_free: yes, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: yes);
+  let own_heights = height_proof_summary(proof: block^.height_proof);
+  let proof_current = height_proof_current(proof: block^.height_proof, styles: styles, style: held.style, width: held.avail_width, height: resolved_basis);
+  if proof_current {
+  } else {
+    set own_heights.unproved = own_heights.unproved +sat 1_u64;
+  }
+  if block^.height_proof.source_owner != held.parent {
+    set own_heights.unproved = own_heights.unproved +sat 1_u64;
+  }
+  let fixed_height = block^.height_proof.state == 2_u8;
+  let measured = BlockOutput(heights: own_heights, fixed_height: fixed_height, valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: resolved_basis, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats, fragment_source: block^.split_head, own_barriers: 0_u32, own_free: yes, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: yes);
   let output = lift_block_output(inside: inside, measured: measured);
   let (relative_x, relative_y) = relative_offset(styles: styles, style: held.style, basis_width: held.avail_width, basis_height: unknown);
   let wide_relative = cvt::<i32, i64>(relative_y);
@@ -321,6 +333,7 @@ fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destin
   set own.float_reach = motion.float_reach;
   set own.motion_known = motion.motion_known;
   set own.travel = own.travel +sat motion.travel;
+  set own.heights = join_height_summary(first: own.heights, second: motion.heights);
   set destination^.own = own;
   return unit;
 }
@@ -563,6 +576,10 @@ fn reference_item_output(context: &Context, item: Flow, styles: &Styles, basis_h
         set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
         set owner = context^.blocks.inner[at].parent;
         let root = context^.blocks.inner[at].entries.root;
+        let parent_basis = containing_height(context: context, styles: styles, owner: owner, context_height: basis_height);
+        let basis_input = containing_height_proof(context: context, owner: owner, height: parent_basis);
+        let proof = resolve_height_proof(styles: styles, style: context^.blocks.inner[at].style, input: basis_input, width: context^.blocks.inner[at].avail_width, height: parent_basis, forced: unknown);
+        set context^.blocks.inner[at].height_proof = proof;
         let total_field = False();
         let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
         let (transfer, size) = block_output(block: &context^.blocks.inner[at], styles: styles, inside: &inside, basis_height: basis_height);
@@ -781,6 +798,7 @@ fn context_size_output(child: &Context, styles: &Styles, height: i32, baseline: 
   let opened = join_output(left: &leading, right: &solid);
   let trailing = margin_output(margin: child^.margin_bottom);
   let output = join_output(left: &opened, right: &trailing);
+  set output.heights = context_height_summary(context: child, styles: styles);
   set output.count = 1_u64;
   set output.events = 1_u64;
   if child^.split_head {
@@ -811,6 +829,12 @@ fn context_size_output(child: &Context, styles: &Styles, height: i32, baseline: 
 
 fn same_transfer(first: SequenceOutput, second: SequenceOutput) -> same: Bool pure {
   doc "Compares every propagated semantic output, including baseline positions and intrinsic contributions when height alone is unchanged.";
+  if first.heights.consumers != second.heights.consumers {
+    return False();
+  }
+  if first.heights.unproved != second.heights.unproved {
+    return False();
+  }
   if first.fragment_sources != second.fragment_sources {
     return False();
   }

@@ -1,0 +1,279 @@
+alias Styles = pkg::style::Styles;
+alias sizing_value = pkg::css::values::sizing_value;
+
+fn empty_height_summary() -> made: HeightSummary pure {
+  return HeightSummary(consumers: 0_u64, unproved: 0_u64);
+}
+
+fn join_height_summary(first: HeightSummary, second: HeightSummary) -> made: HeightSummary pure {
+  let readers = first.consumers +sat second.consumers;
+  let unproved = first.unproved +sat second.unproved;
+  return HeightSummary(consumers: readers, unproved: unproved);
+}
+
+fn absent_height_proof() -> made: HeightProof pure {
+  let no = False();
+  let style = StyleRef(element: no_index, pseudo: no_index, anonymous: no);
+  return HeightProof(consumer: style, source_context: no_index, source_owner: no_index, source_element: no_index, source_kind: 0_u8, basis_state: 0_u8, basis_height: unknown, basis_width: 0_i32, content_height: unknown, state: 0_u8, read_mask: 0_u8, size_key: no_index, box_key: no_index, spacing_key: no_index, border_key: no_index, font_key: no_index, valid: no);
+}
+
+fn height_read_mask(styles: &Styles, style: StyleRef) -> mask: u8 reads(styles) {
+  doc "Counts expressions by has_percent, including a zero coefficient; height, minimum and maximum remain distinct inputs.";
+  let sizes = size_of(styles: styles, style: style);
+  let mask = 0_u8;
+  if sizes.height.kind == sizing_value {
+    if sizes.height.value.has_percent {
+      set mask = mask + 1_u8;
+    }
+  }
+  if sizes.min_height.kind == sizing_value {
+    if sizes.min_height.value.has_percent {
+      set mask = mask + 2_u8;
+    }
+  }
+  if sizes.max_height.kind == sizing_value {
+    if sizes.max_height.value.has_percent {
+      set mask = mask + 4_u8;
+    }
+  }
+  return mask;
+}
+
+fn height_read_count(mask: u8) -> count: u64 pure {
+  let remaining = mask;
+  let count = 0_u64;
+  if remaining >= 4_u8 {
+    set count = count + 1_u64;
+    set remaining = remaining - 4_u8;
+  }
+  if remaining >= 2_u8 {
+    set count = count + 1_u64;
+    set remaining = remaining - 2_u8;
+  }
+  if remaining == 1_u8 {
+    set count = count + 1_u64;
+  }
+  return count;
+}
+
+fn resolve_height_proof(styles: &Styles, style: StyleRef, input: HeightProof, width: i32, height: i32, forced: i32) -> made: HeightProof reads(styles) {
+  doc "Records the full resolver's immediate input and its unchanged style keys. An ordinary specified chain is independent only when every percentage read has an independent definite input. Forced sizes are layout results unless the caller names the viewport or a certified private external input.";
+  let made = input;
+  let computed = computed_of(styles: styles, style: style);
+  let mask = height_read_mask(styles: styles, style: style);
+  let content = definite_block_height(styles: styles, style: style, basis_width: width, basis_height: height);
+  let state = 1_u8;
+  if content >= 0_i32 {
+    set state = 2_u8;
+    if mask != 0_u8 {
+      if input.basis_state != 2_u8 {
+        set state = 3_u8;
+      }
+    }
+  }
+  if forced >= 0_i32 {
+    let border = border_edges(styles: styles, style: style);
+    let padding = padding_edges(styles: styles, style: style, basis: width);
+    let borders = vertical(edges: border);
+    let paddings = vertical(edges: padding);
+    let frame = borders +sat paddings;
+    let inner = forced -sat frame;
+    set content = imax(inner, 0_i32);
+    set state = 3_u8;
+    let viewport = input.source_kind == 1_u8;
+    let private_input = input.source_kind == 4_u8;
+    let external = bor(viewport, private_input);
+    if external {
+      if input.basis_state == 2_u8 {
+        set state = 2_u8;
+      }
+    }
+  }
+  set made.consumer = style;
+  set made.basis_width = width;
+  set made.basis_height = height;
+  set made.content_height = content;
+  set made.state = state;
+  set made.read_mask = mask;
+  set made.size_key = computed.size;
+  set made.box_key = computed.box;
+  set made.spacing_key = computed.spacing;
+  set made.border_key = computed.border;
+  set made.font_key = computed.font;
+  set made.valid = True();
+  return made;
+}
+
+fn height_proof_current(proof: HeightProof, styles: &Styles, style: StyleRef, width: i32, height: i32) -> current: Bool reads(styles) {
+  doc "Freshness compares identities, definite state inputs and style keys, never only equal old used numbers.";
+  if proof.valid {
+  } else {
+    return False();
+  }
+  if proof.consumer.element != style.element {
+    return False();
+  }
+  if proof.consumer.pseudo != style.pseudo {
+    return False();
+  }
+  let anonymous = eeq(proof.consumer.anonymous, style.anonymous);
+  if anonymous {
+  } else {
+    return False();
+  }
+  if proof.basis_width != width {
+    return False();
+  }
+  if proof.basis_height != height {
+    return False();
+  }
+  let computed = computed_of(styles: styles, style: style);
+  if proof.size_key != computed.size {
+    return False();
+  }
+  if proof.box_key != computed.box {
+    return False();
+  }
+  if proof.spacing_key != computed.spacing {
+    return False();
+  }
+  if proof.border_key != computed.border {
+    return False();
+  }
+  if proof.font_key != computed.font {
+    return False();
+  }
+  return True();
+}
+
+fn height_proof_summary(proof: HeightProof) -> made: HeightSummary pure {
+  let readers = height_read_count(mask: proof.read_mask);
+  if proof.valid {
+  } else {
+    return HeightSummary(consumers: readers, unproved: 1_u64);
+  }
+  if readers == 0_u64 {
+    return HeightSummary(consumers: 0_u64, unproved: 0_u64);
+  }
+  if proof.basis_state != 2_u8 {
+    return HeightSummary(consumers: readers, unproved: readers);
+  }
+  if proof.basis_height < 0_i32 {
+    return HeightSummary(consumers: readers, unproved: readers);
+  }
+  return HeightSummary(consumers: readers, unproved: 0_u64);
+}
+
+fn containing_height_proof(context: &Context, owner: u32, height: i32) -> made: HeightProof reads(context) {
+  doc "Shares the immediate containing record through a stable owner link. An auto intermediate remains an indefinite edge, even below a definite ancestor.";
+  let made = absent_height_proof();
+  set made.source_context = context^.slot;
+  set made.source_owner = owner;
+  set made.source_kind = 2_u8;
+  set made.basis_height = height;
+  let source = context^.height_proof;
+  if owner != no_index {
+    let at = cvt::<u32, u64>(owner);
+    if at < context^.blocks.inner.len {
+      set source = context^.blocks.inner[at].height_proof;
+    } else {
+      return made;
+    }
+  }
+  set made.source_element = source.consumer.element;
+  if source.valid {
+    if source.content_height == height {
+      set made.basis_state = source.state;
+    }
+  }
+  return made;
+}
+
+fn viewport_height_proof(styles: &Styles, style: StyleRef, width: i32, height: i32) -> made: HeightProof reads(styles) {
+  let input = absent_height_proof();
+  set input.source_kind = 1_u8;
+  set input.source_element = root_element;
+  set input.basis_state = 2_u8;
+  let made = resolve_height_proof(styles: styles, style: style, input: input, width: width, height: height, forced: height);
+  return made;
+}
+
+fn context_height_summary(context: &Context, styles: &Styles) -> made: HeightSummary reads(context), reads(styles) {
+  let own = height_proof_summary(proof: context^.height_proof);
+  let current = height_proof_current(proof: context^.height_proof, styles: styles, style: context^.style, width: context^.space.basis_width, height: context^.space.basis_height);
+  if current {
+  } else {
+    set own.unproved = own.unproved +sat 1_u64;
+  }
+  let inside = context^.height_summary;
+  if context^.kind == ctx_flow {
+    let total = sequence_output(sequence: &context^.entries);
+    set inside = total.heights;
+  }
+  let made = join_height_summary(first: own, second: inside);
+  return made;
+}
+
+fn child_height_summaries(children: &[Context], styles: &Styles) -> made: HeightSummary reads(children), reads(styles) {
+  doc "Balances independent child summaries for layout modes without an ordinary-flow index. Only their algorithm's direct items are read; cached child summaries exclude descendant traversal.";
+  let count = children^.len;
+  if count == 0_u64 {
+    let empty = empty_height_summary();
+    return empty;
+  }
+  if count == 1_u64 {
+    let child = &children^[0_u64];
+    if child^.retired {
+      let empty = empty_height_summary();
+      return empty;
+    }
+    let out = positioned(styles: styles, context: child);
+    if out {
+      let empty = empty_height_summary();
+      return empty;
+    }
+    let made = context_height_summary(context: child, styles: styles);
+    return made;
+  }
+  let middle = count / 2_u64;
+  let first = child_height_summaries(children: &children^[0_u64..middle], styles: styles);
+  let second = child_height_summaries(children: &children^[middle..count], styles: styles);
+  let made = join_height_summary(first: first, second: second);
+  return made;
+}
+
+fn layout_height_inputs(context: &Context) -> result: unit writes(context) {
+  doc "Names a flex/grid/table input as layout-supplied before item layout. A retained stretch target is not an immutable external size.";
+  let parent = context^.slot;
+  let element = context^.style.element;
+  let count = context^.children.inner.len;
+  for (at in 0_u64..count) {
+    let input = context^.children.inner[at].height_proof;
+    set input.source_context = parent;
+    set input.source_owner = no_index;
+    set input.source_element = element;
+    set input.source_kind = 3_u8;
+    set input.basis_state = 3_u8;
+    set context^.children.inner[at].height_proof = input;
+  }
+  return unit;
+}
+
+fn refresh_context_height_proof(context: &Context, styles: &Styles) -> result: unit reads(styles), writes(context.height_proof), reads(context.style), reads(context.space), reads(context.natural), reads(context.kind) {
+  let proof = resolve_height_proof(styles: styles, style: context^.style, input: context^.height_proof, width: context^.space.basis_width, height: context^.space.basis_height, forced: context^.space.forced_height);
+  if context^.natural != natural_object {
+    set proof.state = 3_u8;
+  }
+  if context^.kind == ctx_table {
+    set proof.state = 3_u8;
+  }
+  set context^.height_proof = proof;
+  return unit;
+}
+
+fn refresh_height_summary(context: &Context, styles: &Styles) -> result: unit reads(styles), reads(context.children.inner), writes(context.height_summary) {
+  let count = context^.children.inner.len;
+  let made = child_height_summaries(children: &context^.children.inner[0_u64..count], styles: styles);
+  set context^.height_summary = made;
+  return unit;
+}

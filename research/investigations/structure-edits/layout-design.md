@@ -3075,3 +3075,32 @@ performance comparisons use GitHub-hosted CI, including the comparison of
 every X5 edit kind against main and `95ea4a1` with a twin. No local build,
 check, test or timing is part of this experiment. This overrides the earlier
 argument's proposed 14900K measurement host for this task.
+
+
+### Q139 implementation: records and local summaries
+
+The candidate retains one `HeightProof` per block/context, naming its actual
+immediate basis and the height/minimum/maximum read mask, state, numeric input,
+content result and style keys. The ordinary containing-block links share
+provenance; a percentage-free specified size starts an independent terminal,
+and an auto intermediate or a flex/grid/table supplied size cannot be promoted
+from its last number. Existing full-layout pre-passes establish the top-down
+inputs; sibling record writes have no added shared cache or reader append.
+
+Live `HeightSummary` counts compose in the existing balanced ordinary-flow
+index. Non-flow owners combine cached direct-item summaries with a balanced
+reduction after their algorithm settles. The intended admission query reads
+those summaries plus the enclosing path, not consumer leaves elsewhere in the
+page. Publication, removal and reference refresh must preserve those counts;
+missing records count as unproved. The live-tree decision is proposed, with
+admission, fixed-height transfer and the required mutation matrix still being
+implemented. No positive splice or locality result is claimed yet.
+
+The cost comparison rejects a Q139 regression beyond the paired twin spread
+for any X5 kind. The hosted workflow uses the same compiler release and
+settings for main `8fbc1601785cee70265da1eac4d99589fc6fb67c`, M2
+`95ea4a10832257d0563d2410565900e5d2981118`, its independently built twin and
+the candidate, sharing exact page captures, fonts and edit scripts. Start with
+one forward/inverse pair per kind in two interleaved rounds, then select scale
+from its observed duration and spread. The full-build and storage comparison
+remains an additional obligation; this small sample cannot establish it.
