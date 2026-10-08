@@ -3522,3 +3522,13 @@ peak RSS will measure the compact candidate. The collection-off generator
 is removed because its stubs never compiled with exact effect rows and
 therefore supplied no valid comparison. Collection cost remains unseparated;
 no result from that failed control is claimed.
+
+
+With optional records, the minimum/maximum reader omissions must be observed
+on the positive `sibling-limits` fixture: its style still names the reader,
+so omitting the mask now leaves a missing record and conservatively refuses
+instead of admitting an indefinite negative. Each mutation must lose the
+required positive path specifically to reason 7. The width-refresh omission
+uses the percentage-bearing `framed` fixture, because percentage-free boxes
+no longer have retained width keys to invalidate. These changes preserve the
+predicate under test and the existing unrelated-failure rejection.
