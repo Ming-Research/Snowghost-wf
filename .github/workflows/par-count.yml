@@ -1,0 +1,62 @@
+# Temporary measurement workflow; remove when the indexed-loop investigation
+# is closed. The existing check workflow independently runs the full gate.
+name: par-count
+
+on:
+  push:
+    branches: [research/par-count-274]
+    paths:
+      - whitefoot.pin
+      - renderer/**
+      - .github/workflows/par-count.yml
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+      - name: Download the pinned compiler
+        run: make compiler
+      - name: Build layout_oracle and record parallel permissions
+        run: |
+          set -uo pipefail
+          mkdir -p build/par-count
+          git rev-parse HEAD > build/par-count/revision.txt
+          cat whitefoot.pin >> build/par-count/revision.txt
+          cp build/whitefoot/wf-691ea8106920/whitefoot-release.json build/par-count/
+          cd renderer
+          ../build/whitefoot/wf-691ea8106920/whitefootc \
+            --cache ../build/par-count/cache --fragments function \
+            --par --par-ledger --graph modules.wfg --entry layout_oracle \
+            -o ../build/par-count/layout_oracle \
+            > ../build/par-count/compiler.stdout 2> ../build/par-count/compiler.stderr
+          compiler_exit=$?
+          printf '%s\n' "$compiler_exit" > ../build/par-count/compiler.exit
+          cat ../build/par-count/compiler.stdout ../build/par-count/compiler.stderr
+          awk '/^PAR loop/ { print }' \
+            ../build/par-count/compiler.stdout ../build/par-count/compiler.stderr \
+            > ../build/par-count/loops-691ea810.txt
+          exit "$compiler_exit"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: par-count-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            build/par-count/revision.txt
+            build/par-count/whitefoot-release.json
+            build/par-count/compiler.stdout
+            build/par-count/compiler.stderr
+            build/par-count/compiler.exit
+            build/par-count/loops-691ea810.txt
