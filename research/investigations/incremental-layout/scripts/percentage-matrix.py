@@ -3,7 +3,7 @@
 The root pair must already have passed as the workflow's timed small sample.
 Each fixture has independent Chromium expectations before/after insertion;
 all retained edit prefixes and required paths use the established X5 checkers.
-This script is wired only to the temporary q139 evidence workflow.
+This script is wired to the permanent q139 workflow.
 """
 import argparse
 import importlib.util

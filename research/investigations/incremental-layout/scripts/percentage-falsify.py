@@ -1,6 +1,6 @@
 """Apply one Q139 semantic mutation and require its focused observation in CI.
 
-Wired to the temporary falsify-m2 workflow. Source edits require one exact
+Wired to the permanent falsify-m2 workflow. Source edits require one exact
 match in the named function. Compiler failures and unrelated driver errors
 are never detection. Certificate rows isolate one premise when integration
 has another conservative guard; policy rows require loss of reason 7 itself
@@ -35,10 +35,10 @@ MUTATIONS = {
     'stale-resolution-mode': ('height_basis', 'same_height_input', 'if first.kind != second.kind {\n    return False();\n  }', '', 'layout-stretch', 'certificate'),
     'stale-viewport': ('height_basis', 'height_resolution_current', 'if proof.basis_height != height {\n    return False();\n  }', '', 'root', 'certificate'),
     'stale-width': ('height_basis', 'height_resolution_current', 'if proof.basis_width != width {\n    return False();\n  }', '', 'framed', 'certificate'),
-    'skip-definiteness-refresh': ('flow', 'prepare_spaces', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let was_fixed = old.state == 2_u8;\n          let now_auto = proof.state == 1_u8;\n          let changed = band(was_fixed, now_auto);\n          if changed {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }', 'equal-state', 'identity'),
-    'skip-width-refresh': ('height_basis', 'refresh_local_height_proofs', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }', 'partial-restyle', 'positive-path'),
-    'skip-private-context-rebase': ('build', 'record_tree', 'set context^.height_proof.source_context = parent;', '', 'private-context-chain', 'positive-path'),
-    'skip-private-owner-rebase': ('splice_publish', 'relocate_splice', 'set block^.height_proof.source_owner = block^.height_proof.source_owner +sat input.blocks;', 'set block^.height_proof.source_owner = block^.height_proof.source_owner +sat 0_u32;', 'private-chain', 'positive-path'),
+    'skip-definiteness-refresh': ('flow', 'prepare_spaces', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n          let was_fixed = old.state == 2_u8;\n          let now_auto = proof.state == 1_u8;\n          let changed = band(was_fixed, now_auto);\n          if changed {\n          } else {\n            store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n          }', 'equal-state', 'identity'),
+    'skip-width-refresh': ('height_basis', 'refresh_local_height_proofs', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n          let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n          }', 'framed', 'positive-path'),
+    'skip-private-context-rebase': ('height_basis', 'rebase_height_context', 'set proof^.inner.source_context = serial;', 'set proof^.inner.source_context = proof^.inner.source_context;', 'private-context-chain', 'positive-path'),
+    'skip-private-owner-rebase': ('height_basis', 'relocate_height_record', 'set held^.inner.source_owner = held^.inner.source_owner +sat input.blocks;', 'set held^.inner.source_owner = held^.inner.source_owner +sat 0_u32;', 'private-chain', 'positive-path'),
     'missing-record': ('height_basis', 'height_resolution_current', 'if proof.valid {\n  } else {\n    return False();\n  }', '', 'nested', 'certificate'),
     'grow-fixed-height': ('boundary', 'propagate_boundary', 'let outgoing_delta = if measured.fixed_height {\n      give 0_i32;', 'let outgoing_delta = if measured.fixed_height {\n      give geometry_narrow(value: wide_delta);', 'root', 'identity'),
     'grow-auto-clamp': ('update', 'snapshot_grows', 'if maximum >= 0_i32 {\n    return False();\n  }\n  if minimum > frame {\n    return False();\n  }', '', 'cross-minimum', 'identity'),
@@ -62,8 +62,8 @@ MUTATIONS = {
 # repaired by the reference publisher, which writes the same record.
 EXTRA_SITES = {
     'skip-width-refresh': [
-        ('flow', 'prepare_spaces', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n          let width_changed = old.basis_width != width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            set context^.blocks.inner[at].height_proof = proof;\n          }'),
-        ('boundary', 'reference_item_output', 'set context^.blocks.inner[at].height_proof = proof;', 'let old = context^.blocks.inner[at].height_proof;\n        let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n        let stale = band(old.valid, width_changed);\n        if stale {\n        } else {\n          set context^.blocks.inner[at].height_proof = proof;\n        }'),
+        ('flow', 'prepare_spaces', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n          let width_changed = old.basis_width != width;\n          let stale = band(old.valid, width_changed);\n          if stale {\n          } else {\n            store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n          }'),
+        ('boundary', 'reference_item_output', 'store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);', 'let old = read_height_record(record: &context^.blocks.inner[at].height_proof);\n        let width_changed = old.basis_width != context^.blocks.inner[at].avail_width;\n        let stale = band(old.valid, width_changed);\n        if stale {\n        } else {\n          store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);\n        }'),
     ],
 }
 

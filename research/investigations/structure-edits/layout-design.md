@@ -2680,8 +2680,10 @@ Admission requires all the following premises before retained publication:
 4. **Private construction and all other certificates.** Resolve percentages
    inside the inserted subtree using the same containing-block inputs and
    rules as a fresh build. Record its new dependencies before publication,
-   and apply premises 1–3 to external basis links and the proposed enclosing
-   outputs. Internal definite chains can be resolved wholly in private
+   and apply premises 1–3 to external basis links in the direct inventory
+   and the proposed enclosing outputs. A privately built nested context
+   resolves its entire interior normally; only its own record joins the
+   parent inventory. Internal definite chains can be resolved wholly in private
    storage. An indefinite/unsupported link or dependence on `G` refuses
    here too. Preserve the existing arithmetic, width, margin, marker,
    float/clearance, flex, positioned and split-fragment conditions.
@@ -2849,7 +2851,7 @@ their own reason rather than manufacturing a reason-7 result.
 
 Indefinite percentage min/max cases use the first row with `min-height:50%`
 or `max-height:50%` in place of `height:50%` and retain reason 7 for this
-certificate. A dangling basis handle, omitted descendant record, unsupported
+certificate. A dangling basis handle, omitted direct-reader record, unsupported
 provenance link, or cycle without a definite external derivation also fails
 premise 1 or 2. Such metadata faults require injection into a real fixture;
 there is no HTML declaration that directly creates a dangling layout handle.
@@ -3090,7 +3092,7 @@ argument's proposed 14900K measurement host for this task.
 
 ### Q139 implementation: records and local summaries
 
-The candidate retains one `HeightProof` per block/context, naming its actual
+The initial dense candidate retained one `HeightProof` per block/context, naming its actual
 immediate basis and the height/minimum/maximum read mask, state, numeric input,
 content result and style keys. The ordinary containing-block links share
 provenance; a percentage-free specified size starts an independent terminal,
@@ -3505,3 +3507,18 @@ use the same drivers and inputs. Root-font cost outside the paired twin
 spread, or memory growth no smaller than the dense-record sample above,
 rejects the cost aim. Any admitted geometry mismatch, lost required path
 or undetected mutation rejects correctness. No cost result is claimed yet.
+
+
+The Q139 fixtures and layout floor now run from the permanent `q139`
+workflow on pushes to this branch and main, affected pull requests, and
+manual dispatch. `percentage-cases.py`, `percentage-splice.py` and
+`percentage-matrix.py` keep that caller; `percentage-falsify.py` keeps the
+permanent `falsify-m2` caller, whose main/manual runs include both inventories
+of semantic mutations. The nested-reader omission now targets a direct
+reader in the route context, because off-route nested readers are expressly
+outside the approved inventory. All existing M2 mutation expectations stay.
+The one-use ABI inspector is removed after the dense-record measurement;
+peak RSS will measure the compact candidate. The collection-off generator
+is removed because its stubs never compiled with exact effect rows and
+therefore supplied no valid comparison. Collection cost remains unseparated;
+no result from that failed control is claimed.
