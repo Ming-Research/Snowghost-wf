@@ -3221,3 +3221,19 @@ compilation, not an oracle or negative control. Each row still validates its
 unmutated focused fixture before accepting its intended failure. The detector
 has hosted machinery controls for identity differences, intended reason-7
 admission loss, missing rows, exact certificate assertions and unrelated errors.
+
+### Hosted workload recovery, 2026-10-08
+
+The first timing pilot, run 37774211817 at `728d577`, built all four
+sequential/parallel driver pairs but performed no measurements: fetching
+Apollo stopped at its stale historical hash. The rerun consumes the archived
+Apollo inputs from diagnosis run 37727037303, whose original 60 block edits
+motivated Q139. The archive includes a SHA-256 manifest, checked in hosted
+CI before use. It is the diagnostic capture, not the earlier E1 supplement:
+HTML `1405f09a8888e2854ba8785a4da6b50dbd3951fb56ec9eca7f2e20aa3fe78dc4`,
+modules `cc2e64f8f1706af7f505ec69b6c9807cb05a743f7887ccbf8c7e104e1f41a9f8`,
+site CSS `a292ccfd0f47accce300fd2febc776a88c2cd18b82f3f4cc8fad01fbdb9ca1d8`.
+All compared drivers receive those same bytes, fonts and generated edits.
+The temporary timing workflow can reuse already built hosted artifacts when
+only its harness changes; this retry remains a pilot on the recorded old
+revision, and cannot establish final-revision performance.
