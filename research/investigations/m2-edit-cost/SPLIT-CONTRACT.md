@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: [Q138 acceptance](#q138-four-cohort-acceptance-at-0dc2e5e) fails; option A
+Current outcome: [Q138 acceptance](#q138-six-cohort-acceptance-at-db46e92) fails; option A
 is not merged into research/m2-layout.
 
 ## Question and prior rejection criterion
@@ -1041,3 +1041,58 @@ remove duplicate work without changing representation, viewport ownership or
 saturation order, but its cost contribution is not yet established. No compiler
 limitation or new block representation is inferred from function percentages.
 The temporary profile job is removed after its evidence is captured.
+
+### Q138 six-cohort acceptance at db46e92
+
+[Run 37728270804](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37728270804) succeeded with 288 raw timing files and 11,520 edit records. The measured source is db46e9218eb3b53550148843a0c3f433e5c113e4; immediate-before and its independently built twin are 03a3d3ebc2f826c3c40aa6179237aa5819c4b39b. Main and cf12c609 retain the frozen source revisions above. All six cohorts use wf-0b7f5c5b9854, LLVM 22 and WF_WORKERS=4 on one Ubuntu 24.04 AMD EPYC 7763 hosted runner, four exposed vCPUs, Linux 6.17.0-1022-azure. Two rounds use forward/reverse cohort order. Values are upper median edit microseconds, round 1 / round 2, excluding separately measured style time.
+
+| Page | Kind | Mode | Main | cf12 | twin | before | before twin | A | Result |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| ecma262 | word | seq | 104/102 | 108/106 | 106/112 | 108/107 | 109/108 | 117/112 | passes |
+| ecma262 | word | par | 174/171 | 183/186 | 185/178 | 175/180 | 179/186 | 176/177 | passes |
+| ecma262 | sentence | seq | 231/227 | 734/802 | 705/739 | 164/150 | 147/146 | 151/148 | passes |
+| ecma262 | sentence | par | 334/300 | 741/673 | 762/730 | 232/234 | 246/239 | 241/232 | passes |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| ecma262 | fontsize | seq | 1419/1614 | 9408/9993 | 9155/9041 | 869/850 | 874/937 | 577/568 | passes |
+| ecma262 | fontsize | par | 2355/1925 | 9431/9524 | 9455/10116 | 834/912 | 882/810 | 848/836 | passes |
+| ecma262 | rootfont | seq | 30250/28979 | 116154/117899 | 111570/115859 | 111291/114405 | 111537/113402 | 113769/112539 | fails r1,r2 |
+| ecma262 | rootfont | par | 68528/67792 | 222458/223198 | 220357/226586 | 185846/188312 | 187410/190318 | 191676/186910 | fails r1,r2 |
+| ecma262 | block | seq | 530213/524230 | 113/113 | 119/116 | 117/119 | 119/128 | 119/125 | fails r1,r2 |
+| ecma262 | block | par | 378708/377834 | 188/190 | 190/212 | 210/198 | 206/189 | 190/188 | fails r1 |
+| html5 | word | seq | 75/73 | 79/82 | 80/81 | 85/79 | 81/82 | 81/79 | passes |
+| html5 | word | par | 121/119 | 129/127 | 128/130 | 126/128 | 130/130 | 129/129 | passes |
+| html5 | sentence | seq | 231/230 | 328/322 | 338/333 | 373/372 | 362/396 | 376/362 | passes |
+| html5 | sentence | par | 313/312 | 376/366 | 370/378 | 406/406 | 385/402 | 385/405 | passes |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | passes |
+| html5 | fontsize | seq | 666/702 | 1860/1939 | 1735/2010 | 1578/1468 | 1468/1532 | 1437/1426 | fails r1,r2 |
+| html5 | fontsize | par | 720/751 | 2202/2158 | 2100/2126 | 2184/1977 | 2172/2032 | 2065/2089 | fails r1,r2 |
+| html5 | rootfont | seq | 616788/615236 | 770995/771687 | 768497/770434 | 774083/774906 | 779006/772078 | 772916/771384 | passes |
+| html5 | rootfont | par | 357834/359159 | 567345/570063 | 567905/570159 | 538796/540888 | 538971/538381 | 543208/549456 | passes |
+| html5 | block | seq | 603430/598779 | 564/576 | 569/569 | 603/597 | 613/594 | 619/596 | fails r1,r2 |
+| html5 | block | par | 437996/431620 | 667/651 | 657/658 | 695/716 | 710/715 | 718/710 | fails r1,r2 |
+
+Acceptance fails 15 of 48 cells: all four ECMA262 root-font cells, all four HTML5 font-size cells, and seven block cells. No merge follows this result. The base twin's spread does not waive literal failures. Before/before-twin/A block timings overlap or A is slower, rejecting an isolated block benefit from the ordinary-origin specialization. ECMA262 sequential font-size improves from before 869/850 and before twin 874/937 to A 577/568 us; this limited observation supports neither a general speed claim nor a root-font repair. The ordinary-phase input closure remains valid, but its proposed block-cost explanation is rejected.
+
+Pin-only children are main `5e604f4902b7fc3edcf0b5df8d3b480ccc507655`, base `7af638017c4ce4735cae6df33d52e1ead825f49c`, twin `c7ad220d44f752f0cdc4b99bbd62d4f5528d8cff`, before `7fe57971ffc8d7333787d5454c01eb3e70f6babc`, before twin `1c54525b6d1439cf54b4fda018d2c5fbe08b802a` and A `30ebc091e3837d72fec63aff2214689c0d0c6d22`. Exact patches/source identities accompany that run's `edit-cost-evidence`; none is pushed or adopted.
+
+The first-round root-font counters still prepare 41 paragraphs in ECMA262. Main reports three contexts, zero rebroken paragraphs and one entry; A reports four contexts, 41 rebroken paragraphs and 112,823 entries (112,817 held). Those counters include the previously described flex-accounting distinction and do not alone prove additional descendant reflow. HTML5 main and A both prepare 60,867–60,868 paragraphs, rebreak 60,868, visit 13,903 contexts and report 105,989 entries. Separate style upper medians are ECMA262 main/A 3,989/4,286 us sequential and 4,924/5,048 parallel; HTML5 290,437/293,647 sequential and 192,845/195,868 parallel. The mandatory floor is actual style dependencies, changed text preparation and dependent reflow; these measurements establish no universal numeric lower bound. Main's observed edit path is the practical comparison. Q140 remains an unimplemented unchanged-input proposal, not a claim that all root-font work can disappear.
+
+### Child-motion owner reuse: question before matched measurement
+
+The local-phase source computes the same immutable owner once for travel
+charging and again inside `child_origin`. Reuse the first value for the child
+anchor, with zero owner for viewport placement, while preserving both
+`origin_accumulate` and every subsequent saturated add/subtract in their
+existing order. Replay phases continue through `child_origin`. This removes
+one ancestry traversal and adds no state, memoization key or shared ordering.
+The unchanged positioned, atomic, transfer-travel and numeric-admission cases
+exercise the affected behavior.
+
+The delayed profile of frozen db46e92 proceeds independently of this candidate's
+correctness and matched timing. Compare candidate versus db46e92 and its
+independent twin, together with main/cf12/cf12-twin, on one hosted runner with
+the full two-round six-kind script. Reject a block-cost attribution if its
+medians do not separate from both before controls. All correctness gates remain
+required; no profile percentage alone establishes an acceptance improvement.
