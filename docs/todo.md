@@ -331,25 +331,19 @@ example apart from the renderer code that exposed it
   ([earlier evidence](../research/investigations/incremental-style/runs/fontsize-fable.txt));
   that work proposed retaining sorted structural keys and closing flags.
   M2 still needs a bounded link from changed endpoints to emitted runs.
-  Change: settle the dependency/invalidation contract for bounded repair of
-  the retained endpoint anchors and split/empty output, or an index of the
-  flat rectangles; merely repeating a transient full scan does not remove
-  the unrelated context dependency. Owner item Q134 remains open; its earlier
-  missing-identity grounds must now account for the retained anchors. The
-  [final integration comparison](../research/investigations/m2-edit-cost/DESIGN.md#final-hosted-comparison-and-remaining-acceptance-failure)
-  still fails ECMA sentence acceptance after local repairs. Q135 A is now
-  authorized: the [dependency contract and two prototypes](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md)
-  investigate Q134 on isolated experiment branches. Neither is adopted.
-  Validate split and
-  empty fragment order, moved ancestor endpoints, negative margins, relative
-  positioning, saturation, insert/remove lifetimes, all X5 identities and
-  falsifiers, then repeat same-host text/font-size acceptance. Reopen after
-  the owner chooses the representation. Topology-changing replays still rebuild
-  all runs in both current prototypes: a future retained adjacency index must
-  replace only affected runs while preserving source publication order. Its
-  validation must include line-presence changes that split and join two runs
-  of one owner, including coincident rectangles; reopen if measured costs or
-  a bounded-topology acceptance claim requires that work.
+  Q134 A was selected by the owner on 2026-10-07, with Q135 A requiring the
+  [dependency contract](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md)
+  first: stable run-role slots, payload endpoints, owner-relative line offsets
+  and indexed affected-run repair. Q132 A retains counted post-publication
+  flex recovery. Option B remains parked. Adoption into research/m2-layout
+  requires all correctness/falsification gates and the two-round same-host
+  acceptance comparison against main and cf12c609; results are pending.
+  Topology-preserving replays use the index; topology-changing replays still
+  rebuild all runs. Bounded topology replacement remains incomplete: retain
+  adjacency dependencies and replace only affected runs in source publication
+  order. Validate line-presence changes splitting/joining runs of one owner,
+  including coincident rectangles, negative margins and endpoint retirement.
+  Reopen this remaining work before claiming bounded topology repair complete.
 
 - **HTML font edits still translate dense compatibility suffixes.** Q134's
   two split-fragment prototypes leave this broader work in place. In the
@@ -363,7 +357,8 @@ example apart from the renderer code that exposed it
   translation/publication with retained exact owner motion and scoped access,
   preserving saturation order. Validate all X5 identity/splice gates, add a
   suffix-repair omission falsifier, and rerun the same-host two-round comparison
-  with an identical-source control. Reopen after the owner decides Q134,
+  with an identical-source control. Q134 A is selected; reopen if its acceptance
+  run still fails,
   before claiming the M2 edit-cost target complete.
 
 - **M2 fallback routing and append-only storage still grow with the session.**

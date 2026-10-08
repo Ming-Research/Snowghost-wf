@@ -2,21 +2,24 @@
 
 ## Question and prior rejection criterion
 
-From cf12c609e1c00f86bb431fab4e92f5dca2bf94f2, compare stable anchored
-run records (A) with flat rectangles reached through a dependency index (B).
-The owner authorized both experiments, not adoption of either. Reject a
-performance acceptance claim unless both sentence and font-size edits are
-within twice concurrent main in each mode and both hosted rounds. Measure
-all six X5 kinds on ecma262 and html5, with the merged base and its independent
-same-source twin, using identical scripts, compiler, host and settings.
-Correctness remains byte-identical full dumps, incremental/full identity in
-both modes, unchanged cases, every page block edit splice 1 reason 0, and all
-existing falsifiers plus one omission of each option's targeted repair.
+The owner selected Q134 A on 2026-10-07: retain stable split-run and endpoint
+identities with owner-relative anchors, repair affected fragments, and let
+following fragments resolve through translated endpoints. Q135 A requires the
+dependency and validity contract first. Q132 A retains counted post-publication
+flex recovery. Option B is no longer an adoption candidate and its branch stays
+unchanged. This document owns A's contract and its acceptance evidence beside
+[the cost investigation](DESIGN.md).
 
-This document owns the experiment's contract and results. It lives beside
-[the cost investigation](DESIGN.md); fold its surviving conclusions into that
-record when the experiment branches are retired. No experiment is merged into
-research/m2-layout and no pull request is opened.
+Acceptance is byte-identical full dumps, incremental/full identity for all six
+X5 kinds in sequential and parallel modes, unchanged case/fixture pages, every
+page block edit splice 1 reason 0, and all existing falsifiers plus omissions
+of affected-fragment repair and following-fragment translation. Two hosted
+rounds compare A with main, cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 and an
+independently built same-source base twin, using identical scripts, compiler,
+host and settings. Sentence and font-size medians must be at most twice main
+in each page/mode/round; word and block must be no worse than the base. Only a
+passing result authorizes a merge commit into research/m2-layout followed by
+layout-check and check. Failure is reported to the owner without merging.
 
 ## Contract before implementation
 
@@ -81,6 +84,37 @@ bridge remains necessary when a legacy reader requires all resolved scratch.
 Missing metadata, retired endpoints or failed numeric conditions retain the
 existing reference behavior; no new source limitation is introduced.
 
+### Edit closure and publication
+
+| Edit | Invalidated inputs | Required repair | Retained work |
+|---|---|---|---|
+| Word or sentence text | Shaping, breaks, line-presence, paragraph size and outgoing flow state | Prepare/break the changed paragraph; settle affected flow; repair intersecting run intervals. A line-presence transition rebuilds topology, including negative adjacency inputs. | Unchanged pieces retain owner marks; runs outside replay keep selectors, offsets and geometry certificates. Following endpoints consume the exact admitted motion. |
+| Local font-size or root font | All actual inherited font/length uses, intrinsic size, available width, line-presence and resolved margins | Follow recorded style uses, recompute affected widths, breaks, margins and flow; repair the run's first width and last margin even when height is unchanged. | A uniform exact vertical move preserves local offsets and role slots. Root font has no promised small frontier. |
+| Class / colour | The actual style delta, including fragment visibility and generated content | Paint-only colour changes no layout input; layout deltas follow their recorded uses. Changed box/inline ownership or generated pieces replaces topology. | Style identity alone is neither an invalidator nor a proof of unchanged layout. |
+| Block insertion/removal | Source order, endpoint lifetime, adjacency, owner marks and boundary state | The existing complete-block splice certificate permits retention only when no split or empty source is retired and the seam preserves topology/selectors. Otherwise rebuild the affected context through its recorded checkpoint. | Certified kept payload slots and relative anchors survive rank shifts; reference entry rebuild restores raw ranks before binary split lookup. |
+
+There are three authority states. Full construction/reconstruction publishes raw
+reference rectangles, dirty pending lines and uncached topology. Encoding then
+publishes exact line offsets, checks every raw/anchor field, and constructs the
+interval index. A stable-topology replay starts with these certificates, dirties
+only stacked split lines, publishes their offsets after endpoints settle, and
+repairs/certifies intersecting leaf slots before the balanced validity join.
+Only then is `fragments_anchored` published. Raw suffix y fields are deliberately
+stale in this last state: every output reader must use `placed_context_fragment`.
+A compatibility bridge materializes anchored values before making raw scratch
+authoritative again. Clearing fragments drops the index, aligned anchors and
+repair/authority flags together. A failed certificate forbids local reuse;
+it is not evidence that stale suffix scratch is reference output.
+
+The index stores split-slot extrema, not coordinates: an enclosing run intersects
+a replay of its interior even when neither endpoint is replayed. Payload slots,
+not shifted event ranks, identify the endpoint. Flow order determines interval
+selection and output order; it must never be inferred from y because relative
+positioning and negative margins can reverse it. Empty-inline rectangles keep
+their source paragraph's last lineless scratch semantics and are not suffix
+rectangles. They can be retained only under the explicit empty-source stability
+condition.
+
 ## Candidate data, invariants and true order
 
 A retains a run slot within a retained topology, its first/last split endpoints, explicit
@@ -142,8 +176,9 @@ identities. Existing saturation and structural falsifiers remain enabled.
 
 ## Status
 
-Contract recorded before implementation. Q135 A is authorized and closed;
-Q134 remains open pending validation and measurements. Independent contract
+The contract preceded the prototype. Q134 A and Q135 A are owner-approved;
+implementation completeness and acceptance are separate from that selection.
+The following dated prototype evidence predates the completion validation. Independent contract
 review found and fixed the empty-source line-presence/identity dependency,
 publication order separate from storage identity, and the Child margin case.
 
