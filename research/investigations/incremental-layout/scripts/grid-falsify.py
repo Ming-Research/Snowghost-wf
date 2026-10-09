@@ -103,6 +103,20 @@ MUTATIONS = {
 }
 
 
+# Removing the fixed-contribution read also removes its transitive effect.
+# Keep the intentionally wrong program's effect rows exact; compilation is
+# only a prerequisite for observing the excessive grid refusal.
+EXTRA_SITES = {
+    'refuse-fixed-intrinsic-contribution': [
+        ('grid_retained', 'grid_column_item_ready',
+         'reads(child), reads(tracks), reads(styles)', 'reads(tracks)'),
+        ('grid_retained', 'grid_column_items_ready',
+         'reads(children), reads(items), reads(tracks), reads(styles)',
+         'reads(children), reads(items), reads(tracks)'),
+    ],
+}
+
+
 def require_complete_dump(output):
     rows = output.splitlines()
     if not output.endswith('\n') or not rows or not rows[-1].startswith('H\t'):
@@ -221,7 +235,10 @@ def main():
     if args.command == 'self-test':
         self_test()
     elif args.command == 'apply':
-        module('percentage-falsify').apply_site(args.name, *MUTATIONS[args.name][:4])
+        apply_site = module('percentage-falsify').apply_site
+        apply_site(args.name, *MUTATIONS[args.name][:4])
+        for site in EXTRA_SITES.get(args.name, ()):
+            apply_site(args.name, *site)
     else:
         verify(args.name, args.baseline, args.mutant, args.directory, args.baseline_paths)
 

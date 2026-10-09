@@ -4427,3 +4427,33 @@ The corrected workflow preserves the historical source and the required
 `missing [1-9]` reach failure. Final validation and cost tables are recorded
 in [PR #54's completion report](https://github.com/Ming-Research/Snowghost-wf/pull/54);
 the dated observations here do not substitute for its final-head gates.
+
+### Repaired matrix evidence and review scope, 2026-10-09
+
+The fixture job in hosted [run 37913428460](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37913428460)
+at `b5e5d744bc1afb5391ec61e3f20e970e50363480` passes all 36 families in each
+mode. The baseline grid is 133 px high and the outer flex peer starts at
+8 px, exactly matching Chromium 141.0.7390.37 in both modes. The fractional
+intrinsic fixture now matches its browser width after insertion. Every
+original-page block edit matches full rebuild: ECMA262 splices 20/20,
+HTML5 60/60, and Apollo11 38/60 per mode. Apollo11's remaining edits are
+18 reason-9 refusals, two reason-7 refusals and two reason-3 refusals; these
+retain their broad certificate categories above. This evidence verifies the
+repairs but does not replace the final-head gates or mutation matrix.
+
+Review clarifies the item-owned proposal Decision as CSS Grid 11.5's
+intrinsic track-contribution distribution. The inherited CSS Grid 11.7
+scalar maximum still orders independent track/item candidates; it is outside
+the selected shared-track representation and its cost is unmeasured. Whether
+to extend this change or investigate that chain separately awaits the owner's
+scope decision in [PR #54](https://github.com/Ming-Research/Snowghost-wf/pull/54).
+No alternative scalar implementation or Whitefoot workaround is selected.
+The four existing Decisions remain proposed, with no design-log entry.
+
+Static review also found that the excessive fixed-contribution refusal
+mutation removes its callee's only child/style reads and its recursive
+caller's only transitive style read. Companion exact effect-row substitutions
+now describe that intentionally faulty program correctly. They change no
+production contract and introduce no dummy reads. The mutant must still
+compile and produce the intended excessive grid refusal in both modes;
+a compiler error or unrelated refusal remains a failed experiment.
