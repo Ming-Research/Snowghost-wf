@@ -2642,3 +2642,104 @@ The next diagnostic captures the adjacent pre-frontier, first frontier and
 bounded-frontier drivers from that run. It also records compiler admission
 of intervening b4ebd94 and a32573f with the same release, distinguishing the
 introducing source change from the first buildable measured revision.
+
+### Root-font source boundary and dependency audit
+
+The introducing commit is [b4ebd94, retained effective inputs and stationary
+frontiers](https://github.com/Ming-Research/Snowghost-wf/commit/b4ebd94d13e85e5db9a3d9d585752b7f3a3b2770).
+Its immediate predecessor is 593b2dba6c10ed23babceea63e65029d7820ccc2.
+The new multi-paragraph preparation call replaces the previously split
+counted paragraph loop; the child-context loop and `break_all` map remain
+split. The first buildable measured revision is
+d6383ddf5be38fb2893a13a47536bea4baccf1c4, after two admission repairs.
+Hosted [diagnostic 37904985865](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37904985865)
+records exit 1 for b4ebd94 (first diagnostic: unresolved `Styles`) and
+for a32573fd23d743f86ca279d574360b30ac7dc4dc (first diagnostic: a u32
+counted-loop index where u64 is required; also a stationary-frontier range
+proof refusal). No timing is claimed for either unbuildable source.
+
+All pilot cells below are upper medians in microseconds, with the minimum
+and maximum of the four edits in brackets. Stage 1 is run 37899580622 on
+EPYC 7763; stage 2 is run 37902138997 on EPYC 9V74, each with four exposed
+CPUs. Both use wf-b2209fd31035 and LLVM 22.1.8, the same generated HTML5
+root-font script within the stage, independent builds for every twin, and
+reversed cohort order in round 2. These hosted observations localize a large
+regression; they are not precise cross-machine performance comparisons.
+
+Stage 1 names: `good` = cf12c609, `mid` = 03a3d3e, `bad` = 58b16da.
+Stage 2 names: `pre` = 593b2db, `first` = d6383dd, `mid2` = 24f351e,
+`bounded` = 3393042 with the established `frontier-span.patch`.
+Every `twin` repeats its named source independently. The artifacts retain
+full source and pin-only child identities and patches.
+
+| Stage | Build | Sequential round 1 | Sequential round 2 | Four workers round 1 | Four workers round 2 |
+|---|---|---:|---:|---:|---:|
+| 1 | good | 793935 [790472–807826] | 796397 [790503–800270] | 575520 [547635–578361] | 576964 [552322–627702] |
+| 1 | goodtwin | 789943 [787264–798378] | 792898 [788025–810076] | 550411 [530302–577706] | 569578 [528855–637633] |
+| 1 | mid | 792701 [784038–796393] | 801631 [791704–806520] | 575707 [561063–583861] | 586618 [574670–600488] |
+| 1 | midtwin | 794158 [792668–801408] | 803284 [793887–804937] | 551766 [542620–579565] | 564350 [545072–599988] |
+| 1 | bad | 846395 [836566–856159] | 857006 [833249–857147] | 1012403 [987205–1028534] | 1038728 [1004272–1095083] |
+| 1 | badtwin | 846288 [837261–849048] | 851224 [834166–855300] | 1024600 [1013511–1056260] | 1020883 [1015246–1070982] |
+| 2 | pre | 864154 [853470–866331] | 858288 [853326–875015] | 580834 [558730–628717] | 587982 [564829–595159] |
+| 2 | pretwin | 867614 [855891–869971] | 865568 [858987–868111] | 572026 [564203–615726] | 589441 [567768–601554] |
+| 2 | first | 1055912 [1044849–1067736] | 1073714 [1062189–1099446] | 1251214 [1189720–1330766] | 1251940 [1229188–1258117] |
+| 2 | firsttwin | 1056697 [1053078–1098750] | 1058120 [1054229–1065660] | 1294570 [1206183–1325177] | 1249397 [1201017–1356081] |
+| 2 | mid2 | 1087258 [1067280–1100480] | 1059602 [1056164–1062150] | 1245124 [1201020–1302573] | 1266235 [1228941–1308408] |
+| 2 | mid2twin | 1066413 [1060255–1093067] | 1056779 [1047448–1088425] | 1231976 [1213169–1313877] | 1275540 [1227014–1311927] |
+| 2 | bounded | 899252 [887617–904949] | 902561 [881819–919747] | 1036509 [1007010–1052743] | 1034254 [1005715–1041447] |
+| 2 | boundedtwin | 895686 [884713–905109] | 896945 [887784–901156] | 1030264 [995670–1040171] | 1043152 [1016030–1072263] |
+
+The first frontier has a second cost: its excessive fixed directory depth
+also raises sequential time. The bounded-frontier comparison separates that
+cost from the lost parallel preparation: sequential is only about 3–5%
+above `pre`, while four-worker medians remain about 76–80% higher, beyond
+both twins' entire edit ranges. No midpoint result is compared numerically
+across hosts.
+
+R3 dependency audit: a fork must read its immutable directory node and
+compute its half interval before either child starts. Each child reads only
+shared document/style/font data and its own directory subtree, and writes
+only its disjoint paragraph slice. A paragraph must retain its previous
+text/shaping before reset and preparation; the parent must wait for both
+Boolean completion results before `band`. Neither child needs the other's
+result, storage or execution order. There is no shared accumulator or list
+in this pair. Releasing a box owned by one paragraph cannot release an
+adjacent paragraph or the immutable directory. The new source adds sparse
+tree navigation, but no true sibling dependency. The existing serial
+owner-motion publication is a separate stored-field proof gap and is
+unchanged.
+
+### Root-font profile and emitted preparation
+
+Diagnostic 37904985865 reuses the stage-2 `pre`, `first` and `bounded`
+drivers on one four-CPU EPYC 7763. One root-font edit has exactly one matched
+`layout.update` entry/return interval in each capture. Fixed 2 ms user
+CPU-clock instruction-pointer samples exclude initialization; every capture
+has zero recorded lost events. The native parallel-driver one/four-worker
+samples are respectively 765685/559579, 983807/1183397 and 813973/969448 us.
+These single edits and instrumented captures are diagnosis, not acceptance.
+
+| Driver | Update-window samples | Scheduler worker-loop self samples | Unknown-symbol samples |
+|---|---:|---:|---:|
+| pre | 843 | 121 | 77 |
+| first | 1813 | 997 | 102 |
+| bounded | 1779 | 1028 | 66 |
+
+Preparation work spreads across worker threads before the frontier change;
+after it, the main thread performs text preparation while most early worker
+samples are in `wf__par_worker_main`. Later line-breaking work still reaches
+workers. These are instruction-pointer self samples, not call-stack or
+exact phase percentages; unknown symbols are retained rather than assigned.
+Disassembly supplies the stronger mechanism evidence: the budget-carrying
+`frontier_prepare` body directly calls the left child and continues into
+the right, with no lane acquisition or publication in the recursive pair.
+
+The ledger reports the pair **permitted, eligible**, and a runtime-derived
+recursion-budget family. It does not report a refusal for that pair. Its
+first neighboring condition-1 denial is between `let middle` and the first
+call, because argument formation reads `middle`; the following denial is
+between the second call and the result join, which reads `right_ok`. Those
+are true dependencies and do not explain serial siblings. The old paragraph
+loop's `split under band` disappears; child-context preparation and
+`break_all` remain split. A budget-family ledger line alone is therefore
+not evidence that sibling offers survived emission.
