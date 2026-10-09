@@ -3821,7 +3821,7 @@ retained/full identity alone cannot establish the full algorithm's premise.
 
 | Fixture family | Required observation | One-condition mutation |
 | --- | --- | --- |
-| Fixed columns, definite percentage columns, zero-minimum fractional columns | Splice; exact full and browser geometry, including the following row and outer sibling | Skip grid rerun or keep old row positions |
+| Fixed columns, definite percentage columns, zero-minimum fractional columns | Splice; exact retained/full identity and agreement with the browser oracle, including the following row and outer sibling | Skip grid rerun or keep old row positions |
 | Two nested invariant grids, gaps and padding | Both containers settle and preserve inline sizes; their following rows and outer flow move correctly | Skip one enclosing grid or use border width as track basis |
 | Short retained item stretched beside the edited tall item, then shrink/remove | Natural contribution remains short; final stretch is reapplied or removed correctly | Substitute the retained final height for the natural result; omit final Space check |
 | Row spans, baseline-aligned peers and fixed/clamped grid height | Track constraints, item positions and baseline propagate even at equal container height | Omit span contribution, baseline shim or output field |
@@ -3841,7 +3841,7 @@ the omitted write is not evidence that the stale-result fault was detected.
 
 ### Refusal boundary and outstanding evidence
 
-Before publication, refuse unknown/stale grid inputs, changed item membership
+Before publication, refuse unknown/stale column-certificate inputs, changed item membership
 or placement, unproved container inline size, and content-dependent column
 sizing with the grid-dependency reason when reached. Preserve earlier
 route/style/seam refusals and their precedence; a fixture intended to isolate
@@ -3862,16 +3862,24 @@ Whitefoot gap is established by this argument.
 
 ### Executable baseline fixtures
 
-`grid-splice.py` now prepares fifteen fixture families and their proposed
+`grid-splice.py` now prepares sixteen fixture families and their proposed
 reason-0/reason-11 paths. It exercises repeated insert/remove pairs, text
 edits, positive style lifetimes, removal of an original block and positive
 viewport lifetimes. The percentage-column case uses an 80-percent container
 width, so viewport refresh changes the measured item Space, not just the
-viewport number. Independent Chromium comparisons cover the first three
-prefixes; later prefixes require retained/full identity and their paths.
+viewport number. A flex parent aligned on baselines consumes the grid's
+baseline in the `baseline-consumer` family. Independent Chromium comparisons
+cover the first three prefixes; later prefixes require retained/full identity
+and their paths. The established browser comparator allows 1 px for block
+rectangles, compares inline/text fragment counts and widths, and reports
+scroll height without judging it. It is not an exact all-coordinate browser
+oracle; retained/full dump identity is exact.
 The temporary `q140-baseline` workflow first runs the fixed-column sample;
 the matrix requires a separate dispatch after inspecting that sample.
 Its explicit baseline mode asserts the existing reason 2 in a separate
 path file. Those outcomes characterize the old renderer and cannot satisfy
-the candidate's admission or mutation requirements. Executable mutations,
-the remaining certificate combinations and implementation are still pending.
+the candidate's admission or mutation requirements. The current path parser
+accepts reasons only through 10; the candidate must add reason 11 to that
+parser and its malformed-row controls when the renderer gains the new reason.
+Executable mutations, the remaining certificate combinations and
+implementation are still pending.
