@@ -441,8 +441,8 @@ example apart from the renderer code that exposed it
   exact-route membership hypothesis was rejected: marking takes only tens of
   microseconds against roughly 110 ms of profiled edit work. See the
   [profile and floor](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#correctly-styled-ecma262-profile-membership-hypothesis-rejected).
-  The integrated root-font comparison still fails ECMA262 in both modes and
-  rounds. The [effective-input probe](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#effective-input-result-and-remaining-root-font-contract)
+  The earlier integrated root-font comparison failed ECMA262 in both modes
+  and rounds. The [effective-input probe](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#effective-input-result-and-remaining-root-font-contract)
   finds unchanged completed frame/space in its 112,817-event flow, but 41
   paragraphs are marked on both 12px and undo. Q140 therefore requires a
   complete effective-input/consumer contract plus bounded marked-paragraph
@@ -474,8 +474,11 @@ example apart from the renderer code that exposed it
   placement changes need it. Adoption still waits on the separately recorded
   stored-field proof gap; no serial owner-motion write changes here.
 
-- **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
-  fails seven of eight literal block cells. Owner-read specializations and
+- **M2 block acceptance is tracked against the cf12 cost gate.** The earlier
+  integrated comparison, using the earlier timing compiler, failed seven of
+  eight literal block cells. Current primary and twin block results use the
+  same compiler for every cohort and are maintained in
+  [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55). Owner-read specializations and
   duplicate-read removal establish no general block speed improvement against
   their independent before twins. Both startup-separated profile attempts lose
   samples, so they do not establish quantitative attribution or a compiler
