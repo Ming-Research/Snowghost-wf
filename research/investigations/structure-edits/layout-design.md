@@ -4472,10 +4472,13 @@ findings under the prior criterion; no cost-equivalence claim follows.
 The next question is where the added full-layout work occurs. Compare
 sequential instruction profiles of the already-measured M2, twin and
 candidate binaries on the same Apollo11 capture and fonts. Subtract each
-zero-layout process from its one-layout process to separate layout from
-driver setup. First time the candidate one-layout profile; proceed to the
-five remaining zero/one samples only if that smallest useful sample takes
-at most two minutes. This diagnostic attributes instruction counts, not
+zero-layout process from its ten-layout process to separate layout from
+driver setup and match the repetition count that exposed the sequential
+regression. The native candidate one-layout pilots (87.8 and 54.5 ms) were
+lower than the ten-layout per-repetition samples (98.7–106.5 ms), so a
+one-layout-only profile could miss the measured effect. First time two
+candidate one-layout instruction profiles; proceed to the six zero/ten
+samples only if each smallest useful sample takes at most 45 seconds. This diagnostic attributes instruction counts, not
 wall-time percentages. Extra grid-proposal/reduction work is a hypothesis,
 not a conclusion; excess dominated by other work rejects that hypothesis.
 A generated-code problem in a natural source form needs a minimized
