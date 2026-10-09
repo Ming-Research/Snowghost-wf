@@ -6,7 +6,7 @@ alias sizing_value = pkg::css::values::sizing_value;
 alias sizing_auto = pkg::css::values::sizing_auto;
 
 fn splice_grid_ready(context: &Context, styles: &Styles) -> ready: Bool reads(context), reads(styles) {
-  doc "Requires the settled grid's content-independent column certificate, unchanged incoming Space and an inline size independent of changed content. Membership and placement remain unchanged because the seam is strictly inside an existing item and retained grid/item restyles are excluded before publication.";
+  doc "Requires the settled grid's content-independent column certificate, layout-equivalent incoming Space and an inline size independent of changed content. The ordinary layout equivalence ignores only an unused containing height basis; the caller separately checks height provenance. Membership and placement remain unchanged because the seam is strictly inside an existing item and retained grid/item restyles are excluded before publication.";
   if context^.kind != ctx_grid {
     return False();
   }
@@ -31,23 +31,16 @@ fn splice_grid_ready(context: &Context, styles: &Styles) -> ready: Bool reads(co
   if context^.marked_children != 0_u32 {
     return False();
   }
-  let same = same_space(first: context^.laid, second: context^.space);
+  let same = equivalent_space(styles: styles, style: context^.style, first: context^.laid, second: context^.space);
   let width = splice_width_stable(context: context, styles: styles);
   return band(same, width);
 }
 
 fn splice_grid_flex_width(context: &Context, child: &Context, styles: &Styles) -> ready: Bool reads(context), reads(child), reads(styles) {
-  doc "Proves the changed row-flex item's main inputs unchanged. A definite base does not remove the automatic minimum's content dependency. Unknown intrinsic content, column flex, changing setup dimensions and inactive/stale preparation refuse; an earlier failed edge remains failed in splice_inputs.";
-  if child^.flex_cache.valid {
-  } else {
-    return False();
-  }
-  if child^.flex_cache.prepared.active {
-  } else {
-    return False();
-  }
-  let setup = child^.flex_cache.setup;
-  if setup.row {
+  doc "Proves the changed row-flex item's main inputs unchanged from current style and settled parent geometry; splice_inputs separately proves active item membership. A text update may discard preparation while retaining the same layout, so a preparation cache is not the source of these style facts. A definite base does not remove the automatic minimum's content dependency. Unknown intrinsic content, column flex and changing setup dimensions refuse; an earlier failed edge remains failed in splice_inputs.";
+  let parent = container_of(styles: styles, style: context^.style);
+  let row = parent.flex_direction < 2_u8;
+  if row {
   } else {
     return False();
   }
@@ -56,6 +49,9 @@ fn splice_grid_flex_width(context: &Context, child: &Context, styles: &Styles) -
   } else {
     return False();
   }
+  let frame = computed_frame(context: context, styles: styles, basis: context^.space.basis_width);
+  let inner = context^.width -sat frame;
+  let content_width = imax(inner, 0_i32);
   if context^.space.forced_height >= 0_i32 {
     return False();
   }
@@ -81,17 +77,18 @@ fn splice_grid_flex_width(context: &Context, child: &Context, styles: &Styles) -
     return False();
   }
   let group = item_of(styles: styles, style: child^.style);
-  let basis = size_value(value: group.basis, basis: setup.content_width);
+  let basis = size_value(value: group.basis, basis: content_width);
   let declared = group.basis.kind == sizing_value;
   let basis_known = basis >= 0_i32;
   let given = band(declared, basis_known);
-  let specified = specified_width(styles: styles, style: child^.style, basis: setup.content_width, frame: child^.flex_cache.prepared.frame_main);
+  let child_frame = computed_frame(context: child, styles: styles, basis: content_width);
+  let specified = specified_width(styles: styles, style: child^.style, basis: content_width, frame: child_frame);
   let auto_basis = group.basis.kind == sizing_auto;
   let spec_known = specified >= 0_i32;
   let uses_spec = band(auto_basis, spec_known);
   let fixed_base = bor(given, uses_spec);
   let automatic = sizes.min_width.kind == sizing_auto;
-  let scrolls = flex_scrolls(styles: styles, style: child^.style, row: setup.row);
+  let scrolls = flex_scrolls(styles: styles, style: child^.style, row: row);
   let non_scrolling = bnot(scrolls);
   let content_minimum = band(automatic, non_scrolling);
   let content_base = bnot(fixed_base);

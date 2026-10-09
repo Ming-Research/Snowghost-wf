@@ -4362,3 +4362,58 @@ The resolved constructor entry leaves the branch-local TODO. The segment
 access and computed-give entries remain on this branch and are to move to
 the status board on merge under `sg-wfreq-segment-place` and
 `sg-wfreq-give-carrier`, without restoring `docs/todo.md` on main.
+
+### First compiled matrix and repairs, 2026-10-09
+
+Hosted [matrix 37908996380](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37908996380)
+at `c5adfd4f19b744dcdbded86254f00e6551a8df48` compiles both modes and passes
+28 of 36 grid families in each. Six required positive families over-refuse:
+`nested` after its first insertion, and five enclosing-flex families after
+the text-edit pair. The flex proof incorrectly requires a preparation cache
+that `prepare_marked` invalidates even when `update_container` subsequently
+proves unchanged layout. Admission now obtains direction, content width and
+frame from the settled parent and current styles, using the same arithmetic
+as flex layout; the live Child entry proves active membership. It retains
+the intrinsic-content, automatic-minimum and every enclosing-edge obligation,
+and neither renews nor reuses an invalid preparation. Grid currentness now
+uses ordinary layout's `equivalent_space`: a changed containing height basis
+that the grid's own height/limits do not read need not invalidate its inline
+certificate. Complete measuring-Space equality and height provenance remain
+required. Hosted reruns must establish these repairs; no pass is inferred
+from source inspection.
+
+The `flex-fractional-intrinsic` negative correctly refuses but its full layout
+after insertion is 800.65625 px wide versus Chromium's 426.625 px. The common
+grid sizing routine wrongly expands flexible tracks using item contributions
+under a min-content constraint. [CSS Grid 11.7](https://www.w3.org/TR/2025/CRD-css-grid-1-20250326/#algo-flex-tracks)
+requires a zero flex fraction there, leaving established bases unchanged.
+The repair applies that rule to every grid; the existing failed fixture is
+its before-fix observation and remains the after-fix oracle.
+
+The `baseline-inline-block-last` fixture also had an incorrect diagnostic
+expectation. Its `.last p:first-child` selector restyles the retained tail
+when the original first paragraph is removed, and each later insertion or
+removal toggles that match. The existing retained-restyle guard runs before
+the atomic-route guard. The unchanged document and edit sequence now require
+exact reason 6 on that suffix, retaining exact reason 2 before it; neither
+local admission nor geometry/identity requirements change. Chromium prefix
+comparison now precedes path comparison so an over-refusal still leaves
+independent geometry evidence before the path gate fails.
+
+All original block edits match full rebuild in both modes on that revision:
+ECMA262 20 splices of 20, HTML5 60 of 60, Apollo11 19 of 60. Apollo11's other
+41 edits are 29 grid-dependency refusals (11), 10 removed-float refusals (9),
+one unresolved context/height certificate (7), and one unsupported seam or
+fragment state (3). Those reason categories do not identify a narrower cause
+without further tracing. Q139 fixtures pass in hosted run 37909000684 at the
+same revision. The final candidate must rerun these gates and counts.
+
+The two-round cost pilot in hosted run 37907939535 used source-identical
+`f35c520b572d98a4aab234f5651902d21c18e178`, four logical CPUs of an AMD EPYC
+7763 (two cores, two threads per core), Ubuntu 24.04 and the common compiler.
+It completed every kind/page/mode. The twin shows wide outliers (including
+2.043 on parallel ECMA262 block edits), while Apollo11 sentence medians are
+1.139 sequential and 1.257 parallel versus M2. These are preliminary findings,
+not final costs. Use two forward/inverse pairs and four interleaved rounds
+for the repaired candidate, retaining paired spreads and the twin; collect
+full layout and peak RSS with their bounded pilot in that same run.

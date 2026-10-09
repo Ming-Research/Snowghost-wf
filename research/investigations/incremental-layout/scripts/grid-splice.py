@@ -133,6 +133,11 @@ def prepare(driver, directory, name):
         pair()
         append('K %d q140-large' % retained['parent'])
         pair()
+    if name == 'baseline-inline-block-last':
+        # Removing the first paragraph makes the retained tail match
+        # .last p:first-child. Later pairs toggle that match, so the existing
+        # retained-restyle refusal precedes the atomic-route refusal.
+        reason = 6
     append('X %d' % retained['parent'], True)
     append('T %d 0 retained ' % tail_text['node'])
     append('D %d 0 9' % tail_text['node'])
@@ -160,7 +165,6 @@ def run(driver, directory, name, baseline):
     command([driver, 'edit', str(script), str(directory / 'case.html'), 'renderer/style/ua.css'], raw)
     command([sys.executable, str(HERE / 'inctime.py'), '--check', str(script), str(raw)])
     expected = directory / ('baseline.paths' if baseline else 'case.edits.paths')
-    command([sys.executable, str(HERE / 'splice-cases.py'), '--check-paths', str(expected), str(raw)])
     spec = importlib.util.spec_from_file_location('percentage_splice', HERE / 'percentage-splice.py')
     extractor = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(extractor)
@@ -169,6 +173,7 @@ def run(driver, directory, name, baseline):
         command(['node', 'tests/layout/layout_oracle.mjs', 'dump', str(directory / (page + '.html'))], directory / (page + '.chromium.tsv'))
     for prefix, page in ((0, 'case'), (1, 'inserted'), (2, 'case')):
         command(['node', 'tests/layout/layout_oracle.mjs', 'compare', str(directory / (page + '.chromium.tsv')), str(directory / ('prefix-%d.tsv' % prefix))])
+    command([sys.executable, str(HERE / 'splice-cases.py'), '--check-paths', str(expected), str(raw)])
 
 
 def main():
