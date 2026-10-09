@@ -1,0 +1,86 @@
+# Temporary ledger diagnosis; remove when the upgrade investigation closes.
+name: upgrade-par-diag
+on:
+  push:
+    branches: [research/upgrade-par-diag]
+    paths:
+      - .github/workflows/upgrade-par-diag.yml
+      - research/investigations/layout/upgrade-par-examples/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - side: old
+            revision: 9d720c49daf4de746d507f5b1400ea407e3dfc09
+          - side: new
+            revision: c3ea1c84ca3a2eca1e4048555d8a7298bd620d00
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.revision }}
+          submodules: true
+          path: side
+      - uses: actions/checkout@v4
+        with:
+          path: diagnosis
+      - name: Install the pinned toolchain
+        working-directory: side
+        run: make toolchain
+      - name: Compile layout_oracle and retain the full ledger
+        working-directory: side
+        run: |
+          set -uo pipefail
+          mkdir -p ../results
+          git rev-parse HEAD > ../results/revision.txt
+          cat whitefoot.pin >> ../results/revision.txt
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          cp "build/whitefoot/$pin/whitefoot-release.json" ../results/
+          wfc=$(realpath "build/whitefoot/$pin/whitefootc")
+          cd renderer
+          if "$wfc" --cache ../build/par-diag-cache --fragments function \
+              --par --par-ledger --graph modules.wfg --entry layout_oracle \
+              -o ../build/layout_oracle_par \
+              > ../../results/compiler.stdout 2> ../../results/compiler.stderr; then
+            compiler_exit=0
+          else
+            compiler_exit=$?
+          fi
+          printf '%s\n' "$compiler_exit" > ../../results/compiler.exit
+          exit "$compiler_exit"
+      - name: Compile stand-alone examples with the same compiler
+        if: always()
+        working-directory: side
+        run: |
+          set -uo pipefail
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$(realpath "build/whitefoot/$pin/whitefootc")
+          status=0
+          for source in ../diagnosis/research/investigations/layout/upgrade-par-examples/*.wf; do
+            [ -f "$source" ] || continue
+            name=$(basename "$source" .wf)
+            mkdir -p "../results/examples/$name"
+            cp "$source" "../results/examples/$name/source.wf"
+            if "$wfc" --par --par-ledger "$source" -o "build/$name" \
+                > "../results/examples/$name/compiler.stdout" \
+                2> "../results/examples/$name/compiler.stderr"; then
+              compiler_exit=0
+            else
+              compiler_exit=$?
+              status=1
+            fi
+            printf '%s\n' "$compiler_exit" > "../results/examples/$name/compiler.exit"
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-par-diag-${{ matrix.side }}-${{ github.run_id }}
+          if-no-files-found: error
+          path: results/
