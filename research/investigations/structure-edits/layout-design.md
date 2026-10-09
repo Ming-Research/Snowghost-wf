@@ -4484,3 +4484,27 @@ not a conclusion; excess dominated by other work rejects that hypothesis.
 A generated-code problem in a natural source form needs a minimized
 Whitefoot example and owner disposition, not a source workaround. No
 representation change is selected before this evidence.
+
+### Full-layout repeated-work attribution
+
+The resumed task selects fixing unnecessary Apollo11 work inside Q140. Before
+measurement, isolate the final-placement condition in same-source hosted
+instruction profiles: unchanged candidate, the existing `equivalent_space`
+rule (which ignores an unread own height percentage basis), and the former
+measured/no-own-percentage/forced-height-fits predicate as a diagnostic
+ablation only. Retain all other changes, compiler and captured inputs. A
+zero/one-layout subtraction counts functions and call edges; the earlier
+zero/ten experiment establishes that this bounded sample is useful. The old
+predicate is not a proposed repair: equal used height does not prove equal
+descendant percentage definiteness.
+
+If only changing that predicate removes the extra line breaking, it attributes
+the added work to final-space materialization rather than item proposals,
+first-baseline publication, flex admission or the min-content fraction repair.
+Failure to remove it requires further isolation. A separate instrumented build
+records each grid item's natural/final Space and height-related state in
+item-owned storage; untimed collection introduces no sibling ordering into
+the profiled builds. Compare each differing constraint with Chromium's
+measurement and final-layout constraint construction. A repair must prove
+equality of the inputs actually consumed and keep all existing correctness
+and admission obligations; a novel choice remains an owner decision.
