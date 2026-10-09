@@ -4623,6 +4623,8 @@ reader, then a direct child formatting context acquires `height:50%` through
 a class edit. Its saved percentage basis must follow the final grid height,
 even though that basis was unread initially. The final-space fixture adds
 and removes that class without adopting fresh state between edits and compares
-every prefix to a fresh layout and Chromium. Any disagreement rejects the
+every prefix to a fresh layout and Chromium. A shorter 20px peer leaves the
+60px item in control of natural row sizing, so a stale definite child basis
+cannot conceal an incorrect 30px natural measurement. Any disagreement rejects the
 current reuse publication; geometry equality alone cannot justify stale
 inputs used by a later restyle.
