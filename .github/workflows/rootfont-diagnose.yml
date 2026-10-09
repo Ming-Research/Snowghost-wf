@@ -84,3 +84,38 @@ jobs:
         with:
           name: rootfont-profile
           path: build/rootfont-profile/
+  historical-syntax:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [b4ebd94d13e85e5db9a3d9d585752b7f3a3b2770, a32573fd23d743f86ca279d574360b30ac7dc4dc]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Record admission of the intervening historical sources
+        env:
+          SOURCE_REVISION: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach build/historical "$SOURCE_REVISION"
+          git -C build/historical submodule update --init
+          echo 'release = wf-b2209fd31035' > build/historical/whitefoot.pin
+          git -C build/historical -c user.name=Claude -c user.email=noreply@anthropic.com commit -am 'Diagnostic compiler pin' -m "$(git log -1 --format='%(trailers:key=Co-Authored-By)')"
+          mkdir -p build/historical-evidence
+          git -C build/historical show --format=fuller HEAD > build/historical-evidence/pin-only.patch
+          make -s -C build/historical compiler
+          wfc=$(realpath "$(ls build/historical/build/whitefoot/*/whitefootc)")
+          status=0
+          (cd build/historical/renderer && "$wfc" --graph modules.wfg --check-module pkg::layout) > build/historical-evidence/admission.txt 2>&1 || status=$?
+          printf '%s\n' "$status" > build/historical-evidence/exit-code.txt
+          cat build/historical-evidence/admission.txt
+          echo "source=$SOURCE_REVISION compiler=wf-b2209fd31035 exit=$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: historical-${{ matrix.source }}
+          path: build/historical-evidence/

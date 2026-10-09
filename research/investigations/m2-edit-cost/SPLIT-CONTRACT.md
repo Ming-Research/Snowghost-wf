@@ -2624,3 +2624,21 @@ samples and emitted preparation calls as separate evidence. A permitted and
 emitted independent path with poor scheduling is a possible compiler/runtime
 gap, not a reason to rewrite the source to suppress its offers. The workflow
 is removed after the capture is recorded.
+
+The second four-edit bisection, [37902138997](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37902138997), localizes the change to frontier introduction.
+On one four-CPU EPYC 9V74, the pre-frontier source 593b2db has sequential
+medians 864154/858288 us (twin 867614/865568) and parallel 580834/587982
+(twin 572026/589441). The first syntax-corrected frontier d6383dd gives
+1055912/1073714 sequential (twin 1056697/1058120) and 1251214/1251940
+parallel (twin 1294570/1249397). The remaining midpoint 24f351e remains in
+that slower class. The established bounded-span patch on 3393042 returns
+sequential to 899252/902561 (twin 895686/896945), but parallel remains
+1036509/1034254 (twin 1030264/1043152). Thus removing the known excessive
+frontier depth leaves the parallel regression while restoring the small
+sequential change. These are same-host comparisons; their absolute values
+are not compared with the first pilot's different processor.
+
+The next diagnostic captures the adjacent pre-frontier, first frontier and
+bounded-frontier drivers from that run. It also records compiler admission
+of intervening b4ebd94 and a32573f with the same release, distinguishing the
+introducing source change from the first buildable measured revision.
