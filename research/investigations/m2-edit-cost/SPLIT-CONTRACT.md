@@ -3040,3 +3040,11 @@ The complete check at 736c71d additionally exposed the new IoError::Cancelled
 variant. The exhaustive error-code reader returns zero for this fieldless
 variant, as it already does for DeadlinePassed. This completes the cancellation API
 adaptation without dropping any previous error handling.
+
+The historical oracle worktrees need the same source-language adaptation
+when built by the adopted compiler. The workflow applies only the immutable
+FN-1 deletion and uncancelled I/O API diffs before compiling them, records
+the original revisions and complete resulting diffs, and retains their old
+behavior. In particular, 8e69668 still lacks the of-clause reach fix and must
+fail the reach observation after compiling. The full-build base is still the
+original structure-edits merge base. Compilation refusal is not detection.
