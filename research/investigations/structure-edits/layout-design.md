@@ -3643,3 +3643,219 @@ The revised fixture sources at `e4d2f71` pass [check 37848967620](https://github
 
 
 The width-refresh omission also compiled but survived because the framed lifetime changed the percentage reader's own width, leaving its recorded containing width unchanged; only percentage-free paragraphs received a different incoming width. The width leg now changes its parent from a 300px to a 420px border box, moving the reader's containing width from 284px to 404px. Its height-edit target, required positive paths and detector are unchanged. This supplies the missing trigger for the two-writer omission; survival of an untriggered omission is not evidence that width renewal is checked.
+
+## Q140: grid row sizing under invariant columns
+
+Q140 B authorizes a structural splice below a grid only after proving that
+the edit cannot change its columns. Rerun that container's complete track
+sizing and placement algorithm, retaining unaffected item results. Repeat
+at each grid on the outward route; nested grids are not one flattened grid.
+This section is the argument written before implementation or measurement.
+The existing [splice transaction](#the-splice-transaction),
+[flex output boundary](#actual-flex-outputs-and-explicit-post-publication-refusal)
+and [Q139 certificate](#q139-percentage-heights-whose-basis-the-edit-cannot-change)
+remain conjunctive. A successful grid certificate is not permission to omit
+a later float, inline-seam, retained-style or arithmetic refusal.
+
+### Question, comparisons and prior rejection criteria
+
+Can an invariant-column grid rerun reuse unaffected item measurements while
+producing the same rows, item rectangles, container size and baseline as a
+fresh build? Compare every insert/remove and subsequent text/style/viewport
+prefix with a full build, and compare the focused initial/inserted/removed
+pages with Chromium. Required positive paths must splice; equality obtained
+only through reconstruction fails that requirement. Negative paths must
+reach the dedicated grid-dependency refusal, proposed structural reason 11.
+Each mutation must compile and fail its own observation; a compiler error,
+missing result or unrelated refusal is not detection.
+
+An admitted column change, stale natural row contribution, changed geometry,
+missing outward output or undetected mutation rejects the correctness claim.
+Unnecessary ordering of independent item work rejects the parallelism claim.
+Before enlarging any hosted batch, time its smallest useful case. Compare
+every X5 kind, full layout and process peak RSS on identical captures, fonts,
+compiler and settings against main `8fbc160`, M2 `a1ed31e`, an independently
+built M2 twin and the candidate, in interleaved rounds, sequentially and with
+four workers. A candidate slowdown beyond the twin's spread is a finding for
+every kind, including fallback edits; do not average it away across kinds.
+The pilot determines repetitions and rounds. All execution for this task is
+on GitHub-hosted CI, with no self-hosted runner or local checks.
+
+### What determines columns
+
+The dependency graph starts with the container's resolved inline space and
+frame, its explicit and implicit track definitions, line names and areas,
+auto-repeat count, gaps and content alignment. Item membership, order and
+placement determine implicit tracks, occupied auto-fit tracks and each
+item's span. Intrinsic minimum/maximum contributions then feed the tracks
+that read them; a bare `1fr` has an automatic minimum and is not independent
+of content. Distribution of the remaining definite inline space couples
+flexible tracks even when the changed item occupies only one column.
+See [CSS Grid's sizing algorithm](https://www.w3.org/TR/2025/CRD-css-grid-1-20250326/#algo-grid-sizing)
+and [track sizing](https://www.w3.org/TR/2025/CRD-css-grid-1-20250326/#algo-track-sizing).
+
+Columns can also depend on rows. Percentage heights, aspect ratios and
+orthogonal items can change intrinsic inline contributions after row sizing.
+An unchanged off-route DOM subtree alone does not prove its contribution
+constant when its grid-area height changes. The inspected Chromium
+[`ComputeGridGeometry`](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/grid/grid_layout_algorithm.cc#350)
+initializes tracks, sizes columns and rows, resolves the container block size,
+and can repeat sizing when those dependencies require it. Its contribution
+code explicitly records block-size-dependent inline contributions. The
+analogy is a whole-container algorithm with guarded reuse, not a rule to
+freeze columns because their old numeric widths happen to fit.
+
+A sufficient initial certificate is content-independent columns throughout
+the container: every resolved column minimum is a definite length and every
+maximum is a definite length or a flexible factor resolved against an
+unchanged definite inline size. Thus `200px`, definite `25%`, and
+`minmax(0, 1fr)` can qualify; `auto`, bare `1fr`, min/max-content and
+fit-content do not. Resolved implicit columns obey the same condition.
+Changed intrinsic contributions cannot affect any admitted column sizing
+step. An item spanning several such columns is safe under this rule;
+spanning a content-sized column is a negative case. Merely testing the
+edited item's first column would miss its span and the coupled distribution.
+
+This is a sufficient certificate, not a claim that an untouched auto column
+must change. Admitting content-sized columns with unchanged contributions
+would need an additional provenance argument covering all their readers,
+including row-dependent off-route items. Keep them counted as unknown until
+that argument exists. Likewise, fixed resolved column numbers in a computed
+style dump do not establish the authored sizing functions.
+
+Item membership and order must remain identical: the seam lies inside an
+existing item, and the retained-style frontier changes no grid or item
+placement input. Stable child handles identify that same item on each grid
+route. Replaying auto-placement with unchanged inputs gives identical cells;
+auto-placement itself need not be forbidden. An insertion/removal of a grid
+item, an order/line/span change, or changed anonymous-item construction cannot
+use this certificate. Auto-fit occupancy, auto-repeat and gaps must stay
+unchanged too. Container inline-size independence uses the existing width
+certificate; shrink-to-fit content width is not proved by equal old widths.
+
+### Row inputs, retained results and settlement
+
+With the columns invariant, each item's row measurement has the same inline
+Space as a fresh layout. The measurement's block size is initially indefinite;
+its result includes natural border-box height, resolved vertical margins,
+baseline and baseline availability. Track sizing consumes the margin-box
+contribution, with baseline shims recomputed for the new row groups. Retain
+the pre-stretch measurement, not the item's final stretched height: when a
+tall sibling is removed, a retained short item must be allowed to shrink.
+
+The current `grid_measure_item` writes the measuring Space into the child
+and the current `grid_final_pass` can replace its geometry with stretched
+geometry. `GridModel` is transient. Therefore current `Context.height` and
+`Context.baseline` alone are insufficient retained row inputs. The grid needs
+the same separation already required by
+[flex's retained-input contract](#flex-retained-input-argument-implementation-contract):
+an item-owned natural result keyed by the complete measuring Space, renewed
+on content/style changes before their marks clear, separately from the
+currently materialized interior. Non-grid contexts should not allocate a
+grid result. Missing or stale results cause actual item measurement, never
+guessed reuse. A splice invalidates every changed ancestor's item result.
+
+Reinitialize and run the same track-sizing phases as full grid layout,
+including row spans, intrinsic limits, flexible rows, specified/minimum/maximum
+container height and content alignment. Recompute baseline groups and item
+positions. Once final row sizes exist, compare the final requested item Space
+with its materialized Space; a change relays through normal child layout,
+including percentage readers, stretch removal and positioned descendants.
+Equal natural contribution is not proof that a final interior can be kept.
+The changed item is measured again as needed; unrelated paragraph preparation
+stays retained. Refresh margins and outgoing height summaries through the
+normal publication path.
+
+The changed item's completed result precedes its containing grid; that grid
+precedes an outer grid. A grid's output is its actual block size, inline
+size, baseline availability/value, margins, intrinsic invalidation, item
+anchors and summaries. Never derive its height by adding the edited item's
+delta, nor stop merely because height is unchanged. Flow above the grid
+consumes these actual outputs through `actual_flow_ready`, the existing
+float/margin/motion/arithmetic certificates and positioned/fragment
+settlement. An unsupported actual outward output needs explicit reference
+completion and counted fallback, analogous to the flex reason-10 boundary;
+the extension of that transaction contract to grid remains an implementation
+obligation, not evidence that pre-publication checks predicted the output.
+
+### Dependencies and the existing shared track scratch
+
+Independent items can resolve their contribution and measure their owned
+interior concurrently once the column Space is known. Within a sizing phase,
+each item's proposed track increases read the same track bases and limits;
+their per-track maximum is a reduction. Span groups and later sizing phases
+wait for earlier applied bases/limits. Water-filling rounds wait for their
+remaining free space and frozen tracks. Deterministic remainder assignment
+preserves the reference numeric order. Final item layouts are independent
+after row sizing; outward propagation waits for their completed outputs.
+Auto-placement's occupancy and cursor introduce a real ordering dependency
+when placement has not already been established.
+
+Source inspection found an additional design issue: `grid_pass` currently
+uses one mutable `GridTrack.share/planned/touched` array across its item loop.
+`grid_merge` takes maxima and `grid_apply` applies them only after all items,
+so that inter-item scratch order is not a true sizing dependency. Similarly,
+`grid_shim_baselines` accumulates a shared per-row maximum. Simply invoking
+the existing routines again would retain this unnecessary chain on the new
+path. R3 requires a disposition before choosing how the rerun executes it.
+
+| Candidate | Dependencies, cost and risk | Status |
+| --- | --- | --- |
+| Private item proposals, then balanced per-track maximum/OR reductions in the shared full-layout algorithm | Each item reads immutable phase inputs and owns its distribution scratch. Reductions precede application; phase/span and numeric distribution dependencies remain. Extra scratch and reduction work, particularly for wide spans, must be measured. All callers share one algorithm. | Recommended for the owner to settle; it changes the track algorithm's scratch representation beyond merely adding a splice caller. |
+| Per-track independent recomputation of item proposals | Each output track independently examines relevant items, recomputing the distribution needed to obtain its share, then reduces them. No shared writes; lower retained scratch but duplicated distribution work, potentially quadratic in a span. | A viable alternative with the same phase dependencies and a different work/storage tradeoff; no measurements yet discriminate it. |
+| Reuse the existing shared scratch loop unchanged | One item must finish its scratch writes before the next uses them, although their proposals do not depend on each other. Lowest implementation disruption. | Not recommended: that ordering is imposed by scratch ownership, contrary to R3. |
+
+No new algorithm or cache representation is selected by this table. The
+owner's Q140 B ruling settles row rerun with invariant columns, not this
+newly exposed parallel scratch choice. Fixture specification and independent
+oracle preparation can proceed while implementation waits for that choice.
+
+### Required fixtures and mutations
+
+Each case must have a complete block seam, line-bearing retained content and
+an outward sibling so that an unrelated empty/inline seam cannot supply its
+expected result. Insert a block, remove it, remove an original block, then
+edit retained text and styles. Positive lifetimes also refresh viewport width
+and restore it before another splice. Chromium supplies the geometry oracle;
+retained/full identity alone cannot establish the full algorithm's premise.
+
+| Fixture family | Required observation | One-condition mutation |
+| --- | --- | --- |
+| Fixed columns, definite percentage columns, zero-minimum fractional columns | Splice; exact full and browser geometry, including the following row and outer sibling | Skip grid rerun or keep old row positions |
+| Two nested invariant grids, gaps and padding | Both containers settle and preserve inline sizes; their following rows and outer flow move correctly | Skip one enclosing grid or use border width as track basis |
+| Short retained item stretched beside the edited tall item, then shrink/remove | Natural contribution remains short; final stretch is reapplied or removed correctly | Substitute the retained final height for the natural result; omit final Space check |
+| Row spans, baseline-aligned peers and fixed/clamped grid height | Track constraints, item positions and baseline propagate even at equal container height | Omit span contribution, baseline shim or output field |
+| Auto column with an edited max-content contribution | Reason 11, full-rebuild identity | Admit an intrinsic maximum |
+| Bare fractional column with automatic minimum | Reason 11; a long unbreakable inserted word changes the unconstrained minimum | Admit an intrinsic minimum |
+| Edited item spanning a fixed and content-sized column | Reason 11 | Inspect only its first column |
+| Direct grid-item insertion that shifts auto-placement | Reason 11; no retained item placement reused | Omit membership/placement condition |
+| Shrink-to-fit grid, changed container width, stale record after text/style/viewport refresh | Refuse unproved inline invariance or renew the actual input before a later splice; exact reason asserted per leg | Omit width/Space currentness or content invalidation |
+| Retained percentage readers, floats, positioned children and split seams | Existing certificate outcomes remain conjunctive with the grid result | Omit the corresponding existing boundary check; never accept an unrelated refusal as detection |
+| Explicitly unproved column dependency and path protocol | Refusal row is present with the new reason, never reported as splice success | Suppress reason 11 or report it as zero |
+
+Mutation rows that geometry cannot distinguish, such as removing a
+conservative classification guard whose particular numeric result stays
+equal, require a focused predicate assertion or loss of that exact counted
+reason. A test must trigger the omitted condition; another writer repairing
+the omitted write is not evidence that the stale-result fault was detected.
+
+### Refusal boundary and outstanding evidence
+
+Before publication, refuse unknown/stale grid inputs, changed item membership
+or placement, unproved container inline size, and content-dependent column
+sizing with the grid-dependency reason when reached. Preserve earlier
+route/style/seam refusals and their precedence; a fixture intended to isolate
+reason 11 must avoid those independent failures. Unsupported subgrid,
+orthogonal/fragmented layout and cross-axis intrinsic feedback are not
+silently admitted. A row-dependent inline contribution is harmless only
+when the whole column certificate proves the algorithm cannot consume it.
+
+The [Apollo diagnosis](https://github.com/Ming-Research/Snowghost-wf/blob/2b122a48d5a1798cbe58232db44df56a4072ea40/research/investigations/structure-edits/apollo11-blocks.md)
+identifies two enclosing grids, `main#content` and
+`.mw-page-container-inner`. Its changed-topology float control does not
+predict the unchanged page's result. Run all 60 original block edits in
+each mode and report splices and every refusal reason, including the next
+masked blocker. ECMA262 must keep 20/20 and HTML5 60/60. Required final-head
+gates are check, layout-check, Q139, page identity and the complete M2/Q139/
+Q140 mutation matrix. No Q140 execution, mutation detection, cost result or
+Whitefoot gap is established by this argument.

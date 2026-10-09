@@ -3,6 +3,27 @@
 Items the work has found and not yet done. Remove an item in the change that
 resolves it.
 
+## Q140 grid rerun dependency
+
+- **Grid sizing serializes independent item proposals through shared scratch.**
+  `renderer/layout/grid.wf:grid_pass` writes `share`, `planned` and `touched`
+  across its item loop, then applies the per-track maxima only after the loop.
+  Items within the same sizing phase/span group read unchanged bases and
+  limits; the inter-item ordering is a storage dependency. `grid_shim_baselines`
+  similarly accumulates row maxima through shared writes. Impact: directly
+  reusing these passes for Q140 preserves an unnecessary dependency contrary
+  to R3. Recommendation awaiting the owner: item-owned proposals followed by
+  balanced per-track maximum/OR reductions in the common full-layout path;
+  per-track recomputation is the alternative with less scratch and more work.
+  No timing establishes which work/storage tradeoff is better. Validate
+  independent item writes, unchanged numeric distribution order, full/retained
+  and Chromium grid identity, semantic mutations, and Q140's hosted paired
+  edit/full-layout/RSS comparison. Reopen when the owner rules on the scratch
+  choice in the Q140 Draft PR. The
+  [argument and alternatives](../research/investigations/structure-edits/layout-design.md#dependencies-and-the-existing-shared-track-scratch)
+  own the details; this is a renderer design issue, not a demonstrated
+  Whitefoot limitation.
+
 ## Whitefoot requirements
 
 Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
