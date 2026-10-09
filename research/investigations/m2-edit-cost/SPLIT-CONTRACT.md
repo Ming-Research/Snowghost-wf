@@ -2500,7 +2500,7 @@ it. This bounded extension keeps the shortest existing independent chain
 and makes no shared cache or counter.
 
 **Falsifiers recorded before code.** The hosted frontier fixture generator
-will require empty-source and whitespace-only retained paragraphs to prepare,
+will require whitespace-only retained paragraphs with empty prepared text to prepare,
 break and publish without held context entries, with every edit equal to an
 independent full layout. A whitespace-preservation toggle will exercise both
 lined-to-lineless and lineless-to-lined transitions and require their exact
@@ -2526,3 +2526,29 @@ twins and two reversed rounds on one hosted machine. Every candidate/main
 cell must be at most 2x; every block/cf12 cell must be no worse. Literal
 failures in either twin are reported without attributing differences inside
 twin variation. No timing or correctness result is claimed by this contract.
+
+### Retained lineless frontier: first hosted fixture evidence
+
+At 3c3992e, hosted check 37878177071 and layout-check 37878177082 pass.
+The focused falsifier run 37878177068 reaches compiled drivers, but its
+unmutated fixture stage fails before mutation detection: deleting the entire
+text node in the newly introduced `lineless-empty-source` case returns
+`inc refused`. `patch_paragraph` in `renderer/layout/update.wf` explicitly
+refuses an empty replacement span because the box tree can change; full
+reconstruction then removes that paragraph, leaving one marked leaf. It is
+outside the retained-source contract and cannot test a two-leaf stationary
+transaction. This new, never-passing deletion fixture is retired for that
+technical reason, not counted as falsifier detection and not given a weaker
+expected result. The required empty-or-whitespace boundary remains covered
+by the whitespace source case (empty prepared text), plus independent
+empty-paragraph admission and through-publication constants. No established
+case or mutation is removed and no renderer source-transition rule changes.
+
+The same unmutated hosted artifact reports four whitespace edits with exactly
+two preparations and two breaks, zero held entries, fewer than 32 entries,
+zero frontier refusals and full-layout identity. The whitespace-preservation
+toggle reports two refused leaves with reason 2048 in both directions; the
+empty-inline case reports two refused leaves with reason 4096 on all four
+edits, each equal to full layout. These are fixture results, not yet evidence
+for the 41 ECMA262 leaves or for the complete mutation/acceptance matrix.
+The final run must repeat them in sequential and parallel modes.

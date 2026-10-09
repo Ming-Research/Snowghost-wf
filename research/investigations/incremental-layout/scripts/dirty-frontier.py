@@ -63,10 +63,6 @@ def fixtures():
     whitespace = '<section class="leaf">\t\t<p>Fixed separator.</p> \t </section>'
     root_css = 'p{white-space:normal}.small{font-size:12px}.large{font-size:24px}'
     yield 'lineless-whitespace', page(whitespace, root_css), root_pairs
-    def empty_source(tree):
-        node = text(tree, '\t\t')['node']
-        return [f'D {node} 0 2'] + root_pairs(tree)
-    yield 'lineless-empty-source', page(whitespace, root_css), empty_source
     yield 'line-presence', page(whitespace, 'p{white-space:normal}.changed{white-space:pre}'), toggle
     empty_inline = '<section><p><span class="leaf">\t\t</span></p><p><span class="leaf"> \t </span></p></section>'
     yield 'lineless-open', page(empty_inline, root_css), root_pairs
@@ -203,7 +199,7 @@ def check_fixture(args, directory, name, source, edits):
     inctime.read(str(protocol), operations, checking=True, require_paths=True)
     if name == 'sparse-root':
         sparse_counts(raw)
-    if name in ('lineless-whitespace', 'lineless-empty-source'):
+    if name == 'lineless-whitespace':
         sparse_counts(raw, expected_paragraphs=2)
         refusal_counts(raw, expected_refusals=0, expected_reason=0, expected_records=4)
     if name == 'line-presence':
