@@ -695,6 +695,228 @@ It includes setup, boxes and cleanup as well as preparation. CPU samples can
 identify CPU consumers; they do not alone measure time blocked on allocator
 locks or isolate the text-only difference.
 
-Capture: [hosted run 37904550290](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37904550290),
-workflow revision `a165356928abf54fea83abf2a968d30f7d60612c`.
-Results will be recorded below after the capture finishes.
+### Result and accepted capture
+
+**The complete loss of four-worker speedup supplied from the 14900K is not
+reproduced on this hosted runner. No sampled release meets that complete-loss
+criterion. The first clear partial deterioration is already at
+`wf-b2209fd31035`, between it and `wf-0b7f5c5b9854`; the later sampled releases
+show no additional separated regression.** This localizes the hosted partial
+regression, not the supplied 14900K collapse. HTML5 root-font edit speedup in
+the earlier hosted run does not settle full-build text preparation: they are
+different operations.
+
+Accepted evidence: [hosted run 37909850251](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37909850251),
+workflow revision `1ed75c5ac3ea9a15d6424c4fbf68e63bc30120ae`, one job from
+09:20:39 to 11:56:14 UTC. Its machine was Ubuntu 24.04 on an AMD EPYC 7763
+virtual machine, four logical CPUs, with guest topology reporting two cores
+and two threads per core. Every release manifest required LLVM 22; every
+build used the same Ubuntu clang/LLD 22.1.8. The first sequential/parallel
+compile pair took 321.84 + 423.37 = 745.21 s, bounding the compilation batch.
+The pilot round took 560.3 s; its largest twin ratio difference was 0.116
+(HTML5 later passes at `wf-23719e608125`), selecting three total rounds.
+Round two reversed all ten builds; rounds one and three used release order.
+
+All 20 accepted compiler commands exited 0 with empty stderr. The old source
+at `wf-23719e608125` exited 1 with this sole diagnostic:
+
+```text
+./text/normalization/decompose.wf:88:3: error[FN-1]: UnreachableStatement
+  source:   return at;
+```
+
+Both twins therefore used the authorized `c3ea1c8` adaptation at that release,
+as did the last two releases. The first two releases used `9d720c4`.
+All 60 harness invocations exited 0, giving 120 part observations. Reported
+work counts agreed across all builds and rounds: ecma262 had 179,471 elements,
+10,217 contexts and 57,514 paragraphs; HTML5 had 117,179 elements, 13,843
+contexts and 60,868 paragraphs. These counts do not replace a rendering
+correctness oracle; this task ran timings, not an additional oracle suite.
+
+Artifact `upgrade-par-bisect-37909850251` retains `summary.md`, `parts.csv`,
+`timings/`, `order.txt`, `pilot-selection.txt`, machine and shared input hashes,
+release manifests, compiler stdout/stderr/exit codes, per-twin binary hashes
+and the profiles. The following table gives each independently compiled twin;
+seconds are medians of per-round nested differences, and ratios are medians
+of the paired per-round par-4/seq ratios, with their observed min/max. Thus a
+ratio need not equal the quotient of the two displayed time medians.
+
+### Per-build times and noise twins
+
+| Page | Build | Part | Seq s | Par-4 s | Ratio median [min, max] |
+|---|---|---|---:|---:|---:|
+| ecma262 | 0b7f5c5b9854-a | text | 0.6367 | 0.3167 | 0.495 [0.492, 0.538] |
+| ecma262 | 0b7f5c5b9854-a | layout-passes | 0.3267 | 0.2167 | 0.657 [0.585, 0.694] |
+| ecma262 | 0b7f5c5b9854-b | text | 0.6467 | 0.3133 | 0.497 [0.485, 0.510] |
+| ecma262 | 0b7f5c5b9854-b | layout-passes | 0.3067 | 0.1867 | 0.609 [0.566, 0.644] |
+| ecma262 | b2209fd31035-a | text | 0.6100 | 0.4867 | 0.798 [0.778, 0.814] |
+| ecma262 | b2209fd31035-a | layout-passes | 0.3233 | 0.2767 | 0.856 [0.837, 0.874] |
+| ecma262 | b2209fd31035-b | text | 0.6167 | 0.4700 | 0.762 [0.746, 0.766] |
+| ecma262 | b2209fd31035-b | layout-passes | 0.3167 | 0.2700 | 0.853 [0.835, 0.874] |
+| ecma262 | 23719e608125-a | text | 0.6200 | 0.4633 | 0.747 [0.737, 0.759] |
+| ecma262 | 23719e608125-a | layout-passes | 0.3367 | 0.2867 | 0.856 [0.851, 0.871] |
+| ecma262 | 23719e608125-b | text | 0.6167 | 0.4767 | 0.773 [0.755, 0.777] |
+| ecma262 | 23719e608125-b | layout-passes | 0.3400 | 0.2800 | 0.824 [0.789, 0.837] |
+| ecma262 | 64c0f956df63-a | text | 0.6133 | 0.4733 | 0.775 [0.763, 0.783] |
+| ecma262 | 64c0f956df63-a | layout-passes | 0.3267 | 0.2833 | 0.837 [0.822, 0.867] |
+| ecma262 | 64c0f956df63-b | text | 0.6133 | 0.4800 | 0.783 [0.778, 0.783] |
+| ecma262 | 64c0f956df63-b | layout-passes | 0.3400 | 0.2733 | 0.804 [0.777, 0.895] |
+| ecma262 | f887e82c4611-a | text | 0.5900 | 0.4567 | 0.774 [0.773, 0.788] |
+| ecma262 | f887e82c4611-a | layout-passes | 0.3333 | 0.2767 | 0.830 [0.775, 0.870] |
+| ecma262 | f887e82c4611-b | text | 0.5900 | 0.4733 | 0.796 [0.791, 0.807] |
+| ecma262 | f887e82c4611-b | layout-passes | 0.3267 | 0.2733 | 0.828 [0.804, 0.847] |
+| html5 | 0b7f5c5b9854-a | text | 0.7600 | 0.3900 | 0.529 [0.504, 0.533] |
+| html5 | 0b7f5c5b9854-a | layout-passes | 0.2967 | 0.1733 | 0.584 [0.580, 0.634] |
+| html5 | 0b7f5c5b9854-b | text | 0.7567 | 0.3833 | 0.509 [0.479, 0.529] |
+| html5 | 0b7f5c5b9854-b | layout-passes | 0.2933 | 0.1833 | 0.640 [0.591, 0.647] |
+| html5 | b2209fd31035-a | text | 0.6967 | 0.4533 | 0.651 [0.646, 0.689] |
+| html5 | b2209fd31035-a | layout-passes | 0.2867 | 0.2300 | 0.802 [0.653, 0.826] |
+| html5 | b2209fd31035-b | text | 0.6967 | 0.4467 | 0.641 [0.573, 0.693] |
+| html5 | b2209fd31035-b | layout-passes | 0.3033 | 0.2367 | 0.769 [0.755, 0.964] |
+| html5 | 23719e608125-a | text | 0.7233 | 0.4467 | 0.632 [0.615, 0.677] |
+| html5 | 23719e608125-a | layout-passes | 0.2767 | 0.2267 | 0.816 [0.759, 0.829] |
+| html5 | 23719e608125-b | text | 0.7267 | 0.4700 | 0.644 [0.634, 0.647] |
+| html5 | 23719e608125-b | layout-passes | 0.2900 | 0.2300 | 0.812 [0.793, 0.875] |
+| html5 | 64c0f956df63-a | text | 0.7067 | 0.4467 | 0.632 [0.627, 0.654] |
+| html5 | 64c0f956df63-a | layout-passes | 0.3000 | 0.2500 | 0.833 [0.821, 0.867] |
+| html5 | 64c0f956df63-b | text | 0.7033 | 0.4467 | 0.650 [0.620, 0.706] |
+| html5 | 64c0f956df63-b | layout-passes | 0.2967 | 0.2300 | 0.747 [0.742, 0.854] |
+| html5 | f887e82c4611-a | text | 0.6833 | 0.4300 | 0.629 [0.617, 0.672] |
+| html5 | f887e82c4611-a | layout-passes | 0.3000 | 0.2300 | 0.802 [0.722, 0.868] |
+| html5 | f887e82c4611-b | text | 0.6833 | 0.4367 | 0.639 [0.629, 0.641] |
+| html5 | f887e82c4611-b | layout-passes | 0.2900 | 0.2433 | 0.796 [0.770, 0.859] |
+
+### Boundary and uncertainty
+
+The combined ranges below include both twins and all three rounds. Every
+range after `wf-b2209fd31035` overlaps that release's range for the same
+page/part. In particular, `wf-64c0f956df63` and `wf-f887e82c4611` overlap for
+all four page/part comparisons.
+
+| Page / part | Old reference | b2209fd31035 | 23719e608125 | 64c0f956df63 | f887e82c4611 |
+|---|---:|---:|---:|---:|---:|
+| ecma262 text | 0.485–0.538 | 0.746–0.814 | 0.737–0.777 | 0.763–0.783 | 0.773–0.807 |
+| ecma262 later passes | 0.566–0.694 | 0.835–0.874 | 0.789–0.871 | 0.777–0.895 | 0.775–0.870 |
+| HTML5 text | 0.479–0.533 | 0.573–0.693 | 0.615–0.677 | 0.620–0.706 | 0.617–0.672 |
+| HTML5 later passes | 0.580–0.647 | 0.653–0.964 | 0.759–0.875 | 0.742–0.867 | 0.722–0.868 |
+
+Established on this runner: the first sampled partial deterioration in text
+on both pages and in ecma262's later passes is `wf-b2209fd31035`, on unchanged
+`9d720c4` source. Their old/new ranges separate clearly. HTML5 later-pass
+medians also worsen, but its old/new range gap is only 0.006, with a wide new
+spread; hundredth-second elapsed readings and nested subtraction make that
+single-part boundary weak evidence. It is not claimed as a robust independent
+localization.
+
+The final release still has text ratios 0.774/0.796 on ecma262 and
+0.629/0.639 on HTML5: four workers retain a measurable advantage. Later-pass
+ratios also remain below one. Consequently the supplied complete collapse,
+its first release and the reason this hosted result differs from the 14900K
+remain unverified. The observed ranges are noise descriptions, not confidence
+intervals. No extra release or machine was used to force a collapse result.
+
+The final interval contains [Whitefoot #263, address-stable paged storage](https://github.com/Ming-Research/Whitefoot/pull/263)
+and [Whitefoot #294, releasing displaced struct components](https://github.com/Ming-Research/Whitefoot/pull/294).
+No collapse is localized to that interval here. The five added releases from
+#294 remain established by the earlier emitted-code diagnosis; attributing
+the 14900K speedup loss to them remains a hypothesis. No Whitefoot release was
+published and no Whitefoot code was changed.
+
+### Whitefoot merges in the partial-regression interval
+
+There are 19 first-parent merges in
+[the old-reference to b2209fd31035 comparison](https://github.com/Ming-Research/Whitefoot/compare/0b7f5c5b98547dd27deb9691aed36281e350576b...b2209fd310355ee5ee648ebb37349c9f8be167fb),
+listed oldest first. This experiment does not distinguish them. Allocation
+changes in #277 and #280, in-place code generation in #279, overlap grouping
+in #275 and call grain in #278 are candidates for further isolation, not
+identified causes. The earlier ledger diagnosis found no text/layout task
+offer lost to #278; its observed offer losses were in CSS/style.
+
+| Merge | Change |
+|---|---|
+| [#264](https://github.com/Ming-Research/Whitefoot/pull/264) | Probe `llvm.coro.end` result type with a verifier call |
+| [#265](https://github.com/Ming-Research/Whitefoot/pull/265) | Probe clang forms when the compiler runs |
+| [#267](https://github.com/Ming-Research/Whitefoot/pull/267) | File rename, removal and directory synchronization |
+| [#266](https://github.com/Ming-Research/Whitefoot/pull/266) | Admit closed-term recursion cycles under FN-6 |
+| [#268](https://github.com/Ming-Research/Whitefoot/pull/268) | Admit measure reads of written storage in element loops |
+| [#269](https://github.com/Ming-Research/Whitefoot/pull/269) | Writable subdirectories and cross-directory file moves |
+| [#272](https://github.com/Ming-Research/Whitefoot/pull/272) | Reinitialize a dead linear binding |
+| [#271](https://github.com/Ming-Research/Whitefoot/pull/271) | Identify places through exact reference paths |
+| [#270](https://github.com/Ming-Research/Whitefoot/pull/270) | Natural-loop interpreter checking, continue and join relations |
+| [#274](https://github.com/Ming-Research/Whitefoot/pull/274) | Indexed reductions in counted loops |
+| [#273](https://github.com/Ming-Research/Whitefoot/pull/273) | Host stop signals |
+| [#279](https://github.com/Ming-Research/Whitefoot/pull/279) | Read by-value parameters in place in branched functions |
+| [#278](https://github.com/Ming-Research/Whitefoot/pull/278) | Exempt only recursion that offers its own calls from call grain |
+| [#281](https://github.com/Ming-Research/Whitefoot/pull/281) | Range entry images and writes through references |
+| [#282](https://github.com/Ming-Research/Whitefoot/pull/282) | End a Bool comparison origin at every reaching write |
+| [#277](https://github.com/Ming-Research/Whitefoot/pull/277) | Heap and resident-set statistics |
+| [#275](https://github.com/Ming-Research/Whitefoot/pull/275) | Keep a Box owner and content borrows out of one overlap group |
+| [#291](https://github.com/Ming-Research/Whitefoot/pull/291) | Reinitialized linear bindings across joins, continue and invariants |
+| [#280](https://github.com/Ming-Research/Whitefoot/pull/280) | Grow a `Box<Slots<T>>` cell with `realloc` |
+
+### Quick profile evidence
+
+Both four-worker ecma262 `text 3` captures succeeded with perf 6.17.13,
+CPU-clock sampling at 99 Hz and DWARF call graphs. The pre-final release had
+833 samples and the final release 828, with zero lost samples reported.
+These are full-invocation CPU profiles, including setup, boxes and cleanup;
+some call chains end at unresolved addresses. They neither isolate text's
+nested difference nor measure wall time blocked on a lock.
+
+| Self CPU samples | 64c0f956df63 | f887e82c4611 |
+|---|---:|---:|
+| `wf__par_worker_main` | 12.24% | 11.71% |
+| `malloc` | 2.16% | 1.93% |
+| `realloc` | 1.68% | 2.05% |
+| `cfree` | 1.56% | 1.21% |
+
+The pre-final profile contains a futex-wake chain through
+`__lll_lock_wake_private` → `realloc` → `wf_layout.push_item` →
+`wf_layout.prepare_paragraph`. The final profile contains a syscall chain
+through `__lll_lock_wait_private` → `realloc`. This shows allocator
+synchronization on the measured path before #294 as well as afterward, and
+makes allocation/growth contention a candidate. It does not show a new
+free/malloc bottleneck introduced by #294, quantify blocked time, or establish
+the cause of the earlier partial regression: the old reference and
+`wf-b2209fd31035` were not profiled. The leading self symbol is a scheduler
+worker entry; these samples alone do not classify its work versus idle/spin
+cost or prove participation by all four workers.
+
+### Validation and scope
+
+The accepted capture and the existing
+[hosted gate 37909850260](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37909850260)
+both passed on `1ed75c5ac3ea9a15d6424c4fbf68e63bc30120ae`.
+The earlier [capture 37904550290](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37904550290)
+was canceled during compilation after correcting the fallback diagnostic
+match; it contains no accepted timing samples. The fixed match requires the
+specific `error[FN-1]: UnreachableStatement` diagnostic, and the accepted
+capture retains that actual failure and the successful adaptation.
+The temporary capture workflow and its wired script remain confined to this
+research branch for replication while the runtime diagnosis is open; remove
+them when that investigation closes, before any branch is made ready.
+
+No rendering algorithm, interface, design-tree decision, committed compiler
+pin or submodule moved. No new Whitefoot gap was filed. Local work consisted
+of source/Git inspection, captured-data analysis and document editing; every
+compilation, project check, timed program and profile ran in hosted CI.
+No self-hosted job or owner-machine access was used.
+
+An independent read-only review covered the complete three-file change from
+`48e2d3e` to `1ed75c5ac3ea9a15d6424c4fbf68e63bc30120ae`, this result append,
+the harness consumers, relevant pipeline/layout decisions and the captured
+evidence. It independently reproduced all 40 table rows, 120 part
+observations and combined ranges, and verified source/toolchain/exit records,
+the 19-merge history, profile claims and saved CI metadata. It found no
+remaining defects within scope. The earlier fallback guard and perf symlink
+lookup repairs were verified in the accepted capture.
+
+Design correspondence, architectural fit, dependency hygiene and experimental
+input provenance passed within the measurement scope; decision edits,
+retired implementation and interface/effect changes were not applicable.
+The review used source and artifact inspection plus arithmetic, without
+rerunning a green suite. Runtime causation, blocked allocator time, actual
+four-worker participation and rendering correctness under every experimental
+compiler remain unverified. Malformed-input rejection paths were inspected
+but not deliberately exercised. The final report revision receives the
+existing hosted gate after its push.
