@@ -37,7 +37,7 @@ WRAPPER = ('<!doctype html><html><head><meta charset="utf-8">'
 # column-dependency guard cannot be hidden behind another fixture's state.
 CASES = {
     'fixed': ('', GRID, 0),
-    'percentage': ('main{grid-template-columns:25% 75%}', GRID, 0),
+    'percentage': ('main{width:80%;grid-template-columns:25% 75%}', GRID, 0),
     'fractional-zero-minimum': ('main{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}', GRID, 0),
     'gaps-and-frame': ('main{box-sizing:border-box;border:3px solid;padding:7px;gap:9px;grid-template-columns:minmax(0,1fr) 100px}', GRID, 0),
     'nested': ('main main{width:auto;grid-template-columns:minmax(0,1fr) 60px}main>div{min-width:0}', '<main><div><main>' + ITEM + PEER + LAST + '</main></div>' + PEER + LAST + '</main><div>Outer tail.</div>', 0),

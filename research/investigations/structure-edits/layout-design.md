@@ -3859,3 +3859,19 @@ masked blocker. ECMA262 must keep 20/20 and HTML5 60/60. Required final-head
 gates are check, layout-check, Q139, page identity and the complete M2/Q139/
 Q140 mutation matrix. No Q140 execution, mutation detection, cost result or
 Whitefoot gap is established by this argument.
+
+### Executable baseline fixtures
+
+`grid-splice.py` now prepares fifteen fixture families and their proposed
+reason-0/reason-11 paths. It exercises repeated insert/remove pairs, text
+edits, positive style lifetimes, removal of an original block and positive
+viewport lifetimes. The percentage-column case uses an 80-percent container
+width, so viewport refresh changes the measured item Space, not just the
+viewport number. Independent Chromium comparisons cover the first three
+prefixes; later prefixes require retained/full identity and their paths.
+The temporary `q140-baseline` workflow first runs the fixed-column sample;
+the matrix requires a separate dispatch after inspecting that sample.
+Its explicit baseline mode asserts the existing reason 2 in a separate
+path file. Those outcomes characterize the old renderer and cannot satisfy
+the candidate's admission or mutation requirements. Executable mutations,
+the remaining certificate combinations and implementation are still pending.
