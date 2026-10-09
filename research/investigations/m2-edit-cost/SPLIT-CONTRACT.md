@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) merges percentage-height provenance from research/m2-layout and adopts wf-01697d2de8a1 (specification v0.112). Hosted admission and correctness validation are in progress. The original flat stored-field proof and the owning type-invariant form are being checked separately from the renderer's recursive SlotPages order storage; owner-motion writes remain serial until the actual stored relation is proved. Acceptance timing is deferred under the owner's instruction while Whitefoot #275's owning-element sibling serialization remains open. The [previous ten-cohort result](#root-font-continuation-ten-cohort-result) is historical: four HTML5 root-font parallel cells failed and every block cell passed. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) carries delivery status and deferrals. No adoption merge is authorized.
+Current outcome: the [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) merges percentage-height provenance from research/m2-layout and adopts wf-01697d2de8a1 (specification v0.112). The unchanged flat stored-field loop is admitted and emits parallel tasks. Integration is blocked on a natural inverse over recursive SlotPages and proof of fields initialized by aggregate fill; owner-motion writes remain serial, with no workaround adopted. Acceptance timing is deferred under the owner's instruction while Whitefoot #275's owning-element sibling serialization remains open. The [previous ten-cohort result](#root-font-continuation-ten-cohort-result) is historical: four HTML5 root-font parallel cells failed and every block cell passed. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) carries delivery status and deferrals. No adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -2996,9 +2996,9 @@ without changing renderer storage or using runtime proof checks. Hosted probe 37
 `a range term calls a function`. This is a remaining representation/proof
 dependency, not a claim that v0.112 promises recursive predicates.
 
-No renderer parallelization, invariant-maintenance falsifier, final-head
-correctness result or acceptance recovery is claimed yet. The complete
-correctness gates remain required. Four-worker acceptance timing waits for
+No renderer parallelization, invariant-maintenance falsifier or acceptance
+recovery is claimed. Final-head correctness results and remaining gate
+failures are recorded in Draft PR 55; the complete gates remain required. Four-worker acceptance timing waits for
 the separately owned paged-overlap-regression repair; this continuation runs
 only on GitHub-hosted CI and runs no acceptance timing.
 
@@ -3022,7 +3022,8 @@ calls: v0.110 added the required cancellation-watch argument. Existing
 command-line generators and oracle writers keep their no-cancellation
 behavior by creating a never-firing watch for each read/write and closing it
 immediately after the host call, before matching its result. No stream
-operation, error case or check is removed.
+operation, error case or check is removed. The font-face oracle's exhaustive
+file-size classifier also treats Cancelled as an ordinary non-size error.
 
 The same hosted probe permits the unchanged natural loop and emits a split
 function with a 96-byte lane acquisition, task publication and join; the
