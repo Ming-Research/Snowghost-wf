@@ -19,6 +19,63 @@ jobs:
         run: make toolchain
       - name: Check pkg::layout
         run: |
-          wfc=$(realpath build/whitefoot/wf-f887e82c4611/whitefootc)
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$(realpath "build/whitefoot/$pin/whitefootc")
           cd renderer
           /usr/bin/time -p "$wfc" --graph modules.wfg --check-module pkg::layout
+  emission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [f887, current]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.side == 'f887' && 'c3ea1c84ca3a2eca1e4048555d8a7298bd620d00' || github.sha }}
+          submodules: true
+      - name: Install the pinned toolchain
+        run: make toolchain
+      - name: Emit the renderer and retain the complete ledger
+        run: |
+          set -euo pipefail
+          mkdir -p emission
+          git rev-parse HEAD > emission/revision.txt
+          cat whitefoot.pin >> emission/revision.txt
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          cp "build/whitefoot/$pin/whitefoot-release.json" emission/
+          wfc=$(realpath "build/whitefoot/$pin/whitefootc")
+          cd renderer
+          if "$wfc" --par --par-ledger --emit-llvm --graph modules.wfg --entry layout_oracle \
+              -o ../emission/layout_oracle.ll > ../emission/compiler.stdout 2> ../emission/compiler.stderr; then
+            compiler_exit=0
+          else
+            compiler_exit=$?
+          fi
+          printf '%s\n' "$compiler_exit" > ../emission/compiler.exit
+          exit "$compiler_exit"
+      - name: Count emitted lane operations by function
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path('emission/layout_oracle.ll').read_text()
+          rows = ['function\tacquire\tpublish\tjoin']
+          for match in re.finditer(r'^define [^\n]*@([^ (]+)\([^\n]*\).*?^}', text, re.M | re.S):
+              name, body = match.group(1), match.group(0)
+              counts = [len(re.findall(r'\bcall\b[^\n]*@wf__par_' + op + r'\(', body))
+                        for op in ('acquire_lane', 'publish', 'join')]
+              if any(counts) or 'prepare_context' in name or 'shape_with' in name:
+                  rows.append(name + '\t' + '\t'.join(map(str, counts)))
+          Path('emission/parallel-counts.tsv').write_text('\n'.join(rows) + '\n')
+          for row in rows:
+              if row.startswith('function') or 'prepare_context' in row or 'shape_with' in row:
+                  print(row)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-emission-${{ matrix.side }}
+          if-no-files-found: error
+          path: emission/
