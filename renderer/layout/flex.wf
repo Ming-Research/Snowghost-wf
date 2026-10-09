@@ -1317,8 +1317,8 @@ fn flex_final(child: &Context, item: &FlexItem, styles: &Styles, document: &Docu
     give child^.width;
   }
   set item^.cross_size = cross;
-  let baseline = if child^.has_baseline {
-    give child^.baseline;
+  let baseline = if child^.has_first_baseline {
+    give child^.first_baseline;
   } else {
     give child^.height;
   }
@@ -1372,8 +1372,8 @@ fn flex_stretch(child: &Context, item: &FlexItem, styles: &Styles, document: &Do
     give child^.width;
   }
   set item^.cross_size = cross;
-  let baseline = if child^.has_baseline {
-    give child^.baseline;
+  let baseline = if child^.has_first_baseline {
+    give child^.first_baseline;
   } else {
     give child^.height;
   }
@@ -1475,6 +1475,89 @@ fn flex_position(child: &Context, item: &FlexItem, styles: &Styles, setup: FlexB
   set child^.x = left +sat shift.dx;
   set child^.normal_y = top;
   set child^.y = top +sat shift.dy;
+  return unit;
+}
+
+fn flex_baseline_member(lanes: &[FlexItem], reverse: Bool) -> child: u64 reads(lanes) {
+  doc "Balanced selection of a baseline-sharing item on one settled line. Auto cross margins suppress baseline participation; selection follows the line's physical start direction.";
+  let no_entry = 18446744073709551615_u64;
+  let count = lanes^.len;
+  if count == 0_u64 {
+    return no_entry;
+  }
+  if count == 1_u64 {
+    let item = lanes^[0_u64];
+    let automatic = bor(item.auto_cross_start, item.auto_cross_end);
+    let explicit = bnot(automatic);
+    let baseline = item.place == flex_at_baseline;
+    let shares = band(explicit, baseline);
+    if shares {
+      return item.child;
+    }
+    return no_entry;
+  }
+  let middle = count / 2_u64;
+  let left = flex_baseline_member(lanes: &lanes^[0_u64..middle], reverse: reverse);
+  let right = flex_baseline_member(lanes: &lanes^[middle..count], reverse: reverse);
+  if reverse {
+    if right != no_entry {
+      return right;
+    }
+    return left;
+  }
+  if left != no_entry {
+    return left;
+  }
+  return right;
+}
+
+fn flex_publish_first_baseline(context: &Context, lanes: &Box<Slots<FlexItem>>, lines: &Box<Slots<FlexLine>>, setup: FlexBox) -> result: unit reads(lanes), reads(lines), writes(context) {
+  doc "Exports the first alignment baseline from the startmost line and item after direction and wrapping, preferring a row line's shared baseline. The legacy export is independent.";
+  let no_entry = 18446744073709551615_u64;
+  set context^.first_baseline = 0_i32;
+  set context^.has_first_baseline = False();
+  let count = lines^.inner.len;
+  if count == 0_u64 {
+    return unit;
+  }
+  let line_at = if setup.wrap_reverse {
+    let last = count - 1_u64;
+    give last;
+  } else {
+    give 0_u64;
+  }
+  let line = lines^.inner[line_at];
+  let first = line.first;
+  let end = line.end;
+  if first >= end {
+    return unit;
+  }
+  if end > lanes^.inner.len {
+    return unit;
+  }
+  let start = if setup.reverse {
+    let last = end - 1_u64;
+    give last;
+  } else {
+    give first;
+  }
+  let child = lanes^.inner[start].child;
+  if setup.row {
+    let sharing = flex_baseline_member(lanes: &lanes^.inner[first..end], reverse: setup.reverse);
+    if sharing != no_entry {
+      set child = sharing;
+    }
+  }
+  if child < context^.children.inner.len {
+    let position = child_position(context: context, at: child);
+    let baseline = if context^.children.inner[child].has_first_baseline {
+      give context^.children.inner[child].first_baseline;
+    } else {
+      give context^.children.inner[child].height;
+    }
+    set context^.first_baseline = position.y +sat baseline;
+    set context^.has_first_baseline = True();
+  }
   return unit;
 }
 
@@ -1671,12 +1754,17 @@ fn lay_out_flex(context: &Context, events: &[Flow], styles: &Styles, document: &
       if first_child < items.inner.len {
         let geometry_read_4 = child_position(context: context, at: first_child);
         let top = geometry_read_4.y;
-        let shown = top +sat items.inner[first_child].baseline;
-        set context^.baseline = shown;
+        let legacy = if context^.children.inner[first_child].has_baseline {
+          give context^.children.inner[first_child].baseline;
+        } else {
+          give context^.children.inner[first_child].height;
+        }
+        set context^.baseline = top +sat legacy;
         set context^.has_baseline = True();
       }
     }
   }
+  flex_publish_first_baseline(context: context, lanes: &lanes, lines: &lines, setup: setup);
   let positioned_counts = position_out(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
   let children_counts = sum_counts(results: &results);

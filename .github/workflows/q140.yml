@@ -1,0 +1,189 @@
+# Permanent Q140 fixtures, Chromium floors and original-page block paths.
+# The complete falsify-m2 workflow also calls this job and its mutation matrix.
+name: q140
+on:
+  push:
+    branches: [main, research/m2-q140]
+  pull_request:
+    paths: ['renderer/**', 'tests/layout/**', 'research/investigations/incremental-layout/**', 'research/investigations/concurrency/**', 'research/investigations/layout/**', '.github/workflows/q140.yml', '.github/workflows/falsify-m2.yml', 'whitefoot.pin']
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      mutations:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: q140-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fixtures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Mutation detector controls
+        run: python3 research/investigations/incremental-layout/scripts/grid-falsify.py self-test
+      - name: Fonts and independent reference browser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+          make -s compiler oracle-fonts
+      - name: Build the candidate drivers
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > build/q140-revision.txt
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          time (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+          time (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_base_par)
+      - name: Small timed fixture before the matrix
+        id: pilot
+        run: |
+          set -euo pipefail
+          "$CHROMIUM" --version
+          time python3 research/investigations/incremental-layout/scripts/grid-splice.py build/layout_base build/q140-pilot --case fixed
+      - name: Natural and final constraint boundaries against Chromium
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for mode in seq par; do
+            driver=build/layout_base
+            if [ "$mode" = par ]; then driver=build/layout_base_par; fi
+            WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/grid-splice.py "$driver" "build/q140-final-space-$mode" --final-space || failed=1
+          done
+          test "$failed" -eq 0
+      - name: Grid admission, geometry and counted refusals
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for mode in seq par; do
+            driver=build/layout_base
+            if [ "$mode" = par ]; then driver=build/layout_base_par; fi
+            WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/grid-splice.py "$driver" "build/q140-$mode" || failed=1
+          done
+          test "$failed" -eq 0
+      - name: Original page block edits and every refusal reason
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          sh research/investigations/concurrency/run.sh fetch || true
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          cp build/layout_base build/layout_oracle_seq
+          cp build/layout_base_par build/layout_oracle_par
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
+          mkdir -p build/q140-blocks
+          failed=0
+          for mode in seq par; do
+            for page in ecma262 html5 apollo11; do
+              WF_WORKERS=4 sh research/investigations/incremental-layout/run.sh inc "$mode" "$page" block > "build/q140-blocks/$page-$mode.summary" || failed=1
+              cat "build/q140-blocks/$page-$mode.summary"
+              cp "build/x5/out/$page-block.$mode.txt.raw" "build/q140-blocks/$page-$mode.raw"
+            done
+          done
+          test "$failed" -eq 0
+      - name: Require the original-page splice and refusal distributions
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
+        run: |
+          python3 -B - <<'PYEOF'
+          from collections import Counter
+          from pathlib import Path
+          import re
+
+          expected = {
+              'ecma262': Counter({(1, 0): 20}),
+              'html5': Counter({(1, 0): 60}),
+              'apollo11': Counter({(1, 0): 38, (0, 9): 18, (0, 7): 2, (0, 3): 2}),
+          }
+          def require_paths(raw, wanted):
+              observed = Counter((int(splice), int(reason)) for splice, reason in
+                                 re.findall(r'^structure path [0-9]+ splice ([01]) reason ([0-9]+)$', raw, re.M))
+              if observed != wanted:
+                  raise ValueError(f'expected {wanted}, observed {observed}')
+          # Exercise the same comparison with missing, extra and changed paths.
+          for page, wanted in expected.items():
+              rows = [f'structure path {index} splice {splice} reason {reason}'
+                      for index, (splice, reason) in enumerate(wanted.elements(), 1)]
+              require_paths('\n'.join(rows), wanted)
+              for wrong in (rows[1:], rows + [rows[0]],
+                            [rows[0].replace('splice 1 reason 0', 'splice 0 reason 11')] + rows[1:]):
+                  try:
+                      require_paths('\n'.join(wrong), wanted)
+                  except ValueError:
+                      pass
+                  else:
+                      raise AssertionError(f'{page}: wrong paths accepted')
+              for mode in ('seq', 'par'):
+                  raw = Path(f'build/q140-blocks/{page}-{mode}.raw').read_text()
+                  require_paths(raw, wanted)
+                  print(page, mode, dict(wanted))
+          PYEOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-fixtures
+          path: |
+            build/q140-*/
+            build/q140-revision.txt
+            build/x5/scripts/*-block.edits
+            build/research/concurrency/
+            build/layout_base*
+            build/grid-cache/
+  mutations:
+    needs: fixtures
+    if: inputs.mutations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [skip-active-proposals, omit-height-reader-invalidation, omit-final-height-dependency, omit-final-used-height, omit-first-flow-update, omit-first-output-equality, omit-first-child-publication, skip-grid-rerun, reuse-stretched-row, omit-final-grid-space, admit-intrinsic-columns, admit-intrinsic-minimum, inspect-first-column-only, refuse-fixed-intrinsic-contribution, share-auto-margin-baseline, suppress-grid-refusal, count-grid-refusal-as-splice, omit-flex-automatic-minimum, trust-definite-grid-for-flex, admit-intrinsic-flexible-maximum, forget-enclosing-flex-edge, refuse-proved-flex-width]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q140-fixtures
+          path: build
+      - name: Toolchain and independent reference browser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+          make -s compiler oracle-fonts
+          chmod +x build/layout_base build/layout_base_par
+      - name: Apply one mutation and compile both modes
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/grid-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+          (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated_par)
+      - name: Require focused detection in both modes
+        run: |
+          set -euo pipefail
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/grid-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutated build/q140-mutation-seq
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/grid-falsify.py verify '${{ matrix.mutation }}' build/layout_base_par build/layout_mutated_par build/q140-mutation-par
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-${{ matrix.mutation }}
+          path: |
+            build/q140-mutation-*/
+            build/mutation.diff
