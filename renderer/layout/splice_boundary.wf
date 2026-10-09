@@ -174,10 +174,11 @@ fn splice_plan_at(context: &Context, steps: &[ContextStep], depth: u64, input: S
   return Err<SplicePlan, u32>(error: 1_u32);
 }
 
-fn splice_block_path(context: &Context, styles: &Styles, owner: u32, delta: i32, visits: &BoundaryVisits) -> ready: Bool reads(context.blocks.inner), reads(context.style), reads(context.space), reads(context.width), reads(styles), writes(visits) {
+fn splice_block_path(context: &Context, styles: &Styles, owner: u32, delta: i32, visits: &BoundaryVisits) -> ready: Bool reads(context.height_proof), reads(context.height_input), reads(context.slot), reads(context.blocks.inner), reads(context.retired), reads(context.style), reads(context.space), reads(context.width), reads(styles), reads(context.natural), reads(context.kind), writes(visits) {
   doc "Preflights ordinary solid ancestors without writing retained counters. Each ancestor depends only on its own width and the propagated size delta.";
   let frame = flow_frame(styles: styles, style: context^.style, space: context^.space, width: context^.width);
   let cursor = owner;
+  let change = delta;
   let limit = context^.blocks.inner.len +sat 1_u64;
   for (level in 0_u64..limit) {
     if cursor == no_index {
@@ -199,13 +200,28 @@ fn splice_block_path(context: &Context, styles: &Styles, owner: u32, delta: i32,
     if output.through {
       return False();
     }
+    let proof_current = block_height_current(context: context, styles: styles, at: at);
+    if proof_current {
+    } else {
+      return False();
+    }
     let yes = output.first_line.slot != no_index;
-    let grows = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: frame.definite, lines: yes);
+    let grows = if measured.fixed_height {
+      let proof = block_height_proof(block: &context^.blocks.inner[at], styles: styles);
+      let fixed = fixed_height_transfer(proof: proof, block: snapshot, measured: measured, styles: styles, lines: yes);
+      give fixed;
+    } else {
+      let growth = snapshot_grows(block: snapshot, styles: styles, delta: change, basis_height: measured.basis_height, lines: yes);
+      give growth;
+    }
     let width_kept = snapshot_keeps_width(block: snapshot, styles: styles);
     let ready = band(grows, width_kept);
     if ready {
     } else {
       return False();
+    }
+    if measured.fixed_height {
+      set change = 0_i32;
     }
     set cursor = snapshot.parent;
   }
@@ -289,7 +305,9 @@ fn splice_path_ready(context: &Context, steps: &[ContextStep], depth: u64, owner
   } else {
     return no, 0_i32, 0_i32, no;
   }
-  let raw = context^.content_raw +sat change;
+  let root_change = proposed.advance -sat old.advance;
+  let root_delta = geometry_narrow(value: root_change);
+  let raw = context^.content_raw +sat root_delta;
   let content = imax(raw, 0_i32);
   let height = used_height(context: context, styles: styles, content: content);
   let wide_delta = proposed.last_baseline -sat old.last_baseline;
@@ -308,9 +326,11 @@ fn splice_finish(context: &Context, old_root: SequenceOutput, delta: i32, styles
   if context^.has_baseline {
     set context^.baseline = context^.baseline +sat baseline_delta;
   }
+  let root_change = after.advance -sat old_root.advance;
+  let root_delta = geometry_narrow(value: root_change);
   let no_events = slots_new::<Flow, 0>();
   let position_children = False();
-  let (moved, counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: delta, position_children: position_children);
+  let (moved, counts) = finish_in_place(context: context, events: &no_events[0_u64..0_u64], styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, delta: root_delta, position_children: position_children);
   let extra = counts;
   if context^.has_out {
     let positioned_counts = splice_position(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
@@ -404,6 +424,10 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
     set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
     set context^.blocks.inner[frontier_at].output.margin_top = input.frontier.margin_top;
     set context^.blocks.inner[frontier_at].boundary = input.frontier.output;
+    let block = &context^.blocks.inner[frontier_at];
+    let retained = block_height_proof(block: block, styles: styles);
+    let proof = resolve_height_proof(styles: styles, style: block^.style, input: retained, width: block^.avail_width, height: block^.output.basis_height, forced: unknown);
+    store_height_record(record: &block^.height_proof, proof: proof);
   }
   let moves = plan^.moves.inner.len;
   for (at in 0_u64..moves) {
@@ -424,13 +448,18 @@ fn publish_splice_at(context: &Context, steps: &[ContextStep], depth: u64, input
       set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
       let measured = context^.blocks.inner[owner].output;
       let output = lift_block_output(inside: &plan^.output, measured: measured);
-      let height = measured.height +sat plan^.delta;
+      let outgoing_delta = if measured.fixed_height {
+        give 0_i32;
+      } else {
+        give plan^.delta;
+      }
+      let height = measured.height +sat outgoing_delta;
       set context^.blocks.inner[owner].height = height;
       set context^.blocks.inner[owner].output.height = height;
       set context^.blocks.inner[owner].boundary = output;
       let parent = context^.blocks.inner[owner].parent;
       let slot = context^.blocks.inner[owner].entry_slot;
-      propagate_boundary(context: context, owner: parent, slot: slot, output: output, delta: plan^.delta);
+      propagate_boundary(context: context, owner: parent, slot: slot, output: output, delta: outgoing_delta);
     }
   }
   let counts = splice_finish(context: context, old_root: old_root, delta: plan^.delta, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);

@@ -110,11 +110,49 @@ struct EntryHandle {
   slot: u32;
 }
 
+struct HeightInput {
+  doc "An incoming edge written by the parent, separate from the input certified by the child's retained summary. Equal dimensions do not erase an identity or definiteness change.";
+  context: u32;
+  owner: u32;
+  element: u32;
+  kind: u8;
+  state: u8;
+}
+
+struct HeightProof {
+  doc "One actual vertical content-box resolution. source_context/source_owner name the immediate basis (no_index owner means the context content box); source_kind is 1 viewport, 2 ordinary containing box, 3 layout-supplied, or 4 private external input. basis_state and state are 0 missing, 1 indefinite, 2 content-independent definite, or 3 unsupported. Consumer and interned style keys retain resolution inputs; read_mask names percentage height/minimum/maximum as bits 1/2/4. Parent records share provenance edges rather than copying ancestor paths.";
+  consumer: StyleRef;
+  source_context: u32;
+  source_owner: u32;
+  source_element: u32;
+  source_kind: u8;
+  basis_state: u8;
+  basis_height: i32;
+  basis_width: i32;
+  content_height: i32;
+  forced_height: i32;
+  state: u8;
+  read_mask: u8;
+  size_key: u32;
+  box_key: u32;
+  spacing_key: u32;
+  border_key: u32;
+  font_key: u32;
+  valid: Bool;
+}
+
+struct HeightSummary {
+  doc "Saturating 32-bit counts over live direct consumers only. Reduction never subtracts, so saturation preserves the nonzero unproved predicate. unproved includes a missing record even when its old numeric height happens to equal a new one. Empty ranges are the identity; removal therefore removes retired dependencies through ordinary index repair.";
+  consumers: u32;
+  unproved: u32;
+}
+
 struct SequenceOutput {
   doc "An ordered Through(leading) or Solid(leading, advance, trailing) transfer, with baseline offsets from its first resolved edge. Struts retain their positive maximum and negative minimum separately. travel bounds the absolute arithmetic along the run; ordinary never licenses reassociation outside the bounded exact range. Float handles identify exports in the enclosing BFC, never a block-contained float list. fragment_sources counts split heads and empty-inline sources in this owned flow; fragment_first/last classify the nearest non-transparent direct entries as 1 ordinary solid or 2 split head, with 0 absent.";
   count: u64;
   events: u64;
   fragment_sources: u64;
+  heights: HeightSummary;
   fragment_first: u8;
   fragment_last: u8;
   first_line: EntryHandle;
@@ -143,6 +181,10 @@ struct SequenceOutput {
 
 struct BlockOutput {
   doc "Translation-independent resolved block output and its width inputs. The block's boundary holds struts, through state, baseline handles and offsets, intrinsic contributions and exported float handles. The reference walk records reads_floats at Close, including any earlier BFC float even after its lexical owner closes; semantic fields are published after the walk's payload geometry is complete. fragment_source retains whether this block is a stable split head, so lifting an edited interior preserves its source count and direct-edge kind.";
+  heights: HeightSummary;
+  fixed_height: Bool;
+  constrained_height: Bool;
+  bottom_separates: Bool;
   valid: Bool;
   width: i32;
   height: i32;
@@ -256,6 +298,7 @@ struct BlockSnapshot {
 
 struct Block {
   doc "A block-level box inside a flow context that establishes no context of its own, with its normal border origin x/y stored as exact i64 differences from its owning block's normal origin (the context for no_index), and its effective CSS relative displacement dx/dy stored separately. normal_x/normal_y and resolved_x/resolved_y are the context-coordinate scratch outputs of the compatibility walker, authoritative only while Context.local_geometry is false; geometry.wf owns all conversions. marker holds for a list item with an outside marker, whose marker makes a line when its content has none; parent is the block it sits in (no_index when it sits directly in the context), entry_slot its stable slot in the parent sequence and flow_at its compatibility Open rank and inner_x its border box's left offset in the context's content box, which the pre-pass records (the stacking pass writes resolved_x in the border box, and starts again from inner_x); split_head means a context-owned Split names this block, and survives interior edits; held_y is where an update's re-stack found the block before it stacked it again; avail_left and avail_width are the content box it sits in and content_left and content_width its own content box, as the pre-pass last computed them, which a style change of the block alone compares against (block_restyle).";
+  height_proof: Option<Box<HeightProof>>;
   neutral: Bool;
   split_head: Bool;
   entries: EntrySequence;
@@ -509,7 +552,10 @@ struct FlexCache {
 }
 
 struct Context {
-  doc "A box that establishes an independent formatting context, owning the boxes inside it and its child contexts; each paragraph owns its pieces. slot is assigned once when published in Layout.paths and is never a preorder rank. kind is ctx_flow for a block container, ctx_flex, ctx_grid, ctx_table for a table wrapper (its captions are children listed in captions, its cells children listed in cells), or ctx_replaced. natural says what an image the stage does not load shows, as the reference draws an image whose fetch failed: natural_object is any other context (a replaced one 300 by 150 px); natural_icon the 16 px broken-image icon of an img without alt; natural_empty the nothing of an img with an empty alt or no source; natural_alt_icon the icon before an img's alt text; natural_alt_box an inline img showing its alt text, a flow context that ignores its width and height; natural_marker the bullet of an inside disc, circle or square list marker; natural_text_input a single-line text input, as wide as twenty characters of its font and as tall as its line; and natural_toggle a checkbox or radio button, 13 px square. splits lists the blocks inside open inline boxes in its flow, in the order they open; fragment_anchors holds stable endpoint dependencies aligned with context fragments, and fragments_valid certifies their equality to the last reference output before local reuse; raw split ranks are restored only at the reference bridge. split_head belongs to a Split in the parent context and is preserved when this context is rebuilt; column_map, for a multi-column context, moves its content from the one column it is laid out in to its columns. Layout writes its border box size, fragments and, when a parent asked, intrinsic sizes. anchor stores its normal origin and effective visual displacement relative to block in its parent context (the viewport for viewport_origin); x/y and normal_x/normal_y are the parent's reference-walker scratch. local_geometry selects owner-relative storage for its contents; content_dx/content_dy are the table's content-origin adjustment, applied once after accumulating block origins and before paragraph-local fragments. The reference bridge materializes that adjustment before a compatibility replay. ratio_width and ratio_height are the width and height attributes of an img, video or svg the stage does not load (HTML Standard, 15.5.4: they give its aspect ratio), in layout units, or 0 when it lacks either. For pkg::layout's update: laid is the space of its last finished layout (laid_never before the first), entry_slot the stable parent-sequence slot, and flow_at and block the compatibility flow rank its parent's pre-pass gives it (its paragraph's for an atomic inline) and the parent's block it sits in, beside whether a float placed before it in its parent's flow reaches below its top; a flow context's stacking pass records the content height it returned before used_height (content_raw), the flow entry whose baseline is the context's (no_index for none) and whether its flow holds an out-of-flow child (has_out); intrinsic_basis is the percentage basis its intrinsic sizes were computed against when they became known; definite_free, which a flow context's pre-pass records, holds when no block or child context of its flow takes a percentage height, min-height or max-height, so that its content height being definite or not changes nothing but its own height. flow_definite_free records the same pre-pass fact excluding out-of-flow children, whose changed containing-block bases the splice settles separately; text_changed counts the paragraphs and the child contexts it marks in it (marked_paragraphs, marked_children) and records the last of each it marked (marked_paragraph, marked_child), so that an update with one of each finds it without a search; when an update prepares a marked context again it records whether its intrinsic sizes were known from the previous layout (intrinsic_held) and what they were (held_min, held_max), which a flex or grid container's update compares; the stacking pass records the end of the flow before the floats (flow_end) and, per flow entry, the position it starts from before floats and clearance move it (naturals; the largest i32 for an entry that a float cannot move), which the update's re-stack from an entry reads. restyled marks a change to styles this context reads locally; unlike an ancestor dirty mark alone, it forbids the text-only geometry cutoffs until the context has been laid out again. walk_exact distinguishes real construction checkpoints from neutral splice contexts; a later reconstruction ascends past those contexts to a genuine enclosing checkpoint. retired marks a vacant stable context slot and neutral records whether its built subtree used counter or quote state. entered and left hold the builder's walk state as build_box began and ended the context (empty for the initial containing block), so that structure_changed can build an element's context again from where the walk entered it and check that the walk leaves it as before.";
+  doc "A box that establishes an independent formatting context, owning the boxes inside it and its child contexts; each paragraph owns its pieces. slot is assigned once when published in Layout.paths and is never a preorder rank. kind is ctx_flow for a block container, ctx_flex, ctx_grid, ctx_table for a table wrapper (its captions are children listed in captions, its cells children listed in cells), or ctx_replaced. natural says what an image the stage does not load shows, as the reference draws an image whose fetch failed: natural_object is any other context (a replaced one 300 by 150 px); natural_icon the 16 px broken-image icon of an img without alt; natural_empty the nothing of an img with an empty alt or no source; natural_alt_icon the icon before an img's alt text; natural_alt_box an inline img showing its alt text, a flow context that ignores its width and height; natural_marker the bullet of an inside disc, circle or square list marker; natural_text_input a single-line text input, as wide as twenty characters of its font and as tall as its line; and natural_toggle a checkbox or radio button, 13 px square. splits lists the blocks inside open inline boxes in its flow, in the order they open; fragment_anchors holds stable endpoint dependencies aligned with context fragments, and fragments_valid certifies their equality to the last reference output before local reuse; raw split ranks are restored only at the reference bridge. split_head belongs to a Split in the parent context and is preserved when this context is rebuilt; column_map, for a multi-column context, moves its content from the one column it is laid out in to its columns. Layout writes its border box size, fragments and, when a parent asked, intrinsic sizes. anchor stores its normal origin and effective visual displacement relative to block in its parent context (the viewport for viewport_origin); x/y and normal_x/normal_y are the parent's reference-walker scratch. local_geometry selects owner-relative storage for its contents; content_dx/content_dy are the table's content-origin adjustment, applied once after accumulating block origins and before paragraph-local fragments. The reference bridge materializes that adjustment before a compatibility replay. ratio_width and ratio_height are the width and height attributes of an img, video or svg the stage does not load (HTML Standard, 15.5.4: they give its aspect ratio), in layout units, or 0 when it lacks either. For pkg::layout's update: laid is the space of its last finished layout (laid_never before the first), entry_slot the stable parent-sequence slot, and flow_at and block the compatibility flow rank its parent's pre-pass gives it (its paragraph's for an atomic inline) and the parent's block it sits in, beside whether a float placed before it in its parent's flow reaches below its top; a flow context's stacking pass records the content height it returned before used_height (content_raw), the flow entry whose baseline is the context's (no_index for none) and whether its flow holds an out-of-flow child (has_out); intrinsic_basis is the percentage basis its intrinsic sizes were computed against when they became known; definite_free, which a flow context's pre-pass records, holds when no block or child context of its flow takes a percentage height, min-height or max-height, so that its content height being definite or not changes nothing but its own height. text_changed counts the paragraphs and the child contexts it marks in it (marked_paragraphs, marked_children) and records the last of each it marked (marked_paragraph, marked_child), so that an update with one of each finds it without a search; when an update prepares a marked context again it records whether its intrinsic sizes were known from the previous layout (intrinsic_held) and what they were (held_min, held_max), which a flex or grid container's update compares; the stacking pass records the end of the flow before the floats (flow_end) and, per flow entry, the position it starts from before floats and clearance move it (naturals; the largest i32 for an entry that a float cannot move), which the update's re-stack from an entry reads. restyled marks a change to styles this context reads locally; unlike an ancestor dirty mark alone, it forbids the text-only geometry cutoffs until the context has been laid out again. walk_exact distinguishes real construction checkpoints from neutral splice contexts; a later reconstruction ascends past those contexts to a genuine enclosing checkpoint. retired marks a vacant stable context slot and neutral records whether its built subtree used counter or quote state. entered and left hold the builder's walk state as build_box began and ended the context (empty for the initial containing block), so that structure_changed can build an element's context again from where the walk entered it and check that the walk leaves it as before.";
+  height_input: HeightInput;
+  height_proof: Option<Box<HeightProof>>;
+  height_summary: HeightSummary;
   split_head: Bool;
   flex_cache: FlexCache;
   flex_counts: UpdateCounts;
@@ -570,7 +616,6 @@ struct Context {
   has_out: Bool;
   intrinsic_basis: i32;
   definite_free: Bool;
-  flow_definite_free: Bool;
   marked_paragraphs: u32;
   marked_paragraph: u32;
   marked_children: u32;
@@ -707,6 +752,8 @@ public fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &
 public fn update_counts(layout: &Layout) -> (prepared: u64, contexts: u64, paragraphs: u64, held_entries: u64, entries: u64) reads(layout) doc "Returns what the last update did, as pkg::layout's UpdateCounts records it: the paragraphs it prepared again, the contexts it laid out again, the paragraphs it broke into lines again, the flow entries the stacking pass walked in the contexts holding a paragraph it prepared again, and those every stacking pass it ran walked; all zero before the first update and for an update with no mark.";
 
 public fn boundary_counts(layout: &Layout) -> (entries: u64, blocks: u64, indexes: u64, fallbacks: u64, reason: u32) reads(layout) doc "Returns boundary-path physical visits across the updated contexts and fallback count/reason. Reference replay is outside these counters; any fallback disqualifies a locality assertion.";
+
+public fn height_read_counts(layout: &Layout) -> (consumers: u64, unproved: u64) reads(layout) doc "Sums every live context's cached direct percentage-read inventory for the checking oracle, plus the root's own record. Child records are counted where their parent includes them; nested interiors are visited only by this checking traversal. Comparing retained and fresh layouts detects lost publication and retired dependencies even when rectangles happen to agree.";
 
 public fn boundary_transfer_check() -> passed: Bool pure doc "Checks ordinary transfer composition against sequential reference margin operations; used by the incremental layout oracle before applying edits.";
 

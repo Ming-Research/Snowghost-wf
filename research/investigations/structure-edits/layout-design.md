@@ -2043,7 +2043,7 @@ indefinite basis. Positioned inputs are excluded from this fact because
 publication combines the old and inserted facts; local style updates that
 introduce any height dependency conservatively invalidate it until the
 reference pre-pass recomputes the fact. This changes admission, not the
-meaning of the existing update cutoff's `definite_free` flag.
+meaning of the existing update cutoff's `definite_free` flag. The [Q139 extension](#q139-percentage-heights-whose-basis-the-edit-cannot-change) below supersedes this coarse refusal fact with direct-reader provenance and removes the unused field.
 
 
 Publication also preserves `has_out` by combining retained and inserted
@@ -2566,3 +2566,1080 @@ alone do not detect semantic mutations; the split-line-refresh optimization
 contract is the explicitly argued exception above. CI run records and their
 raw artifacts are the evidence for these gates. No renderer was compiled or
 executed locally, and no timing or complete-M2 claim follows from this work.
+
+## Q139: percentage heights whose basis the edit cannot change
+
+Q139 A and Q145 C authorize this argument first: retain each percentage
+height's basis, prove that no basis belongs to the edit's growing ancestor
+chain, and otherwise refuse and count it. This section specifies that
+certificate; it does not implement it or claim fixture, mutation or timing
+results. When it was written, the `flow_definite_free` refusal remained in the source; the implementation replaces it with the record checks below.
+The [layout decision](../../../design/pipeline/layout.md) owns the splice;
+this argument extends its percentage-input premise without relaxing the
+other Q128/Q129 certificates. Implementation and its corresponding live-tree
+update belong to the later task.
+
+The motivation is the [apollo11 diagnosis at its recorded branch revision](https://github.com/Ming-Research/Snowghost-wf/blob/2b122a48d5a1798cbe58232db44df56a4072ea40/research/investigations/structure-edits/apollo11-blocks.md#control-results-and-causal-limit):
+54 of 60 block edits refused with structural reason 7; removing both
+`html` and `body` percentage heights exposed reason 2 at grid ancestors.
+Restoring either height restored reason 7. This establishes a masked
+dependency, not a successful splice on the original page. Q140's grid scope
+is independent; accepting this certificate must not report that grid work
+as local. The other six edits had a retained-style refusal.
+
+### Percentage inputs and the precise admission condition
+
+For ordinary in-flow blocks, a percentage `height` uses the containing
+block's content height; an indefinite content-dependent basis makes it
+behave as `auto`. The root uses the initial containing block, whose size
+comes from the viewport in this continuous-media scope. Percentage
+`min-height` and `max-height` also use the containing height; CSS 2.1 treats
+them as zero and no maximum respectively when that basis is indefinite.
+These are different properties, not three spellings of `height:auto`.
+See [CSS 2.1 containing blocks](https://www.w3.org/TR/CSS21/visudet.html#containing-block-details),
+[height](https://www.w3.org/TR/CSS21/visudet.html#the-height-property), and
+[minimum/maximum height](https://www.w3.org/TR/CSS21/visudet.html#min-max-heights).
+
+[CSS Sizing 3's definition of definite size](https://www.w3.org/TR/css-sizing-3/#definite)
+includes a percentage resolved solely from definite sizes; its
+[nested-percentage example](https://www.w3.org/TR/css-sizing-3/#percentage-sizing)
+therefore supplies the induction used below. Definite does not universally
+mean independent of this edit: layout modes can provide a definite size
+after layout, and the containing block of an absolutely positioned box is
+definite for that box. The [cyclic-percentage rules](https://www.w3.org/TR/css-sizing-3/#cyclic-percentage-contribution)
+also have layout-mode exceptions. This certificate covers ordinary block
+resolution, not quirks-mode ancestor skipping, orthogonal writing modes,
+table rules, or a flex/grid size merely because its last numeric value is
+known. Unsupported provenance is a refusal, not an invented fixed basis.
+
+Use these sets and records, based on layout identities rather than DOM
+preorder numbers or the nearest formatting-context root:
+
+- `A` is the complete enclosing block/context path from the changed owner
+  through every boundary whose outputs must be settled. It includes fixed
+  height ancestors: their content extent, baseline or float export may
+  change even when their used height cannot.
+- `G` is the conservative **growing chain** within `A`: every ancestor
+  whose used content height may change, including shrinkage on removal and
+  sizes not knowable before flex settlement. Remove an ancestor from `G`
+  only after proving its used height content-independent from unchanged
+  inputs. Do not remove it because its old and guessed new numbers match,
+  because the current delta is zero, or because a clamp is active today.
+  Thus `html` and `body` with a proven viewport-based `height:100%` belong
+  to `A` but not `G`. A lexical ancestor test alone would reject the very
+  case this extension is intended to admit.
+- `R` is the retained in-flow geometry whose percentage inputs the splice
+  proposes to reuse, including ordinary blocks and the own records of child contexts and floats
+  directly read by each route context. Nested context interiors do not
+  contribute to their parent inventory: an off-route context translates
+  under unchanged Space, and flex relays changed Space through its existing
+  equality check and relayout. A route that descends into a child checks
+  that child context's direct-reader inventory separately.
+  Earlier siblings count too. It is not just the edited parent's style.
+  Out-of-flow boxes that Q128 actually settles again are excluded from
+  this reuse claim; their inputs and arithmetic charges still follow Q128.
+- For every percentage-bearing `height`, `min-height` and `max-height`
+  read in `R`, retain the consumer identity and property, its actual
+  containing-block identity (or explicit initial-containing-block token),
+  axis and box edge, definite/indefinite/unknown resolution state, resolved
+  basis value, and **provenance**. Provenance names the source of that value:
+  viewport, content-independent specified size with its limits and box
+  conversion, another resolved percentage with a link to its basis, or
+  content/layout-dependent or unsupported. Record every intermediate
+  containing block; flattening a chain to "viewport" would lose an
+  intervening clamp or restyle. Percentage-bearing expressions, including
+  supported length-plus-percentage expressions, count as reads.
+
+Admission requires all the following premises before retained publication:
+
+1. **Complete, current inputs.** The seam, style frontier and stable routes
+   pass the existing checks. Every reused percentage read has a live basis
+   record and unchanged resolution inputs: containing-block identity,
+   property/expression, style and font inputs, width/box-sizing inputs,
+   viewport and layout mode. Relevant invalidation or missing metadata is
+   failure, not absence of a dependency. A child context contributes only its own percentage reads; its
+   interior is governed by unchanged-Space translation and flex
+   Space-equality relayout, not this parent inventory.
+2. **Definite, edit-independent provenance.** Every such read has a definite
+   basis, and every height-producing link in its provenance terminates in
+   an unchanged external size or content-independent specified size.
+   No link's basis belongs to `G`; no link depends on changed content,
+   unresolved intrinsic sizing, a changed clamp, or a flex/grid result
+   still to be computed. Both numeric value and definiteness must be
+   preserved. An indefinite basis is conservatively refused by this first
+   certificate even if ordinary CSS would make its percentage ineffective;
+   proving stable auto behavior is not needed to admit the approved case.
+3. **Correct ancestor transfer.** Each ancestor in `A` has either the
+   existing exact auto-growth transfer or a content-independent used-height
+   transfer. In the latter case settle its changed content summary but keep
+   its resolved used height; its outgoing size delta is zero. A percentage
+   min/max constraint with a fixed basis is a fixed *limit*, not proof that
+   an auto height stays fixed or grows by the child's delta. Such auto-height
+   ancestors still need the existing growth certificate; an active or
+   crossed clamp remains refused. No new general clamp transfer is implied.
+4. **Private construction and all other certificates.** Resolve percentages
+   inside the inserted subtree using the same containing-block inputs and
+   rules as a fresh build. Record its new dependencies before publication,
+   and apply premises 1–3 to external basis links in the direct inventory
+   and the proposed enclosing outputs. A privately built nested context
+   resolves its entire interior normally; only its own record joins the
+   parent inventory. Internal definite chains can be resolved wholly in private
+   storage. An indefinite/unsupported link or dependence on `G` refuses
+   here too. Preserve the existing arithmetic, width, margin, marker,
+   float/clearance, flex, positioned and split-fragment conditions.
+
+The test is sufficient, not necessary. Unknown classification goes into
+`G` or fails provenance; no speculative reuse is admitted on equal old
+numbers. Removed consumers need no new layout, but their metadata must be
+removed and surviving readers must still pass. A percentage-free edit uses
+the old certificate. Every failed Q139 premise produces a counted
+pre-publication structural refusal with reason 7 when that check is reached;
+an earlier independent reason keeps its existing precedence. Do not relabel
+Q129 float refusals or Q130's post-flex reason 10 as percentage failures.
+
+### Correctness argument and its boundary
+
+Fix a successful preflight and compare the proposed result with fresh layout
+of the edited document at the same viewport. First prove basis invariance,
+top down in the provenance graph. External leaves are unchanged by premise 1.
+A content-independent specified-size link has identical style, limits,
+width-dependent frame and input bases, so its used content height is
+identical. A percentage link then applies the same expression, rounding,
+box conversion and constraints to the same input; its result and
+definiteness are identical. Premise 2 excludes a back edge through changed
+content, so induction covers nested percentages without a circular
+assumption that the ancestor is unchanged because its child is unchanged.
+No multiplication of percentages into a shortcut is allowed: preserving
+each resolution step also preserves rounding and saturation behavior.
+
+Consequently each reused percentage height is constant. Each reused
+percentage minimum/maximum resolves to the same limit. Outside `A` the
+consumer's content, width and all other size inputs are unchanged, so
+applying that same limit leaves its used height unchanged as well. On `A`
+the content can change: premise 3, not the basis test, establishes the
+ancestor's exact output. For example `height:auto; min-height:50%` can leave
+its minimum when a child is inserted, although its minimum's basis never
+changes. It is unsound to add the child's delta to that ancestor or to
+declare it fixed solely from a retained clamp result.
+
+Percentage padding and margins, including top and bottom, read containing
+**width** in this horizontal ordinary-flow scope, as specified by
+[CSS 2.1 margins](https://www.w3.org/TR/CSS21/box.html#margin-properties) and
+[padding](https://www.w3.org/TR/CSS21/box.html#padding-properties).
+Width equality therefore keeps their values and the frame conversion fixed.
+It does not by itself prove unchanged collapsing-margin state: the existing
+strut and through/solid certificates still do that. In particular the
+current `snapshot_grows` rejects percentage vertical padding outright;
+Q139 does not silently delete that additional refusal. A retained sibling
+with fixed width can nevertheless retain percentage padding/margins under
+its existing translation certificate. A width change requires its existing
+fallback, regardless of the height basis.
+
+Inside the inserted subtree there is no cached geometry to preserve. Its
+private layout consumes proven enclosing bases, resolves any internal
+definite chain in dependency order, and supplies the same size and boundary
+outputs as fresh layout. Its new reads are part of the published metadata,
+not hidden by combining only old boolean flags. Removal subtracts them.
+The next insert, removal, text edit or restyle must see the current records;
+an insert/remove roundtrip proves nothing about stale identities by itself.
+
+For the root example, let the viewport content height be `V`. With default
+content-box sizing and zero frame, `html {height:100%}` resolves against the
+initial containing block to `V`; `body {height:100%}` resolves against html
+to `V`. Additional nested `height:50%` containers successively resolve
+against their immediate containing blocks. Inserting content changes
+neither `V` nor those containing heights. Content can overflow them; that
+overflow is not a new percentage basis. Normal html/body margins and frames
+must still be resolved normally, not removed as an admission workaround.
+A fixed-height ancestor absorbs the *used-height* delta, while its changed
+content extent, baseline, anchored fragments and exclusions remain subject
+to normal propagation. It is not a stop-on-height-equality rule.
+
+For positions, apply the existing boundary-transfer induction from the seam
+outward. At each ancestor, its recomputed changed child output and unchanged
+prefix state determine the direct suffix's new origins. An unchanged
+suffix entry has unchanged width, used height and normalized boundary input,
+so it needs exactly its certified translation; its descendants retain local
+origins. Beyond a fixed-height ancestor the size delta can be zero, but all
+other outputs must still settle. An off-route context with unchanged Space retains its interior. Flex
+settlement that changes an item's Space relays that change through the
+existing relayout path, including any nested percentage readers.
+
+The precise preservation claim distinguishes the splice's existing update
+sets. Let `T` be the existing direct suffix translations and boxes moved by
+those anchors, and `U` its changed subtree, ancestor settlement, flex/positioned
+recomputation and anchored-fragment updates. Every retained box outside
+`T union U` keeps its used height and position; boxes in `T` that are only
+translated keep used heights and local geometry. The literal claim that
+*every* box outside `T` is unchanged would already be false for an auto-height
+ancestor or a Q128 positioned child. Q139 adds no new off-path update set;
+it proves that percentage inputs cannot add one. Split rectangles spanning
+changed endpoints likewise belong to the existing anchor-update set.
+
+The conjunction with the existing certificates is essential:
+
+- **Floats and clearance.** Invariant percentage heights keep each retained
+  float's height and exclusion shape fixed. Q129 still compares old and
+  proposed suffix natural minima with stationary reach, including negative
+  margins, clearance and float floor, and still forbids new/deleted float
+  exports. All mutually interacting moved floats and flow must share its
+  certified delta. A fixed-height ancestor may change an inner suffix by a
+  nonzero delta while its outer suffix stays put; if those regions share
+  float influence and no existing certificate separates them, refuse under
+  Q129. Do not infer common motion from the newly constant height, or stop
+  exporting float reach at a fixed-height block that is not a BFC.
+- **Flex.** Q128 still recomputes the container algorithm and checks complete
+  preparation/space keys, stretch, wrapping, free space and actual outputs.
+  A size supplied by the changed flex result cannot be certified unchanged
+  before that result exists. Direct readers checked by this certificate
+  still need premise 2; readers inside a nested flex item instead follow
+  its Space-equality check and relayout. Recomputed item interiors remain the flex algorithm's work,
+  not reuse authorized here. Q130 still owns an outward failure after flex
+  publication. Grid/table/multicol scope does not expand.
+- **Positioned and atomic content.** Q128 settles the relevant anchors,
+  recomputes positioned percentage sizes against the settled containing
+  block, and refreshes their arithmetic charges. A changing positioned
+  basis is not evidence against this proof about *reused in-flow* geometry.
+  Atomic reuse must still satisfy its actual Space, baseline and paragraph
+  rules; Q139 cannot invent a definite atomic basis where that path supplies
+  an indefinite one.
+- **Split fragments, arithmetic and margins.** Retain source-removal,
+  seam-topology and endpoint-selector certificates and update the same
+  stable anchors and line offsets. A fixed used height does not freeze a
+  spanning fragment's endpoints. Content extent, measured constrained height,
+  old/new travel and visual excursions all remain charged. Percentage
+  resolution uses the full builder's numeric order and fails the existing
+  bounds when necessary; equal basis values cannot justify reassociation.
+
+For comparison only, Chromium's
+[`layout_utils.cc` at the inspected revision](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/layout_utils.cc#101)
+reads `DependsOnPercentageBlockSize()` from the `LayoutResult`'s physical
+fragment and compares old/new `PercentageResolutionBlockSize()` when that
+flag is set. Its surrounding cache logic also checks sizing mode,
+definiteness and other constraints. Q139 proves **before splice publication**
+that the relevant old/new bases must be equal, using retained provenance and
+the growing chain, rather than computing a new layout merely to compare
+them. Both distinguish having a percentage dependency from changing its
+basis; neither flag alone proves cache reuse. This is an analogy, not an
+independent correctness oracle for Snowghost's transfer implementation.
+
+### Refusals and context-boundary identity examples
+
+These are HTML fragments for later fixture construction, not executed
+fixtures. Unless a row says otherwise, place the fragment in a standards-mode
+document with `body {margin:0}` and `p {margin:0}`, insert a line-bearing
+`<p>new</p>` at the indicated comment, and also remove a pre-existing block.
+Retain line-bearing content and a separator so a mixed-inline or through
+seam does not accidentally supply the refusal being tested. Each Q139
+failure is reason 7 if reached; variants exercising other guards must assert
+their own reason rather than manufacturing a reason-7 result.
+
+| Case | Minimal fragment / edit | Required result and reason |
+| --- | --- | --- |
+| Indefinite basis on the growing chain | `<section id="a"><p>old</p><!-- insert --><div style="height:50%"><p>tail</p></div></section>` | `a` has content-driven auto height and is in `G`. The percentage behaves as auto here; reusing a numeric old height as a definite basis is invalid. This conservative refusal does not claim CSS requires a cycle or a changed percentage result. |
+| Indefinite basis even off the growing chain | `<section><p>old</p><!-- insert --></section><aside><div style="height:50%"><p>tail</p></div></aside>` | The retained aside subtree contains an unresolved basis, although aside is not edited. A proposed summary that says only "basis not in G" would miss the definiteness premise. No stable-indefinite certificate is added here. |
+| A broken intermediate percentage chain | `<div style="height:200px"><section style="height:50%"><div id="a"><p>old</p><!-- insert --><div style="height:50%"><p>tail</p></div></div></section></div>` | The inner percentage's immediate basis is auto-height `a`, not the outer 200px box. Retaining only the terminal definite ancestor would incorrectly admit it. |
+| Percentage minimum on an auto-height ancestor | `<div style="height:200px"><section style="min-height:50%"><p style="height:80px">old</p><!-- insert 40px block --></section></div>` | The minimum stays 100px, but the section changes from 100px to 120px, not by the inserted 40px. An active clamp on the growing path is outside the existing transfer. Removal crosses the boundary in reverse. |
+| Percentage maximum on an auto-height ancestor | `<div style="height:200px"><section style="max-height:50%"><p style="height:80px">old</p><!-- insert 40px block --></section></div>` | The maximum stays 100px, but the section grows by 20px and then overflows. Same-basis equality is insufficient; an active/crossed clamp remains reason 7. |
+| Layout-supplied definite basis may change | `<div style="display:flex;align-items:stretch"><section><p>old</p><!-- insert tall block --></section><aside><div style="height:50%"><p>tail</p></div></aside></div>` | `layout-stretch` is a positive splice/identity case. The changed flex line can stretch aside to a different height; the existing flex Space-equality check then relays out its interior and resolves its percentage child again. Its nested reader is outside the parent direct inventory. |
+| Nested retained context (`nested-context-reader`) | `<section><p>old</p><!-- insert --></section><aside style="display:flow-root"><div style="height:50%"><p>tail</p></div></aside>` | Positive splice/identity case: aside has no direct percentage read and its unchanged Space permits translation of the whole context. Its interior reader contributes only when an edit route enters that context. |
+| New percentage read with no admissible external basis | `<section><p>old</p><!-- insert <div style="height:50%"><p>new</p></div> --><p>tail</p></section>` | Looking only at retained reads would miss the inserted box's auto/content-driven basis. Private construction must fail this certificate before publishing any routes or geometry. |
+| Changed source, resolution mode, or stale provenance | `<div id="basis" style="height:200px"><section style="height:50%"><p>old</p><!-- insert --></section></div>`; first change `basis` to `height:auto` or `height:300px`, then insert, without an intervening retained-record refresh in the fault injection | The old identity/value/definiteness record is not current. The legitimate style path must invalidate or republish it; missing records after a reference rebuild or slot replacement are equally unknown. A combined retained restyle may correctly refuse earlier with reason 6. |
+| Changed viewport input | `html,body {height:100%}` with `<section><p>old</p><!-- insert --></section>`; resize the viewport before attempting reuse | The terminal external value is no longer equal. Normal resize layout must refresh it, or this preflight refuses. HTML alone cannot express stale retained viewport state. |
+| Width/box-conversion input not preserved | `<div id="basis" style="width:200px;height:200px"><section style="height:50%;box-sizing:border-box;padding-top:10%"><p>old</p><!-- insert --></section></div>`; change `basis` width to 300px before reuse | Equal height basis does not keep the section's content height or padding fixed. Width/style invalidation must run; a stale record cannot pass premise 1. Existing width or style guards can refuse first. |
+| Uncertified resolution mode or numeric transfer | `<section style="height:calc(50% + 2147483647px)"><p>old</p><!-- insert --></section>` under a definite viewport-based body; separately put the first row in a document without a standards-mode doctype | A percentage expression does not waive travel/overflow limits. The quirks variant cannot borrow the ordinary containing-block proof. These are conservative refusal probes, not assertions that their CSS has no full-layout result. |
+
+Indefinite percentage min/max cases use the first row with `min-height:50%`
+or `max-height:50%` in place of `height:50%` and retain reason 7 for this
+certificate. A dangling basis handle, omitted direct-reader record, unsupported
+provenance link, or cycle without a definite external derivation also fails
+premise 1 or 2. Such metadata faults require injection into a real fixture;
+there is no HTML declaration that directly creates a dangling layout handle.
+The nonzero percentage in these negative probes must not be erased from
+the record merely because its current used result happens to be zero.
+
+### Required fixtures and falsifiers for the implementation task
+
+The comparison is every incremental edit prefix against a fresh full build,
+plus independent CSS/Chromium rectangle expectations for basis resolution.
+Either a geometry difference on an admitted prefix or admission outside
+these premises rejects the implementation. If full and incremental agree
+but disagree with the independent expected containing block, both are wrong;
+do not bless that output as a fixture. Begin in hosted CI with one reduced
+insertion/removal pair before expanding the matrix. These are obligations,
+not new files or completed validation in this argument-only task.
+
+Positive fixtures must include:
+
+- **Reduced apollo11 root chain:** standards mode, `html,body {height:100%}`,
+  an ordinary auto-height section with old/inserted/later paragraphs and a
+  later sibling; no grids. Assert successful local insertion and removal,
+  constant html/body used heights, inner suffix motion and content overflow.
+  Use enough content to cross the viewport height in both directions.
+  Repeat with normal body margins, and a viewport change followed by a
+  proper full refresh. The unchanged real apollo11 input still exposes Q140.
+- **Nested definite chain:** a 200px containing block, a 50% child and a 50%
+  grandchild, with complete block seams inside the grandchild and later
+  siblings at each level. Expect 100px then 50px content heights with zero
+  frame. Include a parallel sibling chain with a different percentage,
+  nonzero border/padding and border-box variants; use a nonintegral
+  percentage/basis combination to catch changed rounding order.
+- **Limits on unchanged geometry:** retained sibling boxes with percentage
+  min-height and max-height against a fixed basis, including active limits;
+  and a content-independent percentage-height ancestor with fixed resolved
+  limits. Their used heights stay constant. Do not use an auto ancestor
+  crossing a clamp as a positive case.
+- **Width percentages and private readers:** percentage top/bottom margins
+  and padding on retained translated siblings at fixed width; an inserted
+  definite percentage chain with a valid external basis. Repeat insertion
+  before one old sibling, remove both new and old blocks, then edit retained
+  and inserted text and restyle a basis. Confirm records are renewed after
+  full fallback, with no stale slots or basis shortcuts.
+- **Certificate combinations:** place the root/nested chain around each
+  supported Q129 stationary-expired-float/later-float/clearance case, Q128
+  positioned/atomic and flex cases, and the anchored split cases. Claim a
+  positive splice only where all their old conditions still hold. Fixed
+  height with a moving internal float and stationary interacting outer flow
+  needs a negative companion, not a widened float certificate.
+
+Negative fixtures cover every row above, both min/max indefinite variants,
+unchanged-numeric-value but changed-definiteness state, a missing or retired
+basis handle. A percentage reader inside a nested retained context whose
+own entry is percentage-free is instead a positive identity case, alongside
+`layout-stretch`, under the approved direct-reader scope. Retain the existing float-floor negative-margin,
+flex changed-space, split-topology and near-limit negatives. Attribute the
+first refusal to the guard actually reached; preserve full rendering on all
+fallbacks and assert unchanged retained state at a reason-7 preflight exit.
+
+Extend the existing temporary `falsify-m2` workflow on the implementation
+branch. Apply each mutation separately to a restored baseline, require that
+the intended fixture reaches that predicate, and retain raw path and dump
+logs. Do not accept a compile error, unrelated earlier refusal or a crashed
+driver as detection. The workflow's branch trigger must include that branch;
+adding a mutation name without execution is no evidence. The premise-to-
+mutation obligations are:
+
+| Premise | Mutation, and observation required to detect it |
+| --- | --- |
+| Complete consumer inventory (1) | Omit one direct percentage reader in the route context or a float, and independently ignore min-height and max-height reads. The focused negative must lose its required reason-7 path or produce wrong geometry; when missing optional records conservatively refuse, the positive reader fixture must instead lose its required splice specifically to reason 7. Instrument the selected predicate so an earlier guard cannot masquerade as detection. |
+| Correct immediate basis and full provenance (1–2) | Replace the immediate containing block with the context root, or flatten a nested chain past the auto-height intermediate. The independent 200/100/50 rectangle expectations or the broken-chain refusal must fail. |
+| Definite, content-independent basis (2) | Treat an indefinite old numeric height as definite; separately accept an old flex stretch target as immutable. The auto-height/flex negative must either violate its reuse/refusal assertion or differ after the growing edit. A fully recomputed flex interior is not a detection of this reuse mutation. |
+| Growing-chain exclusion (2) | Ignore one basis membership in `G`, or remove an unresolved layout-sized ancestor from `G` on equal old numbers. Use a certificate-level fixture for this predicate with other premises supplied, plus a flex-growth integration probe; demand an explicit assertion failure if another preflight conservatively masks the mutation. |
+| Freshness, identity and external inputs (1–2) | Skip invalidation after changing a basis from definite to auto, after replacing its stable handle, and after a viewport/width change, one at a time. A subsequent edit must fail the freshness assertion or produce a dump/independent-rectangle difference. Compare state as well as the numeric basis. |
+| Exact constrained ancestor transfer (3) | Propagate content delta into a fixed percentage height; independently treat an auto-height percentage clamp as exact growth. Root overflow and the 80px + 40px limit probes must differ at an ancestor or its later sibling. Also mutate the output-equality cutoff to ignore changed extent/baseline with equal used height. |
+| Private subtree and metadata lifetime (4) | Resolve a fresh reader using the context basis instead of its containing block; separately omit its dependency publication or fail to remove a retired dependency. Nested private rectangles, a subsequent basis edit, and a removal followed by another local insertion must detect these respectively. Missing publication must not be hidden by an intervening full rebuild. |
+| Width-dependent frame and unchanged margin transfer (1,4) | Use height instead of width for percentage padding/margins, or reuse their old resolved value after a width change; separately ignore an exposed-strut change. Non-square geometry and the existing margin probes must differ or violate refusal. |
+| All existing certificates remain conjunctive (4) | Independently bypass stationary-float reach, common-motion equality across a fixed-height boundary, flex Space equality/stretch layout, split-topology protection, positioned charge refresh and numeric travel checks. Their focused combination cases must detect each bypass; run the existing mutation rows as well. |
+| Numeric resolution and counted refusal (2,4) | Collapse nested percentage arithmetic into one multiplication, then independently suppress a reason-7 path row or count it as a successful splice. The rounding fixture and existing malformed-path assertions must detect the respective changes. |
+
+These include semantic mutations and conservative admission-policy
+mutations. The latter may leave rendering correct; their detection is an
+explicit basis/certificate or required-path assertion, as in the existing
+seam and path-log falsifiers, not a claim of a rendering defect. A guard
+with no reachable integration counterexample still needs an isolated
+certificate assertion varying that premise while keeping the others fixed.
+Positive-path assertions also prevent replacing the whole extension by
+unconditional fallback. Full-build cost is a separate empirical gate.
+
+### Retained data, dependencies and criterion 4
+
+Before Q139, the boolean `flow_definite_free` said only that some percentage
+read existed; it could not identify the basis or distinguish html from an
+edited auto-height ancestor. The Q139 implementation needs the per-read records
+above, live provenance links and invalidation ownership, plus a summary that
+can answer whether any reused read has unknown/indefinite provenance or
+reaches `G`, without scanning unrelated descendants on every edit. Width
+inputs and fixed-used-height versus content-output fields must stay distinct.
+The record describes actual resolution, not a second CSS resolver maintained
+only for splice admission.
+
+Let `N` be live layout boxes, `P` percentage-property reads, `D` enclosing
+depth, and `K` the dependency-summary/index records visited by an edit.
+There are at most three direct height-property reads per box here; repeated
+copies of each read at every ancestor would nevertheless cost `O(P D)`.
+Retain shared provenance edges, not expanded ancestor lists. Missing metadata
+must safely fall back, but must not become the way the positive fixtures
+quietly evade the intended admission.
+
+| Candidate | Actual dependencies and costs | Disposition |
+| --- | --- | --- |
+| Per-box records with an edit-time scan of every retained consumer | Full-build record writes depend on that box's existing style/containing-block resolution; independent children write disjoint records. Once ancestor inputs are known, all edit-time membership queries can run independently and reduce with a balanced OR. Storage and build work are `O(N + P)`; each edit reads `O(P)` consumers even when it changes one paragraph. | A correctness reference for CI, not the final local splice. Parallel scanning removes no page-wide work and fails the existing locality criterion. |
+| Locally owned records and composable dependency summaries over the existing owner/index tree | Style and containing-block identity precede each record; a definite percentage depends on its basis value, giving true top-down edges through nested percentage chains. Sibling records are independent once those inputs exist. Parent summaries depend on child summaries and combine by balanced reductions, not a document-order fold. Edit queries read immutable summaries after `A/G` classification; disjoint query results reduce independently, and publication joins only changed index ancestors. | Recommended direction: retain direct provenance once and use queryable summaries to avoid unrelated consumer leaves. Exact set/range representation, `K` bound and byte cost remain implementation obligations, not a claim that one bit or a constant-sized exact basis set suffices. Summaries may conservatively refuse; they must still admit the required definite chains. |
+| Per-basis reverse reader lists, filled by shared append | Each reader must first resolve its basis. Shared mutation then orders otherwise independent readers of the same viewport/root basis; repairs can fan out to all its readers. A dense page-sized reverse table also charges percentage-free full builds. | Not recommended: the append order is not a layout dependency. If exact reverse grouping proves necessary, disjoint emission followed by balanced grouping is the parallel alternative; its extra storage/work and reader traversal still need comparison with owner summaries. |
+
+Constructing `G` requires proving independence, not first recomputing the
+whole page: follow already recorded basis links from unchanged terminals.
+Then read the changed owner's outward path and conservatively classify
+content/layout-dependent sizes. Private subtree resolution can overlap
+independent retained-summary queries once enclosing inputs are known.
+Boundary output propagation waits for the changed child and its containing
+algorithm, as before. Shared cache insertion, a global allocation counter
+on the dependency path, and sibling-by-sibling record validation add no
+necessary dependency and are not the recommendation.
+
+The records charge the full build for provenance writes, summary construction,
+storage initialization and retained memory, even on a frame with no edits.
+Percentage-free boxes should incur only the representation's empty-state
+cost, not allocated reader lists or a second traversal. Reuse the existing
+resolution pass where possible; doing so is not proof that the added cost is
+negligible. Report actual fields/bytes, allocations, record and index visits,
+and any full-build pass added in the implementation task.
+
+[M2 criterion 4](DESIGN.md#criterion) still requires full style and layout
+within 5 percent of M1's `8b8612f` on every page; this extension receives no
+extra allowance. Before measuring, record the comparison of the same source
+with/without record collection, interleaved runs and a twin base noise
+control, on the 14900K through CI with identical compiler, captures and
+settings. Compare sequential and four-worker full builds and per-edit costs;
+begin with the smallest useful sample and expand only if its spread cannot
+settle the question. Exceeding criterion 4, scanning unchanged descendants,
+or introducing an unnecessary sibling dependency rejects the implementation
+choice even when its geometry is correct. No cost has been measured here.
+
+### Remaining uncertainty and rejection conditions
+
+The argument is conditional on exact containing-block provenance and the
+existing transfer certificates; it does not establish that today's full
+builder already supplies those facts. Source inspection finds
+`prepare_spaces` passing a context-wide `content_height` into nested child
+spaces, and `stack_flow` passing its single `basis_height` to ordinary block
+height resolution. Its open-block frames track widths but not a nested
+height basis. That is a concrete risk for the nested 200/100/50 fixture,
+recorded in [the TODO](../../../docs/todo.md); no local run establishes the
+actual mismatch. Before implementing admission, CI must compare nested and
+auto-intermediate full builds with independent expected rectangles. If they
+disagree, repair full resolution and its consumers; do not encode the wrong
+context-wide basis as an invariant or narrow the required nested fixture.
+
+Other open evidence is whether the supported numeric/box-sizing paths,
+fixed-height ancestor output summaries and cross-boundary float certificates
+can implement these premises without extra descendant work, and which
+summary representation meets criterion 4. Those are later implementation
+and measurement obligations, not owner decisions made by this prose. No
+new choice is requested beyond Q139 A and Q145 C. A need to admit changing
+bases, stable indefinite percentages, general clamp transitions or a wider
+float/flex scope would require another argument and an owner ruling.
+
+An admitted edit that changes a supposedly invariant basis, off-path used
+height or position overturns the proof's premises or its transfer argument.
+A specification/reference-browser exception in the claimed ordinary scope,
+an overlooked provenance edge, or a full-layout result that depends on
+content despite the asserted definite derivation has the same consequence.
+Keep the counted fallback until the discrepancy is resolved. A surviving
+mutation overturns the claimed evidence; a slow full build overturns the
+representation choice, not the CSS induction. This task changes no renderer,
+pin or submodule, files no Whitefoot gap, and supplies no execution results.
+
+
+### Q139 implementation: independent full-layout probe
+
+The implementation first compares `tests/layout/percentage-height-cases.html`
+with Chromium through `tests/layout/layout_oracle.mjs` on hosted CI. The
+probe covers a 200px block with nested 50% blocks, the same outer block with
+an auto-height intermediate, the html/body viewport chain, and a nested
+formatting-context boundary. A mismatch rejects the existing resolver;
+full/incremental identity cannot establish this premise. The Chromium dump,
+comparison and renderer dump are retained as CI artifacts. The focused case
+has fourteen block boxes and no visible inline/text boxes; its ordinary
+oracle floor requires all fourteen to match.
+
+The candidate repair propagates the immediate containing block's definite
+content height in the existing top-down pre-pass and retains the input in
+`BlockOutput.basis_height`. Every intermediate percentage is resolved in
+order; an auto-height block supplies an indefinite basis. The stacking pass,
+child spaces and boundary/growth consumers use that same input. A restyled
+block with percentage-dependent descendants requires the pre-pass before
+child layout; width equality alone cannot establish height-key equality.
+The baseline [hosted run 37761041831](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37761041831)
+at `480b7d5180be244ed8844ea876cb4cea908e9fb7` confirms the defect:
+Chromium 141.0.7390.37 resolves 200/100/50px, while the renderer produces
+200/360/360px. The auto intermediate and its percentage child are both
+30px in Chromium and 360px in the renderer. The viewport chain gives
+html/body 720px, then 360/180px; the last renderer box is 360px. Across the
+formatting-context boundary, Chromium gives 200/100/50px and the renderer
+200/360/180px. Seven of fourteen block boxes match; the comparison exits 1.
+The committed `.chromium.tsv` is the downloaded reference artifact and the
+workflow requires a fresh Chromium dump to agree before judging the fix.
+
+The baseline driver build took 6m59s and the focused dump 0.227s on the
+hosted runner; these observations size the next sequential/parallel fixture
+run, not a renderer performance comparison. The repaired revision
+`ed2d4114d6b4db98d2025b1278bf1d330261a3f4` passes in
+[hosted run 37764019799](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37764019799):
+all fourteen block boxes match Chromium exactly, sequential and four-worker
+dumps agree byte for byte, and every existing layout case floor passes
+unchanged. The [gate at the same revision](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37764019903)
+also passes. This closes the nested-height TODO before splice admission.
+The earlier source-format and effect-row failures produced no rendering
+results and are not regression evidence. Revision `03f8e43` additionally
+probes restyles of height, definiteness and width with ordinary, atomic and
+floated children. Its first 42 ordinary restyles pass, but
+[run 37765149668](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37765149668)
+then refuses the probe's display-changing class edit, as the style-only API
+requires topology reconstruction. Each display/float mode is therefore set
+by the initial stylesheet before its retained baseline; all height/width
+edits remain required, with no allowance for refused edits. Validation of
+those separate mode runs passes at `c0ffc6979d9090dcaa2f55de12d54610f32c2c41`
+in [run 37767223590](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37767223590):
+42 edits per mode, each in sequential and four-worker builds.
+
+Per the implementation task's machine constraint, all evidence and all
+performance comparisons use GitHub-hosted CI, including the comparison of
+every X5 edit kind against main and `95ea4a1` with a twin. No local build,
+check, test or timing is part of this experiment. This overrides the earlier
+argument's proposed 14900K measurement host for this task.
+
+
+### Q139 implementation: records and local summaries
+
+The initial dense candidate retained one `HeightProof` per block/context, naming its actual
+immediate basis and the height/minimum/maximum read mask, state, numeric input,
+content result and style keys. The ordinary containing-block links share
+provenance; a percentage-free specified size starts an independent terminal,
+and an auto intermediate or a flex/grid/table supplied size cannot be promoted
+from its last number. Existing full-layout pre-passes establish the top-down
+inputs; sibling record writes have no added shared cache or reader append.
+
+Live `HeightSummary` counts compose in the existing balanced ordinary-flow
+index. Non-flow owners combine cached direct-item summaries with a balanced
+reduction after their algorithm settles. The intended admission query reads
+those summaries plus the enclosing path, not consumer leaves elsewhere in the
+page. Publication, removal and reference refresh must preserve those counts;
+missing records count as unproved. The live-tree decision is proposed, with
+admission, fixed-height transfer and the required mutation matrix still being
+implemented. No positive splice or locality result is claimed yet.
+
+The cost comparison rejects a Q139 regression beyond the paired twin spread
+for any X5 kind. The hosted workflow uses the same compiler release and
+settings for main `8fbc1601785cee70265da1eac4d99589fc6fb67c`, M2
+`95ea4a10832257d0563d2410565900e5d2981118`, its independently built twin and
+the candidate, sharing exact page captures, fonts and edit scripts. Start with
+one forward/inverse pair per kind in two interleaved rounds, then select scale
+from its observed duration and spread. The full-build and storage comparison
+remains an additional obligation; this small sample cannot establish it.
+
+
+The draft provenance implementation separates the parent's incoming edge from
+the child's last certified input. Geometry reuse first compared both
+exactly; the [record reuse rule](#paired-edit-cost-and-record-reuse)
+below narrows that comparison. Ordinary block records are resolved top down; live-source checks
+include the stable context, owner, consumer style and nonretired entry slot.
+Their cached summaries are published bottom up through the existing owner
+index. A splice checks its enclosing sources and preserves unrelated
+certificates only under invariant source inputs; retirement removes owned
+consumers through the same index. No edit-time descendant scan is intended.
+This is implementation reasoning, pending the lifetime fixtures and review.
+
+The draft review found two issues before successful admission validation:
+constrained siblings lost a collapsed bottom strut, and recorded source
+identities were not checked. The former now retains the full resolver's
+bottom-separation state; the latter is being addressed with live-link checks
+and separate incoming/certified inputs. Neither is claimed verified yet.
+
+
+The fixed-height float conjunction uses the existing no-new/no-deleted-export
+premise. At an absorber, an existing export moves either by the incoming
+displacement or by zero (a lower absorber can stop part of the displacement).
+Thus old global reach plus the positive part of the displacement bounds both
+old and proposed exports. Carry that bound outward after used-height delta
+becomes zero; every outer direct suffix's old/new natural minimum and the
+context flow end must remain beyond it. Existing known-motion and exact
+arithmetic checks still apply. This admits expired internal floats while
+refusing stationary outer flow that could newly intersect a moved float;
+no descendant traversal or active-float relayout is introduced. The focused
+`fixed-floats` and `fixed-float-reentry` fixtures discriminate these cases;
+execution and a bound-bypass mutation remain required.
+
+
+The initial full-layout repair used a context-wide percentage guard on local
+block restyles. The candidate narrows that guard to the affected subtree:
+every old and new ordinary-block read and every immediate Child/Float/Atomic
+read is checked, including unmarked entries. A percentage-free child keeps
+its own fixed or indefinite outgoing basis when its incoming containing
+height changes; its independently marked style/content update still settles
+normally. Readers outside the affected subtree cannot read a changed inner
+source. This avoids forcing unrelated edits through a full pre-pass solely
+because html/body uses a viewport percentage. The height/width restyle probes
+and all-kind paired costs must validate the narrowed path before adoption.
+
+The fixed-height transfer preserves the existing vertical-percentage-padding
+refusal, as required by the argument; `ancestor-width-padding` isolates it.
+Retained siblings with unchanged width still use their translation certificate.
+The narrow read-only review of the float bound and subtree restyle refinement
+found no concrete defect within those changes; execution and mutation coverage
+remain pending. The hosted draft gate passed at `96cf59e178e0040bf478226c9d186eec3769f8ac`
+([run 37773447136](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37773447136));
+this is compilation/static evidence, not completion of Q139's admission probes.
+
+The first compiled provenance draft kept the independent full-layout boxes
+but failed the floated-container restyle inventory on restoring its percentage
+style ([run 37772936762](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37772936762),
+`5edd410d4830c34e2cd7c301f1978eee650eda9a`, edits 8, 10 and 12).
+The parent equality cutoff predates retained height inventories. Its `Before`
+record now snapshots the published inventory and equality compares both
+consumer and unproved counts, so unchanged geometry cannot suppress metadata
+publication. A read-only inspection confirmed the missing equality input;
+the hosted rerun must establish whether this repairs the observed failures.
+Every restyle prefix now requests dumps to preserve both sides of a mismatch.
+The edit oracle also supports a full viewport refresh between edits; root
+and nested lifetime probes resize, rebuild normally, then require another
+local insert/remove pair at the new viewport and after restoration.
+
+The mutation harness is being extended on the Q139 branch itself. Initial
+rows target reader inventory, immediate/auto-intermediate basis resolution,
+indefinite and layout-sized inputs, growing-set classification, individual
+freshness fields, fixed/clamped transfer, private publication, float common
+motion and constrained struts. Pure classification and input-equality helpers
+are shared with the implementation so isolated assertions exercise the real
+predicates; their extraction changes no admission rule. No mutation is counted
+as detected before a hosted run compiles and executes its driver. Remaining
+rows include retired dependencies, arithmetic reassociation, width-frame
+resolution, output-equality and path-report mutations, plus the original
+conjunctive-certificate matrix. The complete fixture runner is prepared but
+will not replace the required first successful timed root splice pair.
+
+The next evidence pass keeps the original positioned, flex, float, clearance,
+split and edit-cost fixture path assertions, and repeats them under the
+html/body viewport chain. This exposes any interaction between the new
+conservative inventory and the old successful paths without silently changing
+an expectation. The mutation inventory now also covers retired dependencies,
+fixed-height output cutoffs, height substituted for width in spacing,
+collapsed nested-percentage arithmetic, suppressed refusal rows and false
+successful-splice reporting. These remain prepared obligations until executed.
+The full pre-pass consumes the content height already returned by its proof's
+normal resolver instead of resolving the identical height a second time.
+
+The first reduced root splice passes at
+`2dde3c0b276aa95ab0422e64a1a6f23ac2aecc02`
+([run 37774886038](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37774886038)):
+both builds splice insertion and removal with reason 0, every prefix matches
+a fresh build, and Chromium matches every requested block exactly (6/7/6
+boxes before/inserted/removed). The driver pairs took 0.226s sequential and
+0.227s with four workers; the focused matrix can now expand on hosted CI.
+Existing Chromium layout floors also pass. The run remains failing because
+float restore edits 8/10/12 retain stale geometry. Requested dumps establish
+300/150px retained versus 100/50px fresh on edit 8, so the inventory-equality
+repair did not settle this failure. The new provenance-mismatch full-layout
+branch cleared descendant marks but left the updated context itself dirty;
+the next restyle therefore could not count it as newly marked. It now clears
+the whole settled subtree, matching the ordinary update's mark lifecycle.
+The next CI run must verify that repair; no expectation was changed.
+
+Mutation jobs share immutable sequential/four-worker baseline drivers built
+once from their workflow revision, while every mutant starts from a separate
+fresh checkout and changes one named predicate. This removes repeated baseline
+compilation, not an oracle or negative control. Each row still validates its
+unmutated focused fixture before accepting its intended failure. The detector
+has hosted machinery controls for identity differences, intended reason-7
+admission loss, missing rows, exact certificate assertions and unrelated errors.
+
+### Hosted workload recovery, 2026-10-08
+
+The first timing pilot, run 37774211817 at `728d577`, built all four
+sequential/parallel driver pairs but performed no measurements: fetching
+Apollo stopped at its stale historical hash. The rerun consumes the archived
+Apollo inputs from diagnosis run 37727037303, whose original 60 block edits
+motivated Q139. The archive includes a SHA-256 manifest, checked in hosted
+CI before use. It is the diagnostic capture, not the earlier E1 supplement:
+HTML `1405f09a8888e2854ba8785a4da6b50dbd3951fb56ec9eca7f2e20aa3fe78dc4`,
+modules `cc2e64f8f1706af7f505ec69b6c9807cb05a743f7887ccbf8c7e104e1f41a9f8`,
+site CSS `a292ccfd0f47accce300fd2febc776a88c2cd18b82f3f4cc8fad01fbdb9ca1d8`.
+All compared drivers receive those same bytes, fonts and generated edits.
+The temporary timing workflow can reuse already built hosted artifacts when
+only its harness changes; this retry remains a pilot on the recorded old
+revision, and cannot establish final-revision performance.
+
+### Q139 validation scope finding, 2026-10-08
+
+The source review finds that the current whole-context unproved-reader count
+includes unsupported percentage reads in unrelated flex interiors. Those
+reads can prevent descent to an existing positive flex case. The argument
+requires all reused readers to be proved, but Q128 can recompute a changed
+interior; the current summary does not express that distinction. This is an
+open architectural choice, not an acceptable change to positive expectations.
+The original combination path assertions remain intact to expose it in CI.
+The recommended repair distinguishes reused interiors from recomputed ones;
+using the old percentage-free guard as an alternative certificate would
+instead qualify the argument's explicit indefinite-reader refusal rule.
+That choice awaits the owner; work independent of it continues.
+
+Review also identifies missing operational invalidation omissions and
+percentage-wrapped mutation combinations. Pure comparator falsifiers alone
+do not discharge those lifetime obligations. They remain required work.
+The temporary oracle workflow now uses an explicit `[q139]` marker or manual
+dispatch so evidence-only edits do not queue duplicate renderer compilations;
+the project gate still runs on every push. Falsifiers use the project's
+native per-function compiler cache, shared from their immutable baseline
+artifact, without changing their separately restored source trees or checks.
+
+### Expanded hosted evidence and harness repair, 2026-10-08
+
+Run 37777880652 at `5bc2838` passes the frozen Chromium regression, all
+252 ordinary/atomic/float restyle prefixes, the root splice pair, and all
+existing Chromium floors. Thus clearing the child's own marks after the
+provenance-triggered full layout repairs the observed float restore defect.
+The expanded matrix passes 28 of 33 named cases in both builds; four root/
+nested/framed lifetime cases fail after viewport refresh because the oracle
+adopted dense rebuilt styles while restoring its prior stable-slot traversal.
+The viewport operation now adopts the rebuilt traversal together with its
+state; DOM node identities and edit numbering still stay unchanged. This
+is a harness correction, not a change to the renderer's percentage rule.
+The viewport falsifier retains a correctly rebuilt state/traversal pair but
+uses the obsolete viewport, so an unrelated style-stage failure cannot count
+as detection. Its corrected execution is pending.
+
+The remaining private-chain fixture uses newly generated pseudo-elements;
+that reaches the existing structural-style membership fallback before Q139.
+It needs a genuine nested DOM insertion probe through the ordinary splice
+API; accepting that earlier refusal would not test private-chain admission.
+The flex combination confirms the review's scope issue: even the existing
+required reason-2 route and positive paths are masked by reason 7. Existing
+expectations remain unchanged. Added operational mutations skip the actual
+publication on definite-to-auto and width changes; their execution remains
+pending and does not replace the pure predicate falsifiers.
+
+### Private subtree and mutation harness completion, 2026-10-08
+
+The oracle's J command inserts a paragraph wrapped by a specified number of
+nested div elements as one detached DOM subtree. It uses the same structural
+restyle, splice and full comparator as B; only fixture construction differs.
+This replaces the private-chain pseudo-element attempt with real nested
+ordinary and flow-root boxes. The lifetime sequence immediately inserts
+inside the newly published basis, before any text edit can refresh it, then
+removes that edit and exercises text, restyle and retirement. Chromium's
+independently constructed initial/inserted pages still own their rectangles.
+The driver command and its strict X5 protocol handling require hosted checks.
+
+Initial deletion-based falsifiers in run 37777880469 stopped at canonical
+whitespace diagnostics, not their intended observations. No such result is
+counted as detection. The mutation writer now removes whitespace-only lines
+within its one edited function; each mutant still must compile and reach its
+specific runtime observation. New source-owner and child-context rebase
+omissions use the immediate nested edit to expose stale published identities.
+
+### Full-build collection-cost comparison, before measurement
+
+Question: what work does retaining and checking the immediate basis records
+add to a full build on the same source? The hosted control keeps the corrected
+numerical height resolver and the record representation, but disables proof
+collection/currentness checks and summary reductions. It is used only for
+full builds; every sequential/four-worker page dump must match the unmodified
+source before timing. A difference rejects the control rather than becoming
+an expected result. It isolates collection work, not empty record storage;
+native LLVM record sizes and whole-process peak RSS are reported separately.
+The control's identical-binary twin and M2's independently built twin expose
+process/order noise; all candidates share the exact captures and fonts.
+
+Each page/mode first measures zero and one full layout repetition, then picks
+at most ten repetitions with a half-second target for layout work; the cap
+may leave fast pages below that target, requiring inspection of spread.
+Three rounds reverse build order. Subtracting the zero-repetition setup
+excludes parsing/style initialization, so these observations are full layout-pipeline
+costs (font matching, boxes, text preparation, layout and destruction), not a claim that M2's full style-and-layout criterion is established.
+A regression beyond twin spread rejects a no-regression claim; an unresolved
+spread requires a longer paired sample. No measurement result is claimed yet.
+The native ABI inspector asks clang to evaluate sizes from emitted LLVM types
+rather than inferring padding from field sums. All compilation and execution
+are confined to the hosted temporary workflow.
+
+The first pilot used the default compiler code-generation mode on all four
+candidates. Subsequent cached falsifier drivers use per-function fragments;
+they cannot be mixed with that pilot's historical binaries for an attributed
+source comparison. The next all-candidate run rebuilds every side with the
+same per-function mode before the full-cost comparison consumes its artifacts.
+Driver revisions and compiler/native toolchain identities accompany the
+full-cost artifact. The recorded control-reference dump hash is explicitly
+head/control evidence, not a dump hash claimed for historical builds.
+
+### Inventory scope evidence, 2026-10-08
+
+The candidate counts every percentage reader below a route context: a
+nested context contributes its whole subtree summary. A temporary hosted
+variant of the same source (run 37794801347, renderer of `4d5ca75`) lets
+each nested context contribute only its own record, so a route context
+counts its direct readers and readers inside a nested context are counted
+only when the route descends into it. Both builds compared every edit
+prefix with a fresh build, and every result below was identical to it.
+
+| Workload | Whole-subtree inventory (candidate) | Direct-reader variant |
+| --- | --- | --- |
+| apollo11, 60 block edits on the recorded capture | 60 refusals, reason 7 | 60 refusals, reason 2 at grid owners |
+| ecma262, 20 block edits | 20 splices | 20 splices |
+| html5, 60 block edits | 60 splices | 60 splices |
+| flex fixture, original and viewport chains | 9 required paths: 2 splices, six reason 2 and one reason 10 all become reason 7 | all 9 required paths match |
+| positioned, transfer and edit-cost fixtures, both chains | all required paths match | all required paths match |
+| Q139 matrix, 34 cases | all required paths match | `nested-context-reader` and `layout-stretch` splice instead of refusing; 32 cases unchanged |
+
+In the capture's computed styles (the diagnosis artifact's
+`apollo11-styles.tsv`), the only in-flow percentage height outside html
+and body is the header's flex-container link, `a.mw-logo` with
+`height:100%`; the other percentage heights belong to absolutely
+positioned inputs, which the summary excludes. One reader whose basis is
+not proved therefore refuses every block edit on the page under the
+whole-subtree inventory, before the grid owners that
+[the diagnosis](https://github.com/Ming-Research/Snowghost-wf/blob/2b122a48d5a1798cbe58232db44df56a4072ea40/research/investigations/structure-edits/apollo11-blocks.md#control-results-and-causal-limit)
+expected Q139 to expose. The direct-reader variant reaches exactly those
+grid owners. It relies on the transfer certificate's unchanged space for
+an off-route nested context, the premise M2's percentage-free guard
+relied on, instead of the argument's rule that retained nested contexts
+contribute their readers; the argument's two negative rows for an
+indefinite nested reader and a stretched flex sibling would become
+admitted cases. The owner selected the direct-reader inventory on 2026-10-08. The
+argument above now states that scope; `nested-context-reader` and
+`layout-stretch` require splice/identity, and the flex fixture keeps its
+existing expectations.
+
+### Paired edit cost and record reuse
+
+On 2026-10-08 the first all-kind hosted comparison at `4477e5e` (run 37782276771, one
+forward/inverse pair per kind, two interleaved rounds, ubuntu-24.04
+runners) measured the candidate against M2 `95ea4a1` with the twin as a
+noise control. Median paired ratios outside the twin's range: ecma262
+root font 3.47 sequential and 1.60 with four workers; apollo11 sentence
+9.9 and 10.7, word 2.8 and 3.4, font size 2.8 and 2.2, block 1.07 and
+1.10. Instruction counts under the layout update (callgrind, runs
+37797895873 and 37804054947) located three causes, none of them in the
+admission query:
+
+- Geometry reuse required exact equality of each context's record with
+  its current inputs. A root font change alters every font key, so every
+  context was laid out again (10,217 contexts per ecma262 root font edit
+  against M2's 4).
+- A grid measures an item with an unknown height and then lays it out at
+  its row height, so an item's record alternated between the auto and
+  layout-supplied states, and the reuse check laid every Apollo grid item
+  out again in both passes of each update.
+- Each pre-pass and reference publication resolved every block's record
+  again although nothing it depends on had changed.
+
+A retained context now keeps its geometry and refreshes a stale record
+in place when its incoming edge keeps the same source context, owner,
+element and kind and the same content independence (state 2). Fresh
+layout follows when any of those changes, or when the refresh changes the
+record's validity, its reads or its own content independence. Only
+state 2 proves a descendant's basis: a record left in another unproved
+state, a changed content height or a descendant edge still keyed to the
+previous record can only fail a currentness check and refuse admission,
+never prove a reader. That conservative staleness inside a kept context
+is not visible to the oracle, which compares dumps and the root counts;
+whether it costs admissions after a text edit is unmeasured. A record
+whose edge, consumer, numeric inputs and style keys are unchanged is
+reused instead of resolved, which relies on a restyle appending to the
+kept group tables, and a child's incoming edge is written from the
+containing record without resolving the child. These change no admission
+rule; the matrix, restyle probes and Chromium rectangles pass unchanged
+at `afc8028` (run 37810231653).
+
+A larger sample at `afc8028` (run 37814247123: two forward/inverse pairs
+per kind, four interleaved rounds, the drivers of run 37810231789) has
+three median paired ratios against M2 whose range excludes both 1.0 and
+the twin's median: ecma262 root font 1.082 sequential and 1.045 with four
+workers, and html5 root font 1.014 sequential. Every other median lies
+between 0.95 and 1.11 with a range that includes the twin's median, so
+this sample cannot separate it from noise; apollo11 root font sequential,
+1.019, excludes 1.0 but not the twin's 1.003. The root font edits take
+the update path over most of the page; the full-build comparison below
+separates that from a full build.
+
+The full-build comparison at the same renderer (run 37827316476, drivers
+of run 37810231789 for main, M2 and twin, the candidate from the mutation
+baseline of `ed3cec0`; ubuntu-24.04, three rounds in alternating order,
+milliseconds per full layout with the zero-repetition setup subtracted,
+medians with ranges) is:
+
+| Page, mode | main `8fbc160` | M2 `95ea4a1` | M2 twin | candidate |
+| --- | --- | --- | --- | --- |
+| ecma262 sequential | 1126.4 [1100.8, 1142.0] | 1537.8 [1503.5, 1547.5] | 1509.7 [1506.0, 1525.4] | 1529.7 [1524.2, 1567.0] |
+| ecma262 four workers | 621.6 [614.6, 624.1] | 1028.0 [1014.5, 1085.8] | 1032.3 [1028.1, 1041.5] | 1039.2 [1031.1, 1045.4] |
+| html5 sequential | 1245.4 [1242.8, 1253.8] | 1570.3 [1561.2, 1614.3] | 1612.5 [1593.6, 1618.2] | 1594.3 [1580.9, 1626.8] |
+| html5 four workers | 707.4 [675.7, 717.5] | 1052.8 [1034.9, 1081.1] | 1055.0 [1028.0, 1074.9] | 1060.7 [1053.3, 1078.2] |
+| apollo11 sequential | 75.5 [74.3, 76.9] | 86.5 [84.5, 86.5] | 86.2 [85.5, 87.3] | 85.7 [85.5, 86.9] |
+| apollo11 four workers | 49.9 [49.3, 50.0] | 65.4 [64.2, 66.1] | 64.9 [64.3, 66.4] | 65.7 [64.5, 66.7] |
+
+Every candidate median lies within about one percent of M2's and inside
+or next to the twin's range, so this sample finds no full-build
+regression from Q139 beyond the twin's noise; it does not settle a
+difference below one percent. Sequential peak resident memory of the
+whole process grows from 485,384 to 503,384 KiB on ecma262 (3.7 percent)
+and from 477,660 to 494,792 KiB on html5 (3.6 percent), and by at most
+1,232 KiB on apollo11. The native sizes from the same run are 72 bytes per
+`HeightProof`, 16 per `HeightInput`, 568 per `Block` and 976 per
+`Context`. M2's distance from main, 37 to 65 percent on these pages, is
+the existing criterion-4 gap recorded in the TODO, not a Q139 cost. The
+collection-off control did not compile: stubbing the record functions
+changes their effect rows, which every caller's declared row must then
+match, so collection work is not separated from the record storage and
+the Part 1 resolver repair.
+
+The root font edits, which lay out most of the page through the update
+path rather than a full build, stay 5 to 8 percent slower than M2 in
+every paired sample above; that path refreshes and republishes records
+in addition to laying out. Smaller per-edit medians of 1 to 7 percent on
+text, style and block edits fall inside wide ranges that include the
+twin's medians and are not separated from noise by these samples.
+
+
+### Approved direct inventory and compact records
+
+On 2026-10-08 the owner selected direct-reader inventory and record
+compaction. Each route context counts its own direct height/minimum/maximum
+percentage readers; a child context contributes only its own record.
+Nested interiors follow unchanged-Space translation and flex Space-equality
+relayout. The two scope fixtures now require admitted full-rebuild identity;
+the existing flex paths remain unchanged. The superseded scope-variant job
+is removed because it implemented the now-selected candidate as a mutation.
+The unused `flow_definite_free` field and its writers are removed (review F6).
+
+The compact representation gives each block/context an optional owned
+`HeightProof`, allocated only for percentage readers. Other boxes derive
+height state from current style and layout inputs when a containing basis
+or fixed-height transfer needs it. Allocations belong to their consumer;
+sibling writes remain independent, with no shared record table or counter.
+The alternative dense record charged every box 72 bytes regardless of reads.
+Summary counts become saturating `u32`: reductions rebuild from live entries
+and never subtract, so overflow cannot erase a nonzero unproved count.
+
+Before measuring, the comparison remains main `8fbc160`, M2 `95ea4a1`, its
+independently built twin and the candidate, on one GitHub-hosted runner per
+experiment, sequential and four workers. Every X5 kind uses identical
+captures, fonts and edits in alternating order; full layout and peak RSS
+use the same drivers and inputs. Root-font cost outside the paired twin
+spread, or memory growth no smaller than the dense-record sample above,
+rejects the cost aim. Any admitted geometry mismatch, lost required path
+or undetected mutation rejects correctness. The measurements below test this aim.
+
+
+The Q139 fixtures and layout floor now run from the permanent `q139`
+workflow on pushes to this branch and main, affected pull requests, and
+manual dispatch. `percentage-cases.py`, `percentage-splice.py` and
+`percentage-matrix.py` keep that caller; `percentage-falsify.py` keeps the
+permanent `falsify-m2` caller, whose main/manual runs include the M2 and Q139 sets
+of semantic mutations. The nested-reader omission now targets a direct
+reader in the route context, because off-route nested readers are expressly
+outside the approved inventory. All existing M2 mutation expectations stay.
+The one-use ABI inspector is removed after the dense-record measurement;
+peak RSS will measure the compact candidate. The collection-off generator
+is removed because its stubs never compiled with exact effect rows and
+therefore supplied no valid comparison. Collection cost remains unseparated;
+no result from that failed control is claimed.
+
+
+With optional records, the minimum/maximum reader omissions must be observed
+on the positive `sibling-limits` fixture: its style still names the reader,
+so omitting the mask now leaves a missing record and conservatively refuses
+instead of admitting an indefinite negative. Each mutation must lose the
+required positive path specifically to reason 7. The width-refresh omission
+uses the percentage-bearing `framed` fixture, because percentage-free boxes
+no longer have retained width keys to invalidate. These changes preserve the
+predicate under test and the existing unrelated-failure rejection.
+
+
+Percentage-free pre-pass boxes now call the existing definite-height resolver
+without constructing a stored record or resolving a provenance edge. Reference
+publication reuses its already resolved specified height to classify fixed
+transfer and publishes an empty reader summary. Only reader writers perform
+record renewal; source lookup derives only the actual containing box, not the
+context root first. These remove dense-record work along with dense storage.
+The width mutation targets the two remaining reader writers (pre-pass and
+reference publication); the percentage-free restyle path has no record to
+refresh and is no longer a mutation site.
+
+
+The compact candidate passes `make check` ([37834644358](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644358)),
+`layout-check` ([37834644250](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644250))
+and Q139 fixtures ([37834644324](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644324))
+at `3fdd2ee`. The fixture run passes all 34 cases in both modes, all four
+original/viewport sequential/parallel flex runs retain their 9 required
+paths, and all 60 Apollo block edits in each mode match full rebuilds and
+refuse with reason 2; none splice or refuse with reason 7.
+
+The width-refresh mutation initially failed to compile because its inserted
+body kept its previous indentation after moving under the reader branch.
+Both refresh mutations now use their new source indentation. This compiler
+failure is not counted as detection. The permanent mutation workflow allows
+selecting Q139 rows for a focused retry, reusing a hosted baseline only after
+a source diff establishes that the renderer and compiler pin are identical;
+this avoids rebuilding unchanged drivers or rerunning already-green rows.
+
+
+Compact full-layout and memory measurements, [hosted run 37838645880](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37838645880), use renderer `3fdd2ee`, main `8fbc160`, M2 and twin `95ea4a1`, compiler `wf-f949e676acfa` and Clang 18.1.3. The Ubuntu 24.04 runner exposes four logical CPUs (two cores) of an AMD EPYC 9V45. The candidate full dump is captured and hashed; this harness does not compare it with main/M2/twin dumps. Independent Q139 fixture identity is established separately above. A zero/one-build pilot selects one repetition for ECMA262/HTML5 and ten for Apollo; three alternating rounds subtract the zero-build process from the repeated-build process. These are layout costs, not compiler build times. Values are medians; each cell is main / M2 / twin / candidate.
+
+| page, mode | full layout ms | peak RSS MiB |
+| --- | --- | --- |
+| ecma262, seq | 682.6 / 985.5 / 964.9 / 969.2 | 437.9 / 473.9 / 473.9 / 481.2 |
+| ecma262, par | 408.8 / 691.1 / 699.9 / 718.8 | 422.9 / 460.9 / 461.8 / 469.5 |
+| html5, seq | 744.3 / 1024.0 / 1016.0 / 991.8 | 309.0 / 466.5 / 466.6 / 474.3 |
+| html5, par | 423.2 / 692.4 / 707.7 / 712.3 | 312.3 / 470.0 / 469.7 / 478.0 |
+| apollo11, seq | 43.8 / 55.3 / 53.0 / 54.2 | 65.2 / 65.8 / 65.5 / 65.7 |
+| apollo11, par | 29.5 / 40.6 / 41.2 / 45.4 | 70.6 / 74.3 / 73.8 / 74.3 |
+
+RSS is the median of three whole-process peaks, including parsing/style and retained layout state. Against M2 it grows 1.54%/1.86% on ECMA262 and 1.69%/1.70% on HTML5 (sequential/four workers), below the previous dense-record 3.6–3.7% growth; Apollo differs by less than 0.2 MiB. This supports the memory aim without claiming that RSS isolates record allocation. Full-layout candidate/M2 medians range from 0.969 to 1.119; Apollo parallel is 45.4 ms against M2 40.6 and twin 41.2, with candidate range 40.8–45.7 and twin 39.7–43.0 ms. The overlap leaves that small-page cost unresolved; this sample does not establish a speed improvement. Artifacts retain every process resource record, input/driver hashes and raw samples.
+
+A nine-round recheck of Apollo alone ([hosted run 37857846203](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37857846203)) resolves that overlap. It reuses the same candidate and main/M2/twin drivers (renderer `3fdd2ee`, compiler `wf-f949e676acfa`) with the same harness, nine alternating rounds instead of three, on a hosted Ubuntu 24.04 runner exposing four logical CPUs of an AMD EPYC 7763; absolute times therefore differ from the table above. Medians, main / M2 / twin / candidate: sequential 70.1 / 79.7 / 79.8 / 80.1 ms, four workers 48.7 / 63.5 / 63.1 / 64.3 ms. The candidate's four-worker range, 63.5–64.8 ms, lies inside the twin's 61.0–65.3 ms, and its sequential range, 77.9–82.4 ms, inside the twin's 77.7–84.1 ms. The three-round 10 percent difference was therefore runner noise; this recheck establishes no speed difference in either direction.
+
+
+The compact edit pilot ([37835285351](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37835285351), one forward/inverse pair and two alternating rounds) still separates ECMA262 sequential root-font cost from twin noise: paired candidate/M2 median 1.082, range 1.058–1.119, versus twin median 1.007, range 0.978–1.031. Other root-font comparisons overlap or border the twin range. The next sample uses two pairs and four rounds to resolve those overlaps and compare the remaining X5 kinds on the same scale as the previous dense-record sample. A hosted instruction profile compares M2 and candidate under the layout update; the question is whether remaining provenance operations explain the ECMA262 root-font difference. If their instruction contribution is too small, that explanation is rejected rather than removing correctness checks speculatively.
+
+
+The permanent Q139 job no longer downloads the one-use Apollo diagnostic archive: Actions artifacts expire, so that capture cannot be a permanent gate dependency. Its 60-edit evidence remains attached to run 37834644324. Permanent checked-in Q139 cases, the Chromium floor, existing certificate combinations and all mutation callers remain wired; ordinary page-identity coverage stays in `oracles-m2`.
+
+
+The retained-style-key premise has source support at `3fdd2ee`: `restyle_level` in `renderer/style/incremental.wf` calls `intern_nodes` with the retained `state.styles`; `intern_values` in `renderer/style/intern.wf` interns box/size/spacing/border/font groups into those existing tables. Each group interner returns the position of an equal old value or appends a new value, while index rehashing preserves table positions. Thus the compared group IDs retain their meaning during these restyles; a future table-compaction change must invalidate or translate retained keys. This source examination does not certify the whole Q139 argument.
+
+
+The larger compact edit sample ([37840130509](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37840130509)) uses two forward/inverse pairs per kind and four alternating rounds, the same four revisions/compiler above, on a hosted Ubuntu 24.04 AMD EPYC 9V45 exposing four logical CPUs. Each cell below gives median whole-edit microseconds for main / M2 / twin / candidate. Ratios discussed below are medians of paired edit/round ratios, not ratios of these independently pooled medians.
+
+| page, kind | sequential µs | four workers µs |
+| --- | --- | --- |
+| ecma262 word | 94 / 98 / 101 / 100 | 140 / 146 / 143 / 160 |
+| ecma262 sentence | 548 / 1093 / 1132 / 1090 | 366 / 915 / 919 / 947 |
+| ecma262 colour | 22 / 18 / 18 / 19 | 29 / 23 / 24 / 24 |
+| ecma262 fontsize | 1644 / 5884 / 5236 / 4901 | 1888 / 6074 / 5990 / 5874 |
+| ecma262 rootfont | 31756 / 106222 / 106509 / 110486 | 52987 / 158106 / 158285 / 163930 |
+| ecma262 block | 428873 / 86 / 91 / 96 | 287828 / 136 / 126 / 148 |
+| html5 word | 366 / 554 / 456 / 608 | 349 / 620 / 622 / 710 |
+| html5 sentence | 270 / 241 / 316 / 336 | 330 / 338 / 341 / 341 |
+| html5 colour | 40 / 38 / 40 / 38 | 58 / 66 / 58 / 66 |
+| html5 fontsize | 797 / 1807 / 1890 / 2154 | 958 / 2090 / 2135 / 2193 |
+| html5 rootfont | 634554 / 757572 / 759624 / 760721 | 376012 / 526084 / 527842 / 533389 |
+| html5 block | 403946 / 693 / 774 / 802 | 300986 / 790 / 822 / 814 |
+| apollo11 word | 200 / 234 / 242 / 242 | 276 / 356 / 340 / 364 |
+| apollo11 sentence | 120 / 149 / 154 / 158 | 168 / 242 / 234 / 250 |
+| apollo11 colour | 26 / 26 / 26 / 28 | 34 / 34 / 35 / 34 |
+| apollo11 fontsize | 167 / 457 / 482 / 502 | 410 / 1293 / 1290 / 1347 |
+| apollo11 rootfont | 59578 / 66227 / 65560 / 67290 | 49922 / 58519 / 59086 / 58802 |
+| apollo11 block | 16417 / 23752 / 23649 / 24322 | 14678 / 23948 / 24588 / 24242 |
+
+Root-font candidate/M2 paired medians and ranges, compared with twin/M2:
+
+| page, mode | candidate median [min, max] | twin median [min, max] |
+| --- | --- | --- |
+| ecma262, seq | 1.045 [1.008, 1.080] | 0.997 [0.986, 1.042] |
+| ecma262, par | 1.053 [0.950, 1.118] | 1.000 [0.932, 1.298] |
+| html5, seq | 1.003 [0.958, 1.109] | 1.002 [0.961, 1.088] |
+| html5, par | 1.006 [0.951, 1.091] | 0.989 [0.948, 1.037] |
+| apollo11, seq | 1.017 [0.970, 1.078] | 0.997 [0.956, 1.017] |
+| apollo11, par | 1.002 [0.931, 1.070] | 1.005 [0.951, 1.186] |
+
+ECMA262 sequential root-font remains 4.5% above M2 by the paired median, just above the twin's 4.2% upper sample; the pilot also separated that case. Thus compaction meets the reduced-memory aim but does not establish the root-font aim. Apollo sequential is also marginally above the twin's upper sample at unrounded precision (1.016775 versus 1.016537); the other root-font medians lie within the twin range. Every non-root-font candidate range overlaps its twin range in this larger sample, including the ECMA262/Apollo parallel font-size cases separated in the pilot; the broad HTML5 font-size/block spreads do not establish cost equivalence. These are workload-specific hosted observations, not precise hardware performance claims or satisfaction of M2's separate full-build criterion against M1.
+
+The hosted instruction diagnostic ([37840134642](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37840134642)) captured all four ECMA262 root-font edits under `layout.update`. Callgrind 3.22.0 counted 2,090,606,461 candidate instructions against 1,951,545,352 for M2 (7.13% more). Largest self-count increases include `join_output` (+26,885,648), memcpy (+12,638,138), `prepare_spaces` (+11,679,648), `height_relative` (+11,056,308), sequence reduction (+9,564,224) and block-output lifting (+8,458,512). The added work spans summary propagation/copies and height handling; it is not concentrated in retained-record allocation. Instruction counts do not attribute wall-time percentages. Both runs emit Valgrind's brk-segment limitation warning but complete all four edits; treat this as diagnostic evidence, not a native timing result or proof of a compiler defect. No additional representation or admission change is selected from it.
+
+The two one-use measurement helpers (`percentage-cost.py`, `percentage-full-cost.py`) and their temporary timing/full-cost workflows are removed after recording these results. Their exact sources remain at the linked run revisions, and the artifacts retain raw samples, driver revisions, hashes and machine records. They served this finite experiment rather than a permanent gate. Together with the earlier ABI/control removals and permanent callers for the other four helpers and the Q139 floor, this closes review F9 without weakening any semantic fixture or mutation requirement.
+
+The complete [oracles-m2 run 37834644269](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37834644269) passes its fixture job and all twelve page-identity jobs. ECMA262 retains 20/20 block splices and HTML5 60/60, sequential and four workers, with no full-rebuild differences or structural fallbacks.
+
+
+The direct-scope mutation run exposed a checking gap: `omit-private-publication` compiled and survived because `height_read_counts` still read only the root's summary, which no longer includes nested interiors. The checking oracle now sums each live context's cached direct interior summary through a balanced read-only child reduction, adding the root's own record once. A child's own record is already included where its parent algorithm counts it; the traversal adds only its interior, avoiding duplicate reader counts and skipping retired contexts. This introduces no retained data and changes no renderer admission or layout path. The same publication mutation compiles and is detected in [run 37844087709](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37844087709/job/113546460102) at `d939a41`, with all 15 baseline paths matched. Its required identity observation is unchanged: it fails on the missing cached inventory even when rectangles agree.
+
+
+The repaired definiteness-refresh mutation compiled but survived when it omitted only the pre-pass writer: reference publication legitimately renewed the same block record later. Like the existing width-refresh omission, it now omits the definite-to-auto renewal at both remaining block-record writers. The required paths and identity requirement are unchanged. The fault under test is failure to renew the retained record, not omission of one redundant write that another writer repairs; compilation or an unrelated refusal still cannot count as detection.
+
+
+The equal-number definiteness fixture now also gives the same holder a zero-percent minimum. Its initial/final rectangles and required splice/refusal paths stay unchanged, but two percentage reads distinguish a fresh indefinite inventory (two unproved readers) from a stale definite record rejected by the currentness check (one additional blocker). With only one read those aggregate counts coincide, so even omitting both writers can be masked without proving renewal correct. This adds a real percentage property to the existing state-transition case; it changes neither the detector nor renderer behavior and keeps the unmutated negative control mandatory.
+
+
+The revised fixture sources at `e4d2f71` pass [check 37848967620](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37848967620), [layout-check 37848967649](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37848967649) and [Q139 37848967487](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37848967487). The equal-number case keeps all 19 required paths in both modes, all 34 Q139 cases pass, the Chromium floors agree, and the four existing flex combinations keep their nine paths. Renderer sources and the compiler pin are unchanged from `d939a41`; the finite cost experiment measures layout/admission sources at `3fdd2ee`, before the checking-only reader-count repair. Complete mutation and page-identity outcomes, the independent review and the remaining owner decisions are maintained in [PR #53, direct-reader percentage-height admission](https://github.com/Ming-Research/Snowghost-wf/pull/53).
+
+
+The width-refresh omission also compiled but survived because the framed lifetime changed the percentage reader's own width, leaving its recorded containing width unchanged; only percentage-free paragraphs received a different incoming width. The width leg now changes its parent from a 300px to a 420px border box, moving the reader's containing width from 284px to 404px. Its height-edit target, required positive paths and detector are unchanged. This supplies the missing trigger for the two-writer omission; survival of an untriggered omission is not evidence that width renewal is checked.

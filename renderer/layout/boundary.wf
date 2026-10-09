@@ -23,7 +23,8 @@ fn add_boundary_visits(first: BoundaryVisits, second: BoundaryVisits) -> made: B
 fn empty_block_output() -> made: BlockOutput pure {
   doc "An unpublished block boundary cannot authorize a cutoff.";
   let no = False();
-  let empty = BlockOutput(valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no, fragment_source: no, own_barriers: 0_u32, own_free: no, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: no);
+  let heights = empty_height_summary();
+  let empty = BlockOutput(heights: heights, fixed_height: no, constrained_height: no, bottom_separates: no, valid: no, width: 0_i32, height: 0_i32, available: 0_i32, content_width: 0_i32, basis_height: -1_i32, top_frame: 0_i32, bottom_frame: 0_i32, margin_top: 0_i32, margin_bottom: 0_i32, reads_floats: no, fragment_source: no, own_barriers: 0_u32, own_free: no, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: no);
   return empty;
 }
 
@@ -134,7 +135,7 @@ fn paragraph_output(paragraph: &Paragraph) -> made: SequenceOutput reads(paragra
 }
 
 fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: SequenceOutput reads(inside) {
-  doc "Lifts ordinary Open/Close edges: top padding settles the leading strut and bottom padding settles the trailing strut. Unframed empty boxes remain Through. Height constraints and marker-created lines are rejected by the publisher.";
+  doc "Lifts ordinary Open/Close edges: top padding settles the leading strut and bottom padding settles the trailing strut. Unframed empty boxes remain Through. Constrained retained boxes export their measured used height and the reference resolver's collapsed or separated bottom margin while retaining changed interior baselines, extents and exclusions; only content-independent specified heights may absorb an edit on the ancestor path.";
   let leading = margin_output(margin: measured.margin_top);
   let opened = leading;
   if measured.top_frame > 0_i32 {
@@ -151,6 +152,20 @@ fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: Se
   }
   let trailing = margin_output(margin: measured.margin_bottom);
   let output = join_output(left: &closed, right: &trailing);
+  if measured.constrained_height {
+    if measured.height > 0_i32 {
+      set output.through = False();
+    }
+    if output.through {
+    } else {
+      set output.advance = cvt::<i32, i64>(measured.height);
+      if measured.bottom_separates {
+        set output.trailing_positive = trailing.leading_positive;
+        set output.trailing_negative = trailing.leading_negative;
+      }
+    }
+  }
+  set output.heights = join_height_summary(first: inside^.heights, second: measured.heights);
   set output.count = 1_u64;
   set output.events = inside^.events +sat 2_u64;
   if measured.fragment_source {
@@ -185,6 +200,7 @@ fn lift_block_output(inside: &SequenceOutput, measured: BlockOutput) -> made: Se
 fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_height: i32) -> (transfer: SequenceOutput, size: BlockOutput) reads(block), reads(styles), reads(inside) {
   doc "Combines a completed child reduction with the block's reference geometry and retained float-prefix dependency. Refusal reasons preserve the reference publisher's meaning.";
   let held = block_snapshot(block: block);
+  let resolved_basis = block^.output.basis_height;
   let incoming_floats = block^.output.reads_floats;
   let border = border_edges(styles: styles, style: held.style);
   let padding = padding_edges(styles: styles, style: held.style, basis: held.avail_width);
@@ -193,10 +209,31 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
   let top = border.top +sat padding.top;
   let bottom = border.bottom +sat padding.bottom;
   let frame = top +sat bottom;
-  let specified = specified_height(styles: styles, style: held.style, basis: basis_height, frame: frame);
-  let (minimum, maximum) = height_limits(styles: styles, style: held.style, basis: basis_height, frame: frame);
+  let specified = specified_height(styles: styles, style: held.style, basis: resolved_basis, frame: frame);
+  let (minimum, maximum) = height_limits(styles: styles, style: held.style, basis: resolved_basis, frame: frame);
   let yes = True();
-  let measured = BlockOutput(valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: basis_height, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats, fragment_source: block^.split_head, own_barriers: 0_u32, own_free: yes, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: yes);
+  let own_heights = empty_height_summary();
+  let fixed_height = specified >= 0_i32;
+  let relative = height_relative(styles: styles, style: held.style);
+  if relative {
+    let proof = read_height_record(record: &block^.height_proof);
+    set own_heights = height_proof_summary(proof: proof);
+    let proof_current = height_proof_current(proof: proof, styles: styles, style: held.style, width: held.avail_width, height: resolved_basis, forced: unknown);
+    if proof_current {
+    } else {
+      set own_heights.unproved = own_heights.unproved +sat 1_u32;
+    }
+    if proof.source_owner != held.parent {
+      set own_heights.unproved = own_heights.unproved +sat 1_u32;
+    }
+    set fixed_height = proof.state == 2_u8;
+  }
+  let specified_known = specified >= 0_i32;
+  let minimum_constrains = minimum > frame;
+  let maximum_constrains = maximum >= 0_i32;
+  let limits_constrain = bor(minimum_constrains, maximum_constrains);
+  let constrained = bor(specified_known, limits_constrain);
+  let measured = BlockOutput(heights: own_heights, fixed_height: fixed_height, constrained_height: constrained, bottom_separates: block^.output.bottom_separates, valid: yes, width: held.width, height: held.height, available: held.avail_width, content_width: held.content_width, basis_height: resolved_basis, top_frame: top, bottom_frame: bottom, margin_top: margins.top, margin_bottom: margins.bottom, reads_floats: incoming_floats, fragment_source: block^.split_head, own_barriers: 0_u32, own_free: yes, extra_travel: 0_i64, offset: 0_i64, natural: 9223372036854775807_i64, motion_known: yes);
   let output = lift_block_output(inside: inside, measured: measured);
   let (relative_x, relative_y) = relative_offset(styles: styles, style: held.style, basis_width: held.avail_width, basis_height: unknown);
   let wide_relative = cvt::<i32, i64>(relative_y);
@@ -216,21 +253,6 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
   if group.clear != clear_none {
     let boundary_value_10 = imax(reason, 2_u32);
     set reason = boundary_value_10;
-  }
-  if specified >= 0_i32 {
-    set own_free = False();
-    let boundary_value_11 = imax(reason, 3_u32);
-    set reason = boundary_value_11;
-  }
-  if minimum > frame {
-    set own_free = False();
-    let boundary_value_12 = imax(reason, 3_u32);
-    set reason = boundary_value_12;
-  }
-  if maximum >= 0_i32 {
-    set own_free = False();
-    let boundary_value_13 = imax(reason, 3_u32);
-    set reason = boundary_value_13;
   }
   if held.marker {
     if inside^.first_line.slot == no_index {
@@ -256,8 +278,9 @@ fn block_output(block: &Block, styles: &Styles, inside: &SequenceOutput, basis_h
   if reason != 0_u32 {
     set output.ordinary = False();
   }
-  if own_free {
-  } else {
+  let not_free = bnot(own_free);
+  let charge_height = bor(constrained, not_free);
+  if charge_height {
     let height_bound = travel_absolute(value: resolved_height);
     set output.travel = output.travel +sat height_bound;
     set measured.extra_travel = measured.extra_travel +sat height_bound;
@@ -320,6 +343,7 @@ fn prepare_boundary_entry(context: &Context, item: Flow, styles: &Styles, destin
   set own.float_reach = motion.float_reach;
   set own.motion_known = motion.motion_known;
   set own.travel = own.travel +sat motion.travel;
+  set own.heights = join_height_summary(first: own.heights, second: motion.heights);
   set destination^.own = own;
   return unit;
 }
@@ -562,6 +586,17 @@ fn reference_item_output(context: &Context, item: Flow, styles: &Styles, basis_h
         set context^.boundary_visits.blocks = context^.boundary_visits.blocks +sat 1_u64;
         set owner = context^.blocks.inner[at].parent;
         let root = context^.blocks.inner[at].entries.root;
+        let parent_basis = containing_height(context: context, styles: styles, owner: owner, context_height: basis_height);
+        let relative = height_relative(styles: styles, style: context^.blocks.inner[at].style);
+        if relative {
+          let basis_input = containing_height_proof(context: context, styles: styles, owner: owner, height: parent_basis);
+          let retained = read_height_record(record: &context^.blocks.inner[at].height_proof);
+          let proof = renewed_height_proof(retained: retained, styles: styles, style: context^.blocks.inner[at].style, input: basis_input, width: context^.blocks.inner[at].avail_width, height: parent_basis, forced: unknown);
+          store_height_record(record: &context^.blocks.inner[at].height_proof, proof: proof);
+        } else {
+          set context^.blocks.inner[at].height_proof = None<Box<HeightProof>>();
+        }
+        set context^.blocks.inner[at].output.basis_height = parent_basis;
         let total_field = False();
         let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
         let (transfer, size) = block_output(block: &context^.blocks.inner[at], styles: styles, inside: &inside, basis_height: basis_height);
@@ -703,7 +738,6 @@ fn translated_reference_output(context: &Context, item: Flow, previous: Sequence
         let relative_delta = new_offset -sat old_offset;
         let shifted = shift_motion(output: previous, delta: relative_delta);
         set context^.blocks.inner[at].output.offset = new_offset;
-        set context^.blocks.inner[at].output.basis_height = basis_height;
         set context^.blocks.inner[at].boundary = shifted;
         return shifted;
       }
@@ -781,6 +815,7 @@ fn context_size_output(child: &Context, styles: &Styles, height: i32, baseline: 
   let opened = join_output(left: &leading, right: &solid);
   let trailing = margin_output(margin: child^.margin_bottom);
   let output = join_output(left: &opened, right: &trailing);
+  set output.heights = own_height_summary(context: child, styles: styles);
   set output.count = 1_u64;
   set output.events = 1_u64;
   if child^.split_head {
@@ -811,6 +846,12 @@ fn context_size_output(child: &Context, styles: &Styles, height: i32, baseline: 
 
 fn same_transfer(first: SequenceOutput, second: SequenceOutput) -> same: Bool pure {
   doc "Compares every propagated semantic output, including baseline positions and intrinsic contributions when height alone is unchanged.";
+  if first.heights.consumers != second.heights.consumers {
+    return False();
+  }
+  if first.heights.unproved != second.heights.unproved {
+    return False();
+  }
   if first.fragment_sources != second.fragment_sources {
     return False();
   }
@@ -1115,7 +1156,7 @@ fn boundary_path_ready(context: &Context, styles: &Styles, owner: u32, delta: i3
       return False();
     }
     let yes = True();
-    let grows = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: basis_height, lines: yes);
+    let grows = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: measured.basis_height, lines: yes);
     if grows {
     } else {
       return False();
@@ -1187,7 +1228,13 @@ fn propagate_boundary(context: &Context, owner: u32, slot: u32, output: Sequence
     let total_field = False();
     let inside = boundary_output(sequence: &context^.blocks.inner[at].entries, slot: root, own: total_field, visits: &context^.boundary_visits);
     let after = lift_block_output(inside: &inside, measured: measured);
-    let height = measured.height +sat delta;
+    let outgoing_delta = if measured.fixed_height {
+      give 0_i32;
+    } else {
+      give geometry_narrow(value: wide_delta);
+    }
+    let height = measured.height +sat outgoing_delta;
+    set wide_delta = cvt::<i32, i64>(outgoing_delta);
     if at < context^.blocks.inner.len {
       set context^.blocks.inner[at].height = height;
       set context^.blocks.inner[at].output.height = height;

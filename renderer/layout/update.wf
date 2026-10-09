@@ -378,8 +378,9 @@ fn reset_tree(context: &Context) -> result: unit writes(context) {
 }
 
 struct Before {
-  doc "What a child context held before its parent's update laid anything out again: the space it was laid out in and the outputs its parent reads, its border-box size, baseline and margins.";
+  doc "What a child context held before its parent's update laid anything out again: the space it was laid out in and the outputs its parent reads, its height-read inventory, border-box size, baseline and margins.";
   space: Space;
+  heights: HeightSummary;
   width: i32;
   height: i32;
   baseline: i32;
@@ -404,7 +405,8 @@ fn update_counts(layout: &Layout) -> (prepared: u64, contexts: u64, paragraphs: 
 
 fn before_of(context: &Context) -> before: Before reads(context) {
   doc "The space of context's last finished layout and the outputs it holds now.";
-  return Before(space: context^.laid, width: context^.width, height: context^.height, baseline: context^.baseline, has_baseline: context^.has_baseline, margin_top: context^.margin_top, margin_right: context^.margin_right, margin_bottom: context^.margin_bottom, margin_left: context^.margin_left);
+  let heights = retained_height_summary(context: context);
+  return Before(space: context^.laid, heights: heights, width: context^.width, height: context^.height, baseline: context^.baseline, has_baseline: context^.has_baseline, margin_top: context^.margin_top, margin_right: context^.margin_right, margin_bottom: context^.margin_bottom, margin_left: context^.margin_left);
 }
 
 fn same_space(first: Space, second: Space) -> same: Bool pure {
@@ -424,7 +426,14 @@ fn same_space(first: Space, second: Space) -> same: Bool pure {
 }
 
 fn same_outputs(before: Before, context: &Context) -> same: Bool reads(context) {
-  doc "Tells whether context's border-box size, baseline and margins are what before recorded, field by field: when they are, its parent's stacking pass reads nothing new from it.";
+  doc "Compares the published height-read inventory as well as border-box size, baseline and margins: equal geometry alone cannot stop publication of renewed metadata.";
+  let heights = retained_height_summary(context: context);
+  if before.heights.consumers != heights.consumers {
+    return False();
+  }
+  if before.heights.unproved != heights.unproved {
+    return False();
+  }
   let width = before.width == context^.width;
   let height = before.height == context^.height;
   let baseline = before.baseline == context^.baseline;
@@ -566,6 +575,17 @@ fn update_child(child: &Context, styles: &Styles, document: &Document, fonts: &F
 fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> (counts: UpdateCounts, still: Bool) reads(styles), reads(document), reads(fonts), reads(picks), writes(child) {
   doc "Brings a marked child context up to date in the space its parent wrote, as lay_out_child would lay it out: a flow context by update_flow; a flex or grid container by update_container when that finds its result unchanged, else by its own algorithm while it is marked, so that lay_out_child keeps or updates its items (counted as one context, with its items' counts added); a table or replaced context in full, its subtree returned to the fresh state by reset_marked_children first when its parent is a flow context, and the marks below it cleared after (clear_tree_marks), since its layout in full does not go through their updates and a mark left would hide the next edit's from text_changed's counts. Then it records the space as laid and resolves its margins. still tells whether the child lays out as before in every space its parent's algorithm may give it: a flow context whose outputs (same_outputs) and content height (content_raw) came out as before and whose content does not read a definite height (definite_free), or a container update_container stopped at.";
   let boundary_work = no_boundary_visits();
+  let provenance_kept = keep_height_proof(context: child, styles: styles);
+  if provenance_kept {
+  } else {
+    lay_out_context(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+    clear_subtree(context: child);
+    resolve_margins(child: child, styles: styles);
+    let (contexts, paragraphs) = count_tree(context: child);
+    let counted = UpdateCounts(prepared: 0_u64, work: boundary_work, contexts: contexts, paragraphs: paragraphs, held_entries: 0_u64, entries: 0_u64);
+    let no = False();
+    return counted, no;
+  }
   if child^.kind == ctx_flow {
     let old_raw = child^.content_raw;
     let counts = update_flow(context: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
@@ -586,6 +606,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
     let (stopped, updated) = update_container(container: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
     set item_counts = updated;
     if stopped {
+      refresh_height_summary(context: child, styles: styles);
       set child^.dirty = False();
       set child^.restyled = False();
       set child^.restyled_blocks = 0_u32;
@@ -787,7 +808,8 @@ fn fresh_before() -> made: Before pure {
   doc "The Before of a context no parent has laid out, which every child's own replaces.";
   let space = fresh_space();
   let no = False();
-  return Before(space: space, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32);
+  let heights = empty_height_summary();
+  return Before(space: space, heights: heights, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32);
 }
 
 fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked: Bool, marked_parent: Bool, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result_unit: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(result) {
@@ -799,6 +821,10 @@ fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked:
     return unit;
   }
   let same = equivalent_space(styles: styles, style: child^.style, first: before.space, second: child^.space);
+  if same {
+    let provenance_kept = keep_height_proof(context: child, styles: styles);
+    set same = provenance_kept;
+  }
   if same {
     resolve_margins(child: child, styles: styles);
     return unit;
@@ -918,7 +944,8 @@ fn block_grows(context: &Context, styles: &Styles, block: u64, delta: i32, basis
   doc "Checks one guarded block payload through the shared snapshot rule.";
   if block < context^.blocks.inner.len {
     let snapshot = block_snapshot(block: &context^.blocks.inner[block]);
-    let checked_growth = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: basis_height, lines: lines);
+    let resolved_basis = context^.blocks.inner[block].output.basis_height;
+    let checked_growth = snapshot_grows(block: snapshot, styles: styles, delta: delta, basis_height: resolved_basis, lines: lines);
     return checked_growth;
   }
   return False();
@@ -1794,6 +1821,14 @@ fn update(layout: &Layout, document: &Document, styles: &Styles, fonts: &FontSet
   let height = units(px: viewport.height);
   let no = False();
   set layout^.root.space = Space(available: width, basis_width: width, basis_height: height, forced_width: width, forced_height: height, shrink: no);
+  let root_proof = viewport_height_proof(styles: styles, style: layout^.root.style, width: width, height: height);
+  let ordinary_mode = ordinary_height_mode(document: document);
+  if ordinary_mode {
+  } else {
+    set root_proof.source_kind = 3_u8;
+    set root_proof.basis_state = 3_u8;
+  }
+  set_height_input(child: &layout^.root, proof: root_proof);
   let counts = update_flow(context: &layout^.root, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
   set layout^.root.x = 0_i32;
   set layout^.root.y = 0_i32;
@@ -2349,7 +2384,7 @@ fn snapshot_keeps_width(block: BlockSnapshot, styles: &Styles) -> kept: Bool rea
 }
 
 fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, frame: FlowFrame, unasked: Bool, scope: &ReferenceScope) -> (handled: Bool, counts: UpdateCounts) reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context), writes(scope) {
-  doc "Re-stacks the nearest block containing the context's changed blocks, when every marked paragraph and every marked child context lies inside it. Independent width checks first establish whether the old pre-pass inputs hold; otherwise a subtree of blocks and text without child contexts or atomic inlines recomputes its widths locally. A marked child's space depends only on its containing block's width (prepare_spaces), so when the widths hold its space is the one it was laid out in: a marked atomic inline is updated in that space before the re-stack, which breaks its paragraph again, and a marked in-flow child or float is settled by the re-stack at its entry, which reads its style there as a full pass would. Stacking must pass the block's Close before convergence, so no changed descendant or closing margin is skipped. Refusals leave the full update path available.";
+  doc "Re-stacks the nearest block containing the context's changed blocks, when every marked paragraph and every marked child context lies inside it. Independent width checks first establish whether the old pre-pass inputs hold; otherwise a subtree of blocks and text without child contexts or atomic inlines recomputes its widths locally. Old or new percentage reads in the affected block subtree and at every direct child entry, marked or unmarked, require the full pre-pass after a block restyle, even when widths hold. A percentage-free child shields its descendants because its outgoing definite or auto height does not depend on its incoming height; unrelated percentage readers outside the subtree keep their sources. For percentage-free contents a marked child's space is the one it was laid out in when the widths hold: a marked atomic inline is updated in that space before the re-stack, which breaks its paragraph again, and a marked in-flow child or float is settled by the re-stack at its entry, which reads its style there as a full pass would. Stacking must pass the block's Close before convergence, so no changed descendant or closing margin is skipped. Refusals leave the full update path available.";
   let refused = no_updates();
   let none = 18446744073709551615_u64;
   if frame.columned {
@@ -2406,9 +2441,12 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
                 if child_at < context^.children.inner.len {
                   if context^.children.inner[child_at].dirty {
                     set children_inside = children_inside +sat 1_u32;
-                    let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
-                    set child_relative = bor(child_relative, relative);
                   }
+                  let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+                  let previous_proof = read_height_record(record: &context^.children.inner[child_at].height_proof);
+                  let previous_relative = previous_proof.read_mask != 0_u8;
+                  let either = bor(relative, previous_relative);
+                  set child_relative = bor(child_relative, either);
                 }
               }
               Open(..) => {
@@ -2427,9 +2465,12 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
         if child_at < context^.children.inner.len {
           if context^.children.inner[child_at].dirty {
             set children_inside = children_inside +sat 1_u32;
-            let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
-            set child_relative = bor(child_relative, relative);
           }
+          let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+          let previous_proof = read_height_record(record: &context^.children.inner[child_at].height_proof);
+          let previous_relative = previous_proof.read_mask != 0_u8;
+          let either = bor(relative, previous_relative);
+          set child_relative = bor(child_relative, either);
         }
       }
       Float(context: c) => {
@@ -2438,9 +2479,12 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
         if child_at < context^.children.inner.len {
           if context^.children.inner[child_at].dirty {
             set children_inside = children_inside +sat 1_u32;
-            let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
-            set child_relative = bor(child_relative, relative);
           }
+          let relative = height_relative(styles: styles, style: context^.children.inner[child_at].style);
+          let previous_proof = read_height_record(record: &context^.children.inner[child_at].height_proof);
+          let previous_relative = previous_proof.read_mask != 0_u8;
+          let either = bor(relative, previous_relative);
+          set child_relative = bor(child_relative, either);
         }
       }
       Out(..) => {
@@ -2465,7 +2509,10 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
       let kept = block_keeps_width(context: context, styles: styles, b: nested);
       set widths_kept = band(widths_kept, kept);
       let relative = height_relative(styles: styles, style: context^.blocks.inner[nested].style);
-      set relative_height = bor(relative_height, relative);
+      let previous_proof = read_height_record(record: &context^.blocks.inner[nested].height_proof);
+      let previous_relative = previous_proof.read_mask != 0_u8;
+      let either = bor(relative, previous_relative);
+      set relative_height = bor(relative_height, either);
     }
   }
   let empty_stable = True();
@@ -2484,9 +2531,9 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
   }
   let any_relative = bor(relative_height, child_relative);
   if any_relative {
-    set context^.definite_free = False();
-    set context^.flow_definite_free = False();
+    return False(), refused;
   }
+  refresh_local_height_proofs(context: context, events: events, styles: styles, from: from, until: until, height: frame.definite);
   let atomic_counts = if children_inside > 0_u32 {
     let updated = update_atomics_in(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, from: from, until: until);
     give updated;
@@ -2501,7 +2548,7 @@ fn restack_block(context: &Context, events: &[Flow], styles: &Styles, document: 
 }
 
 fn update_atomics_in(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, from: u64, until: u64) -> counts: UpdateCounts reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
-  doc "Updates each marked atomic inline child held by a paragraph of the flow entries from..until, in the space it was last laid out in (its paragraph's width is unchanged, so prepare_spaces would write that space again), as update_in_place updates one; the re-stack then breaks the paragraph again. Returns the children's counts.";
+  doc "Updates each marked atomic inline child held by a paragraph of the flow entries from..until, in the space it was last laid out in (the caller has established unchanged width and percentage-free contents, so prepare_spaces would write equivalent sizing inputs again), as update_in_place updates one; the re-stack then breaks the paragraph again. Returns the children's counts.";
   let counted = no_updates();
   let end = until +sat 1_u64;
   for (k in from..end) {
