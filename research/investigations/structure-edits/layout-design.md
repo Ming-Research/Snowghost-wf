@@ -4681,3 +4681,18 @@ its compiled omission mutation now own the lifetime regression gate, replacing
 repeated execution of the known-failing historical control. The ordinary and
 intrinsic-column forward/inverse cases remain, and both candidate modes must
 match fresh layout and independent Chromium geometry at every prefix.
+
+The separate sentence-edit cost remains outside the twin range in the
+five-cohort pilot `37937511588`: the initial repair's four-worker paired
+median is 1.220 times M2, with a 1.155–1.384 range against the twin's
+0.916–1.021. This pilot uses the same captures and compiler but a hosted
+Xeon Platinum 8573C; it is not a cross-machine speed comparison with the
+previous EPYC run. Its 360 processes take 662.86 seconds in total, 0.36–4.61
+seconds each, supporting the planned two-pair/four-round final comparison.
+Before accepting the edit difference, `q140-edit-profile` subtracts the same
+initial pipeline with zero edits from the original sentence pair in each
+measured cohort and mode. Per-function instructions and calls distinguish
+new required baseline/measurement work from repeated work; a setup-only
+explanation is rejected if it survives subtraction. Diagnostic binaries are
+explicitly identified by their cost-run revisions rather than called the
+workflow's current renderer.

@@ -1,0 +1,87 @@
+# Temporary attribution of the separately measured sentence-edit cost;
+# remove with the other finite Q140 evidence workflows before readiness.
+name: q140-edit-profile
+on:
+  workflow_dispatch:
+    inputs:
+      driver_run:
+        description: Common-compiler cost run providing all diagnostic binaries and inputs
+        default: '37937511588'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run }}
+          pattern: driver-*
+          path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run }}
+          name: q140-edit-cost
+          path: build/measured
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37917728829
+          name: page-identity-inputs
+          path: build/reference
+      - name: Restore exact measured inputs and record diagnostic cohorts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          mkdir -p build/edit-profile build/research build/x5
+          mv build/reference/fonts build/fonts
+          mv build/measured/research/concurrency build/research/concurrency
+          mv build/measured/x5/scripts build/x5/scripts
+          awk '$2 ~ /^build\/(fonts|research\/concurrency|x5\/scripts)\//' build/measured/evidence/inputs.sha256 > build/edit-profile/inputs.sha256
+          test -s build/edit-profile/inputs.sha256
+          sha256sum -c build/edit-profile/inputs.sha256 > build/edit-profile/inputs-verified.txt
+          uname -a > build/edit-profile/machine.txt
+          lscpu >> build/edit-profile/machine.txt
+          valgrind --version >> build/edit-profile/machine.txt
+          git rev-parse HEAD > build/edit-profile/workflow-revision.txt
+          for name in m2 twin before head; do
+            cp "build/drivers/driver-$name/revision.txt" "build/edit-profile/$name-revision.txt"
+          done
+          # The zero-edit process has exactly the same initial pipeline and
+          # author sheets as the sentence pair; subtraction removes setup.
+          sed -n '/^S /p' build/x5/scripts/apollo11-sentence.edits > build/edit-profile/zero.edits
+          cp build/x5/scripts/apollo11-sentence.edits build/edit-profile/sentence.edits
+      - name: Bounded zero/pair instruction samples
+        run: |
+          set -euo pipefail
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          for mode in seq par; do
+            for name in head before twin m2; do
+              for script in zero sentence; do
+                prefix="build/edit-profile/$name-$mode-$script"
+                WF_WORKERS=4 /usr/bin/time -f '%e %M' -o "$prefix.resources" valgrind --tool=callgrind --callgrind-out-file="$prefix.callgrind" "build/drivers/driver-$name/layout_oracle_$mode" incremental "build/edit-profile/$script.edits" "${args[@]}" > "$prefix.stdout" 2> "$prefix.stderr"
+                callgrind_annotate --auto=no --inclusive=no --threshold=100 "$prefix.callgrind" > "$prefix.self.txt"
+                # Reuse the established 45-second per-process pilot bound.
+                python3 - "$prefix.resources" <<'PY'
+          from pathlib import Path
+          import sys
+          seconds = float(Path(sys.argv[1]).read_text().split()[0])
+          print(sys.argv[1], seconds, flush=True)
+          if seconds > 45:
+              raise SystemExit('Instruction sample exceeds the established pilot bound')
+          PY
+              done
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-sentence-profile
+          path: build/edit-profile/
