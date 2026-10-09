@@ -53,6 +53,21 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
+- **A constructed segment count does not discharge the following loop bound.**
+  Construct a length array of `count` entries, pass its full range
+  `&lengths.inner[0_u64..count]` to `box_segments_filled`, then borrow
+  `&segments.inner[i]` in `for (i in 0_u64..count)`. The pin rejects
+  `OP-4 UndischargedBoundsObligation`, residual `i < segments.inner.len`:
+  [isolated hosted run 37895079868](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37895079868)
+  at `e321715`. The [complete minimal example and specification grounds](../research/investigations/structure-edits/layout-design.md#constructed-segment-count-loses-its-bound)
+  establish the reproduced boundary, not yet whether the compiler or the
+  specification's relation transport must change. Impact: Q140 cannot compile,
+  so geometry, admission and cost evidence remain unavailable. Investigate
+  transport of the declared constructor length equality; require this example
+  to accept while a genuinely out-of-range borrow still rejects. Reopen after
+  the owner rules on the Whitefoot work; do not add a runtime guard, alternate
+  loop bound or proof-only data in Snowghost to conceal this refusal.
+
 - **Natural segment length and element access.** For
   `values: &Box<Segments<i32>>`, guarded `values^.inner[item].len` is refused
   with `OP-4 TypeMismatch: expected an indexable base; found Segments<i32>`

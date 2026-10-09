@@ -4274,7 +4274,7 @@ REF-4 defines the range length as `hi - lo`, and PRE-1 declares
 `box_segments_filled` with `ensures result.inner.len == lengths^.len`.
 Those facts imply the requested bound mathematically; whether their compiler
 transport is supported is the new question. The temporary isolated workflow
-now tests this minimized form, with its result still pending:
+reproduces the refusal with this minimized form:
 
 ```wf
 fn segment_lengths(count: u64) -> length: u64 pure {
@@ -4289,8 +4289,30 @@ fn segment_lengths(count: u64) -> length: u64 pure {
 }
 ```
 
-The isolated workflow also tests acceptance of the correct flat Boolean form.
+Hosted [run 37895079868](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37895079868)
+at `e321715311069d13318378949468d83a9cbedfbf` rejects the example at
+`repro.wf:6:34` with the same OP-4 residual, `i < segments.inner.len`.
+It accepts the correct flat Boolean form, the specified segment borrow and
+all three authorized named-selection examples. The intended earlier refusal
+controls still reject. Design lint and its 21 checker tests pass: 7 nodes,
+depth 1, 64 Decisions against 60 at the base, and 24 rejected alternatives.
+The mutation detector's complete/truncated input, reason-loss, over-refusal
+and unrelated-refusal controls pass as well.
+
+On that same head, [check 37895079918](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37895079918)
+and [layout-check 37895079907](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37895079907)
+stop at the renderer segment bound. [Q139 37895083925](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37895083925)
+checks PR merge `68720bf82877673c09a724b48005bdaef0d44477`, not the branch
+head, and stops at the same bound before fixtures. The small grid pilot
+[37894875960](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37894875960)
+at renderer-identical `b88240c` also stops during compilation, before the
+timed fixture. These are Ubuntu 24.04 hosted results with `wf-f949e676acfa`;
+no local check or measurement ran.
+
 Expected refusal is diagnostic evidence only. Grid geometry, all 18 new
 mutations, page counts and the hosted cost pilot depend on a compiled
-candidate and remain unverified. Design-form and detector-control evidence
-and the complete read-only source review can proceed independently.
+candidate and remain unverified. No timing, full-layout or peak-RSS sample
+has run for main `8fbc160`, M2 `a1ed31e`, its twin or this candidate; no
+cost comparison is supported. The four prior proposed Decisions stand.
+The new bound refusal is recorded in the Whitefoot requirements, and its
+disposition awaits the owner; no source workaround has been selected.
