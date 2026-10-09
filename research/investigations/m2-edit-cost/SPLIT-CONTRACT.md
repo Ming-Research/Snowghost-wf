@@ -2562,3 +2562,40 @@ The runtime is frozen for those gates and the subsequent dispatched timing
 run; recording their results in that PR does not create a different source
 revision after validation. This investigation owns the contract and prior
 criteria; the PR owns the current delivery evidence.
+
+
+### HTML5 root-font parallel regression: bisection criterion before measurement
+
+The continuation from 5b09e69 localizes the four-worker regression between
+cf12c609 and 58b16da using only HTML5 root-font edits. Hosted run
+[37892025668](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37892025668)
+measured cf12c609 at 535511/535846 us sequential and 342864/345070 us
+parallel, versus 58b16da at 564636/562091 and 604603/602147 us. All sources
+used wf-b2209fd31035; the parallel jump is much larger than the sequential
+change. This is the observed interval, not an attributed cause.
+
+Bisect the branch's first-parent history, inspecting a merge's introduced
+changes if it becomes the boundary. Each tested source has an independently
+built twin with that same compiler, function fragments and LLVM 22. All
+cohorts in a comparison execute the same HTML5 root-font script on one
+GitHub-hosted machine with WF_WORKERS=4 in two reversed rounds, sequential
+and parallel. Start with four edits, retaining the one-edit wall-time sample
+and every raw edit; inspect edit, twin and round spread before enlarging.
+The temporary dispatch inputs of `bisect-hosted.yml` select these cohorts
+without changing the full acceptance default and are removed when this
+bisection is complete. The existing timing parser rejects missing or
+malformed records; a completed timing workflow is not acceptance success.
+
+The discriminating observation is a persistent parallel increase beyond
+both twins' and rounds' spread without a comparable sequential increase.
+A midpoint separating from neither endpoint does not settle the interval;
+repeat or enlarge that sample. Compare the before/after parallel ledgers at
+the first source change and profile one four-worker edit only if needed.
+The hypothesis of lost independent work is rejected if the relevant offers
+and splits remain unchanged and the profile instead attributes the increase
+to additional necessary work. True per-paragraph dependencies are preparation,
+breaking, classification and dependent publication; independent paragraphs
+must acquire no artificial order. Serial owner-motion writes remain unchanged
+pending the existing stored-field proof gap. A naturally written independent
+form refused by Whitefoot stops that repair, with a minimal example; it is
+not replaced by an alternative spelling or proof-only storage.
