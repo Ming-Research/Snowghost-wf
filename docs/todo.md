@@ -421,18 +421,20 @@ example apart from the renderer code that exposed it
   the font-size gain. Sentence still costs 358/371 us sequential and 473/480
   parallel against frontier 343/329 and 355/355 on the same host. The
   native capture and frozen-binary inspection identify the point-reader task
-  offer recorded under Whitefoot requirements above; its causal latency
-  share is unverified. Further reader redesign awaits the owner direction,
-  with the [complete ten-cohort result](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#geometry-reader-ten-cohort-result)
-  now recorded: HTML5 block beats frontier and cf12 in both modes and rounds,
-  and the font-size gain survives. Sentence still misses frontier in both
-  modes and rounds. Seven primary and ten reader-twin acceptance cells fail,
-  in ECMA262 root-font/block and HTML5 parallel font-size. The splice plan's
+  offer recorded under Whitefoot requirements above. The later compiler-only
+  comparison resolves this reader's parallel excess with Whitefoot #278;
+  wf-b2209fd31035 is now the default for all acceptance cohorts. The earlier
+  [complete ten-cohort result](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#geometry-reader-ten-cohort-result)
+  records the old compiler: HTML5 block beats frontier and cf12 in both modes
+  and rounds, and the font-size gain survives, while sentence misses frontier
+  and seven primary/ten reader-twin acceptance cells fail. The current
+  same-compiler matrix and each failing cell are maintained in
+  [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55). The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.
 
-- **M2 root-font edits still need bounded marked-frontier work.** The Q138
+- **M2 root-font frontier adoption still needs its acceptance evidence.** The Q138
   bisect first exposes a large regression at step 3a's virtual owner-order
   lookups. Shared flat events recover most of it, but full-context boundary
   reduction, publication and geometry conversion remain above main. The
@@ -464,10 +466,13 @@ example apart from the renderer code that exposed it
   [bounded contract](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#retained-lineless-frontier-bounded-contract-and-prior-falsifiers)
   now admits stable lineless leaves without Open marks through preparation,
   breaking and publication, with separate line-presence and empty-inline
-  topology refusal reasons. Hosted validation and the new-compiler acceptance
-  matrix are pending; general non-stationary restacking is outside this task.
-  Reopen it only after the admitted leaves' actual output/refusal distribution
-  supplies evidence that placement changes need it.
+  topology refusal reasons. The complete hosted validation, admitted-leaf
+  distribution and new-compiler acceptance matrix are maintained in
+  [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55); general
+  non-stationary restacking is outside this task. Reopen it only if the
+  admitted leaves' actual output/refusal distribution supplies evidence that
+  placement changes need it. Adoption still waits on the separately recorded
+  stored-field proof gap; no serial owner-motion write changes here.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and

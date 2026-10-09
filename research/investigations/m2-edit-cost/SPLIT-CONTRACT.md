@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [complete ten-cohort comparison](#geometry-reader-ten-cohort-result), but with the timing compiler HTML5 sentence still exceeds the patched frontier; built with a compiler containing Whitefoot #278, the reader's parallel sentence edit falls below the frontier ([compiler-only comparison](#point-reader-task-grain-compiler-only-comparison)). Seven primary and ten reader-twin acceptance cells fail in ECMA262 root-font/block and HTML5 parallel font-size. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. The owner selected bounded lineless processing, now specified below before implementation; the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction) needs no further investigation, since #278 removes its cost. The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: bounded retained-lineless processing is implemented under the [proposed contract](#retained-lineless-frontier-bounded-contract-and-prior-falsifiers): admitted leaves still prepare, break and publish, while line-presence transitions and unsupported empty-inline topology have distinct counted refusals. Every acceptance cohort and twin now defaults to wf-b2209fd31035, containing the point-reader grain repair. Completion evidence, the actual disposition of the 41 ECMA262 paragraphs and the full two-round ten-cohort table are maintained in [Draft PR 55, retained fragment topology and the stationary frontier](https://github.com/Ming-Research/Snowghost-wf/pull/55). The earlier compiler tables below remain historical results. General non-stationary restacking is outside this task; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -2529,11 +2529,12 @@ twin variation. No timing or correctness result is claimed by this contract.
 
 ### Retained lineless frontier: first hosted fixture evidence
 
-At 3c3992e, hosted check 37878177071 and layout-check 37878177082 pass.
-The focused falsifier run 37878177068 reaches compiled drivers, but its
-unmutated fixture stage fails before mutation detection: deleting the entire
-text node in the newly introduced `lineless-empty-source` case returns
-`inc refused`. `patch_paragraph` in `renderer/layout/update.wf` explicitly
+At 3c3992e, [hosted check 37878177071](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878177071)
+and [layout-check 37878177082](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878177082) pass.
+The [focused falsifier run 37878177068](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878177068) reaches compiled drivers, but its
+unmutated fixture stage fails before mutation detection: deleting all text
+from the node in the newly introduced `lineless-empty-source` case returns
+`inc refused`. `patch_pieces` in `renderer/layout/update.wf` explicitly
 refuses an empty replacement span because the box tree can change; full
 reconstruction then removes that paragraph, leaving one marked leaf. It is
 outside the retained-source contract and cannot test a two-leaf stationary
@@ -2552,3 +2553,12 @@ empty-inline case reports two refused leaves with reason 4096 on all four
 edits, each equal to full layout. These are fixture results, not yet evidence
 for the 41 ECMA262 leaves or for the complete mutation/acceptance matrix.
 The final run must repeat them in sequential and parallel modes.
+
+The completion record is maintained in [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55):
+exact gate revisions and run IDs, the observed 41-leaf distribution, machine
+and compiler details, both rounds of every timing cohort and its twin, every
+literal acceptance failure, review scope/fixes and remaining uncertainty.
+The runtime is frozen for those gates and the subsequent dispatched timing
+run; recording their results in that PR does not create a different source
+revision after validation. This investigation owns the contract and prior
+criteria; the PR owns the current delivery evidence.
