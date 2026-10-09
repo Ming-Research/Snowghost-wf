@@ -3755,6 +3755,27 @@ use this certificate. Auto-fit occupancy, auto-repeat and gaps must stay
 unchanged too. Container inline-size independence uses the existing width
 certificate; shrink-to-fit content width is not proved by equal old widths.
 
+Review found that the existing width certificate is insufficient through
+an enclosing flex context: it accepts the current forced width, but the
+flex rerun can choose a different one after a content change. In a fixed-width
+row flex, a `width:auto; flex:0 1 auto` grid with `50% 50%` columns has
+content-dependent intrinsic widths under flex's indefinite query even though
+its current grid columns are definite. A specified preferred width alone
+does not settle this: `flex_prepare` also derives the automatic minimum from
+`flex_content_widths`, which intentionally bypasses that preferred width.
+An inserted unbreakable word separates the claimed proof from the actual
+dependency; the new `flex-percentage-intrinsic` fixture requires reason 11.
+
+The recommendation awaiting the owner is to extend the enclosing-input
+proof, covering intrinsic contributions, automatic minima and every flex
+ancestor that can change the incoming width. This adds proof state/work but
+preserves the required fixed-column baseline consumer. Refusing every such
+route is simpler and sound, but leaves that required positive unfinished.
+The draft currently carries a route flag and refuses grids below flex; it
+does not treat this temporary restriction as completion or change the
+positive fixture to accept it. The proof extension remains a decision, and
+all rendering/cost claims remain unverified.
+
 ### Row inputs, retained results and settlement
 
 With the columns invariant, each item's row measurement has the same inline
@@ -3799,6 +3820,28 @@ settlement. An unsupported actual outward output needs explicit reference
 completion and counted fallback, analogous to the flex reason-10 boundary;
 the extension of that transaction contract to grid remains an implementation
 obligation, not evidence that pre-publication checks predicted the output.
+
+### Draft admission and retained-row implementation
+
+The draft stores an optional natural row result on each measured grid item,
+including complete measuring Space, border-box height, margins and first
+baseline/value availability. Nonitems allocate no result. Changed ancestors
+invalidate their record before marks clear; ordinary layout renews it.
+Unchanged items reuse only valid records in equal measuring Space, and the
+final pass separately checks the materialized Space and height provenance.
+Items own their work counts, reduced in a balanced tree; the grid pass also
+charges its flow events and positioned-child work.
+
+A settled grid records whether every track is content-independent or every
+contributor to its content-dependent tracks has fixed inline contributions.
+The splice preflight requires this certificate, an existing direct item on
+the route, clean/current inputs and the existing height/boundary checks;
+unknown grid dependencies return reason 11. Each outward grid reruns the
+common sizing algorithm and publishes actual outputs through the existing
+post-publication refusal contract. The containing-flex proof remains open
+as described above; those routes refuse before publication. None of this
+new source has compiled or executed while the separate language boundary
+blocks the renderer. It is authored work, not a validated capability.
 
 ### Dependencies and the existing shared track scratch
 
@@ -3892,8 +3935,8 @@ language boundary encountered during implementation.
 
 ### Executable baseline fixtures
 
-`grid-splice.py` now prepares twenty-seven fixture families and their proposed
-reason-0/reason-11 paths. The original seventeen characterized the unchanged
+`grid-splice.py` now prepares grid fixture families and their required
+splice and reason-2/reason-11 refusal paths. The original seventeen characterized the unchanged
 renderer; the added baseline boundary cases have not executed. It exercises repeated insert/remove pairs, text
 edits, positive style lifetimes, removal of an original block and positive
 viewport lifetimes. The percentage-column case uses an 80-percent container
@@ -3910,14 +3953,26 @@ oracle; retained/full dump identity is exact.
 The temporary `q140-baseline` workflow builds the current source and first runs
 the fixed-column sample;
 the matrix requires a separate dispatch after inspecting that sample.
-Its explicit baseline mode asserts the existing reason 2 in a separate
-path file. Those outcomes characterize the old renderer and cannot satisfy
-the candidate's admission or mutation requirements. The current path parser
-accepts reasons only through 10; the candidate must add reason 11 to that
-parser and its malformed-row controls when the renderer gains the new reason.
-Three executable first-baseline propagation mutations are now wired to the
-hosted fixture workflow; their detection, the Q140-specific mutations, the
-remaining certificate combinations and grid admission are still pending.
+The draft workflow now requires candidate paths. The script's explicit
+baseline mode remains available only to characterize historical reason 2;
+it cannot satisfy admission or mutation requirements. The parser accepts
+reason 11; its controls accept that refusal, reject unknown reason 12 and
+reject reason 11 reported as success. The three first-baseline mutations and
+ten additional grid/auto-margin mutations are wired to the temporary
+workflow. Their detector requires the intended geometry/identity difference,
+loss of reason 11, or loss of a required positive to reason 11, and rejects
+unrelated failures. These new controls and mutations have not executed.
+Remaining certificate combinations, permanent mutation wiring and complete
+admission remain unfinished.
+
+The baseline-only nested flex/grid fixtures preserve their original geometry
+but now assert their actual seam contracts: changing direct grid membership
+is reason 11; direct flex membership or an inline-block atomic route is
+reason 2. These are not the positive inside-item seams. The auto-margin case
+adds an independent Chromium observation: vertical auto margins exclude an
+item from baseline sharing before its automatic margin placement, as
+[CSS Grid section 10.2](https://www.w3.org/TR/css-grid-1/#auto-margins)
+requires. The source repair and its omission mutation remain unvalidated.
 
 The first hosted pilot, [run 37874471866](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37874471866)
 at `0ebf96f`, passes the fixed-column family in 1.505 seconds including
@@ -4095,8 +4150,9 @@ carry scalar relations from bare bindings, literals and named constants,
 but expressly exclude computed expressions; the subtraction therefore
 loses its bound at delivery. This is a specified language boundary rather
 than evidence of a compiler/specification mismatch. The temporary hosted
-reproduction now checks this minimal range form and the accepted segment
-borrow independently of the renderer. Its result is pending.
+reproduction is authored to check this minimal range form and the accepted
+segment borrow independently of the renderer. Its push was refused because
+the OAuth token lacks workflow scope; neither new check has run.
 
 The first-baseline selector is unchanged pending the owner's ruling.
 Extending Whitefoot's evaluated scalar fact delivery preserves the natural

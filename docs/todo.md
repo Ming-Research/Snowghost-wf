@@ -20,6 +20,20 @@ resolves it.
   [Q140 investigation](../research/investigations/structure-edits/layout-design.md#q140-grid-row-sizing-under-invariant-columns)
   owns the dependency argument and prior failure evidence.
 
+- **Grid admission through flex needs an enclosing-input proof.** The old
+  forced width can change when flex reruns: percentage grid columns may be
+  definite now but intrinsic under flex's content query, and a fixed
+  preferred width alone does not fix the automatic minimum. A long word
+  inserted inside a `width:auto; flex:0 1 auto` grid with `50% 50%` columns
+  is the falsifier. Pending the owner's choice, the draft refuses all grid
+  routes through flex with reason 11; the required fixed-column baseline
+  consumer remains an unmet positive expectation. Recommended change: prove
+  enclosing flex inputs, including intrinsic contributions and automatic
+  minima, before admitting these routes. Compare the required fixed-column
+  consumer and the percentage-column negative against Chromium/full rebuild
+  and a guard-omission mutation; measure proof work in the paired cost run.
+  Reopen on the owner's ruling, not by weakening the positive fixture.
+
 ## Oracle input completeness
 
 - **The shared browser comparator accepts a dump without its terminal height

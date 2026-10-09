@@ -64,8 +64,9 @@ const grid_select_intrinsic_max: u8 = 4_u8;
 const grid_select_max_content_max: u8 = 5_u8;
 
 struct GridItem {
-  doc "What the grid keeps of one child of its context, indexed by the child's index: whether it is a grid item, its order, its placement (a row or column start and span, definite or not; starts count from the first implicit track once placed), and while sizing tracks its size contributions in the axis being sized, whether its height was measured at its column width, and its grid area relative to the context's content box.";
+  doc "What the grid keeps of one child of its context, indexed by the child's index: whether it is a grid item, its order, its placement (a row or column start and span, definite or not; starts count from the first implicit track once placed), and while sizing tracks its size contributions in the axis being sized, its grid area relative to the context's content box.";
   active: Bool;
+  work: UpdateCounts;
   order: i32;
   row_definite: Bool;
   row: i32;
@@ -78,7 +79,6 @@ struct GridItem {
   least: i32;
   most: i32;
   minimum: i32;
-  measured: Bool;
   x: i32;
   y: i32;
   width: i32;
@@ -147,7 +147,8 @@ struct GridSize {
 fn grid_new_item() -> made: GridItem pure {
   doc "An item entry for a child that is no grid item.";
   let no = False();
-  return GridItem(active: no, order: 0_i32, row_definite: no, row: 0_i32, rows: 1_i32, column_definite: no, column: 0_i32, columns: 1_i32, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
+  let work = no_updates();
+  return GridItem(active: no, work: work, order: 0_i32, row_definite: no, row: 0_i32, rows: 1_i32, column_definite: no, column: 0_i32, columns: 1_i32, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
 }
 
 fn grid_mod(value: u64, modulus: u64) -> remainder: u64 pure {
@@ -874,7 +875,8 @@ fn grid_collect(context: &Context, events: &[Flow], styles: &Styles, model: &Gri
           let no = False();
           let row = grid_spot(styles: styles, def: row_def, areas: areas, rows: yes, first: group.row_start, last: group.row_end);
           let column = grid_spot(styles: styles, def: column_def, areas: areas, rows: no, first: group.column_start, last: group.column_end);
-          let made = GridItem(active: yes, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
+          let work = no_updates();
+          let made = GridItem(active: yes, work: work, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
           grid_put(items: &model^.items, at: at, item: made);
           let pushed = push_item::<u32>(cell: &model^.sequence, value: child, ceiling: item_ceiling);
           if group.order != 0_i32 {
@@ -945,7 +947,7 @@ fn grid_swap_axes(model: &GridModel) -> result: unit writes(model) {
   let count = model^.items.inner.len;
   for (c in 0_u64..count) {
     let item = grid_get(items: &model^.items, at: c);
-    let swapped = GridItem(active: item.active, order: item.order, row_definite: item.column_definite, row: item.column, rows: item.columns, column_definite: item.row_definite, column: item.row, columns: item.rows, placed: item.placed, needs: item.needs, least: item.least, most: item.most, minimum: item.minimum, measured: item.measured, x: item.x, y: item.y, width: item.width, height: item.height, shared: item.shared, ascent: item.ascent, shim: item.shim);
+    let swapped = GridItem(active: item.active, work: item.work, order: item.order, row_definite: item.column_definite, row: item.column, rows: item.columns, column_definite: item.row_definite, column: item.row, columns: item.rows, placed: item.placed, needs: item.needs, least: item.least, most: item.most, minimum: item.minimum, x: item.x, y: item.y, width: item.width, height: item.height, shared: item.shared, ascent: item.ascent, shim: item.shim);
     grid_put(items: &model^.items, at: c, item: swapped);
   }
   return unit;
@@ -2222,7 +2224,6 @@ fn grid_mark_needs(model: &GridModel, rows: Bool) -> result: unit writes(model) 
       give False();
     }
     set model^.items.inner[c].needs = found;
-    set model^.items.inner[c].measured = False();
   }
   return unit;
 }
@@ -2260,31 +2261,40 @@ fn grid_measure_column(child: &Context, styles: &Styles, document: &Document, fo
 }
 
 fn grid_measure_item(child: &Context, item: &GridItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, justify_items: u8, align_items: u8, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(item) {
-  doc "Lays an item out at the width of its grid area, its height not yet known, and records its margin-box height as its contributions to the rows it spans.";
+  doc "Obtains the item's natural row result in its complete measuring Space. An unchanged item's recorded result can be reused without replacing its final stretched interior; final placement separately checks and materializes the requested Space.";
   let style = child^.style;
   let group = item_of(styles: styles, style: style);
   let replaced = child^.kind == ctx_replaced;
   let justify = grid_choose(own: group.justify_self, inherited: justify_items);
   let align = grid_choose(own: group.align_self, inherited: align_items);
-  set child^.space = grid_item_space(styles: styles, style: style, replaced: replaced, justify: justify, align: align, width: item^.width, height: unknown);
-  let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
-  let outer = child^.margin_top +sat child^.margin_bottom;
-  let tall = child^.height +sat outer;
-  set item^.least = tall;
-  set item^.most = tall;
-  set item^.minimum = tall;
-  let inner = if child^.has_first_baseline {
-    give child^.first_baseline;
-  } else {
-    give child^.height;
+  let space = grid_item_space(styles: styles, style: style, replaced: replaced, justify: justify, align: align, width: item^.width, height: unknown);
+  let held = grid_read_row(record: &child^.grid_row);
+  let same = same_space(first: held.space, second: space);
+  let changed = bor(child^.dirty, child^.restyled);
+  let clean = bnot(changed);
+  let current = band(held.valid, clean);
+  let matching = band(current, same);
+  let reuse = band(updating, matching);
+  if reuse {
+    let provenance_kept = keep_height_proof(context: child, styles: styles);
+    set reuse = provenance_kept;
   }
-  set item^.ascent = child^.margin_top +sat inner;
-  set item^.measured = True();
+  if reuse {
+    grid_row_contribution(item: item, measured: held);
+    return unit;
+  }
+  set child^.space = space;
+  let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+  set item^.work = add_counts(first: item^.work, second: counted);
+  let yes = True();
+  let measured = GridRowResult(valid: yes, space: space, height: child^.height, margin_top: child^.margin_top, margin_bottom: child^.margin_bottom, first_baseline: child^.first_baseline, has_first_baseline: child^.has_first_baseline);
+  grid_store_row(record: &child^.grid_row, measured: measured);
+  grid_row_contribution(item: item, measured: measured);
   return unit;
 }
 
 fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, align_items: u8) -> result: unit reads(context), reads(styles), writes(model) {
-  doc "Marks items whose first baseline aligns in their starting row, including row-spanning items. They are measured because their baseline ascents contribute to sizing.";
+  doc "Marks items whose first baseline aligns in their starting row, including row-spanning items and excluding vertical auto margins. They are measured because their baseline ascents contribute to sizing.";
   let count = model^.items.inner.len;
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
@@ -2293,7 +2303,11 @@ fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, al
         let style = context^.children.inner[c].style;
         let group = item_of(styles: styles, style: style);
         let align = grid_choose(own: group.align_self, inherited: align_items);
-        give align == align_baseline;
+        let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
+        let automatic = bor(auto_top, auto_bottom);
+        let aligned = align == align_baseline;
+        let participates = band(aligned, bnot(automatic));
+        give participates;
       } else {
         give False();
       }
@@ -2504,21 +2518,7 @@ fn grid_rows_pass(context: &Context, styles: &Styles, document: &Document, fonts
   return unit;
 }
 
-fn grid_percent_height(styles: &Styles, style: StyleRef) -> percent: Bool reads(styles) {
-  doc "Whether an item's height, min-height or max-height is a percentage, which its grid area's height resolves.";
-  let sizes = size_of(styles: styles, style: style);
-  let tall = sizes.height.kind == sizing_value;
-  let tall_percent = band(tall, sizes.height.value.has_percent);
-  let low = sizes.min_height.kind == sizing_value;
-  let low_percent = band(low, sizes.min_height.value.has_percent);
-  let high = sizes.max_height.kind == sizing_value;
-  let high_percent = band(high, sizes.max_height.value.has_percent);
-  let pair = bor(tall_percent, low_percent);
-  let made = bor(pair, high_percent);
-  return made;
-}
-
-fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), reads(item), writes(child) {
+fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32, updating: Bool) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(item), writes(child) {
   doc "Lays out an item in its grid area, unless the lay-out that measured it already is the one it needs, and places it in the area by its alignment; an absolutely positioned child is laid out in the content box (unless the update defers it to position_out_with: deferred_out) and put at its origin as its static position.";
   let style = child^.style;
   if item^.active {
@@ -2527,18 +2527,20 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
     let justify = grid_choose(own: group.justify_self, inherited: justify_items);
     let align = grid_choose(own: group.align_self, inherited: align_items);
     let space = grid_item_space(styles: styles, style: style, replaced: replaced, justify: justify, align: align, width: item^.width, height: item^.height);
-    let forced = space.forced_height >= 0_i32;
-    let matches = space.forced_height == child^.height;
-    let unforced = bnot(forced);
-    let fits = bor(unforced, matches);
-    let percent = grid_percent_height(styles: styles, style: style);
-    let plain = bnot(percent);
-    let depends = band(item^.measured, plain);
-    let reuse = band(depends, fits);
-    if reuse {
+    let same = same_space(first: child^.laid, second: space);
+    let changed = bor(child^.dirty, child^.restyled);
+    let clean = bnot(changed);
+    let ready = band(same, clean);
+    set child^.space = space;
+    if ready {
+      let provenance_kept = keep_height_proof(context: child, styles: styles);
+      set ready = provenance_kept;
+    }
+    if ready {
+      resolve_margins(child: child, styles: styles);
     } else {
-      set child^.space = space;
       let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+      set item^.work = add_counts(first: item^.work, second: counted);
     }
     let (auto_left, auto_right, auto_top, auto_bottom) = margin_auto(styles: styles, style: style);
     let across = grid_kind(value: justify, replaced: replaced);
@@ -2567,6 +2569,7 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
       resolve_margins(child: child, styles: styles);
     } else {
       let counted = lay_out_child(child: child, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, updating: updating);
+      set item^.work = add_counts(first: item^.work, second: counted);
     }
     set child^.normal_x = content_left;
     set child^.x = content_left;
@@ -2576,7 +2579,7 @@ fn grid_finish_child(child: &Context, item: &GridItem, styles: &Styles, document
   return unit;
 }
 
-fn grid_final_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), reads(model), writes(context) {
+fn grid_final_pass(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, model: &GridModel, justify_items: u8, align_items: u8, content_left: i32, content_top: i32, content_width: i32, content_height: i32) -> result: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(model), writes(context) {
   doc "Lays out and places every child of the context in one counted loop in which each iteration writes only its own child.";
   let count = context^.children.inner.len;
   let listed = model^.items.inner.len;
@@ -2723,6 +2726,10 @@ fn lay_out_grid(context: &Context, events: &[Flow], styles: &Styles, document: &
   let yes = True();
   grid_build_tracks(styles: styles, def: column_def, tracks: &model.columns, items: &model.items, rows: no, total: size.columns, origin: size.column_origin, basis: content_width, gap: column_gap);
   grid_build_tracks(styles: styles, def: row_def, tracks: &model.rows, items: &model.items, rows: yes, total: size.rows, origin: size.row_origin, basis: definite, gap: row_gap);
+  let children = context^.children.inner.len;
+  let items = model.items.inner.len;
+  let columns = model.columns.inner.len;
+  set context^.grid_columns_invariant = grid_column_items_ready(children: &context^.children.inner[0_u64..children], items: &model.items.inner[0_u64..items], tracks: &model.columns.inner[0_u64..columns], styles: styles);
   grid_mark_needs(model: &model, rows: no);
   grid_columns_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model);
   let stretch_columns = grid_stretches(align: group.justify_content);
@@ -2769,6 +2776,12 @@ fn lay_out_grid(context: &Context, events: &[Flow], styles: &Styles, document: &
   set context^.first_baseline = first_baseline;
   set context^.has_first_baseline = has_first;
   let positioned_counts = position_out(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
+  let item_count = model.items.inner.len;
+  let item_work = grid_sum_work(items: &model.items.inner[0_u64..item_count]);
+  let own_work = one_context_count();
+  set own_work.entries = events^.len;
+  let child_work = add_counts(first: item_work, second: positioned_counts);
+  set context^.grid_counts = add_counts(first: own_work, second: child_work);
   add_own_fragment(context: context);
   return unit;
 }

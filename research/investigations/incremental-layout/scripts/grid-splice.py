@@ -35,6 +35,10 @@ WRAPPER = ('<!doctype html><html><head><meta charset="utf-8">'
 
 # css, body, proposed reason. Each negative owns its document so the new
 # column-dependency guard cannot be hidden behind another fixture's state.
+# Nested baseline-only flex/grid fixtures change direct item membership;
+# the inline-block fixture crosses an atomic route. Their geometry is kept,
+# while path expectations follow those seams rather than an inside-item seam.
+# Required flex-consumer positives stay reason 0 while its proof is pending.
 CASES = {
     'fixed': ('', GRID, 0),
     'percentage': ('main{width:80%;grid-template-columns:25% 75%}', GRID, 0),
@@ -43,16 +47,18 @@ CASES = {
     'nested': ('main main{width:auto;grid-template-columns:minmax(0,1fr) 60px}main>div{min-width:0}', '<main><div><main>' + ITEM + PEER + LAST + '</main></div>' + PEER + LAST + '</main><div>Outer tail.</div>', 0),
     'stretch-shrink': ('aside p{height:20px}', GRID, 0),
     'baseline': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}', GRID, 0),
+    'baseline-auto-margin': ('main{align-items:baseline;grid-template-rows:100px auto}section{margin-top:auto}aside{font-size:30px;line-height:35px}', GRID, 0),
+    'flex-percentage-intrinsic': ('.consumer{display:flex;width:500px}main{width:auto;flex:0 1 auto;grid-template-columns:50% 50%}', '<div class="consumer">' + GRID + PEER + '</div>', 11),
     'baseline-consumer': ('main{align-items:baseline}.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}.raised{font:30px/35px serif}', '<div class="consumer"><main>' + ITEM.replace('<p>', '<p class="raised">', 1) + PEER + LAST + '</main>' + PEER + '</div><div>Outer tail.</div>', 0),
     'baseline-nested-flow': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}article{display:flow-root}', GRID.replace('<section>', '<section><article>').replace('</section>', '</article></section>'), 0),
-    'baseline-nested-flex': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:flex;flex-direction:column}', GRID, 0),
-    'baseline-nested-grid': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:grid;grid-template-columns:200px}', GRID, 0),
+    'baseline-nested-flex': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:flex;flex-direction:column}', GRID, 2),
+    'baseline-nested-grid': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:grid;grid-template-columns:200px}', GRID, 11),
     'baseline-scroller': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{overflow:auto}', GRID, 0),
     'baseline-sharing-priority': ('.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}main>aside{align-self:baseline;font:30px/35px serif}section{align-self:start}', '<div class="consumer">' + GRID + PEER + '</div>', 0),
     'baseline-equal-height': ('main{align-items:baseline;height:180px}section{height:120px}aside{font-size:30px;line-height:35px}', GRID, 0),
-    'baseline-flex-sharing': ('main{align-items:baseline}section{display:flex}section p{width:70px}section p:first-child{align-self:start}section p:last-child{align-self:baseline;font:30px/35px serif}', GRID, 0),
-    'baseline-flex-reverse': ('main{align-items:baseline}section{display:flex;flex-direction:row-reverse}section p{width:70px}section p:last-child{font:30px/35px serif}', GRID, 0),
-    'baseline-inline-block-last': ('main{align-items:baseline}.last{display:inline-block}.last p:first-child{font:30px/35px serif}aside{font-size:30px;line-height:35px}', GRID.replace('<section>', '<section><span class="last">').replace('</section>', '</span>last-line</section>'), 0),
+    'baseline-flex-sharing': ('main{align-items:baseline}section{display:flex}section p{width:70px}section p:first-child{align-self:start}section p:last-child{align-self:baseline;font:30px/35px serif}', GRID, 2),
+    'baseline-flex-reverse': ('main{align-items:baseline}section{display:flex;flex-direction:row-reverse}section p{width:70px}section p:last-child{font:30px/35px serif}', GRID, 2),
+    'baseline-inline-block-last': ('main{align-items:baseline}.last{display:inline-block}.last p:first-child{font:30px/35px serif}aside{font-size:30px;line-height:35px}', GRID.replace('<section>', '<section><span class="last">').replace('</section>', '</span>last-line</section>'), 2),
     'baseline-row-span': ('main{align-items:baseline}section{grid-row:1 / 3}footer{grid-column:2}aside{font-size:30px;line-height:35px}', GRID, 0),
     'row-span': ('section{grid-row:1 / 3}footer{grid-column:2}aside p{height:20px}', GRID, 0),
     'fixed-container-height': ('main{height:240px;align-content:space-between}', GRID, 0),
@@ -77,6 +83,9 @@ def command(args, output=None):
 def prepare(driver, directory, name):
     directory.mkdir(parents=True, exist_ok=True)
     css, body, reason = CASES[name]
+    # Preserve all previously authored baseline style/viewport lifetimes even
+    # when their direct-item or atomic seam requires fallback.
+    lifetime = reason == 0 or name.startswith('baseline-')
     source = WRAPPER.format(css=css, body=body)
     page = directory / 'case.html'
     page.write_text(source.replace('{insert}', ''))
@@ -112,7 +121,7 @@ def prepare(driver, directory, name):
     append('T %d 0 extra ' % retained['node'])
     append('D %d 0 6' % retained['node'])
     pair()
-    if reason == 0:
+    if lifetime:
         append('C %d q140-large' % retained['parent'])
         pair()
         append('K %d q140-large' % retained['parent'])
@@ -121,7 +130,7 @@ def prepare(driver, directory, name):
     append('T %d 0 retained ' % tail_text['node'])
     append('D %d 0 9' % tail_text['node'])
     pair()
-    if reason == 0:
+    if lifetime:
         for width, height in ((1000, 800), (1280, 720)):
             append('V %d %d' % (width, height))
             pair()
