@@ -57,6 +57,16 @@ def fixtures():
                          for i in range(65))
     yield 'sparse-root', page('<section>' + paragraphs + '</section>',
                               '.small{font-size:12px}.large{font-size:24px}'), root_pairs
+    whitespace = '<section><p class="leaf">\t\t</p><p class="leaf"> \t </p></section>'
+    root_css = '.small{font-size:12px}.large{font-size:24px}'
+    yield 'lineless-whitespace', page(whitespace, root_css), root_pairs
+    def empty_source(tree):
+        node = text(tree, '\t\t')['node']
+        return [f'D {node} 0 2'] + root_pairs(tree)
+    yield 'lineless-empty-source', page(whitespace, root_css), empty_source
+    yield 'line-presence', page(whitespace, '.changed .leaf{white-space:pre}'), toggle
+    empty_inline = '<section><p><span class="leaf">\t\t</span></p><p><span class="leaf"> \t </span></p></section>'
+    yield 'lineless-open', page(empty_inline, root_css), root_pairs
     simple = '<section><p><span class="leaf">First.</span></p><p class="middle">Middle.</p><p><span class="leaf">Last.</span></p></section>'
     for name, rule in [('frame-width', 'width:90px'),
                        ('frame-left', 'padding-left:29px;padding-right:0'),
@@ -143,6 +153,17 @@ def sparse_counts(raw, expected_paragraphs=3, expected_records=4):
     print('stationary frontier:', expected_records, 'edits prepare/break', expected_paragraphs, 'leaves, held entries zero, total entries below 32', flush=True)
 
 
+def refusal_counts(raw, expected_refusals, expected_reason, expected_records):
+    """Require the intended leaf classification, never an unrelated replay."""
+    records = re.findall(r'^style edit (\d+) .* frontier_refusals (\d+) frontier_reasons (\d+)$', raw, re.M)
+    if len(records) != expected_records:
+        raise ValueError(('missing lineless classification records', expected_records, records))
+    for edit, refused, reason in records:
+        if (int(refused), int(reason)) != (expected_refusals, expected_reason):
+            raise ValueError(('wrong lineless classification', edit, refused, reason, expected_refusals, expected_reason))
+    print('lineless classification:', expected_records, 'edits, refused', expected_refusals, 'reason', expected_reason, flush=True)
+
+
 def run(args):
     directory = Path(args.output)
     directory.mkdir(parents=True, exist_ok=True)
@@ -179,6 +200,13 @@ def check_fixture(args, directory, name, source, edits):
     inctime.read(str(protocol), operations, checking=True, require_paths=True)
     if name == 'sparse-root':
         sparse_counts(raw)
+    if name in ('lineless-whitespace', 'lineless-empty-source'):
+        sparse_counts(raw, expected_paragraphs=2)
+        refusal_counts(raw, expected_refusals=0, expected_reason=0, expected_records=4)
+    if name == 'line-presence':
+        refusal_counts(raw, expected_refusals=2, expected_reason=2048, expected_records=2)
+    if name == 'lineless-open':
+        refusal_counts(raw, expected_refusals=2, expected_reason=4096, expected_records=4)
     if name == 'stationary-first-line':
         sparse_counts(raw, expected_paragraphs=2, expected_records=2)
     print(name, 'edits', len(operations), 'differences', different, flush=True)

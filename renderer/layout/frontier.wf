@@ -197,16 +197,15 @@ fn frontier_clear(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
 }
 
 fn frontier_paragraph_ready(paragraph: &Paragraph) -> (ready: Bool, reason: u32) reads(paragraph) {
-  doc "Admits one leaf independently of other leaves: positive solid lines, retained width and left edge, no float or atomic dependence.";
+  doc "Admits one leaf independently of other leaves: positive height when lined, retained width and left edge, no float or atomic dependence; lineless topology is classified after breaking.";
   if paragraph^.dirty {
   } else {
     return False(), 1_u32;
   }
-  if paragraph^.lines.inner.len == 0_u64 {
-    return False(), 2_u32;
-  }
-  if paragraph^.height <= 0_i32 {
-    return False(), 4_u32;
+  if paragraph^.lines.inner.len != 0_u64 {
+    if paragraph^.height <= 0_i32 {
+      return False(), 4_u32;
+    }
   }
   if paragraph^.beside {
     return False(), 8_u32;
@@ -223,6 +222,49 @@ fn frontier_paragraph_ready(paragraph: &Paragraph) -> (ready: Bool, reason: u32)
   return True(), 0_u32;
 }
 
+fn frontier_line_transition(old_lines: u64, new_lines: u64) -> reason: u32 pure {
+  doc "Line presence owns placement and split-role topology; either transition requires reference publication even if another extent guard would also refuse.";
+  if old_lines == 0_u64 {
+    if new_lines != 0_u64 {
+      return 2048_u32;
+    }
+  } else if new_lines == 0_u64 {
+    return 2048_u32;
+  }
+  return 0_u32;
+}
+
+fn frontier_empty_topology(marks: &[Mark]) -> reason: u32 reads(marks) {
+  doc "A lineless Open may own a context-level empty-inline source, outside stationary paragraph publication. Independent mark halves reduce their reasons without a shared write.";
+  let count = marks^.len;
+  if count == 0_u64 {
+    return 0_u32;
+  }
+  if count == 1_u64 {
+    match marks^[0_u64] {
+      Open(..) => {
+        return 4096_u32;
+      }
+      Close(..) => {
+        return 0_u32;
+      }
+      Atomic(..) => {
+        return 0_u32;
+      }
+      Node(..) => {
+        return 0_u32;
+      }
+    }
+  }
+  let half = count / 2_u64;
+  if half <= count {
+    let left = frontier_empty_topology(marks: &marks^[0_u64..half]);
+    let right = frontier_empty_topology(marks: &marks^[half..count]);
+    return ior(left, right);
+  }
+  return 0_u32;
+}
+
 fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: u64, children: &[Context], styles: &Styles, fonts: &FontSet, picks: &FontPicks, exclusions: &[Exclusion]) -> (stationary: Bool, broken: u64, visited: u64, refusals: u64, reasons: u32) reads(children), reads(styles), reads(fonts), reads(picks), reads(exclusions), writes(frontier), writes(paragraphs) {
   doc "Each leaf independently checks its inputs, breaks when admitted and retains its fresh transfer without publication or mark retirement. A leaf refusal or changed placement leaves full replay all dirty inputs, including other leaves already broken. visited counts paragraph admission reads, excluding directory nodes.";
   let count = paragraphs^.len;
@@ -237,21 +279,30 @@ fn frontier_break(frontier: &ParagraphFrontier, paragraphs: &[Paragraph], span: 
         } else {
           return False(), 0_u64, 1_u64, 1_u64, reason;
         }
+        let old_lines = paragraphs^[0_u64].lines.inner.len;
         let old_height = paragraphs^[0_u64].height;
         let old_baseline = last_line_baseline(paragraph: &paragraphs^[0_u64]);
         break_paragraph(paragraph: &paragraphs^[0_u64], children: children, styles: styles, fonts: fonts, picks: picks, exclusions: exclusions, origin_y: 0_i32);
         let fresh = paragraph_output(paragraph: &paragraphs^[0_u64]);
         set frontier^ = ParagraphFrontier::Mark(output: fresh);
         let new_baseline = last_line_baseline(paragraph: &paragraphs^[0_u64]);
-        let solid = bnot(fresh.through);
+        let new_lines = paragraphs^[0_u64].lines.inner.len;
+        let transition = frontier_line_transition(old_lines: old_lines, new_lines: new_lines);
+        if transition != 0_u32 {
+          return False(), 1_u64, 1_u64, 1_u64, transition;
+        }
+        if new_lines == 0_u64 {
+          let marks = paragraphs^[0_u64].marks.inner.len;
+          let topology = frontier_empty_topology(marks: &paragraphs^[0_u64].marks.inner[0_u64..marks]);
+          if topology != 0_u32 {
+            return False(), 1_u64, 1_u64, 1_u64, topology;
+          }
+        }
         let same_height = old_height == paragraphs^[0_u64].height;
         let same_baseline = old_baseline == new_baseline;
         let same_extent = band(same_height, same_baseline);
-        let kept = band(solid, same_extent);
+        let kept = same_extent;
         let reasons = 0_u32;
-        if fresh.through {
-          set reasons = ior(reasons, 256_u32);
-        }
         if same_height {
         } else {
           set reasons = ior(reasons, 512_u32);
@@ -487,11 +538,47 @@ fn frontier_check() -> passed: Bool pure {
     return False();
   }
   set counter_leaf.dirty = True();
+  set counter_leaf.broken_width = 0_i32;
+  set counter_leaf.broken_left = 0_i32;
   let (lineless_ready, lineless_reason) = frontier_paragraph_ready(paragraph: &counter_leaf);
   if lineless_ready {
+  } else {
     return False();
   }
-  if lineless_reason != 2_u32 {
+  if lineless_reason != 0_u32 {
+    return False();
+  }
+  let appeared = frontier_line_transition(old_lines: 0_u64, new_lines: 1_u64);
+  let disappeared = frontier_line_transition(old_lines: 1_u64, new_lines: 0_u64);
+  let still_empty = frontier_line_transition(old_lines: 0_u64, new_lines: 0_u64);
+  let still_lined = frontier_line_transition(old_lines: 1_u64, new_lines: 2_u64);
+  if appeared != 2048_u32 {
+    return False();
+  }
+  if disappeared != 2048_u32 {
+    return False();
+  }
+  if still_empty != 0_u32 {
+    return False();
+  }
+  if still_lined != 0_u32 {
+    return False();
+  }
+  let marks = slots_new::<Mark, 2>();
+  let node = Mark::Node(at: 0_u32, end: 0_u32, node: 1_u32);
+  let closed = Mark::Close(at: 0_u32, style: style);
+  place_back(window: &marks, value: node);
+  place_back(window: &marks, value: closed);
+  let count = marks.len;
+  let no_source = frontier_empty_topology(marks: &marks[0_u64..count]);
+  if no_source != 0_u32 {
+    return False();
+  }
+  if 1_u64 < marks.len {
+    set marks[1_u64] = Mark::Open(at: 0_u32, style: style);
+  }
+  let has_source = frontier_empty_topology(marks: &marks[0_u64..count]);
+  if has_source != 4096_u32 {
     return False();
   }
   let first_counts = no_boundary_visits();

@@ -67,7 +67,7 @@ def frontier_record(match):
     if refused is None and reasons is None:
         return
     refused, reasons = int(refused), int(reasons)
-    if reasons & ~2047 or (refused == 0) != (reasons == 0):
+    if reasons & ~8191 or (refused == 0) != (reasons == 0):
         raise ValueError('inconsistent dirty-frontier refusal count/reasons')
 
 
