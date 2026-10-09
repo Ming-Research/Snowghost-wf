@@ -188,6 +188,19 @@ example apart from the renderer code that exposed it
 
 ## Snowghost
 
+- **A root-font edit costs up to 4.5 percent more with percentage-height
+  provenance.** With compact records, ECMA262's sequential root-font edit is
+  1.045 times M2 by the paired median against the twin's 1.042 upper sample,
+  and Apollo's 1.0168 against 1.0165; every other root-font comparison lies
+  within the twin's spread ([measurements](../research/investigations/structure-edits/layout-design.md#approved-direct-inventory-and-compact-records)).
+  An instruction profile spreads the extra work over summary propagation,
+  copies and height handling, with no single replaceable hot spot. Impact:
+  root-font edits, which update most of a page, pay it on every edit. Change:
+  a record or summary representation that propagates less, chosen against
+  the same paired, twin-controlled comparison. Reopen when M2's final edit
+  measurement shows root-font edits behind, or with the next change to the
+  height provenance records.
+
 - **Verify percentage relative-position offsets against immediate containing height.**
   Q139 inspection found ordinary block relative offsets still passing
   `unknown` as their height basis in `block_relative_offset` and boundary
