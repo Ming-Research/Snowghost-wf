@@ -4402,8 +4402,8 @@ independent geometry evidence before the path gate fails.
 
 All original block edits match full rebuild in both modes on that revision:
 ECMA262 20 splices of 20, HTML5 60 of 60, Apollo11 19 of 60. Apollo11's other
-41 edits are 29 grid-dependency refusals (11), 10 removed-float refusals (9),
-one unresolved context/height certificate (7), and one unsupported seam or
+41 edits are 29 grid-dependency refusals (11), 10 float/motion refusals (9),
+one unresolved context/height/motion certificate (7), and one unsupported seam or
 fragment state (3). Those reason categories do not identify a narrower cause
 without further tracing. Q139 fixtures pass in hosted run 37909000684 at the
 same revision. The final candidate must rerun these gates and counts.
@@ -4417,3 +4417,13 @@ It completed every kind/page/mode. The twin shows wide outliers (including
 not final costs. Use two forward/inverse pairs and four interleaved rounds
 for the repaired candidate, retaining paired spreads and the twin; collect
 full layout and peak RSS with their bounded pilot in that same run.
+
+The historical style falsifier in `oracles-m2` must use its own source pin,
+`8e69668:whitefoot.pin` (`wf-f949e676acfa`), not the later main-era v0.94
+release. Run 37909004954 reached its old-source build and failed because
+that later release emitted LLVM's `captures(none)` attribute to the hosted
+Clang version, before the semantic observation. This is not mutation detection.
+The corrected workflow preserves the historical source and the required
+`missing [1-9]` reach failure. Final validation and cost tables are recorded
+in [PR #54's completion report](https://github.com/Ming-Research/Snowghost-wf/pull/54);
+the dated observations here do not substitute for its final-head gates.
