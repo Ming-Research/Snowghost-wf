@@ -43,7 +43,7 @@ CASES = {
     'nested': ('main main{width:auto;grid-template-columns:minmax(0,1fr) 60px}main>div{min-width:0}', '<main><div><main>' + ITEM + PEER + LAST + '</main></div>' + PEER + LAST + '</main><div>Outer tail.</div>', 0),
     'stretch-shrink': ('aside p{height:20px}', GRID, 0),
     'baseline': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}', GRID, 0),
-    'baseline-consumer': ('main{align-items:baseline}.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}', '<div class="consumer"><main>' + ITEM + PEER + LAST + '</main>' + PEER + '</div><div>Outer tail.</div>', 0),
+    'baseline-consumer': ('main{align-items:baseline}.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}.raised{font:30px/35px serif}', '<div class="consumer"><main>' + ITEM.replace('<p>', '<p class="raised">', 1) + PEER + LAST + '</main>' + PEER + '</div><div>Outer tail.</div>', 0),
     'row-span': ('section{grid-row:1 / 3}footer{grid-column:2}aside p{height:20px}', GRID, 0),
     'fixed-container-height': ('main{height:240px;align-content:space-between}', GRID, 0),
     'clamped-container-height': ('main{min-height:100px;max-height:130px}', GRID, 0),

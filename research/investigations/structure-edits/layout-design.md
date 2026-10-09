@@ -3716,7 +3716,7 @@ unchanged definite inline size. Thus `200px`, definite `25%`, and
 fit-content do not. Resolved implicit columns obey the same condition.
 Changed intrinsic contributions cannot affect any admitted column sizing
 step. An item spanning several such columns is safe under this rule;
-spanning a content-sized column is a negative case. Merely testing the
+spanning a content-sized column needs the second certificate below. Merely testing the
 edited item's first column would miss its span and the coupled distribution.
 
 A second sufficient family permits content-sized columns when every consumed
@@ -3736,7 +3736,10 @@ Neither family claims that an untouched auto column must change. An unchanged
 DOM subtree with unproved row feedback stays unknown, and a cached intrinsic
 number alone proves nothing. A fixture with fixed item width feeding an auto
 column tests the second family independently of page-specific styling. The
-archived Apollo stylesheet gives `main#content` a `min-content` column beside
+archived Apollo stylesheet (`research/concurrency/apollo11-modules.css` in
+artifact `apollo11-diag-37727037303` of
+[run 37727037303](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37727037303),
+whose input manifest is `apollo11-inputs.sha256`) gives `main#content` a `min-content` column beside
 `minmax(0,59.25rem)`, so the first family alone cannot establish that page's
 admission. Every contributor to that column, including spans, needs the
 second proof or a counted refusal. Fixed resolved numbers in a computed-style
@@ -3862,8 +3865,8 @@ the omitted write is not evidence that the stale-result fault was detected.
 ### Refusal boundary and outstanding evidence
 
 Before publication, refuse unknown/stale column-certificate inputs, changed item membership
-or placement, unproved container inline size, and content-dependent column
-sizing with the grid-dependency reason when reached. Preserve earlier
+or placement, unproved container inline size, and unproved column
+contributions with the grid-dependency reason when reached. Preserve earlier
 route/style/seam refusals and their precedence; a fixture intended to isolate
 reason 11 must avoid those independent failures. Unsupported subgrid,
 orthogonal/fragmented layout and cross-axis intrinsic feedback are not
@@ -3888,7 +3891,9 @@ edits, positive style lifetimes, removal of an original block and positive
 viewport lifetimes. The percentage-column case uses an 80-percent container
 width, so viewport refresh changes the measured item Space, not just the
 viewport number. A flex parent aligned on baselines consumes the grid's
-baseline in the `baseline-consumer` family. Independent Chromium comparisons
+baseline in the `baseline-consumer` family; its removable first paragraph
+has an authored larger font so removing it changes the first baseline without
+a structural-selector restyle. Independent Chromium comparisons
 cover the first three prefixes; later prefixes require retained/full identity
 and their paths. The established browser comparator allows 1 px for block
 rectangles, compares inline/text fragment counts and widths, and reports
@@ -3903,3 +3908,12 @@ accepts reasons only through 10; the candidate must add reason 11 to that
 parser and its malformed-row controls when the renderer gains the new reason.
 Executable mutations, the remaining certificate combinations and
 implementation are still pending.
+
+The first hosted pilot, [run 37874471866](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37874471866)
+at `0ebf96f`, passes the fixed-column family in 1.505 seconds including
+generation, retained/full checks and the Chromium comparisons. It uses the
+sequential Q139 baseline driver built at `3bdd5cd`, compiler
+`wf-f949e676acfa`; the workflow requires an empty renderer/pin diff before
+reusing that artifact. This is fixture characterization, not an edit-cost
+measurement or Q140 admission. The sample supports expanding to seventeen
+families in both sequential and four-worker modes; the matrix remains pending.
