@@ -123,6 +123,7 @@ case_floors() {
 	flow-cases) echo "219 145 294" ;;
 	percentage-height-cases) echo "14 0 0" ;;
 	grid-cases) echo "286 2 198" ;;
+	grid-final-space-cases) echo "26 0 8" ;;
 	table-cases) echo "694 29 306" ;;
 	*) echo "" ;;
 	esac
