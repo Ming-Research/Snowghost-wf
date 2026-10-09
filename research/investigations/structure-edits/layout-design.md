@@ -4577,7 +4577,7 @@ not prove their internal measurement constraints equal.
 Each item reads only its own existing record and writes only its own result;
 no shared cache, epoch, pass, global counter or new sibling dependency is
 introduced. Track and baseline reductions retain their existing dependencies.
-No incremental admission condition changes. The independent browser boundary
+Structural splice admission conditions are unchanged. The independent browser boundary
 fixture and omission mutations must reject ignoring either percentage
 height dependence or the final used height; all existing grid/Q139 mutations
 and page identities remain required. The native comparison adds the handoff
@@ -4639,3 +4639,26 @@ sizes before layout, making the boundary path decline and exercising the
 reference update directly. It keeps the 200px item width and 20px peer, so
 the expected natural row height and final percentage height stay 60px and
 30px. A failure there would reject relying on the ordinary-boundary guard.
+
+The intrinsic-column variant fails its first class-edit identity on both the
+handoff renderer and this repair in
+[37940319321](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37940319321)
+at `1bc1f42`, in both candidate modes. The existing reference path can retain
+`definite_free` after a direct child's style introduces a height reader; unlike
+the ordinary boundary path, it does not force fresh input preparation before
+the next indefinite row query. This is an existing renderer dependency defect,
+not a reason to reuse a wrongly sized natural result.
+
+Before geometry updates, marked-child preparation now compares each restyled
+direct child's old stored height-read signature with its current style. A
+transition between reading and not reading height/min-height/max-height
+invalidates the parent flow's pre-pass and percentage-free summary. Existing
+reference preparation then resolves the actual new incoming edges and renews
+that summary before reuse. Own percentage amount changes retain the existing
+reader path; unrelated child restyles retain their entry-scoped update. The
+single-mark case reads one child; multiple signatures are independent and
+reduce through a balanced OR before parent invalidation. This adds only the
+actual newly read input dependency, with no sibling write or shared cache.
+The tree's existing entry-scoped restyle rule is qualified by this dependency.
+The new `omit-height-reader-invalidation` mutation must reproduce the
+intrinsic variant's runtime identity failure; compiler errors do not count.

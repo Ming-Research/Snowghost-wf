@@ -24,6 +24,10 @@ def module(name):
 
 
 MUTATIONS = {
+    'omit-height-reader-invalidation': (
+        'update', 'changed_height_read',
+        '  return bnot(same);', '  return False();',
+        'final-space', 'final-identity'),
     'omit-final-height-dependency': (
         'grid_retained', 'grid_same_layout',
         '  let same_height = bor(same_definite, child^.definite_free);',
@@ -179,7 +183,11 @@ def verify(name, baseline, mutant, directory, baseline_paths):
     _, _, _, _, case, mode = MUTATIONS[name]
     grid = module('grid-splice')
     detector = module('percentage-falsify')
-    if mode == 'final-chromium':
+    if mode == 'final-identity':
+        grid.final_space(baseline, directory, intrinsic=True)
+        script = directory / 'case.edits'
+        required = {}
+    elif mode == 'final-chromium':
         page = Path('tests/layout/grid-final-space-cases.html')
         grid.command(['node', 'tests/layout/layout_oracle.mjs', 'dump', str(page)], directory / 'case.chromium.tsv')
         arguments = ['dump', '1', str(page), 'renderer/style/ua.css']

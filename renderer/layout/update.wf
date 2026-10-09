@@ -249,6 +249,34 @@ fn reset_paragraph(paragraph: &Paragraph) -> result: unit writes(paragraph) {
   return unit;
 }
 
+fn changed_height_read(child: &Context, styles: &Styles) -> changed: Bool reads(child), reads(styles) {
+  doc "A restyled direct child's height-read signature must invalidate its parent's retained input preparation. Previously unread height bases may differ from the parent's current definite height; introducing a reader requires preparing that edge, and removing one requires renewing the parent's percentage-free summary.";
+  if child^.restyled {
+  } else {
+    return False();
+  }
+  let old = read_height_record(record: &child^.height_proof);
+  let previous = old.read_mask != 0_u8;
+  let current = height_relative(styles: styles, style: child^.style);
+  let same = eeq(previous, current);
+  return bnot(same);
+}
+
+fn changed_height_reads(children: &[Context], styles: &Styles) -> changed: Bool reads(children), reads(styles) {
+  doc "Independent direct-child signatures reduce through a balanced OR; neither child preparation nor sibling order determines this invalidation.";
+  let count = children^.len;
+  if count == 0_u64 {
+    return False();
+  }
+  if count == 1_u64 {
+    return changed_height_read(child: &children^[0_u64], styles: styles);
+  }
+  let middle = count / 2_u64;
+  let first = changed_height_reads(children: &children^[0_u64..middle], styles: styles);
+  let second = changed_height_reads(children: &children^[middle..count], styles: styles);
+  return bor(first, second);
+}
+
 fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
   doc "Forgets the marked context's intrinsic sizes, which its content no longer gives, recording whether they were known and what they were (intrinsic_held, held_min, held_max), and prepares again each of its marked paragraphs, handing each its previous text and shaping so that unchanged segments are only scaled again, then does the same in each marked child context: the one text_changed recorded when it marked one, or each one in a counted loop whose iterations test their own element's mark when it marked several; False when shaping refuses a paragraph. The marks stay for the layout pass.";
   flex_forget(context: context);
@@ -288,6 +316,24 @@ fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts
     }
   }
   let (one_child, c) = single_marked_child(context: context);
+  if context^.kind == ctx_flow {
+    let changed = if one_child {
+      if c < context^.children.inner.len {
+        give changed_height_read(child: &context^.children.inner[c], styles: styles);
+      } else {
+        give False();
+      }
+    } else if context^.marked_children > 0_u32 {
+      let children = context^.children.inner.len;
+      give changed_height_reads(children: &context^.children.inner[0_u64..children], styles: styles);
+    } else {
+      give False();
+    }
+    if changed {
+      set context^.restyled = True();
+      set context^.definite_free = False();
+    }
+  }
   if one_child {
     if c < context^.children.inner.len {
       let done = prepare_marked(context: &context^.children.inner[c], document: document, styles: styles, fonts: fonts, picks: picks);
