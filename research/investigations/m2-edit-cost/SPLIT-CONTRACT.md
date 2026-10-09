@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) merges percentage-height provenance from research/m2-layout and adopts wf-01697d2de8a1 (specification v0.112). The unchanged flat stored-field loop is admitted and emits parallel tasks. Renderer integration is blocked on a natural inverse over recursive SlotPages; owner-motion writes remain serial, with no workaround adopted. Separately, the flat reachable fixture exposes unavailable proof of fields initialized by aggregate fill. Acceptance timing is deferred under the owner's instruction while Whitefoot #275's owning-element sibling serialization remains open. The [previous ten-cohort result](#root-font-continuation-ten-cohort-result) is historical: four HTML5 root-font parallel cells failed and every block cell passed. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) carries delivery status and deferrals. No adoption merge is authorized.
+Current continuation: adopt wf-41f46e60030c (specification v0.117), merge the grid-splice base and test the owning-element sibling emission repaired by Whitefoot #316. Owner-motion writes and their proposed Context invariant remain unchanged and blocked on status-board card `sg-inverse-storage`. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) and [previous ten-cohort result](#root-font-continuation-ten-cohort-result) below retain their dated evidence. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) owns this continuation's delivery, validation and deferrals; no adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -3064,3 +3064,30 @@ comparison and every other historical fixture/page comparison. Both dumps
 are retained; the permanent Q139 gate still checks that fresh Chromium agrees
 with the committed reference. This is the approved behavior correction's
 oracle adaptation, not a new renderer choice or a suppressed failed check.
+
+
+### Released owning-sibling repair: comparison before measurement
+
+The question is whether Whitefoot #316 restores the unchanged paragraph
+frontier's sibling lane offers and removes the HTML5 root-font acceptance
+failure. Compare unoptimized LLVM and parallel ledgers for the same source
+at 8f973e6 with wf-01697d2de8a1 and wf-41f46e60030c, then capture final-head
+emission with the latter. Count lane acquire, publish and join calls per
+function, keeping sequential clones and thunks distinct. An unchanged serial
+sibling pair rejects emission recovery; a permitted ledger alone is insufficient.
+
+For acceptance, build main's compiler-adaptation source
+bb98d4371d0e148775e232e4d2938ddb9aec3be6 (PR 56), this branch's head, and
+independent twins with wf-41f46e60030c. Include layout base b0d1b71 and its
+twin only if that unmodified source builds. Refusal of the main source stops
+timing; refusal of the optional layout control drops that pair with the exact
+diagnostic recorded. A one-round HTML5 root-font sequential/four-worker pilot
+precedes all six X5 kinds on ecma262, html5 and the preserved apollo11 capture.
+Two interleaved forward/reverse rounds use identical inputs on one hosted
+runner, with each candidate paired with its corresponding main build. Every
+cell must be at most twice main, including block, as this continuation's
+owner instruction specifies; earlier cf12 comparisons remain historical.
+Report raw edit ranges, both rounds and twin spread without relaxing a
+literal failure. The four HTML5 root-font parallel comparisons and Apollo11
+parallel sentence edits are the specific regression observations. This is
+a hosted acceptance comparison, not a precise cross-machine speed claim.

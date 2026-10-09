@@ -153,7 +153,7 @@ made a material choice elsewhere.
 - [ ] **V3 — Delivery.** The PR describes the current result and remaining
   limitations. Its *Found along the way* section gives every defect or
   opportunity the work exposed a disposition: fixed, recorded in
-  `docs/todo.md`, or declined with a reason. A PR marked ready has the
+  the status board by item key, or declined with a reason. A PR marked ready has the
   owner's approval of every design-tree change it carries, recorded in
   `design/log.md`.
 - [ ] **V4 — Existing PR updated.** The reviewed changes are pushed to the PR
