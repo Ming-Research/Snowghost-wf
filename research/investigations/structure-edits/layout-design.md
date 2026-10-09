@@ -3916,4 +3916,64 @@ sequential Q139 baseline driver built at `3bdd5cd`, compiler
 `wf-f949e676acfa`; the workflow requires an empty renderer/pin diff before
 reusing that artifact. This is fixture characterization, not an edit-cost
 measurement or Q140 admission. The sample supports expanding to seventeen
-families in both sequential and four-worker modes; the matrix remains pending.
+families in both sequential and four-worker modes.
+
+### Baseline matrix finding and shared contract choice
+
+The expanded hosted matrix, [run 37875129706](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37875129706)
+at `a8a0e30`, ran all seventeen families on Ubuntu 24.04 with Chromium
+141.0.7390.37, in sequential and four-worker modes. The source/pin equality
+check allowed reuse of the Q139 drivers built at `3bdd5cd`. In each mode,
+fifteen families pass the browser comparisons and two fail: `baseline` and
+`baseline-consumer`. Retained/full identity and existing reason-2 assertions
+pass even for those two families. The failure is in initial full-layout
+geometry, before a splice could explain it. The artifact `q140-baseline`
+contains the generated pages, raw output, browser dumps, prefix dumps and
+summaries; each failing comparison stops at prefix zero, so its later browser
+comparisons remain unverified. No failing case is suppressed.
+
+| Initial geometry, in px | Chromium | Renderer, both modes |
+| --- | ---: | ---: |
+| `baseline`: grid block size | 133 | 120 |
+| `baseline`: section top relative to grid | 13 | 0 |
+| `baseline`: peer top relative to grid | 0 | 27 |
+| `baseline-consumer`: outer flex peer top in the document | 8 | 35 |
+
+The fixture's two-paragraph flow item and larger-font one-paragraph peer
+expose the distinction between first and last baselines. `stack_flow` uses
+`last_baseline` and overwrites the context baseline as it visits later
+paragraphs. `grid_shim_baselines` and `grid_first_baseline` consume that same
+value. `context_size_output` copies the child's exported value into both
+`SequenceOutput.first_baseline` and `last_baseline`; merely substituting the
+first field does not repair nested child contexts. The
+[alignment baseline rule](https://www.w3.org/TR/css-align-3/#baseline-values)
+requires first-baseline alignment for the unqualified `baseline` value.
+
+Two related boundaries need coverage in the repair: `finish_flow` suppresses
+`has_baseline` for scrolling overflow, while `grid_first_baseline` always
+chooses the earliest item. The
+[grid baseline rule](https://www.w3.org/TR/2025/CRD-css-grid-1-20250326/#grid-baselines)
+instead gives priority to baseline-sharing items in the first occupied row
+and treats a scrolling contributor at its initial scroll position. These
+are source/specification findings, not additional measured failures.
+
+**Question.** How should a first-baseline result and its availability reach
+grid sizing, export and retained updates without changing existing
+last-baseline consumers? This shared output contract is beyond Q140 B's
+column-invariance ruling; no representation has been implemented.
+
+| Candidate | Dependencies, cost and risk | Status |
+| --- | --- | --- |
+| Publish a distinct first-baseline value and availability alongside the existing exported baseline, and retain it with item measurements | Each owned context publishes after its contributing child/line output settles; independent siblings remain independent. Parent selection/reduction consumes settled outputs. Constant-size reads for repeated sizing, with extra state and an obligation to update every publication, invalidation and outward comparison. | Recommended for the owner to settle. It makes the semantic distinction explicit without repurposing the baseline used by inline-blocks. |
+| Query the first baseline through settled owner-local entries and nested contexts when needed | Independent item queries share no writes; following a selected child's nested baseline is a true dependency. Avoids another retained value, but repeats traversal during sizing/export and must handle non-flow contexts, availability, empty entries and scrollers correctly. | Viable alternative; the current sequence first field alone is insufficient. No cost comparison yet distinguishes it from retained publication. |
+
+Confidence is 4/5 in the diagnosis and 3/5 in the representation
+recommendation: the measured discrepancy and publication chain identify the
+semantic error; nested kinds, scroll handling and query cost still need
+validation. The comparison is first/last-distinct, nested, scrolled and
+externally consumed baseline fixtures against Chromium and full rebuild,
+plus the requested paired edit/full-layout/RSS experiment. Reject a repair
+that leaves those cases wrong, changes existing last-baseline behavior, adds
+unnecessary sibling ordering, or introduces a measured regression beyond
+the M2 twin's spread without disposition. This prerequisite remains open
+alongside the independent-proposal choice; neither is a Whitefoot gap.

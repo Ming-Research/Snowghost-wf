@@ -24,6 +24,26 @@ resolves it.
   own the details; this is a renderer design issue, not a demonstrated
   Whitefoot limitation.
 
+- **Grid baseline alignment consumes the flow item's last baseline.** The
+  Q140 hosted matrix at `a8a0e30` disagrees with Chromium before any edit in
+  both modes: the `baseline` grid is 120 px rather than 133 px tall, and
+  `baseline-consumer` places the outer flex peer 27 px too low. Flow publishes
+  its last baseline; grid row shims and grid baseline export consume it as
+  the first. A child sequence entry also copies that value into both baseline
+  fields, so reading its `first_baseline` is not a general repair. Preserve
+  the existing last-baseline consumers and supply a correct first value and
+  availability through nested contexts. The representation choice is pending:
+  retained first-baseline outputs are recommended over demand queries, with
+  currentness and storage versus repeated query work still to evaluate.
+  Validate both failing families, nested contexts, baseline-sharing item
+  selection, scrolling overflow, original first-item removal and unchanged
+  inline-block behavior against the independent browser and full rebuild.
+  The item-selection and scrolling cases are source-inspection leads, not
+  measured failures. Reopen with the owner's baseline-contract ruling before
+  Q140 can claim baseline coverage; keep both fixtures failing until repaired.
+  [Evidence and alternatives](../research/investigations/structure-edits/layout-design.md#baseline-matrix-finding-and-shared-contract-choice)
+  record the full-layout prerequisite separately from splice admission.
+
 ## Whitefoot requirements
 
 Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
