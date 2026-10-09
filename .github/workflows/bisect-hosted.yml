@@ -2,6 +2,9 @@
 # one job per build, in parallel. A regression of tens to hundreds of times
 # needs no precise machine; this hosted comparison is explicitly requested.
 # The cohort includes independent main, base and immediate-before twins.
+# [grain-pilot] builds the same sources with the pinned compiler and with a
+# release containing Whitefoot #278 (call grain) to test whether the
+# point-read task offer explains the remaining reader cost.
 # Retired with the Q134 acceptance investigation; no expired run artifact is needed to reproduce it.
 name: bisect-hosted
 
@@ -11,13 +14,13 @@ on:
 
 jobs:
   build:
-    if: contains(github.event.head_commit.message, '[timing]') || contains(github.event.head_commit.message, '[reader-pilot]')
+    if: contains(github.event.head_commit.message, '[timing]') || contains(github.event.head_commit.message, '[reader-pilot]') || contains(github.event.head_commit.message, '[grain-pilot]')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        build: ${{ contains(github.event.head_commit.message, '[reader-pilot]') && fromJSON('["before=6424e28ee94f7196518b9f3f8dfc910d3a727985", "beforetwin=6424e28ee94f7196518b9f3f8dfc910d3a727985", "frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "a=HEAD", "atwin=HEAD"]') || fromJSON('["main=8fbc1601785cee70265da1eac4d99589fc6fb67c", "maintwin=8fbc1601785cee70265da1eac4d99589fc6fb67c", "base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2", "twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2", "before=58b16dae2770a774189370d4d2e5b74abc1a2fd0", "beforetwin=58b16dae2770a774189370d4d2e5b74abc1a2fd0", "frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "a=HEAD", "atwin=HEAD"]') }}
+        build: ${{ contains(github.event.head_commit.message, '[grain-pilot]') && fromJSON('["frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "fgrain=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch%wf-b2209fd31035", "fgraintwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch%wf-b2209fd31035", "a=HEAD", "atwin=HEAD", "agrain=HEAD%wf-b2209fd31035", "agraintwin=HEAD%wf-b2209fd31035"]') || contains(github.event.head_commit.message, '[reader-pilot]') && fromJSON('["before=6424e28ee94f7196518b9f3f8dfc910d3a727985", "beforetwin=6424e28ee94f7196518b9f3f8dfc910d3a727985", "frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "a=HEAD", "atwin=HEAD"]') || fromJSON('["main=8fbc1601785cee70265da1eac4d99589fc6fb67c", "maintwin=8fbc1601785cee70265da1eac4d99589fc6fb67c", "base=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2", "twin=cf12c609e1c00f86bb431fab4e92f5dca2bf94f2", "before=58b16dae2770a774189370d4d2e5b74abc1a2fd0", "beforetwin=58b16dae2770a774189370d4d2e5b74abc1a2fd0", "frontier=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "frontiertwin=3393042d79efe1ada22129b950a610ffae4508aa@frontier-span.patch", "a=HEAD", "atwin=HEAD"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +42,8 @@ jobs:
           set -euo pipefail
           pair='${{ matrix.build }}'
           name=${pair%%=*} ref=${pair#*=}
+          pin=wf-0b7f5c5b9854
+          case "$ref" in *%*) pin=${ref#*%}; ref=${ref%%%*} ;; esac
           patch=""
           case "$ref" in *@*) patch=${ref#*@}; ref=${ref%%@*} ;; esac
           git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
@@ -49,8 +54,8 @@ jobs:
             git -C build/tree -c user.name=Claude -c user.email='noreply@anthropic.com' commit -q -m "Timing only: apply $patch" -m "$(git log -1 --format='%(trailers:key=Co-Authored-By)')"
           fi
           source=$(git -C build/tree rev-parse HEAD)
-          echo "release = wf-0b7f5c5b9854" > build/tree/whitefoot.pin
-          git -C build/tree -c user.name=Claude -c user.email='noreply@anthropic.com' commit --allow-empty -am 'Timing only: pin wf-0b7f5c5b9854 for six-kind acceptance' -m "$(git log -1 --format='%(trailers:key=Co-Authored-By)')"
+          echo "release = $pin" > build/tree/whitefoot.pin
+          git -C build/tree -c user.name=Claude -c user.email='noreply@anthropic.com' commit --allow-empty -am "Timing only: pin $pin" -m "$(git log -1 --format='%(trailers:key=Co-Authored-By)')"
           git -C build/tree show --format=fuller HEAD > build/pin-only.patch
           make -s -C build/tree compiler
           wfc=$(realpath "$(ls build/tree/build/whitefoot/*/whitefootc | head -1)")
@@ -81,7 +86,12 @@ jobs:
           path: build/drivers
       - name: Select builds
         run: |
-          if [ '${{ contains(github.event.head_commit.message, '[reader-pilot]') }}' = true ]; then
+          if [ '${{ contains(github.event.head_commit.message, '[grain-pilot]') }}' = true ]; then
+            echo "BUILD_NAMES=frontier frontiertwin fgrain fgraintwin a atwin agrain agraintwin" >> "$GITHUB_ENV"
+            echo "PREPARE_BUILD=frontier" >> "$GITHUB_ENV"
+            echo "TIMING_PAGES=html5" >> "$GITHUB_ENV"
+            echo "TIMING_KINDS=sentence fontsize block" >> "$GITHUB_ENV"
+          elif [ '${{ contains(github.event.head_commit.message, '[reader-pilot]') }}' = true ]; then
             echo "BUILD_NAMES=before beforetwin frontier frontiertwin a atwin" >> "$GITHUB_ENV"
             echo "PREPARE_BUILD=frontier" >> "$GITHUB_ENV"
             echo "TIMING_PAGES=html5" >> "$GITHUB_ENV"
@@ -114,7 +124,7 @@ jobs:
           sh research/investigations/incremental-layout/run.sh prepare ecma262 html5
           sha256sum build/x5/scripts/* build/research/concurrency/*.html
       - name: Bound the root-font batch with one edit per sample
-        if: ${{ !contains(github.event.head_commit.message, '[reader-pilot]') }}
+        if: ${{ !contains(github.event.head_commit.message, '[reader-pilot]') && !contains(github.event.head_commit.message, '[grain-pilot]') }}
         run: |
           set -euo pipefail
           mkdir -p build/evidence
@@ -152,6 +162,7 @@ jobs:
             done
           done
       - name: Attribute remaining inherited-reader cost after native timing
+        if: ${{ !contains(github.event.head_commit.message, '[grain-pilot]') }}
         run: |
           set -euo pipefail
           mkdir -p build/range-profile
