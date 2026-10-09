@@ -4533,7 +4533,7 @@ line-breaking pass. `grid-final-space-cases.html` distinguishes an unread
 height basis, an equal-height stretch that resolves a percentage descendant,
 a nested grid's changed row definiteness and a positioned descendant's
 changed containing height against Chromium; these are required boundaries
-for any repair, not measurements yet.
+for the repair.
 
 ### Full-layout consumed-input equality
 
@@ -4662,3 +4662,22 @@ actual newly read input dependency, with no sibling write or shared cache.
 The tree's existing entry-scoped restyle rule is qualified by this dependency.
 The new `omit-height-reader-invalidation` mutation must reproduce the
 intrinsic variant's runtime identity failure; compiler errors do not count.
+
+The repaired full-layout profile in
+[37937644153](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37937644153)
+at `8b1b3b3` observes 784,820,871 instructions and 3,089 `finish_lines` calls
+per layout, with eight natural child measurements and three final layouts.
+The trace identifies those final layouts as the start column, title-bar flex
+container and end column. The full dump retains the identical SHA-256 above.
+This is the zero/one same-source experiment; the earlier 1,390,473,589 count
+came from the prior zero/ten experiment, while the unchanged zero/one result
+in `37935940394` is 1,390,474,152. Native cost and final-head gates are reported
+in the pull request with their actual revisions.
+
+The finite handoff comparison is archived by the failed intrinsic probe:
+its fresh article/section heights are 60/30px but its incremental result is
+30/30px; the initial reuse repair gives 60/60px. The corrected candidate and
+its compiled omission mutation now own the lifetime regression gate, replacing
+repeated execution of the known-failing historical control. The ordinary and
+intrinsic-column forward/inverse cases remain, and both candidate modes must
+match fresh layout and independent Chromium geometry at every prefix.
