@@ -27,10 +27,12 @@ resolves it.
   inserted inside a `width:auto; flex:0 1 auto` grid with `50% 50%` columns
   is the falsifier. The owner selected an enclosing-input proof covering
   intrinsic contributions and automatic minima; unknown inputs retain
-  reason 11. The required fixed-column baseline consumer remains an
-  unvalidated positive expectation. Compare the required fixed-column
-  consumer and the percentage-column negative against Chromium/full rebuild
-  and a guard-omission mutation; measure proof work in the paired cost run.
+  reason 11. Hosted [run 37913428460](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37913428460)
+  at `b5e5d74` validates the fixed-column
+  consumer against Chromium/full rebuild in both modes, with its outer flex
+  peer at 8 px. Final-head gates, the guard-omission mutation and paired
+  proof-work cost evidence remain required for the fixed-column consumer
+  and percentage-column negative.
   Reopen on any failed proof/fixture or cost regression, without weakening
   the positive fixture.
 
