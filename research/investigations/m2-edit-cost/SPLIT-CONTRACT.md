@@ -3037,6 +3037,6 @@ No redundant explicit store is added. Both minimal gaps and their exact
 diagnostics are recorded in [the probe record](inverse-proof/README.md).
 
 The complete check at 736c71d additionally exposed the new IoError::Cancelled
-variant. The exhaustive error-code reader now returns its carried code just
-as it does for every other variant. This completes the cancellation API
+variant. The exhaustive error-code reader returns zero for this fieldless
+variant, as it already does for DeadlinePassed. This completes the cancellation API
 adaptation without dropping any previous error handling.
