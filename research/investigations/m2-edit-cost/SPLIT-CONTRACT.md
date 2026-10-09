@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: bounded retained-lineless processing is implemented under the [proposed contract](#retained-lineless-frontier-bounded-contract-and-prior-falsifiers): admitted leaves still prepare, break and publish, while line-presence transitions and unsupported empty-inline topology have distinct counted refusals. Every acceptance cohort and twin now defaults to wf-b2209fd31035, containing the point-reader grain repair. Completion evidence, the actual disposition of the 41 ECMA262 paragraphs and the full two-round ten-cohort table are maintained in [Draft PR 55, retained fragment topology and the stationary frontier](https://github.com/Ming-Research/Snowghost-wf/pull/55). The earlier compiler tables below remain historical results. General non-stationary restacking is outside this task; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: HTML5 root-font preparation loses sibling worker offers in wf-b2209fd31035 after the sparse frontier replaces the counted loop. The [source boundary, dependency audit and minimal compiler gap](#root-font-source-boundary-and-dependency-audit) are established; renderer repair stops at that gap, with no workaround or owner-motion change. Bounded retained-lineless processing is implemented under the [proposed contract](#retained-lineless-frontier-bounded-contract-and-prior-falsifiers): admitted leaves still prepare, break and publish, while line-presence transitions and unsupported empty-inline topology have distinct counted refusals. Every acceptance cohort and twin now defaults to wf-b2209fd31035, containing the point-reader grain repair. Completion evidence, the actual disposition of the 41 ECMA262 paragraphs and the full two-round ten-cohort table are maintained in [Draft PR 55, retained fragment topology and the stationary frontier](https://github.com/Ming-Research/Snowghost-wf/pull/55). The earlier compiler tables below remain historical results. General non-stationary restacking is outside this task; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -2694,7 +2694,10 @@ also raises sequential time. The bounded-frontier comparison separates that
 cost from the lost parallel preparation: sequential is only about 3–5%
 above `pre`, while four-worker medians remain about 76–80% higher, beyond
 both twins' entire edit ranges. No midpoint result is compared numerically
-across hosts.
+across hosts. Every stage-2 cohort and twin prepares 60867–60868 paragraphs,
+breaks 60868, visits 13903 contexts and reports 105927 held entries and
+105989 total entries. These counters rule out a larger paragraph set as the
+explanation; they do not claim identical instruction counts.
 
 R3 dependency audit: a fork must read its immutable directory node and
 compute its half interval before either child starts. Each child reads only
@@ -2718,6 +2721,8 @@ CPU-clock instruction-pointer samples exclude initialization; every capture
 has zero recorded lost events. The native parallel-driver one/four-worker
 samples are respectively 765685/559579, 983807/1183397 and 813973/969448 us.
 These single edits and instrumented captures are diagnosis, not acceptance.
+The driver's edit time includes delta marking and font picks; the uprobe
+window covers only `layout.update`, so its duration is not the whole edit.
 
 | Driver | Update-window samples | Scheduler worker-loop self samples | Unknown-symbol samples |
 |---|---:|---:|---:|
@@ -2743,3 +2748,105 @@ are true dependencies and do not explain serial siblings. The old paragraph
 loop's `split under band` disappears; child-context preparation and
 `break_all` remain split. A budget-family ledger line alone is therefore
 not evidence that sibling offers survived emission.
+
+### Owning-range actualization gap and repair disposition
+
+Hosted [emission probe 37907165434](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37907165434)
+at a29e85d36a51355242e41eca7f0d098b1d4caaf0 compiles the following complete
+library source with wf-b2209fd31035 using
+`whitefootc --par --par-ledger --emit-llvm -o owning-pair.ll owning-pair.wf`.
+The artifact contains the source, ledger, unoptimized LLVM and compiler hash.
+The ordinary emission path reproduces the loss before LLVM optimization,
+so function fragments, caching and runtime grain are not needed to trigger it.
+
+```whitefoot
+enum Frontier {
+  doc "A sparse directory over stable element slots.";
+  Vacant();
+  Mark();
+  Fork(left: Box<Frontier>, right: Box<Frontier>);
+}
+
+fn visit(frontier: &Frontier, values: &[Box<u64>], span: u64) -> ok: Bool reads(frontier), writes(values) {
+  doc "Visits independent leaves and joins only their completion results.";
+  let count = values^.len;
+  match frontier^ {
+    Vacant() => {
+      return True();
+    }
+    Mark() => {
+      if 0_u64 < count {
+        let fresh = box_new::<u64>(value: 1_u64);
+        set values^[0_u64] = move fresh;
+        return True();
+      }
+      return False();
+    }
+    Fork(left: left_tree, right: right_tree) => {
+      let half = span / 2_u64;
+      let middle = imin(half, count);
+      let left_ok = visit(frontier: &left_tree^.inner, values: &values^[0_u64..middle], span: half);
+      let right_ok = visit(frontier: &right_tree^.inner, values: &values^[middle..count], span: half);
+      let both_ok = band(left_ok, right_ok);
+      return both_ok;
+    }
+  }
+}
+```
+
+The ledger permits `pair(visit, visit)` at line 26 and records its two-member
+chain. The emitted `wf_visit` instead calls itself twice in sequence and
+contains no lane acquisition or publication. The first subsequent recursive
+status is `excluded: visit has no sequential clone`; this is a consequence
+of the lost offer, not a reported lifetime-conflict reason. The paired
+control changes only the element to u64 and the leaf to a scalar increment;
+it keeps the same directory and recursive slice pair, and emits a 48-byte
+lane acquisition, publication, inline sibling and join. This is an emission
+comparison, not a proposed renderer spelling or a throughput measurement.
+The full renderer's unoptimized `frontier_prepare` also has no recursive
+offer; its remaining descendant offers account for its sequential clone and
+budget-family status even though the sibling pair disappeared.
+
+Compiler source identifies the narrowing: [`CallStorageEffects::conflicts`](https://github.com/Ming-Research/Whitefoot/blob/b2209fd31035/compiler/src/semantic/permission.rs#L326)
+compares released places with borrowed places using `UnprovedSeparations`.
+Its [`ranges_disjoint` method always returns false](https://github.com/Ming-Research/Whitefoot/blob/b2209fd31035/compiler/src/semantic/places.rs#L1149),
+so it cannot preserve the checker's proof that these two intervals are
+disjoint. Written reference parameters whose elements can release owned
+storage contribute released places. [`IrBuilder::overlaps`](https://github.com/Ming-Research/Whitefoot/blob/b2209fd31035/compiler/src/lowering/builder.rs#L1022)
+then ends the group at that conflict. This narrowing supplies no ledger
+line naming the conflict. It is a compiler proof-transport/diagnostic gap,
+not a source dependency, a run-time alias uncertainty, or evidence that the
+recursion budget refused real offers. The lifetime boundary exists for real
+release/borrow hazards and must not simply be removed.
+
+Repair disposition: **blocked on Whitefoot**. No renderer rewrite, proof-only
+data, alias check, compiler-policy override or alternative spelling is
+adopted. The serial owner-motion writes, production compiler pin and both
+submodules remain unchanged. No new renderer design choice was made, so
+this continuation adds no Decision or approval log. The diagnostic workflow
+and bisection-only dispatch inputs are removed after their captures; the
+existing full acceptance workflow is restored exactly. Its historical
+commits and run artifacts retain how the observations were made.
+
+**Decision pending: take the owning-range gap into Whitefoot?**
+
+- **Background.** The permitted recursive slices above execute serially
+  because actualization no longer has their proved separation. The same
+  loss appears on the HTML5 preparation path and exceeds the acceptance
+  bound. Restoring a counted loop would hide the naturally expressed gap.
+- **A — Repair Whitefoot's proof transport and refusal reporting (recommended).**
+  Preserve valid range-separation evidence at the lifetime boundary while
+  keeping genuine release/borrow conflicts ordered, then qualify the same
+  source against a released compiler and rerun the full comparison. Cost:
+  a separate compiler change and its safety/code-generation review. Risk:
+  an over-broad lifetime relaxation would be incorrect; the compiler task
+  must retain the existing negative witnesses. Its architecture is not
+  selected by this Snowghost investigation.
+- **B — Defer the compiler repair and keep this PR blocked.** No new
+  implementation cost or safety change; the HTML5 acceptance failure and
+  adoption delay remain. This preserves the gap but does not meet the
+  performance goal, so it is not recommended.
+- **Confidence 5/5 on the gap, 4/5 on this next step.** The scalar/owning
+  emission contrast, compiler source and unchanged-driver profile agree.
+  A compiler repair has not been implemented or measured, so recovery of
+  the complete acceptance matrix remains unverified.
