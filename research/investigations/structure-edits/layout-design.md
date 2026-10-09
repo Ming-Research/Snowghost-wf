@@ -4238,3 +4238,16 @@ paths, mutations and costs remain unverified. The enclosing proof and fixture/mu
 can be reviewed independently of that blocked execution. The complete
 `falsify-m2` dispatch now calls the Q140 fixture/mutation workflow as well as
 its existing M2/Q139 jobs; no passing mutation result is claimed from wiring.
+
+
+Hosted [run 37893205705](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37893205705)
+at `b80035de28af943aec6473971719de640c513456` passes the corrected complete
+probe: range, boxed-slot and checked-interval named delivery all accept,
+while direct segment access, computed delivery and nested Boolean calls
+reject with their intended diagnostics. The literal zero branch needs no
+change in either first/last example. Design form and detector controls also
+pass. Exact-head [layout-check 37893205689](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37893205689)
+and [Q139 37893213598](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37893213598)
+still stop at `grid.wf:2309`'s GRAM-9; layout-check also names the same shape
+at `splice_grid.wf:95`. Thus the authorized bounds spelling is validated in
+isolation, but no candidate rendering or cost measurement is established.

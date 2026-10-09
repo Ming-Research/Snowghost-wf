@@ -74,10 +74,10 @@ example apart from the renderer code that exposed it
   from scalar fact delivery. The owner classified this as a Whitefoot gap
   and authorized `let last = count - 1_u64; give last;` now. That form is
   used for both the line and item selectors in `flex_publish_first_baseline`;
-  the range example passes with the unchanged literal branch in hosted
-  [run 37891780521](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37891780521)
-  at `ae5bcb5`. Full renderer acceptance is blocked by the separate GRAM-9
-  refusal below; boxed-slot and interval reproducers are pending. Switch back when Whitefoot carries facts through computed gives;
+  hosted [run 37893205705](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37893205705)
+  at `b80035d` accepts the range, boxed-slot and checked-interval examples,
+  including the unchanged literal branch. Full renderer acceptance remains
+  blocked by the separate GRAM-9 refusal below. Switch back when Whitefoot carries facts through computed gives;
   validate first/last selection and negative joins without runtime checks.
 
 - **Nested pure Boolean operations are refused by the flat grammar.**
