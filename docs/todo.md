@@ -402,10 +402,13 @@ example apart from the renderer code that exposed it
   sequential, still above frontier 353/346. Parallel block recovers cf12 cost;
   sequential block and the sentence target remain open. The shared positioned ancestry walk reduces inherited reads again, but its
   [pilot](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#shared-positioned-ancestry-pilot-result)
-  still trails the frontier on sentence edits. Geometry consumers will next
-  query only their consumed action channel, preserving applicability and
-  accumulation order; the complete-view and geometry-only counters must both
-  be included in the after profile. The splice plan's
+  still trails the frontier on sentence edits. Geometry-only queries reduce the combined inherited cost to 18,600,391
+  instructions and put HTML5 block below frontier in both modes, retaining
+  the font-size gain. Sentence still costs 358/371 us sequential and 473/480
+  parallel against frontier 343/329 and 355/355 on the same host. The next
+  matched native profile distinguishes remaining readers from parallel runtime
+  work with one/four-worker controls; no compiler defect is inferred from the
+  latency gap alone. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.

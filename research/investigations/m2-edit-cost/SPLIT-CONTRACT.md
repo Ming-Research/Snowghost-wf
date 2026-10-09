@@ -2012,3 +2012,85 @@ The prior criterion is lower inherited-query instructions than the shared
 walk and native sentence cost outside its before/twin spread. Sentence and
 block must still recover frontier cost, font-size gains must remain, and the
 final ten-cohort comparison must report every X5 acceptance cell.
+
+
+### Geometry-only reader: pilot result and remaining attribution
+
+[Hosted pilot 37861961788](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37861961788)
+compares 50a898e4d09feae50e19986773cb27dfd7e85040 with shared-walk before
+6424e28ee94f7196518b9f3f8dfc910d3a727985 and the patched frontier, each with an
+independent twin. This run uses an AMD EPYC 7763 runner exposing four CPUs,
+Ubuntu 24.04 / Linux 6.17.0-1022-azure, wf-0b7f5c5b9854, LLVM 22 and
+WF_WORKERS=4. Its 72 raw files contain 4,320 edits in the same two interleaved
+rounds. Upper-median microseconds, round 1/round 2:
+
+| Kind | Mode | Before | Before twin | Frontier | Frontier twin | Geometry query | Query twin |
+|---|---|---:|---:|---:|---:|---:|---:|
+| sentence | seq | 406/404 | 418/400 | 343/329 | 332/352 | 358/371 | 358/357 |
+| sentence | par | 486/485 | 504/492 | 355/355 | 371/360 | 473/480 | 458/481 |
+| fontsize | seq | 947/943 | 951/939 | 1491/1573 | 1590/1582 | 851/854 | 860/862 |
+| fontsize | par | 1737/1694 | 1657/1652 | 1925/1972 | 2005/1944 | 1535/1584 | 1525/1554 |
+| block | seq | 491/493 | 499/476 | 568/572 | 571/589 | 443/439 | 436/441 |
+| block | par | 603/599 | 608/606 | 658/662 | 688/677 | 592/596 | 607/586 |
+
+The query reduces sequential sentence, sequential block and font-size in both
+modes beyond the respective before/twin spread. HTML5 block is now below the
+frontier in both modes, and the font-size gain remains. Sentence still misses
+the frontier target: sequential 358/371 against 343/329, and parallel 473/480
+against 355/355. The reader task is not complete; this pilot has no main/cf12
+cohorts and supplies no new all-X5 acceptance result.
+
+The combined counters include both inherited functions and both slot-reader
+functions. Over 60 update parts, calls remain 114,357 (98,118 now use the
+geometry-only query), and node-read calls fall from 243,326 to 210,964. Their
+combined self/callee instructions fall from 26,617,149 to 18,600,391
+(10,540,911 self plus 8,059,480 slot readers); total update instructions fall
+from 154,817,770 to 146,894,464. Each part's self sum matches its summary;
+both decoder families and omitted-edge controls pass. This is sequential
+instruction attribution, not an explanation of the remaining parallel gap.
+
+At this revision [make check 37861961737](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37861961737),
+[layout-check 37861961793](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37861961793),
+the step-5 job of [oracles 37861961785](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37861961785)
+and [both geometry omission jobs 37861961787](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37861961787)
+pass. Each omission compiles and fails the independent range constants.
+The broader oracle run is still pending. The preceding shared-walk revision
+now passes all 14 jobs of [37859507852](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507852).
+Read-only review found no geometry-query or counter-wiring defect, and verified
+its association, applicability and absence of new shared state or a Whitefoot
+workaround. General soundness and nonzero content adjustment on the new
+published path remain outside the finite execution evidence.
+
+### Remaining sentence cost: native profile criterion
+
+Before changing placement representation again, distinguish retained reader
+work from parallel runtime work on the actual HTML5 sentence pair already
+used by the Callgrind pilot (edits 35/36). Frozen frontier and geometry-query
+drivers, each with a twin, run the same restoring pair in sequential mode,
+parallel mode with one worker and parallel mode with four workers. This is
+an edit-loop diagnosis, not a replacement for full-script acceptance.
+Two-edit native samples bound a repeated batch before it runs, with the
+previously used 30,000-pair cap and a per-process timeout. Both setup and the
+restoring pair remain identical across the controls.
+
+Earlier hardware-event DWARF profiles lost samples even at 99 Hz and supplied
+no quantitative attribution. The repeat uses the software `cpu-clock:u`
+event, 99 Hz, a 4,096-page buffer and 4,096-byte DWARF stacks. Sampling starts
+five seconds after process launch; observed base/first-edit timestamps must
+precede that boundary, and the batch must continue beyond ten seconds.
+Missing or late startup markers reject the profile. The
+[perf record documentation](https://man7.org/linux/man-pages/man1/perf-record.1.html)
+owns delay, frequency, buffer and stack options. Every raw perf record,
+loss report, sample count and thread identity is retained. Any recorded loss
+or insufficient samples rules out quantitative attribution; lower frequency
+alone is not assumed to repair loss. These software samples describe user CPU
+work after startup, including edit-loop overhead, not blocked time or a
+precise wall-time decomposition.
+
+Reader attribution requires visible post-startup reader samples that separate
+from the frontier controls. A runtime attribution requires an observed
+runtime mechanism and a corresponding difference between the one- and
+four-worker controls; slower parallel medians alone establish no compiler
+gap. If neither distinguishes the residual, record it as unresolved rather
+than selecting another representation from timing alone. The one-use native
+profiling workflow and driver script are retired after capturing this result.
