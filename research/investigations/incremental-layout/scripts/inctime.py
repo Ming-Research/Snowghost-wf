@@ -5,8 +5,8 @@ usage: python3 inctime.py SCRIPT RUN...
        python3 inctime.py --reparse SCRIPT EDIT_OUTPUT REPARSE_OUTPUT COUNT
 
 The script defines the exact, nonempty edit sequence. Each run must report
-one base and every edit once in order: T/D/C/K/B/X must succeed
-incrementally. C/K/B/X carry a style edit line, and B/X a structure edit
+one base and every edit once in order: T/D/C/K/B/J/X must succeed
+incrementally. C/K/B/J/X carry a style edit line, and B/J/X a structure edit
 line with the contexts and paragraphs built again and those that kept their
 preparation.
 Checking validates raw driver stdout before run.sh extracts comparable
@@ -16,6 +16,10 @@ in their documented forms. Timing takes the best microseconds per edit over
 the runs and requires identical counts across runs. No timed edits is an
 error. The 1 ms reporting threshold is unchanged. Python 3 standard library.
 Structural path records distinguish local splices from reason-coded fallbacks.
+J PARENT BEFORE DEPTH TEXT inserts nested divs around a paragraph through
+the same structural path as B; DEPTH is between 1 and 32.
+V WIDTH HEIGHT is a full viewport refresh between edits, not a timed edit;
+the next edit compares against a fresh build at that viewport.
 --check requires them for every structural edit. Historical timing and
 filtered reparse logs may omit the entire set; a partial set is invalid.
 Historical logs may omit the entire boundary-count suffix. Current logs
@@ -41,8 +45,8 @@ STRUCTURE = re.compile(r'structure edit (\d+) contexts (\d+) paragraphs (\d+) re
 CREATED = re.compile(r'created \d+$')
 STRUCTURE_FALLBACK = re.compile(r'structure fallback (\d+)$')
 STRUCTURE_PATH = re.compile(r'structure path (\d+) splice ([01]) reason (\d+)$')
-INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'X')
-RESTYLED = ('C', 'K', 'B', 'X')
+INCREMENTAL = ('T', 'D', 'C', 'K', 'B', 'J', 'X')
+RESTYLED = ('C', 'K', 'B', 'J', 'X')
 
 
 def script_operations(path):
@@ -52,9 +56,9 @@ def script_operations(path):
         if not line:
             continue
         kind = line[:1]
-        if kind not in (b'S', b'P', b'T', b'D', b'C', b'K', b'B', b'X') or line[1:2] != b' ':
+        if kind not in (b'S', b'P', b'V', b'T', b'D', b'C', b'K', b'B', b'J', b'X') or line[1:2] != b' ':
             raise ValueError('%s:%d: unreadable operation' % (path, number))
-        if kind not in (b'S', b'P'):
+        if kind not in (b'S', b'P', b'V'):
             operations.append(kind.decode('ascii'))
     if not operations:
         raise ValueError(path + ': no edits')
@@ -99,7 +103,7 @@ def read(path, operations, checking=False, require_paths=False):
         structure = STRUCTURE.fullmatch(line)
         if structure:
             edit = int(structure.group(1))
-            if edit in structural or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'X'):
+            if edit in structural or not 1 <= edit <= len(operations) or operations[edit - 1] not in ('B', 'J', 'X'):
                 raise ValueError('%s:%d: unexpected structure edit' % (path, line_number))
             structural.add(edit)
             built[edit] = [int(value) for value in structure.groups()[1:]]
@@ -109,7 +113,7 @@ def read(path, operations, checking=False, require_paths=False):
             edit, local, reason = map(int, path_record.groups())
             if (edit in paths or edit in seen or
                     not 1 <= edit <= len(operations) or
-                    operations[edit - 1] not in ('B', 'X')):
+                    operations[edit - 1] not in ('B', 'J', 'X')):
                 raise ValueError('%s:%d: unexpected structure path' % (path, line_number))
             if (local == 1) != (reason == 0) or not 0 <= reason <= 10:
                 raise ValueError('%s:%d: inconsistent splice/fallback reason' % (path, line_number))
@@ -120,7 +124,7 @@ def read(path, operations, checking=False, require_paths=False):
             edit = int(fallback_record.group(1))
             if (edit in fallbacks or edit in seen or
                     not 1 <= edit <= len(operations) or
-                    operations[edit - 1] not in ('B', 'X')):
+                    operations[edit - 1] not in ('B', 'J', 'X')):
                 raise ValueError('%s:%d: unexpected structure fallback' % (path, line_number))
             fallbacks.add(edit)
             continue
@@ -157,16 +161,16 @@ def read(path, operations, checking=False, require_paths=False):
             other[edit] = status
     if base_count != 1 or len(seen) != len(operations):
         raise ValueError('%s: %d edits for %d operations, %d bases' % (path, len(seen), len(operations), base_count))
-    if created_count != operations.count('B'):
-        raise ValueError('%s: %d created records for %d insertions' % (path, created_count, operations.count('B')))
+    if created_count != (operations.count('B') + operations.count('J')):
+        raise ValueError('%s: %d created records for %d insertions' % (path, created_count, (operations.count('B') + operations.count('J'))))
     if not checking and not timed:
         raise ValueError(path + ': no edits were timed')
     if not checking and set(styled) != {edit for edit in timed if operations[edit - 1] in RESTYLED}:
         raise ValueError(path + ': a timed style edit lacks its style edit line')
-    if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'X')}:
+    if not checking and set(built) != {edit for edit in timed if operations[edit - 1] in ('B', 'J', 'X')}:
         raise ValueError(path + ': a timed structural edit lacks its structure edit line')
     if paths or require_paths:
-        expected = {i for i, kind in enumerate(operations, 1) if kind in ('B', 'X')}
+        expected = {i for i, kind in enumerate(operations, 1) if kind in ('B', 'J', 'X')}
         if set(paths) != expected:
             raise ValueError(path + ': partial structural path records')
         for edit in built:
@@ -184,7 +188,7 @@ def check_reparse(script, edited, reparsed, count):
     operations = script_operations(script)
     read(edited, operations, checking=True)
     count = int(count)
-    forward = [i for i, kind in enumerate(operations, 1) if kind in ('T', 'B')]
+    forward = [i for i, kind in enumerate(operations, 1) if kind in ('T', 'B', 'J')]
     if count <= 0 or len(forward) < count:
         raise ValueError('reparse count must name available forward edits')
     hashes = {}

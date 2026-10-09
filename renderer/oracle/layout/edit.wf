@@ -1,3 +1,4 @@
+alias height_read_counts = pkg::layout::height_read_counts;
 alias structure_restyle = pkg::style::structure_restyle;
 alias boundary_counts = pkg::layout::boundary_counts;
 alias frontier_counts = pkg::layout::frontier_counts;
@@ -76,6 +77,8 @@ const fnv_basis: u64 = 14695981039346656037_u64;
 const fnv_prime: u64 = 1099511628211_u64;
 
 const paragraph_name: Array<u8, 1> = "p";
+
+const wrapper_name: Array<u8, 3> = "div";
 
 const class_name: Array<u8, 5> = "class";
 
@@ -604,8 +607,53 @@ fn make_paragraph(page: &Page, parent: NodeId, before: Option<NodeId>, text: &[u
   return Ok<NodeId, DomError>(value: paragraph);
 }
 
+fn make_nested_paragraph(page: &Page, parent: NodeId, before: Option<NodeId>, text: &[u8], depth: u64) -> result: Result<NodeId, DomError> reads(text), writes(page) contract {
+  requires text^.len <= 1073741824_u64;
+} {
+  doc "Creates depth nested div elements around a paragraph as one detached subtree, then inserts its root through the ordinary DOM API. The oracle J PARENT BEFORE DEPTH TEXT command uses this to exercise private subtree construction without generated-content style fallback.";
+  if depth == 0_u64 {
+    let made = propagate make_paragraph(page: page, parent: parent, before: before, text: text);
+    return Ok<NodeId, DomError>(value: made);
+  }
+  let name = match atom_intern(table: &page^.atoms, name: &wrapper_name[0_u64..wrapper_name.len]) {
+    Ok(value: found) => {
+      give found;
+    }
+    Err(..) => {
+      let refused = DomError::TooLarge();
+      return Err<NodeId, DomError>(error: refused);
+    }
+  }
+  let root = parent;
+  let inside = parent;
+  for (level in 0_u64..depth) {
+    let attributes = box_slots_new::<Attribute>(capacity: 0_u64);
+    let no_template = None<NodeId>();
+    let html_space = Namespace::Html();
+    let data = NodeData::Element(namespace: html_space, local_name: name, attributes: move attributes, template_contents: no_template);
+    let made = propagate create_node(document: &page^.document, data: move data);
+    if level == 0_u64 {
+      set root = made;
+    } else {
+      let linked = propagate append_child(document: &page^.document, parent: inside, child: made);
+    }
+    set inside = made;
+  }
+  let ending = None<NodeId>();
+  let paragraph = propagate make_paragraph(page: page, parent: inside, before: ending, text: text);
+  match before {
+    Some(value: reference) => {
+      let placed = propagate insert_before(document: &page^.document, parent: parent, child: root, reference: reference);
+    }
+    None() => {
+      let placed = propagate append_child(document: &page^.document, parent: parent, child: root);
+    }
+  }
+  return Ok<NodeId, DomError>(value: root);
+}
+
 fn structure_neighbours(page: &Page, line: &[u8]) -> (previous: Option<NodeId>, next: Option<NodeId>) reads(page), reads(line) {
-  doc "The children of the edited parent on either side of a B or X line's edit point, read before the edit: X's node's previous and next siblings; B's BEFORE and the child before it, or the parent's last child when BEFORE is -. Both None for any other line or a node the document does not hold.";
+  doc "The children of the edited parent on either side of a B, J or X line's edit point, read before the edit: X's node's previous and next siblings; B/J's BEFORE and the child before it, or the parent's last child when BEFORE is -. Both None for any other line or a node the document does not hold.";
   let nothing = None<NodeId>();
   let length = line^.len;
   if length < 3_u64 {
@@ -634,7 +682,10 @@ fn structure_neighbours(page: &Page, line: &[u8]) -> (previous: Option<NodeId>, 
   if kind == 88_u8 {
     return links.previous_sibling, links.next_sibling;
   }
-  if kind == 66_u8 {
+  let plain_insert = kind == 66_u8;
+  let nested_insert = kind == 74_u8;
+  let insertion = bor(plain_insert, nested_insert);
+  if insertion {
   } else {
     return nothing, nothing;
   }
@@ -666,13 +717,15 @@ fn structure_neighbours(page: &Page, line: &[u8]) -> (previous: Option<NodeId>, 
 }
 
 fn structure_parent(page: &Page, line: &[u8]) -> parent: Option<NodeId> reads(page), reads(line) {
-  doc "The element whose children a B or X line changes, read before the edit: B's PARENT, or the parent X's node has in the live document; None for any other line or a node that has no parent.";
+  doc "The element whose children a B, J or X line changes, read before the edit: B/J's PARENT, or the parent X's node has in the live document; None for any other line or a node that has no parent.";
   let length = line^.len;
   if length < 3_u64 {
     return None<NodeId>();
   }
   let kind = line^[0_u64];
-  let inserting = kind == 66_u8;
+  let plain_insert = kind == 66_u8;
+  let nested_insert = kind == 74_u8;
+  let inserting = bor(plain_insert, nested_insert);
   let removing = kind == 88_u8;
   let structural = bor(inserting, removing);
   if structural {
@@ -704,7 +757,7 @@ fn structure_parent(page: &Page, line: &[u8]) -> parent: Option<NodeId> reads(pa
 }
 
 fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool reads(line), writes(page), writes(report) {
-  doc "Applies the edit line spells to the live document: T inserts text, D deletes text, C and K add and remove a class token, B inserts a paragraph (and appends `created NODE` to report), X detaches a node. False when the line does not parse or the operation is refused.";
+  doc "Applies the edit line spells to the live document: T inserts text, D deletes text, C and K add and remove a class token, B inserts a paragraph, J PARENT BEFORE DEPTH TEXT inserts it inside DEPTH nested divs (both append `created NODE` to report), X detaches a node. False when the line does not parse or the operation is refused.";
   let length = line^.len;
   if length < 3_u64 {
     return False();
@@ -779,7 +832,10 @@ fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool rea
     let done = edit_class(document: &page^.document, holder: node, class_atom: class_atom, token: &line^[after_node..length], add: adding);
     return done;
   }
-  if kind == 66_u8 {
+  let plain_insert = kind == 66_u8;
+  let nested_insert = kind == 74_u8;
+  let insertion = bor(plain_insert, nested_insert);
+  if insertion {
     if after_node >= length {
       return False();
     }
@@ -810,6 +866,22 @@ fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool rea
     }
     let text_gap = field_end(line: line, start: after_node);
     let text_start = text_gap +sat 1_u64;
+    let depth = 0_u64;
+    if nested_insert {
+      let (found, levels, after_depth) = read_number(line: line, start: text_start);
+      if found {
+      } else {
+        return False();
+      }
+      if levels == 0_u64 {
+        return False();
+      }
+      if levels > 32_u64 {
+        return False();
+      }
+      set depth = levels;
+      set text_start = after_depth;
+    }
     if text_start > length {
       return False();
     }
@@ -819,7 +891,7 @@ fn apply_edit(page: &Page, line: &[u8], report: &Box<Slots<u8>>) -> ok: Bool rea
     if size > 1073741824_u64 {
       return False();
     }
-    match make_paragraph(page: page, parent: node, before: before_option, text: &scratch.inner[0_u64..size]) {
+    match make_nested_paragraph(page: page, parent: node, before: before_option, text: &scratch.inner[0_u64..size], depth: depth) {
       Ok(value: made) => {
         put_text(buffer: report, text: &created_label[0_u64..created_label.len]);
         let wide = cvt::<u32, u64>(made.index);
@@ -845,7 +917,7 @@ fn put_failure(report: &Box<Slots<u8>>, number: u64, reason: &[u8]) -> result: u
 }
 
 fn collect_script(page: &Page, environment: Environment, script: &[u8], dumps: &Box<Slots<u64>>, report: &Box<Slots<u8>>) -> ok: Bool reads(script), writes(page), writes(dumps), writes(report) {
-  doc "The first pass over the script: each S line adds its text as an author style sheet, which must come before the first edit, and each P line lists an edit number in dumps. Every other line must be empty or an edit (T, D, C, K, B or X).";
+  doc "The first pass over the script: each S line adds its text as an author style sheet, which must come before the first edit, and each P line lists an edit number in dumps. V requests a full viewport refresh between edits; every other line must be empty or an edit (T, D, C, K, B, J or X).";
   let length = script^.len;
   let at = 0_u64;
   let number = 0_u64;
@@ -897,13 +969,17 @@ fn collect_script(page: &Page, environment: Environment, script: &[u8], dumps: &
         let is_d = kind == 68_u8;
         let is_c = kind == 67_u8;
         let is_k = kind == 75_u8;
-        let is_b = kind == 66_u8;
+        let plain_insert = kind == 66_u8;
+        let nested_insert = kind == 74_u8;
+        let is_b = bor(plain_insert, nested_insert);
         let is_x = kind == 88_u8;
         let first = bor(is_t, is_d);
         let second = bor(is_c, is_k);
         let third = bor(is_b, is_x);
         let early = bor(first, second);
-        let known = bor(early, third);
+        let ordinary = bor(early, third);
+        let resize = kind == 86_u8;
+        let known = bor(ordinary, resize);
         if known {
           set edited = True();
         } else {
@@ -1550,7 +1626,7 @@ fn put_counts(buffer: &Box<Slots<u8>>, layout: &Layout) -> result: unit reads(la
 }
 
 fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: Viewport, script: &[u8], timing: Bool, compare: Bool, clock: &Clock, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> code: u8 reads(fonts), reads(script), writes(page), writes(clock), writes(out), writes(err), writes(files) waits {
-  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/X edits restyle stable slots and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and reports inc same, inc DIFF or inc refused. P requests dumps; a differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes the separately reported style_us and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
+  doc "Runs the edit script on the live document, applying S lines before building the base. T/D edits update the retained text layout; C/K edits recompute styles, compare layout-relevant values, pick fonts and update the retained layout; B/J/X edits restyle stable slots and build again the context that holds the changed children (structure_changed), reporting a structure edit line with its counts. Checking compares each successful retained dump, using its own styles, byte for byte with a full rebuild and compares live height-read inventories and reports inc same, inc DIFF or inc refused. P requests dumps; V WIDTH HEIGHT fully rebuilds at a new viewport between edits, preserving DOM identities and edit numbering. A differing retained dump follows inc dump. A refusal or difference resynchronizes to the full build. Timing reports the existing edit I us U and update_counts format; style U excludes the separately reported style_us and includes the delta, font picks, marking and update. A separate style edit line reports delta_us, picks_us and the full layout comparator full_us, which runs only when compare holds and is 0 otherwise, so that no full layout runs between timed edits (mode edittime). No edit kind rebuilds without trying the retained path first. Checking style edit lines expose the retained counts. Refusals remain explicit, even when resynchronized. Returns 0, or 2 after reporting a failing script or pipeline stage.";
   let report = box_slots_new::<u8>(capacity: 4096_u64);
   let transfers_valid = boundary_transfer_check();
   if transfers_valid {
@@ -1616,11 +1692,48 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
       let skipped_p = kind == 80_u8;
       let skipped = bor(skipped_s, skipped_p);
       if skipped {
+      } else if kind == 86_u8 {
+        let (has_width, width, after_width) = read_number(line: &script^[start..end], start: 2_u64);
+        let (has_height, height, after_height) = read_number(line: &script^[start..end], start: after_width);
+        let dimensions = band(has_width, has_height);
+        if dimensions {
+        } else {
+          return 2_u8;
+        }
+        if width == 0_u64 {
+          return 2_u8;
+        }
+        if height == 0_u64 {
+          return 2_u8;
+        }
+        if width > 16384_u64 {
+          return 2_u8;
+        }
+        if height > 16384_u64 {
+          return 2_u8;
+        }
+        let resized_width = cvt::<u64, f32>(width);
+        let resized_height = cvt::<u64, f32>(height);
+        set viewport = Viewport(width: resized_width, height: resized_height);
+        let preserve = False();
+        let resized = match build_page(page: page, fonts: fonts, environment: environment, viewport: viewport, preserve: preserve) {
+          Ok(value: found) => {
+            give move found;
+          }
+          Err(error: stage) => {
+            let code = stage_failure(err: err, files: files, stage: stage);
+            return code;
+          }
+        }
+        set kept = move resized;
       } else {
         set edits = edits +sat 1_u64;
         let structure = structure_parent(page: page, line: &script^[start..end]);
         let (edit_previous, edit_next) = structure_neighbours(page: page, line: &script^[start..end]);
-        let inserted = if kind == 66_u8 {
+        let plain_insert = kind == 66_u8;
+        let nested_insert = kind == 74_u8;
+        let inserting = bor(plain_insert, nested_insert);
+        let inserted = if inserting {
           give node_id_of(value: page^.document.nodes.inner.len);
         } else {
           give None<NodeId>();
@@ -1779,6 +1892,12 @@ fn run_edits(page: &Page, fonts: &FontSet, environment: Environment, viewport: V
               let contexts_same = kept_contexts == full_contexts;
               let paragraphs_same = kept_paragraphs == full_paragraphs;
               let counts_same = band(contexts_same, paragraphs_same);
+              let (kept_reads, kept_unproved) = height_read_counts(layout: &kept.layout);
+              let (full_reads, full_unproved) = height_read_counts(layout: &rebuilt.layout);
+              let same_reads = kept_reads == full_reads;
+              let same_unproved = kept_unproved == full_unproved;
+              let same_heights = band(same_reads, same_unproved);
+              set counts_same = band(counts_same, same_heights);
               let dump_same = band(identical, kept_dumped);
               give band(dump_same, counts_same);
             } else {

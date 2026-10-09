@@ -1,20 +1,25 @@
-# Temporary, for M2's layout branch: applies each falsifier of the current
-# step to a copy of the sources, builds it, and requires the oracles to see a
-# difference: a full-build dump against the unmutated build, or an X5 case
-# page's incremental edit against its rebuild. A job passes when its mutation
-# is detected. Runs only for a head commit that asks ([falsify]). Removed
-# before the branch is ready. Certificate-equality mutations independently omit
-# travel, natural_floor, float_reach, free_transfer and motion_known; each must
-# trip boundary_transfer_check before any fixture edit.
+# Permanent M2 and Q139 semantic mutations. Hosted jobs reject a wrong result
+# only through the intended fixture observation, never a compiler failure.
 name: falsify-m2
 
 on:
   push:
-    branches: [research/m2-layout, research/m2-edit-cost, research/m2-frag-a, research/m2-frag-b, research/m2-apollo11-fix]
+    branches: [main, research/m2-layout, research/m2-edit-cost, research/m2-apollo11-fix, research/m2-q139, research/m2-frag-a, research/m2-frag-b]
+
+  workflow_dispatch:
+    inputs:
+      q139_mutations:
+        description: Comma-separated Q139 rows to retry; empty runs all M2 and Q139 rows
+        required: false
+        default: ''
+      baseline_run:
+        description: Reuse a q139-baseline artifact only when renderer source is identical
+        required: false
+        default: ''
 
 jobs:
   check-machinery:
-    if: contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[frontier]')
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[frontier]')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -372,7 +377,8 @@ jobs:
               verify(kind)
           PYEOF
   falsify:
-    if: contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]')
+    needs: q139-baseline
+    if: inputs.q139_mutations == '' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -411,10 +417,12 @@ jobs:
           make -s compiler oracle-fonts
           wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
           echo "WFC=$wfc" >> "$GITHUB_ENV"
-          (cd renderer && "$wfc" --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
-          if [ "${{ matrix.mutation }}" = no-split-line-refresh ]; then
-            (cd renderer && "$wfc" --par --graph modules.wfg --entry layout_oracle -o ../build/layout_base_par)
-          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Restore the shared unmutated drivers' executable bits
+        run: chmod +x build/layout_base build/layout_base_par
       - name: Apply the mutation
         run: |
           python3 - "${{ matrix.mutation }}" <<'PYEOF'
@@ -689,7 +697,7 @@ jobs:
           PYEOF
           git diff --stat
       - name: Mutated driver
-        run: (cd renderer && "$WFC" --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+        run: (cd renderer && "$WFC" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
       - name: Near-limit unsafe-admission falsifier
         if: matrix.mutation == 'unsafe-admission'
         run: |
@@ -991,7 +999,7 @@ jobs:
             build/*-case.*.err
 
   numeric-suffix:
-    if: contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[numeric]')
+    if: (github.event_name == 'workflow_dispatch' && inputs.q139_mutations == '') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[numeric]')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -1049,3 +1057,110 @@ jobs:
             build/split-limit-*/
             build/split-limit-negative.log
             build/split-limit-negative.err
+
+  q139-baseline:
+    if: (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[geometry-readers]') || contains(github.event.head_commit.message, '[position-readers]') || contains(github.event.head_commit.message, '[migrated]') || contains(github.event.head_commit.message, '[range]') || contains(github.event.head_commit.message, '[frontier]') || contains(github.event.head_commit.message, '[falsify]') || contains(github.event.head_commit.message, '[stationary]') || contains(github.event.head_commit.message, '[reference]') || contains(github.event.head_commit.message, '[fragment]') || contains(github.event.head_commit.message, '[q139-falsify]'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      mutations: ${{ steps.inventory.outputs.mutations }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Mutation inventory and detector controls
+        id: inventory
+        env:
+          SELECTED_MUTATIONS: ${{ inputs.q139_mutations }}
+        run: |
+          set -euo pipefail
+          s=research/investigations/incremental-layout/scripts/percentage-falsify.py
+          python3 "$s" self-test
+          python3 - <<'PYEOF'
+          import json, os, subprocess
+          names = subprocess.check_output(['python3', 'research/investigations/incremental-layout/scripts/percentage-falsify.py', 'list'], text=True).split()
+          selected = os.environ['SELECTED_MUTATIONS']
+          if selected:
+              wanted = selected.split(',')
+              if not wanted or len(set(wanted)) != len(wanted) or set(wanted) - set(names):
+                  raise SystemExit('unknown or repeated Q139 mutation')
+              names = wanted
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('mutations=' + json.dumps(names) + '\n')
+          PYEOF
+      - uses: actions/download-artifact@v4
+        if: inputs.baseline_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.baseline_run }}
+          name: q139-baseline
+          path: build
+      - name: Require the same renderer for a reused baseline
+        if: inputs.baseline_run != ''
+        run: |
+          set -euo pipefail
+          baseline=$(head -1 build/baseline-revision.txt)
+          git fetch origin "$baseline"
+          git diff --exit-code "$baseline" -- renderer whitefoot.pin
+      - name: Unmutated driver
+        if: inputs.baseline_run == ''
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_base_par)
+          git rev-parse HEAD > build/baseline-revision.txt
+          cat whitefoot.pin >> build/baseline-revision.txt
+          sha256sum "$wfc" build/layout_base* >> build/baseline-revision.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: q139-baseline
+          path: |
+            build/layout_base
+            build/layout_base_par
+            build/baseline-revision.txt
+            build/mutation-cache/
+  q139-falsify:
+    needs: q139-baseline
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || contains(github.event.head_commit.message, '[q139-falsify]') || contains(github.event.head_commit.message, '[falsify]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: ${{ fromJSON(needs.q139-baseline.outputs.mutations) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q139-baseline
+          path: build
+      - name: Toolchain and identical fonts
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s compiler oracle-fonts
+          chmod +x build/layout_base
+      - name: Apply exactly one mutation and compile it
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/percentage-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/mutation-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+      - name: Require the focused observation and negative control
+        run: |
+          python3 research/investigations/incremental-layout/scripts/percentage-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutated build/q139-mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q139-${{ matrix.mutation }}
+          path: |
+            build/q139-mutation/
+            build/mutation.diff
