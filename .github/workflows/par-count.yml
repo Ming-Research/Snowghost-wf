@@ -4,7 +4,7 @@ name: par-count
 
 on:
   push:
-    branches: [research/par-count-exp68]
+    branches: [research/par-count-6e80]
     paths:
       - whitefoot.pin
       - renderer/**
@@ -34,9 +34,9 @@ jobs:
           mkdir -p build/par-count
           git rev-parse HEAD > build/par-count/revision.txt
           cat whitefoot.pin >> build/par-count/revision.txt
-          cp build/whitefoot/wf-exp-68fe93be539c/whitefoot-release.json build/par-count/
+          cp build/whitefoot/wf-6e800e9160f7/whitefoot-release.json build/par-count/
           cd renderer
-          if ../build/whitefoot/wf-exp-68fe93be539c/whitefootc \
+          if ../build/whitefoot/wf-6e800e9160f7/whitefootc \
               --cache ../build/par-count/cache --fragments function \
               --par --par-ledger --graph modules.wfg --entry layout_oracle \
               -o ../build/par-count/layout_oracle \
@@ -49,8 +49,62 @@ jobs:
           cat ../build/par-count/compiler.stdout ../build/par-count/compiler.stderr
           awk '/^PAR loop/ { print }' \
             ../build/par-count/compiler.stdout ../build/par-count/compiler.stderr \
-            > ../build/par-count/loops-exp68.txt
+            > ../build/par-count/loops-6e80.txt
           exit "$compiler_exit"
+      - name: Emit LLVM for the measured program
+        run: |
+          set -uo pipefail
+          cd renderer
+          # --emit-llvm cannot take --fragments; the ledger build above keeps
+          # the inherited cached function-fragment link command unchanged.
+          if ../build/whitefoot/wf-6e800e9160f7/whitefootc \
+              --cache ../build/par-count/cache --emit-llvm \
+              --par --par-ledger --graph modules.wfg --entry layout_oracle \
+              -o ../build/par-count/layout_oracle.ll \
+              > ../build/par-count/emission.stdout 2> ../build/par-count/emission.stderr; then
+            compiler_exit=0
+          else
+            compiler_exit=$?
+          fi
+          printf '%s\n' "$compiler_exit" > ../build/par-count/emission.exit
+          cat ../build/par-count/emission.stdout ../build/par-count/emission.stderr
+          exit "$compiler_exit"
+      - name: Record emission counts by function and generated helper
+        run: |
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path('build/par-count')
+          llvm = (root / 'layout_oracle.ll').read_text()
+          bodies = {}
+          for match in re.finditer(r'^define [^\n]*@([^\s(]+)\([^\n]*\).*?^\}', llvm, re.M | re.S):
+              bodies[match[1]] = match[0]
+          targets = ('set_coverage_bits', 'build_filters', 'mark_lookups', 'collect_stage', 'sort_run')
+          report = {}
+          extracts = []
+          for target in targets:
+              selected = {name: body for name, body in bodies.items() if target in name}
+              if not selected:
+                  raise SystemExit(f'missing emitted function: {target}')
+              report[target] = {}
+              for name, body in selected.items():
+                  calls = re.findall(r'\bcall\b[^\n]*@([^\s(]+)\(', body)
+                  report[target][name] = {
+                      'acquire_lane': calls.count('wf__par_acquire_lane'),
+                      'publish': calls.count('wf__par_publish'),
+                      'join': calls.count('wf__par_join'),
+                      'split_calls': sum(name.startswith('wf__par_split_') and name != 'wf__par_split_budget' for name in calls),
+                      'chunk_calls': sum(name.startswith('wf__par_chunk_') for name in calls),
+                      'indexed_allocations': body.count('.allocation = call ptr @wf__heap_take'),
+                      'indexed_combines': body.count('.combine.head:'),
+                  }
+                  extracts.append(body)
+          (root / 'emission-counts.json').write_text(json.dumps(report, indent=2) + '\n')
+          (root / 'emission-functions.ll').write_text('\n\n'.join(extracts) + '\n')
+          print(json.dumps(report, indent=2))
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -62,4 +116,10 @@ jobs:
             build/par-count/compiler.stdout
             build/par-count/compiler.stderr
             build/par-count/compiler.exit
-            build/par-count/loops-exp68.txt
+            build/par-count/loops-6e80.txt
+            build/par-count/emission.stdout
+            build/par-count/emission.stderr
+            build/par-count/emission.exit
+            build/par-count/layout_oracle.ll
+            build/par-count/emission-counts.json
+            build/par-count/emission-functions.ll
