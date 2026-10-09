@@ -48,6 +48,7 @@ CASES = {
     'fixed-container-height': ('main{height:240px;align-content:space-between}', GRID, 0),
     'clamped-container-height': ('main{min-height:100px;max-height:130px}', GRID, 0),
     'column-span-fixed': ('section{grid-column:1 / 3}', GRID, 0),
+    'auto-fixed-contribution': ('main{grid-template-columns:auto 100px}section{width:200px}footer{grid-column:2}', GRID, 0),
     'auto-maximum': ('main{grid-template-columns:auto 100px}', GRID, 11),
     'fractional-intrinsic-minimum': ('main{grid-template-columns:1fr 100px}', GRID, 11),
     'column-span-intrinsic': ('main{grid-template-columns:100px auto}section{grid-column:1 / 3}', GRID, 11),

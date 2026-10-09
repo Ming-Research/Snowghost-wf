@@ -3705,7 +3705,10 @@ code explicitly records block-size-dependent inline contributions. The
 analogy is a whole-container algorithm with guarded reuse, not a rule to
 freeze columns because their old numeric widths happen to fit.
 
-A sufficient initial certificate is content-independent columns throughout
+The general invariance condition is unchanged track/placement/space inputs
+and unchanged values for every intrinsic contribution that sizing actually
+consumes, including contributions of spanning items and any second-pass
+block-size feedback. One sufficient family is content-independent columns throughout
 the container: every resolved column minimum is a definite length and every
 maximum is a definite length or a flexible factor resolved against an
 unchanged definite inline size. Thus `200px`, definite `25%`, and
@@ -3716,12 +3719,28 @@ step. An item spanning several such columns is safe under this rule;
 spanning a content-sized column is a negative case. Merely testing the
 edited item's first column would miss its span and the coupled distribution.
 
-This is a sufficient certificate, not a claim that an untouched auto column
-must change. Admitting content-sized columns with unchanged contributions
-would need an additional provenance argument covering all their readers,
-including row-dependent off-route items. Keep them counted as unknown until
-that argument exists. Likewise, fixed resolved column numbers in a computed
-style dump do not establish the authored sizing functions.
+A second sufficient family permits content-sized columns when every consumed
+item contribution has an unchanged content-independent derivation. For
+example, a definite nonpercentage preferred inline size with unchanged
+content-independent limits, frame and margins determines the contributing
+outer inline size without reading changed content or the new row height.
+The proof must cover minimum, min-content and max-content contributions
+separately, preserve their actual box conversions and the automatic-minimum
+rules, and exclude any transfer through a changing aspect ratio or block
+size. A spanning item contributes to every relevant sizing step. An edited
+item with such fixed inline contributions can qualify even though its row
+contribution changes. This is still column invariance, not a new permission
+to resize columns.
+
+Neither family claims that an untouched auto column must change. An unchanged
+DOM subtree with unproved row feedback stays unknown, and a cached intrinsic
+number alone proves nothing. A fixture with fixed item width feeding an auto
+column tests the second family independently of page-specific styling. The
+archived Apollo stylesheet gives `main#content` a `min-content` column beside
+`minmax(0,59.25rem)`, so the first family alone cannot establish that page's
+admission. Every contributor to that column, including spans, needs the
+second proof or a counted refusal. Fixed resolved numbers in a computed-style
+dump do not establish the authored sizing functions.
 
 Item membership and order must remain identical: the seam lies inside an
 existing item, and the retained-style frontier changes no grid or item
@@ -3825,7 +3844,8 @@ retained/full identity alone cannot establish the full algorithm's premise.
 | Two nested invariant grids, gaps and padding | Both containers settle and preserve inline sizes; their following rows and outer flow move correctly | Skip one enclosing grid or use border width as track basis |
 | Short retained item stretched beside the edited tall item, then shrink/remove | Natural contribution remains short; final stretch is reapplied or removed correctly | Substitute the retained final height for the natural result; omit final Space check |
 | Row spans, baseline-aligned peers and fixed/clamped grid height | Track constraints, item positions and baseline propagate even at equal container height | Omit span contribution, baseline shim or output field |
-| Auto column with an edited max-content contribution | Reason 11, full-rebuild identity | Admit an intrinsic maximum |
+| Auto column with fixed, content-independent item inline contributions | Splice and preserve column width while rows change | Refuse every intrinsic track regardless of its proven inputs |
+| Auto column with an edited max-content contribution | Reason 11, full-rebuild identity | Admit an unproved intrinsic maximum |
 | Bare fractional column with automatic minimum | Reason 11; a long unbreakable inserted word changes the unconstrained minimum | Admit an intrinsic minimum |
 | Edited item spanning a fixed and content-sized column | Reason 11 | Inspect only its first column |
 | Direct grid-item insertion that shifts auto-placement | Reason 11; no retained item placement reused | Omit membership/placement condition |
@@ -3862,7 +3882,7 @@ Whitefoot gap is established by this argument.
 
 ### Executable baseline fixtures
 
-`grid-splice.py` now prepares sixteen fixture families and their proposed
+`grid-splice.py` now prepares seventeen fixture families and their proposed
 reason-0/reason-11 paths. It exercises repeated insert/remove pairs, text
 edits, positive style lifetimes, removal of an original block and positive
 viewport lifetimes. The percentage-column case uses an 80-percent container
