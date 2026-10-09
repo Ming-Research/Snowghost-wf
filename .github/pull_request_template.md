@@ -10,7 +10,7 @@ adopts and why. Owner questions belong in the conversation. -->
 
 <!-- Defects and improvement opportunities this work exposed outside its
 requested change, kept current while working. Give each its disposition:
-fixed here, recorded in docs/todo.md (name the item), or declined (why).
+fixed here, recorded as a status-board item (name its key), or declined (why).
 Write "none" when nothing was found. -->
 
 ## Review

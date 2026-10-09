@@ -64,8 +64,8 @@ does not yet paint.
   - the Rust shell, with rasterization, compositing, windows and input;
   - the JavaScript interpreter.
 
-[`docs/todo.md`](docs/todo.md) lists the known defects and the Whitefoot
-features Snowghost is waiting for.
+The known defects and the Whitefoot features Snowghost is waiting for are
+tracked as items on the project's status board, not in this repository.
 
 ## How it is built
 
@@ -106,7 +106,7 @@ Correctness is judged by oracles independent of Snowghost:
 | `design/` | The decisions the project is built on, each with its reason and refused alternatives, and the log of the owner's approvals |
 | `design/skill/` | [Design-skill](https://github.com/Ming-Research/Design-skill), as a submodule: the design tree's lint and CI base script |
 | `research/investigations/` | One directory per question: its design, experiments, measurements and rejected alternatives |
-| `docs/` | The review checklist, and the TODO of known defects and Whitefoot requirements |
+| `docs/` | The review checklist |
 | `whitefoot.pin` | The Whitefoot compiler release the renderer builds with, `release = wf-<12 hex digits of its commit>` |
 | `whitefoot-kit/` | [Whitefoot-kit](https://github.com/Ming-Research/Whitefoot-kit), as a submodule: the build rules and downstream rules shared by projects written in Whitefoot |
 
