@@ -3015,23 +3015,41 @@ fn position_out_children(context: &Context, events: &[Flow], styles: &Styles, do
   return counted;
 }
 
-fn publish_flow_first_baseline(context: &Context) -> result: unit writes(context) {
-  doc "Publishes the first alignment baseline from the settled sequence's first contributing handle. The selected line or child and its ancestor origins are the only dependencies; no sibling scan or nested child-baseline query is needed. Scrolling overflow leaves this initial-scroll-position baseline available, independently of the legacy last-baseline rule.";
-  let output = sequence_output(sequence: &context^.entries);
+fn publish_flow_first_baseline(context: &Context) -> visits: BoundaryVisits writes(context) {
+  doc "Publishes the first alignment baseline from the settled sequence's first contributing handle. The selected line or child and its ancestor origins are the only dependencies; no sibling scan or nested child-baseline query is needed. Scrolling overflow leaves this initial-scroll-position baseline available, independently of the legacy last-baseline rule. Returned visits count metadata, direct payload and ancestor openings for the retained callers; full reference layout discards them.";
+  let visits = no_boundary_visits();
+  let own = False();
+  let output = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: own, visits: &visits);
   let first = output.first_line;
   set context^.first_baseline = 0_i32;
   set context^.has_first_baseline = False();
   if first.slot == no_index {
-    return unit;
+    return visits;
+  }
+  set visits.entries = visits.entries +sat 1_u64;
+  let owner_at = cvt::<u32, u64>(first.owner);
+  if owner_at < context^.blocks.inner.len {
+    set visits.blocks = visits.blocks +sat 1_u64;
   }
   let item = reference_owner_payload(context: context, owner: first.owner, slot: first.slot);
   match item {
     Text(paragraph: p) => {
       let at = cvt::<u32, u64>(p);
       if at < context^.paragraphs.inner.len {
-        if context^.paragraphs.inner[at].lines.inner.len > 0_u64 {
-          let line = context^.paragraphs.inner[at].lines.inner[0_u64];
-          let position = paragraph_position(context: context, at: at);
+        set visits.entries = visits.entries +sat 1_u64;
+        let paragraph = &context^.paragraphs.inner[at];
+        if paragraph^.lines.inner.len > 0_u64 {
+          let line = paragraph^.lines.inner[0_u64];
+          let origin = if context^.local_geometry {
+            let (owner, opened) = counted_block_origin(context: context, block: paragraph^.block);
+            set visits.blocks = visits.blocks +sat opened;
+            let local = Origin(x: paragraph^.x, y: paragraph^.top, dx: paragraph^.dx, dy: paragraph^.dy);
+            give origin_accumulate(owner: owner, local: local);
+          } else {
+            give origin_from_resolved(nx: paragraph^.normal_x, ny: paragraph^.normal_top, vx: paragraph^.resolved_x, vy: paragraph^.resolved_top);
+          }
+          let visual = origin_visual(value: origin);
+          let position = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
           let top = position.y +sat line.top;
           set context^.first_baseline = top +sat line.baseline;
           set context^.has_first_baseline = True();
@@ -3041,9 +3059,24 @@ fn publish_flow_first_baseline(context: &Context) -> result: unit writes(context
     Child(context: c) => {
       let at = cvt::<u32, u64>(c);
       if at < context^.children.inner.len {
-        let position = child_position(context: context, at: at);
-        set context^.first_baseline = position.y +sat context^.children.inner[at].first_baseline;
-        set context^.has_first_baseline = context^.children.inner[at].has_first_baseline;
+        set visits.entries = visits.entries +sat 1_u64;
+        let child = &context^.children.inner[at];
+        let visual = if context^.local_geometry {
+          let owner = if child^.viewport_origin {
+            give zero_origin();
+          } else {
+            let (origin, opened) = counted_block_origin(context: context, block: child^.block);
+            set visits.blocks = visits.blocks +sat opened;
+            give origin;
+          }
+          let origin = origin_accumulate(owner: owner, local: child^.anchor);
+          give origin_visual(value: origin);
+        } else {
+          give Position(x: child^.x, y: child^.y);
+        }
+        let position = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+        set context^.first_baseline = position.y +sat child^.first_baseline;
+        set context^.has_first_baseline = child^.has_first_baseline;
       }
     }
     Open(..) => {
@@ -3055,7 +3088,7 @@ fn publish_flow_first_baseline(context: &Context) -> result: unit writes(context
     Out(..) => {
     }
   }
-  return unit;
+  return visits;
 }
 
 fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
@@ -3069,7 +3102,7 @@ fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
   break_all(context: context, styles: styles, fonts: fonts, picks: picks);
   let counted = finish_flow(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   publish_boundaries(context: context, events: events, styles: styles, basis_height: frame.definite);
-  publish_flow_first_baseline(context: context);
+  let first_visits = publish_flow_first_baseline(context: context);
   set context^.boundary_dirty = False();
   return unit;
 }

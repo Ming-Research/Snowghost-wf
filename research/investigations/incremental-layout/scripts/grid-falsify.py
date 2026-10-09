@@ -5,6 +5,7 @@ error, incomplete output or unrelated driver error never counts as detection.
 Remove the temporary baseline-path option when Q140 admission is implemented.
 """
 import argparse
+import math
 from pathlib import Path
 import subprocess
 
@@ -22,7 +23,9 @@ def module(name):
 
 MUTATIONS = {
     'omit-first-flow-update': (
-        'update', 'update_flow', '  publish_flow_first_baseline(context: context);', '',
+        'update', 'update_flow',
+        '  let first_visits = publish_flow_first_baseline(context: context);',
+        '  let first_visits = no_boundary_visits();',
         'baseline-equal-height', 'identity'),
     'omit-first-output-equality': (
         'update', 'same_outputs',
@@ -32,15 +35,39 @@ MUTATIONS = {
         'boundary', 'context_size_output', '  if has_first_baseline {',
         '  let publish_first = False();\n  if publish_first {',
         'baseline-nested-flow', 'chromium'),
-    'omit-first-splice-publication': (
-        'splice_boundary', 'splice_finish', '  publish_flow_first_baseline(context: context);', '',
-        'baseline-consumer', 'identity'),
+
 }
 
 
+def require_complete_dump(output):
+    rows = output.splitlines()
+    if not output.endswith('\n') or not rows or not rows[-1].startswith('H\t'):
+        raise ValueError('incomplete dump: missing terminal height row')
+    if sum(row.startswith('H\t') for row in rows) != 1:
+        raise ValueError('malformed dump: duplicate height row')
+    fields = rows[-1].split('\t')
+    if len(fields) != 2 or not math.isfinite(float(fields[1])):
+        raise ValueError('malformed dump: invalid terminal height')
+
+
+def self_test():
+    complete = 'E\t0\thtml\t-1\tb\t0,0,10,10\nT\t0\t0\t0,0,5,5\nH\t10\n'
+    require_complete_dump(complete)
+    incomplete = [
+        '', complete.split('T\t')[0], complete.rsplit('H\t', 1)[0],
+        complete.rstrip('\n'), complete + 'H\t10\n',
+        complete.replace('H\t10', 'H\tnan'),
+    ]
+    for output in incomplete:
+        try:
+            require_complete_dump(output)
+        except ValueError:
+            continue
+        raise AssertionError('incomplete or malformed dump accepted')
+    print('complete dump accepted; truncated and malformed dumps rejected')
+
+
 def verify(name, baseline, mutant, directory, baseline_paths):
-    if baseline_paths and name == 'omit-first-splice-publication':
-        raise ValueError('splice publication requires Q140 admission; baseline refusals cannot detect it')
     directory.mkdir(parents=True, exist_ok=True)
     _, _, _, _, case, mode = MUTATIONS[name]
     grid = module('grid-splice')
@@ -52,6 +79,7 @@ def verify(name, baseline, mutant, directory, baseline_paths):
         wrong = detector.run_driver(mutant, arguments, directory / 'mutated')
         if wrong.returncode or wrong.stderr:
             raise ValueError('mutated driver failed: ' + wrong.stderr)
+        require_complete_dump(wrong.stdout)
         compared = subprocess.run([
             'node', 'tests/layout/layout_oracle.mjs', 'compare',
             str(directory / 'case.chromium.tsv'), str(directory / 'mutated.raw'),
@@ -73,6 +101,7 @@ def verify(name, baseline, mutant, directory, baseline_paths):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('self-test')
     apply = sub.add_parser('apply')
     apply.add_argument('name', choices=MUTATIONS)
     check = sub.add_parser('verify')
@@ -82,7 +111,9 @@ def main():
     check.add_argument('directory', type=Path)
     check.add_argument('--baseline-paths', action='store_true')
     args = parser.parse_args()
-    if args.command == 'apply':
+    if args.command == 'self-test':
+        self_test()
+    elif args.command == 'apply':
         module('percentage-falsify').apply_site(args.name, *MUTATIONS[args.name][:4])
     else:
         verify(args.name, args.baseline, args.mutant, args.directory, args.baseline_paths)

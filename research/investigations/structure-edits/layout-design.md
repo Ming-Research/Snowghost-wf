@@ -3886,13 +3886,15 @@ predict the unchanged page's result. Run all 60 original block edits in
 each mode and report splices and every refusal reason, including the next
 masked blocker. ECMA262 must keep 20/20 and HTML5 60/60. Required final-head
 gates are check, layout-check, Q139, page identity and the complete M2/Q139/
-Q140 mutation matrix. No Q140 execution, mutation detection, cost result or
-Whitefoot gap is established by this argument.
+Q140 mutation matrix. No Q140 execution, mutation detection or cost result is established by this
+argument. The later direct-segment-access subsection records the separate
+language boundary encountered during implementation.
 
 ### Executable baseline fixtures
 
-`grid-splice.py` now prepares seventeen fixture families and their proposed
-reason-0/reason-11 paths. It exercises repeated insert/remove pairs, text
+`grid-splice.py` now prepares twenty-seven fixture families and their proposed
+reason-0/reason-11 paths. The original seventeen characterized the unchanged
+renderer; the added baseline boundary cases have not executed. It exercises repeated insert/remove pairs, text
 edits, positive style lifetimes, removal of an original block and positive
 viewport lifetimes. The percentage-column case uses an 80-percent container
 width, so viewport refresh changes the measured item Space, not just the
@@ -3905,15 +3907,17 @@ and their paths. The established browser comparator allows 1 px for block
 rectangles, compares inline/text fragment counts and widths, and reports
 scroll height without judging it. It is not an exact all-coordinate browser
 oracle; retained/full dump identity is exact.
-The temporary `q140-baseline` workflow first runs the fixed-column sample;
+The temporary `q140-baseline` workflow builds the current source and first runs
+the fixed-column sample;
 the matrix requires a separate dispatch after inspecting that sample.
 Its explicit baseline mode asserts the existing reason 2 in a separate
 path file. Those outcomes characterize the old renderer and cannot satisfy
 the candidate's admission or mutation requirements. The current path parser
 accepts reasons only through 10; the candidate must add reason 11 to that
 parser and its malformed-row controls when the renderer gains the new reason.
-Executable mutations, the remaining certificate combinations and
-implementation are still pending.
+Three executable first-baseline propagation mutations are now wired to the
+hosted fixture workflow; their detection, the Q140-specific mutations, the
+remaining certificate combinations and grid admission are still pending.
 
 The first hosted pilot, [run 37874471866](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37874471866)
 at `0ebf96f`, passes the fixed-column family in 1.505 seconds including
@@ -3966,7 +3970,7 @@ are source/specification findings, not additional measured failures.
 **Question.** How should a first-baseline result and its availability reach
 grid sizing, export and retained updates without changing existing
 last-baseline consumers? This shared output contract is beyond Q140 B's
-column-invariance ruling; no representation has been implemented.
+column-invariance ruling. The continuation below implements the proposed first option in source; execution remains blocked by the separate segment-access boundary.
 
 | Candidate | Dependencies, cost and risk | Status |
 | --- | --- | --- |
@@ -4030,6 +4034,8 @@ fn segment_length(values: &Box<Segments<i32>>, item: u64) -> count: u64 reads(va
 }
 ```
 
+The isolated hosted reproduction [37879441246](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37879441246) at `a53b696e116762702fd5f45043d73272bcb67453` rejects this example at line 3 with the same OP-4 diagnostic and `Segments<i32>` type. Its expected-rejection assertion passes; that is evidence of the language boundary, not a successful renderer gate.
+
 At the pinned Whitefoot revision, TYPE-9, REF-4 and OP-4 explicitly restrict
 segments to complete range-reference borrows (`&s[i]`), while RANGE-1's
 segment projections occur only in nonexecuting clauses. The rejection agrees
@@ -4040,3 +4046,22 @@ balanced reductions remain the proposed algorithm; no shared-scratch or
 per-track-recomputation alternative is substituted. First-baseline source
 work can be inspected independently, but exact-head compilation, Chromium
 results, executable mutation detection and cost all remain unverified.
+
+The independent source review identified legacy grid/flex baseline exports
+that the first-value repair had repurposed. Grid now keeps separate legacy
+selection/value reads and first selection/value reads; flex keeps its legacy
+first-item export independently of first-baseline alignment. The same review
+identified flex export's missing sharing priority; first export now selects
+from the startmost settled line and item, including direction, while a
+balanced selection prefers a row line's baseline-sharing members. Row-spanning
+grid items participate in their starting row's baseline group. These repairs
+have source-level fixture coverage but no hosted rendering result yet. First-baseline publication also counts its root metadata, selected entry and payload, and ancestor-block openings. The shared block-origin traversal returns its actual openings without a second walk; ordinary updates add the new visits once to returned work, and splice settlement adds them to the context visits its caller aggregates.
+
+Three first-baseline mutations have actual callers in `q140-baseline`:
+remove flow-update publication, remove first-value output equality, and
+remove child first-value publication. The first two require exact
+retained/full disagreement at fixed heights; the third requires an independent
+Chromium mismatch for nested flow. The established Q139 mutation detector
+rejects malformed output and unrelated driver failures. Compiler rejection
+is not detection. Structural-splice publication mutation remains pending
+actual Q140 admission, because reason-2 reconstruction would conceal it.

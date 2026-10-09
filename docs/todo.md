@@ -6,11 +6,14 @@ resolves it.
 ## Q140 grid rerun dependency
 
 - **Grid sizing serializes independent item proposals through shared scratch.**
-  `renderer/layout/grid.wf:grid_pass` writes `share`, `planned` and `touched`
-  across its item loop, then applies the per-track maxima only after the loop.
+  The pre-Q140 `grid_pass` wrote `share`, `planned` and `touched` across its
+  item loop, then applied per-track maxima only after that loop. The proposed
+  replacement uses item-owned segments and balanced maximum/OR reductions,
+  but cannot yet compile at the pinned language boundary below.
   Items within the same sizing phase/span group read unchanged bases and
   limits; the inter-item ordering is a storage dependency. `grid_shim_baselines`
-  similarly accumulates row maxima through shared writes. Impact: directly
+  previously accumulated row maxima through shared writes; its proposed
+  replacement also uses balanced reductions. Impact: directly
   reusing these passes for Q140 preserves an unnecessary dependency contrary
   to R3. Recommendation awaiting the owner: item-owned proposals followed by
   balanced per-track maximum/OR reductions in the common full-layout path;
@@ -21,20 +24,21 @@ resolves it.
   edit/full-layout/RSS comparison. Reopen when the owner rules on the scratch
   choice in the Q140 Draft PR. The
   [argument and alternatives](../research/investigations/structure-edits/layout-design.md#dependencies-and-the-existing-shared-track-scratch)
-  own the details; the scratch choice remains proposed; its implementation now also encounters
-  the direct-segment-access language boundary recorded below.
+  own the details; the scratch choice remains proposed and encounters the
+  direct-segment-access language boundary recorded below.
 
 - **Grid baseline alignment consumes the flow item's last baseline.** The
   Q140 hosted matrix at `a8a0e30` disagrees with Chromium before any edit in
   both modes: the `baseline` grid is 120 px rather than 133 px tall, and
   `baseline-consumer` places the outer flex peer 27 px too low. Flow publishes
   its last baseline; grid row shims and grid baseline export consume it as
-  the first. A child sequence entry also copies that value into both baseline
-  fields, so reading its `first_baseline` is not a general repair. Preserve
+  the first. The proposed repair adds a distinct context first value and
+  availability, child sequence publication, retained equality and all flow
+  update returns; shared-source compilation remains blocked below. Preserve
   the existing last-baseline consumers and supply a correct first value and
-  availability through nested contexts. The representation choice is pending:
-  retained first-baseline outputs are recommended over demand queries, with
-  currentness and storage versus repeated query work still to evaluate.
+  availability through nested contexts. Retained first-baseline output work
+  proceeds under the continuation instruction, while its card stays open and
+  hosted correctness, currentness and cost remain unverified.
   Validate both failing families, nested contexts, baseline-sharing item
   selection, scrolling overflow, original first-item removal and unchanged
   inline-block behavior against the independent browser and full rebuild.
@@ -43,6 +47,19 @@ resolves it.
   Q140 can claim baseline coverage; keep both fixtures failing until repaired.
   [Evidence and alternatives](../research/investigations/structure-edits/layout-design.md#baseline-matrix-finding-and-shared-contract-choice)
   record the full-layout prerequisite separately from splice admission.
+
+## Oracle input completeness
+
+- **The shared browser comparator accepts a dump without its terminal height
+  row.** Its `read()` parser accepts element/text rows when the final `H` row
+  is missing; a zero-exit truncated dump can therefore look like a geometry
+  mismatch to mutation callers. The new grid mutation caller requires one
+  finite terminal height row and has hosted truncated-input controls. The
+  existing Q139 Chromium mutation path and the shared comparator still need
+  the same input-completeness contract, without changing geometry tolerances.
+  Validate truncation after elements and during text rows plus ordinary
+  complete dumps. Reopen before extending any other Chromium mutation caller;
+  this is a pre-existing harness defect outside the current changed files.
 
 ## Whitefoot requirements
 
