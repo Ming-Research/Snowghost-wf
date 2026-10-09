@@ -65,6 +65,27 @@ MUTATIONS = {
         'grid_retained', 'grid_column_item_ready',
         '      return grid_fixed_contribution(child: child, styles: styles);',
         '      return False();', 'auto-fixed-contribution', 'positive-path'),
+    'omit-flex-automatic-minimum': (
+        'splice_grid', 'splice_grid_flex_width',
+        '  let needs_content = bor(content_base, content_minimum);',
+        '  let needs_content = content_base;', 'flex-percentage-auto-min', 'path'),
+    'trust-definite-grid-for-flex': (
+        'splice_grid', 'splice_grid_flex_width',
+        '    return band(grid, child^.grid_intrinsic_invariant);',
+        '    return band(grid, child^.grid_columns_invariant);',
+        'flex-percentage-intrinsic', 'path'),
+    'admit-intrinsic-flexible-maximum': (
+        'grid_retained', 'grid_independent_columns',
+        '    let definite_flex = band(definite, flexible);',
+        '    let definite_flex = flexible;', 'flex-fractional-intrinsic', 'path'),
+    'forget-enclosing-flex-edge': (
+        'splice', 'splice_inputs',
+        '            give band(grid_inline_stable, edge);',
+        '            give edge;', 'flex-nested-unproved', 'path'),
+    'refuse-proved-flex-width': (
+        'splice_grid', 'splice_grid_flex_width',
+        '    return band(grid, child^.grid_intrinsic_invariant);',
+        '    return False();', 'flex-fixed-intrinsic', 'positive-path'),
     'share-auto-margin-baseline': (
         'grid', 'grid_mark_baselines',
         '        let participates = band(aligned, bnot(automatic));',

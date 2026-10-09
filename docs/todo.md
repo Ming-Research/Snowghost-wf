@@ -25,14 +25,14 @@ resolves it.
   definite now but intrinsic under flex's content query, and a fixed
   preferred width alone does not fix the automatic minimum. A long word
   inserted inside a `width:auto; flex:0 1 auto` grid with `50% 50%` columns
-  is the falsifier. Pending the owner's choice, the draft refuses all grid
-  routes through flex with reason 11; the required fixed-column baseline
-  consumer remains an unmet positive expectation. Recommended change: prove
-  enclosing flex inputs, including intrinsic contributions and automatic
-  minima, before admitting these routes. Compare the required fixed-column
+  is the falsifier. The owner selected an enclosing-input proof covering
+  intrinsic contributions and automatic minima; unknown inputs retain
+  reason 11. The required fixed-column baseline consumer remains an
+  unvalidated positive expectation. Compare the required fixed-column
   consumer and the percentage-column negative against Chromium/full rebuild
   and a guard-omission mutation; measure proof work in the paired cost run.
-  Reopen on the owner's ruling, not by weakening the positive fixture.
+  Reopen on any failed proof/fixture or cost regression, without weakening
+  the positive fixture.
 
 ## Oracle input completeness
 
@@ -74,10 +74,24 @@ example apart from the renderer code that exposed it
   from scalar fact delivery. The owner classified this as a Whitefoot gap
   and authorized `let last = count - 1_u64; give last;` now. That form is
   used for both the line and item selectors in `flex_publish_first_baseline`;
-  hosted acceptance is pending. The literal branch may deliver only
-  `at = 0`, so any remaining rejection is reported without another spelling
-  change. Switch back when Whitefoot carries facts through computed gives;
+  the range example passes with the unchanged literal branch in hosted
+  [run 37891780521](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37891780521)
+  at `ae5bcb5`. Full renderer acceptance is blocked by the separate GRAM-9
+  refusal below; boxed-slot and interval reproducers are pending. Switch back when Whitefoot carries facts through computed gives;
   validate first/last selection and negative joins without runtime checks.
+
+- **Nested pure Boolean operations are refused by the flat grammar.**
+  `fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure {
+  let participates = band(selected, bnot(automatic)); return participates; }`
+  is the minimal proposed reproducer of the observed `grid_mark_baselines`
+  rejection: `GRAM-9 UnexpectedToken`, found `bnot(`, at `grid.wf:2309`
+  in hosted [layout-check 37891780386](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37891780386)
+  on `ae5bcb5`. GRAM-9 expressly requires flat calls; this is not a
+  compiler/specification disagreement. The enclosing-flex predicate has the
+  same shape. The owner must classify this as a source syntax correction
+  permitting the required preceding `let`, or a Whitefoot language gap.
+  Keep the refusal until that ruling; the isolated hosted test is pending.
+  Impact: no candidate renderer or cost cohort can yet be validated.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the

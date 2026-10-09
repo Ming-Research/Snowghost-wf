@@ -112,6 +112,8 @@ jobs:
           EOF
           cat > build/named-selection-repro/repro/module.wfm <<'EOF'
           public fn selected(values: &[i32], reverse: Bool) -> value: i32 reads(values) doc "Reads the first or last element of a nonempty range, zero when empty.";
+          public fn selected_slot(values: &Box<Slots<i32>>, reverse: Bool) -> value: i32 reads(values) doc "Reads first or last through the renderer's boxed slot shape.";
+          public fn selected_interval(values: &[i32], first: u64, end: u64, reverse: Bool) -> value: i32 reads(values) doc "Reads first or last in a checked nonempty interval.";
           EOF
           cat > build/named-selection-repro/repro/repro.wf <<'EOF'
           fn selected(values: &[i32], reverse: Bool) -> value: i32 reads(values) {
@@ -127,12 +129,67 @@ jobs:
             }
             return values^[at];
           }
+          fn selected_slot(values: &Box<Slots<i32>>, reverse: Bool) -> value: i32 reads(values) {
+            let count = values^.inner.len;
+            if count == 0_u64 {
+              return 0_i32;
+            }
+            let at = if reverse {
+              let last = count - 1_u64;
+              give last;
+            } else {
+              give 0_u64;
+            }
+            return values^.inner[at];
+          }
+          fn selected_interval(values: &[i32], first: u64, end: u64, reverse: Bool) -> value: i32 reads(values) {
+            if first >= end {
+              return 0_i32;
+            }
+            if end > values^.len {
+              return 0_i32;
+            }
+            let at = if reverse {
+              let last = end - 1_u64;
+              give last;
+            } else {
+              give first;
+            }
+            return values^[at];
+          }
           EOF
           status=0
           (cd build/named-selection-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/named-selection-repro/compiler.log 2>&1 || status=$?
           echo "$status" > build/named-selection-repro/exit-code.txt
           cat build/named-selection-repro/compiler.log
           test "$status" -eq 0
+      - name: Reproduce nested Boolean call refusal
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/nested-call-repro/repro
+          git rev-parse HEAD > build/nested-call-repro/revision.txt
+          cp whitefoot.pin build/nested-call-repro/
+          cat > build/nested-call-repro/modules.wfg <<'EOF'
+          pkg::repro: [];
+          EOF
+          cat > build/nested-call-repro/repro/module.wfm <<'EOF'
+          public fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure doc "Conjoins selection with absence of automatic placement.";
+          EOF
+          cat > build/nested-call-repro/repro/repro.wf <<'EOF'
+          fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure {
+            let participates = band(selected, bnot(automatic));
+            return participates;
+          }
+          EOF
+          status=0
+          (cd build/nested-call-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/nested-call-repro/compiler.log 2>&1 || status=$?
+          echo "$status" > build/nested-call-repro/exit-code.txt
+          cat build/nested-call-repro/compiler.log
+          test "$status" -ne 0
+          grep -F 'error[GRAM-9]: UnexpectedToken' build/nested-call-repro/compiler.log
+          grep -F 'found: "bnot("' build/nested-call-repro/compiler.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -141,3 +198,4 @@ jobs:
             build/segment-repro/
             build/selection-repro/
             build/named-selection-repro/
+            build/nested-call-repro/

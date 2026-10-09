@@ -3766,15 +3766,36 @@ does not settle this: `flex_prepare` also derives the automatic minimum from
 An inserted unbreakable word separates the claimed proof from the actual
 dependency; the new `flex-percentage-intrinsic` fixture requires reason 11.
 
-The recommendation awaiting the owner is to extend the enclosing-input
-proof, covering intrinsic contributions, automatic minima and every flex
-ancestor that can change the incoming width. This adds proof state/work but
-preserves the required fixed-column baseline consumer. Refusing every such
-route is simpler and sound, but leaves that required positive unfinished.
-The draft currently carries a route flag and refuses grids below flex; it
-does not treat this temporary restriction as completion or change the
-positive fixture to accept it. The proof extension remains a decision, and
-all rendering/cost claims remain unverified.
+The owner selected the enclosing-flex extension. The proof separates a grid's
+settled definite columns from its intrinsic min/max-content query: percentage
+tracks become auto under the latter, and flexible maxima still read item
+contributions. Record the same item-contribution certificate against the
+actual indefinite-query tracks, allowing only length maxima to bypass those
+contributions. The certificate is renewed by that query and cleared on tree
+reset; retained clean styles and unchanged item membership govern its use,
+as for the definite-column certificate. No intrinsic number is itself proof.
+
+At each row-flex edge on the route, require unchanged incoming inline space,
+a content-independent container width and unchanged flex setup dimensions.
+The first implementation refuses a forced container height and percentage
+height/limit dependencies rather than claiming their setup unchanged. The
+changed item's row base must be definite from flex-basis/preferred width or
+have certified grid intrinsic content; its automatic minimum requires that
+content certificate even with a definite base, unless scrolling suppresses
+it. Explicit limits, frame, margins, factors and order are unchanged style
+inputs. With the same setup, off-route items have unchanged preparation;
+therefore line membership and the flexible-length solution give the same
+widths. Column flex and any unproved edge retain reason 11. A failed edge
+stays failed through deeper contexts, so a later local proof cannot erase it.
+
+The certificate adds one Boolean per context and a balanced item/track
+conjunction during an intrinsic grid query. Per-item facts remain independent;
+route checks follow only the existing ancestor dependency and do not scan
+siblings or rerun layout in preflight. Compare fixed-column and explicit-minimum
+positives with percentage-intrinsic, automatic-minimum, flexible-intrinsic and
+nested-edge negatives. Omitting either the automatic-minimum obligation or
+an enclosing-edge conjunction must lose its exact reason 11. This source
+extension, its mutations and its cost remain unvalidated until hosted gates.
 
 ### Row inputs, retained results and settlement
 
@@ -3838,8 +3859,8 @@ The splice preflight requires this certificate, an existing direct item on
 the route, clean/current inputs and the existing height/boundary checks;
 unknown grid dependencies return reason 11. Each outward grid reruns the
 common sizing algorithm and publishes actual outputs through the existing
-post-publication refusal contract. The containing-flex proof remains open
-as described above; those routes refuse before publication. None of this
+post-publication refusal contract. The containing-flex extension above is owner-selected; unknown enclosing
+inputs continue to refuse before publication. None of this
 new source has compiled or executed while the separate language boundary
 blocks the renderer. It is authored work, not a validated capability.
 
@@ -4154,10 +4175,52 @@ reproduction is authored to check this minimal range form and the accepted
 segment borrow independently of the renderer. Its push was refused because
 the OAuth token lacks workflow scope; neither new check has run.
 
-The first-baseline selector is unchanged pending the owner's ruling.
-Extending Whitefoot's evaluated scalar fact delivery preserves the natural
-source and static proof; named branch intermediates would instead require
-another explicit spelling exception. No runtime guard, extra proof data,
-semantic change or pin movement is substituted. Candidate geometry,
+The owner classified this as a Whitefoot gap and authorized naming the
+computed value before giving it. Both bounded selectors now use
+`let last = count - 1_u64; give last;` (the item selector uses `end`).
+The literal branch remains `give 0_u64;`: if its image cannot carry the
+upper bound through the join, that diagnostic is a new stop, with no further
+respelling, runtime guard, extra data or pin movement. The isolated hosted
+workflow tests this authorized form separately from the original refusal. Candidate geometry,
 mutation detection and costs remain unverified because no renderer can yet
 be built. The three owner-selected algorithm choices still stand.
+
+
+### Authorized named delivery and the next grammar boundary
+
+Hosted [run 37891780521](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37891780521)
+on `ae5bcb565c1aaea14ddbc7cbe0e1d3ccdbf30a3d`, Ubuntu 24.04 and
+`wf-f949e676acfa`, accepts the isolated range selector with the computed
+value bound to `last` before `give last;`; its other branch remains
+`give 0_u64;`. The computed-expression control still fails with
+`OP-4 UndischargedBoundsObligation`, residual `at < values^.len`. The
+specified segment borrow also passes while its direct-access control fails.
+These are compiler-boundary observations, not renderer execution. The same
+run passes design form and mutation-detector controls. Boxed-slot and
+checked-interval named-selection reproducers are added for the two renderer
+shapes; their hosted results remain pending.
+
+The renderer's next diagnostic in
+[layout-check 37891780386](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37891780386)
+on that revision is `grid.wf:2309:42: error[GRAM-9]: UnexpectedToken`,
+source `let participates = band(aligned, bnot(automatic));`, found `bnot(`.
+The pinned grammar permits only atoms as call arguments and expressly
+requires a preceding binding for a computed argument. This is a source
+language restriction, not evidence of a compiler defect. Minimal example:
+
+```wf
+fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure {
+  let participates = band(selected, bnot(automatic));
+  return participates;
+}
+```
+
+The newly authored automatic-minimum predicate has the same shape.
+The owner is asked to classify this as a source syntax correction using the
+required flat form, or a Whitefoot gap to address in the language. No
+respelling is applied while that decision is open. The isolated grammar
+reproduction is authored; candidate compilation, geometry, paths, mutations
+and costs remain unverified. The enclosing proof and fixture/mutation work
+can be reviewed independently of that blocked execution. The complete
+`falsify-m2` dispatch now calls the Q140 fixture/mutation workflow as well as
+its existing M2/Q139 jobs; no passing mutation result is claimed from wiring.

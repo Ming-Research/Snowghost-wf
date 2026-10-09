@@ -38,7 +38,7 @@ WRAPPER = ('<!doctype html><html><head><meta charset="utf-8">'
 # Nested baseline-only flex/grid fixtures change direct item membership;
 # the inline-block fixture crosses an atomic route. Their geometry is kept,
 # while path expectations follow those seams rather than an inside-item seam.
-# Required flex-consumer positives stay reason 0 while its proof is pending.
+# Required flex-consumer positives stay reason 0; unknown inputs require 11.
 CASES = {
     'fixed': ('', GRID, 0),
     'percentage': ('main{width:80%;grid-template-columns:25% 75%}', GRID, 0),
@@ -49,6 +49,13 @@ CASES = {
     'baseline': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}', GRID, 0),
     'baseline-auto-margin': ('main{align-items:baseline;grid-template-rows:100px auto}section{margin-top:auto}aside{font-size:30px;line-height:35px}', GRID, 0),
     'flex-percentage-intrinsic': ('.consumer{display:flex;width:500px}main{width:auto;flex:0 1 auto;grid-template-columns:50% 50%}', '<div class="consumer">' + GRID + PEER + '</div>', 11),
+    'flex-fixed-intrinsic': ('.consumer{display:flex;width:600px}main{width:auto;flex:0 1 auto}', '<div class="consumer">' + GRID + PEER + '</div>', 0),
+    'flex-percentage-explicit-min': ('.consumer{display:flex;width:300px}main{flex:0 1 auto;min-width:0;grid-template-columns:50% 50%}', '<div class="consumer">' + GRID + PEER + '</div>', 0),
+    'flex-percentage-auto-min': ('.consumer{display:flex;width:300px}main{flex:0 1 auto;grid-template-columns:50% 50%}', '<div class="consumer">' + GRID + PEER + '</div>', 11),
+    'flex-fractional-intrinsic': ('.consumer{display:flex;width:500px}main{width:auto;flex:0 1 auto;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}', '<div class="consumer">' + GRID + PEER + '</div>', 11),
+    'flex-nested-fixed': ('.outer{display:flex;align-items:flex-start;width:600px}.consumer{display:flex;width:500px;min-width:0}', '<div class="outer"><div class="consumer">' + GRID + PEER + '</div>' + PEER + '</div>', 0),
+    'flex-nested-unproved': ('.outer{display:flex;align-items:flex-start;width:600px}.consumer{display:flex}', '<div class="outer"><div class="consumer">' + GRID + PEER + '</div>' + PEER + '</div>', 11),
+    'flex-column-unproved': ('.consumer{display:flex;flex-direction:column;height:250px;flex-wrap:wrap}main{width:auto}', '<div class="consumer">' + GRID + PEER + '</div>', 11),
     'baseline-consumer': ('main{align-items:baseline}.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}.raised{font:30px/35px serif}', '<div class="consumer"><main>' + ITEM.replace('<p>', '<p class="raised">', 1) + PEER + LAST + '</main>' + PEER + '</div><div>Outer tail.</div>', 0),
     'baseline-nested-flow': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}article{display:flow-root}', GRID.replace('<section>', '<section><article>').replace('</section>', '</article></section>'), 0),
     'baseline-nested-flex': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:flex;flex-direction:column}', GRID, 2),
