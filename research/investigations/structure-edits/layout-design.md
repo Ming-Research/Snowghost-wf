@@ -798,7 +798,7 @@ compatibility positions, split endpoints and baseline entries are still ranks;
 the block, paragraph and child-context records also carry local entry slots.
 The indirect payload writes still need a Whitefoot disjointness proof;
 child-context publication still follows child slots. Both limitations are
-recorded in [the TODO](../../../docs/todo.md) and must be resolved before
+recorded in [the historical backlog](https://github.com/Ming-Research/Snowghost-wf/blob/8f973e691e18f7322c39e2adbb2a8d4647865079/docs/todo.md) (the owner-motion dependency is now `sg-inverse-storage`) and must be resolved before
 claiming the full step's independence and storage-permutation checks.
 Step 2's source encodes reference-walker outputs through `geometry.wf`.
 The walker still performs every potentially saturating layout operation in
@@ -3005,7 +3005,7 @@ builder already supplies those facts. Source inspection finds
 spaces, and `stack_flow` passing its single `basis_height` to ordinary block
 height resolution. Its open-block frames track widths but not a nested
 height basis. That is a concrete risk for the nested 200/100/50 fixture,
-recorded in [the TODO](../../../docs/todo.md); no local run establishes the
+subsequently settled by [the independent full-layout probe](#q139-implementation-independent-full-layout-probe); at this point no local run established the
 actual mismatch. Before implementing admission, CI must compare nested and
 auto-intermediate full builds with independent expected rectangles. If they
 disagree, repair full resolution and its consumers; do not encode the wrong
