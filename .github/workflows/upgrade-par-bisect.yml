@@ -1,0 +1,142 @@
+# Measurement-only release boundary capture; confined to the research branch.
+name: upgrade-par-bisect
+on:
+  push:
+    branches: [research/upgrade-par-bisect]
+    paths:
+      - .github/workflows/upgrade-par-bisect.yml
+      - .github/timing/upgrade-par-bisect.py
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Machine and shared fonts
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          uname -a > results/machine.txt
+          lscpu >> results/machine.txt
+          cat /etc/os-release >> results/machine.txt
+          cat results/machine.txt
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends linux-tools-common linux-tools-generic fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          make -s oracle-fonts
+          sha256sum build/fonts/* > results/fonts.sha256
+      - name: Fetch only the four pinned input files used here
+        run: |
+          set -euo pipefail
+          mkdir -p build/research/concurrency
+          sed -n '/^ecma262\.html /p; /^ecma262-ecmarkup\.css /p; /^ecma262-print\.css /p; /^html5\.html /p' research/investigations/concurrency/run.sh > results/page-pins.txt
+          test "$(wc -l < results/page-pins.txt)" -eq 4
+          while read -r name url digest; do
+            curl -fsSL --retry 3 -o "build/research/concurrency/$name" "$url"
+            printf '%s  %s\n' "$digest" "build/research/concurrency/$name" >> results/pages.sha256
+          done < results/page-pins.txt
+          sha256sum -c results/pages.sha256
+          sha256sum renderer/style/ua.css research/investigations/layout/run.sh > results/harness.sha256
+      - name: Build each source and release twice with separate caches
+        run: |
+          set -euo pipefail
+          old=9d720c49daf4de746d507f5b1400ea407e3dfc09
+          adapted=c3ea1c84ca3a2eca1e4048555d8a7298bd620d00
+          mkdir -p build/trees results/builds
+          printf 'name\trelease\tsource\n' > results/builds.tsv
+          installed_major=''
+          for pin in wf-0b7f5c5b9854 wf-b2209fd31035 wf-23719e608125 wf-64c0f956df63 wf-f887e82c4611; do
+            case "$pin" in wf-64*|wf-f887*) source=$adapted ;; *) source=$old ;; esac
+            for twin in a b; do
+              name=${pin#wf-}-$twin
+              tree=$GITHUB_WORKSPACE/build/trees/$name
+              evidence=$GITHUB_WORKSPACE/results/builds/$name
+              mkdir -p "$evidence"
+              git worktree add -q --detach "$tree" "$source"
+              git -C "$tree" submodule update -q --init whitefoot-kit
+              printf 'release = %s\n' "$pin" > "$tree/whitefoot.pin"
+              make -s -C "$tree" compiler
+              manifest=$tree/build/whitefoot/$pin/whitefoot-release.json
+              major=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["linux_llvm_major"])' "$manifest")
+              if [ "$major" != "$installed_major" ]; then
+                make -s -C "$tree" toolchain
+                installed_major=$major
+              fi
+              make -s -C "$tree" toolchain-check
+              cp "$manifest" "$evidence/"
+              /usr/bin/clang --version > "$evidence/toolchain.txt"
+              ld.lld --version >> "$evidence/toolchain.txt"
+              wfc=$tree/build/whitefoot/$pin/whitefootc
+              # The first seq/par pair bounds the remaining compilation batch.
+              if (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/seq.time" "$wfc" --cache "$tree/build/cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle > "$evidence/seq.stdout" 2> "$evidence/seq.stderr"); then
+                echo 0 > "$evidence/seq.exit"
+              else
+                code=$?
+                echo "$code" > "$evidence/seq.exit"
+                if [ "$pin" != wf-23719e608125 ] || [ "$source" != "$old" ]; then cat "$evidence/seq.stderr"; exit "$code"; fi
+                # Do not hide any unrelated failure behind the authorized adaptation.
+                grep -q 'unreachable' "$evidence/seq.stderr"
+                mv "$evidence/seq.stderr" "$evidence/old-source.stderr"
+                mv "$evidence/seq.stdout" "$evidence/old-source.stdout"
+                mv "$evidence/seq.exit" "$evidence/old-source.exit"
+                mv "$evidence/seq.time" "$evidence/old-source.time"
+                source=$adapted
+                git -C "$tree" restore whitefoot.pin
+                git -C "$tree" checkout -q "$source"
+                printf 'release = %s\n' "$pin" > "$tree/whitefoot.pin"
+                rm -rf "$tree/build/cache"
+                (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/seq.time" "$wfc" --cache "$tree/build/cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle > "$evidence/seq.stdout" 2> "$evidence/seq.stderr")
+                echo 0 > "$evidence/seq.exit"
+              fi
+              (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/par.time" "$wfc" --cache "$tree/build/cache" --fragments function --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par > "$evidence/par.stdout" 2> "$evidence/par.stderr")
+              echo 0 > "$evidence/par.exit"
+              sha256sum "$wfc" "$tree/build/layout_oracle" "$tree/build/layout_oracle_par" > "$evidence/binaries.sha256"
+              git -C "$tree" rev-parse HEAD > "$evidence/source.txt"
+              git -C "$tree" diff -- whitefoot.pin > "$evidence/pin-only.patch"
+              printf '%s\t%s\t%s\n' "$name" "$pin" "$source" >> results/builds.tsv
+              cat "$evidence/seq.time" "$evidence/par.time"
+              if [ "$pin" = wf-0b7f5c5b9854 ] && [ "$twin" = a ]; then
+                python3 - <<'PY'
+          from pathlib import Path
+          times = [float(p.read_text().splitlines()[0].split()[1]) for p in Path('results/builds/0b7f5c5b9854-a').glob('*.time')]
+          print('first seq/par compile seconds:', times, '; estimated ten-pair batch seconds:', 10 * sum(times))
+          if sum(times) > 1100:
+              raise SystemExit('first pair exceeds the 240-minute job budget; stop before scaling')
+          PY
+              fi
+            done
+          done
+      - name: Pilot, select bounded rounds, and reverse alternate rounds
+        run: python3 .github/timing/upgrade-par-bisect.py
+      - name: Quick four-worker CPU profile after timings
+        run: |
+          set -euo pipefail
+          mkdir -p results/profiles
+          perf=$(find /usr/lib/linux-tools -type f -name perf | sort -V | tail -1)
+          if [ -z "$perf" ]; then echo 'perf binary unavailable' > results/profiles/unavailable.txt; exit 0; fi
+          "$perf" --version > results/profiles/version.txt
+          # Matched controls; full text mode includes setup, boxes and cleanup.
+          for name in 64c0f956df63-a f887e82c4611-a; do
+            cp "build/trees/$name/build/layout_oracle_par" build/layout_oracle_par
+            if sudo env WF_WORKERS=4 "$perf" record -e cpu-clock -F 99 -g --call-graph dwarf -o "results/profiles/$name.data" -- build/layout_oracle_par text 3 build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > "results/profiles/$name.stdout" 2> "results/profiles/$name.stderr"; then
+              echo 0 > "results/profiles/$name.exit"
+              sudo "$perf" report -i "results/profiles/$name.data" --stdio --no-children --percent-limit 0.5 > "results/profiles/$name.self.txt"
+              sudo "$perf" report -i "results/profiles/$name.data" --stdio --children --percent-limit 1 > "results/profiles/$name.children.txt"
+            else
+              echo "$?" > "results/profiles/$name.exit"
+              cat "results/profiles/$name.stderr"
+            fi
+          done
+          sudo chown -R "$(id -u):$(id -g)" results/profiles
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-par-bisect-${{ github.run_id }}
+          if-no-files-found: error
+          path: results/
