@@ -4227,8 +4227,14 @@ The newly authored automatic-minimum predicate has the same shape.
 The owner is asked to classify this as a source syntax correction using the
 required flat form, or a Whitefoot gap to address in the language. No
 respelling is applied while that decision is open. The isolated grammar
-reproduction is authored; candidate compilation, geometry, paths, mutations
-and costs remain unverified. The enclosing proof and fixture/mutation work
+reproduction in [run 37892904373](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37892904373)
+at `859f72a` reproduces `GRAM-9 UnexpectedToken` at `repro.wf:2:37`, found
+`bnot(`. Design lint and detector controls also pass at that revision (7
+nodes, depth 1, 64 Decisions versus the base's 60, 24 rejected alternatives).
+The expanded named-selector test stopped earlier at a missing blank line
+between declarations (`FORM-2 NonCanonicalTrivia`); canonical spacing is
+repaired without changing the examples. Candidate compilation, geometry,
+paths, mutations and costs remain unverified. The enclosing proof and fixture/mutation work
 can be reviewed independently of that blocked execution. The complete
 `falsify-m2` dispatch now calls the Q140 fixture/mutation workflow as well as
 its existing M2/Q139 jobs; no passing mutation result is claimed from wiring.
