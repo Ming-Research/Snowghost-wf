@@ -2973,7 +2973,8 @@ refused the merged Open path: its new height-basis read followed
 block bound. The helper only updates existing scalar fields, so its contract
 now states that the block count is unchanged. This is a checked function
 boundary guarantee, with no extra guard, reordered read or runtime work.
-Further hosted admission is pending; this is not a passing-gate claim.
+Hosted layout-check 37996059947 accepts layout at 736c71d; the complete gate
+is still pending.
 
 The proposed proof owner is the Context that owns both the order stores and
 the block, paragraph and child pools. A type invariant makes construction and
@@ -2991,9 +2992,9 @@ Slots, while this branch's EntrySequence owns recursively boxed pages. The
 finite range projection grammar does not name arbitrary directory paths;
 RANGE-1 also excludes a logical accessor call. The proposed getter fact in
 `recursive-fact.wf` makes this remaining expressibility question concrete,
-without changing renderer storage or using runtime proof checks. Its compiler
-result is pending. This is a potential representation/proof dependency, not
-a claim that v0.112 promises recursive predicates.
+without changing renderer storage or using runtime proof checks. Hosted probe 37996060054 rejects it with RANGE-1 InvalidRangeClause:
+`a range term calls a function`. This is a remaining representation/proof
+dependency, not a claim that v0.112 promises recursive predicates.
 
 No renderer parallelization, invariant-maintenance falsifier, final-head
 correctness result or acceptance recovery is claimed yet. The complete
@@ -3022,3 +3023,20 @@ command-line generators and oracle writers keep their no-cancellation
 behavior by creating a never-firing watch for each read/write and closing it
 immediately after the host call, before matching its result. No stream
 operation, error case or check is removed.
+
+The same hosted probe permits the unchanged natural loop and emits a split
+function with a 96-byte lane acquisition, task publication and join; the
+serial control is denied condition 2 and emits no offer. This proves the
+original callee's independence, not renderer integration. The reachable
+natural caller fails RANGE-3 and the Context constructor fails TYPE-11.
+A one-cell aggregate-fill reduction fails RANGE-3 for
+`targets^[k].entry_slot == 0_u32`, despite filling Block(entry_slot: 0).
+The specified generic fill postcondition is inactive for noninteger element
+types (PRE-1 and RANGE-1), so its field value is unavailable to this proof.
+No redundant explicit store is added. Both minimal gaps and their exact
+diagnostics are recorded in [the probe record](inverse-proof/README.md).
+
+The complete check at 736c71d additionally exposed the new IoError::Cancelled
+variant. The exhaustive error-code reader now returns its carried code just
+as it does for every other variant. This completes the cancellation API
+adaptation without dropping any previous error handling.

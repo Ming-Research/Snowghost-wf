@@ -52,7 +52,7 @@ at 74ab9dd accepted the two original declarations: today reports `denied`
 natural construction was refused at the call with RANGE-3, missing `inv`.
 The owning fixture first needed the actual unchanged target-length
 postcondition to observe its result after `forward`; that contract is now
-stated on both writer and forwarder, and its next verdict is pending.
+stated on both writer and forwarder, and the constructor then fails with TYPE-11, missing `inv`.
 `filled-field.wf` isolates whether an aggregate fill exposes a field value to
 a range requirement. No explicit-store rewrite is used to make this natural
 constructor pass. Declaration emission is also captured independently of the
@@ -63,3 +63,21 @@ InvalidRangeClause`, reason `a range term calls a function`, and repair
 `write range terms from literals, consts, integer values, measures and element
 reads`. This agrees with the specified grammar; it is the remaining logical
 order expression, not a reported compiler/specification contradiction.
+
+
+Hosted [37996060054](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37996060054)
+at 736c71d confirms the original natural declaration's permitted ledger and
+`split independent map over 5 captured bindings`. Its emitted LLVM contains
+`wf__par_acquire_lane(i64 96)`, publication of the split thunk and a join.
+The serial control is denied condition 2 and has no task offer. These are
+callee-declaration results; the generated reachable natural main still fails
+RANGE-3 at its call, and the Context construction fails TYPE-11.
+
+`filled-field.wf` is refused at 14:3 with RANGE-3 `UndischargedRangeFact`,
+missing `targets^[k].entry_slot == 0_u32`. Its single element is naturally
+initialized by `array_filled::<Block, 1>(value: Block(entry_slot: 0_u32))`.
+OP-13 promises the runtime value, but PRE-1 makes the published contract the
+proof boundary and RANGE-1 makes its generic whole-element equality inactive
+for noninteger Block. The diagnostic therefore exposes a specified proof
+limitation, not a demonstrated compiler violation. Explicitly storing the
+field again would conceal this gap and is not used.
