@@ -1,0 +1,161 @@
+# Temporary Q140 evidence; removed before ready. All measurement runs are hosted.
+name: q140-cost
+on:
+  workflow_dispatch:
+    inputs:
+      driver_run:
+        description: Reuse this workflow's drivers after verifying candidate source identity
+        default: ''
+      count:
+        description: Forward edits per kind; pilot starts with one
+        default: '1'
+      rounds:
+        description: Interleaved rounds; pilot starts with two
+        default: '2'
+      full:
+        description: Also measure full layout and peak RSS after the edit pilot
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    if: inputs.driver_run == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [main=c3ea1c84ca3a2eca1e4048555d8a7298bd620d00, m2=a1ed31e9b854937abac7a71750dd60f66ffb8d4b, twin=a1ed31e9b854937abac7a71750dd60f66ffb8d4b, head=HEAD]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Drivers with one compiler and toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          pair='${{ matrix.build }}'
+          name=${pair%%=*} ref=${pair#*=}
+          cohort_author=$(git show -s --format=%an 3c7a80d)
+          cohort_email=$(git show -s --format=%ae 3c7a80d)
+          cohort_credit=$(git show -s --format=%B 3c7a80d | sed -n '/^Co-Authored-By:/p')
+          git worktree add --detach build/tree "$ref"
+          if [ "$name" = m2 ] || [ "$name" = twin ]; then
+            git -C build/tree -c user.name="$cohort_author" -c user.email="$cohort_email" cherry-pick 3c7a80df4da78ba65975a9c9a21111f07bccf82e
+          fi
+          cp whitefoot.pin build/tree/whitefoot.pin
+          if [ "$name" != head ]; then
+            git -C build/tree add whitefoot.pin
+            git -C build/tree -c user.name="$cohort_author" -c user.email="$cohort_email" commit --allow-empty -m 'Pin the common compiler for this timing-only cohort' -m "$cohort_credit"
+          fi
+          (cd build/tree && git submodule update --init)
+          (cd build/tree/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/timing-cache" --fragments function --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_seq")
+          (cd build/tree/renderer && "$wfc" --cache "$GITHUB_WORKSPACE/build/timing-cache" --fragments function --par --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/layout_oracle_par")
+          echo "$name source=$ref adapted=$(git -C build/tree rev-parse HEAD) tree=$(git -C build/tree rev-parse HEAD^{tree})" > build/revision.txt
+          git rev-parse HEAD > build/source-revision.txt
+          git -C build/tree format-patch --stdout "$ref"..HEAD > build/adaptations.patch
+          cat whitefoot.pin >> build/revision.txt
+          sha256sum "$wfc" build/layout_oracle_* >> build/revision.txt
+          clang --version >> build/revision.txt
+          echo "BUILD_NAME=$name" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: driver-${{ env.BUILD_NAME }}
+          path: |
+            build/layout_oracle_seq
+            build/layout_oracle_par
+            build/revision.txt
+            build/source-revision.txt
+            build/adaptations.patch
+  measure:
+    needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || inputs.driver_run != '') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.driver_run || github.run_id }}
+          pattern: driver-*
+          path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37727037303
+          name: apollo11-diag-37727037303
+          path: build/apollo-archive
+      - name: Require the reused candidate's complete source and pin
+        run: |
+          set -euo pipefail
+          source=$(cat build/drivers/driver-head/source-revision.txt)
+          git diff --exit-code "$source" HEAD -- renderer whitefoot.pin
+      - name: Shared fonts, captures and edits
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          mkdir -p build/evidence
+          uname -a > build/evidence/machine.txt
+          lscpu >> build/evidence/machine.txt
+          sh research/investigations/concurrency/run.sh fetch || true
+          cp build/apollo-archive/research/concurrency/apollo11* build/research/concurrency/
+          sha256sum -c build/apollo-archive/apollo11-inputs.sha256
+          for file in ecma262.html ecma262-ecmarkup.css ecma262-print.css html5.html apollo11.html apollo11-modules.css apollo11-site.css; do
+            test -s "build/research/concurrency/$file"
+          done
+          make -s oracle-fonts
+          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          sh research/investigations/incremental-layout/run.sh prepare ecma262 html5 apollo11
+          for page in ecma262 html5 apollo11; do
+            python3 research/investigations/incremental-layout/scripts/edits.py "$page" "build/x5/$page.nodes" build/x5/scripts --dump "build/x5/$page.dump" --count '${{ inputs.count || 1 }}'
+          done
+          find build/x5/scripts build/research/concurrency build/fonts -type f -exec sha256sum {} + > build/evidence/inputs.sha256
+      - name: Interleaved all-kind samples
+        env:
+          ROUNDS: ${{ inputs.rounds || 2 }}
+        run: |
+          set -euo pipefail
+          for page in ecma262 html5 apollo11; do
+            for kind in word sentence colour fontsize rootfont block; do
+              for mode in seq par; do
+                for ((round=1; round<=ROUNDS; round++)); do
+                  names='main m2 twin head'
+                  if (( round % 2 == 0 )); then names='head twin m2 main'; fi
+                  for name in $names; do
+                    cp "build/drivers/driver-$name/layout_oracle_$mode" "build/layout_oracle_$mode"
+                    rm -rf build/x5/time
+                    prefix="build/evidence/$page-$kind-$mode-r$round-$name"
+                    ALONE=1 WF_WORKERS=4 /usr/bin/time -p -o "$prefix.wall" sh research/investigations/incremental-layout/run.sh time "$mode" "$page" "$kind" 1 > "$prefix.summary"
+                    cat "$prefix.summary"
+                    cp build/x5/time/*.txt "$prefix.raw"
+                  done
+                done
+              done
+            done
+          done
+      - name: Paired whole-edit table and input controls
+        run: python3 research/investigations/incremental-layout/scripts/q140-cost.py build/evidence build/x5/scripts --rounds '${{ inputs.rounds || 2 }}'
+      - name: Full-layout and peak-RSS pilot and interleaved rounds
+        if: inputs.full
+        run: python3 research/investigations/incremental-layout/scripts/q140-full-cost.py build/evidence/full --rounds '${{ inputs.rounds }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-edit-cost
+          path: |
+            build/evidence/
+            build/x5/scripts/
+            build/research/concurrency/
+            build/drivers/driver-*/revision.txt

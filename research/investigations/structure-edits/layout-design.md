@@ -3674,12 +3674,30 @@ missing outward output or undetected mutation rejects the correctness claim.
 Unnecessary ordering of independent item work rejects the parallelism claim.
 Before enlarging any hosted batch, time its smallest useful case. Compare
 every X5 kind, full layout and process peak RSS on identical captures, fonts,
-compiler and settings against main `8fbc160`, M2 `a1ed31e`, an independently
+compiler and settings against main's adapted `c3ea1c8` (main `9d720c4`),
+M2 `a1ed31e` with the same loop-tail adaptation `3c7a80d`, an independently
 built M2 twin and the candidate, in interleaved rounds, sequentially and with
 four workers. A candidate slowdown beyond the twin's spread is a finding for
 every kind, including fallback edits; do not average it away across kinds.
 The pilot determines repetitions and rounds. All execution for this task is
 on GitHub-hosted CI, with no self-hosted runner or local checks.
+
+The resumed comparison uses the main release `wf-21823ee8602d`, specification
+v0.109, for every cohort. Timing-only cohort commits change only the compiler
+pin and the authorized unreachable loop tails; the artifact retains their
+revisions, tree identities and patches. A two-round pilot begins with one
+forward/inverse pair for each X5 kind on each page, followed by inspection of
+paired candidate/M2 and twin/M2 spreads before selecting a larger sample.
+Full-layout sampling first measures two zero/one-repetition pairs per page
+and mode, then chooses a bounded repetition count before interleaved rounds.
+Peak RSS is whole-process memory, not retained-row allocation in isolation.
+Candidate full dumps are captured; the baseline repair can intentionally
+change geometry relative to older cohorts, so cross-cohort dump equality is
+not asserted. The fixture and retained/full gates establish correctness
+separately. This compiler release has a known, still-unexplained loss of
+four-worker speedup in layout text preparation, under investigation on
+`research/upgrade-par-bisect`, affecting every cohort alike; this comparison
+cannot attribute that release-wide effect to Q140.
 
 ### What determines columns
 
