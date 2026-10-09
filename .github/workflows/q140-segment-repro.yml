@@ -194,6 +194,54 @@ jobs:
           test "$status" -ne 0
           grep -F 'error[GRAM-9]: UnexpectedToken' build/nested-call-repro/compiler.log
           grep -F 'found: "bnot("' build/nested-call-repro/compiler.log
+      - name: Flat Boolean calls are accepted
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          cat > build/nested-call-repro/repro/repro.wf <<'EOF'
+          fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure {
+            let manual = bnot(automatic);
+            let participates = band(selected, manual);
+            return participates;
+          }
+          EOF
+          (cd build/nested-call-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/nested-call-repro/flat.log 2>&1
+          cat build/nested-call-repro/flat.log
+      - name: Reproduce constructed segment-count bound refusal
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/constructed-segments-repro/repro
+          git rev-parse HEAD > build/constructed-segments-repro/revision.txt
+          cp whitefoot.pin build/constructed-segments-repro/
+          cp "$(dirname "$wfc")/whitefoot-release.json" build/constructed-segments-repro/
+          cat > build/constructed-segments-repro/modules.wfg <<'EOF'
+          pkg::repro: [];
+          EOF
+          cat > build/constructed-segments-repro/repro/module.wfm <<'EOF'
+          public fn segment_lengths(count: u64) -> length: u64 pure doc "Reads each segment constructed from one length per iteration.";
+          EOF
+          cat > build/constructed-segments-repro/repro/repro.wf <<'EOF'
+          fn segment_lengths(count: u64) -> length: u64 pure {
+            let lengths = box_array_filled::<u64>(count: count, value: 1_u64);
+            let segments = box_segments_filled::<i32>(lengths: &lengths.inner[0_u64..count], value: 0_i32);
+            let length = 0_u64;
+            for (i in 0_u64..count) {
+              let segment = &segments.inner[i];
+              set length = segment^.len;
+            }
+            return length;
+          }
+          EOF
+          status=0
+          (cd build/constructed-segments-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/constructed-segments-repro/compiler.log 2>&1 || status=$?
+          echo "$status" > build/constructed-segments-repro/exit-code.txt
+          cat build/constructed-segments-repro/compiler.log
+          test "$status" -ne 0
+          grep -F 'error[OP-4]: UndischargedBoundsObligation' build/constructed-segments-repro/compiler.log
+          grep -F 'residual: i < segments.inner.len' build/constructed-segments-repro/compiler.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -203,3 +251,4 @@ jobs:
             build/selection-repro/
             build/named-selection-repro/
             build/nested-call-repro/
+            build/constructed-segments-repro/

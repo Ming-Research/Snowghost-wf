@@ -3987,8 +3987,8 @@ requires the intended geometry/identity difference, loss of reason 11, or
 loss of a required positive to reason 11, and rejects unrelated failures.
 The detector controls pass in hosted run 37891780521, linked in the
 [named-delivery result](#authorized-named-delivery-and-the-next-grammar-boundary).
-No candidate fixture or mutation has executed: renderer compilation remains
-blocked there. Required certificate coverage and admission remain unverified;
+No candidate fixture or mutation has executed: after the GRAM-9 repair,
+renderer compilation stops at the constructed-segment bound recorded below. Required certificate coverage and admission remain unverified;
 the temporary workflow still needs its permanent home before readiness.
 
 The baseline-only nested flex/grid fixtures preserve their original geometry
@@ -4053,7 +4053,7 @@ grid sizing, export and retained updates without changing existing
 last-baseline consumers? This shared output contract is beyond Q140 B's
 column-invariance ruling. The owner selected the first option, authored below. The authorized segment
 borrow and named-`give` range example pass isolated checks; renderer
-execution remains blocked by the later GRAM-9 refusal recorded below.
+execution remains blocked by the constructed-segment bound refusal recorded below.
 
 | Candidate | Dependencies, cost and risk | Status |
 | --- | --- | --- |
@@ -4253,3 +4253,44 @@ and [Q139 37893213598](https://github.com/Ming-Research/Snowghost-wf/actions/run
 still stop at `grid.wf:2309`'s GRAM-9; layout-check also names the same shape
 at `splice_grid.wf:95`. Thus the authorized bounds spelling is validated in
 isolation, but no candidate rendering or cost measurement is established.
+
+
+### Constructed segment count loses its bound
+
+The owner classified the two nested Boolean calls as source syntax errors,
+so they now bind the negation before the conjunction. Hosted
+[layout-check 37894829524](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37894829524)
+at `b88240c8a1431022c36b228ed8264c95285b3a1b` passes those sites and stops
+at `grid.wf:1716`, `let proposal = &proposals.inner[c];`, with
+`OP-4 UndischargedBoundsObligation`, residual `c < proposals.inner.len`.
+This is not another GRAM-9 flattening. The renderer remains unchanged at
+that access; no extra guard, proof-only data, loop bound change or pin move
+has been introduced.
+
+The constructor is fed the full length range `&lengths.inner[0_u64..count]`,
+and the following counted loop uses that same `count`. At the pinned
+[Whitefoot specification](https://github.com/Ming-Research/Whitefoot/blob/f949e676acfa811f96b21afd07f02c06dcd14b51/spec/kernel-spec.md),
+REF-4 defines the range length as `hi - lo`, and PRE-1 declares
+`box_segments_filled` with `ensures result.inner.len == lengths^.len`.
+Those facts imply the requested bound mathematically; whether their compiler
+transport is supported is the new question. The temporary isolated workflow
+now tests this minimized form, with its result still pending:
+
+```wf
+fn segment_lengths(count: u64) -> length: u64 pure {
+  let lengths = box_array_filled::<u64>(count: count, value: 1_u64);
+  let segments = box_segments_filled::<i32>(lengths: &lengths.inner[0_u64..count], value: 0_i32);
+  let length = 0_u64;
+  for (i in 0_u64..count) {
+    let segment = &segments.inner[i];
+    set length = segment^.len;
+  }
+  return length;
+}
+```
+
+The isolated workflow also tests acceptance of the correct flat Boolean form.
+Expected refusal is diagnostic evidence only. Grid geometry, all 18 new
+mutations, page counts and the hosted cost pilot depend on a compiled
+candidate and remain unverified. Design-form and detector-control evidence
+and the complete read-only source review can proceed independently.

@@ -77,23 +77,8 @@ example apart from the renderer code that exposed it
   hosted [run 37893205705](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37893205705)
   at `b80035d` accepts the range, boxed-slot and checked-interval examples,
   including the unchanged literal branch. Full renderer acceptance remains
-  blocked by the separate GRAM-9 refusal below. Switch back when Whitefoot carries facts through computed gives;
+  unverified. Switch back when Whitefoot carries facts through computed gives;
   validate first/last selection and negative joins without runtime checks.
-
-- **Nested pure Boolean operations are refused by the flat grammar.**
-  `fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure {
-  let participates = band(selected, bnot(automatic)); return participates; }`
-  reproduces the observed `grid_mark_baselines` rejection in hosted
-  [run 37892904373](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37892904373)
-  at `859f72a`: `GRAM-9 UnexpectedToken`, found `bnot(`, at `grid.wf:2309`
-  in hosted [layout-check 37891780386](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37891780386)
-  on `ae5bcb5`. GRAM-9 expressly requires flat calls; this is not a
-  compiler/specification disagreement. The enclosing-flex predicate has the
-  same shape. The owner must classify this as a source syntax correction
-  permitting the required preceding `let`, or a Whitefoot language gap.
-  Keep the refusal until that ruling; the isolated expected-rejection check
-  passes with the same diagnostic at `repro.wf:2:37`.
-  Impact: no candidate renderer or cost cohort can yet be validated.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the
