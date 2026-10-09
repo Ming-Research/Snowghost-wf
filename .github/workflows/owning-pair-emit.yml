@@ -1,0 +1,40 @@
+# Temporary: compiles the owning-element sibling-pair reproducer with each
+# Whitefoot release around the four-worker layout loss and records whether
+# the recursive pair is emitted as a parallel offer. Deleted with the branch.
+name: owning-pair-emit
+on:
+  push:
+    branches: [research/owning-pair-emit]
+jobs:
+  emit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Emit with each release
+        run: |
+          set -uo pipefail
+          src=research/investigations/layout/owning-pair/owning-pair.wf
+          mkdir -p out
+          for pin in wf-0b7f5c5b9854 wf-c18e6708b6cc wf-d9d6c92fcb64 wf-631d3ffbe928 wf-b2209fd31035 wf-f887e82c4611 wf-21823ee8602d; do
+            printf 'release = %s\n' "$pin" > whitefoot.pin
+            make -s compiler > out/$pin.make 2>&1 || { echo "$pin: compiler download failed"; continue; }
+            wfc=build/whitefoot/$pin/whitefootc
+            "$wfc" --par --par-ledger --emit-llvm -o out/$pin.ll "$src" > out/$pin.ledger 2> out/$pin.stderr
+            echo "$pin exit=$?" | tee -a out/summary.txt
+            if [ -f out/$pin.ll ]; then
+              awk '/^define .*visit/{f=1} f{print} /^}/{if(f){f=0}}' out/$pin.ll > out/$pin.visit.ll
+              n_par=$(grep -c 'wf__par_\|@wf_par\|lane' out/$pin.visit.ll || true)
+              n_calls=$(grep -c 'call .*visit' out/$pin.visit.ll || true)
+              echo "$pin visit: par-runtime-refs=$n_par direct-visit-calls=$n_calls" | tee -a out/summary.txt
+              grep -o '@wf__[a-z_]*' out/$pin.visit.ll | sort | uniq -c | tee -a out/summary.txt
+            fi
+            grep -i "visit\|PAR" out/$pin.ledger | head -5 | tee -a out/summary.txt
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owning-pair-emit
+          path: out/
