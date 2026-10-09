@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) merges percentage-height provenance from research/m2-layout and adopts wf-01697d2de8a1 (specification v0.112). The unchanged flat stored-field loop is admitted and emits parallel tasks. Integration is blocked on a natural inverse over recursive SlotPages and proof of fields initialized by aggregate fill; owner-motion writes remain serial, with no workaround adopted. Acceptance timing is deferred under the owner's instruction while Whitefoot #275's owning-element sibling serialization remains open. The [previous ten-cohort result](#root-font-continuation-ten-cohort-result) is historical: four HTML5 root-font parallel cells failed and every block cell passed. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) carries delivery status and deferrals. No adoption merge is authorized.
+Current outcome: the [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) merges percentage-height provenance from research/m2-layout and adopts wf-01697d2de8a1 (specification v0.112). The unchanged flat stored-field loop is admitted and emits parallel tasks. Renderer integration is blocked on a natural inverse over recursive SlotPages; owner-motion writes remain serial, with no workaround adopted. Separately, the flat reachable fixture exposes unavailable proof of fields initialized by aggregate fill. Acceptance timing is deferred under the owner's instruction while Whitefoot #275's owning-element sibling serialization remains open. The [previous ten-cohort result](#root-font-continuation-ten-cohort-result) is historical: four HTML5 root-font parallel cells failed and every block cell passed. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) carries delivery status and deferrals. No adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -3034,7 +3034,9 @@ A one-cell aggregate-fill reduction fails RANGE-3 for
 `targets^[k].entry_slot == 0_u32`, despite filling Block(entry_slot: 0).
 The specified generic fill postcondition is inactive for noninteger element
 types (PRE-1 and RANGE-1), so its field value is unavailable to this proof.
-No redundant explicit store is added. Both minimal gaps and their exact
+No redundant explicit store is added. Its necessity for the renderer's
+actual empty-Slots/append construction is unverified; the recursive relation
+is the established renderer blocker. Both minimal gaps and their exact
 diagnostics are recorded in [the probe record](inverse-proof/README.md).
 
 The complete check at 736c71d additionally exposed the new IoError::Cancelled
@@ -3049,3 +3051,16 @@ the original revisions and complete resulting diffs, and retains their old
 behavior. In particular, 8e69668 still lacks the of-clause reach fix and must
 fail the reach observation after compiling. The full-build base is still the
 original structure-edits merge base. Compilation refusal is not detection.
+
+Q139 intentionally corrected the context-wide height basis that produced
+200/360/360 instead of Chromium's 200/100/50, as the imported
+[independent full-layout probe](../structure-edits/layout-design.md#q139-implementation-independent-full-layout-probe)
+records. The newly imported percentage-height fixture therefore cannot use
+the pre-Q139 renderer's dump as its expected result. The historical oracle
+step still compiles and runs that control, requires the established Chromium
+comparison to reject its geometry with status 1, and requires the current
+output to meet the same independent expectation. It keeps exact seq/par
+comparison and every other historical fixture/page comparison. Both dumps
+are retained; the permanent Q139 gate still checks that fresh Chromium agrees
+with the committed reference. This is the approved behavior correction's
+oracle adaptation, not a new renderer choice or a suppressed failed check.

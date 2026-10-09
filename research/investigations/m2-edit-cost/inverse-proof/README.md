@@ -81,3 +81,10 @@ proof boundary and RANGE-1 makes its generic whole-element equality inactive
 for noninteger Block. The diagnostic therefore exposes a specified proof
 limitation, not a demonstrated compiler violation. Explicitly storing the
 field again would conceal this gap and is not used.
+
+
+The aggregate-fill result is a limitation of this natural flat constructor.
+It has not been established as an additional requirement of the renderer's
+actual construction, whose target pools begin as empty Slots and append
+records. The recursive logical-order relation is the established integration
+blocker; this fixture does not widen that conclusion.
