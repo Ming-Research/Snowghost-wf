@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: HTML5 root-font preparation loses sibling worker offers in wf-b2209fd31035 after the sparse frontier replaces the counted loop. The [source boundary, dependency audit and minimal compiler gap](#root-font-source-boundary-and-dependency-audit) are established; renderer repair stops at that gap, with no workaround or owner-motion change. Bounded retained-lineless processing is implemented under the [proposed contract](#retained-lineless-frontier-bounded-contract-and-prior-falsifiers): admitted leaves still prepare, break and publish, while line-presence transitions and unsupported empty-inline topology have distinct counted refusals. Every acceptance cohort and twin now defaults to wf-b2209fd31035, containing the point-reader grain repair. The [new full ten-cohort result](#root-font-continuation-ten-cohort-result) has exactly four literal failures, all HTML5 root-font at four workers; every block comparison passes in that run. [Draft PR 55, retained fragment topology and the stationary frontier](https://github.com/Ming-Research/Snowghost-wf/pull/55) maintains delivery and review status. The earlier compiler tables below remain historical results. General non-stationary restacking is outside this task; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: the [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) merges percentage-height provenance from research/m2-layout and adopts wf-01697d2de8a1 (specification v0.112). Hosted admission and correctness validation are in progress. The original flat stored-field proof and the owning type-invariant form are being checked separately from the renderer's recursive SlotPages order storage; owner-motion writes remain serial until the actual stored relation is proved. Acceptance timing is deferred under the owner's instruction while Whitefoot #275's owning-element sibling serialization remains open. The [previous ten-cohort result](#root-font-continuation-ten-cohort-result) is historical: four HTML5 root-font parallel cells failed and every block cell passed. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) carries delivery status and deferrals. No adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -2950,3 +2950,53 @@ paragraphs, break 60868, visit 105989 entries and hold 105927, with zero
 frontier refusals and 1979 context boundary fallbacks with reason 7.
 The ECMA262 retained-lineless improvement remains present; it does not remove
 HTML5's separate preparation cost.
+
+
+### Released inverse proof and recursive order storage
+
+The continuation starts at 50b40ca and merges layout base a1ed31e in 16fc1e3.
+The incoming work is percentage-height provenance from merged PR 53; grid
+splice PR 54 is still open at integration. Conflict resolution retains both
+height inventories and fragment/range storage, combines initialization and
+private relocation, and refreshes height provenance after settling the
+fragment frontier's retained semantics. Both mutation families remain wired.
+The merged height inventory replaces the old flow-definiteness bit's
+consumers, so the unused bit is removed rather than left stale.
+
+The pin moves from wf-f949e676acfa (specification v0.92) to
+wf-01697d2de8a1 (v0.112); neither submodule moves. The initial source adaptation
+carries the deletion-only FN-1 change from 3c7a80d: statements after ordinary
+loops without a break edge are unreachable. Reachable returns, bodies,
+contracts and checks are retained. The first hosted check ([37994844784](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37994844784))
+refused the merged Open path: its new height-basis read followed
+`set_natural`, whose broad `writes(context)` row discarded the preceding
+block bound. The helper only updates existing scalar fields, so its contract
+now states that the block count is unchanged. This is a checked function
+boundary guarantee, with no extra guard, reordered read or runtime work.
+Further hosted admission is pending; this is not a passing-gate claim.
+
+The proposed proof owner is the Context that owns both the order stores and
+the block, paragraph and child pools. A type invariant makes construction and
+writers establish the inverse and gives it directly to readers; a writer fact
+alone would have to be carried through every intermediate caller. For one
+owner, the needed relation is the original `natural.wf` relation. Across
+owners it also includes the target's owner, and Child, Float and Out share
+one child store, so their facts must jointly exclude collisions.
+
+The [focused probes](inverse-proof/README.md) ask separately whether the
+released checker admits the unchanged original callee, the implicit caller
+through a type invariant, and a fact over recursive SlotPages. The released
+compiler's nested-owner test uses `Slots<Order>` whose payloads are another
+Slots, while this branch's EntrySequence owns recursively boxed pages. The
+finite range projection grammar does not name arbitrary directory paths;
+RANGE-1 also excludes a logical accessor call. The proposed getter fact in
+`recursive-fact.wf` makes this remaining expressibility question concrete,
+without changing renderer storage or using runtime proof checks. Its compiler
+result is pending. This is a potential representation/proof dependency, not
+a claim that v0.112 promises recursive predicates.
+
+No renderer parallelization, invariant-maintenance falsifier, final-head
+correctness result or acceptance recovery is claimed yet. The complete
+correctness gates remain required. Four-worker acceptance timing waits for
+the separately owned paged-overlap-regression repair; this continuation runs
+only on GitHub-hosted CI and runs no acceptance timing.
