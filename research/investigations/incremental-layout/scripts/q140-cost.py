@@ -14,7 +14,7 @@ import inctime
 
 PAGES = ('ecma262', 'html5', 'apollo11')
 KINDS = ('word', 'sentence', 'colour', 'fontsize', 'rootfont', 'block')
-NAMES = ('main', 'm2', 'twin', 'head')
+NAMES = ('main', 'm2', 'twin', 'before', 'head')
 
 
 def costs(path, operations):
@@ -69,9 +69,11 @@ def main():
                         samples[name].update({(round_number, edit): value for edit, value in values.items()})
                 head = paired(samples['head'], samples['m2'])
                 twin = paired(samples['twin'], samples['m2'])
+                before = paired(samples['head'], samples['before'])
                 record = dict(page=page, kind=kind, mode=mode, edits=len(operations), rounds=args.rounds)
                 record.update({name + '_us': statistics.median(values.values()) for name, values in samples.items()})
                 record.update(head_m2=statistics.median(head), head_m2_min=min(head), head_m2_max=max(head), twin_m2=statistics.median(twin), twin_m2_min=min(twin), twin_m2_max=max(twin))
+                record.update(head_before=statistics.median(before), head_before_min=min(before), head_before_max=max(before))
                 rows.append(record)
     (args.directory / 'table.json').write_text(json.dumps(rows, indent=2) + '\n')
     columns = list(rows[0])

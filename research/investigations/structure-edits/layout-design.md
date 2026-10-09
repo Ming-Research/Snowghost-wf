@@ -4508,3 +4508,80 @@ the profiled builds. Compare each differing constraint with Chromium's
 measurement and final-layout constraint construction. A repair must prove
 equality of the inputs actually consumed and keep all existing correctness
 and admission obligations; a novel choice remains an owner decision.
+
+The first completed ablation, hosted job `attribute (legacy)` in
+[37935775426](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37935775426),
+uses `fc9b030` with only the final reuse predicate replaced. It records
+780,616,353 instructions, 3,077 `finish_lines` calls, eight natural measurement
+calls and two final child-layout calls per full Apollo11 layout. The earlier
+unchanged candidate has 1,390,473,589 instructions, 9,092 line-breaking calls,
+twelve measurements and twelve final calls. The candidate and ablation's
+complete page dumps have the same SHA-256
+`2cf2c3ccc45ed02b6d04c9c629a19f2843f37f49367b12464b41732b08b2ccb4`.
+Thus the final predicate causes the observed extra calls on this page; this
+ablation does not establish that its old reuse rule is correct generally.
+
+Chromium's pinned `CreateConstraintSpaceForMeasure` supplies the settled
+column extent but an indefinite row extent for row contributions; final
+placement supplies both grid-area extents. `BlockNode::Layout` can reuse a
+measurement through its layout-result cache. Its
+[`CalculateSizeBasedLayoutCacheStatusWithGeometry`](https://chromium.googlesource.com/chromium/src/+/4b47de55fa514cf90042b65c634b6ac10502d42b/third_party/blink/renderer/core/layout/layout_utils.cc#176)
+checks used geometry and percentage dependencies, and rejects changed initial
+block-size definiteness for grids, flexboxes and percentage-dependent
+contents. A second algorithm call is therefore not necessarily a second
+line-breaking pass. `grid-final-space-cases.html` distinguishes an unread
+height basis, an equal-height stretch that resolves a percentage descendant,
+a nested grid's changed row definiteness and a positioned descendant's
+changed containing height against Chromium; these are required boundaries
+for any repair, not measurements yet.
+
+### Full-layout consumed-input equality
+
+The repair uses the existing item-owned measurement key in repeated full
+passes as well as updates: validity, clean content/style marks, the same
+complete measuring Space and the existing height provenance guard. A parent
+changing its final height cannot change this child's row query, whose height
+is still indefinite, if its column width is equal. A newly built context has
+no valid record; content/style preparation, structural ancestor publication
+and tree reset already invalidate the record before changed inputs are
+consumed. The cached value is the natural contribution, never the currently
+stretched interior. This removes no measurement whose query inputs differ.
+
+For final placement, `grid_same_layout` first applies the existing
+`equivalent_space` rule. For an ordinary non-column flow only, it additionally
+compares the following consumed inputs under unchanged content and style:
+
+- `available`, `basis_width`, `forced_width` and `shrink` stay equal, so
+  `used_width`, padding, margins, flow width and column selection stay equal.
+  The incoming percentage height basis stays equal unless `height_relative`
+  proves that no own height or limit reads it.
+- `flow_frame.definite` stays equal, or the published `definite_free` summary
+  proves that no direct flow block or child reads a percentage height or
+  limit. Ordinary entries then resolve the same geometry; nested contexts
+  receive the same relevant inputs. Descendants behind a fixed-height box
+  keep that box's independently resolved basis.
+- `used_height` is reevaluated with the same nonnegative unfragmented content
+  height and must equal the materialized border-box height. Positioned
+  descendants therefore keep their containing box and static anchors.
+  The complete height-provenance guard still applies before reuse.
+
+All other layout inputs (text, fonts, inline pieces, styles and viewport)
+are unchanged under the same validity/cleanliness obligations as the existing
+row record. Equal consumed inputs imply identical lines, floats, fragments,
+ordinary sequence outputs and both baselines; the final placement still
+resolves margins and aligns the child. Record the requested Space as laid
+after that proof. Grid, flex, table, replaced and multicolumn algorithms
+keep the original constraint comparison; an equal used outer height does
+not prove their internal measurement constraints equal.
+
+Each item reads only its own existing record and writes only its own result;
+no shared cache, epoch, pass, global counter or new sibling dependency is
+introduced. Track and baseline reductions retain their existing dependencies.
+No incremental admission condition changes. The independent browser boundary
+fixture and omission mutations must reject ignoring either percentage
+height dependence or the final used height; all existing grid/Q139 mutations
+and page identities remain required. The native comparison adds the handoff
+Q140 renderer as a fifth cohort, alongside the original main/M2/twin/candidate,
+with all captures and fonts restored from the prior measured manifest. This
+same-source before/after pair isolates the repair's cost; it does not replace
+the M2 twin or permit the old incorrect final-space heuristic.

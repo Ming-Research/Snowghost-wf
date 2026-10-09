@@ -17,7 +17,7 @@ import subprocess
 import time
 
 PAGES = ('ecma262', 'html5', 'apollo11')
-NAMES = ('main', 'm2', 'twin', 'head')
+NAMES = ('main', 'm2', 'twin', 'before', 'head')
 
 
 def arguments(page):

@@ -24,6 +24,14 @@ def module(name):
 
 
 MUTATIONS = {
+    'omit-final-height-dependency': (
+        'grid_retained', 'grid_same_layout',
+        '  let same_height = bor(same_definite, child^.definite_free);',
+        '  let same_height = True();', 'final-space', 'final-chromium'),
+    'omit-final-used-height': (
+        'grid_retained', 'grid_same_layout',
+        '  return height == child^.height;',
+        '  return True();', 'final-space', 'final-chromium'),
     'omit-first-flow-update': (
         'update', 'update_flow',
         '  let first_visits = publish_flow_first_baseline(context: context);',
@@ -171,11 +179,21 @@ def verify(name, baseline, mutant, directory, baseline_paths):
     _, _, _, _, case, mode = MUTATIONS[name]
     grid = module('grid-splice')
     detector = module('percentage-falsify')
-    grid.run(baseline, directory, case, baseline_paths)
-    script = directory / 'case.edits'
-    required = path_rows(script.with_suffix('.edits.paths').read_text())
-    if mode == 'chromium':
+    if mode == 'final-chromium':
+        page = Path('tests/layout/grid-final-space-cases.html')
+        grid.command(['node', 'tests/layout/layout_oracle.mjs', 'dump', str(page)], directory / 'case.chromium.tsv')
+        arguments = ['dump', '1', str(page), 'renderer/style/ua.css']
+        base = detector.run_driver(baseline, arguments, directory / 'control')
+        if base.returncode or base.stderr:
+            raise ValueError('unmutated driver failed: ' + base.stderr)
+        require_complete_dump(base.stdout)
+        grid.command(['node', 'tests/layout/layout_oracle.mjs', 'compare', str(directory / 'case.chromium.tsv'), str(directory / 'control.raw')])
+    else:
+        grid.run(baseline, directory, case, baseline_paths)
+        script = directory / 'case.edits'
+        required = path_rows(script.with_suffix('.edits.paths').read_text())
         arguments = ['dump', '1', str(directory / 'case.html'), 'renderer/style/ua.css']
+    if mode in ('chromium', 'final-chromium'):
         wrong = detector.run_driver(mutant, arguments, directory / 'mutated')
         if wrong.returncode or wrong.stderr:
             raise ValueError('mutated driver failed: ' + wrong.stderr)
