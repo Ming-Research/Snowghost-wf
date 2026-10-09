@@ -1494,7 +1494,7 @@ The range experiment must distinguish geometry omission from semantic-publicatio
 
 The implementation in `renderer/layout/range.wf` follows the contract above with these representation details. Each `SequenceNode` holds `RangeActions`: own and pending-child geometry (`Origin`), own and pending-child semantic displacement, and own and pending-child basis assignments. Applicability traits are carried in `SequenceOutput` (`placed`, `opens`, `positioned`) and compose by addition through the existing joins, so own applicability is the stored own transfer's trait and child applicability is the children's totals. An Open is a placed member with `opens` one and its nested positioned count; lined Text, in-flow Child and Float are placed members; lineless Text and every positioned entry are not.
 
-Producers. Hybrid translation (`install_reference_geometry`) computes each cut-chain owner's action from its captured old frame and settled frame before installing anything, installs it on that owner's direct suffix and descends only into the Open containing the cut; semantic publication (`publish_reference_ranges`) later installs the action's local y and the latest basis on the same ranges and retires the descriptors. Ordinary boundary propagation and the certified splice suffix install `(0, delta, 0, 0)` with the equal semantic displacement. Positioned entries of every installed range are found through the positioned trait and moved explicitly: block-owned anchors by the owner action (or their own planned splice movement) and viewport anchors by the ordinary vertical movement only. Atomic anchors are paragraph-relative (`placement_paragraph`) and follow their paragraph without a write.
+Producers. Hybrid translation (`install_reference_geometry`) computes each cut-chain owner's action from its captured old frame and settled frame before installing anything, installs it on that owner's direct suffix and descends only into the Open containing the cut; semantic publication (`publish_reference_ranges`) later installs the action's local y on the same ranges while preserving each Open's immediate containing-block basis and retires the descriptors. Ordinary boundary propagation and the certified splice suffix install `(0, delta, 0, 0)` with the equal semantic displacement. Positioned entries of every installed range are found through the positioned trait and moved explicitly: block-owned anchors by the owner action (or their own planned splice movement) and viewport anchors by the ordinary vertical movement only. Atomic anchors are paragraph-relative (`placement_paragraph`) and follow their paragraph without a write.
 
 Readers and lifetimes. Point readers (`block_local`, `paragraph_local`, `child_local`, `block_boundary`, `block_measured`, `effective_output`) collect ancestor actions on the owner index path only when that owner may retain actions (the later reader bound below); range reads (`inherited_range_output`) pass inherited displacement down. `boundary_set`, rotations, insertion, removal and successor extraction distribute pending actions first; point geometry encoding exposes its path and retires only its own geometry action; semantic point publication folds and retires only its own semantic and basis channels. Full bridges (`reference_geometry`, `own_geometry`, `full_reference_publication`) fold every action into bases, duplicated Open fields and stored transfers with one top-down traversal per owner before the existing dense loops; installation clears `reference_dense`.
 
@@ -3013,3 +3013,12 @@ obsolete unknown-basis assignment and must trip this runtime assertion after
 successful compilation; its result is pending. Range basis channels remain
 covered by their existing explicit-action test, but reference suffix
 translation no longer produces a basis assignment.
+
+
+Hosted check [37995496943](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37995496943)
+accepted layout after the count postcondition, then refused the host I/O
+calls: v0.110 added the required cancellation-watch argument. Existing
+command-line generators and oracle writers keep their no-cancellation
+behavior by creating a never-firing watch for each read/write and closing it
+immediately after the host call, before matching its result. No stream
+operation, error case or check is removed.
