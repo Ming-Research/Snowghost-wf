@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [complete ten-cohort comparison](#geometry-reader-ten-cohort-result), but with the timing compiler HTML5 sentence still exceeds the patched frontier; built with a compiler containing Whitefoot #278, the reader's parallel sentence edit falls below the frontier ([compiler-only comparison](#point-reader-task-grain-compiler-only-comparison)). Seven primary and ten reader-twin acceptance cells fail in ECMA262 root-font/block and HTML5 parallel font-size. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. Root-font contract work awaits the recorded owner choice; the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction) needs no further investigation, since #278 removes its cost. The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [complete ten-cohort comparison](#geometry-reader-ten-cohort-result), but with the timing compiler HTML5 sentence still exceeds the patched frontier; built with a compiler containing Whitefoot #278, the reader's parallel sentence edit falls below the frontier ([compiler-only comparison](#point-reader-task-grain-compiler-only-comparison)). Seven primary and ten reader-twin acceptance cells fail in ECMA262 root-font/block and HTML5 parallel font-size. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. The owner selected bounded lineless processing, now specified below before implementation; the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction) needs no further investigation, since #278 removes its cost. The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -2443,3 +2443,83 @@ did not run; it should run with a compiler containing #278 for every cohort,
 as Snowghost adopts such a release. The suffix-traversal instance in
 docs/todo.md was not re-measured.
 
+
+### Retained lineless frontier: bounded contract and prior falsifiers
+
+The owner selected option A of the root-font card for this task: process
+retained lineless paragraphs first and use their actual post-break outputs
+to decide whether general non-stationary restacking is needed. This extends
+the stationary admission below; it does not implement general restacking.
+The acceptance workflow now defaults every cohort and twin to
+wf-b2209fd31035, containing Whitefoot #278. The old-compiler tables above
+remain historical measurements; the optional compiler pilot names its old
+compiler explicitly. The production pin and owner-motion writes stay as they
+are.
+
+**Bound.** The existing completed-input, stable-source and context admission
+still applies. Each marked paragraph is prepared and broken, including an
+empty or whitespace-only source. A retained lineless paragraph may publish
+only when it remains lineless and has no Open mark: an Open can own an
+empty-inline rectangle whose context placement/metrics need the topology
+publisher. Node and Close marks alone create no empty-inline source. Stable
+source identity ensures an old empty-inline source cannot lose its Open
+without reconstruction invalidating the completed-input certificate.
+Retained lined paragraphs keep the positive-height requirement. Both kinds
+still require unchanged effective width/left and no float or atomic
+placement dependence. A line-presence transition in either direction refuses
+with bit 2048; a remaining lineless paragraph with an Open mark refuses with
+bit 4096. These replace the blanket lineless exclusion, not the existing
+source reconstruction or context-input guards. Historical reason bits 2 and
+256 remain reserved for decoding earlier records.
+
+After topology classification, unchanged height and last baseline remain
+necessary. Changed height and baseline retain bits 512 and 1024 and may
+co-occur. A stable lineless leaf contributes a live through transfer with
+zero advance and no line baseline, rather than being dropped. Publication
+still replaces its retained transfer and repairs ancestors, including
+intrinsic contributions; preparation/breaking refresh paragraph-owned data.
+It retains the unplaced geometry from the completed lineless output. Any
+refusal keeps every mark and uses the existing full replay transaction.
+The diagnostic must report actual refused leaf counts and reason bits; if
+several reasons occur, their distribution must be captured before inferring
+that a general restack is necessary.
+
+**Dependencies and alternatives (R3).** For each paragraph, preparation
+precedes its breaking, which precedes its output classification. Paragraphs
+have no dependency on one another: both visitors retain disjoint slices,
+shared immutable inputs and independent branch results. The existing
+preparation call finishes before layout starts; publication requires the
+all-leaf acceptance reduction because a refused transaction must keep all
+marks. Ancestor reductions depend on their child outputs, and outer
+settlement/mark retirement follow publication. Shared owner publication
+remains serial under the existing stored-field proof gap; there is no new
+algorithmic order between independent owner writes. Blanket refusal keeps
+an unnecessary whole-flow stacking chain; general restacking adds placement
+convergence machinery without current evidence that these 41 leaves need
+it. This bounded extension keeps the shortest existing independent chain
+and makes no shared cache or counter.
+
+**Falsifiers recorded before code.** The hosted frontier fixture generator
+will require empty-source and whitespace-only retained paragraphs to prepare,
+break and publish without held context entries, with every edit equal to an
+independent full layout. A whitespace-preservation toggle will exercise both
+lined-to-lineless and lineless-to-lined transitions and require their exact
+2048 refusal, rather than a coincidental full replay. A lineless inline Open
+case will require the separate 4096 refusal and full-layout identity.
+Independent constant cases will exercise both transition directions and the
+Open-mark exclusion directly, including admitted empty/Node-only inputs.
+Each new admission condition gets its own omission mutation against these
+cases. Direct classification assertions are necessary for transitions:
+changed height can otherwise mask the missing topology guard. Such a later
+extent refusal is not mutation detection. Compilation failure, malformed
+oracle output and unrelated refusal are invalid evidence. The established
+boundary assertion mechanism checks these independent expected values;
+normal/parallel fixtures additionally establish the production path. Existing
+preparation/publication/retirement and source-domain mutations stay wired.
+
+The final experiment is the complete ten-cohort X5 matrix, both pages and
+all six kinds in sequential and four-worker parallel modes, with independent
+twins and two reversed rounds on one hosted machine. Every candidate/main
+cell must be at most 2x; every block/cf12 cell must be no worse. Literal
+failures in either twin are reported without attributing differences inside
+twin variation. No timing or correctness result is claimed by this contract.
