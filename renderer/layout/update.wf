@@ -250,9 +250,38 @@ fn reset_paragraph(paragraph: &Paragraph) -> result: unit writes(paragraph) {
   return unit;
 }
 
+fn changed_height_read(child: &Context, styles: &Styles) -> changed: Bool reads(child), reads(styles) {
+  doc "A restyled direct child's height-read signature must invalidate its parent's retained input preparation. Previously unread height bases may differ from the parent's current definite height; introducing a reader requires preparing that edge, and removing one requires renewing the parent's percentage-free summary.";
+  if child^.restyled {
+  } else {
+    return False();
+  }
+  let old = read_height_record(record: &child^.height_proof);
+  let previous = old.read_mask != 0_u8;
+  let current = height_relative(styles: styles, style: child^.style);
+  let same = eeq(previous, current);
+  return bnot(same);
+}
+
+fn changed_height_reads(children: &[Context], styles: &Styles) -> changed: Bool reads(children), reads(styles) {
+  doc "Independent direct-child signatures reduce through a balanced OR; neither child preparation nor sibling order determines this invalidation.";
+  let count = children^.len;
+  if count == 0_u64 {
+    return False();
+  }
+  if count == 1_u64 {
+    return changed_height_read(child: &children^[0_u64], styles: styles);
+  }
+  let middle = count / 2_u64;
+  let first = changed_height_reads(children: &children^[0_u64..middle], styles: styles);
+  let second = changed_height_reads(children: &children^[middle..count], styles: styles);
+  return bor(first, second);
+}
+
 fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts: &FontSet, picks: &FontPicks) -> ok: Bool reads(document), reads(styles), reads(fonts), reads(picks), writes(context) {
   doc "Forgets the marked context's intrinsic sizes, which its content no longer gives, recording whether they were known and what they were (intrinsic_held, held_min, held_max), and prepares again each of its marked paragraphs, handing each its previous text and shaping so that unchanged segments are only scaled again, then does the same in each marked child context: the one text_changed recorded when it marked one, or the sparse frontier when it marked several; independent frontier branches write disjoint paragraph slices. Marked children follow their existing count-based traversal. False when shaping refuses a paragraph. The marks stay for the layout pass.";
   flex_forget(context: context);
+  grid_forget(context: context);
   let stored = document^.text.inner.len;
   let made = styles^.generated_text.inner.len;
   let ok = True();
@@ -279,6 +308,24 @@ fn prepare_marked(context: &Context, document: &Document, styles: &Styles, fonts
     set ok = band(ok, done);
   }
   let (one_child, c) = single_marked_child(context: context);
+  if context^.kind == ctx_flow {
+    let changed = if one_child {
+      if c < context^.children.inner.len {
+        give changed_height_read(child: &context^.children.inner[c], styles: styles);
+      } else {
+        give False();
+      }
+    } else if context^.marked_children > 0_u32 {
+      let children = context^.children.inner.len;
+      give changed_height_reads(children: &context^.children.inner[0_u64..children], styles: styles);
+    } else {
+      give False();
+    }
+    if changed {
+      set context^.restyled = True();
+      set context^.definite_free = False();
+    }
+  }
   if one_child {
     if c < context^.children.inner.len {
       let done = prepare_marked(context: &context^.children.inner[c], document: document, styles: styles, fonts: fonts, picks: picks);
@@ -352,6 +399,9 @@ fn clear_subtree(context: &Context) -> result: unit writes(context) {
 fn reset_tree(context: &Context) -> result: unit writes(context) {
   doc "Returns the context and every context below it to the state build_boxes leaves for lay_out to start from: no intrinsic sizes known, the fresh space, and no marks on it or its paragraphs and no marked ones counted.";
   flex_forget(context: context);
+  grid_forget(context: context);
+  set context^.grid_columns_invariant = False();
+  set context^.grid_intrinsic_invariant = False();
   set context^.intrinsic_known = False();
   set context^.flow_inputs.valid = False();
   set context^.space = fresh_space();
@@ -380,6 +430,8 @@ struct Before {
   height: i32;
   baseline: i32;
   has_baseline: Bool;
+  first_baseline: i32;
+  has_first_baseline: Bool;
   margin_top: i32;
   margin_right: i32;
   margin_bottom: i32;
@@ -401,7 +453,7 @@ fn update_counts(layout: &Layout) -> (prepared: u64, contexts: u64, paragraphs: 
 fn before_of(context: &Context) -> before: Before reads(context) {
   doc "The space of context's last finished layout and the outputs it holds now.";
   let heights = retained_height_summary(context: context);
-  return Before(space: context^.laid, heights: heights, width: context^.width, height: context^.height, baseline: context^.baseline, has_baseline: context^.has_baseline, margin_top: context^.margin_top, margin_right: context^.margin_right, margin_bottom: context^.margin_bottom, margin_left: context^.margin_left);
+  return Before(space: context^.laid, heights: heights, width: context^.width, height: context^.height, baseline: context^.baseline, has_baseline: context^.has_baseline, first_baseline: context^.first_baseline, has_first_baseline: context^.has_first_baseline, margin_top: context^.margin_top, margin_right: context^.margin_right, margin_bottom: context^.margin_bottom, margin_left: context^.margin_left);
 }
 
 fn same_space(first: Space, second: Space) -> same: Bool pure {
@@ -427,6 +479,14 @@ fn same_outputs(before: Before, context: &Context) -> same: Bool reads(context) 
     return False();
   }
   if before.heights.unproved != heights.unproved {
+    return False();
+  }
+  if before.first_baseline != context^.first_baseline {
+    return False();
+  }
+  let first_available = eeq(before.has_first_baseline, context^.has_first_baseline);
+  if first_available {
+  } else {
     return False();
   }
   let width = before.width == context^.width;
@@ -619,8 +679,7 @@ fn update_held(child: &Context, styles: &Styles, document: &Document, fonts: &Fo
     return total, no;
   }
   if grid {
-    let one = one_context_count();
-    let total = add_counts(first: item_counts, second: one);
+    let total = add_counts(first: item_counts, second: child^.grid_counts);
     return total, no;
   }
   clear_tree_marks(context: child);
@@ -797,7 +856,7 @@ fn fresh_before() -> made: Before pure {
   let space = fresh_space();
   let no = False();
   let heights = empty_height_summary();
-  return Before(space: space, heights: heights, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32);
+  return Before(space: space, heights: heights, width: 0_i32, height: 0_i32, baseline: 0_i32, has_baseline: no, first_baseline: 0_i32, has_first_baseline: no, margin_top: 0_i32, margin_right: 0_i32, margin_bottom: 0_i32, margin_left: 0_i32);
 }
 
 fn settle_child(child: &Context, result: &UpdateCounts, before: Before, unasked: Bool, marked_parent: Bool, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result_unit: unit reads(styles), reads(document), reads(fonts), reads(picks), writes(child), writes(result) {
@@ -1515,6 +1574,14 @@ fn update_in_place(context: &Context, events: &[Flow], styles: &Styles, document
 }
 
 fn update_flow(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
+  doc "Publishes the settled first baseline after every full, scoped, boundary and stationary flow update, before its parent compares outputs.";
+  let counts = update_flow_inner(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, before: before);
+  let first_visits = publish_flow_first_baseline(context: context);
+  set counts.work = add_boundary_visits(first: counts.work, second: first_visits);
+  return counts;
+}
+
+fn update_flow_inner(context: &Context, styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport, before: Before) -> counts: UpdateCounts reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Compares completed effective inputs at the actual parent-supplied space, settles an admitted dirty frontier, then retains the new inputs only after publication. A speculative changed output forces full replay before any further old-output probe.";
   let visits = no_boundary_visits();
   set context^.boundary_visits = visits;

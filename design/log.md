@@ -4,6 +4,14 @@ Newest first. One entry per approved change of the tree: a dated title,
 `Nodes:` naming every node changed, `Owner-approved:` and `Summary:`;
 `skill/SKILL.md` owns the form.
 
+## 2026-10-09 Prove grid columns invariant, reduce item-owned proposals and publish first baselines
+
+Nodes: pipeline/layout
+
+Owner-approved: On 2026-10-08 the owner chose Q140 B, a grid splice admitted only when the container's column sizes are provably unchanged with the container's track sizing rerun and counted fallback otherwise; on the status board on 2026-10-09 the owner chose item-owned grid proposals with balanced reductions (A), distinct first-baseline publication (A), extending the width proof through an enclosing flex (A), fixing Apollo11's full-layout regression within this branch (B) and investigating the flexible-track maximum chain separately (B).
+
+Summary: Grid splices prove invariant columns through enclosing flex inputs, rerun sizing and placement with current item-owned natural measurements, and count unproved dependencies as refusals. Independent CSS Grid 11.5 proposals reduce per track, while first-baseline consumers receive a distinct context output. Consumed-input equality avoids repeating equivalent final flow layout without discarding height dependencies, and a changed direct height-reader signature renews parent preparation. These rules preserve the algorithm's dependencies and correct baselines while removing Apollo11's duplicate work; the inherited CSS Grid 11.7 maximum chain remains a separate investigation ([Q140 evidence and grounds](../research/investigations/structure-edits/layout-design.md#q140-grid-row-sizing-under-invariant-columns)).
+
 ## 2026-10-09 Admit percentage heights whose basis a structural edit cannot change
 
 Nodes: pipeline/layout

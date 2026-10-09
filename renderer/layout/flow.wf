@@ -2893,6 +2893,66 @@ fn position_out_children(context: &Context, events: &[Flow], styles: &Styles, do
   return counted;
 }
 
+fn publish_flow_first_baseline(context: &Context) -> visits: BoundaryVisits writes(context) {
+  doc "Publishes the first alignment baseline from the settled sequence's first contributing handle. The selected line or child and its ancestor origins are the only dependencies; no sibling scan or nested child-baseline query is needed. Scrolling overflow leaves this initial-scroll-position baseline available, independently of the legacy last-baseline rule. Returned visits count metadata, direct payload and ancestor openings for the retained callers; full reference layout discards them.";
+  let visits = no_boundary_visits();
+  let own = False();
+  let output = boundary_output(sequence: &context^.entries, slot: context^.entries.root, own: own, visits: &visits);
+  let first = output.first_line;
+  set context^.first_baseline = 0_i32;
+  set context^.has_first_baseline = False();
+  if first.slot == no_index {
+    return visits;
+  }
+  set visits.entries = visits.entries +sat 1_u64;
+  let owner_at = cvt::<u32, u64>(first.owner);
+  if owner_at < context^.blocks.inner.len {
+    set visits.blocks = visits.blocks +sat 1_u64;
+  }
+  let item = reference_owner_payload(context: context, owner: first.owner, slot: first.slot);
+  match item {
+    Text(paragraph: p) => {
+      let at = cvt::<u32, u64>(p);
+      if at < context^.paragraphs.inner.len {
+        set visits.entries = visits.entries +sat 1_u64;
+        let paragraph = &context^.paragraphs.inner[at];
+        if paragraph^.lines.inner.len > 0_u64 {
+          let line = paragraph^.lines.inner[0_u64];
+          let (origin, opened) = counted_paragraph_origin(context: context, at: at);
+          set visits.blocks = visits.blocks +sat opened;
+          let visual = origin_visual(value: origin);
+          let position = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+          let top = position.y +sat line.top;
+          set context^.first_baseline = top +sat line.baseline;
+          set context^.has_first_baseline = True();
+        }
+      }
+    }
+    Child(context: c) => {
+      let at = cvt::<u32, u64>(c);
+      if at < context^.children.inner.len {
+        set visits.entries = visits.entries +sat 1_u64;
+        let child = &context^.children.inner[at];
+        let (origin, opened) = counted_child_origin(context: context, at: at);
+        set visits.blocks = visits.blocks +sat opened;
+        let visual = origin_visual(value: origin);
+        let position = content_position(value: visual, dx: context^.content_dx, dy: context^.content_dy);
+        set context^.first_baseline = position.y +sat child^.first_baseline;
+        set context^.has_first_baseline = child^.has_first_baseline;
+      }
+    }
+    Open(..) => {
+    }
+    Close(..) => {
+    }
+    Float(..) => {
+    }
+    Out(..) => {
+    }
+  }
+  return visits;
+}
+
 fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
   doc "Lays out a flow context: its width, a pre-pass giving every box its containing width, its child contexts in parallel, its paragraphs broken in parallel at their full widths, then finish_flow: the stacking pass, its height and positioned children, then its fragments.";
   let width = used_width(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
@@ -2904,6 +2964,7 @@ fn lay_out_flow(context: &Context, events: &[Flow], styles: &Styles, document: &
   break_all(context: context, styles: styles, fonts: fonts, picks: picks);
   let counted = finish_flow(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, frame: frame);
   publish_boundaries(context: context, events: events, styles: styles, basis_height: frame.definite);
+  let first_visits = publish_flow_first_baseline(context: context);
   set context^.boundary_dirty = False();
   return unit;
 }

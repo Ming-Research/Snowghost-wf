@@ -60,66 +60,84 @@ fn content_position(value: Position, dx: i32, dy: i32) -> made: Position pure {
 }
 
 fn owned_block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
+  let (origin, opened) = counted_owned_block_origin(context: context, block: block);
+  return origin;
+}
+
+fn counted_owned_block_origin(context: &Context, block: u32) -> (made: Origin, opened: u64) reads(context.blocks.inner), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
   doc "Resolves published owner-relative geometry using only local anchors and ancestry. Both publishers retire every replay capture and fresh flag before selecting local_geometry, so hybrid scratch and captured coordinates are not inputs in this phase.";
+  let opened = 0_u64;
   let cursor = block;
   let accumulated = zero_origin();
   let count = context^.blocks.inner.len;
   for (step in 0_u64..count) {
     let at = cvt::<u32, u64>(cursor);
     if at < context^.blocks.inner.len {
+      set opened = opened +sat 1_u64;
       let local = block_local(context: context, at: at);
       set accumulated = origin_accumulate(owner: local, local: accumulated);
       set cursor = context^.blocks.inner[at].parent;
     } else {
-      return accumulated;
+      return accumulated, opened;
     }
   }
-  return accumulated;
+  return accumulated, opened;
 }
 
 fn retained_block_origin(context: &Context, block: u32, previous: Bool) -> made: Origin reads(context.blocks.inner), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
+  let (origin, opened) = counted_retained_block_origin(context: context, block: block, previous: previous);
+  return origin;
+}
+
+fn counted_retained_block_origin(context: &Context, block: u32, previous: Bool) -> (made: Origin, opened: u64) reads(context.blocks.inner), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
   doc "Resolves retained ancestry, stopping at captured old origins for previous coordinates or completed fresh scratch for current coordinates.";
+  let opened = 0_u64;
   let cursor = block;
   let accumulated = zero_origin();
   let count = context^.blocks.inner.len;
   for (step in 0_u64..count) {
     let at = cvt::<u32, u64>(cursor);
     if at < context^.blocks.inner.len {
+      set opened = opened +sat 1_u64;
       if previous {
         if context^.blocks.inner[at].reference_captured {
           let saved = context^.blocks.inner[at].reference_old;
-          return origin_accumulate(owner: saved, local: accumulated);
+          return origin_accumulate(owner: saved, local: accumulated), opened;
         }
       } else if context^.blocks.inner[at].reference_fresh {
         let raw = origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y);
-        return origin_accumulate(owner: raw, local: accumulated);
+        return origin_accumulate(owner: raw, local: accumulated), opened;
       }
       let local = block_local(context: context, at: at);
       set accumulated = origin_accumulate(owner: local, local: accumulated);
       set cursor = context^.blocks.inner[at].parent;
     } else {
-      return accumulated;
+      return accumulated, opened;
     }
   }
-  return accumulated;
+  return accumulated, opened;
 }
 
 fn block_origin(context: &Context, block: u32) -> made: Origin reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
+  let (origin, opened) = counted_block_origin(context: context, block: block);
+  return origin;
+}
+
+fn counted_block_origin(context: &Context, block: u32) -> (made: Origin, opened: u64) reads(context.blocks.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
   doc "Reads authoritative local geometry between passes, raw scratch for a touched replay payload, and old or settled owner geometry for untouched payloads according to the replay phase.";
   if context^.local_geometry {
-    let owned = owned_block_origin(context: context, block: block);
-    return owned;
+    return counted_owned_block_origin(context: context, block: block);
   }
   let at = cvt::<u32, u64>(block);
   if at < context^.blocks.inner.len {
     let full = context^.reference_phase == 0_u8;
     let raw = bor(full, context^.blocks.inner[at].reference_fresh);
     if raw {
-      return origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y);
+      return origin_from_resolved(nx: context^.blocks.inner[at].normal_x, ny: context^.blocks.inner[at].normal_y, vx: context^.blocks.inner[at].resolved_x, vy: context^.blocks.inner[at].resolved_y), 1_u64;
     }
   }
   let previous = context^.reference_phase == 1_u8;
-  return retained_block_origin(context: context, block: block, previous: previous);
+  return counted_retained_block_origin(context: context, block: block, previous: previous);
 }
 
 fn block_position(context: &Context, at: u64) -> made: Position reads(context) {
@@ -130,35 +148,50 @@ fn block_position(context: &Context, at: u64) -> made: Position reads(context) {
 }
 
 fn paragraph_origin(context: &Context, at: u64) -> made: Origin reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner), reads(context.paragraphs.inner) {
+  let (origin, opened) = counted_paragraph_origin(context: context, at: at);
+  return origin;
+}
+
+fn counted_paragraph_origin(context: &Context, at: u64) -> (made: Origin, opened: u64) reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions), reads(context.blocks.inner), reads(context.paragraphs.inner) {
   doc "Resolves one paragraph against the authoritative owner frame without requiring untouched suffix scratch.";
+  let opened = 0_u64;
   if at < context^.paragraphs.inner.len {
     if context^.local_geometry {
-      let placed_owner = owned_block_origin(context: context, block: context^.paragraphs.inner[at].block);
+      let (placed_owner, visits) = counted_owned_block_origin(context: context, block: context^.paragraphs.inner[at].block);
+      set opened = opened +sat visits;
       let placed_local = paragraph_local(context: context, at: at);
       let placed = origin_accumulate(owner: placed_owner, local: placed_local);
-      return placed;
+      return placed, opened;
     }
     let full = context^.reference_phase == 0_u8;
     let raw = bor(full, context^.paragraphs.inner[at].reference_fresh);
     if raw {
-      return origin_from_resolved(nx: context^.paragraphs.inner[at].normal_x, ny: context^.paragraphs.inner[at].normal_top, vx: context^.paragraphs.inner[at].resolved_x, vy: context^.paragraphs.inner[at].resolved_top);
+      return origin_from_resolved(nx: context^.paragraphs.inner[at].normal_x, ny: context^.paragraphs.inner[at].normal_top, vx: context^.paragraphs.inner[at].resolved_x, vy: context^.paragraphs.inner[at].resolved_top), opened;
     }
     let previous = context^.reference_phase == 1_u8;
-    let owner = retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
+    let (owner, visits) = counted_retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
+    set opened = opened +sat visits;
     let local = paragraph_local(context: context, at: at);
-    return origin_accumulate(owner: owner, local: local);
+    return origin_accumulate(owner: owner, local: local), opened;
   }
-  return zero_origin();
+  return zero_origin(), opened;
 }
 
 fn retained_paragraph_frame(context: &Context, at: u64, previous: Bool) -> made: Origin reads(context.blocks.inner), reads(context.paragraphs.inner), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
+  let (origin, opened) = counted_retained_paragraph_frame(context: context, at: at, previous: previous);
+  return origin;
+}
+
+fn counted_retained_paragraph_frame(context: &Context, at: u64, previous: Bool) -> (made: Origin, opened: u64) reads(context.blocks.inner), reads(context.paragraphs.inner), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
   doc "An atomic child's placement source in a retained phase: the paragraph's retained base plus committed actions against the old or settled formatting owner. It never substitutes the paragraph's fresh raw scratch, which may already belong to the new frame.";
+  let opened = 0_u64;
   if at < context^.paragraphs.inner.len {
-    let owner = retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
+    let (owner, visits) = counted_retained_block_origin(context: context, block: context^.paragraphs.inner[at].block, previous: previous);
+    set opened = opened +sat visits;
     let local = paragraph_local(context: context, at: at);
-    return origin_accumulate(owner: owner, local: local);
+    return origin_accumulate(owner: owner, local: local), opened;
   }
-  return zero_origin();
+  return zero_origin(), opened;
 }
 
 fn raw_paragraph_frame(paragraph: &Paragraph) -> made: Origin reads(paragraph) {
@@ -183,7 +216,13 @@ fn paragraph_position(context: &Context, at: u64) -> made: Position reads(contex
 }
 
 fn child_origin(context: &Context, at: u64) -> made: Origin reads(context.blocks.inner), reads(context.paragraphs.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
+  let (origin, opened) = counted_child_origin(context: context, at: at);
+  return origin;
+}
+
+fn counted_child_origin(context: &Context, at: u64) -> (made: Origin, opened: u64) reads(context.blocks.inner), reads(context.paragraphs.inner), reads(context.children.inner), reads(context.local_geometry), reads(context.reference_phase), reads(context.range_actions), reads(context.entries.nodes), reads(context.entries.span), reads(context.entries.range_actions) {
   doc "Resolves a child placement independently of the child's own formatting-context replay state; viewport anchors retain the zero owner and atomic anchors resolve against their paragraph's effective origin.";
+  let opened = 0_u64;
   if at < context^.children.inner.len {
     let source = cvt::<u32, u64>(context^.children.inner[at].placement_paragraph);
     let atomic_source = source < context^.paragraphs.inner.len;
@@ -192,33 +231,39 @@ fn child_origin(context: &Context, at: u64) -> made: Origin reads(context.blocks
         let viewport_owner = zero_origin();
         give viewport_owner;
       } else if atomic_source {
-        let paragraph_owner = paragraph_origin(context: context, at: source);
+        let (paragraph_owner, visits) = counted_paragraph_origin(context: context, at: source);
+        set opened = opened +sat visits;
         give paragraph_owner;
       } else {
-        let local_owner = owned_block_origin(context: context, block: context^.children.inner[at].block);
+        let (local_owner, visits) = counted_owned_block_origin(context: context, block: context^.children.inner[at].block);
+        set opened = opened +sat visits;
         give local_owner;
       }
       let anchor = child_local(context: context, at: at);
       let placed = origin_accumulate(owner: placed_owner, local: anchor);
-      return placed;
+      return placed, opened;
     }
     let full = context^.reference_phase == 0_u8;
     let raw = bor(full, context^.children.inner[at].placement_fresh);
     if raw {
-      return origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y);
+      return origin_from_resolved(nx: context^.children.inner[at].normal_x, ny: context^.children.inner[at].normal_y, vx: context^.children.inner[at].x, vy: context^.children.inner[at].y), opened;
     }
     let previous = context^.reference_phase == 1_u8;
     let owner = if context^.children.inner[at].viewport_origin {
       give zero_origin();
     } else if atomic_source {
-      give retained_paragraph_frame(context: context, at: source, previous: previous);
+      let (owner, visits) = counted_retained_paragraph_frame(context: context, at: source, previous: previous);
+      set opened = opened +sat visits;
+      give owner;
     } else {
-      give retained_block_origin(context: context, block: context^.children.inner[at].block, previous: previous);
+      let (owner, visits) = counted_retained_block_origin(context: context, block: context^.children.inner[at].block, previous: previous);
+      set opened = opened +sat visits;
+      give owner;
     }
     let anchor = child_local(context: context, at: at);
-    return origin_accumulate(owner: owner, local: anchor);
+    return origin_accumulate(owner: owner, local: anchor), opened;
   }
-  return zero_origin();
+  return zero_origin(), opened;
 }
 
 fn child_position(context: &Context, at: u64) -> made: Position reads(context) {
