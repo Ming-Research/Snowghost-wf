@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [complete ten-cohort comparison](#geometry-reader-ten-cohort-result), but HTML5 sentence still exceeds the patched frontier. Seven primary and ten reader-twin acceptance cells fail in ECMA262 root-font/block and HTML5 parallel font-size. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. Root-font contract work and further reader redesign await the two recorded owner choices, including the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction). The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [complete ten-cohort comparison](#geometry-reader-ten-cohort-result), but with the timing compiler HTML5 sentence still exceeds the patched frontier; built with a compiler containing Whitefoot #278, the reader's parallel sentence edit falls below the frontier ([compiler-only comparison](#point-reader-task-grain-compiler-only-comparison)). Seven primary and ten reader-twin acceptance cells fail in ECMA262 root-font/block and HTML5 parallel font-size. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. Root-font contract work awaits the recorded owner choice; the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction) needs no further investigation, since #278 removes its cost. The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -2402,3 +2402,44 @@ point-read grain investigation. The reader target is not met, and the
 non-stationary implementation is not claimed. The passive inherited-read
 profiler remains wired to the temporary timing workflow while this
 acceptance investigation is open; the one-use native diagnostics are retired.
+
+
+### Point-reader task grain: compiler-only comparison
+
+Question: does the emitted point-read offer explain the reader's remaining
+parallel cost? Comparison: the same sources built with the timing compiler
+wf-0b7f5c5b9854 and with wf-b2209fd31035, a main-line release containing
+Whitefoot #278 ("Call grain: exempt only recursion that offers its own
+calls"), each with a twin. A parallel improvement of the reader beyond the
+twins' spread, with the frontier unchanged, supports the account; no change
+rejects it.
+
+[Hosted run 37875294803](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37875294803)
+built the reader head f184ee7 and the patched frontier 3393042 with each
+compiler and timed 60 HTML5 edits per kind and mode in two reversed rounds
+on one hosted Ubuntu 24.04 runner exposing four CPUs of an AMD EPYC 7763,
+LLVM 22, `WF_WORKERS=4`. Every edit spliced without refusal or rebuild.
+Median us, round 1/2, primary [twin]:
+
+| kind, mode | frontier, old | frontier, #278 | reader, old | reader, #278 |
+| --- | --- | --- | --- | --- |
+| sentence, seq | 344/356 [334/340] | 355/356 [325/331] | 359/380 [373/376] | 373/354 [372/354] |
+| sentence, par | 370/368 [387/384] | 358/366 [347/350] | 475/477 [459/478] | 341/327 [327/327] |
+| fontsize, seq | 1477/1678 [1474/1860] | 1502/1805 [1742/1486] | 859/840 [843/851] | 854/855 [866/854] |
+| fontsize, par | 1919/2159 [1928/2092] | 1917/2032 [1922/1924] | 1491/1600 [1533/1624] | 1245/1239 [1213/1223] |
+| block, seq | 574/598 [593/603] | 568/585 [564/570] | 442/456 [442/448] | 462/452 [453/464] |
+| block, par | 663/687 [690/695] | 639/684 [640/648] | 587/590 [590/583] | 410/403 [401/400] |
+
+With #278 the reader's parallel sentence edit falls from about 476 to 334 us,
+below the frontier under either compiler, and its parallel block and
+font-size edits fall by 30 and 20 percent; the frontier, which has no such
+offer, barely moves, and sequential cells are unchanged within their twins.
+This supports the point-read offer as the cause of the reader's parallel
+excess and #278 as its remedy, so the grain question needs no further
+Whitefoot investigation for this reader. The sequential sentence edit stays
+near the frontier, within or just above its spread. Acceptance is still
+judged on the complete X5 matrix against main and cf12c609, which this pilot
+did not run; it should run with a compiler containing #278 for every cohort,
+as Snowghost adopts such a release. The suffix-traversal instance in
+docs/todo.md was not re-measured.
+

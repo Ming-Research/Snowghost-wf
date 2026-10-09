@@ -38,9 +38,11 @@ example apart from the renderer code that exposed it
   The pinned timing compiler keeps calls reaching recursion regardless of
   static work. A semantic fragment is recorded, but no standalone minimized
   trial or compiler-only timing has run, and the offer's exclusive latency
-  cost is unverified. The owner choice is to prioritize that Whitefoot grain
-  investigation (recommended) or defer further reader redesign until this
-  existing concern is addressed. The [complete X5 comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#geometry-reader-ten-cohort-result)
+  cost was unverified. A [compiler-only comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#point-reader-task-grain-compiler-only-comparison)
+  then built the same reader with wf-b2209fd31035, which contains Whitefoot
+  #278: its parallel sentence edit fell from about 476 to 334 us, below the
+  frontier, so #278 resolves this reader instance once Snowghost adopts such
+  a release; the suffix-traversal instance above was not re-measured. The [complete X5 comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#geometry-reader-ten-cohort-result)
   still misses sentence/frontier and the stated acceptance cells; renderer dependencies remain unchanged.
 
 - **Reaching into a nested owned structure needs one descent helper per
