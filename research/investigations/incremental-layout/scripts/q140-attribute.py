@@ -80,8 +80,12 @@ with open('renderer/layout/grid_retained.wf', 'a') as f:
     f.write('\n' + '\n'.join(body) + '\n')
 replace(grid, '  if reuse {\n    grid_row_contribution',
         '  q140_trace_item(child: child, styles: styles, space: space, phase: 1_i32, ready: reuse);\n  if reuse {\n    grid_row_contribution')
-replace(grid, '    if ready {\n      resolve_margins',
-        '    q140_trace_item(child: child, styles: styles, space: space, phase: 2_i32, ready: ready);\n    if ready {\n      resolve_margins')
+# Trace before publication so the record retains the previous laid Space.
+final_marker = '    if ready {\n      set child^.laid = space;'
+if final_marker not in Path(grid).read_text():
+    final_marker = '    if ready {\n      resolve_margins'
+replace(grid, final_marker,
+        '    q140_trace_item(child: child, styles: styles, space: space, phase: 2_i32, ready: ready);\n' + final_marker)
 # Scalar record width is published with the trace's schema, not guessed by readers.
 Path('build/attribute/trace-fields.txt').write_text('\n'.join(f'{i}: {value}' for i, (value, _) in enumerate(fields)) + '\n')
 replace('renderer/oracle/layout/layout.wf',
