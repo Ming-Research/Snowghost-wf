@@ -24,6 +24,10 @@ def module(name):
 
 
 MUTATIONS = {
+    'skip-active-proposals': (
+        'grid', 'grid_pass',
+        '  let any = grid_has_proposals(lengths: &lengths.inner[0_u64..count]);',
+        '  let any = False();', 'fixed', 'chromium'),
     'omit-height-reader-invalidation': (
         'update', 'changed_height_read',
         '  return bnot(same);', '  return False();',

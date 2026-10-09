@@ -4696,3 +4696,37 @@ new required baseline/measurement work from repeated work; a setup-only
 explanation is rejected if it survives subtraction. Diagnostic binaries are
 explicitly identified by their cost-run revisions rather than called the
 workflow's current renderer.
+
+The completed sequential sentence-pair subtraction in
+[37941552014](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37941552014)
+uses the pilot's recorded binaries: M2 2,121,004 instructions, its twin
+2,120,998, handoff 2,526,302 and the initial repair 2,493,671. M2 and repair
+both execute eighteen held updates, sixteen flow updates, fourteen reference
+updates, four grid layouts and two line-breaking calls per pair. The repair's
+reported ten contexts per edit versus M2's six includes grid item work that
+M2 did not count; it does not mean four additional updates. The handoff's
+actual held/flow/reference totals are 22/20/18, so the repair removes repeated
+edit updates too. The remaining added instructions concentrate in item-owned
+proposal reductions, allocation and baseline queries. Parallel total
+instructions include scheduler variation and do not establish native cost.
+
+Review isolates a narrower unnecessary computation within the selected
+proposal representation: when every item proposal length is zero, every
+per-track reduction returns exactly zero increase and false touched. Before
+measurement, the comparison is the unchanged algorithm against skipping only
+that all-zero case. The proposal is rejected by any geometry or identity
+difference, or by removing any nonempty required distribution. The fixed-grid
+Chromium case and a compiled mutation that incorrectly skips active proposals
+must distinguish the latter fault. Instruction profiles must show whether
+empty phases account for a material part of the observed reduction work;
+native cost is remeasured with the other required cohorts and controls.
+
+The implementation reduces nonzero-length presence with a balanced OR before
+allocation. The complete length vector already precedes segment allocation,
+so this adds no sibling proposal ordering or shared scratch. In the empty
+case it writes zero planned increase and false touched independently to each
+track, exactly as the omitted reductions would, and leaves bases, limits,
+shares and every other field unchanged. The following application would then
+be a no-op. Nonempty phases retain the selected item-owned representation and
+all original phase/span dependencies. This eliminates an exact no-op within
+the existing decision rather than selecting a new distribution algorithm.
