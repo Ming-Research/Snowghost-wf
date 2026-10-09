@@ -1,0 +1,80 @@
+# Temporary one-edit diagnosis for the HTML5 parallel regression; removed after capture.
+name: rootfont-diagnose
+on:
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: 'Completed bisect-hosted run supplying the unchanged drivers and script'
+        required: true
+      builds:
+        description: 'Driver names to inspect on one hosted machine'
+        default: 'good bad'
+        required: true
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run }}
+          pattern: driver-*
+          path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run }}
+          name: edit-cost-evidence
+          path: build/source-evidence
+      - name: Tools, fonts and shared input
+        run: |
+          set -euo pipefail
+          sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends linux-tools-common linux-tools-azure fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          mkdir -p build/rootfont-profile
+          uname -a > build/rootfont-profile/machine.txt
+          lscpu >> build/rootfont-profile/machine.txt
+          perf --version >> build/rootfont-profile/machine.txt
+          sh research/investigations/concurrency/run.sh fetch || true
+          test -s build/research/concurrency/html5.html
+          make -s oracle-fonts
+          head -n 2 build/source-evidence/x5/scripts/html5-rootfont.edits > build/rootfont-profile/one.edits
+          sha256sum build/rootfont-profile/one.edits build/research/concurrency/html5.html renderer/style/ua.css > build/rootfont-profile/inputs.sha256
+      - name: Native sample, emitted calls and one-edit four-worker profile
+        env:
+          PROFILE_BUILDS: ${{ inputs.builds }}
+        run: |
+          set -euo pipefail
+          out=build/rootfont-profile
+          sudo sysctl kernel.perf_event_paranoid=-1
+          if ! mountpoint -q /sys/kernel/tracing; then sudo mount -t tracefs tracefs /sys/kernel/tracing; fi
+          for name in $PROFILE_BUILDS; do
+            exe=$(realpath "build/drivers/driver-$name/layout_oracle_par")
+            cp "build/drivers/driver-$name/revision.txt" "$out/$name-revision.txt"
+            nm -n "$exe" > "$out/$name-symbols.txt"
+            for symbol in wf_layout.frontier_prepare wf__par_budget_layout.frontier_prepare wf__par_seq_layout.frontier_prepare wf_layout.prepare_marked wf__par_seq_layout.prepare_marked wf__par_recursion_budget; do
+              objdump -d --no-show-raw-insn --disassemble="$symbol" "$exe" >> "$out/$name-calls.txt"
+            done
+            for workers in 1 4; do
+              WF_WORKERS=$workers /usr/bin/time -p -o "$out/$name-w$workers.time" "$exe" edittime "$out/one.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$out/$name-w$workers.raw"
+              python3 research/investigations/incremental-layout/scripts/inctime.py "$out/one.edits" "$out/$name-w$workers.raw"
+              cat "$out/$name-w$workers.time"
+            done
+            sudo perf probe -x "$exe" --add 'rootfont:enter=wf_layout.update' --add 'rootfont:leave=wf_layout.update%return'
+            sudo env WF_WORKERS=4 perf record -e cpu-clock:u -F 499 -e 'rootfont:enter/period=1/' -e 'rootfont:leave/period=1/' -m 4096 -o "$out/$name.perf.data" -- "$exe" edittime "$out/one.edits" build/research/concurrency/html5.html renderer/style/ua.css > "$out/$name-profile.raw" 2> "$out/$name-perf.err"
+            sudo perf script --ns -i "$out/$name.perf.data" > "$out/$name-events.txt" 2> "$out/$name-script.err"
+            sudo perf script --show-lost-events -D -i "$out/$name.perf.data" > "$out/$name-records.txt" 2> "$out/$name-records.err"
+            python3 research/investigations/incremental-layout/scripts/inctime.py "$out/one.edits" "$out/$name-profile.raw"
+            sudo perf probe --del 'rootfont:*'
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rootfont-profile
+          path: build/rootfont-profile/

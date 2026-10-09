@@ -2599,3 +2599,28 @@ must acquire no artificial order. Serial owner-motion writes remain unchanged
 pending the existing stored-field proof gap. A naturally written independent
 form refused by Whitefoot stops that repair, with a minimal example; it is
 not replaced by an alternative spelling or proof-only storage.
+
+The first four-edit pilot, [37899580622](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37899580622), places the jump after midpoint 03a3d3e: its
+parallel upper medians and twin are 575707/586618 and 551766/564350 us,
+versus 1012403/1038728 and 1024600/1020883 at 58b16da. Sequential medians
+are 792701/801631 and 794158/803284, versus 846395/857006 and
+846288/851224. The four-CPU EPYC 7763 pilot's one-edit wall samples are both
+3.81 seconds. This large separation needs no larger sample for choosing the
+next interval; it is not a final acceptance measurement. The next hosted
+comparison includes the remaining midpoint 24f351e, its pre-frontier source
+593b2db, the first syntax-corrected frontier d6383dd, and the bounded frontier
+3393042 plus the established span patch, all with independent twins.
+
+The 58b16da ledger permits both `frontier_prepare` recursive calls and emits
+a runtime-derived recursion-budget family; child preparation and `break_all`
+still split. A static permission-refusal account is therefore not supported.
+Before attributing the loss, the temporary `rootfont-diagnose` workflow uses
+unchanged pilot drivers for one root-font edit at four workers. Entry/return
+uprobes delimit `layout.update` in CPU-clock samples, excluding initialization;
+only instruction-pointer self attribution is attempted, not unreliable caller
+stacks. Require one matched interval, samples inside it, zero recorded loss
+and readable symbols before attribution. Capture native one/four-worker
+samples and emitted preparation calls as separate evidence. A permitted and
+emitted independent path with poor scheduling is a possible compiler/runtime
+gap, not a reason to rewrite the source to suppress its offers. The workflow
+is removed after the capture is recorded.
