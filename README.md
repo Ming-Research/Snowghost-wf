@@ -64,8 +64,8 @@ does not yet paint.
   - the Rust shell, with rasterization, compositing, windows and input;
   - the JavaScript interpreter.
 
-[`docs/todo.md`](docs/todo.md) lists the known defects and the Whitefoot
-features Snowghost is waiting for.
+The known defects and the Whitefoot features Snowghost is waiting for are
+tracked as items on the project's status board, not in this repository.
 
 ## How it is built
 
