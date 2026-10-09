@@ -71,12 +71,13 @@ example apart from the renderer code that exposed it
   [layout-check 37883842994](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37883842994)
   rejects the corresponding `flex_publish_first_baseline` selector at
   `a9517cb`; GIVE-1/ENT-5 at the pin expressly exclude computed expressions
-  from scalar fact delivery. Impact: all candidate renderer gates stop
-  before execution. Proposed follow-up: carry the proved bounds of the
-  evaluated scalar expression through each `give` and its ordinary join;
-  validate first/last selection and negative joins without adding a runtime
-  check. The isolated hosted reproduction is pending. Reopen on the owner's
-  ruling; no named-intermediate or guarded-access rewrite is authorized.
+  from scalar fact delivery. The owner classified this as a Whitefoot gap
+  and authorized `let last = count - 1_u64; give last;` now. That form is
+  used for both the line and item selectors in `flex_publish_first_baseline`;
+  hosted acceptance is pending. The literal branch may deliver only
+  `at = 0`, so any remaining rejection is reported without another spelling
+  change. Switch back when Whitefoot carries facts through computed gives;
+  validate first/last selection and negative joins without runtime checks.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the
