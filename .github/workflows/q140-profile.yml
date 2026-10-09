@@ -1,0 +1,85 @@
+# Temporary instruction diagnostic for Q140's measured Apollo11 regression.
+# Uses the measured binaries; remove before readiness with the cost workflow.
+name: q140-profile
+on:
+  push:
+    branches: [research/m2-q140]
+    paths: ['.github/workflows/q140-profile.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37913944038
+          pattern: driver-*
+          path: build/drivers
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37917735046
+          name: q140-edit-cost
+          path: build/measured
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37917728829
+          name: page-identity-inputs
+          path: build/reference
+      - name: Measured source, inputs and diagnostic tool
+        run: |
+          set -euo pipefail
+          source=$(cat build/drivers/driver-head/source-revision.txt)
+          git diff --exit-code "$source" HEAD -- renderer whitefoot.pin
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind
+          chmod +x build/drivers/driver-*/layout_oracle_seq
+          mkdir -p build/profile build/research
+          mv build/reference/fonts build/fonts
+          mv build/measured/research/concurrency build/research/concurrency
+          uname -a > build/profile/machine.txt
+          lscpu >> build/profile/machine.txt
+          valgrind --version >> build/profile/machine.txt
+          git rev-parse HEAD > build/profile/revision.txt
+          for name in m2 twin head; do
+            cp "build/drivers/driver-$name/revision.txt" "build/profile/$name-revision.txt"
+          done
+      - name: Small candidate instruction pilot before the comparison
+        run: |
+          set -euo pipefail
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          WF_WORKERS=4 /usr/bin/time -f '%e %M' -o build/profile/pilot.resources valgrind --tool=callgrind --callgrind-out-file=build/profile/head-1.callgrind build/drivers/driver-head/layout_oracle_seq layout 1 "${args[@]}" > build/profile/head-1.stdout 2> build/profile/head-1.stderr
+          cat build/profile/pilot.resources
+          python3 - <<'PY'
+          from pathlib import Path
+          seconds = float(Path('build/profile/pilot.resources').read_text().split()[0])
+          if seconds > 120:
+              raise SystemExit('Instruction pilot exceeds two minutes; inspect before expanding')
+          print('Pilot permits the five remaining zero/one samples:', seconds, 'seconds')
+          PY
+      - name: Same-input zero/one instruction comparison and twin
+        run: |
+          set -euo pipefail
+          args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
+          for sample in m2-0 twin-0 head-0 m2-1 twin-1; do
+            name=${sample%-*} count=${sample##*-}
+            WF_WORKERS=4 /usr/bin/time -f '%e %M' -o "build/profile/$sample.resources" valgrind --tool=callgrind --callgrind-out-file="build/profile/$sample.callgrind" "build/drivers/driver-$name/layout_oracle_seq" layout "$count" "${args[@]}" > "build/profile/$sample.stdout" 2> "build/profile/$sample.stderr"
+          done
+          for file in build/profile/*.callgrind; do
+            callgrind_annotate --auto=no --inclusive=no --threshold=100 "$file" > "$file.self.txt"
+            callgrind_annotate --auto=no --inclusive=yes --threshold=100 "$file" > "$file.inclusive.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-apollo-profile
+          path: build/profile/

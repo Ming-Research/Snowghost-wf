@@ -4457,3 +4457,27 @@ now describe that intentionally faulty program correctly. They change no
 production contract and introduce no dummy reads. The mutant must still
 compile and produce the intended excessive grid refusal in both modes;
 a compiler error or unrelated refusal remains a failed experiment.
+
+### Apollo11 cost finding and instruction comparison, 2026-10-09
+
+Hosted cost run 37917735046 on `9f1377b` uses the measured `c555219` binaries
+only after proving renderer/pin identity. Its four interleaved rounds on
+an AMD EPYC 9V45 with four logical CPUs give Apollo11 full-layout medians
+M2/twin/candidate of 54.744/53.645/103.040 ms sequentially and
+44.158/46.430/81.074 ms with four workers. Candidate ranges are disjoint
+from the twin in both modes. The parallel sentence edit also has a paired
+candidate/M2 median 1.1468 above the twin's maximum 1.0593. These are cost
+findings under the prior criterion; no cost-equivalence claim follows.
+
+The next question is where the added full-layout work occurs. Compare
+sequential instruction profiles of the already-measured M2, twin and
+candidate binaries on the same Apollo11 capture and fonts. Subtract each
+zero-layout process from its one-layout process to separate layout from
+driver setup. First time the candidate one-layout profile; proceed to the
+five remaining zero/one samples only if that smallest useful sample takes
+at most two minutes. This diagnostic attributes instruction counts, not
+wall-time percentages. Extra grid-proposal/reduction work is a hypothesis,
+not a conclusion; excess dominated by other work rejects that hypothesis.
+A generated-code problem in a natural source form needs a minimized
+Whitefoot example and owner disposition, not a source workaround. No
+representation change is selected before this evidence.
