@@ -3866,7 +3866,7 @@ path. R3 requires a disposition before choosing how the rerun executes it.
 
 | Candidate | Dependencies, cost and risk | Status |
 | --- | --- | --- |
-| Private item proposals, then balanced per-track maximum/OR reductions in the shared full-layout algorithm | Each item reads immutable phase inputs and owns its distribution scratch. Reductions precede application; phase/span and numeric distribution dependencies remain. Extra scratch and reduction work, particularly for wide spans, must be measured. All callers share one algorithm. | Recommended for the owner to settle; it changes the track algorithm's scratch representation beyond merely adding a splice caller. |
+| Private item proposals, then balanced per-track maximum/OR reductions in the shared full-layout algorithm | Each item reads immutable phase inputs and owns its distribution scratch. Reductions precede application; phase/span and numeric distribution dependencies remain. Extra scratch and reduction work, particularly for wide spans, must be measured. All callers share one algorithm. | Owner-selected; source authored, execution unvalidated. It changes the track algorithm's scratch representation beyond merely adding a splice caller. |
 | Per-track independent recomputation of item proposals | Each output track independently examines relevant items, recomputing the distribution needed to obtain its share, then reduces them. No shared writes; lower retained scratch but duplicated distribution work, potentially quadratic in a span. | A viable alternative with the same phase dependencies and a different work/storage tradeoff; no measurements yet discriminate it. |
 | Reuse the existing shared scratch loop unchanged | One item must finish its scratch writes before the next uses them, although their proposals do not depend on each other. Lowest implementation disruption. | Not recommended: that ordering is imposed by scratch ownership, contrary to R3. |
 
@@ -4025,11 +4025,11 @@ are source/specification findings, not additional measured failures.
 **Question.** How should a first-baseline result and its availability reach
 grid sizing, export and retained updates without changing existing
 last-baseline consumers? This shared output contract is beyond Q140 B's
-column-invariance ruling. The continuation below implements the proposed first option in source; execution remains blocked by the separate segment-access boundary.
+column-invariance ruling. The owner selected the first option, authored below; execution now stops at the separate computed-`give` bounds boundary after the authorized segment-borrow repair.
 
 | Candidate | Dependencies, cost and risk | Status |
 | --- | --- | --- |
-| Publish a distinct first-baseline value and availability alongside the existing exported baseline, and retain it with item measurements | Each owned context publishes after its contributing child/line output settles; independent siblings remain independent. Parent selection/reduction consumes settled outputs. Constant-size reads for repeated sizing, with extra state and an obligation to update every publication, invalidation and outward comparison. | Recommended for the owner to settle. It makes the semantic distinction explicit without repurposing the baseline used by inline-blocks. |
+| Publish a distinct first-baseline value and availability alongside the existing exported baseline, and retain it with item measurements | Each owned context publishes after its contributing child/line output settles; independent siblings remain independent. Parent selection/reduction consumes settled outputs. Constant-size reads for repeated sizing, with extra state and an obligation to update every publication, invalidation and outward comparison. | Owner-selected; source authored, execution unvalidated. It makes the semantic distinction explicit without repurposing the baseline used by inline-blocks. |
 | Query the first baseline through settled owner-local entries and nested contexts when needed | Independent item queries share no writes; following a selected child's nested baseline is a true dependency. Avoids another retained value, but repeats traversal during sizing/export and must handle non-flow contexts, availability, empty entries and scrollers correctly. | Viable alternative; the current sequence first field alone is insufficient. No cost comparison yet distinguishes it from retained publication. |
 
 Confidence is 4/5 in the diagnosis and 3/5 in the representation
