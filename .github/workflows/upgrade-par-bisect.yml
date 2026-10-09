@@ -1,9 +1,10 @@
-# Measurement-only release boundary capture inside 0b7f5c5..b2209fd (v0.94 to
-# #280); confined to the research branch and deleted with it.
+# Measurement-only check that wf-843c85091e58 (Whitefoot #316) restores the
+# four-worker layout scaling lost after v0.94; confined to the research branch
+# and deleted with it.
 name: upgrade-par-bisect
 on:
   push:
-    branches: [research/upgrade-par-bisect2]
+    branches: [research/upgrade-par-843]
     paths:
       - .github/workflows/upgrade-par-bisect.yml
       - .github/timing/upgrade-par-bisect.py
@@ -47,13 +48,15 @@ jobs:
       - name: Build each source and release twice with separate caches
         run: |
           set -euo pipefail
-          old=9d720c49daf4de746d507f5b1400ea407e3dfc09
-          adapted=c3ea1c84ca3a2eca1e4048555d8a7298bd620d00
           mkdir -p build/trees results/builds
           printf 'name\trelease\tsource\n' > results/builds.tsv
           installed_major=''
-          for pin in wf-c18e6708b6cc wf-d9d6c92fcb64 wf-631d3ffbe928 wf-b2209fd31035; do
-            source=$old
+          # Each release builds the source that compiles under it: main before
+          # the upgrade, PR #56 at its f887 head (FN-1 deletions) and at its
+          # 843c head (FN-1 deletions plus cancellation handling).
+          for pair in wf-0b7f5c5b9854:9d720c49daf4de746d507f5b1400ea407e3dfc09 wf-f887e82c4611:c3ea1c84ca3a2eca1e4048555d8a7298bd620d00 wf-843c85091e58:bb98d4371d0e148775e232e4d2938ddb9aec3be6; do
+            pin=${pair%%:*}
+            source=${pair#*:}
             for twin in a b; do
               name=${pin#wf-}-$twin
               tree=$GITHUB_WORKSPACE/build/trees/$name
@@ -74,27 +77,8 @@ jobs:
               /usr/bin/clang --version > "$evidence/toolchain.txt"
               ld.lld --version >> "$evidence/toolchain.txt"
               wfc=$tree/build/whitefoot/$pin/whitefootc
-              # The first seq/par pair bounds the remaining compilation batch.
-              if (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/seq.time" "$wfc" --cache "$tree/build/cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle > "$evidence/seq.stdout" 2> "$evidence/seq.stderr"); then
-                echo 0 > "$evidence/seq.exit"
-              else
-                code=$?
-                echo "$code" > "$evidence/seq.exit"
-                if [ "$pin" != wf-23719e608125 ] || [ "$source" != "$old" ]; then cat "$evidence/seq.stderr"; exit "$code"; fi
-                # Do not hide any unrelated failure behind the authorized adaptation.
-                grep -Fq 'error[FN-1]: UnreachableStatement' "$evidence/seq.stderr"
-                mv "$evidence/seq.stderr" "$evidence/old-source.stderr"
-                mv "$evidence/seq.stdout" "$evidence/old-source.stdout"
-                mv "$evidence/seq.exit" "$evidence/old-source.exit"
-                mv "$evidence/seq.time" "$evidence/old-source.time"
-                source=$adapted
-                git -C "$tree" restore whitefoot.pin
-                git -C "$tree" checkout -q "$source"
-                printf 'release = %s\n' "$pin" > "$tree/whitefoot.pin"
-                rm -rf "$tree/build/cache"
-                (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/seq.time" "$wfc" --cache "$tree/build/cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle > "$evidence/seq.stdout" 2> "$evidence/seq.stderr")
-                echo 0 > "$evidence/seq.exit"
-              fi
+              (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/seq.time" "$wfc" --cache "$tree/build/cache" --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle > "$evidence/seq.stdout" 2> "$evidence/seq.stderr")
+              echo 0 > "$evidence/seq.exit"
               (cd "$tree/renderer" && /usr/bin/time -p -o "$evidence/par.time" "$wfc" --cache "$tree/build/cache" --fragments function --par --par-ledger --graph modules.wfg --entry layout_oracle -o ../build/layout_oracle_par > "$evidence/par.stdout" 2> "$evidence/par.stderr")
               echo 0 > "$evidence/par.exit"
               sha256sum "$wfc" "$tree/build/layout_oracle" "$tree/build/layout_oracle_par" > "$evidence/binaries.sha256"
@@ -102,15 +86,6 @@ jobs:
               git -C "$tree" diff -- whitefoot.pin > "$evidence/pin-only.patch"
               printf '%s\t%s\t%s\n' "$name" "$pin" "$source" >> results/builds.tsv
               cat "$evidence/seq.time" "$evidence/par.time"
-              if [ "$pin" = wf-c18e6708b6cc ] && [ "$twin" = a ]; then
-                python3 - <<'PY'
-          from pathlib import Path
-          times = [float(p.read_text().splitlines()[0].split()[1]) for p in Path('results/builds/c18e6708b6cc-a').glob('*.time')]
-          print('first seq/par compile seconds:', times, '; estimated ten-pair batch seconds:', 10 * sum(times))
-          if sum(times) > 1100:
-              raise SystemExit('first pair exceeds the 240-minute job budget; stop before scaling')
-          PY
-              fi
             done
           done
       - name: Pilot, select bounded rounds, and reverse alternate rounds
@@ -123,7 +98,7 @@ jobs:
           if [ -z "$perf" ]; then echo 'perf binary unavailable' > results/profiles/unavailable.txt; exit 0; fi
           "$perf" --version > results/profiles/version.txt
           # Matched controls; full text mode includes setup, boxes and cleanup.
-          for name in 631d3ffbe928-a b2209fd31035-a; do
+          for name in f887e82c4611-a 843c85091e58-a; do
             cp "build/trees/$name/build/layout_oracle_par" build/layout_oracle_par
             if sudo env WF_WORKERS=4 "$perf" record -e cpu-clock -F 99 -g --call-graph dwarf -o "results/profiles/$name.data" -- build/layout_oracle_par text 3 build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > "results/profiles/$name.stdout" 2> "results/profiles/$name.stderr"; then
               echo 0 > "results/profiles/$name.exit"
