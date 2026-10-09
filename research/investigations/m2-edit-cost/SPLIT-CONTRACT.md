@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: HTML5 root-font preparation loses sibling worker offers in wf-b2209fd31035 after the sparse frontier replaces the counted loop. The [source boundary, dependency audit and minimal compiler gap](#root-font-source-boundary-and-dependency-audit) are established; renderer repair stops at that gap, with no workaround or owner-motion change. Bounded retained-lineless processing is implemented under the [proposed contract](#retained-lineless-frontier-bounded-contract-and-prior-falsifiers): admitted leaves still prepare, break and publish, while line-presence transitions and unsupported empty-inline topology have distinct counted refusals. Every acceptance cohort and twin now defaults to wf-b2209fd31035, containing the point-reader grain repair. Completion evidence, the actual disposition of the 41 ECMA262 paragraphs and the full two-round ten-cohort table are maintained in [Draft PR 55, retained fragment topology and the stationary frontier](https://github.com/Ming-Research/Snowghost-wf/pull/55). The earlier compiler tables below remain historical results. General non-stationary restacking is outside this task; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: HTML5 root-font preparation loses sibling worker offers in wf-b2209fd31035 after the sparse frontier replaces the counted loop. The [source boundary, dependency audit and minimal compiler gap](#root-font-source-boundary-and-dependency-audit) are established; renderer repair stops at that gap, with no workaround or owner-motion change. Bounded retained-lineless processing is implemented under the [proposed contract](#retained-lineless-frontier-bounded-contract-and-prior-falsifiers): admitted leaves still prepare, break and publish, while line-presence transitions and unsupported empty-inline topology have distinct counted refusals. Every acceptance cohort and twin now defaults to wf-b2209fd31035, containing the point-reader grain repair. The [new full ten-cohort result](#root-font-continuation-ten-cohort-result) has exactly four literal failures, all HTML5 root-font at four workers; every block comparison passes in that run. [Draft PR 55, retained fragment topology and the stationary frontier](https://github.com/Ming-Research/Snowghost-wf/pull/55) maintains delivery and review status. The earlier compiler tables below remain historical results. General non-stationary restacking is outside this task; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -2554,14 +2554,13 @@ edits, each equal to full layout. These are fixture results, not yet evidence
 for the 41 ECMA262 leaves or for the complete mutation/acceptance matrix.
 The final run must repeat them in sequential and parallel modes.
 
-The completion record is maintained in [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55):
-exact gate revisions and run IDs, the observed 41-leaf distribution, machine
-and compiler details, both rounds of every timing cohort and its twin, every
-literal acceptance failure, review scope/fixes and remaining uncertainty.
-The runtime is frozen for those gates and the subsequent dispatched timing
-run; recording their results in that PR does not create a different source
-revision after validation. This investigation owns the contract and prior
-criteria; the PR owns the current delivery evidence.
+The retained-lineless completion at 5b09e69 is recorded in
+[Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55), including
+its 41-leaf distribution, correctness gates and historical ten-cohort run.
+The root-font continuation below records its bisection, compiler gap and
+repeated acceptance measurement; the PR carries current delivery and review
+status. All evidence names its actual revision. Later investigation edits
+change no renderer source, pin or submodule.
 
 
 ### HTML5 root-font parallel regression: bisection criterion before measurement
@@ -2856,3 +2855,98 @@ commits and run artifacts retain how the observations were made.
   emission contrast, compiler source and unchanged-driver profile agree.
   A compiler repair has not been implemented or measured, so recovery of
   the complete acceptance matrix remains unverified.
+
+
+### Root-font continuation ten-cohort result
+
+[Hosted run 37906888534](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37906888534)
+completed all ten builds and the full measurement. Its
+[raw evidence](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37906888534/artifacts/11610267444)
+contains 480 timing files and 19,200 numbered edits: 20 per ECMA262 file,
+60 per HTML5 file. Every recomputed upper median agrees with its CI summary;
+all 480 summaries occur in the intended forward/reversed order in the job
+log. No timing edit is refused or rebuilt. Workflow success means the
+measurement completed, not that acceptance passed.
+
+The measurement host is a GitHub-hosted AMD EPYC 9V45 96-Core Processor
+exposing four CPUs, Ubuntu 24.04.5, Linux 6.17.0-1022-azure. All ten builds
+use wf-b2209fd31035, function fragments and Ubuntu Clang/LLVM 22.1.8
+(++20260714014902+ca7933e47d3a-1~exp1~20260714135019.80). Sequential and
+parallel drivers use WF_WORKERS=4; the separately recorded style time is
+excluded. Both one-edit HTML5 root-font wall samples took 2.12 seconds before
+the full batch. Native timing precedes the workflow's separate supplemental
+reader profile. All cohorts share pages, fonts, styles and scripts; all 16
+generated scripts match baseline 37892025668 byte for byte. Absolute times
+from different hosted instances are not a before/after attribution.
+
+| Cohort and independent twin | Source |
+|---|---|
+| Main | 8fbc1601785cee70265da1eac4d99589fc6fb67c |
+| cf12 | cf12c609e1c00f86bb431fab4e92f5dca2bf94f2 |
+| Pre-range | 58b16dae2770a774189370d4d2e5b74abc1a2fd0 |
+| Frontier | 3393042d79efe1ada22129b950a610ffae4508aa with `.github/timing/frontier-span.patch` |
+| Head | af2438c9337384a2640f0293b31d3523f9550cf7 |
+
+Each cohort and twin is built independently, with its source and temporary
+pin-only child recorded in the artifact. The measured head's renderer tree
+is identical to 5b09e69 and to the continuation after diagnostic cleanup;
+there is no renderer fix or compiler adoption in this measurement. Round 1
+orders Main, Main twin, cf12, cf12 twin, Pre-range, Pre-range twin, Frontier,
+Frontier twin, Head, Head twin; round 2 reverses it. Cells below are
+unprofiled upper-median edit microseconds, round 1 / round 2.
+
+| Page | Kind | Mode | Main | Main twin | cf12 | cf12 twin | Pre-range | Pre-range twin | Frontier | Frontier twin | Head | Head twin |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | word | seq | 58/54 | 62/59 | 66/61 | 66/66 | 73/63 | 61/65 | 74/65 | 66/62 | 73/64 | 61/64 |
+| ecma262 | word | par | 81/81 | 84/86 | 87/82 | 98/89 | 103/89 | 85/102 | 101/89 | 88/83 | 89/89 | 88/85 |
+| ecma262 | sentence | seq | 163/135 | 164/124 | 473/464 | 446/527 | 87/88 | 82/87 | 99/99 | 98/92 | 84/86 | 84/83 |
+| ecma262 | sentence | par | 224/209 | 223/226 | 417/375 | 418/486 | 131/131 | 120/128 | 145/156 | 139/142 | 121/124 | 118/125 |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | fontsize | seq | 1480/932 | 1774/1780 | 9102/9192 | 9300/9403 | 419/409 | 384/392 | 426/382 | 387/439 | 380/374 | 462/371 |
+| ecma262 | fontsize | par | 1664/1495 | 1745/1907 | 8496/8510 | 9051/9519 | 545/649 | 505/558 | 577/662 | 659/559 | 567/525 | 610/584 |
+| ecma262 | rootfont | seq | 27370/23741 | 26636/27991 | 102895/99435 | 102627/104146 | 110285/108754 | 108694/107586 | 106567/102622 | 105206/102161 | 197/212 | 222/204 |
+| ecma262 | rootfont | par | 49343/45285 | 48114/49279 | 118167/115232 | 118741/121722 | 128161/127110 | 128377/125518 | 125457/124954 | 123000/120596 | 280/303 | 285/300 |
+| ecma262 | block | seq | 464323/447837 | 450182/432852 | 86/83 | 84/91 | 88/86 | 89/88 | 91/89 | 90/86 | 86/83 | 83/83 |
+| ecma262 | block | par | 426141/415913 | 417140/426182 | 114/109 | 115/116 | 114/111 | 116/110 | 119/128 | 119/137 | 111/108 | 109/109 |
+| html5 | word | seq | 42/43 | 42/41 | 52/47 | 46/48 | 50/51 | 49/48 | 52/45 | 47/47 | 52/48 | 49/50 |
+| html5 | word | par | 69/63 | 63/62 | 68/70 | 66/65 | 73/87 | 71/67 | 67/69 | 67/69 | 69/68 | 68/65 |
+| html5 | sentence | seq | 125/119 | 122/120 | 202/193 | 190/192 | 373/371 | 373/371 | 199/192 | 218/190 | 213/206 | 216/208 |
+| html5 | sentence | par | 176/160 | 168/160 | 187/186 | 189/195 | 266/272 | 298/273 | 188/215 | 183/178 | 177/184 | 180/167 |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | fontsize | seq | 513/393 | 394/480 | 1495/1416 | 1675/1889 | 864/843 | 846/880 | 918/898 | 894/906 | 568/561 | 609/665 |
+| html5 | fontsize | par | 547/401 | 464/407 | 1379/1328 | 1702/1891 | 1060/1067 | 1128/1132 | 1134/1083 | 1194/1138 | 664/693 | 689/726 |
+| html5 | rootfont | seq | 456305/444242 | 453698/446253 | 588136/579091 | 585211/579437 | 608328/619040 | 615551/620191 | 618997/604629 | 613477/603496 | 624984/605040 | 620651/615946 |
+| html5 | rootfont | par | 270353/264201 | 270148/256831 | 381203/383936 | 396866/374302 | 662728/675158 | 673793/665521 | 662229/675223 | 666938/657692 | 661084/657582 | 668969/659094 |
+| html5 | block | seq | 629684/578051 | 609471/573344 | 360/376 | 377/355 | 450/439 | 452/445 | 362/379 | 349/362 | 281/262 | 272/268 |
+| html5 | block | par | 559404/520280 | 533354/509476 | 384/377 | 402/396 | 344/338 | 360/356 | 382/462 | 392/379 | 234/236 | 237/237 |
+
+Acceptance compares each head build with its corresponding main build at
+most twice main, and each block cell with its corresponding cf12 build at
+most cf12. Of 112 comparisons (96 against main, including block, and 16
+additional block comparisons), exactly four fail:
+
+| Page / kind / mode | Candidate | Round | Candidate us | Main control us | Allowed maximum us | Ratio |
+|---|---|---:|---:|---:|---:|---:|
+| HTML5 rootfont par | Head | 1 | 661084 | 270353 | 540706 | 2.445x |
+| HTML5 rootfont par | Head | 2 | 657582 | 264201 | 528402 | 2.489x |
+| HTML5 rootfont par | Head twin | 1 | 668969 | 270148 | 540296 | 2.476x |
+| HTML5 rootfont par | Head twin | 2 | 659094 | 256831 | 513662 | 2.566x |
+
+Every other main comparison and all 16 block comparisons pass in this run.
+The historical one-microsecond ECMA262 block miss is not reproduced; no
+source change or isolated measurement establishes a block speedup. HTML5
+root-font remains systematically over the limit in both builds and rounds,
+consistent with the independently established missing preparation offers.
+The compiler repair and its effect on acceptance remain unmeasured.
+
+All 160 head/twin ECMA262 root-font timing edits prepare and break 41
+paragraphs, visit six entries, hold zero entries and have zero frontier
+refusals; the two existing context boundary fallbacks with reason 7 remain.
+Head sequential medians are 197/212 us (twin 222/204), and parallel 280/303
+(twin 285/300). All 480 corresponding HTML5 edits prepare 60867–60868
+paragraphs, break 60868, visit 105989 entries and hold 105927, with zero
+frontier refusals and 1979 context boundary fallbacks with reason 7.
+The ECMA262 retained-lineless improvement remains present; it does not remove
+HTML5's separate preparation cost.
