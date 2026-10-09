@@ -3000,3 +3000,16 @@ correctness result or acceptance recovery is claimed yet. The complete
 correctness gates remain required. Four-worker acceptance timing waits for
 the separately owned paged-overlap-regression repair; this continuation runs
 only on GitHub-hosted CI and runs no acceptance timing.
+
+
+The integration review found the range counterpart of a changed height rule:
+`publish_reference_ranges` still replaced every retained Open's basis with
+the context height, although the incoming `translated_reference_output`
+correctly stopped doing that. Publication now keeps each Open's immediate
+containing-block basis. The existing nested zero-rebase boundary case gives
+its retained Open basis 40 while the context basis is unknown, and requires
+40 after publication. The new `range-context-basis` mutation restores the
+obsolete unknown-basis assignment and must trip this runtime assertion after
+successful compilation; its result is pending. Range basis channels remain
+covered by their existing explicit-action test, but reference suffix
+translation no longer produces a basis assignment.
