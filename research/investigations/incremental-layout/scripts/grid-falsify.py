@@ -88,7 +88,7 @@ MUTATIONS = {
         '    return False();', 'flex-fixed-intrinsic', 'positive-path'),
     'share-auto-margin-baseline': (
         'grid', 'grid_mark_baselines',
-        '        let participates = band(aligned, bnot(automatic));',
+        '        let participates = band(aligned, manual);',
         '        let participates = aligned;', 'baseline-auto-margin', 'chromium'),
     'suppress-grid-refusal': (
         'oracle', 'put_structure_path',

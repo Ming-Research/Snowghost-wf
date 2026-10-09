@@ -4224,9 +4224,11 @@ fn exclude(selected: Bool, automatic: Bool) -> value: Bool pure {
 ```
 
 The newly authored automatic-minimum predicate has the same shape.
-The owner is asked to classify this as a source syntax correction using the
-required flat form, or a Whitefoot gap to address in the language. No
-respelling is applied while that decision is open. The isolated grammar
+The owner classified this as a source syntax error: GRAM-9 requires flat
+three-address computation, as used throughout the renderer. Both predicates
+now bind the inner negation before passing its value to the conjunction;
+the auto-margin mutation targets the corrected conjunction. This is ordinary
+Whitefoot and introduces no language-gap TODO. The isolated grammar
 reproduction in [run 37892904373](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37892904373)
 at `859f72a` reproduces `GRAM-9 UnexpectedToken` at `repro.wf:2:37`, found
 `bnot(`. Design lint and detector controls also pass at that revision (7
