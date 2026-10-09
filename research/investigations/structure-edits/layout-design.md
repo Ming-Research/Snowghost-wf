@@ -4628,3 +4628,14 @@ every prefix to a fresh layout and Chromium. A shorter 20px peer leaves the
 cannot conceal an incorrect 30px natural measurement. Any disagreement rejects the
 current reuse publication; geometry equality alone cannot justify stale
 inputs used by a later restyle.
+
+The first lifetime probe passes on both the handoff and repaired renderers in
+[37939261832](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37939261832).
+The ordinary boundary path publishes the new child's height-read summary and
+sets `boundary_dirty`; when grid row measurement switches to indefinite
+height, reference preparation rebuilds the input and `definite_free` summary.
+An intrinsic-column variant is also required: it asks the item's intrinsic
+sizes before layout, making the boundary path decline and exercising the
+reference update directly. It keeps the 200px item width and 20px peer, so
+the expected natural row height and final percentage height stay 60px and
+30px. A failure there would reject relying on the ordinary-boundary guard.

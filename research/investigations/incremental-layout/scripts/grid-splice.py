@@ -176,10 +176,12 @@ def run(driver, directory, name, baseline):
     command([sys.executable, str(HERE / 'splice-cases.py'), '--check-paths', str(expected), str(raw)])
 
 
-def final_space(driver, directory):
+def final_space(driver, directory, intrinsic=False):
     """Check final constraints and a later direct-context height reader."""
     directory.mkdir(parents=True, exist_ok=True)
     source = Path('tests/layout/grid-final-space-cases.html').read_text()
+    if intrinsic:
+        source = source.replace('</style>', '.restyle-grid { grid-template-columns: auto 80px; }\n.restyle-grid > article { width: 200px; }\n</style>')
     page = directory / 'case.html'
     page.write_text(source)
     (directory / 'changed.html').write_text(source.replace(
@@ -215,7 +217,8 @@ def main():
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=True)
     if args.final_space:
-        final_space(args.driver, args.directory)
+        final_space(args.driver, args.directory / 'fixed')
+        final_space(args.driver, args.directory / 'intrinsic', intrinsic=True)
         return
     failures = []
     summary = []
