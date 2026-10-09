@@ -3,50 +3,22 @@
 Items the work has found and not yet done. Remove an item in the change that
 resolves it.
 
-## Q140 grid rerun dependency
+## Q140 prerequisites awaiting validation
 
-- **Grid sizing serializes independent item proposals through shared scratch.**
-  The pre-Q140 `grid_pass` wrote `share`, `planned` and `touched` across its
-  item loop, then applied per-track maxima only after that loop. The proposed
-  replacement uses item-owned segments and balanced maximum/OR reductions,
-  but cannot yet compile at the pinned language boundary below.
-  Items within the same sizing phase/span group read unchanged bases and
-  limits; the inter-item ordering is a storage dependency. `grid_shim_baselines`
-  previously accumulated row maxima through shared writes; its proposed
-  replacement also uses balanced reductions. Impact: directly
-  reusing these passes for Q140 preserves an unnecessary dependency contrary
-  to R3. Recommendation awaiting the owner: item-owned proposals followed by
-  balanced per-track maximum/OR reductions in the common full-layout path;
-  per-track recomputation is the alternative with less scratch and more work.
-  No timing establishes which work/storage tradeoff is better. Validate
-  independent item writes, unchanged numeric distribution order, full/retained
-  and Chromium grid identity, semantic mutations, and Q140's hosted paired
-  edit/full-layout/RSS comparison. Reopen when the owner rules on the scratch
-  choice in the Q140 Draft PR. The
-  [argument and alternatives](../research/investigations/structure-edits/layout-design.md#dependencies-and-the-existing-shared-track-scratch)
-  own the details; the scratch choice remains proposed and encounters the
-  direct-segment-access language boundary recorded below.
-
-- **Grid baseline alignment consumes the flow item's last baseline.** The
-  Q140 hosted matrix at `a8a0e30` disagrees with Chromium before any edit in
-  both modes: the `baseline` grid is 120 px rather than 133 px tall, and
-  `baseline-consumer` places the outer flex peer 27 px too low. Flow publishes
-  its last baseline; grid row shims and grid baseline export consume it as
-  the first. The proposed repair adds a distinct context first value and
-  availability, child sequence publication, retained equality and all flow
-  update returns; shared-source compilation remains blocked below. Preserve
-  the existing last-baseline consumers and supply a correct first value and
-  availability through nested contexts. Retained first-baseline output work
-  proceeds under the continuation instruction, while its card stays open and
-  hosted correctness, currentness and cost remain unverified.
-  Validate both failing families, nested contexts, baseline-sharing item
-  selection, scrolling overflow, original first-item removal and unchanged
-  inline-block behavior against the independent browser and full rebuild.
-  The item-selection and scrolling cases are source-inspection leads, not
-  measured failures. Reopen with the owner's baseline-contract ruling before
-  Q140 can claim baseline coverage; keep both fixtures failing until repaired.
-  [Evidence and alternatives](../research/investigations/structure-edits/layout-design.md#baseline-matrix-finding-and-shared-contract-choice)
-  record the full-layout prerequisite separately from splice admission.
+- **Independent grid proposals and first-baseline publication need executable
+  evidence.** The owner selected item-owned proposal segments with balanced
+  per-track reductions and a distinct first-baseline value/availability for
+  every context. Both source repairs are authored; segment reads now use
+  the owner's authorized range-reference form. Validate full/retained and
+  Chromium grid identity, the three baseline mutations, and the hosted paired
+  edit/full-layout/RSS comparison before claiming completion. The original
+  failing fixtures must reach Chromium's 133 px grid height and 8 px outer
+  flex peer top in both modes. Preserve existing last-baseline consumers and
+  validate nested contexts, sharing priority, scrolling, row spans and first
+  baseline changes at fixed heights. Reopen on any failed gate or regression
+  beyond the base twin's spread. The
+  [Q140 investigation](../research/investigations/structure-edits/layout-design.md#q140-grid-row-sizing-under-invariant-columns)
+  owns the dependency argument and prior failure evidence.
 
 ## Oracle input completeness
 
@@ -76,6 +48,21 @@ example apart from the renderer code that exposed it
   then `segment^.len` or `segment^[j]`. Snowghost uses it for item-owned grid
   proposals in `grid_pass` and `grid_reduce_proposals`. When Whitefoot admits
   natural `s[i].len` and `s[i][j]`, switch these accesses back.
+
+- **Bounds from computed `give` values do not reach the receiving index.**
+  With `count = values^.len` and an early return for zero, the natural
+  `let at = if reverse { give count - 1_u64; } else { give 0_u64; }`
+  followed by `values^[at]` is rejected with
+  `OP-4 UndischargedBoundsObligation: at < values^.len`. Hosted
+  [layout-check 37883842994](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37883842994)
+  rejects the corresponding `flex_publish_first_baseline` selector at
+  `a9517cb`; GIVE-1/ENT-5 at the pin expressly exclude computed expressions
+  from scalar fact delivery. Impact: all candidate renderer gates stop
+  before execution. Proposed follow-up: carry the proved bounds of the
+  evaluated scalar expression through each `give` and its ordinary join;
+  validate first/last selection and negative joins without adding a runtime
+  check. The isolated hosted reproduction is pending. Reopen on the owner's
+  ruling; no named-intermediate or guarded-access rewrite is authorized.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the

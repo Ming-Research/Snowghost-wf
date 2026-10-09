@@ -1,5 +1,5 @@
-# Temporary language-boundary reproduction for Q140. Remove after the owner
-# resolves direct segment access and the renderer compiles normally.
+# Temporary isolated Q140 language-boundary evidence. Remove when the
+# natural-form refusals are resolved and the renderer compiles normally.
 name: q140-segment-repro
 on:
   push:
@@ -50,8 +50,59 @@ jobs:
           test "$status" -ne 0
           grep -F 'error[OP-4]: TypeMismatch' build/segment-repro/compiler.log
           grep -F 'found: Segments<i32>' build/segment-repro/compiler.log
+      - name: Specified segment borrow is accepted
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          cat > build/segment-repro/repro/repro.wf <<'EOF'
+          fn segment_length(values: &Box<Segments<i32>>, item: u64) -> count: u64 reads(values) {
+            if item < values^.inner.len {
+              let segment = &values^.inner[item];
+              return segment^.len;
+            }
+            return 0_u64;
+          }
+          EOF
+          (cd build/segment-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/segment-repro/borrow.log 2>&1
+          cat build/segment-repro/borrow.log
+      - name: Reproduce bounded first-or-last selection
+        run: |
+          set -euo pipefail
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/selection-repro/repro
+          git rev-parse HEAD > build/selection-repro/revision.txt
+          cp whitefoot.pin build/selection-repro/
+          cat > build/selection-repro/modules.wfg <<'EOF'
+          pkg::repro: [];
+          EOF
+          cat > build/selection-repro/repro/module.wfm <<'EOF'
+          public fn selected(values: &[i32], reverse: Bool) -> value: i32 reads(values) doc "Reads the first or last element of a nonempty range, zero when empty.";
+          EOF
+          cat > build/selection-repro/repro/repro.wf <<'EOF'
+          fn selected(values: &[i32], reverse: Bool) -> value: i32 reads(values) {
+            let count = values^.len;
+            if count == 0_u64 {
+              return 0_i32;
+            }
+            let at = if reverse {
+              give count - 1_u64;
+            } else {
+              give 0_u64;
+            }
+            return values^[at];
+          }
+          EOF
+          status=0
+          (cd build/selection-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/selection-repro/compiler.log 2>&1 || status=$?
+          echo "$status" > build/selection-repro/exit-code.txt
+          cat build/selection-repro/compiler.log
+          test "$status" -ne 0
+          grep -F 'error[OP-4]: UndischargedBoundsObligation' build/selection-repro/compiler.log
+          grep -F 'residual: at < values^.len' build/selection-repro/compiler.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: q140-segment-repro
-          path: build/segment-repro/
+          path: |
+            build/segment-repro/
+            build/selection-repro/

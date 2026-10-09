@@ -3827,8 +3827,7 @@ path. R3 requires a disposition before choosing how the rerun executes it.
 | Per-track independent recomputation of item proposals | Each output track independently examines relevant items, recomputing the distribution needed to obtain its share, then reduces them. No shared writes; lower retained scratch but duplicated distribution work, potentially quadratic in a span. | A viable alternative with the same phase dependencies and a different work/storage tradeoff; no measurements yet discriminate it. |
 | Reuse the existing shared scratch loop unchanged | One item must finish its scratch writes before the next uses them, although their proposals do not depend on each other. Lowest implementation disruption. | Not recommended: that ordering is imposed by scratch ownership, contrary to R3. |
 
-The continuation instruction authorizes proceeding on option A while its
-owner decision card stays open. The proposed implementation gives each item
+The owner selected option A. The authored implementation gives each item
 one segment containing its spanned phase inputs and distribution scratch.
 Independent item writes precede balanced maximum/OR reductions for each
 track, followed by independent track application. A later phase/span group
@@ -3836,7 +3835,8 @@ waits for those applied bases/limits; inside each distribution, water-filling
 rounds depend on remaining space and deterministic numeric remainders retain
 the reference order. The segment lengths are actual allocation inputs, not
 proof-only metadata. No sizing path is selected by an edit kind or fixture.
-Hosted compilation and measurements remain pending.
+Hosted compilation and measurements remain pending after adopting the
+specified segment borrow form below.
 
 ### Required fixtures and mutations
 
@@ -3985,13 +3985,13 @@ externally consumed baseline fixtures against Chromium and full rebuild,
 plus the requested paired edit/full-layout/RSS experiment. Reject a repair
 that leaves those cases wrong, changes existing last-baseline behavior, adds
 unnecessary sibling ordering, or introduces a measured regression beyond
-the M2 twin's spread without disposition. This prerequisite remains open
-alongside the independent-proposal choice; neither is a Whitefoot gap.
+the M2 twin's spread without disposition. The owner selected retained first-baseline publication and independent item
+proposals. Their executable validation remains open; neither choice is a
+Whitefoot gap.
 
 ### First-baseline publication implementation under option A
 
-The continuation instruction permits implementation on A while the card
-remains open. Contexts now carry first-baseline value and availability next
+The owner selected option A. Contexts now carry first-baseline value and availability next
 to the existing baseline. A flow publishes from its settled sequence's first
 contributing handle, reading that line or child's first result and its
 ancestor origins. It does not scan siblings or traverse nested context
@@ -4015,7 +4015,7 @@ with a nonsharing first item, and a first-only font change at fixed item and
 container heights. All candidate outcomes, mutations and costs are still
 unverified until hosted execution.
 
-### Direct segment access stops hosted compilation
+### Direct segment access and the authorized specified borrow
 
 The first implementation revision `3f8767a` fails hosted
 [check 37878456548](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878456548)
@@ -4040,12 +4040,16 @@ At the pinned Whitefoot revision, TYPE-9, REF-4 and OP-4 explicitly restrict
 segments to complete range-reference borrows (`&s[i]`), while RANGE-1's
 segment projections occur only in nonexecuting clauses. The rejection agrees
 with that language boundary; it is not evidence of a compiler defect.
-The task forbids changing a natural form to a different spelling to pass the
-checker, so this step stops for an owner ruling. Item-owned storage and
-balanced reductions remain the proposed algorithm; no shared-scratch or
-per-track-recomputation alternative is substituted. First-baseline source
-work can be inspected independently, but exact-head compilation, Chromium
-results, executable mutation detection and cost all remain unverified.
+The owner classified direct access as a language gap, recorded on the
+Whitefoot side, and authorized Snowghost to use the specified form now.
+`grid_pass` borrows each complete proposal segment with `&s[i]`;
+`grid_reduce_proposals` borrows it before reading its length or element.
+This changes neither the item-owned storage nor the sizing semantics or
+dependencies and adds no run-time check or data. The short
+[Whitefoot requirement](../../../docs/todo.md#whitefoot-requirements) calls
+for switching back when natural direct access is admitted. Every other
+natural-form refusal remains a stop. Exact-head compilation, Chromium
+results, executable mutation detection and cost still require hosted evidence.
 
 The independent source review identified legacy grid/flex baseline exports
 that the first-value repair had repurposed. Grid now keeps separate legacy
@@ -4065,3 +4069,39 @@ Chromium mismatch for nested flow. The established Q139 mutation detector
 rejects malformed output and unrelated driver failures. Compiler rejection
 is not detection. Structural-splice publication mutation remains pending
 actual Q140 admission, because reason-2 reconstruction would conceal it.
+
+### Computed first-or-last selection loses its bounds
+
+After the authorized segment borrow, hosted
+[check 37883842980](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37883842980)
+and [layout-check 37883842994](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37883842994)
+at `a9517cb` stop at the first-baseline selector in `flex_publish_first_baseline`:
+
+```wf
+let count = values^.len;
+if count == 0_u64 { return 0_i32; }
+let at = if reverse {
+  give count - 1_u64;
+} else {
+  give 0_u64;
+}
+return values^[at];
+```
+
+This fragment selects the first or last element after excluding the empty
+range, yet the renderer diagnostic is OP-4 `UndischargedBoundsObligation`,
+with residual `line_at < lines^.inner.len`. The pinned GIVE-1 and ENT-5
+carry scalar relations from bare bindings, literals and named constants,
+but expressly exclude computed expressions; the subtraction therefore
+loses its bound at delivery. This is a specified language boundary rather
+than evidence of a compiler/specification mismatch. The temporary hosted
+reproduction now checks this minimal range form and the accepted segment
+borrow independently of the renderer. Its result is pending.
+
+The first-baseline selector is unchanged pending the owner's ruling.
+Extending Whitefoot's evaluated scalar fact delivery preserves the natural
+source and static proof; named branch intermediates would instead require
+another explicit spelling exception. No runtime guard, extra proof data,
+semantic change or pin movement is substituted. Candidate geometry,
+mutation detection and costs remain unverified because no renderer can yet
+be built. The three owner-selected algorithm choices still stand.
