@@ -5,10 +5,16 @@ on:
     branches: [research/upgrade-par-diag]
     paths:
       - .github/workflows/upgrade-par-diag.yml
-      - research/investigations/layout/upgrade-par-examples/**
   workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [details, examples, drivers]
+        default: details
 permissions:
   contents: read
+env:
+  DIAG_MODE: ${{ inputs.mode || 'details' }}
 jobs:
   ledger:
     runs-on: ubuntu-24.04
@@ -33,20 +39,44 @@ jobs:
       - name: Install the pinned toolchain
         working-directory: side
         run: make toolchain
-      - name: Compile layout_oracle and retain the full ledger
+      - name: Record revisions and releases
         working-directory: side
         run: |
-          set -uo pipefail
+          set -euo pipefail
           mkdir -p ../results
           git rev-parse HEAD > ../results/revision.txt
           cat whitefoot.pin >> ../results/revision.txt
           pin=$(sed -n 's/^release = //p' whitefoot.pin)
           cp "build/whitefoot/$pin/whitefoot-release.json" ../results/
+      - name: Compile layout_oracle and retain the full ledger
+        if: env.DIAG_MODE == 'drivers'
+        working-directory: side
+        run: |
+          set -uo pipefail
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
           wfc=$(realpath "build/whitefoot/$pin/whitefootc")
           cd renderer
           if "$wfc" --cache ../build/par-diag-cache --fragments function \
               --par --par-ledger --graph modules.wfg --entry layout_oracle \
               -o ../build/layout_oracle_par \
+              > ../../results/compiler.stdout 2> ../../results/compiler.stderr; then
+            compiler_exit=0
+          else
+            compiler_exit=$?
+          fi
+          printf '%s\n' "$compiler_exit" > ../../results/compiler.exit
+          exit "$compiler_exit"
+      - name: Emit LLVM to inspect actual task publications
+        if: env.DIAG_MODE == 'details'
+        working-directory: side
+        run: |
+          set -uo pipefail
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$(realpath "build/whitefoot/$pin/whitefootc")
+          cd renderer
+          if "$wfc" --par --par-ledger --emit-llvm \
+              --graph modules.wfg --entry layout_oracle \
+              -o ../../results/layout_oracle.ll \
               > ../../results/compiler.stdout 2> ../../results/compiler.stderr; then
             compiler_exit=0
           else
@@ -76,6 +106,18 @@ jobs:
               status=1
             fi
             printf '%s\n' "$compiler_exit" > "../results/examples/$name/compiler.exit"
+            if [ "$compiler_exit" -eq 0 ]; then
+              if "$wfc" --par --par-ledger --emit-llvm "$source" \
+                  -o "../results/examples/$name/program.ll" \
+                  > "../results/examples/$name/emission.stdout" \
+                  2> "../results/examples/$name/emission.stderr"; then
+                emission_exit=0
+              else
+                emission_exit=$?
+                status=1
+              fi
+              printf '%s\n' "$emission_exit" > "../results/examples/$name/emission.exit"
+            fi
           done
           exit "$status"
       - uses: actions/upload-artifact@v4
