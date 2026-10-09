@@ -79,3 +79,73 @@ jobs:
           name: upgrade-emission-${{ matrix.side }}
           if-no-files-found: error
           path: emission/
+  io-adaptation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Install the pinned toolchain
+        run: make toolchain
+      - name: Exercise the error reader and its negative controls
+        run: |
+          set -euo pipefail
+          mkdir -p build/upgrade-io
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          root = Path('build/upgrade-io')
+          path = 'renderer/oracle/support/support.wf'
+          current = Path(path).read_text()
+          old = subprocess.check_output(['git', 'show', 'c3ea1c8:' + path], text=True)
+          def reader(source):
+              return 'fn io_error_code(' + source.split('fn io_error_code(', 1)[1].split('\nfn put_host_error(', 1)[0]
+          probe = '''
+          fn main() -> status: std::process::ExitStatus pure {
+            let cancelled = io_error_code(error: IoError::Cancelled());
+            let deadline = io_error_code(error: IoError::DeadlinePassed());
+            let host = io_error_code(error: IoError::Other(code: 37_u32, origin: 1_u8));
+            if cancelled != 0_u32 {
+              return std::process::exit_status(code: 1_u8);
+            }
+            if deadline != 0_u32 {
+              return std::process::exit_status(code: 2_u8);
+            }
+            if host != 37_u32 {
+              return std::process::exit_status(code: 3_u8);
+            }
+            return std::process::exit_status(code: 0_u8);
+          }
+          '''
+          body = reader(current)
+          zero = 'Cancelled() => {\n      return 0_u32;'
+          assert body.count(zero) == 1
+          wrong = body.replace(zero, 'Cancelled() => {\n      return 1_u32;')
+          for name, source in [('current', body), ('before', reader(old)), ('wrong', wrong)]:
+              (root / (name + '.wf')).write_text('alias IoError = std::io::IoError;\n' + source + probe)
+          PY
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$(realpath "build/whitefoot/$pin/whitefootc")
+          "$wfc" build/upgrade-io/current.wf -o build/upgrade-io/current
+          build/upgrade-io/current
+          if "$wfc" build/upgrade-io/before.wf -o build/upgrade-io/before > build/upgrade-io/before.log 2>&1; then
+            echo 'the old reader unexpectedly accepted the cancellation variant' >&2
+            exit 1
+          fi
+          grep 'NonExhaustiveMatch' build/upgrade-io/before.log
+          "$wfc" build/upgrade-io/wrong.wf -o build/upgrade-io/wrong
+          if build/upgrade-io/wrong; then
+            echo 'the error-code probe missed a wrong cancellation code' >&2
+            exit 1
+          else
+            wrong_exit=$?
+          fi
+          test "$wrong_exit" -eq 1
+          echo 'current reader passed; old reader rejected; wrong cancellation code detected'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-io-adaptation
+          path: build/upgrade-io/
