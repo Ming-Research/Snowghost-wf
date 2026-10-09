@@ -40,8 +40,8 @@ example apart from the renderer code that exposed it
   trial or compiler-only timing has run, and the offer's exclusive latency
   cost is unverified. The owner choice is to prioritize that Whitefoot grain
   investigation (recommended) or defer further reader redesign until this
-  existing concern is addressed. The complete X5 comparison continues while
-  this choice is pending; renderer dependencies remain unchanged.
+  existing concern is addressed. The [complete X5 comparison](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#geometry-reader-ten-cohort-result)
+  still misses sentence/frontier and the stated acceptance cells; renderer dependencies remain unchanged.
 
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
@@ -421,8 +421,11 @@ example apart from the renderer code that exposed it
   native capture and frozen-binary inspection identify the point-reader task
   offer recorded under Whitefoot requirements above; its causal latency
   share is unverified. Further reader redesign awaits the owner direction,
-  while the all-kind ten-cohort comparison supplies the remaining acceptance
-  evidence. The splice plan's
+  with the [complete ten-cohort result](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#geometry-reader-ten-cohort-result)
+  now recorded: HTML5 block beats frontier and cf12 in both modes and rounds,
+  and the font-size gain survives. Sentence still misses frontier in both
+  modes and rounds. Seven primary and ten reader-twin acceptance cells fail,
+  in ECMA262 root-font/block and HTML5 parallel font-size. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.

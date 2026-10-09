@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [geometry pilot](#geometry-only-reader-pilot-result-and-remaining-attribution), but HTML5 sentence still exceeds the patched frontier. Its complete all-kind comparison is pending. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. Root-font contract work and further reader redesign await the two recorded owner choices, including the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction). The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [complete ten-cohort comparison](#geometry-reader-ten-cohort-result), but HTML5 sentence still exceeds the patched frontier. Seven primary and ten reader-twin acceptance cells fail in ECMA262 root-font/block and HTML5 parallel font-size. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. Root-font contract work and further reader redesign await the two recorded owner choices, including the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction). The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -2262,8 +2262,8 @@ pass with the production pin. The native profiling and binary-inspection
 workflow and script are retired after preserving their evidence. All builds,
 tests, checks and timing ran on GitHub-hosted runners; local work was source
 editing, repository inspection and analysis of downloaded evidence.
-No pin, submodule or approval log changed. The all-kind timing result remains
-pending, and neither owner direction card has been ruled on.
+No pin, submodule or approval log changed. The completed all-kind timing
+result is below, and neither owner direction card has been ruled on.
 
 The separate read-only completion review covers the complete task-base
 58b16da..4e2c11f diff, directly affected consumers, the current result/TODO
@@ -2279,6 +2279,126 @@ execution on another worker. The form evidence remains seven nodes, depth
 one, 66 to 67 decisions against the task base and 24 rejections.
 General design arguments, nonzero content adjustment through the new
 published positioned reader, the retired harness's unexecuted short-batch
-control and a minimized compiler-only grain trial remain unverified. Final
-all-kind timing and delivery checks need an evidence addendum; no owner
-approval or completion of the paused implementation steps is implied.
+control and a minimized compiler-only grain trial remain unverified.
+The read-only evidence addendum independently parsed all 480 raw timing
+files and 120 compressed profile parts, verified every table median,
+acceptance failure and inherited-read total below, and checked the final
+result/TODO prose over 992ffcd. It found no further issue. Final-head hosted
+gates and remote verification are delivery checks; no owner approval or
+completion of the paused implementation steps is implied.
+
+
+### Geometry reader: ten-cohort result
+
+[Hosted comparison 37866007483](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37866007483)
+succeeds at f29dcde6f3a0cc9f70f7f082d222db1773445b83, whose runtime is
+unchanged from 50a898e4d09feae50e19986773cb27dfd7e85040. The ten independent
+builds are main 8fbc1601785cee70265da1eac4d99589fc6fb67c, cf12c609e1c00f86bb431fab4e92f5dca2bf94f2,
+range-before 58b16dae2770a774189370d4d2e5b74abc1a2fd0, the patched frontier
+3393042d79efe1ada22129b950a610ffae4508aa plus `frontier-span.patch`, and the
+reader, each with its own twin. The main control has the same renderer and
+pin as current main 9d720c49daf4de746d507f5b1400ea407e3dfc09; intervening
+changes affect documentation and the vocabulary investigation's Makefile.
+The measurement host is an AMD EPYC 7763 exposing four CPUs, Ubuntu 24.04.5,
+Linux 6.17.0-1022-azure, Clang/LLVM 22.1.8, wf-0b7f5c5b9854 and
+WF_WORKERS=4. The timing-only pin does not change the work branch's production
+pin. All cohorts share the page, styles, fonts and edit scripts on this host.
+
+The complete two forward/reverse rounds contain 480 raw timing files and
+19,200 numbered edits: 20 per ECMA262 kind and 60 per HTML5 kind. These are
+unprofiled upper-median microseconds, round 1/round 2. They are not compared
+as absolute times with a different host's pilot.
+
+| Page | Kind | Mode | Main | Main twin | cf12 | cf12 twin | Range before | Before twin | Frontier | Frontier twin | Reader | Reader twin |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ecma262 | word | seq | 101/100 | 104/119 | 119/119 | 110/107 | 120/107 | 118/116 | 113/116 | 120/124 | 112/107 | 109/116 |
+| ecma262 | word | par | 162/164 | 160/165 | 178/180 | 178/188 | 185/191 | 177/198 | 183/188 | 192/180 | 180/187 | 181/177 |
+| ecma262 | sentence | seq | 228/249 | 221/245 | 760/765 | 779/747 | 148/143 | 145/141 | 154/155 | 154/150 | 151/144 | 147/138 |
+| ecma262 | sentence | par | 334/323 | 306/332 | 737/757 | 675/677 | 227/226 | 230/229 | 236/237 | 247/240 | 232/247 | 224/243 |
+| ecma262 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| ecma262 | fontsize | seq | 1275/1138 | 1611/1663 | 9380/9140 | 8210/9212 | 524/504 | 503/479 | 530/527 | 541/527 | 480/503 | 523/482 |
+| ecma262 | fontsize | par | 1607/1695 | 1991/2027 | 9825/9402 | 9111/9160 | 865/852 | 873/775 | 750/850 | 743/718 | 745/784 | 737/919 |
+| ecma262 | rootfont | seq | 28991/27826 | 31108/32443 | 113592/114077 | 112245/112759 | 121163/118514 | 119350/118302 | 115744/109431 | 118885/111866 | 116182/115852 | 120855/121796 |
+| ecma262 | rootfont | par | 70559/63141 | 68100/69609 | 223822/220086 | 214862/217507 | 205687/203215 | 203949/203906 | 184945/182542 | 188363/183019 | 209840/210725 | 215146/214269 |
+| ecma262 | block | seq | 532585/518370 | 555129/545896 | 119/116 | 121/114 | 119/121 | 119/119 | 118/122 | 134/120 | 116/119 | 122/119 |
+| ecma262 | block | par | 374634/368477 | 395219/377648 | 185/207 | 186/188 | 190/201 | 196/196 | 196/189 | 216/188 | 196/192 | 191/209 |
+| html5 | word | seq | 73/73 | 75/73 | 84/81 | 80/79 | 84/83 | 84/81 | 84/81 | 82/84 | 86/84 | 83/83 |
+| html5 | word | par | 120/120 | 120/122 | 130/127 | 128/131 | 133/133 | 131/133 | 135/130 | 131/138 | 132/132 | 132/133 |
+| html5 | sentence | seq | 236/218 | 220/219 | 323/326 | 321/339 | 648/671 | 688/680 | 355/339 | 335/337 | 361/366 | 359/354 |
+| html5 | sentence | par | 340/314 | 342/331 | 345/373 | 358/346 | 620/614 | 610/615 | 355/377 | 360/399 | 461/484 | 453/456 |
+| html5 | colour | seq | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | colour | par | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| html5 | fontsize | seq | 764/803 | 793/708 | 2061/1983 | 1858/1796 | 1342/1371 | 1325/1336 | 1501/1488 | 1555/1503 | 870/860 | 854/825 |
+| html5 | fontsize | par | 768/736 | 761/777 | 2342/2169 | 2105/2140 | 2199/2363 | 2284/2267 | 2079/1965 | 1941/1957 | 1521/1544 | 1558/1577 |
+| html5 | rootfont | seq | 621884/621832 | 631431/623484 | 768593/770002 | 759687/769584 | 808825/818915 | 812900/824402 | 813977/810342 | 808991/805191 | 810300/814945 | 814386/810979 |
+| html5 | rootfont | par | 361207/362765 | 366747/363055 | 563319/569207 | 559330/568705 | 566041/571591 | 576822/584619 | 551416/537318 | 547309/539117 | 575391/572831 | 571658/581770 |
+| html5 | block | seq | 631204/636887 | 602985/612065 | 567/612 | 564/570 | 738/742 | 741/750 | 570/572 | 571/577 | 439/454 | 442/456 |
+| html5 | block | par | 446901/474694 | 436301/443199 | 682/669 | 655/672 | 732/730 | 731/727 | 678/663 | 677/677 | 586/585 | 576/595 |
+
+The complete reader repair lowers HTML5 sentence from 648/671 to 361/366 us
+sequential and from 620/614 to 461/484 parallel, with both before and after
+twins supporting the reduction. It still misses the patched frontier in all
+four primary round cells: frontier is 355/339 sequential and 355/377 parallel.
+The sequential first-round gap is small; the table retains twin variation
+instead of interpreting every literal difference as an attributable cost.
+HTML5 block now beats both controls in both modes and rounds: 439/454 us
+sequential and 586/585 parallel, against frontier 570/572 and 678/663, and
+cf12 567/612 and 682/669. Both reader twins also pass those block comparisons.
+The font-size gain over frontier remains: 870/860 us sequential and
+1,521/1,544 parallel, against 1,501/1,488 and 2,079/1,965, beyond their
+respective twin spread.
+
+**Acceptance still fails.** Against its primary controls, the reader fails
+seven literal round cells: ECMA262 root-font sequential in both rounds
+(4.01/4.16 times main) and parallel in both (2.97/3.34); ECMA262 block
+sequential round 2 (119 > 116 us) and parallel round 1 (196 > 185); and
+HTML5 font-size parallel round 2 (1,544 > 2 × 736 us, or 2.10 times main).
+Every other primary all-X5/main and block/cf12 cell passes, but the additional
+sentence/frontier target fails all four cells above.
+
+The reader twin is compared with the corresponding main and cf12 twins,
+not omitted from acceptance reporting. It fails ten cells: all four
+ECMA262 root-font cells; all four ECMA262 block cells (sequential 122 > 121
+and 119 > 114 us; parallel 191 > 186 and 209 > 188); and both HTML5
+font-size parallel cells (1,558 > 2 × 761 and 1,577 > 2 × 777 us). These
+are the same three failing workload families. The small block and font-size
+threshold crossings are literal failures, not isolated causal regressions.
+The twin also misses sentence/frontier in both modes and rounds.
+
+Root-font work remains diagnostic only. All 80 primary-reader ECMA262
+root-font records across both modes and rounds contain exactly 41 frontier
+refusals with reason bit 2, 41 boundary entries, 112,817 replay-held entries,
+three fallbacks and reason 7. This extends the production-pin two-edit
+diagnostic to the complete timing workload at the timing compiler; none
+records a post-break extent refusal. Root-font medians remain
+116,182/115,852 us sequential and 209,840/210,725 parallel, versus main
+28,991/27,826 and 70,559/63,141. No bounded lineless or non-stationary
+contract or implementation has been added while the owner choice is pending.
+
+The matched after-profile uses Valgrind 3.22 and the same 60 sentence edits
+on the range-before and reader drivers. Each cohort has exactly 60
+update-return parts on thread 2, with self sums equal to every summary.
+The decoder's independent examples and the 400-outside-call exclusion probe
+pass again. The page, script and UA hashes match the earlier geometry pilot.
+
+| Across 60 sequential updates | Range before | Reader |
+|---|---:|---:|
+| Total instructions | 216,949,190 | 146,894,464 |
+| Compiled inherited-query calls | 179,067 | 114,357 |
+| Compiled node-read calls from inherited queries | 822,700 | 210,964 |
+| Inherited-query self plus slot-reader instructions | 78,862,686 | 18,600,391 |
+
+The reader executes 98,118 geometry-only query calls within the combined
+inherited-query total. Inherited self instructions are 10,540,911 and slot
+callees 8,059,480; the combined chain falls 76.4%, node-read calls 74.4% and
+total update instructions 32.3%. These are compiled-call and instruction
+observations, with the inlining and sequential-attribution limits already
+stated; they are not mutable renderer counters or parallel wall-time shares.
+
+The stop is now at the two owner direction cards, rather than unfinished CI:
+choose the root-font lineless contract and whether to prioritize Whitefoot's
+point-read grain investigation. The reader target is not met, and the
+non-stationary implementation is not claimed. The passive inherited-read
+profiler remains wired to the temporary timing workflow while this
+acceptance investigation is open; the one-use native diagnostics are retired.
