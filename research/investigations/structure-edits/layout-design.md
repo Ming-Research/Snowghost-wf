@@ -4147,7 +4147,7 @@ Whitefoot side, and authorized Snowghost to use the specified form now.
 `grid_reduce_proposals` borrows it before reading its length or element.
 This changes neither the item-owned storage nor the sizing semantics or
 dependencies and adds no run-time check or data. The short
-[Whitefoot requirement](../../../docs/todo.md#whitefoot-requirements) calls
+[status-board item `sg-wfreq-segment-place`](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) calls
 for switching back when natural direct access is admitted. Every other
 natural-form refusal remains a stop. Exact-head compilation, Chromium
 results, executable mutation detection and cost still require hosted evidence.
@@ -4359,9 +4359,9 @@ check passes 21 tests, 7 nodes, depth 1 and 64 Decisions against base 60.
 These results supersede the pending compiler-boundary claims in the earlier
 handoff subsections; runtime, mutation and cost evidence remain separate.
 The resolved constructor entry leaves the branch-local TODO. The segment
-access and computed-give entries remain on this branch and are to move to
-the status board on merge under `sg-wfreq-segment-place` and
-`sg-wfreq-give-carrier`, without restoring `docs/todo.md` on main.
+access and computed-give follow-ups are status-board items
+`sg-wfreq-segment-place` and `sg-wfreq-give-carrier`; the branch adds no
+repository TODO entries for them.
 
 ### First compiled matrix and repairs, 2026-10-09
 
@@ -4444,11 +4444,11 @@ repairs but does not replace the final-head gates or mutation matrix.
 Review clarifies the item-owned proposal Decision as CSS Grid 11.5's
 intrinsic track-contribution distribution. The inherited CSS Grid 11.7
 scalar maximum still orders independent track/item candidates; it is outside
-the selected shared-track representation and its cost is unmeasured. Whether
-to extend this change or investigate that chain separately awaits the owner's
-scope decision in [PR #54](https://github.com/Ming-Research/Snowghost-wf/pull/54).
-No alternative scalar implementation or Whitefoot workaround is selected.
-The four existing Decisions remain proposed, with no design-log entry.
+the selected shared-track representation and its cost is unmeasured. The owner chose
+to investigate that chain separately on 2026-10-09, under status-board item
+`sg-bl-grid-fr-max`. No alternative scalar implementation or Whitefoot
+workaround is selected. The four Q140 Decisions are approved in the
+[design log](../../../design/log.md).
 
 Static review also found that the excessive fixed-contribution refusal
 mutation removes its callee's only child/style reads and its recursive
@@ -4730,3 +4730,100 @@ shares and every other field unchanged. The following application would then
 be a no-op. Nonempty phases retain the selected item-owned representation and
 all original phase/span dependencies. This eliminates an exact no-op within
 the existing decision rather than selecting a new distribution algorithm.
+
+
+### Final finite evidence and approved readiness, 2026-10-09
+
+[Final cost run 37945388541](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37945388541) checks out `c1b42b22924c2fc439881d13210efb0e3a098e10` and reuses the five completed cohort builds from [37943505431](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37943505431), after requiring an empty renderer/pin diff. The build run's superseded measurement was cancelled after its drivers were preserved. The final renderer binary was compiled from `af335c51cb2f037cab05b8c5d5c797266a7e551c`; That revision differs only by the shared fixture-floor registration. Every cohort uses `wf-21823ee8602d`, compiler SHA-256 `496894ec4a39801da0f166d9142f5ddf860d5343d4dc199e00a7d872e62957d9`, Clang 18.1.3. Machine: GitHub-hosted Ubuntu 24.04, AMD EPYC 7763, four logical CPUs (two cores with SMT); `WF_WORKERS=4` for parallel runs. This differs from the earlier EPYC 9V45, so historical absolute times are not compared across machines.
+
+Captures and fonts are the original measured inputs, verified against their prior SHA-256 manifest. Four rounds alternate the five-cohort order and its reverse. Every edit kind uses two forward/inverse pairs (four edits, sixteen observations per cohort/kind/mode); reported edit time includes the entire style stage where applicable. All three pages and six X5 kinds are measured in sequential and four-worker modes. Full layout uses the previous zero/repeated-layout subtraction, two bounded pilots per page/mode and four interleaved rounds; each round subtracts that cohort's zero-layout setup from its repeated-layout process. Whole-process peak RSS includes setup. Ranges are observed minima/maxima, not confidence intervals. Paired edit ratios match round and edit rather than divide independently pooled medians.
+
+| Cohort | Source | Actual compiled revision |
+| --- | --- | --- |
+| Main | `c3ea1c84ca3a2eca1e4048555d8a7298bd620d00` | `b6fd69389116dc3ce1bdc9f8b1dfa36f8438faff` |
+| M2 | `a1ed31e9b854937abac7a71750dd60f66ffb8d4b` | `bf9652ae2a8aa477c541d6b5d1e1e27113cbdb08` |
+| Twin | Same M2 source | `8b316449200ca78a3711d1f32078ff8f7e1587c8` |
+| Before repair | `10bdf9a25cda61a33528d7ba332f8a6401dbbf10` | `544be40dd268de3dba6b25d36a6b9cfd77b524c4` |
+| Final repair | Renderer identical to `c1b42b22924c2fc439881d13210efb0e3a098e10` | `af335c51cb2f037cab05b8c5d5c797266a7e551c` |
+
+Main/M2/twin/handoff use the common compiler pin; M2 and twin also carry the existing authorized loop-tail adaptation `3c7a80df4da78ba65975a9c9a21111f07bccf82e`. Their complete adapted trees are identical (`b5dbd028315d1b43093d712f5a84e775e7711d8a`). The artifacts retain exact driver hashes and adaptation patches. No source-specific performance path is added.
+
+Apollo11 full layout falls from 149.814 to 79.856 ms sequentially and from 132.433 to 70.387 ms with four workers on this host (46.70% and 46.85% lower). Final medians are 1.0075× and 1.0090× M2, with overlapping M2/twin/final ranges. ECMA262 and HTML5 full-layout ranges also overlap their M2/twin controls. Thus the doubled full-layout cost is removed on this workload; the retained distinct flex pass remains visible in the instruction count.
+
+The separate parallel sentence regression is **not resolved**: final/M2 paired median 1.211 [1.090–1.547], versus twin/M2 0.987 [0.808–1.146]; final/handoff is 1.114 [1.012–1.318]. The ratio ranges overlap the twin only at their edges, and every final/handoff paired observation is above one. This is a remaining cost finding, not noise dismissed by the lower sequential instruction count. The profile below identifies proposal/publication work and reduced duplicate updates, but does not attribute native scheduling cost or prove the remaining work irreducible. The remaining cost is tracked by status-board item `paged-overlap-regression` and is to be remeasured after Whitefoot #275 is fixed; no new representation is selected.
+
+All 180 edit-cohort medians were independently recomputed from 720 raw process samples; all 30 full-layout medians reconcile to 120 per-round setup subtractions. The full stage records 270 successful processes with empty stderr, including pilots and dumps; all 55 restored capture/font hashes match. Full-layout repetitions are one for each control page/mode, seven for Apollo sequential and eight for Apollo parallel.
+
+Median edit microseconds; each tuple is main / M2 / twin / before / head.
+
+| Page | Kind | Sequential µs | Four workers µs |
+| --- | --- | ---: | ---: |
+| ecma262 | word | 157.0 / 171.5 / 165.5 / 157.5 / 157.5 | 229.5 / 251.0 / 258.5 / 254.5 / 251.0 |
+| ecma262 | sentence | 487.5 / 1,202.5 / 1,225.5 / 1,191.5 / 1,275.0 | 437.0 / 923.0 / 943.5 / 948.0 / 920.0 |
+| ecma262 | colour | 22.0 / 21.0 / 26.0 / 21.0 / 22.0 | 27.5 / 27.0 / 30.5 / 33.0 / 29.5 |
+| ecma262 | fontsize | 1,756.0 / 5,422.0 / 6,032.5 / 5,626.0 / 5,947.5 | 2,047.5 / 6,126.5 / 6,247.0 / 6,382.0 / 5,744.5 |
+| ecma262 | rootfont | 37,748.5 / 125,435.0 / 125,204.5 / 129,144.0 / 129,672.0 | 77,133.0 / 160,563.0 / 160,238.0 / 167,228.5 / 168,171.5 |
+| ecma262 | block | 538,582.5 / 135.0 / 124.0 / 116.0 / 119.0 | 500,781.0 / 180.0 / 180.0 / 173.5 / 184.0 |
+| html5 | word | 379.0 / 534.0 / 568.5 / 572.5 / 596.5 | 398.0 / 684.5 / 702.0 / 712.0 / 695.5 |
+| html5 | sentence | 245.5 / 348.0 / 326.5 / 324.5 / 319.5 | 266.5 / 383.5 / 380.0 / 397.0 / 385.5 |
+| html5 | colour | 65.0 / 65.0 / 60.5 / 62.5 / 67.0 | 97.0 / 120.5 / 121.5 / 126.0 / 122.0 |
+| html5 | fontsize | 1,081.0 / 2,306.5 / 2,376.5 / 2,422.5 / 2,466.0 | 1,315.0 / 2,842.5 / 2,807.0 / 2,847.5 / 2,922.0 |
+| html5 | rootfont | 997,844.5 / 1,146,836.0 / 1,147,986.5 / 1,150,325.0 / 1,157,410.5 | 612,177.5 / 766,375.0 / 765,359.5 / 772,082.0 / 761,476.0 |
+| html5 | block | 531,959.0 / 815.0 / 806.5 / 835.5 / 851.0 | 482,215.5 / 887.5 / 911.5 / 959.5 / 922.5 |
+| apollo11 | word | 327.0 / 419.0 / 424.0 / 421.0 / 414.5 | 534.5 / 669.0 / 655.5 / 740.0 / 694.0 |
+| apollo11 | sentence | 185.5 / 262.0 / 286.0 / 300.5 / 277.0 | 321.0 / 451.0 / 448.5 / 476.5 / 556.0 |
+| apollo11 | colour | 37.5 / 38.0 / 38.5 / 39.0 / 37.5 | 60.0 / 55.0 / 69.0 / 66.0 / 63.0 |
+| apollo11 | fontsize | 307.0 / 855.0 / 860.5 / 917.0 / 895.0 | 817.5 / 1,725.5 / 1,658.0 / 1,815.0 / 1,793.0 |
+| apollo11 | rootfont | 90,221.0 / 99,820.5 / 99,933.0 / 101,160.5 / 100,062.5 | 79,815.0 / 91,248.5 / 91,661.0 / 91,278.5 / 92,029.5 |
+| apollo11 | block | 27,256.5 / 38,801.0 / 39,078.0 / 40,166.0 / 39,156.5 | 30,748.5 / 41,308.0 / 42,171.0 / 43,863.5 / 43,360.5 |
+
+Apollo paired ratios, matching round and edit (median [minimum–maximum]).
+
+| Kind / mode | Head/M2 | Twin/M2 | Head/before |
+| --- | ---: | ---: | ---: |
+| word / seq | 1.023 [0.906–1.085] | 1.012 [0.871–1.117] | 1.002 [0.935–1.070] |
+| word / par | 1.056 [0.924–1.143] | 1.007 [0.899–1.280] | 1.000 [0.722–1.044] |
+| sentence / seq | 1.048 [0.879–1.234] | 0.996 [0.752–1.514] | 0.963 [0.765–1.074] |
+| sentence / par | 1.211 [1.090–1.547] | 0.987 [0.808–1.146] | 1.114 [1.012–1.318] |
+| colour / seq | 0.981 [0.871–1.121] | 1.000 [0.903–1.133] | 0.995 [0.630–1.176] |
+| colour / par | 1.046 [0.881–1.390] | 1.065 [0.987–2.000] | 1.019 [0.667–1.310] |
+| fontsize / seq | 1.042 [0.829–1.188] | 0.995 [0.800–1.163] | 0.978 [0.845–1.076] |
+| fontsize / par | 1.052 [0.852–1.082] | 0.935 [0.792–1.120] | 1.005 [0.586–1.169] |
+| rootfont / seq | 1.004 [0.966–1.018] | 0.995 [0.961–1.032] | 0.989 [0.959–1.011] |
+| rootfont / par | 0.997 [0.951–1.045] | 0.993 [0.938–1.068] | 0.993 [0.941–1.071] |
+| block / seq | 1.003 [0.914–1.082] | 1.005 [0.900–1.073] | 0.986 [0.902–1.049] |
+| block / par | 1.003 [0.972–1.126] | 1.019 [0.893–1.051] | 0.982 [0.910–1.089] |
+
+Full layout milliseconds, median [four-round minimum–maximum].
+
+| Page / mode | Main | M2 | Twin | Before | Head |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ecma262 / seq | 1064.823 [1060.245–1084.548] | 1411.072 [1401.039–1426.307] | 1411.087 [1394.971–1431.515] | 1406.930 [1392.384–1418.058] | 1404.321 [1396.404–1425.110] |
+| ecma262 / par | 1028.586 [1012.684–1035.638] | 1331.824 [1325.351–1353.494] | 1361.788 [1297.519–1374.718] | 1350.977 [1330.685–1385.526] | 1360.095 [1347.220–1377.550] |
+| html5 / seq | 1123.286 [1103.220–1148.536] | 1434.676 [1411.357–1444.343] | 1413.361 [1401.554–1455.478] | 1435.927 [1413.020–1472.720] | 1435.970 [1421.733–1461.602] |
+| html5 / par | 913.481 [864.261–918.242] | 1195.251 [1178.547–1224.869] | 1205.200 [1161.972–1238.429] | 1214.717 [1199.559–1243.515] | 1219.941 [1211.553–1227.616] |
+| apollo11 / seq | 70.807 [68.253–72.351] | 79.262 [74.970–80.488] | 78.474 [75.876–80.490] | 149.814 [147.891–151.306] | 79.856 [78.490–80.162] |
+| apollo11 / par | 58.005 [57.033–58.687] | 69.758 [66.707–70.584] | 69.822 [68.884–72.054] | 132.433 [130.530–133.507] | 70.387 [67.761–70.843] |
+
+Whole-process peak RSS MiB (median of four rounds; includes setup).
+
+| Page / mode | Main | M2 | Twin | Before | Head | Repetitions |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ecma262 / seq | 421.39 | 459.39 | 459.17 | 461.42 | 461.62 | [1] |
+| ecma262 / par | 423.73 | 462.42 | 464.64 | 464.53 | 464.85 | [1] |
+| html5 / seq | 273.24 | 436.72 | 436.86 | 437.44 | 437.45 | [1] |
+| html5 / par | 274.40 | 440.21 | 440.52 | 441.32 | 441.32 | [1] |
+| apollo11 / seq | 62.15 | 63.44 | 63.37 | 63.62 | 63.57 | [7] |
+| apollo11 / par | 67.37 | 69.77 | 70.68 | 70.27 | 70.15 | [8] |
+
+
+The final sentence diagnostic [37945393550](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37945393550) profiles the identified final renderer binaries over the original forward/inverse pair, subtracting the identical zero-edit pipeline. Sequential instructions per pair: M2 2,120,988; twin 2,120,998; handoff 2,526,302; final 2,415,657. Thus the final pair uses 4.38% fewer instructions than handoff, while remaining 13.89% above M2. The initial repair was 2,493,671. The empty-phase change reduces proposal reduction self-instructions from 124,892 to 67,372 per pair; final presence reduction costs 15,128. These are instruction observations, not native speed ratios or a lower bound on the selected representation’s cost.
+
+M2 and final have equal named held/flow/reference/grid/line-breaking call totals (18/16/14/4/2 per pair); reported context counts 6→10 include grid work M2 omitted. Child-layout calls fall 20→8. Positioning/publication still differs, including `finish_in_place→position_out_children` 2→4; equal flow totals do not mean every operation is unchanged. Parallel instruction totals contain scheduler variation, so native four-worker timing comes from the interleaved cost run.
+
+
+The final full-layout instruction profile [37943505181](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37943505181) uses `af335c51cb2f037cab05b8c5d5c797266a7e551c`. Empty-phase removal leaves 784,781,675 instructions per Apollo11 layout, 3,089 line-finishing calls, eight natural child measurements and three final layouts. It skips 28 of 62 proposal phases, preserving the required nonempty distributions. The original-page and 36-family fixture job in [37943702867](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37943702867) validates `c1b42b22924c2fc439881d13210efb0e3a098e10`: grid heights 133/173/133 px, the outer flex peer at 8 px throughout, and the inserted min-content flexible-track width 426.625 px match Chromium in both modes. Original blocks splice 20/20 for ECMA262, 60/60 for HTML5 and 38/60 for Apollo11, whose remaining paths are 18 reason-9, two reason-7 and two reason-3 refusals per mode. The same run detects all 22 Q140 mutations along with the complete M2/Q139 matrix.
+
+The owner ruled all branch decisions on 2026-10-08/09. The item-owned proposal/first-baseline evidence and enclosing-flex proof prerequisites are resolved by the fixture, mutation and cost evidence above; the remaining sentence-edit cost stays open under `paged-overlap-regression`, within 2x main, to be remeasured after Whitefoot #275. The shared comparator's terminal-height completeness contract remains `sg-bl-comparator-complete`; Q140's mutation caller keeps its complete-dump guard. Segment access and computed-give follow-ups remain `sg-wfreq-segment-place` and `sg-wfreq-give-carrier` until the approved natural forms land in Whitefoot. The inherited CSS Grid 11.7 maximum chain remains `sg-bl-grid-fr-max`.
+
+The permanent `.github/workflows/q140.yml` replaces the temporary baseline workflow. It runs every grid family, Chromium comparison, final-space lifetime and original-page block check on each selected push/PR and manual dispatch, with no matrix opt-out. `falsify-m2` calls it with all Q140 mutations enabled. A sibling of Q139 keeps the two fixture entry points independent while sharing Q140's build with its mutation jobs. The finite attribute, baseline, cost, edit-profile, profile and segment-reproduction workflows and their three dedicated diagnostic helpers are retired; the dated results and run links above remain evidence. Earlier temporary-workflow instructions in this investigation describe those historical runs.

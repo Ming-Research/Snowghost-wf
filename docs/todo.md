@@ -3,85 +3,11 @@
 Items the work has found and not yet done. Remove an item in the change that
 resolves it.
 
-## Q140 prerequisites awaiting validation
-
-- **Independent grid proposals and first-baseline publication need executable
-  evidence.** The owner selected item-owned proposal segments with balanced
-  per-track reductions and a distinct first-baseline value/availability for
-  every context. Both source repairs are authored; segment reads now use
-  the owner's authorized range-reference form. Validate full/retained and
-  Chromium grid identity, the three baseline mutations, and the hosted paired
-  edit/full-layout/RSS comparison before claiming completion. The original
-  failing fixtures must reach Chromium's 133 px grid height and 8 px outer
-  flex peer top in both modes. Preserve existing last-baseline consumers and
-  validate nested contexts, sharing priority, scrolling, row spans and first
-  baseline changes at fixed heights. Reopen on any failed gate or regression
-  beyond the base twin's spread. The
-  [Q140 investigation](../research/investigations/structure-edits/layout-design.md#q140-grid-row-sizing-under-invariant-columns)
-  owns the dependency argument and prior failure evidence.
-
-- **Grid admission through flex needs an enclosing-input proof.** The old
-  forced width can change when flex reruns: percentage grid columns may be
-  definite now but intrinsic under flex's content query, and a fixed
-  preferred width alone does not fix the automatic minimum. A long word
-  inserted inside a `width:auto; flex:0 1 auto` grid with `50% 50%` columns
-  is the falsifier. The owner selected an enclosing-input proof covering
-  intrinsic contributions and automatic minima; unknown inputs retain
-  reason 11. Hosted [run 37913428460](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37913428460)
-  at `b5e5d74` validates the fixed-column
-  consumer against Chromium/full rebuild in both modes, with its outer flex
-  peer at 8 px. Final-head gates, the guard-omission mutation and paired
-  proof-work cost evidence remain required for the fixed-column consumer
-  and percentage-column negative.
-  Reopen on any failed proof/fixture or cost regression, without weakening
-  the positive fixture.
-
-## Oracle input completeness
-
-- **The shared browser comparator accepts a dump without its terminal height
-  row.** Its `read()` parser accepts element/text rows when the final `H` row
-  is missing; a zero-exit truncated dump can therefore look like a geometry
-  mismatch to mutation callers. The new grid mutation caller requires one
-  finite terminal height row and has hosted truncated-input controls. The
-  existing Q139 Chromium mutation path and the shared comparator still need
-  the same input-completeness contract, without changing geometry tolerances.
-  Validate truncation after elements and during text rows plus ordinary
-  complete dumps. Reopen before extending any other Chromium mutation caller;
-  this is a pre-existing harness defect outside the current changed files.
-
 ## Whitefoot requirements
 
 Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
-
-- **Natural segment length and element access.** For
-  `values: &Box<Segments<i32>>`, guarded `values^.inner[item].len` is refused
-  with `OP-4 TypeMismatch: expected an indexable base; found Segments<i32>`
-  ([isolated reproduction](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37879441246)).
-  The owner classified this as a language gap tracked in Whitefoot and
-  authorized the OP-4/REF-4 form now: `let segment = &values^.inner[item];`,
-  then `segment^.len` or `segment^[j]`. Snowghost uses it for item-owned grid
-  proposals in `grid_pass` and `grid_reduce_proposals`. When Whitefoot admits
-  natural `s[i].len` and `s[i][j]`, switch these accesses back.
-
-- **Bounds from computed `give` values do not reach the receiving index.**
-  With `count = values^.len` and an early return for zero, the natural
-  `let at = if reverse { give count - 1_u64; } else { give 0_u64; }`
-  followed by `values^[at]` is rejected with
-  `OP-4 UndischargedBoundsObligation: at < values^.len`. Hosted
-  [layout-check 37883842994](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37883842994)
-  rejects the corresponding `flex_publish_first_baseline` selector at
-  `a9517cb`; GIVE-1/ENT-5 at the pin expressly exclude computed expressions
-  from scalar fact delivery. The owner classified this as a Whitefoot gap
-  and authorized `let last = count - 1_u64; give last;` now. That form is
-  used for both the line and item selectors in `flex_publish_first_baseline`;
-  hosted [run 37893205705](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37893205705)
-  at `b80035d` accepts the range, boxed-slot and checked-interval examples,
-  including the unchanged literal branch. The layout module is now
-  accepted by layout-check on v0.109 (run 37907283850). Switch back when
-  Whitefoot carries facts through computed gives;
-  validate first/last selection and negative joins without runtime checks.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the

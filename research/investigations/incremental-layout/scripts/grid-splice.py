@@ -1,6 +1,6 @@
-"""Q140 grid fixtures, consumed by the hosted q140-baseline workflow.
+"""Q140 grid fixtures, consumed by the permanent hosted q140 workflow.
 
-The ordinary run requires the proposed splice/refusal paths. --baseline is
+The ordinary run requires the approved splice/refusal paths. --baseline is
 only a pre-implementation characterization: it separately requires existing
 reason 2 and never supplies evidence of Q140 admission or mutation detection.
 Both modes require full-rebuild identity and independent Chromium geometry.

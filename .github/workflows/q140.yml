@@ -1,36 +1,22 @@
-# Temporary hosted Q140 fixtures and mutations; remove before ready after
-# the permanent gates take over. Required positive paths remain mandatory.
-name: q140-baseline
+# Permanent Q140 fixtures, Chromium floors and original-page block paths.
+# The complete falsify-m2 workflow also calls this job and its mutation matrix.
+name: q140
 on:
+  push:
+    branches: [main, research/m2-q140]
+  pull_request:
+    paths: ['renderer/**', 'tests/layout/**', 'research/investigations/incremental-layout/**', 'research/investigations/concurrency/**', 'research/investigations/layout/**', '.github/workflows/q140.yml', '.github/workflows/falsify-m2.yml', 'whitefoot.pin']
+  workflow_dispatch:
   workflow_call:
     inputs:
-      cache_run:
-        type: string
-        default: ''
-      matrix:
-        type: boolean
-        default: true
       mutations:
         type: boolean
         default: true
-  workflow_dispatch:
-    inputs:
-      cache_run:
-        description: Reuse compiler cache from a prior q140-baseline artifact; always rebuild both drivers
-        default: ''
-      matrix:
-        description: Run the full fixture matrix after inspecting the pilot
-        type: boolean
-        default: false
-      mutations:
-        description: Run grid and first-baseline mutations after the pilot
-        type: boolean
-        default: false
 permissions:
   contents: read
   actions: read
 concurrency:
-  group: q140-baseline-${{ github.ref }}
+  group: q140-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   fixtures:
@@ -52,18 +38,6 @@ jobs:
           echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
           node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
           make -s compiler oracle-fonts
-      - uses: actions/download-artifact@v4
-        if: inputs.cache_run != ''
-        with:
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.cache_run }}
-          name: q140-baseline
-          path: build/reused
-      - name: Restore only the compiler-validated function cache
-        if: inputs.cache_run != ''
-        run: |
-          mv build/reused/grid-cache build/grid-cache
-          rm -rf build/reused
       - name: Build the candidate drivers
         run: |
           set -euo pipefail
@@ -89,7 +63,7 @@ jobs:
           done
           test "$failed" -eq 0
       - name: Grid admission, geometry and counted refusals
-        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' && inputs.matrix }}
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
         run: |
           set -euo pipefail
           failed=0
@@ -100,14 +74,14 @@ jobs:
           done
           test "$failed" -eq 0
       - uses: actions/download-artifact@v4
-        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' && inputs.matrix }}
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
         with:
           github-token: ${{ github.token }}
           run-id: 37727037303
           name: apollo11-diag-37727037303
           path: build/apollo-archive
       - name: Original page block edits and every refusal reason
-        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' && inputs.matrix }}
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
         run: |
           set -euo pipefail
           sh research/investigations/concurrency/run.sh fetch || true
@@ -126,10 +100,46 @@ jobs:
             done
           done
           test "$failed" -eq 0
+      - name: Require the original-page splice and refusal distributions
+        if: ${{ !cancelled() && steps.pilot.conclusion == 'success' }}
+        run: |
+          python3 -B - <<'PYEOF'
+          from collections import Counter
+          from pathlib import Path
+          import re
+
+          expected = {
+              'ecma262': Counter({(1, 0): 20}),
+              'html5': Counter({(1, 0): 60}),
+              'apollo11': Counter({(1, 0): 38, (0, 9): 18, (0, 7): 2, (0, 3): 2}),
+          }
+          def require_paths(raw, wanted):
+              observed = Counter((int(splice), int(reason)) for splice, reason in
+                                 re.findall(r'^structure path [0-9]+ splice ([01]) reason ([0-9]+)$', raw, re.M))
+              if observed != wanted:
+                  raise ValueError(f'expected {wanted}, observed {observed}')
+          # Exercise the same comparison with missing, extra and changed paths.
+          for page, wanted in expected.items():
+              rows = [f'structure path {index} splice {splice} reason {reason}'
+                      for index, (splice, reason) in enumerate(wanted.elements(), 1)]
+              require_paths('\n'.join(rows), wanted)
+              for wrong in (rows[1:], rows + [rows[0]],
+                            [rows[0].replace('splice 1 reason 0', 'splice 0 reason 11')] + rows[1:]):
+                  try:
+                      require_paths('\n'.join(wrong), wanted)
+                  except ValueError:
+                      pass
+                  else:
+                      raise AssertionError(f'{page}: wrong paths accepted')
+              for mode in ('seq', 'par'):
+                  raw = Path(f'build/q140-blocks/{page}-{mode}.raw').read_text()
+                  require_paths(raw, wanted)
+                  print(page, mode, dict(wanted))
+          PYEOF
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: q140-baseline
+          name: q140-fixtures
           path: |
             build/q140-*/
             build/q140-revision.txt
@@ -152,7 +162,7 @@ jobs:
           submodules: true
       - uses: actions/download-artifact@v4
         with:
-          name: q140-baseline
+          name: q140-fixtures
           path: build
       - name: Toolchain and independent reference browser
         run: |
