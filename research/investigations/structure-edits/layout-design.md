@@ -3827,10 +3827,16 @@ path. R3 requires a disposition before choosing how the rerun executes it.
 | Per-track independent recomputation of item proposals | Each output track independently examines relevant items, recomputing the distribution needed to obtain its share, then reduces them. No shared writes; lower retained scratch but duplicated distribution work, potentially quadratic in a span. | A viable alternative with the same phase dependencies and a different work/storage tradeoff; no measurements yet discriminate it. |
 | Reuse the existing shared scratch loop unchanged | One item must finish its scratch writes before the next uses them, although their proposals do not depend on each other. Lowest implementation disruption. | Not recommended: that ordering is imposed by scratch ownership, contrary to R3. |
 
-No new algorithm or cache representation is selected by this table. The
-owner's Q140 B ruling settles row rerun with invariant columns, not this
-newly exposed parallel scratch choice. Fixture specification and independent
-oracle preparation can proceed while implementation waits for that choice.
+The continuation instruction authorizes proceeding on option A while its
+owner decision card stays open. The proposed implementation gives each item
+one segment containing its spanned phase inputs and distribution scratch.
+Independent item writes precede balanced maximum/OR reductions for each
+track, followed by independent track application. A later phase/span group
+waits for those applied bases/limits; inside each distribution, water-filling
+rounds depend on remaining space and deterministic numeric remainders retain
+the reference order. The segment lengths are actual allocation inputs, not
+proof-only metadata. No sizing path is selected by an edit kind or fixture.
+Hosted compilation and measurements remain pending.
 
 ### Required fixtures and mutations
 
