@@ -67,25 +67,15 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
-- **Direct segment length and element access are unavailable in executable
-  expressions.** Q140's item-owned grid proposals naturally read
-  `proposals^.inner[item].len` and `proposals^.inner[item][track]`. Hosted
-  [check 37878456548](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878456548)
-  at `3f8767a` rejects the former with OP-4: expected an indexable base,
-  found `Segments<GridTrack>`. The pinned specification's TYPE-9, REF-4 and
-  OP-4 permit only segment range references, so this is a language-boundary
-  question, not a demonstrated compiler/specification mismatch. Minimal
-  example: a guarded `return values^.inner[item].len;` for
-  `values: &Box<Segments<i32>>` with `item < values^.inner.len`.
-  Impact: the common grid algorithm and therefore candidate baseline/Q140
-  gates cannot compile. Recommendation: decide whether direct segment
-  projection should be supported; changing to a reference binding solely
-  to satisfy the current checker is stopped under this task's no-respelling
-  rule. The temporary `q140-segment-repro` workflow checks the isolated
-  diagnostic on hosted CI and is removed once the question is resolved.
-  Validate length, element, slice and independent item-write forms in
-  Whitefoot before resuming this source. Reopen with the owner's language
-  boundary ruling; no pin or submodule has moved.
+- **Natural segment length and element access.** For
+  `values: &Box<Segments<i32>>`, guarded `values^.inner[item].len` is refused
+  with `OP-4 TypeMismatch: expected an indexable base; found Segments<i32>`
+  ([isolated reproduction](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37879441246)).
+  The owner classified this as a language gap tracked in Whitefoot and
+  authorized the OP-4/REF-4 form now: `let segment = &values^.inner[item];`,
+  then `segment^.len` or `segment^[j]`. Snowghost uses it for item-owned grid
+  proposals in `grid_pass` and `grid_reduce_proposals`. When Whitefoot admits
+  natural `s[i].len` and `s[i][j]`, switch these accesses back.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the
