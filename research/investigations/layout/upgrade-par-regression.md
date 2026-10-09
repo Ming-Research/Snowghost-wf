@@ -651,3 +651,50 @@ captured exit/stderr evidence. Hosted gate conclusions were verified by the
 implementing session; the reviewer did not poll CI. Local work used source
 and captured-text inspection only. Runtime participation and causal cost
 remain unverified rather than receiving a review pass.
+
+## Hosted release-boundary experiment (2026-10-09)
+
+Question: which sampled Whitefoot release first loses the old text-preparation
+and later-layout-pass speedup at four workers? This is a coarse release
+localization on one GitHub-hosted Ubuntu 24.04 job, not a precise timing
+comparison with the supplied 14900K measurements.
+
+The comparison uses the requested five releases, with two independently
+compiled sequential/parallel pairs per release and separate fragment caches
+for the twins. Sources are main `9d720c4` for `wf-0b7f5c5b9854` and
+`wf-b2209fd31035`; `9d720c4` is tried for `wf-23719e608125`, with the
+authorized FN-1-only adaptation `c3ea1c8` used if the break-free-loop rule
+prevents compilation; `c3ea1c8` is used for `wf-64c0f956df63` and
+`wf-f887e82c4611`. The retained diagnostic must establish the specific FN-1
+failure before a fallback sample is accepted. No renderer source, committed
+pin or submodule is changed by this experiment.
+
+The existing `run.sh time` harness runs ecma262 and html5, modes `boxes`,
+`text` and `layout`, sequential and `WF_WORKERS=4`, with `BUILT=1`,
+`WORKERS=4`, `RUNS=1` and three repetitions per invocation. Text preparation
+is `(text - boxes)` and later layout passes are `(layout - text)`, computed
+from the retained `T(0)` and `T(REPS)` rather than the rounded per-run column.
+Each round interleaves all ten builds; even rounds reverse their order. All
+timings follow the full compilation batch on the same runner. The job records
+`lscpu`, toolchains, release manifests, binary hashes, shared page/font hashes,
+raw timing rows and exit codes.
+
+Before timing, the criterion is: compare the par-4/seq ratio ranges across
+both twins and all rounds at each release; a claimed collapse must rise
+beyond the previous release's combined range and approach no speedup.
+Overlapping ranges or failure to reproduce the reference speedup reject a
+localized boundary for that part/page. A single pilot round measures the
+twin spread: three total rounds when its largest absolute ratio difference
+is at most 0.15, otherwise five, with a maximum pilot duration of 1,200 s.
+This bounded rule selects the coarse sample size; it supplies no statistical
+confidence interval. Medians and observed ranges are reported separately.
+
+A matched, optional CPU-clock profile of the full ecma262 `text 3` invocation
+at four workers follows timing for `wf-64c0f956df63` and `wf-f887e82c4611`.
+It includes setup, boxes and cleanup as well as preparation. CPU samples can
+identify CPU consumers; they do not alone measure time blocked on allocator
+locks or isolate the text-only difference.
+
+Capture: [hosted run 37904550290](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37904550290),
+workflow revision `a165356928abf54fea83abf2a968d30f7d60612c`.
+Results will be recorded below after the capture finishes.
