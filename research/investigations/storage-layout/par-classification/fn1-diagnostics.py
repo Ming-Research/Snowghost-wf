@@ -1,7 +1,7 @@
 """Temporary hosted-only FN-1 migration probe; removed after collecting its patch.
 
 Checks each gate module, records exact refusals, and deletes only simple
-compiler-reported unreachable statements in the disposable runner checkout.
+compiler-reported unreachable tails in the disposable runner checkout.
 The exported patch is inspected before any source change is committed.
 Other diagnostics stop that module; the remaining modules are still checked.
 """
@@ -49,13 +49,30 @@ for module in modules:
         if not re.fullmatch(r"(?:return|let)\b[^{};]*;", source):
             results.append({"module": module, "result": "manual FN-1", "diagnostic": log})
             break
+        # FN-1 selects the first unreachable statement. Its remaining sibling
+        # statements are unreachable too; remove the whole simple tail at once
+        # so a deleted binder cannot create an unrelated name-resolution error.
+        end = index
+        indent = len(lines[index]) - len(lines[index].lstrip())
+        while end < len(lines):
+            tail = lines[end].strip()
+            if tail == "}":
+                break
+            if not re.fullmatch(r"(?:return|let)\b[^{};]*;", tail) or len(lines[end]) - len(lines[end].lstrip()) != indent:
+                end = index
+                break
+            end += 1
+        if end == index:
+            results.append({"module": module, "result": "manual FN-1 tail", "diagnostic": log})
+            break
         original = locations.setdefault(str(path.relative_to(root)), list(range(1, len(lines) + 1)))
         function = re.findall(r"^fn (\w+)", "".join(lines[:index]), re.M)[-1]
         records.append({"module": module, "path": str(path.relative_to(root)),
                         "line": original[index], "function": function, "source": source,
+                        "tail": [{"line": original[k], "source": lines[k].strip()} for k in range(index, end)],
                         "diagnostic": log})
-        del lines[index]
-        del original[index]
+        del lines[index:end]
+        del original[index:end]
         path.write_text("".join(lines))
     else:
         raise RuntimeError(f"Too many refusals in {module}")
@@ -67,4 +84,4 @@ for module in modules:
         print("Normalization sample complete; checking the remaining gate modules.", flush=True)
 (out / "adaptation.patch").write_text(subprocess.run(
     ["git", "diff", "--", "renderer"], capture_output=True, text=True, check=True).stdout)
-print(f"Recorded {len(records)} FN-1 statements; inspect adaptation.patch before applying.")
+print(f"Recorded {len(records)} FN-1 tails; inspect adaptation.patch before applying.")
