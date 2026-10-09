@@ -3091,3 +3091,9 @@ Report raw edit ranges, both rounds and twin spread without relaxing a
 literal failure. The four HTML5 root-font parallel comparisons and Apollo11
 parallel sentence edits are the specific regression observations. This is
 a hosted acceptance comparison, not a precise cross-machine speed claim.
+
+The obsolete historical-cohort patch and range-reader profiler are retired
+with their previous caller when `bisect-hosted.yml` adopts this comparison.
+Their frozen commits and results above remain the reproduction record;
+the current experiment needs native acceptance timing and direct emission
+evidence, with no supplemental profiler after the timed batch.
