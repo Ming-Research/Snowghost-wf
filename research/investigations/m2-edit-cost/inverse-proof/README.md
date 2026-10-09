@@ -33,7 +33,7 @@ second inverse store, sorting targets, or checking the relation at run time
 would not supply the requested natural proof and is not an integration.
 
 The temporary [hosted workflow](../../../../.github/workflows/inverse-proof.yml)
-collects diagnostics and exit statuses for all four files and emits reachable
+collects diagnostics and exit statuses for the probe files and emits reachable
 versions of the two original loops. Their generated main gives the loops two
 matching target slots; the callee bodies are unchanged. Each compiler status
 is read directly, outside a pipe. Probe-job success means the evidence was
@@ -44,3 +44,22 @@ specified and maintained there.
 The oracle is [Whitefoot v0.112, TYPE-11 and RANGE-1 through RANGE-5](https://github.com/Ming-Research/Whitefoot/blob/01697d2de8a1349631d1a92a2659ae9f8c7ea7ad/spec/kernel-spec.md).
 Results and the representation decision belong in
 [SPLIT-CONTRACT.md](../SPLIT-CONTRACT.md#released-inverse-proof-and-recursive-order-storage).
+
+
+Hosted [37995129991](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37995129991)
+at 74ab9dd accepted the two original declarations: today reports `denied`
+(condition 2), natural `permitted` (eligible; no accumulator). The reachable
+natural construction was refused at the call with RANGE-3, missing `inv`.
+The owning fixture first needed the actual unchanged target-length
+postcondition to observe its result after `forward`; that contract is now
+stated on both writer and forwarder, and its next verdict is pending.
+`filled-field.wf` isolates whether an aggregate fill exposes a field value to
+a range requirement. No explicit-store rewrite is used to make this natural
+constructor pass. Declaration emission is also captured independently of the
+constructor diagnostic; neither is renderer parallelization evidence.
+
+The recursive getter was refused at 56:42 with `error[RANGE-1]:
+InvalidRangeClause`, reason `a range term calls a function`, and repair
+`write range terms from literals, consts, integer values, measures and element
+reads`. This agrees with the specified grammar; it is the remaining logical
+order expression, not a reported compiler/specification contradiction.
