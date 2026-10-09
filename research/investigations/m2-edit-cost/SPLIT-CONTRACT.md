@@ -2077,12 +2077,16 @@ Earlier hardware-event DWARF profiles lost samples even at 99 Hz and supplied
 no quantitative attribution. The repeat uses the software `cpu-clock:u`
 event, 99 Hz, a 4,096-page buffer and 4,096-byte DWARF stacks. Sampling starts
 five seconds after process launch; observed base/first-edit timestamps must
-precede that boundary, and the batch must continue beyond ten seconds.
-Missing or late startup markers reject the profile. The
+precede that boundary, and summed sequential update durations must exceed
+ten seconds. Overall process duration includes profiler finalization and
+cannot establish that condition. Missing or late startup markers and a
+short edit batch reject the profile. The
 [perf record documentation](https://man7.org/linux/man-pages/man1/perf-record.1.html)
 owns delay, frequency, buffer and stack options. Every raw perf record,
-loss report, sample count and thread identity is retained. Any recorded loss
-or insufficient samples rules out quantitative attribution; lower frequency
+loss report, sample count and thread identity is retained. Quantitative
+attribution requires at least 1,000 user CPU event samples in every cohort,
+zero recorded loss, and usable stacks with report/script diagnostics inspected.
+Any failure rules out quantitative attribution; lower frequency
 alone is not assumed to repair loss. These software samples describe user CPU
 work after startup, including edit-loop overhead, not blocked time or a
 precise wall-time decomposition.
@@ -2094,3 +2098,20 @@ four-worker controls; slower parallel medians alone establish no compiler
 gap. If neither distinguishes the residual, record it as unresolved rather
 than selecting another representation from timing alone. The one-use native
 profiling workflow and driver script are retired after capturing this result.
+
+Review RV9 tightened the duration and sample admission criteria after the
+first frozen capture began but before its results were inspected. That
+capture records summed edit durations and raw samples, so it can be audited
+against the stronger criteria; it did not run the repaired harness. The
+repair additionally records last-edit receipt time and retains report/script
+stderr. A receipt timestamp only corroborates execution duration.
+
+The geometry reader's all-kind comparison uses ten independent builds of
+main 8fbc1601785cee70265da1eac4d99589fc6fb67c, cf12c609e1c00f86bb431fab4e92f5dca2bf94f2,
+the original range head 58b16dae2770a774189370d4d2e5b74abc1a2fd0, patched
+frontier 3393042d79efe1ada22129b950a610ffae4508aa and the current reader,
+each with its twin. Both forward/reverse rounds cover every X5 kind and both
+pages in sequential and four-worker parallel mode. It supplies the complete
+acceptance cells missing from the three-kind pilots; it does not presume that
+the remaining sentence gap is resolved. Runtime code is unchanged from
+50a898e4d09feae50e19986773cb27dfd7e85040.

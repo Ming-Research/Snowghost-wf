@@ -40,7 +40,7 @@ def run(name, mode, workers, script, label, profiled=False):
                 '-m', '4096', '-F', '99', '--strict-freq', '--call-graph', 'dwarf,4096',
                 '-o', str(output) + '.data', '--'] + args
     start = time.monotonic()
-    base = first = None
+    base = first = last = None
     with Path(str(output) + '.raw').open('wb') as destination, Path(str(output) + '.err').open('wb') as err:
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=err,
                                    env=dict(os.environ, WF_WORKERS=str(workers)),
@@ -54,6 +54,8 @@ def run(name, mode, workers, script, label, profiled=False):
                     base = elapsed
                 if line.startswith(b'edit 1 us '):
                     first = elapsed
+                if re.match(rb'edit \d+ us ', line):
+                    last = elapsed
                 destination.write(line)
             status = process.wait()
         finally:
@@ -66,6 +68,7 @@ def run(name, mode, workers, script, label, profiled=False):
     assert [a for a, _ in values] == list(range(1, expected + 1)), (output, len(values), expected)
     costs = sorted(b for _, b in values)
     info = dict(status=status, base_seconds=base, first_edit_seconds=first,
+                last_edit_seconds=last,
                 total_seconds=wall, count=len(costs), upper_median_us=costs[len(costs)//2],
                 summed_edit_us=sum(costs), sample_delay_seconds=5 if profiled else 0)
     Path(str(output) + '.phase.json').write_text(json.dumps(info, indent=2) + '\n')
@@ -75,22 +78,23 @@ def run(name, mode, workers, script, label, profiled=False):
             return (row['status'] == 0 and row['base_seconds'] is not None and
                     row['first_edit_seconds'] is not None and
                     0 <= row['base_seconds'] <= row['first_edit_seconds'] < 5 and
-                    row['total_seconds'] > 10)
+                    row['summed_edit_us'] > 10000000)
         assert admitted(info), info
         assert not admitted(dict(info, first_edit_seconds=6)), 'late startup admitted'
         assert not admitted(dict(info, base_seconds=None)), 'missing startup admitted'
+        assert not admitted(dict(info, summed_edit_us=10000000)), 'short edit batch admitted'
         data = str(output) + '.data'
         for children in (False, True):
             suffix = 'callers' if children else 'self'
-            with Path(str(output) + f'.{suffix}.txt').open('wb') as out:
+            with Path(str(output) + f'.{suffix}.txt').open('wb') as out, Path(str(output) + f'.{suffix}.err').open('wb') as err:
                 subprocess.run(['perf', 'report', '-i', data, '--stdio', '--header',
                                 '--children' if children else '--no-children',
                                 '--show-nr-samples', '--show-total-period', '--percent-limit', '0.1'],
-                               stdout=out, check=True, timeout=60)
-        with Path(str(output) + '.samples.txt').open('wb') as out:
+                               stdout=out, stderr=err, check=True, timeout=60)
+        with Path(str(output) + '.samples.txt').open('wb') as out, Path(str(output) + '.samples.err').open('wb') as err:
             subprocess.run(['perf', 'script', '-i', data, '--show-lost-events',
                             '-F', 'comm,pid,tid,time,event,ip,sym,dso'],
-                           stdout=out, check=True, timeout=60)
+                           stdout=out, stderr=err, check=True, timeout=60)
         records = Path(str(output) + '.samples.txt').read_text()
         loss_records = [line for line in records.splitlines() if re.search(r'\bPERF_RECORD_LOST(?:_SAMPLES)?\b', line)]
         warnings = Path(str(output) + '.err').read_text()
