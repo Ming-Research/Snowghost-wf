@@ -119,3 +119,60 @@ jobs:
         with:
           name: historical-${{ matrix.source }}
           path: build/historical-evidence/
+  emission:
+    if: contains(github.event.head_commit.message, '[rootfont-ir]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Reduce the permitted recursive pair and capture unoptimized emission
+        run: |
+          set -euo pipefail
+          git worktree add --detach build/emission HEAD
+          git -C build/emission submodule update --init
+          echo 'release = wf-b2209fd31035' > build/emission/whitefoot.pin
+          git -C build/emission -c user.name=Claude -c user.email=noreply@anthropic.com commit -am 'Diagnostic compiler pin' -m "$(git log -1 --format='%(trailers:key=Co-Authored-By)')"
+          make -s -C build/emission compiler
+          wfc=$(realpath "$(ls build/emission/build/whitefoot/*/whitefootc)")
+          mkdir -p build/emission-evidence
+          cat > build/emission-evidence/pair.wf <<'WFEOF'
+          enum Frontier {
+            doc "A sparse directory over stable element slots.";
+            Vacant();
+            Mark();
+            Fork(left: Box<Frontier>, right: Box<Frontier>);
+          }
+          fn visit(frontier: &Frontier, values: &[u64], span: u64) -> ok: Bool reads(frontier), writes(values) {
+            doc "Visits independent leaves and joins only their completion results.";
+            let count = values^.len;
+            match frontier^ {
+              Vacant() => { return True(); }
+              Mark() => {
+                if 0_u64 < count {
+                  set values^[0_u64] = values^[0_u64] +sat 1_u64;
+                  return True();
+                }
+                return False();
+              }
+              Fork(left: left_tree, right: right_tree) => {
+                let half = span / 2_u64;
+                let middle = imin(half, count);
+                let left_ok = visit(frontier: &left_tree^.inner, values: &values^[0_u64..middle], span: half);
+                let right_ok = visit(frontier: &right_tree^.inner, values: &values^[middle..count], span: half);
+                let both_ok = band(left_ok, right_ok);
+                return both_ok;
+              }
+            }
+          }
+          WFEOF
+          "$wfc" --par --par-ledger --emit-llvm -o build/emission-evidence/pair.ll build/emission-evidence/pair.wf > build/emission-evidence/pair-ledger.txt 2>&1
+          (cd build/emission/renderer && "$wfc" --par --par-ledger --emit-llvm --graph modules.wfg --function pkg::layout::frontier_prepare -o "$GITHUB_WORKSPACE/build/emission-evidence/frontier.ll") > build/emission-evidence/frontier-ledger.txt 2>&1
+          sha256sum "$wfc" > build/emission-evidence/compiler.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rootfont-emission
+          path: build/emission-evidence/
