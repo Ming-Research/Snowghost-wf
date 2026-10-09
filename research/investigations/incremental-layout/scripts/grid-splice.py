@@ -176,14 +176,47 @@ def run(driver, directory, name, baseline):
     command([sys.executable, str(HERE / 'splice-cases.py'), '--check-paths', str(expected), str(raw)])
 
 
+def final_space(driver, directory):
+    """Check final constraints and a later direct-context height reader."""
+    directory.mkdir(parents=True, exist_ok=True)
+    source = Path('tests/layout/grid-final-space-cases.html').read_text()
+    page = directory / 'case.html'
+    page.write_text(source)
+    (directory / 'changed.html').write_text(source.replace(
+        'class="restyle-context"', 'class="restyle-context half"'))
+    nodes = directory / 'case.nodes'
+    command([driver, 'nodes', '0', str(page), 'renderer/style/ua.css'], nodes)
+    tree = Tree(nodes)
+    marker = next(text for text in tree.texts
+                  if text['data'] == b'Restyled direct context.')
+    child = tree.by_node[marker['parent']]['parent']
+    script = directory / 'case.edits'
+    script.write_text('P 0\nP 1\nP 2\nC %d half\nK %d half\n' % (child, child))
+    raw = directory / 'edits.raw'
+    command([driver, 'edit', str(script), str(page), 'renderer/style/ua.css'], raw)
+    command([sys.executable, str(HERE / 'inctime.py'), '--check', str(script), str(raw)])
+    spec = importlib.util.spec_from_file_location('percentage_splice', HERE / 'percentage-splice.py')
+    extractor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(extractor)
+    extractor.extract(raw, directory)
+    for name in ('case', 'changed'):
+        command(['node', 'tests/layout/layout_oracle.mjs', 'dump', str(directory / (name + '.html'))], directory / (name + '.chromium.tsv'))
+    for prefix, name in ((0, 'case'), (1, 'changed'), (2, 'case')):
+        command(['node', 'tests/layout/layout_oracle.mjs', 'compare', str(directory / (name + '.chromium.tsv')), str(directory / ('prefix-%d.tsv' % prefix))])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('driver')
     parser.add_argument('directory', type=Path)
     parser.add_argument('--case', choices=CASES, action='append')
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--final-space', action='store_true')
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=True)
+    if args.final_space:
+        final_space(args.driver, args.directory)
+        return
     failures = []
     summary = []
     for name in args.case or CASES:

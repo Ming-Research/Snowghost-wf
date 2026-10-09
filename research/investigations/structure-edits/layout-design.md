@@ -4585,3 +4585,44 @@ Q140 renderer as a fifth cohort, alongside the original main/M2/twin/candidate,
 with all captures and fonts restored from the prior measured manifest. This
 same-source before/after pair isolates the repair's cost; it does not replace
 the M2 twin or permit the old incorrect final-space heuristic.
+
+The completed trace in
+[37935940394](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37935940394)
+at `16b497f` records the following original-page calls. All eight items have
+unchanged inline inputs, no own percentage-height read and clean marks. The
+four items inside `main#content` are each measured and finalized twice because
+the outer `.mw-content-container` flow is laid out again at final placement.
+All row queries use their settled column width with indefinite height; every
+final query supplies a definite grid-area height and stretch target.
+
+| Item | Natural height → final stretch target, px | Natural/final calls before repair | Constraint and disposition |
+| --- | ---: | ---: | --- |
+| Site-notice container | 24 → 24 | 1 / 1 | No direct percentage-height reader; final flow inputs are equal after excluding unread height definiteness. Reuse. |
+| Start column | 673 → 54231.265625 | 1 / 1 | The used height changes. Final materialization is required. |
+| Content wrapper | 54276.0625 → 54276.0625 | 1 / 1 | No direct percentage-height reader; the nested grid has an automatic own height and ignores the changed incoming percentage basis. Reuse avoids its entire duplicate pass. |
+| Title-bar flex container | 39.59375 → 39.59375 | 2 / 2 | One natural measure and one final definite flex constraint remain; Chromium also rejects a cache hit when a flex container gains definite block size. The second pair is caused by the duplicate wrapper layout. |
+| Page toolbar | 33 → 33 | 2 / 2 | No direct percentage-height reader. Both final calls and the second natural call repeat equal consumed flow inputs. |
+| End column | 17 → 54231.265625 | 2 / 2 | One final call changes used height and remains required; the second pair is the duplicate wrapper pass. |
+| Article body | 54203.46875 → 54203.46875 | 2 / 2 | No direct percentage-height reader. Positioned descendants exist, but both their containing geometry and static anchors stay equal. Both final calls and the second natural call are duplicates. |
+| Footer container | 311.390625 → 311.390625 | 1 / 1 | No direct percentage-height reader; reuse equal final flow inputs. |
+
+This accounts for all four extra natural measurements and all ten extra
+final calls relative to M2. Nine extra final calls are duplicate flow or
+wrapper-induced work. The first title-bar final call serves a distinct
+flex constraint that M2's heuristic skipped. Its output happens to match on
+this page; this observation is not a proof that indefinite and definite flex
+constraints are interchangeable. The repair conservatively retains it under
+the existing complete flex contract. The two original column stretch calls
+remain because they change used height. The existing Space-equivalence-only
+ablation records the same 9,092 line-breaking calls and twelve/twelve child
+calls, rejecting unread percentage basis alone as the explanation.
+
+Review identifies a retained-input lifetime to distinguish before accepting
+this repair: an equal-height stretched flow can initially have no percentage
+reader, then a direct child formatting context acquires `height:50%` through
+a class edit. Its saved percentage basis must follow the final grid height,
+even though that basis was unread initially. The final-space fixture adds
+and removes that class without adopting fresh state between edits and compares
+every prefix to a fresh layout and Chromium. Any disagreement rejects the
+current reuse publication; geometry equality alone cannot justify stale
+inputs used by a later restyle.
