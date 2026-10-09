@@ -9,7 +9,7 @@ Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
 
-- **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
+- **Parallel execution exposes task grain for small metadata reads.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the
   affected suffix. In a same-host, same-script 2,000-edit comparison using
   wf-0b7f5c5b9854/clang 22, this naturally written traversal took median
@@ -30,6 +30,18 @@ example apart from the renderer code that exposed it
   work/dumps and seq/par-one/par-four repeated edits plus the M2 acceptance
   matrix on the same host. Reopen with the owner's Whitefoot decision; do
   not hide the issue by serializing reads or forcing worker count.
+  The [point-reader follow-up](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#point-reader-task-grain-emitted-call-site-and-pending-direction)
+  identifies another emitted offer at reader revision 50a898e: two independent
+  reads obtain a stored transfer and inherited actions; the first becomes a
+  task containing one directory lookup and a 184-byte copy, joined after the
+  second. Frozen-binary inspection verifies the call site in both twins.
+  The pinned timing compiler keeps calls reaching recursion regardless of
+  static work. A semantic fragment is recorded, but no standalone minimized
+  trial or compiler-only timing has run, and the offer's exclusive latency
+  cost is unverified. The owner choice is to prioritize that Whitefoot grain
+  investigation (recommended) or defer further reader redesign until this
+  existing concern is addressed. The complete X5 comparison continues while
+  this choice is pending; renderer dependencies remain unchanged.
 
 - **Reaching into a nested owned structure needs one descent helper per
   structure.** Minimal example: `enum Pages { Leaf(items: Box<Slots<Item>>);
@@ -405,10 +417,12 @@ example apart from the renderer code that exposed it
   still trails the frontier on sentence edits. Geometry-only queries reduce the combined inherited cost to 18,600,391
   instructions and put HTML5 block below frontier in both modes, retaining
   the font-size gain. Sentence still costs 358/371 us sequential and 473/480
-  parallel against frontier 343/329 and 355/355 on the same host. The next
-  matched native profile distinguishes remaining readers from parallel runtime
-  work with one/four-worker controls; no compiler defect is inferred from the
-  latency gap alone. The splice plan's
+  parallel against frontier 343/329 and 355/355 on the same host. The
+  native capture and frozen-binary inspection identify the point-reader task
+  offer recorded under Whitefoot requirements above; its causal latency
+  share is unverified. Further reader redesign awaits the owner direction,
+  while the all-kind ten-cohort comparison supplies the remaining acceptance
+  evidence. The splice plan's
   per-sibling certification, the dense raw path and the positioned child
   scans remain linear. Q139 separately covers the natural independent-write
   proof that the pinned Whitefoot stored-field grammar cannot express.

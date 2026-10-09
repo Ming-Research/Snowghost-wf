@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current outcome: the [ten-cohort comparison](#ten-cohort-comparison-at-c5cae05) of the dirty frontier and range displacement still fails acceptance (ECMA262 root-font, HTML5 sentence and parallel font-size, and block); option A is not merged into research/m2-layout. The owner selected retained effective inputs with a dirty frontier first, then range displacement, each contract before implementation. Adoption also waits for the Whitefoot field-step range-proof fix even if timing passes.
+Current outcome: the reader repair reduces inherited work and retains the font-size gain in the [geometry pilot](#geometry-only-reader-pilot-result-and-remaining-attribution), but HTML5 sentence still exceeds the patched frontier. Its complete all-kind comparison is pending. The actual root-font refusal is [41 retained lineless paragraphs](#root-font-refusal-result-and-contract-decision), not an observed extent change. Root-font contract work and further reader redesign await the two recorded owner choices, including the [emitted point-read task grain](#point-reader-task-grain-emitted-call-site-and-pending-direction). The owner-selected retained-input frontier and range displacement remain proposed; option A is not merged into research/m2-layout, and adoption still waits for the Whitefoot field-step range-proof fix even if timing passes.
 
 ## Question and prior rejection criterion
 
@@ -1976,7 +1976,7 @@ compile and each produces 18 incremental/full differences on the positioned
 fixture, against a clean baseline and its six required splice paths. The
 step-5 oracle job in [37859507852](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37859507852)
 passes, including 20 ECMA262 and 60 HTML5 block edits using local splices;
-the broader oracle run is still pending. Read-only review found and fixed
+the broader run subsequently passes all 14 jobs. Read-only review found and fixed
 the mutation step's missing selector and an overbroad content-adjustment
 coverage claim; nonzero adjustment on this new path remains unverified.
 No arithmetic or dependency finding remains in the inspected shared walk.
@@ -2126,3 +2126,159 @@ that generated call site rejects this explanation. Presence alone does not
 attribute the complete latency gap or establish that a different source
 spelling is warranted; any compiler granularity gap needs its own minimal
 example and owner decision.
+
+### Remaining sentence cost: native capture and attribution limit
+
+[Hosted capture 37865310538](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37865310538)
+uses the frozen 50a898e reader and patched-frontier binaries from the geometry
+pilot, including both independent twins, on an AMD EPYC 9V74 host exposing
+four CPUs (Ubuntu 24.04, Linux 6.17.0-1022-azure, perf 6.17.13,
+wf-0b7f5c5b9854 and LLVM 22). Two-edit samples took 1.55–2.38 seconds
+including startup; their largest pair cost, 1,392 us, selected the existing
+30,000-pair cap. Every cohort completes 60,000 numbered edits, for 720,000
+records total. These are profiled repeated-pair medians, including any
+profiler perturbation; they do not replace X5 acceptance or an uninstrumented
+performance comparison.
+
+| Setting | Frontier | Frontier twin | Geometry reader | Reader twin |
+|---|---:|---:|---:|---:|
+| Sequential, one worker | 305 | 303 | 384 | 387 |
+| Parallel, one worker | 298 | 297 | 384 | 384 |
+| Parallel, four workers | 336 | 337 | 524 | 523 |
+
+All observed first edits arrive before sampling begins, at 1.46–2.34 seconds;
+summed edit execution is 17.896–31.539 seconds, independently exceeding the
+repaired ten-second admission bound. Every cohort has 1,534–11,389 user CPU
+event records, above the 1,000-sample minimum fixed before inspection. Perf
+reports zero lost samples in all twelve cohorts; raw LOST records and record
+stderr contain none. The original report/script stderr remains in the job
+log and emits no diagnostic. This evidence meets the strengthened duration,
+count and loss criteria even though the original capture ran the earlier
+harness. Its late/missing marker controls ran; the added short-batch harness
+control has not run.
+
+Call-stack quality does not meet the quantitative caller-attribution criterion.
+Many stacks contain unresolved or invalid intermediate frames; a one-frame
+worker stack alone is not evidence of truncation. For example, reader parallel/four-worker has 10,076 one-frame records
+out of 11,383; 1,011 records contain an unknown or all-ones frame. No caller
+percentage or decomposition of the latency gap is accepted from these stacks.
+Raw sampled instruction pointers still locate `range_geometry`, `slot_geometry`,
+`block_local` and positioned-plan work after startup. Four-worker captures
+also contain `wf__par_join` and `wf__par_worker_main`; their presence alone
+neither proves a compiler defect nor distinguishes useful work from waiting.
+The sampled windows also differ (about 17.8 seconds for frontier and 29.2
+seconds for the reader in four-worker mode), so raw sample-count ratios are
+not per-edit cost ratios. The binary call-site inspection below tests the
+specific point-reader fork hypothesis. No dependency has been added to the renderer to suppress parallel
+execution, and no new Whitefoot gap is yet established by this capture.
+
+### Point-reader task grain: emitted call site and pending direction
+
+[Hosted binary inspection 37866617553](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37866617553)
+confirms the same call site in both reader twins. All eight inspected binary
+hashes match the native capture. In the parallel reader, `effective_output`
+publishes `wf__par_thunk_layout.effective_output.0`, runs `range_inherited`
+on the calling lane, then calls `wf__par_join` before consuming the returned
+transfer. The thunk contains the counted point lookup and copies one
+184-byte stored transfer; it does not traverse a flow suffix. Publication and
+lane bookkeeping are inlined into the caller, so their samples can appear
+under `effective_output` rather than a named runtime helper. The frontier has
+no `effective_output` symbol or corresponding thunk.
+
+The relevant compiler source at the timing revision
+[0b7f5c5b9854](https://github.com/Ming-Research/Whitefoot/blob/0b7f5c5b98547dd27deb9691aed36281e350576b/compiler/src/lowering/builder/call_grain.rs)
+keeps an independent call offer whenever its callee reaches recursion,
+regardless of its static work; otherwise the threshold is 150,000 units.
+`boundary_output` reaches recursive `slot_output`, whose directory descent
+can be short. The natural dependency is two independent reads followed by
+combining their results. There is no algorithmic dependency between them.
+
+Minimal semantic example (a fragment, not a standalone compiler trial):
+
+```text
+let stored = read_transfer(pages: pages, slot: slot);
+let inherited = read_ancestor_actions(pages: pages, slot: slot);
+return shift_transfer(output: stored, delta: inherited);
+```
+
+`read_transfer` descends an immutable paged tree and returns one stored
+transfer; `read_ancestor_actions` sums the actions on its parent path. The
+emitted reader reproducer offers the first lookup as a task even for a short
+path; it need not execute on a different worker. This extends the existing Whitefoot point-query task-grain concern in
+`docs/todo.md`; it identifies the mechanism, not its exclusive latency cost.
+A standalone minimized trial and a compiler-only before/twin comparison have
+not run. Sequential sentence cost also remains above frontier, so a grain
+repair alone is not claimed to meet the reader target. Further reader
+redesign pauses at this choice while the complete acceptance measurement and
+validation finish. Existing independent calls and serial owner-motion writes
+are preserved.
+
+---
+
+**Should Whitefoot's point-read task grain be investigated before another reader redesign?**
+
+**Background.** The reader repair removes most inherited instructions, but
+sentence still misses the pre-range target. The frozen binary now shows a
+single transfer lookup published beside an ancestor read and joined before
+use. The native sampled instruction pointers include that caller and joins;
+invalid caller chains and different sample windows prevent a causal latency
+percentage. The compiler's recursion exemption is sufficient to retain a
+call reaching this lookup; no ledger comparison isolates it from the static-work criterion.
+
+**Options.** A — Have the Whitefoot work minimize and evaluate this point-read
+grain before another renderer representation change. Recommended: it keeps
+the natural dependencies and addresses the observed generated mechanism;
+it costs a compiler/runtime investigation and may leave sequential placement
+work to repair afterward. B — Leave the current reader proposal unaccepted
+and defer further reader redesign until the already recorded Whitefoot
+task-grain concern is addressed. This avoids a second investigation now but
+delays sentence acceptance and provides no date or guarantee for its resolution. Neither option serializes independent reads,
+forces a worker count or changes the acceptance threshold.
+
+**Confidence 4/5.** The emitted task and the static recursion exemption are
+established. Their share of the remaining regression, the best compiler
+remedy and its transfer to the complete X5 matrix are unverified.
+
+---
+
+### Geometry reader: completed correctness evidence
+
+The runtime remains unchanged from 50a898e4d09feae50e19986773cb27dfd7e85040.
+[All 14 oracle jobs, 37861961785](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37861961785),
+pass the broad fixtures, step-5 checks and every X5 kind on both pages in
+sequential and parallel modes. The page jobs cover 20 ECMA262 or 60 HTML5
+edits per kind and mode, with identical full/incremental dumps and zero block
+fallbacks. [All 21 range mutation jobs, 37865310392](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37865310392),
+compile and reach their behavioral detectors against clean baselines,
+including both new geometry-channel omissions and retained normalization.
+The separate positioned-accumulator mutations remain covered by their
+passing shared-walk run above. This is the affected range suite, not a claim
+that every unrelated M2 mutation was rerun.
+
+At 4e2c11f04c2f7c5698bba019a517c9fbb4e4f0a3,
+[make check 37866617542](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37866617542)
+and [layout-check 37866617548](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37866617548)
+pass with the production pin. The native profiling and binary-inspection
+workflow and script are retired after preserving their evidence. All builds,
+tests, checks and timing ran on GitHub-hosted runners; local work was source
+editing, repository inspection and analysis of downloaded evidence.
+No pin, submodule or approval log changed. The all-kind timing result remains
+pending, and neither owner direction card has been ruled on.
+
+The separate read-only completion review covers the complete task-base
+58b16da..4e2c11f diff, directly affected consumers, the current result/TODO
+updates and diagnostic retirement: all 19 resulting changed paths, the
+project checklist's applicable A/D/C/T/R/M/V groups and G1–G3/DC1–DC4,
+including `design/pipeline.md` and `design/pipeline/layout.md`. No source
+finding remains outstanding. RV1–RV3 corrected profile boundaries and
+attribution scope; RV4 and RV7 repaired mutation effect rows and wiring;
+RV5–RV6 corrected unsupported diagnostic and reader descriptions; RV8
+removed an unproved fixture claim; RV9 corrected edit-duration admission;
+RV10 corrected the section reference and distinguished a task offer from
+execution on another worker. The form evidence remains seven nodes, depth
+one, 66 to 67 decisions against the task base and 24 rejections.
+General design arguments, nonzero content adjustment through the new
+published positioned reader, the retired harness's unexecuted short-batch
+control and a minimized compiler-only grain trial remain unverified. Final
+all-kind timing and delivery checks need an evidence addendum; no owner
+approval or completion of the paused implementation steps is implied.
