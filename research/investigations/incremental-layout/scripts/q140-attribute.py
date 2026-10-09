@@ -39,7 +39,7 @@ if variant != 'trace':
     raise SystemExit(0)
 
 module = 'renderer/layout/module.wfm'
-replace(module, 'struct Context {', 'struct Context {\n  q140_trace: Box<Slots<i64>>;')
+replace(module, '  height_input: HeightInput;', '  q140_trace: Box<Slots<i64>>;\n  height_input: HeightInput;')
 replace('renderer/layout/build.wf', '  return Context(height_input:',
         '  let q140_trace = box_slots_new::<i64>(capacity: 0_u64);\n  return Context(q140_trace: move q140_trace, height_input:')
 with open(module, 'a') as f:
