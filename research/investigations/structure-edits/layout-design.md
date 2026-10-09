@@ -4334,3 +4334,31 @@ has run for main `8fbc160`, M2 `a1ed31e`, its twin or this candidate; no
 cost comparison is supported. The four prior proposed Decisions stand.
 The new bound refusal is recorded in the Whitefoot requirements, and its
 disposition awaits the owner; no source workaround has been selected.
+
+### Main-release pin and loop adaptation, 2026-10-09
+
+The owner authorized main release `wf-21823ee8602d`, Whitefoot
+`21823ee8602da1e8d78b2d07974ce2d14a6efcf0`, specification v0.109, replacing
+`wf-f949e676acfa`, v0.92. Whitefoot [#302, inline-range postconditions](https://github.com/Ming-Research/Whitefoot/pull/302)
+closes the constructed-segment boundary above; the same release contains
+[#286, constant inequality bounds](https://github.com/Ming-Research/Whitefoot/pull/286).
+The renderer keeps its natural constructor and count-based iteration.
+Cherry-picked loop adaptation `3c7a80d` removes 71 unreachable tails (93
+statements in 70 functions across 45 files), with no reachable-code,
+interface or contract change. FN-1 now gives a break-free ordinary loop no
+normal successor. No unused declaration cleanup was required by that patch.
+
+At `2a4aff1ff5746e788371c326b65e63684e0bf8d8`, hosted
+[layout-check 37907283850](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37907283850)
+accepts the entire layout module, including the unchanged proposal access.
+[Isolated probes 37907283896](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37907283896)
+accept the constructed-segment example above and the authorized borrowed
+segment, named selection and flat Boolean forms; the direct-segment,
+computed-give and nested-call controls still reject as intended. Its design
+check passes 21 tests, 7 nodes, depth 1 and 64 Decisions against base 60.
+These results supersede the pending compiler-boundary claims in the earlier
+handoff subsections; runtime, mutation and cost evidence remain separate.
+The resolved constructor entry leaves the branch-local TODO. The segment
+access and computed-give entries remain on this branch and are to move to
+the status board on merge under `sg-wfreq-segment-place` and
+`sg-wfreq-give-carrier`, without restoring `docs/todo.md` on main.
