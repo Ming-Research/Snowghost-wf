@@ -19,3 +19,111 @@ to its generated splitter's lane acquire, publish and join calls.
 A permitted row that retains sequential lowering rejects that emission
 claim without changing its source-permission verdict. No runtime overlap,
 output-correctness or performance claim follows from these measurements.
+
+## Hosted method and source compatibility
+
+The inherited [par-count workflow](../../../../.github/workflows/par-count.yml)
+builds `layout_oracle` with `--cache`, `--fragments function`, `--par` and
+`--par-ledger`, preserving the revision, pin, release manifest, compiler
+streams, exit code and full loop ledger. Its branch selector, release paths
+and ledger artifact name now select this recount. A second compiler
+invocation uses `--emit-llvm --par --par-ledger` on the same entry and cache,
+without `--fragments`, which the CLI forbids with `--emit-llvm`. It preserves
+the whole LLVM module, emission streams/exit and per-definition counts and
+extracts for `set_coverage_bits`, `build_filters`, `mark_lookups`,
+`collect_stage` and `sort_run`, including their generated helpers. Counts
+refer to call instructions, never runtime declarations.
+
+The independent existing `check` workflow runs unchanged `make check`.
+Both workflows use GitHub-hosted Ubuntu 24.04. No local or self-hosted
+build, test, check or timing is part of this measurement; CI status is
+polled at most once every five minutes.
+
+The [v0.110–v0.115 specification log](https://github.com/Ming-Research/Whitefoot/blob/6e800e9160f70b2f8a9aa10cab5b6d90d97bdf58/spec/log.md)
+was read before the upgrade. v0.110 adds fieldless `IoError::Cancelled`
+and cancellation parameters on host waits; v0.113 adds read-only shared
+cancellation-state handles and makes cancellation firing a waiting call.
+v0.111 adds map-reserve release, v0.112 extends range facts, v0.114 admits
+the copied-cell and call-form indexed updates, and v0.115 changes canonical
+scientific float spelling. Compiler overlap grouping also consumes proved
+separations (#316); the ledger determines whether that changes these rows.
+
+The renderer adaptations reuse [the matching cancellation classifier
+fix](https://github.com/Ming-Research/Snowghost-wf/commit/551c21b0291656abf55014d62cb85d44f246aa54)
+in `oracle/font_face/font_face.wf`:
+
+```diff
+     DeadlinePassed() => {
+       return False();
+     }
++    Cancelled() => {
++      return False();
++    }
+```
+
+`file_too_large` answers whether an `IoError` is `FileTooLarge`; cancellation
+is a distinct host outcome, so `False()` is the specified classification.
+Adding its explicit arm preserves exhaustive matching rather than hiding
+an unhandled outcome. The file before this patch matches that fix's parent.
+The other cancellation adaptations reuse [the upgrade's host-I/O patch](https://github.com/Ming-Research/Snowghost-wf/commit/d0cfd313ebacf1bac1010cfa248f68dfafbd87a9)
+on matching files: `io_error_code` returns `0_u32` for fieldless `Cancelled`,
+and its body/interface documentation now says that errors without a host
+code return zero. Seven `write_once` sites and one `read_next` site in
+oracle support and the six table-generator tool files pass a fresh
+`cancel_never()` watch and close it after the host wait, before handling
+the outcome. This satisfies the new argument/linear-handle obligations
+and preserves the command-line tools' unbounded waits. It adds no polling,
+deadline, cancellation source or renderer fallback.
+
+These compatibility adaptations are separate from helper narrowing: none of
+the 32 counted loop bodies or their permission inputs changes. The inherited
+FN-1 unreachable-tail adaptation from #290 stays unchanged.
+
+## Narrowing boundary and observations for Whitefoot
+
+No qualifying helper narrowing was found. The two font helpers already
+receive their mutable primitive-array roots separately from the read-only
+layout. For the remaining bodies, narrowing an effect or signature does
+not remove the complete-loop blockers: sequence-selected item get/put in
+the grid; shared `TableTrack` get/put after narrowing per-cell output
+helpers; whole-`Col` get/put, floating maximum or old-field-dependent
+contributions in columns; hidden-dominates-maximum in borders; and
+key-dependent winner payloads in cascade. The direct first-pseudo,
+scalar-mark, guarded exact-add and `NodeId` replacement forms have no
+helper narrowing that removes their blockers. Replacing whole-record
+get/put with field stores would be a direct-store rewrite, outside the
+criterion. **Applied narrowing diffs: none.** The after-narrowing column
+therefore uses the same measured bodies, not a hypothetical rewrite.
+
+The copied-cell positive form in `sort_run` is this source fragment,
+inside the counted loop with a bounded `class64` and independent contribution:
+
+```whitefoot
+let current = counts[class64];
+let next = current +wrap 1_u64;
+set counts[class64] = next;
+```
+
+A useful remaining rule boundary is `merge_edge`'s actual statement shape,
+inside its bounds guard:
+
+```whitefoot
+let current = list^.inner[at];
+if current < 0_i32 {
+  return unit;
+}
+if value < 0_i32 {
+  set list^.inner[at] = -1_i32;
+  return unit;
+}
+let wider = imax(current, value);
+set list^.inner[at] = wider;
+```
+
+This observes `current` in a branch as well as in `imax`, permits an
+intervening write to the root, and mixes a constant mark with an operation
+update. PAR-2 requires a single-use copied operand, disjoint intervening
+footprints and one fixed family kind. Supporting hidden-dominates-maximum
+requires a broader operator/selection rule, not helper narrowing. These
+are illustrative source fragments, not separately compiled fixtures.
+No renderer workaround or Whitefoot source change is made here.
