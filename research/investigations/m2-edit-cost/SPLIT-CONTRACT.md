@@ -2631,11 +2631,12 @@ medians 864154/858288 us (twin 867614/865568) and parallel 580834/587982
 (twin 572026/589441). The first syntax-corrected frontier d6383dd gives
 1055912/1073714 sequential (twin 1056697/1058120) and 1251214/1251940
 parallel (twin 1294570/1249397). The remaining midpoint 24f351e remains in
-that slower class. The established bounded-span patch on 3393042 returns
-sequential to 899252/902561 (twin 895686/896945), but parallel remains
-1036509/1034254 (twin 1030264/1043152). Thus removing the known excessive
-frontier depth leaves the parallel regression while restoring the small
-sequential change. These are same-host comparisons; their absolute values
+that slower class. The later 3393042 source with the established bounded-span
+patch gives sequential 899252/902561 (twin 895686/896945), but parallel remains
+1036509/1034254 (twin 1030264/1043152). Thus the bounded source still has the
+parallel regression alongside a small sequential difference from the pre-frontier source. This comparison also
+contains intervening frontier changes; it does not isolate the cost of
+directory depth. These are same-host comparisons; their absolute values
 are not compared with the first pilot's different processor.
 
 The next diagnostic captures the adjacent pre-frontier, first frontier and
@@ -2652,6 +2653,9 @@ The new multi-paragraph preparation call replaces the previously split
 counted paragraph loop; the child-context loop and `break_all` map remain
 split. The first buildable measured revision is
 d6383ddf5be38fb2893a13a47536bea4baccf1c4, after two admission repairs.
+Those intervening changes leave the recursive preparation pair unchanged;
+they repair aliases, a borrowed publication value, a post-publication range
+bound and oracle index types, and add oracle helpers.
 Hosted [diagnostic 37904985865](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37904985865)
 records exit 1 for b4ebd94 (first diagnostic: unresolved `Styles`) and
 for a32573fd23d743f86ca279d574360b30ac7dc4dc (first diagnostic: a u32
@@ -2689,12 +2693,14 @@ full source and pin-only child identities and patches.
 | 2 | bounded | 899252 [887617–904949] | 902561 [881819–919747] | 1036509 [1007010–1052743] | 1034254 [1005715–1041447] |
 | 2 | boundedtwin | 895686 [884713–905109] | 896945 [887784–901156] | 1030264 [995670–1040171] | 1043152 [1016030–1072263] |
 
-The first frontier has a second cost: its excessive fixed directory depth
-also raises sequential time. The bounded-frontier comparison separates that
-cost from the lost parallel preparation: sequential is only about 3–5%
-above `pre`, while four-worker medians remain about 76–80% higher, beyond
-both twins' entire edit ranges. No midpoint result is compared numerically
-across hosts. Every stage-2 cohort and twin prepares 60867–60868 paragraphs,
+The first frontier raises sequential time as well as parallel time. In the
+later bounded-frontier source, sequential is only about 3–5% above `pre`,
+while four-worker medians remain about 76–80% higher, beyond
+both twins' entire edit ranges. The first-to-bounded interval also changes
+frontier admission and stationary processing, so this comparison does not
+isolate how much sequential cost comes from directory depth. The lost
+recursive offer is established separately by emission and profile evidence.
+No midpoint result is compared numerically across hosts. Every stage-2 cohort and twin prepares 60867–60868 paragraphs,
 breaks 60868, visits 13903 contexts and reports 105927 held entries and
 105989 total entries. These counters rule out a larger paragraph set as the
 explanation; they do not claim identical instruction counts.
