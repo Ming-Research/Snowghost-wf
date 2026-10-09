@@ -460,10 +460,14 @@ example apart from the renderer code that exposed it
   ECMA262 font-size, and its bounded root interval fixed a measured HTML5
   root-font regression. The owner selected non-stationary restacking after
   the range-reader repair, starting with actual refusal evidence. That evidence
-  now leaves a contract choice awaiting the owner: first add bounded retained
-  lineless processing (recommended), or include it in general non-stationary
-  restacking. Both need explicit line/source-topology refusal and publication
-  coverage; neither is implemented or approved by this diagnostic.
+  led the owner to select bounded retained-lineless processing first. The
+  [bounded contract](../research/investigations/m2-edit-cost/SPLIT-CONTRACT.md#retained-lineless-frontier-bounded-contract-and-prior-falsifiers)
+  now admits stable lineless leaves without Open marks through preparation,
+  breaking and publication, with separate line-presence and empty-inline
+  topology refusal reasons. Hosted validation and the new-compiler acceptance
+  matrix are pending; general non-stationary restacking is outside this task.
+  Reopen it only after the admitted leaves' actual output/refusal distribution
+  supplies evidence that placement changes need it.
 
 - **M2 block edits still exceed the cf12 cost gate.** The integrated comparison
   fails seven of eight literal block cells. Owner-read specializations and

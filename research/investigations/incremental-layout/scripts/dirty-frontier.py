@@ -57,14 +57,17 @@ def fixtures():
                          for i in range(65))
     yield 'sparse-root', page('<section>' + paragraphs + '</section>',
                               '.small{font-size:12px}.large{font-size:24px}'), root_pairs
-    whitespace = '<section><p class="leaf">\t\t</p><p class="leaf"> \t </p></section>'
-    root_css = '.small{font-size:12px}.large{font-size:24px}'
+    # The anonymous paragraphs use the context's strut. The intervening block
+    # fixes its own font and whitespace, so no interior-block style guard masks
+    # the leaf transaction when the context's font/whitespace changes.
+    whitespace = '<section class="leaf">\t\t<p>Fixed separator.</p> \t </section>'
+    root_css = 'p{white-space:normal}.small{font-size:12px}.large{font-size:24px}'
     yield 'lineless-whitespace', page(whitespace, root_css), root_pairs
     def empty_source(tree):
         node = text(tree, '\t\t')['node']
         return [f'D {node} 0 2'] + root_pairs(tree)
     yield 'lineless-empty-source', page(whitespace, root_css), empty_source
-    yield 'line-presence', page(whitespace, '.changed .leaf{white-space:pre}'), toggle
+    yield 'line-presence', page(whitespace, 'p{white-space:normal}.changed{white-space:pre}'), toggle
     empty_inline = '<section><p><span class="leaf">\t\t</span></p><p><span class="leaf"> \t </span></p></section>'
     yield 'lineless-open', page(empty_inline, root_css), root_pairs
     simple = '<section><p><span class="leaf">First.</span></p><p class="middle">Middle.</p><p><span class="leaf">Last.</span></p></section>'
