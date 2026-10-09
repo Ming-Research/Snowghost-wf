@@ -4,6 +4,45 @@ on:
   push:
     branches: [research/m2-frag-a]
 jobs:
+  disassemble:
+    if: contains(github.event.head_commit.message, '[reader-disasm]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Frozen native-profile drivers and call sites
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          for name in frontier frontiertwin a atwin; do
+            gh run download 37861961788 --repo Ming-Research/Snowghost-wf -n "driver-$name" --dir "drivers/$name"
+          done
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import subprocess
+          for path in sorted(Path('drivers').glob('*/layout_oracle_*')):
+              label = path.parent.name + '-' + path.name
+              prefix = Path('evidence') / label
+              Path(str(prefix) + '.sha256').write_text(hashlib.sha256(path.read_bytes()).hexdigest() + '\n')
+              symbols = subprocess.check_output(['nm', '-n', '--defined-only', str(path)], text=True)
+              Path(str(prefix) + '.symbols').write_text(symbols)
+              selected = [line.split()[-1] for line in symbols.splitlines() if line.split() and any(name in line.split()[-1] for name in ('effective_output', 'boundary_output', 'range_inherited', 'wf__par_join', 'wf__par_worker_main'))]
+              with Path(str(prefix) + '.asm').open('wb') as output:
+                  for symbol in selected:
+                      subprocess.run(['objdump', '-drwC', '--disassemble=' + symbol, str(path)], stdout=output, check=True)
+              with Path(str(prefix) + '.frames').open('wb') as output:
+                  subprocess.run(['readelf', '--debug-dump=frames-interp', str(path)], stdout=output, check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reader-callsite-evidence
+          path: |
+            evidence/
+            drivers/*/revision.txt
+            drivers/*/pin-only.patch
   profile:
     if: contains(github.event.head_commit.message, '[reader-native]')
     runs-on: ubuntu-24.04

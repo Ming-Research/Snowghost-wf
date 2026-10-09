@@ -2115,3 +2115,14 @@ pages in sequential and four-worker parallel mode. It supplies the complete
 acceptance cells missing from the three-kind pilots; it does not presume that
 the remaining sentence gap is resolved. Runtime code is unchanged from
 50a898e4d09feae50e19986773cb27dfd7e85040.
+
+The native capture's remaining join observations are followed by hosted
+inspection of the same frozen binaries, without rebuilding or modifying the
+renderer. The inspection retains binary hashes, symbol addresses, unwind
+entries and disassembly of effective transfer reads and runtime joins. The
+question is whether `effective_output`'s independent `boundary_output` and
+`range_inherited` calls introduce a fork/join at each point read. Absence of
+that generated call site rejects this explanation. Presence alone does not
+attribute the complete latency gap or establish that a different source
+spelling is warranted; any compiler granularity gap needs its own minimal
+example and owner decision.
