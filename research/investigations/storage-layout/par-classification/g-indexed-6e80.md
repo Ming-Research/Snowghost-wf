@@ -31,8 +31,13 @@ invocation uses `--emit-llvm --par --par-ledger` on the same entry and cache,
 without `--fragments`, which the CLI forbids with `--emit-llvm`. It preserves
 the whole LLVM module, emission streams/exit and per-definition counts and
 extracts for `set_coverage_bits`, `build_filters`, `mark_lookups`,
-`collect_stage` and `sort_run`, including their generated helpers. Counts
-refer to call instructions, never runtime declarations.
+`collect_stage` and `sort_run`, including their generated helpers. Because
+the layout entry uses normalization queries rather than full normalization,
+`sort_run` is outside its emitted closure; a targeted invocation uses
+`--function pkg::text::normalization::sort_run --emit-llvm --par --par-ledger`
+on the same graph, source, pin and cache. Counts refer to call instructions,
+never runtime declarations. The all-module permission ledger and this
+targeted function's permission/actualization ledger remain separate evidence.
 
 The independent existing `check` workflow runs unchanged `make check`.
 Both workflows use GitHub-hosted Ubuntu 24.04. No local or self-hosted
@@ -78,6 +83,37 @@ deadline, cancellation source or renderer fallback.
 These compatibility adaptations are separate from helper narrowing: none of
 the 32 counted loop bodies or their permission inputs changes. The inherited
 FN-1 unreachable-tail adaptation from #290 stays unchanged.
+
+The initial runs on `7e1eaa3e8034894a9688a516e00266297f677ef9`, with only
+the font-classifier arm applied, record the remaining compatibility refusals:
+
+```text
+./oracle/support/support.wf:327:3: error[ERR-2]: NonExhaustiveMatch
+  source:   match error {
+  marker:   ^^^^^^^^^^^^^
+  missing_variants: [Cancelled]
+```
+
+The [initial par-count run 38001496505](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38001496505)
+exited 1 before producing a loop ledger. The [initial gate run
+38001496520](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38001496520)
+stopped at the corresponding host-call signature change:
+
+```text
+./tools/static_atoms/static_atoms.wf:213:11: error[GRAM-11]: InvalidNamedArguments
+  callee: read_next
+  declared_parameters: [factory, input, destination, start, end, deadline, cancel]
+```
+
+These are the new exhaustive-match and required-argument obligations, not
+a refusal of a sound natural form. The reused patches supply the correct
+classification and the explicit noncancellable wait policy. The upgrade's
+[hosted classifier controls, run 38000758589](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38000758589),
+at `bb98d4371d0e148775e232e4d2938ddb9aec3be6` with `wf-f887e82c4611`,
+exercise these identical classifier bodies: the correct mappings pass,
+both missing-arm forms fail with ERR-2, and returning a nonzero code or
+`True()` for cancellation is detected. This is reused classifier evidence
+at v0.113, not a new runtime test of the v0.115 renderer.
 
 ## Narrowing boundary and observations for Whitefoot
 
