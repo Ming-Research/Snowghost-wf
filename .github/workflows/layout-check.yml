@@ -102,6 +102,11 @@ jobs:
           old = subprocess.check_output(['git', 'show', 'c3ea1c8:' + path], text=True)
           def reader(source):
               return 'fn io_error_code(' + source.split('fn io_error_code(', 1)[1].split('\nfn put_host_error(', 1)[0]
+          font_path = 'renderer/oracle/font_face/font_face.wf'
+          def classifier(source):
+              return 'fn file_too_large(' + source.split('fn file_too_large(', 1)[1].split('\nfn print_line(', 1)[0]
+          font = classifier(Path(font_path).read_text())
+          old_font = classifier(subprocess.check_output(['git', 'show', 'c3ea1c8:' + font_path], text=True))
           probe = '''
           fn main() -> status: std::process::ExitStatus pure {
             let cancelled = io_error_code(error: IoError::Cancelled());
@@ -116,6 +121,13 @@ jobs:
             if host != 37_u32 {
               return std::process::exit_status(code: 3_u8);
             }
+            if file_too_large(problem: IoError::Cancelled()) {
+              return std::process::exit_status(code: 4_u8);
+            }
+            if file_too_large(problem: IoError::FileTooLarge(code: 0_u32, origin: 0_u8)) {
+            } else {
+              return std::process::exit_status(code: 5_u8);
+            }
             return std::process::exit_status(code: 0_u8);
           }
           '''
@@ -123,27 +135,34 @@ jobs:
           zero = 'Cancelled() => {\n      return 0_u32;'
           assert body.count(zero) == 1
           wrong = body.replace(zero, 'Cancelled() => {\n      return 1_u32;')
-          for name, source in [('current', body), ('before', reader(old)), ('wrong', wrong)]:
+          false = 'Cancelled() => {\n      return False();'
+          assert font.count(false) == 1
+          wrong_font = font.replace(false, 'Cancelled() => {\n      return True();')
+          for name, source in [('current', body + font), ('before-reader', reader(old) + font),
+                               ('before-classifier', body + old_font), ('wrong-reader', wrong + font),
+                               ('wrong-classifier', body + wrong_font)]:
               (root / (name + '.wf')).write_text('alias IoError = std::io::IoError;\n' + source + probe)
           PY
           pin=$(sed -n 's/^release = //p' whitefoot.pin)
           wfc=$(realpath "build/whitefoot/$pin/whitefootc")
           "$wfc" build/upgrade-io/current.wf -o build/upgrade-io/current
           build/upgrade-io/current
-          if "$wfc" build/upgrade-io/before.wf -o build/upgrade-io/before > build/upgrade-io/before.log 2>&1; then
-            echo 'the old reader unexpectedly accepted the cancellation variant' >&2
-            exit 1
-          fi
-          grep 'NonExhaustiveMatch' build/upgrade-io/before.log
-          "$wfc" build/upgrade-io/wrong.wf -o build/upgrade-io/wrong
-          if build/upgrade-io/wrong; then
-            echo 'the error-code probe missed a wrong cancellation code' >&2
-            exit 1
-          else
-            wrong_exit=$?
-          fi
-          test "$wrong_exit" -eq 1
-          echo 'current reader passed; old reader rejected; wrong cancellation code detected'
+          for part in reader classifier; do
+            if "$wfc" "build/upgrade-io/before-$part.wf" -o "build/upgrade-io/before-$part" > "build/upgrade-io/before-$part.log" 2>&1; then
+              echo "the old $part unexpectedly accepted the cancellation variant" >&2
+              exit 1
+            fi
+            grep 'NonExhaustiveMatch' "build/upgrade-io/before-$part.log"
+            "$wfc" "build/upgrade-io/wrong-$part.wf" -o "build/upgrade-io/wrong-$part"
+            if "build/upgrade-io/wrong-$part"; then
+              echo "the probe missed a wrong cancellation $part result" >&2
+              exit 1
+            else
+              wrong_exit=$?
+            fi
+            if [ "$part" = reader ]; then test "$wrong_exit" -eq 1; else test "$wrong_exit" -eq 4; fi
+          done
+          echo 'current mappings passed; both old matches rejected; both wrong cancellation results detected'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
