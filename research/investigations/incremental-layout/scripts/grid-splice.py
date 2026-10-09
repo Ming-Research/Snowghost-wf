@@ -44,6 +44,16 @@ CASES = {
     'stretch-shrink': ('aside p{height:20px}', GRID, 0),
     'baseline': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}', GRID, 0),
     'baseline-consumer': ('main{align-items:baseline}.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}.raised{font:30px/35px serif}', '<div class="consumer"><main>' + ITEM.replace('<p>', '<p class="raised">', 1) + PEER + LAST + '</main>' + PEER + '</div><div>Outer tail.</div>', 0),
+    'baseline-nested-flow': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}article{display:flow-root}', GRID.replace('<section>', '<section><article>').replace('</section>', '</article></section>'), 0),
+    'baseline-nested-flex': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:flex;flex-direction:column}', GRID, 0),
+    'baseline-nested-grid': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{display:grid;grid-template-columns:200px}', GRID, 0),
+    'baseline-scroller': ('main{align-items:baseline}aside{font-size:30px;line-height:35px}section{overflow:auto}', GRID, 0),
+    'baseline-sharing-priority': ('.consumer{display:flex;align-items:baseline}.consumer>aside{font:30px/35px serif}main>aside{align-self:baseline;font:30px/35px serif}section{align-self:start}', '<div class="consumer">' + GRID + PEER + '</div>', 0),
+    'baseline-equal-height': ('main{align-items:baseline;height:180px}section{height:120px}aside{font-size:30px;line-height:35px}', GRID, 0),
+    'baseline-flex-sharing': ('main{align-items:baseline}section{display:flex}section p{width:70px}section p:first-child{align-self:start}section p:last-child{align-self:baseline;font:30px/35px serif}', GRID, 0),
+    'baseline-flex-reverse': ('main{align-items:baseline}section{display:flex;flex-direction:row-reverse}section p{width:70px}section p:last-child{font:30px/35px serif}', GRID, 0),
+    'baseline-inline-block-last': ('main{align-items:baseline}.last{display:inline-block}.last p:first-child{font:30px/35px serif}aside{font-size:30px;line-height:35px}', GRID.replace('<section>', '<section><span class="last">').replace('</section>', '</span>last-line</section>'), 0),
+    'baseline-row-span': ('main{align-items:baseline}section{grid-row:1 / 3}footer{grid-column:2}aside{font-size:30px;line-height:35px}', GRID, 0),
     'row-span': ('section{grid-row:1 / 3}footer{grid-column:2}aside p{height:20px}', GRID, 0),
     'fixed-container-height': ('main{height:240px;align-content:space-between}', GRID, 0),
     'clamped-container-height': ('main{min-height:100px;max-height:130px}', GRID, 0),
@@ -115,7 +125,10 @@ def prepare(driver, directory, name):
         for width, height in ((1000, 800), (1280, 720)):
             append('V %d %d' % (width, height))
             pair()
-    script = ('S .q140-large{font-size:24px;line-height:30px;height:70px}\n'
+    changed_rule = '.q140-large{font-size:24px;line-height:30px;height:70px}'
+    if name == 'baseline-equal-height':
+        changed_rule = '.q140-large{font-size:24px;line-height:30px}'
+    script = ('S ' + changed_rule + '\n'
               'P 0\nP 1\nP 2\n' + '\n'.join(commands) + '\n')
     (directory / 'case.edits').write_text(script)
     (directory / 'case.edits.paths').write_text(''.join(

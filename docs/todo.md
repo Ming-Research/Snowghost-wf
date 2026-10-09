@@ -21,8 +21,8 @@ resolves it.
   edit/full-layout/RSS comparison. Reopen when the owner rules on the scratch
   choice in the Q140 Draft PR. The
   [argument and alternatives](../research/investigations/structure-edits/layout-design.md#dependencies-and-the-existing-shared-track-scratch)
-  own the details; this is a renderer design issue, not a demonstrated
-  Whitefoot limitation.
+  own the details; the scratch choice remains proposed; its implementation now also encounters
+  the direct-segment-access language boundary recorded below.
 
 - **Grid baseline alignment consumes the flow item's last baseline.** The
   Q140 hosted matrix at `a8a0e30` disagrees with Chromium before any edit in
@@ -49,6 +49,26 @@ resolves it.
 Gaps Snowghost needs Whitefoot to close, each stated as its minimal semantic
 example apart from the renderer code that exposed it
 ([Whitefoot-kit](../whitefoot-kit/downstream.md#trying-an-unmerged-whitefoot-change)).
+
+- **Direct segment length and element access are unavailable in executable
+  expressions.** Q140's item-owned grid proposals naturally read
+  `proposals^.inner[item].len` and `proposals^.inner[item][track]`. Hosted
+  [check 37878456548](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878456548)
+  at `3f8767a` rejects the former with OP-4: expected an indexable base,
+  found `Segments<GridTrack>`. The pinned specification's TYPE-9, REF-4 and
+  OP-4 permit only segment range references, so this is a language-boundary
+  question, not a demonstrated compiler/specification mismatch. Minimal
+  example: a guarded `return values^.inner[item].len;` for
+  `values: &Box<Segments<i32>>` with `item < values^.inner.len`.
+  Impact: the common grid algorithm and therefore candidate baseline/Q140
+  gates cannot compile. Recommendation: decide whether direct segment
+  projection should be supported; changing to a reference binding solely
+  to satisfy the current checker is stopped under this task's no-respelling
+  rule. The temporary `q140-segment-repro` workflow checks the isolated
+  diagnostic on hosted CI and is removed once the question is resolved.
+  Validate length, element, slice and independent item-write forms in
+  Whitefoot before resuming this source. Reopen with the owner's language
+  boundary ruling; no pin or submodule has moved.
 
 - **Parallel execution regresses a retained suffix walk.** At Snowghost 3ec4bb4, `translate_reference_owner_suffix`
   snapshots its left and right owner cursors independently, then visits the

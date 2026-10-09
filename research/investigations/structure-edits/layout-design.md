@@ -3983,3 +3983,60 @@ that leaves those cases wrong, changes existing last-baseline behavior, adds
 unnecessary sibling ordering, or introduces a measured regression beyond
 the M2 twin's spread without disposition. This prerequisite remains open
 alongside the independent-proposal choice; neither is a Whitefoot gap.
+
+### First-baseline publication implementation under option A
+
+The continuation instruction permits implementation on A while the card
+remains open. Contexts now carry first-baseline value and availability next
+to the existing baseline. A flow publishes from its settled sequence's first
+contributing handle, reading that line or child's first result and its
+ancestor origins. It does not scan siblings or traverse nested context
+baselines. Children publish independently; a parent waits only for its chosen
+contributor, and grid's per-row ascent maxima use balanced reductions.
+Tables and flex first-baseline consumers read the new result, while the
+inline-block last-baseline consumer still reads the existing fields.
+
+Retained output equality compares the new fields, child sequence publication
+keeps distinct first and last offsets, and structural arithmetic preview
+carries both first value and availability. Shared flow update publication
+covers stationary, ordinary-boundary, scoped-reference and full-reference
+returns; splice settlement publishes after geometry and sequence repair.
+Grid export gives priority to a baseline-sharing item in the first occupied
+row. Scrolling flow exports its initial-position first baseline separately
+from the existing last-baseline visibility rule.
+
+The two measured failing fixtures remain unchanged. Additional fixture
+families cover a nested flow, flex and grid, scrolling overflow, grid export
+with a nonsharing first item, and a first-only font change at fixed item and
+container heights. All candidate outcomes, mutations and costs are still
+unverified until hosted execution.
+
+### Direct segment access stops hosted compilation
+
+The first implementation revision `3f8767a` fails hosted
+[check 37878456548](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878456548)
+and [Q139 37878460922](https://github.com/Ming-Research/Snowghost-wf/actions/runs/37878460922)
+before any renderer execution. The first rejection is
+`proposals^.inner[first].len`: OP-4 expects an indexable base and finds
+`Segments<GridTrack>`. The isolated source under the temporary hosted
+reproduction is:
+
+```wf
+fn segment_length(values: &Box<Segments<i32>>, item: u64) -> count: u64 reads(values) {
+  if item < values^.inner.len {
+    return values^.inner[item].len;
+  }
+  return 0_u64;
+}
+```
+
+At the pinned Whitefoot revision, TYPE-9, REF-4 and OP-4 explicitly restrict
+segments to complete range-reference borrows (`&s[i]`), while RANGE-1's
+segment projections occur only in nonexecuting clauses. The rejection agrees
+with that language boundary; it is not evidence of a compiler defect.
+The task forbids changing a natural form to a different spelling to pass the
+checker, so this step stops for an owner ruling. Item-owned storage and
+balanced reductions remain the proposed algorithm; no shared-scratch or
+per-track-recomputation alternative is substituted. First-baseline source
+work can be inspected independently, but exact-head compilation, Chromium
+results, executable mutation detection and cost all remain unverified.

@@ -1,0 +1,52 @@
+# Temporary language-boundary reproduction for Q140. Remove after the owner
+# resolves direct segment access and the renderer compiles normally.
+name: q140-segment-repro
+on:
+  push:
+    branches: [research/m2-q140]
+    paths: ['.github/workflows/q140-segment-repro.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Reproduce direct segment length access
+        run: |
+          set -euo pipefail
+          make -s compiler
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          mkdir -p build/segment-repro/repro
+          git rev-parse HEAD > build/segment-repro/revision.txt
+          cp whitefoot.pin build/segment-repro/
+          cat > build/segment-repro/modules.wfg <<'EOF'
+          pkg::repro: [];
+          EOF
+          cat > build/segment-repro/repro/module.wfm <<'EOF'
+          public fn segment_length(values: &Box<Segments<i32>>, item: u64) -> count: u64 reads(values) doc "Reads the length of an existing segment.";
+          EOF
+          cat > build/segment-repro/repro/repro.wf <<'EOF'
+          fn segment_length(values: &Box<Segments<i32>>, item: u64) -> count: u64 reads(values) {
+            if item < values^.inner.len {
+              return values^.inner[item].len;
+            }
+            return 0_u64;
+          }
+          EOF
+          status=0
+          (cd build/segment-repro && time "$wfc" --graph modules.wfg --check-module pkg::repro) > build/segment-repro/compiler.log 2>&1 || status=$?
+          echo "$status" > build/segment-repro/exit-code.txt
+          cat build/segment-repro/compiler.log
+          test "$status" -ne 0
+          grep -F 'error[OP-4]: TypeMismatch' build/segment-repro/compiler.log
+          grep -F 'found: Segments<i32>' build/segment-repro/compiler.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-segment-repro
+          path: build/segment-repro/

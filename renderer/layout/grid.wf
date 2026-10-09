@@ -84,6 +84,7 @@ struct GridItem {
   width: i32;
   height: i32;
   shared: Bool;
+  ascent: i32;
   shim: i32;
 }
 
@@ -146,7 +147,7 @@ struct GridSize {
 fn grid_new_item() -> made: GridItem pure {
   doc "An item entry for a child that is no grid item.";
   let no = False();
-  return GridItem(active: no, order: 0_i32, row_definite: no, row: 0_i32, rows: 1_i32, column_definite: no, column: 0_i32, columns: 1_i32, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, shim: 0_i32);
+  return GridItem(active: no, order: 0_i32, row_definite: no, row: 0_i32, rows: 1_i32, column_definite: no, column: 0_i32, columns: 1_i32, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
 }
 
 fn grid_mod(value: u64, modulus: u64) -> remainder: u64 pure {
@@ -873,7 +874,7 @@ fn grid_collect(context: &Context, events: &[Flow], styles: &Styles, model: &Gri
           let no = False();
           let row = grid_spot(styles: styles, def: row_def, areas: areas, rows: yes, first: group.row_start, last: group.row_end);
           let column = grid_spot(styles: styles, def: column_def, areas: areas, rows: no, first: group.column_start, last: group.column_end);
-          let made = GridItem(active: yes, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, shim: 0_i32);
+          let made = GridItem(active: yes, order: group.order, row_definite: row.definite, row: row.start, rows: row.span, column_definite: column.definite, column: column.start, columns: column.span, placed: no, needs: no, least: 0_i32, most: 0_i32, minimum: 0_i32, measured: no, x: 0_i32, y: 0_i32, width: 0_i32, height: 0_i32, shared: no, ascent: 0_i32, shim: 0_i32);
           grid_put(items: &model^.items, at: at, item: made);
           let pushed = push_item::<u32>(cell: &model^.sequence, value: child, ceiling: item_ceiling);
           if group.order != 0_i32 {
@@ -2271,18 +2272,22 @@ fn grid_measure_item(child: &Context, item: &GridItem, styles: &Styles, document
   set item^.least = tall;
   set item^.most = tall;
   set item^.minimum = tall;
+  let inner = if child^.has_first_baseline {
+    give child^.first_baseline;
+  } else {
+    give child^.height;
+  }
+  set item^.ascent = child^.margin_top +sat inner;
   set item^.measured = True();
   return unit;
 }
 
 fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, align_items: u8) -> result: unit reads(context), reads(styles), writes(model) {
-  doc "Marks the items that share a baseline with the other items of their row: those whose align-self is baseline and that span one row. They are measured, since their baselines are needed.";
+  doc "Marks items whose first baseline aligns in their starting row, including row-spanning items. They are measured because their baseline ascents contribute to sizing.";
   let count = model^.items.inner.len;
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
-    let one = item.rows == 1_i32;
-    let live = band(item.active, one);
-    let shares = if live {
+    let shares = if item.active {
       if c < context^.children.inner.len {
         let style = context^.children.inner[c].style;
         let group = item_of(styles: styles, style: style);
@@ -2303,51 +2308,47 @@ fn grid_mark_baselines(context: &Context, styles: &Styles, model: &GridModel, al
   return unit;
 }
 
-fn grid_shim_baselines(context: &Context, model: &GridModel) -> result: unit reads(context), writes(model) {
-  doc "Shifts the items that share a baseline within their row so that their baselines line up: each is moved down by the difference between the largest distance from the top of a margin box to the baseline in its row and its own, and its contributions to the row grow by that shim.";
+fn grid_row_ascent(items: &[GridItem], row: i32) -> ascent: i32 reads(items) {
+  doc "Balanced maximum of independent item-owned ascent proposals for one row.";
+  let count = items^.len;
+  if count == 0_u64 {
+    return 0_i32;
+  }
+  if count == 1_u64 {
+    let item = items^[0_u64];
+    let same = item.row == row;
+    let takes = band(item.shared, same);
+    if takes {
+      return imax(item.ascent, 0_i32);
+    }
+    return 0_i32;
+  }
+  let middle = count / 2_u64;
+  let left = grid_row_ascent(items: &items^[0_u64..middle], row: row);
+  let right = grid_row_ascent(items: &items^[middle..count], row: row);
+  return imax(left, right);
+}
+
+fn grid_shim_baselines(model: &GridModel) -> result: unit writes(model) {
+  doc "Reduces item-owned baseline ascents independently per row, then writes each item's shim and contributions independently. No item updates shared row scratch.";
   let rows = model^.rows.inner.len;
   let slots = imin(rows, grid_max_tracks);
   let tops = box_array_filled::<i32>(count: slots, value: 0_i32);
   let count = model^.items.inner.len;
-  for (c in 0_u64..count) {
-    let item = model^.items.inner[c];
-    if item.shared {
-      if c < context^.children.inner.len {
-        let child = &context^.children.inner[c];
-        let inner = if child^.has_baseline {
-          give child^.baseline;
-        } else {
-          give child^.height;
-        }
-        let ascent = child^.margin_top +sat inner;
-        let at = grid_index(value: item.row);
-        if at < tops.inner.len {
-          let larger = imax(tops.inner[at], ascent);
-          set tops.inner[at] = larger;
-        }
-      }
-    }
+  for (row in 0_u64..slots) {
+    let index = grid_small(value: row);
+    set tops.inner[row] = grid_row_ascent(items: &model^.items.inner[0_u64..count], row: index);
   }
   for (c in 0_u64..count) {
     let item = model^.items.inner[c];
     if item.shared {
-      if c < context^.children.inner.len {
-        let child = &context^.children.inner[c];
-        let inner = if child^.has_baseline {
-          give child^.baseline;
-        } else {
-          give child^.height;
-        }
-        let ascent = child^.margin_top +sat inner;
-        let at = grid_index(value: item.row);
-        if at < tops.inner.len {
-          let top = tops.inner[at];
-          let shim = top -sat ascent;
-          set model^.items.inner[c].shim = shim;
-          set model^.items.inner[c].least = item.least +sat shim;
-          set model^.items.inner[c].most = item.most +sat shim;
-          set model^.items.inner[c].minimum = item.minimum +sat shim;
-        }
+      let at = grid_index(value: item.row);
+      if at < tops.inner.len {
+        let shim = tops.inner[at] -sat item.ascent;
+        set model^.items.inner[c].shim = shim;
+        set model^.items.inner[c].least = item.least +sat shim;
+        set model^.items.inner[c].most = item.most +sat shim;
+        set model^.items.inner[c].minimum = item.minimum +sat shim;
       }
     }
   }
@@ -2612,37 +2613,65 @@ fn grid_stretches(align: u8) -> stretch: Bool pure {
   return made;
 }
 
-fn grid_first_baseline(context: &Context, model: &GridModel) -> (baseline: i32, found: Bool) reads(context), reads(model) {
-  doc "The grid container's first baseline: that of the item that starts earliest, by row and then column, ties going to the earlier in placement order, from the container's border-box top; an item with no baseline gives its border box's bottom edge.";
-  let best = grid_infinite;
-  let baseline = 0_i32;
-  let found = False();
-  let count = model^.sequence.inner.len;
-  for (s in 0_u64..count) {
-    let child = model^.sequence.inner[s];
-    let at = cvt::<u32, u64>(child);
-    if at < model^.items.inner.len {
-      if at < context^.children.inner.len {
-        let item = model^.items.inner[at];
-        let rows = item.row *sat 4096_i32;
-        let key = rows +sat item.column;
-        let earlier = key < best;
-        if earlier {
-          set best = key;
-          set found = True();
-          let geometry_read_1 = child_position(context: context, at: at);
-          let top = geometry_read_1.y;
-          let inner = if context^.children.inner[at].has_baseline {
-            give context^.children.inner[at].baseline;
+fn grid_baseline_item(items: &Box<Slots<GridItem>>, sequence: &[u32], prefer_sharing: Bool) -> child: u32 reads(items), reads(sequence) {
+  doc "Selects the first-row baseline-sharing item, or that row's first item, in grid order; ties retain placement order. Balanced selection depends only on settled item placement and sharing flags.";
+  let count = sequence^.len;
+  if count == 0_u64 {
+    return no_index;
+  }
+  if count == 1_u64 {
+    return sequence^[0_u64];
+  }
+  let middle = count / 2_u64;
+  let left = grid_baseline_item(items: items, sequence: &sequence^[0_u64..middle], prefer_sharing: prefer_sharing);
+  let right = grid_baseline_item(items: items, sequence: &sequence^[middle..count], prefer_sharing: prefer_sharing);
+  let a = cvt::<u32, u64>(left);
+  let b = cvt::<u32, u64>(right);
+  if a < items^.inner.len {
+    if b < items^.inner.len {
+      let first = items^.inner[a];
+      let second = items^.inner[b];
+      if second.row < first.row {
+        return right;
+      }
+      if first.row < second.row {
+        return left;
+      }
+      if prefer_sharing {
+        if first.shared {
+          if second.shared {
           } else {
-            give context^.children.inner[at].height;
+            return left;
           }
-          set baseline = top +sat inner;
+        } else if second.shared {
+          return right;
         }
       }
+      if second.column < first.column {
+        return right;
+      }
     }
+    return left;
   }
-  return baseline, found;
+  return right;
+}
+
+fn grid_export_baseline(context: &Context, model: &GridModel, first: Bool) -> (baseline: i32, found: Bool) reads(context), reads(model) {
+  doc "Exports the first alignment baseline from a sharing-priority selection, or preserves the legacy baseline from the earliest item and its existing baseline field. Missing item baselines synthesize the border-box bottom.";
+  let count = model^.sequence.inner.len;
+  let selected = grid_baseline_item(items: &model^.items, sequence: &model^.sequence.inner[0_u64..count], prefer_sharing: first);
+  let at = cvt::<u32, u64>(selected);
+  if at < context^.children.inner.len {
+    let position = child_position(context: context, at: at);
+    let inner = if context^.children.inner[at].has_first_baseline {
+      give context^.children.inner[at].first_baseline;
+    } else {
+      give context^.children.inner[at].height;
+    }
+    let baseline = position.y +sat inner;
+    return baseline, True();
+  }
+  return 0_i32, False();
 }
 
 fn lay_out_grid(context: &Context, events: &[Flow], styles: &Styles, document: &Document, fonts: &FontSet, picks: &FontPicks, viewport: Viewport) -> result: unit reads(events), reads(styles), reads(document), reads(fonts), reads(picks), writes(context) {
@@ -2696,7 +2725,7 @@ fn lay_out_grid(context: &Context, events: &[Flow], styles: &Styles, document: &
   grid_mark_needs(model: &model, rows: yes);
   grid_mark_baselines(context: context, styles: styles, model: &model, align_items: group.align_items);
   grid_rows_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model, justify_items: group.justify_items, align_items: group.align_items);
-  grid_shim_baselines(context: context, model: &model);
+  grid_shim_baselines(model: &model);
   let stretch_rows = grid_stretches(align: group.align_content);
   let known = definite >= 0_i32;
   if known {
@@ -2726,9 +2755,12 @@ fn lay_out_grid(context: &Context, events: &[Flow], styles: &Styles, document: &
   grid_assign(model: &model, rows: yes);
   grid_final_pass(context: context, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport, model: &model, justify_items: group.justify_items, align_items: group.align_items, content_left: content_left, content_top: content_top, content_width: content_width, content_height: target);
   set context^.height = used;
-  let (first_baseline, has_first) = grid_first_baseline(context: context, model: &model);
-  set context^.baseline = first_baseline;
-  set context^.has_baseline = has_first;
+  let (first_baseline, has_first) = grid_export_baseline(context: context, model: &model, first: yes);
+  let (baseline, has_baseline) = grid_export_baseline(context: context, model: &model, first: no);
+  set context^.baseline = baseline;
+  set context^.has_baseline = has_baseline;
+  set context^.first_baseline = first_baseline;
+  set context^.has_first_baseline = has_first;
   let positioned_counts = position_out(context: context, events: events, styles: styles, document: document, fonts: fonts, picks: picks, viewport: viewport);
   add_own_fragment(context: context);
   return unit;

@@ -1,11 +1,15 @@
-# Temporary Q140 pre-implementation fixture characterization. Remove when
-# the candidate gate takes over; reason 2 is never a Q140 admission result.
+# Temporary hosted baseline-repair fixtures; remove when the candidate gate
+# takes over. Existing reason 2 is never a Q140 admission result.
 name: q140-baseline
 on:
   workflow_dispatch:
     inputs:
       matrix:
         description: Run the full fixture matrix after inspecting the pilot
+        type: boolean
+        default: false
+      mutations:
+        description: Run first-baseline propagation mutations after the pilot
         type: boolean
         default: false
 permissions:
@@ -23,29 +27,22 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
-      - uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: 37857671233
-          name: q139-baseline
-          path: build
-      - name: Verify unchanged renderer and pin before driver reuse
-        run: |
-          set -euo pipefail
-          baseline=$(head -1 build/baseline-revision.txt)
-          git diff --exit-code "$baseline" HEAD -- renderer whitefoot.pin
-          chmod +x build/layout_base build/layout_base_par
-          git rev-parse HEAD > build/q140-revision.txt
-          cat build/baseline-revision.txt >> build/q140-revision.txt
       - name: Fonts and independent reference browser
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
           npm install --prefix build/reference playwright@1.56.1
           build/reference/node_modules/.bin/playwright install --with-deps chromium
           echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
           node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
-          make -s oracle-fonts
+          make -s compiler oracle-fonts
+      - name: Build the candidate drivers
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > build/q140-revision.txt
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          time (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_base)
+          time (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_base_par)
       - name: Small timed fixture before the matrix
         id: pilot
         run: |
@@ -70,4 +67,52 @@ jobs:
           path: |
             build/q140-*/
             build/q140-revision.txt
-            build/baseline-revision.txt
+            build/layout_base*
+            build/grid-cache/
+  mutations:
+    needs: fixtures
+    if: inputs.mutations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mutation: [omit-first-flow-update, omit-first-output-equality, omit-first-child-publication]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: q140-baseline
+          path: build
+      - name: Toolchain and independent reference browser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          npm install --prefix build/reference playwright@1.56.1
+          build/reference/node_modules/.bin/playwright install --with-deps chromium
+          echo "PLAYWRIGHT=$GITHUB_WORKSPACE/build/reference/node_modules/playwright" >> "$GITHUB_ENV"
+          node -e 'console.log("CHROMIUM=" + require("./build/reference/node_modules/playwright").chromium.executablePath())' >> "$GITHUB_ENV"
+          make -s compiler oracle-fonts
+          chmod +x build/layout_base build/layout_base_par
+      - name: Apply one mutation and compile both modes
+        run: |
+          set -euo pipefail
+          python3 research/investigations/incremental-layout/scripts/grid-falsify.py apply '${{ matrix.mutation }}'
+          git diff > build/mutation.diff
+          wfc=$(realpath "$(ls build/whitefoot/*/whitefootc | head -1)")
+          (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated)
+          (cd renderer && "$wfc" --cache ../build/grid-cache --fragments function --par --graph modules.wfg --entry layout_oracle -o ../build/layout_mutated_par)
+      - name: Require focused detection in both modes
+        run: |
+          set -euo pipefail
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/grid-falsify.py verify '${{ matrix.mutation }}' build/layout_base build/layout_mutated build/q140-mutation-seq --baseline-paths
+          WF_WORKERS=4 python3 research/investigations/incremental-layout/scripts/grid-falsify.py verify '${{ matrix.mutation }}' build/layout_base_par build/layout_mutated_par build/q140-mutation-par --baseline-paths
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: q140-${{ matrix.mutation }}
+          path: |
+            build/q140-mutation-*/
+            build/mutation.diff
