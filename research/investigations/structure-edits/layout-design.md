@@ -3972,19 +3972,24 @@ rectangles, compares inline/text fragment counts and widths, and reports
 scroll height without judging it. It is not an exact all-coordinate browser
 oracle; retained/full dump identity is exact.
 The temporary `q140-baseline` workflow builds the current source and first runs
-the fixed-column sample;
-the matrix requires a separate dispatch after inspecting that sample.
+the fixed-column sample. A manual pilot dispatch leaves matrix/mutations off;
+a subsequent full dispatch or `falsify-m2` call enables them, conditional on
+pilot success. Inspect the first candidate pilot before starting that full
+run. The called workflow is part of the complete M2 mutation dispatch.
 The draft workflow now requires candidate paths. The script's explicit
 baseline mode remains available only to characterize historical reason 2;
 it cannot satisfy admission or mutation requirements. The parser accepts
 reason 11; its controls accept that refusal, reject unknown reason 12 and
-reject reason 11 reported as success. The three first-baseline mutations and
-ten additional grid/auto-margin mutations are wired to the temporary
-workflow. Their detector requires the intended geometry/identity difference,
-loss of reason 11, or loss of a required positive to reason 11, and rejects
-unrelated failures. These new controls and mutations have not executed.
-Remaining certificate combinations, permanent mutation wiring and complete
-admission remain unfinished.
+reject reason 11 reported as success. The three first-baseline mutations,
+ten grid/auto-margin mutations and five enclosing-flex mutations are wired
+to the temporary workflow, alongside 36 fixture families. Their detector
+requires the intended geometry/identity difference, loss of reason 11, or
+loss of a required positive to reason 11, and rejects unrelated failures.
+The detector controls pass in hosted run 37891780521, linked in the
+[named-delivery result](#authorized-named-delivery-and-the-next-grammar-boundary).
+No candidate fixture or mutation has executed: renderer compilation remains
+blocked there. Required certificate coverage and admission remain unverified;
+the temporary workflow still needs its permanent home before readiness.
 
 The baseline-only nested flex/grid fixtures preserve their original geometry
 but now assert their actual seam contracts: changing direct grid membership
@@ -4046,7 +4051,9 @@ are source/specification findings, not additional measured failures.
 **Question.** How should a first-baseline result and its availability reach
 grid sizing, export and retained updates without changing existing
 last-baseline consumers? This shared output contract is beyond Q140 B's
-column-invariance ruling. The owner selected the first option, authored below; execution now stops at the separate computed-`give` bounds boundary after the authorized segment-borrow repair.
+column-invariance ruling. The owner selected the first option, authored below. The authorized segment
+borrow and named-`give` range example pass isolated checks; renderer
+execution remains blocked by the later GRAM-9 refusal recorded below.
 
 | Candidate | Dependencies, cost and risk | Status |
 | --- | --- | --- |
@@ -4171,9 +4178,10 @@ carry scalar relations from bare bindings, literals and named constants,
 but expressly exclude computed expressions; the subtraction therefore
 loses its bound at delivery. This is a specified language boundary rather
 than evidence of a compiler/specification mismatch. The temporary hosted
-reproduction is authored to check this minimal range form and the accepted
-segment borrow independently of the renderer. Its push was refused because
-the OAuth token lacks workflow scope; neither new check has run.
+reproduction checks this minimal range form and the accepted segment borrow
+independently of the renderer. Its initial HTTPS push was refused for missing
+workflow scope; the subsequent SSH publication and hosted results are
+recorded below.
 
 The owner classified this as a Whitefoot gap and authorized naming the
 computed value before giving it. Both bounded selectors now use
