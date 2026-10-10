@@ -210,26 +210,38 @@ def summarize():
     with (OUT / 'native-summary.csv').open('w') as f:
         writer = csv.DictWriter(f, fieldnames=summary_rows[0]); writer.writeheader(); writer.writerows(summary_rows)
     totals, counts, functions, breakdown = {}, {}, {}, []
-    for name in ('main', 'candidate'):
+    cohorts = ['main', 'candidate']
+    if (OUT / 'profile-before-full.callgrind.2').exists():
+        cohorts.insert(1, 'before')
+    for name in cohorts:
         total, own, calls = 0, Counter(), Counter()
         for edit in sorted(ids):
             path = OUT / f'profile-{name}-full.callgrind.{2 * edit}'
             cost, self_cost, incoming, edges = callgrind(path)
-            rebuild = sum(v for (caller, callee), v in edges.items() if callee == 'wf_layout.structure_changed')
-            layout = sum(v for (caller, callee), v in edges.items() if callee == 'wf_layout.update')
+            rebuild = sum(v for (caller, callee), v in edges.items() if callee.split('.body.llvm.')[0] == 'wf_layout.structure_changed')
+            layout = sum(v for (caller, callee), v in edges.items() if callee.split('.body.llvm.')[0] == 'wf_layout.update')
             if not rebuild or not layout or cost < rebuild + layout:
                 raise ValueError(('invalid phase decomposition', name, edit, cost, rebuild, layout))
             breakdown.append(dict(cohort=name, edit=edit, instructions=cost, structural_rebuild=rebuild, layout=layout, bookkeeping=cost-rebuild-layout))
             total += cost
             for symbol, amount in self_cost.items():
-                own[re.sub(r'\$instance\$[0-9a-f]+', '<all>', symbol)] += amount
+                own[re.sub(r"(?:\.body\.llvm\.[0-9]+|'[0-9]+)$", '', re.sub(r'\$instance\$[0-9a-f]+', '<all>', symbol))] += amount
             for symbol, amount in incoming.items():
-                calls[re.sub(r'\$instance\$[0-9a-f]+', '<all>', symbol)] += amount
+                calls[re.sub(r"(?:\.body\.llvm\.[0-9]+|'[0-9]+)$", '', re.sub(r'\$instance\$[0-9a-f]+', '<all>', symbol))] += amount
         totals[name], counts[name], functions[name] = total, calls, own
     with (OUT / 'instruction-breakdown.csv').open('w') as f:
         writer = csv.DictWriter(f, fieldnames=breakdown[0]); writer.writeheader(); writer.writerows(breakdown)
-    symbols = set(functions['main']) | set(functions['candidate'])
-    attribution = [dict(function=s, main_calls=counts['main'][s], candidate_calls=counts['candidate'][s], main_self=functions['main'][s], candidate_self=functions['candidate'][s], difference=functions['candidate'][s]-functions['main'][s]) for s in symbols]
+    symbols = set().union(*(set(functions[n]) for n in cohorts))
+    attribution = []
+    for symbol in symbols:
+        row = dict(function=symbol)
+        for name in cohorts:
+            row[name + '_calls'] = counts[name][symbol]
+            row[name + '_self'] = functions[name][symbol]
+        row['difference'] = functions['candidate'][symbol] - functions['main'][symbol]
+        if 'before' in cohorts:
+            row['repair_difference'] = functions['candidate'][symbol] - functions['before'][symbol]
+        attribution.append(row)
     attribution.sort(key=lambda row: row['difference'], reverse=True)
     with (OUT / 'attribution.csv').open('w') as f:
         writer = csv.DictWriter(f, fieldnames=attribution[0]); writer.writeheader(); writer.writerows(attribution)

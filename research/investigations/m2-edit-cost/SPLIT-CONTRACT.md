@@ -3595,3 +3595,90 @@ detected by a subsequent edit. Needed costs that cannot meet the target under
 this contract require an owner decision, not a skipped check or changed
 admission. The temporary workflow and helper are wired only to this finite
 experiment and are removed after archiving its evidence, before readiness.
+
+### Fallback producer/consumer audit
+
+The current reconstruction first builds a private replacement, retires the
+old context directory entries in a private copy, copies surviving routes,
+and records the replacement. Preparation transfer and publication follow
+those checks. The immediately following layout does not consume every route,
+but later incremental edits do; absence from that one layout is not proof
+of dead data.
+
+| Producer/work | Reader after fallback | Disposition before measurement |
+| --- | --- | --- |
+| `record_uses`: context owner and table structural routes | `styles_restyled` calls `mark_use`; an owner route also invalidates a placing grid/flex/table parent | Required; dropping these can leave layout or its parent stale. |
+| `record_uses`: block routes | `splice_owner` resolves an exact DOM parent to its single block; `mark_use` also records the changed block scope | Required for the next structural splice and scoped block restyle. |
+| `record_uses`: paragraph strut and piece routes | `mark_use` marks precisely those paragraphs; a boxes-only restyle additionally consults `paragraph_reads` | Required independently of block geometry marks. A block route does not mark its paragraphs for preparation. |
+| `note_use`: repeated supplier in one paragraph | The duplicate branch returns without publishing another route | Its repeated directory reads do not change the result; source-level duplicate suppression is a candidate for measurement. |
+| `retain_routes`: old route traversal | It copies only routes whose context survives `retire_at`; those routes serve later edits outside the replacement | Retired routes are already omitted. Surviving routes cannot simply be dropped with the rebuilt context. |
+| `record_units` and retained text-unit copy | `text_changed`, splice-source lookup and a later reconstruction's `reuse_prepared` | Required for fresh and surviving text; skipped whitespace remains a distinct refusal state. |
+| Context directory, `context_of` and checkpoint lookup | Subsequent path validation, splice-owner resolution and exact-checkpoint reconstruction | Required; context identities remain stable outside the replacement and retired slots must not alias new ones. |
+| Full boundary/height/fragment publication | Subsequent splice admission, dirty-frontier updates and old/current geometry readers | Required retained state that main does not store in the same form; profiles must separate publication from duplicate preparation before any cost is called inherent. |
+
+The focused lifetime sequence forces a mixed-inline-seam reconstruction,
+then splices in another ordinary block of that same rebuilt context. It
+edits retained and newly inserted text/styles, checks an outside context,
+removes the fallback insertion, and splices again. Separate omissions erase
+fallback-published style heads or text units, requiring the immediately
+following splice or first retained-text edit to detect the missing record.
+The original Apollo11 script additionally receives a splice/inverse pair
+after each counted fallback, preserving original sites and edit order and
+renumbering only newly allocated DOM nodes. Hosted execution is required
+before claiming these sequences pass.
+
+The before-source lifetime pilot passes in
+[hosted run 38033466490](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38033466490).
+Its drivers were compiled at `b2ea372d9cdcdfae5dff03fea7043ca72fd5717f`;
+that commit and the requested before revision have the identical renderer
+tree `3cd1ca91be4621f41f62889dce568faa8973bf5c`. The focused sequence takes
+0.21/0.22 seconds in its two sequential pilots, supporting the expanded
+batch. Both modes pass its 20 edits and the Apollo11 sequence's 104 edits
+(60 unchanged operations plus 44 followups). The fixed original path
+inventory is retained in `tests/layout/fixtures/apollo11/block-paths.json`;
+it specifies preservation of the before-source admissions, while each edit's
+geometry is compared with a fresh full rebuild. The new record omissions
+still require their own hosted detection evidence.
+
+### First fallback trim: comparison before measurement
+
+The three-round native baseline in
+[38033465161](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38033465161)
+places the fallback medians at 37–41 ms for the before source and 24–26 ms
+for main on a hosted AMD EPYC 9V74. Its complete profiles contain
+4,933,630,767 main and 6,193,244,173 before-source instructions over the same
+22 fallback edits. Reconstruction accounts for 926,273,904 of the
+1,259,613,406 added instructions, layout for 326,378,472 and other
+structural-edit bookkeeping for 6,961,030. The initial summary step failed
+because the compiler outlined the candidate's reconstruction under a
+`.body.llvm` symbol; the raw timings and all per-edit instruction dumps are
+complete. Symbol normalization must preserve those bodies and recursive
+call contexts when deriving final tables.
+
+Three local changes preserve the existing records and dependencies:
+
+1. Consecutive paragraph pieces with the same supplying element already
+   have the route published by the strut or preceding piece. No intervening
+   operation can change that supplier's head. Omit those duplicate calls,
+   keeping `note_use`'s general duplicate check for nonconsecutive suppliers.
+2. `retain_routes` writes into a fresh empty use table. Keep a supplier's
+   chain head in a local variable and write it once after collecting its
+   surviving routes; no consumer reads the intermediate heads. Preserve
+   chain order and every live-context check.
+3. Allocate the fallback's style-route table as a bulk page using a checked
+   producer bound: all old routes, plus one new context owner per context,
+   block uses, two row/column uses, paragraph struts and pieces. The bound
+   may exceed actual emissions due to duplicate uses, but cannot omit an
+   emission. It adds independent read-only subtree reductions before the
+   existing route publication. If the bound exceeds the directory ceiling,
+   retain ordinary growth rather than changing admission or refusing an
+   otherwise valid edit. The final logical length still counts actual
+   records. No reserve heuristic, record elision or new lifetime is used.
+
+Before measuring these changes, compare them with the frozen before and its
+twin, main and its twin, and the new candidate and its twin on one hosted
+runner. Reject attribution if eliminated calls/traversals do not explain
+an instruction reduction, and retain the original native thresholds without
+a noise exception. Fresh routes, text routes, boundary summaries, height
+records and fragment state remain required. The full identity and mutation
+matrix, including the new record omissions, must pass on the resulting head.

@@ -12,6 +12,9 @@ on:
         description: Run the fallback lifetime pilot and sequences only
         type: boolean
         default: false
+      evidence_run:
+        description: Summarize completed archived profiles without rerunning measurements
+        default: ''
       candidate:
         description: Candidate revision (empty selects this workflow revision)
         default: ''
@@ -24,7 +27,7 @@ permissions:
   actions: read
 jobs:
   build:
-    if: inputs.driver_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]'))
+    if: inputs.driver_run == '' && inputs.evidence_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -33,8 +36,16 @@ jobs:
         include:
           - name: main
             source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            archive: main
           - name: maintwin
             source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+            archive: maintwin
+          - name: before
+            source: 4b8a75b241107c02504b3fa9d1eaccf9e758a349
+            archive: candidate
+          - name: beforetwin
+            source: 4b8a75b241107c02504b3fa9d1eaccf9e758a349
+            archive: candidatetwin
           - name: candidate
             source: ''
           - name: candidatetwin
@@ -44,12 +55,34 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: matrix.archive != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: 38032513579
+          name: driver-${{ matrix.archive }}
+          path: build/driver
+      - name: Verify frozen source and common compiler
+        if: matrix.archive != ''
+        env:
+          SOURCE: ${{ matrix.source }}
+        run: |
+          set -euo pipefail
+          source=$(head -n 1 build/driver/revision.txt)
+          git diff --exit-code "$source" "$SOURCE" -- renderer
+          grep -Fx 'release = wf-41f46e60030c' build/driver/revision.txt
+          grep '^ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921 ' build/driver/revision.txt
+          test "$(cat build/driver/seq-build.status)" = 0
+          test "$(cat build/driver/par-build.status)" = 0
+          test ! -s build/driver/source.diff
       - name: Common compiler and LLVM
+        if: matrix.archive == ''
         run: |
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y --no-install-recommends clang lld
           make -s compiler toolchain
       - name: Independent exact-source builds
+        if: matrix.archive == ''
         env:
           SOURCE: ${{ matrix.source || inputs.candidate || github.sha }}
         run: |
@@ -81,9 +114,9 @@ jobs:
           path: build/driver/
   measure:
     needs: build
-    if: always() && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.driver_run != ''))
+    if: always() && inputs.evidence_run == '' && (needs.build.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.driver_run != ''))
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -137,10 +170,10 @@ jobs:
           set -euo pipefail
           flag=''
           if [ "$CONTROLS" = true ]; then flag=--controls; fi
-          python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin candidate candidatetwin $flag
+          python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin before beforetwin candidate candidatetwin $flag
       - name: Isolated instruction profiles with zero-edit control
         if: inputs.fixtures_only != true
-        run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main candidate
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main before candidate
       - name: Per-fallback attribution and paired timing summaries
         if: inputs.fixtures_only != true
         run: python3 research/investigations/m2-edit-cost/fallback-cost.py summarize
@@ -156,7 +189,7 @@ jobs:
           for mode in seq par; do
             WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/fixture-$mode"
             WF_WORKERS=4 "build/drivers/driver-candidate/layout_oracle_$mode" edittime build/x5/scripts/apollo11-block.edits build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css' > "build/fallback-cost/apollo-before-$mode.raw"
-            WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/apollo-followup-$mode" --apollo-before "build/fallback-cost/apollo-before-$mode.raw"
+            WF_WORKERS=4 python3 "$s" "build/drivers/driver-candidate/layout_oracle_$mode" "build/fallback-cost/apollo-followup-$mode" --apollo
           done
       - uses: actions/upload-artifact@v4
         if: always()
@@ -166,3 +199,26 @@ jobs:
             build/fallback-cost/
             build/x5/scripts/
             build/research/concurrency/
+
+  summarize:
+    if: inputs.evidence_run != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.evidence_run }}
+          name: fallback-evidence
+          path: build
+      - name: Reconcile all recorded edit instructions
+        run: |
+          python3 research/investigations/m2-edit-cost/fallback-cost.py self-test
+          python3 research/investigations/m2-edit-cost/fallback-cost.py summarize
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-summary
+          path: |
+            build/fallback-cost/*.csv
+            build/fallback-cost/*.json

@@ -122,7 +122,7 @@ section{display:flow-root}p{margin:8px 0}.probe{font-size:27px}
     return text, expected
 
 
-def apollo(driver, out, baseline_raw):
+def apollo(driver, out):
     """Replay all original edits; put a proved splice after each fallback.
 
     Insertions allocate two DOM nodes, as the existing X5 generator specifies.
@@ -133,7 +133,8 @@ def apollo(driver, out, baseline_raw):
     out.mkdir(parents=True, exist_ok=True)
     source = Path('build/x5/scripts/apollo11-block.edits')
     original = source.read_text().splitlines()
-    baseline = paths(Path(baseline_raw).read_text())
+    inventory = json.loads(Path('tests/layout/fixtures/apollo11/block-paths.json').read_text())
+    baseline = {number: (splice, reason) for number, splice, reason in inventory['paths']}
     wanted = Counter({(1, 0): 38, (0, 9): 18, (0, 7): 2, (0, 3): 2})
     if Counter(baseline.values()) != wanted or sorted(baseline) != list(range(1, 61)):
         raise ValueError('frozen before-source fallback inventory differs')
@@ -176,12 +177,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('driver', nargs='?')
     parser.add_argument('output', nargs='?', type=Path)
-    parser.add_argument('--apollo-before')
+    parser.add_argument('--apollo', action='store_true')
     parser.add_argument('--self-test', action='store_true')
     options = parser.parse_args()
     if options.self_test:
         controls()
-    elif options.apollo_before:
-        apollo(options.driver, options.output, options.apollo_before)
+    elif options.apollo:
+        apollo(options.driver, options.output)
     else:
         focused(options.driver, options.output)

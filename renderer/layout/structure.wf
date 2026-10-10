@@ -757,13 +757,14 @@ fn retire_at(context: &Context, steps: &[ContextStep], depth: u64, paths: &Route
 }
 
 fn retain_routes(layout: &Layout, paths: &RouteTable<ContextPath>, uses: &RouteTable<StyleUse>, routes: &RouteTable<StyleRoute>) -> result: Result<unit, LayoutError> reads(layout), reads(paths), writes(uses), writes(routes) {
-  doc "Copies surviving explicit uses without reading retained context payloads. Dense directory copying is migration support, not a local splice.";
+  doc "Copies surviving explicit uses into the caller's empty use table without reading retained context payloads. One local head accumulates each supplier's surviving chain; no consumer reads intermediate heads. Dense directory copying is migration support, not a local splice.";
   let nodes = uses^.len;
   let total = layout^.routes.len;
   for (n in 0_u64..nodes) {
     if n < layout^.uses.len {
       let route_value_5 = route_read::<StyleUse>(table: &layout^.uses, at: n);
       let cursor = route_value_5.head;
+      let head = no_index;
       for (step in 0_u64..total) {
         if cursor == no_index {
           break;
@@ -782,22 +783,44 @@ fn retain_routes(layout: &Layout, paths: &RouteTable<ContextPath>, uses: &RouteT
           } else {
             return too_large::<unit>();
           }
-          let route_value_7 = route_read::<StyleUse>(table: uses, at: n);
-          let head = route_value_7.head;
           let route = StyleRoute(serial: held.serial, structural: held.structural, block: held.block, paragraph: held.paragraph, owner: held.owner, next: head);
           let pushed = propagate route_push::<StyleRoute>(table: routes, value: route);
           let route_head = cvt::<u64, u32>(next);
-          let updated_use = StyleUse(head: route_head);
-          route_write::<StyleUse>(table: uses, at: n, value: updated_use);
+          set head = route_head;
         }
         set cursor = held.next;
       }
       if cursor != no_index {
         return inconsistent::<unit>();
       }
+      if head != no_index {
+        let updated_use = StyleUse(head: head);
+        route_write::<StyleUse>(table: uses, at: n, value: updated_use);
+      }
     }
   }
   return Ok<unit, LayoutError>(value: unit);
+}
+
+fn reconstruction_route_bound(context: &Context) -> count: u64 reads(context) {
+  doc "Bounds record_tree's route emissions by its producers: one context owner, one per block, two per row/column, and each paragraph's strut and pieces. Duplicates may emit fewer routes. Independent subtree counts precede allocation; no route or admission depends on this reserve.";
+  let rows = context^.rows.inner.len *sat 2_u64;
+  let columns = context^.columns.inner.len *sat 2_u64;
+  let blocks = context^.blocks.inner.len;
+  let paragraphs = context^.paragraphs.inner.len;
+  let count = 1_u64 +sat blocks;
+  set count = count +sat rows;
+  set count = count +sat columns;
+  set count = count +sat paragraphs;
+  for (p in 0_u64..paragraphs) {
+    set count = count +sat context^.paragraphs.inner[p].pieces.inner.len;
+  }
+  let children = context^.children.inner.len;
+  for (c in 0_u64..children) {
+    let below = reconstruction_route_bound(context: &context^.children.inner[c]);
+    set count = count +sat below;
+  }
+  return count;
 }
 
 fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) {
@@ -927,7 +950,15 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
   let unused = unused_style();
   let uses = route_table::<StyleUse>(count: nodes, missing: unused);
   let missing_routes = absent_style_route();
-  let routes = route_table::<StyleRoute>(count: 0_u64, missing: missing_routes);
+  let fresh_routes = reconstruction_route_bound(context: &built);
+  let route_bound = layout^.routes.len +sat fresh_routes;
+  let reserve = if route_bound <= item_ceiling {
+    give route_bound;
+  } else {
+    give 0_u64;
+  }
+  let routes = route_table::<StyleRoute>(count: reserve, missing: missing_routes);
+  set routes.len = 0_u64;
   let retained = propagate retain_routes(layout: layout, paths: &paths, uses: &uses, routes: &routes);
   let old_slot = cvt::<u32, u64>(serial);
   if old_slot < layout^.paths.len {
