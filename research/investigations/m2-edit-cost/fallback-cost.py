@@ -135,6 +135,47 @@ def profile(names):
                     raise ValueError(('missing edit dumps', len(parts), len(edits)))
 
 
+def memory_record(text):
+    import re
+    rss = re.findall(r'^\s*Maximum resident set size \(kbytes\): (\d+)$', text, re.M)
+    status = re.findall(r'^\s*Exit status: (\d+)$', text, re.M)
+    if len(rss) != 1 or status != ['0'] or int(rss[0]) <= 0:
+        raise ValueError('missing, failed or invalid maximum RSS observation')
+    return int(rss[0])
+
+
+def memory(names, rounds):
+    source = SCRIPTS / 'apollo11-block.edits'
+    lines = source.read_text().splitlines(keepends=True)
+    header = [line for line in lines if line.startswith('S ')]
+    edits = [line for line in lines if line[:2] not in ('S ', 'P ', 'V ') and line.strip()]
+    rows = []
+    for mode in ('seq', 'par'):
+        for size, selected in (('zero', []), ('sample', edits[:2]), ('full', edits)):
+            script = OUT / f'memory-{size}.edits'
+            script.write_text(''.join(header + selected))
+            repetitions = rounds if size == 'full' else 2
+            for repeat in range(1, repetitions + 1):
+                ordered = names if repeat % 2 else list(reversed(names))
+                for name in ordered:
+                    dest = OUT / f'memory-{name}-{mode}-{size}-{repeat}.raw'
+                    measured = dest.with_suffix('.time')
+                    seconds = run(['/usr/bin/time', '-v', '-o', str(measured),
+                                   driver(name, mode), 'edittime', str(script.relative_to(ROOT)),
+                                   *args_for('apollo11')], dest)
+                    inctime.read(dest, inctime.script_operations(script))
+                    rss = memory_record(measured.read_text())
+                    rows.append(dict(cohort=name, mode=mode, size=size, round=repeat,
+                                     maximum_rss_kib=rss, wall_seconds=seconds))
+                    print('memory', rows[-1], flush=True)
+                    if size != 'full' and seconds > 30:
+                        raise ValueError('RSS pilot exceeds bounded batch budget')
+    with (OUT / 'memory.csv').open('w') as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def callgrind(path):
     """Read Ir self costs and call edges from one independent dump part."""
     import re
@@ -313,12 +354,21 @@ fn=(4) bookkeeping
                 pass
             else:
                 raise AssertionError('accepted incorrect instruction evidence')
-    print('instruction-accounting controls: pass')
+    good = 'Maximum resident set size (kbytes): 123\nExit status: 0\n'
+    assert memory_record(good) == 123
+    for bad in ('', good + good, good.replace('123', '0'), good.replace('status: 0', 'status: 1')):
+        try:
+            memory_record(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('accepted incorrect RSS evidence')
+    print('instruction-accounting and RSS controls: pass')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('native', 'profile', 'summarize', 'self-test'))
+    parser.add_argument('action', choices=('native', 'profile', 'memory', 'summarize', 'self-test'))
     parser.add_argument('--names', nargs='+')
     parser.add_argument('--controls', action='store_true')
     parser.add_argument('--rounds', type=int, default=3)
@@ -326,6 +376,8 @@ if __name__ == '__main__':
     OUT.mkdir(parents=True, exist_ok=True)
     if opts.action == 'native':
         native(opts.names, opts.controls, opts.rounds)
+    elif opts.action == 'memory':
+        memory(opts.names, opts.rounds)
     elif opts.action == 'profile':
         profile(opts.names)
     elif opts.action == 'summarize':

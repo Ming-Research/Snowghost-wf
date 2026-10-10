@@ -850,7 +850,7 @@ fn fill_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, counts
   let head = no_index;
   let written = before;
   let limit = layout^.routes.len;
-  for (step in 0_u64..limit) {
+  for (step in 0_u64..limit, invariant written_prefix: written >= before) {
     if cursor == no_index {
       break;
     }
@@ -897,7 +897,8 @@ fn retain_routes(layout: &Layout, paths: &RouteTable<ContextPath>, uses: &RouteT
   if total > 0_u64 {
     match uses^.pages {
       Page(values: use_page) => {
-        match fresh.pages {
+        let fresh_table = &fresh;
+        match fresh_table^.pages {
           Page(values: route_page) => {
             if nodes <= use_page^.inner.len {
               if total <= route_page^.inner.len {
@@ -944,6 +945,55 @@ fn reconstruction_route_bound(context: &Context) -> count: u64 reads(context) {
   let local_boxes = owner_blocks +sat table_uses;
   let local_uses = local_boxes +sat paragraph_uses;
   return local_uses +sat descendants;
+}
+
+fn copy_retained_units(source: &RouteTable<TextUnit>, paths: &RouteTable<ContextPath>, destination: &RouteTable<TextUnit>) -> result: unit reads(source), reads(paths), writes(destination.pages) {
+  doc "Bulk-copies the old text directory, then filters independent final cells by context lifetime, preserving the skipped-text sentinel.";
+  copy_route_table::<TextUnit>(source: source, destination: destination);
+  match destination^.pages {
+    Page(values: page) => {
+      let count = imin(source^.len, page^.inner.len);
+      for (at in 0_u64..count) {
+        let held = page^.inner[at];
+        let live = live_context(paths: paths, serial: held.serial);
+        let skipped = held.serial == skipped_text;
+        let keep = bor(live, skipped);
+        if keep {
+        } else {
+          let missing = absent_text_unit();
+          set page^.inner[at] = missing;
+        }
+      }
+    }
+    Vacant() => {
+    }
+    Fork(..) => {
+    }
+  }
+  return unit;
+}
+
+fn copy_retained_contexts(source: &RouteTable<u32>, paths: &RouteTable<ContextPath>, destination: &RouteTable<u32>) -> result: unit reads(source), reads(paths), writes(destination.pages) {
+  doc "Bulk-copies establishing-element identities and filters final cells independently by retirement; no live identity is renumbered.";
+  copy_route_table::<u32>(source: source, destination: destination);
+  match destination^.pages {
+    Page(values: page) => {
+      let count = imin(source^.len, page^.inner.len);
+      for (at in 0_u64..count) {
+        let held = page^.inner[at];
+        let live = live_context(paths: paths, serial: held);
+        if live {
+        } else {
+          set page^.inner[at] = no_index;
+        }
+      }
+    }
+    Vacant() => {
+    }
+    Fork(..) => {
+    }
+  }
+  return unit;
 }
 
 fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &Styles, traversal: &Traversal, atoms: &AtomTable, changed: &[Bool], parent: NodeId) -> result: Result<unit, LayoutError> reads(document), reads(old), reads(new), reads(traversal), reads(atoms), reads(changed), writes(layout) {
@@ -1039,45 +1089,14 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
   }
   let missing_paths = absent_context_path();
   let paths = route_table::<ContextPath>(count: directory_size, missing: missing_paths);
-  set paths.len = 0_u64;
-  let previous_paths = layout^.paths.len;
-  for (k in 0_u64..previous_paths) {
-    let route_value_9 = route_read::<ContextPath>(table: &layout^.paths, at: k);
-    let place = route_value_9;
-    if place.live {
-      let copied = propagate route_push::<ContextPath>(table: &paths, value: place);
-    } else {
-      let next = paths.len;
-      if next >= item_ceiling {
-        return too_large::<unit>();
-      }
-      set paths.len = next +sat 1_u64;
-    }
-  }
+  copy_route_table::<ContextPath>(source: &layout^.paths, destination: &paths);
+  set paths.len = layout^.paths.len;
   let retired = propagate retire_at(context: &layout^.root, steps: &base.inner[0_u64..base_count], depth: 0_u64, paths: &paths);
   let unreached = TextUnit(serial: no_index, piece: 0_u32, count: 0_u32, paragraph: no_index);
   let listing = route_table::<TextUnit>(count: nodes, missing: unreached);
   let context_of = route_table::<u32>(count: nodes, missing: no_index);
-  for (k in 0_u64..nodes) {
-    if k < layout^.text_units.len {
-      let route_value_10 = route_read::<TextUnit>(table: &layout^.text_units, at: k);
-      let held = route_value_10;
-      let live = live_context(paths: &paths, serial: held.serial);
-      let skipped_unit = held.serial == skipped_text;
-      let keep = bor(live, skipped_unit);
-      if keep {
-        route_write::<TextUnit>(table: &listing, at: k, value: held);
-      }
-    }
-    if k < layout^.context_of.len {
-      let route_value_11 = route_read::<u32>(table: &layout^.context_of, at: k);
-      let held = route_value_11;
-      let live = live_context(paths: &paths, serial: held);
-      if live {
-        route_write::<u32>(table: &context_of, at: k, value: held);
-      }
-    }
-  }
+  copy_retained_units(source: &layout^.text_units, paths: &paths, destination: &listing);
+  copy_retained_contexts(source: &layout^.context_of, paths: &paths, destination: &context_of);
   let unused = unused_style();
   let uses = route_table::<StyleUse>(count: nodes, missing: unused);
   let missing_routes = absent_style_route();

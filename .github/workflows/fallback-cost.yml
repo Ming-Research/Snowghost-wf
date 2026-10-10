@@ -54,6 +54,8 @@ jobs:
             source: ''
           - name: candidatetwin
             source: ''
+          - name: noreserve
+            source: ''
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +92,7 @@ jobs:
         env:
           SOURCE: ${{ matrix.source || inputs.candidate || github.sha }}
           PHASES: ${{ inputs.phases_only }}
+          COHORT: ${{ matrix.name }}
         run: |
           set -euo pipefail
           mkdir -p build/driver
@@ -97,6 +100,20 @@ jobs:
           if [ "$PHASES" = true ]; then
             python3 research/investigations/m2-edit-cost/fallback-phase.py self-test
             python3 research/investigations/m2-edit-cost/fallback-phase.py patch --tree build/tree
+          fi
+          if [ "$COHORT" = noreserve ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path('build/tree/renderer/layout/structure.wf')
+          source = path.read_text()
+          before = 'let fresh_routes = reconstruction_route_bound(context: &built);'
+          after = 'let fresh_routes = 0_u64;'
+          assert source.count(before) == 1
+          source = source.replace(before, after)
+          before = 'let route_bound = layout^.routes.len +sat fresh_routes;'
+          assert source.count(before) == 1
+          path.write_text(source.replace(before, 'let route_bound = fresh_routes;'))
+          PY
           fi
           wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
           git -C build/tree rev-parse HEAD > build/driver/revision.txt
@@ -115,8 +132,14 @@ jobs:
             if [ "$status" -ne 0 ]; then exit "$status"; fi
           done
           git -C build/tree diff HEAD > build/driver/source.diff
-          if [ "$PHASES" = true ]; then
+          if [ "$PHASES" = true ] && [ "$COHORT" = noreserve ]; then
+            test "$(git -C build/tree diff --name-only HEAD | wc -l)" = 2
+            git -C build/tree diff --name-only HEAD | grep -Fx renderer/layout/structure.wf
+            git -C build/tree diff --name-only HEAD | grep -Fx renderer/oracle/layout/edit.wf
+          elif [ "$PHASES" = true ]; then
             test "$(git -C build/tree diff --name-only HEAD)" = renderer/oracle/layout/edit.wf
+          elif [ "$COHORT" = noreserve ]; then
+            test "$(git -C build/tree diff --name-only HEAD)" = renderer/layout/structure.wf
           else
             test ! -s build/driver/source.diff
           fi
@@ -184,9 +207,12 @@ jobs:
           flag=''
           if [ "$CONTROLS" = true ]; then flag=--controls; fi
           python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin before beforetwin candidate candidatetwin $flag
+      - name: Maximum resident set pilots and interleaved rounds
+        if: inputs.fixtures_only != true && inputs.phases_only != true
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py memory --names main before candidate noreserve
       - name: Isolated instruction profiles with zero-edit control
         if: inputs.fixtures_only != true && inputs.phases_only != true
-        run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main before candidate
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main before candidate noreserve
       - name: Per-fallback attribution and paired timing summaries
         if: inputs.fixtures_only != true && inputs.phases_only != true
         run: python3 research/investigations/m2-edit-cost/fallback-cost.py summarize
