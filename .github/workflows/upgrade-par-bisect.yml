@@ -1,6 +1,7 @@
-# Measurement-only check that wf-843c85091e58 (Whitefoot #316) restores the
-# four-worker layout scaling lost after v0.94; confined to the research branch
-# and deleted with it.
+# Measurement-only test of whether large-block realloc (Whitefoot #280) explains
+# the four-worker layout scaling lost after v0.94: each build runs with the
+# default allocator and with glibc's mmap threshold fixed at 32 MiB (no
+# mmap/mremap for blocks below it). Confined to the research branch.
 name: upgrade-par-bisect
 on:
   push:
@@ -52,9 +53,9 @@ jobs:
           printf 'name\trelease\tsource\n' > results/builds.tsv
           installed_major=''
           # Each release builds the source that compiles under it: main before
-          # the upgrade, PR #56 at its f887 head (FN-1 deletions) and at its
-          # 843c head (FN-1 deletions plus cancellation handling).
-          for pair in wf-0b7f5c5b9854:9d720c49daf4de746d507f5b1400ea407e3dfc09 wf-f887e82c4611:c3ea1c84ca3a2eca1e4048555d8a7298bd620d00 wf-843c85091e58:bb98d4371d0e148775e232e4d2938ddb9aec3be6; do
+          # the upgrade, and PR #56 at its 843c head (FN-1 deletions plus
+          # cancellation handling).
+          for pair in wf-0b7f5c5b9854:9d720c49daf4de746d507f5b1400ea407e3dfc09 wf-843c85091e58:bb98d4371d0e148775e232e4d2938ddb9aec3be6; do
             pin=${pair%%:*}
             source=${pair#*:}
             for twin in a b; do
@@ -89,7 +90,22 @@ jobs:
             done
           done
       - name: Pilot, select bounded rounds, and reverse alternate rounds
+        env:
+          UPB_VARIANTS: default=;mmap32m=glibc.malloc.mmap_threshold=33554432
         run: python3 .github/timing/upgrade-par-bisect.py
+      - name: Memory-mapping system calls per build and allocator setting
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends strace
+          mkdir -p results/strace
+          for name in 0b7f5c5b9854-a 843c85091e58-a; do
+            for variant in default mmap32m; do
+              if [ "$variant" = mmap32m ]; then tun=glibc.malloc.mmap_threshold=33554432; else tun=; fi
+              env WF_WORKERS=4 GLIBC_TUNABLES="$tun" strace -f -c -e trace=mmap,munmap,mremap,brk,madvise,futex -o "results/strace/$name-$variant.txt" \
+                "build/trees/$name/build/layout_oracle_par" text 3 build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > /dev/null
+              echo "== $name $variant"; cat "results/strace/$name-$variant.txt"
+            done
+          done
       - name: Quick four-worker CPU profile after timings
         run: |
           set -euo pipefail
@@ -98,7 +114,7 @@ jobs:
           if [ -z "$perf" ]; then echo 'perf binary unavailable' > results/profiles/unavailable.txt; exit 0; fi
           "$perf" --version > results/profiles/version.txt
           # Matched controls; full text mode includes setup, boxes and cleanup.
-          for name in f887e82c4611-a 843c85091e58-a; do
+          for name in 0b7f5c5b9854-a 843c85091e58-a; do
             cp "build/trees/$name/build/layout_oracle_par" build/layout_oracle_par
             if sudo env WF_WORKERS=4 "$perf" record -e cpu-clock -F 99 -g --call-graph dwarf -o "results/profiles/$name.data" -- build/layout_oracle_par text 3 build/research/concurrency/ecma262.html renderer/style/ua.css assets/css/ecmarkup.css=build/research/concurrency/ecma262-ecmarkup.css assets/css/print.css=build/research/concurrency/ecma262-print.css > "results/profiles/$name.stdout" 2> "results/profiles/$name.stderr"; then
               echo 0 > "results/profiles/$name.exit"

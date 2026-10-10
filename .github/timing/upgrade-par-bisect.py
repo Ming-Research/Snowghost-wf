@@ -22,17 +22,22 @@ raw = results / "timings"
 raw.mkdir()
 with (results / "builds.tsv").open() as stream:
     builds = list(csv.DictReader(stream, delimiter="\t"))
+# Each build also runs under glibc tunables named by UPB_VARIANTS
+# ("label=TUNABLES;..."; an empty value means the default allocator), so one
+# binary's ratio can be compared with and without large-block mmap/mremap.
+variants = [item.split("=", 1) for item in os.environ.get("UPB_VARIANTS", "default=").split(";")]
 names = [row["name"] for row in builds]
+runs = [(name, label, tunables) for name in names for label, tunables in variants]
 pages = ("ecma262", "html5")
 observations = []
 
 
 def capture(round_number):
-    order = names if round_number % 2 else list(reversed(names))
+    order = runs if round_number % 2 else list(reversed(runs))
     with (results / "order.txt").open("a") as out:
-        out.write(f"round {round_number}: {' '.join(order)}\n")
+        out.write(f"round {round_number}: {' '.join(n + '+' + l for n, l, _ in order)}\n")
     started = time.monotonic()
-    for name in order:
+    for name, label, tunables in order:
         tree = root / "build/trees" / name
         for binary in ("layout_oracle", "layout_oracle_par"):
             shutil.copy2(tree / "build" / binary, root / "build" / binary)
@@ -40,8 +45,13 @@ def capture(round_number):
         env = dict(os.environ, BUILT="1", RUNS="1", WORKERS="4",
                    MODES="boxes text layout", WF_WORKERS="4",
                    WHITEFOOTC=str(tree / "build/whitefoot" / pin / "whitefootc"))
+        if tunables:
+            env["GLIBC_TUNABLES"] = tunables
+        else:
+            env.pop("GLIBC_TUNABLES", None)
+        run_name = f"{name}+{label}"
         for page in pages:
-            path = raw / f"{name}-{page}-r{round_number}.txt"
+            path = raw / f"{run_name}-{page}-r{round_number}.txt"
             error_path = path.with_suffix(".stderr")
             sample_started = time.monotonic()
             with path.open("w") as out, error_path.open("w") as error:
@@ -49,7 +59,7 @@ def capture(round_number):
                     ["sh", "research/investigations/layout/run.sh", "time", page, "3"],
                     env=env, stdout=out, stderr=error, timeout=300, check=False)
             path.with_suffix(".exit").write_text(f"{process.returncode}\n")
-            print(f"round {round_number} {name} {page}: wall {time.monotonic() - sample_started:.1f}s", flush=True)
+            print(f"round {round_number} {run_name} {page}: wall {time.monotonic() - sample_started:.1f}s", flush=True)
             print(path.read_text(), flush=True)
             if process.returncode:
                 raise SystemExit(f"harness failed: {error_path.read_text()}")
@@ -69,7 +79,7 @@ def capture(round_number):
                 par = values[upper, "par-4"] - values[lower, "par-4"]
                 if seq <= 0 or par <= 0:
                     raise SystemExit(f"nonpositive nested difference: {name} {page} {part}: {seq}, {par}")
-                observations.append(dict(round=round_number, name=name, page=page,
+                observations.append(dict(round=round_number, name=run_name, page=page,
                                          part=part, seq=seq, par4=par, ratio=par / seq))
     return time.monotonic() - started
 
@@ -83,7 +93,7 @@ def save():
              "", "| Page | Build | Part | Seq s | Par-4 s | Ratio median [min, max] |",
              "|---|---|---|---:|---:|---:|"]
     for page in pages:
-        for name in names:
+        for name in [f"{n}+{l}" for n, l, _ in runs]:
             for part in ("text", "layout-passes"):
                 rows = [r for r in observations if (r["name"], r["page"], r["part"]) == (name, page, part)]
                 ratios = [r["ratio"] for r in rows]
@@ -96,11 +106,12 @@ save()
 noise = []
 for page in pages:
     for pin in dict.fromkeys(row["release"] for row in builds):
+      for label, _ in variants:
         for part in ("text", "layout-passes"):
-            ratios = [r["ratio"] for r in observations if r["name"].startswith(pin[3:] + "-") and r["page"] == page and r["part"] == part]
+            ratios = [r["ratio"] for r in observations if r["name"].startswith(pin[3:] + "-") and r["name"].endswith("+" + label) and r["page"] == page and r["part"] == part]
             if len(ratios) != 2:
                 raise SystemExit("pilot requires exactly two independently compiled twins")
-            noise.append((abs(ratios[0] - ratios[1]), page, pin, part, ratios))
+            noise.append((abs(ratios[0] - ratios[1]), page, pin + "+" + label, part, ratios))
 worst = max(noise)
 rounds = 3 if worst[0] <= 0.15 else 5
 selection = f"Pilot round wall seconds: {pilot_seconds:.1f}\nWorst twin ratio difference: {worst}\nSelected total rounds: {rounds}; threshold 0.15, bounded maximum 5\n"
