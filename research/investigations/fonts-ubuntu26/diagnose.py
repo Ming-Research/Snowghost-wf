@@ -71,13 +71,11 @@ new = '''    Err(error: problem) => {
       put_text(buffer: &diagnostic, text: &fonts_word[0_u64..fonts_word.len]);
       match problem {
         Refused(face: face) => {
-          let label: Array<u8, 14> = " Refused face=";
-          put_text(buffer: &diagnostic, text: &label[0_u64..label.len]);
+          put_text(buffer: &diagnostic, text: &diagnostic_refused[0_u64..diagnostic_refused.len]);
           put_decimal(buffer: &diagnostic, value: face);
         }
         Unreadable(face: face) => {
-          let label: Array<u8, 17> = " Unreadable face=";
-          put_text(buffer: &diagnostic, text: &label[0_u64..label.len]);
+          put_text(buffer: &diagnostic, text: &diagnostic_unreadable[0_u64..diagnostic_unreadable.len]);
           put_decimal(buffer: &diagnostic, value: face);
         }
       }
@@ -88,7 +86,7 @@ new = '''    Err(error: problem) => {
   }
   let viewport'''
 assert source.count(old) == 1
-driver.write_text(source.replace(old, new))
+driver.write_text(source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
 (results / 'diagnostic.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(driver)], text=True))
 wfc = next(Path('build/whitefoot').glob('*/whitefootc')).resolve()
 subprocess.run([str(wfc), '--cache', str(Path('build/wf-cache').resolve()), '--fragments', 'function', '--graph', 'modules.wfg', '--entry', 'layout_oracle', '-o', '../build/layout_oracle_seq'], cwd='renderer', check=True)
