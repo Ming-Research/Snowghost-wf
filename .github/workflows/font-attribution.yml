@@ -54,6 +54,16 @@ jobs:
             reuse_run: 38017678473
             source: 4528e007bcc7559d91725cc81fb0a075ff6c1efe
             optional: false
+          - name: projection
+            reuse_run: 38018656125
+            artifact: fixed
+            source: c1257beef772e0dbfbab26132262deddd653ce82
+            optional: false
+          - name: projectiontwin
+            reuse_run: 38018656125
+            artifact: fixedtwin
+            source: c1257beef772e0dbfbab26132262deddd653ce82
+            optional: false
           - name: fixed
             source: HEAD
             optional: false
@@ -70,7 +80,7 @@ jobs:
         with:
           github-token: ${{ github.token }}
           run-id: ${{ matrix.reuse_run }}
-          name: driver-${{ matrix.name }}
+          name: driver-${{ matrix.artifact || matrix.name }}
           path: build/driver/
       - name: Verify the archived source and compiler
         if: matrix.reuse_run != ''
@@ -193,17 +203,38 @@ jobs:
           mkdir -p build/evidence
           head -n 2 build/x5/scripts/apollo11-fontsize.edits > build/evidence/sample.edits
           sha256sum build/x5/scripts/* build/research/concurrency/*.html renderer/style/ua.css > build/evidence/inputs.sha256
+      - name: Column replay sample, old-source discriminator and complete focused fixtures
+        if: inputs.profile_only != true
+        run: |
+          set -euo pipefail
+          script=research/investigations/incremental-layout/scripts/dirty-frontier.py
+          for sample in 1 2; do
+            WF_WORKERS=4 /usr/bin/time -p -o "build/evidence/column-sample-$sample.time" python3 "$script" build/drivers/driver-fixed/layout_oracle_seq "build/evidence/column-sample-$sample" --case column-two
+          done
+          python3 - <<'PYEOF'
+          from pathlib import Path
+          values = [float(p.read_text().splitlines()[0].split()[1]) for p in Path('build/evidence').glob('column-sample-*.time')]
+          assert len(values) == 2 and max(values) < 30, values
+          print('column fixture pilot wall seconds:', values)
+          PYEOF
+          status=0
+          WF_WORKERS=4 python3 "$script" build/drivers/driver-projection/layout_oracle_seq build/evidence/column-before --case column-two > build/evidence/column-before.log 2>&1 || status=$?
+          test "$status" -ne 0
+          grep -F 'column normal flow replay was not scoped' build/evidence/column-before.log
+          for mode in seq par; do
+            WF_WORKERS=4 python3 "$script" build/drivers/driver-fixed/layout_oracle_$mode "build/evidence/column-$mode" --case column-one --case column-two --case column-three --case column-float --case column-split --case column-atomic --case column-marked-child --case column-marked-block --case column-shape --case column-frame --case column-height --case column-percentage --case column-source
+          done
       - name: Bounded samples followed by two interleaved font-size rounds
         if: inputs.profile_only != true
         run: |
           set -euo pipefail
-          names='main maintwin premerge merge a atwin fixed fixedtwin'
+          names='main maintwin premerge merge a atwin projection projectiontwin fixed fixedtwin'
           for name in $names; do
             test "$(cat build/drivers/driver-$name/seq-build.status)" = 0
             test "$(cat build/drivers/driver-$name/par-build.status)" = 0
           done
           if [ -s build/drivers/driver-layout/layout_oracle_par ]; then
-            names='main maintwin layout premerge merge a atwin fixed fixedtwin'
+            names='main maintwin layout premerge merge a atwin projection projectiontwin fixed fixedtwin'
           else
             echo 'Layout control unavailable under the exact permitted patch; refusal retained.'
           fi

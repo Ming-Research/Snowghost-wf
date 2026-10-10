@@ -142,6 +142,72 @@ def fixtures():
     yield 'source-reconstruction', page('<section><div><span>Removed split.<div>Split head.</div>Trailing source.</span></div><p><span class="leaf">First.</span></p><p><span class="leaf">Last.</span></p></section>', '.changed .leaf{font-size:24px}'), reconstruct_edits
 
 
+
+    yield from column_fixtures()
+
+
+def column_fixtures():
+    """Column maps are recomputed; only their preceding normal flow is scoped."""
+    rows = ''.join('<p><span class="glyph">%s</span></p>' %
+                   ('Column target.' if i == 31 else 'Row %02d.' % i)
+                   for i in range(64))
+    base = ('html,body{margin:0;padding:0}body{font:0px/0 monospace}'
+            'section{width:380px;column-count:2;column-gap:20px}'
+            'p{margin:0;font:0px/0 monospace}.glyph{font:16px/1 monospace;vertical-align:top}'
+            '.changed{font-size:32px}')
+    def source(body=rows, extra=''):
+        return '<!doctype html><html><head><style>' + base + extra + '</style></head><body><article><section>' + body + '</section></article></body></html>'
+    def target_pairs(tree):
+        target = text(tree, 'Column target.')
+        node = target['parent']
+        return [f'C {node} changed', f'K {node} changed',
+                f'T {target["node"]} 0 Added ', f'D {target["node"]} 0 6',
+                f'C {node} changed', f'K {node} changed']
+    for name, extra in [('column-one', 'section{column-count:1}'),
+                        ('column-two', ''),
+                        ('column-three', 'section{width:580px;column-count:3}')]:
+        yield name, source(extra=extra), target_pairs
+    yield 'column-float', source(body=rows.replace('<p><span class="glyph">Column target.',
+          '<aside style="float:left;width:70px;height:100px"></aside><p><span class="glyph">Column target.')), target_pairs
+    yield 'column-split', source(body='<span style="font:16px/1 monospace">Split head.<div>Bridge.</div>Split tail.</span>' + rows,
+          extra='p:nth-child(4){margin-top:-5px}'), target_pairs
+    yield 'column-atomic', source(body=rows.replace('Column target.</span>',
+          'Column target.</span><b style="display:inline-block;width:24px;height:28px"></b>')), target_pairs
+    def descendants(tree):
+        section = first(tree, 'section')
+        return [f'C {section} descendants', f'K {section} descendants']
+    yield 'column-marked-child', source(body=rows + '<aside>Later child.</aside>',
+          extra='aside{display:flow-root;width:80px;height:20px}.descendants .glyph{color:blue}'
+                '.descendants p:nth-child(32) .glyph{font-size:32px}.descendants aside{height:70px}'), descendants
+    yield 'column-marked-block', source(extra='.descendants p:nth-child(32) .glyph{font-size:32px}'
+          '.descendants p:nth-child(50){padding-left:80px}'), descendants
+    for name, rule in [('column-shape', 'column-count:3;column-gap:37px'),
+                       ('column-frame', 'padding-left:20px;padding-top:30px'),
+                       ('column-height', 'height:700px'),
+                       ('column-percentage', 'height:80%')]:
+        yield name, source(extra='article{height:900px}.descendants{' + rule + '}'
+              '.descendants p:nth-child(32) .glyph{font-size:32px}'), descendants
+    def source_pairs(tree):
+        target = text(tree, 'Column target.')
+        paragraph = tree.by_node[target['parent']]['parent']
+        section = first(tree, 'section')
+        node = target['parent']
+        return [f'B {section} {paragraph} New source.', f'C {node} changed', f'K {node} changed',
+                f'X {tree.arena}', f'C {node} changed', f'K {node} changed']
+    yield 'column-source', source(), source_pairs
+
+
+def column_counts(raw):
+    """The 192-event normal flow must use a bounded scope; balancing stays full."""
+    records = re.findall(r'^style edit (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)(?: .*)?$', raw, re.M)
+    if len(records) != 4:
+        raise ValueError(('missing column style-count records', len(records)))
+    for edit, prepared, contexts, paragraphs, held, entries in records:
+        if int(prepared) != 1 or int(held) >= 32:
+            raise ValueError(('column normal flow replay was not scoped', edit, prepared, held, entries))
+    print('column normal flow: four edits, one preparation and fewer than 32 replayed entries; balancing remains complete', flush=True)
+
+
 def sparse_counts(raw, expected_paragraphs=3, expected_records=4):
     records = re.findall(r'^style edit (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)(?: .*)?$', raw, re.M)
     if len(records) != expected_records:
@@ -197,6 +263,8 @@ def check_fixture(args, directory, name, source, edits):
     protocol = directory / (name + '.raw')
     operations = inctime.script_operations(str(script))
     inctime.read(str(protocol), operations, checking=True, require_paths=True)
+    if name in ('column-one', 'column-two', 'column-three'):
+        column_counts(raw)
     if name == 'sparse-root':
         sparse_counts(raw)
     if name == 'lineless-whitespace':

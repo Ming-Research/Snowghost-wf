@@ -3173,3 +3173,60 @@ projection once with the new inputs: minimum natural floor, sentinel-preserving
 saturating shift, and conjunction of motion-known flags. Preserve the existing
 join association, saturation, admission, invalidation and publication extent.
 These local computations do not change a design choice or add a retained cache.
+
+### Scoped column reflow contract (2026-10-10, proposed)
+
+The first font-size pair's hosted consumed-input trace
+[38018484884](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38018484884)
+identifies the large full replay: a 1,190-event column context, with one marked
+paragraph, no marked children or blocks, no own restyle or intrinsic request,
+and identical completed `Space`, used width and every `FlowFrame` field.
+Its resolved column count is one, but that is not an admission argument:
+`balanced_height` reads unit bottoms, and can change the column height even
+when the count remains one. Both edits match full rebuilds.
+
+The first same-input publication repair reduces the first edit from 6,439,777
+to 5,427,355 instructions in
+[38018656125](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38018656125),
+but the matched Intel Xeon Platinum 8573C run still measures 661–703 us for the
+repaired sequential twins against main's 203–212 us. This motivates examining
+the remaining full normal-flow replay and boundary publication, not weakening
+the 2x criterion or removing column fragmentation.
+
+The proposed dependency split uses existing scoped normal-flow reflow, followed
+by complete column balancing. Before measurement, reject it if a fixture or
+mutation exposes a missed preparation input, if normal-flow scope does not
+reduce the targeted replay, or if the twin-controlled font-size comparison
+still fails. Final acceptance remains the complete common-compiler matrix.
+
+The admission key is the completed flow's exact Space, used width, content
+origins, flow width, definite height and column count/width/gap. The saved
+columned flag must also hold. A single paragraph is dirty; own and block styles,
+child outputs and topology remain unchanged under the existing restyle/marking
+contract. Intrinsic demand, shrink-to-fit, positioned children, a dirty boundary,
+any changed block/child, multiple paragraphs, incoming percentage readers or
+an own percentage height keep the full reference path. Thus `prepare_spaces`
+would read the same block styles, containing widths/heights, child kinds and
+structural flow, and write the same widths, local horizontal positions, spaces,
+height provenance, split widths and compatibility ranks. Dirty inline text is
+still prepared and broken, including the existing float-dependent rebreak.
+
+Normal-flow convergence retains all existing margin, float, baseline, height,
+numeric and suffix certificates. `column_map` is consumed only by final output
+placement (`place_context` and fragment placement), never by normal stacking,
+geometry readers or convergence. After scoped stacking and exact suffix motion,
+`reflow_column_height` collects the complete updated unit stream and runs the
+unchanged column balancer, then the used-height resolver. The stored fragments
+are normal-flow geometry; the rebuilt map transforms them only at output.
+Consequently neither column breaks nor column height are reused. Boundary
+publication follows the ordinary scope and its exact suffix proof rather than
+rebuilding unrelated retained summaries. There is no new cache or representation.
+
+The fixtures must cover one and multiple columns, a font change that moves a
+column boundary, negative margins, floats, atomic inline and split fragments,
+repeated edits and source reconstruction, plus changed column shape, containing
+width, own style, block style, child and percentage inputs that keep full replay.
+Mutations must detect omitted rebalancing, wrong content height, omitted scoped
+publication and an unguarded admission; existing finite full-identity and numeric
+mutations remain conjunctive. This is a proposed task-local dependency change,
+not an owner-approved adoption or a claim that the current full pass is free.
