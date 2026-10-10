@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import urllib.request
 
@@ -111,12 +112,27 @@ for face in offenders:
         result = run(f'face-oracle-{version}-{source.name}', ['build/font_face_oracle', str(source)])
         print(f'FACE_ORACLE {version} {source.name} {result.stdout.splitlines()[0]}', flush=True)
 
-for face in changed:
+for face in offenders:
     for version in ('24.04', '26.04'):
         source = Path('build/fontsets') / version / 'root' / face['path'].lstrip('/')
-        font = TTFont(source, checkChecksums=2) if source.read_bytes()[:4] != b'ttcf' else TTCollection(source).fonts[0]
-        font.ensureDecompiled(recurse=True)
-        if version == '26.04':
+        font = TTFont(source, checkChecksums=2)
+        raw_cmap = font.reader['cmap']
+        (results / f'{version}-{source.name}-cmap.bin').write_bytes(raw_cmap)
+        cmap_version, cmap_count = struct.unpack_from('>HH', raw_cmap)
+        print(f'RAW_CMAP {version} {source.name} size={len(raw_cmap)} version={cmap_version} records={cmap_count} first64={raw_cmap[:64].hex()}', flush=True)
+        for record in range(cmap_count):
+            platform, encoding, offset = struct.unpack_from('>HHI', raw_cmap, 4 + 8 * record)
+            header = raw_cmap[offset:offset + 16]
+            fmt = struct.unpack_from('>H', header)[0]
+            length = struct.unpack_from('>I', header, 4)[0] if fmt in (8, 10, 12, 13) else struct.unpack_from('>H', header, 2)[0]
+            print(f'CMAP_RECORD {version} {source.name} record={record} platform={platform} encoding={encoding} offset={offset} format={fmt} length={length} header={header.hex()}', flush=True)
+        try:
+            font.ensureDecompiled(recurse=True)
+        except AssertionError as problem:
+            print(f'FONTTOOLS {version} {source.name} rejected={type(problem).__name__}: {problem}', flush=True)
+            assert version == '26.04' and str(problem) == 'Format 0 cmap subtable not 262 bytes'
+            continue
+        if version == '24.04':
             mapping = font.getBestCmap() or next(t.cmap for t in font['cmap'].tables if hasattr(t, 'cmap') and t.cmap)
             face['sample'] = ''.join(chr(c) for c in sorted(mapping) if c >= 32 and not 0xD800 <= c <= 0xDFFF)[:20]
         print(f'FONTTOOLS {version} {source.name} decompiled=all tables={sorted(font.keys())}', flush=True)
@@ -136,7 +152,7 @@ for face in changed:
                     detail['subtables'] = [(t.platformID, t.platEncID, t.format, len(getattr(t, 'cmap', {}))) for t in table.tables]
                 print(f'TABLE {version} {source.name} {tag} {detail}', flush=True)
         font.saveXML(results / f'{version}-{source.name}.ttx', tables=['head', 'maxp', 'hhea', 'OS/2', 'cmap'])
-(results / 'changed.json').write_text(json.dumps(changed, indent=2))
+(results / 'offenders.json').write_text(json.dumps(offenders, indent=2))
 
 # Diagnostic only: preserve the existing error variant and exit status.
 driver.write_text(driver_source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
