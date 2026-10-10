@@ -4753,4 +4753,4 @@ bound on any identity, lifetime, ordering, admission or ceiling difference,
 or if it fails those cost conditions. The unchanged 1x fallback and 2x
 control requirements still apply to the delivered composition. This is not
 a reformulation of the rejected multiple-result construction: it computes
-only capacity and leaves its compiler gap and rejection unresolved.
+only capacity, leaves the compiler gap explicit and keeps the rejection in effect.
