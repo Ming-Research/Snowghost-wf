@@ -113,7 +113,9 @@ to the ordinary boxes and source domains that presently disappear on fallback.
 Existing [consumed-input equality](../structure-edits/layout-design.md#full-layout-consumed-input-equality)
 remains the only permission to omit differing flow height inputs: its inline,
 height-reader, provenance and equal-used-height conditions remain conjunctive.
-Other context kinds retain complete constraints until separately proved.
+Other context kinds retain the existing `equivalent_space` comparison and
+height-provenance checks; the ordinary-flow final-height relaxation does not
+extend to them.
 
 ## Algorithm and propagation
 
