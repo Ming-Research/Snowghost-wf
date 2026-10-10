@@ -4506,3 +4506,44 @@ cohorts. `noreserve` removes only the producer-bound reservation/counting.
 Inclusive constructor costs count only calls from `structure_changed`, not
 recursive or outlined internal calls twice. Missing emitted boundaries are
 reported as unverified attribution, never treated as zero-cost construction.
+
+#### Independent multiple-result calls: parallel-permission witness
+
+The candidate's emitted parallel ledger from hosted build
+[38059104043](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38059104043),
+renderer `f2a76593123fce60aee9e634571bdfcdc6196026`, admits the two disjoint
+`fill_retained_routes` calls and the independent supplier fill. It also
+splits the directory-copy and lifetime-filter loops as independent maps.
+However, the count traversal's adjacent recursive calls bind `(total,
+valid)` result lists. The ledger explicitly denies the second call
+followed by the independent `route_read` because the first statement
+"binds an ordered result list"; it prints no permission for the recursive
+call pair. Separately, it reports that `count_retained_routes` has no
+sequential clone. The two recursive reads and disjoint count writes have no
+algorithmic dependency; only combining their returned totals waits. The
+source exposes independence, but this compiler does not realize that part
+of the intended shorter construction chain. The inference that ordered
+result bindings prevent the recursive pair's permission is what the reduced
+witness below tests, not an explicit pair diagnostic already observed.
+
+This is a compiler optimization gap, not a source rejection or a claimed
+specification violation: [PAR-1 at the pinned compiler revision](https://github.com/Ming-Research/Whitefoot/blob/41f46e60030c0dd79de7f39731530dc8d15be3d2/spec/kernel-spec.md)
+permits read/read overlap and disjoint binding writes, while explicitly
+allowing an implementation to overlap nothing. No result-struct rewrite,
+extra output store or sequential workaround is introduced.
+
+Before running the reduced case, the question is whether the same denial
+persists without layout types, allocation or shared writes. The
+[standalone witness](bulk-parallel-results.wf) recursively sums immutable
+halves and returns a total and validity together. Its independent call pair
+is the acceptance site; its four-element main must still return success.
+Reject the reduced diagnosis if the pinned compiler permits that pair, or
+if the witness does not compile and compute four. For the upstream fix,
+require admission and retained parallel permission for the natural pair,
+then confirm that the renderer's corresponding count calls receive that
+permission and that all unchanged semantic gates pass. Runtime grain
+selection is separate from permission and is not forced by the witness.
+The temporary fallback-cost workflow compiles and runs this smallest case
+on a hosted runner and archives its ledger; retain the source until the
+owning Whitefoot session incorporates the regression, then replace it with
+that upstream reference. Proposed handoff key: `sg-wf-bulk-multiple-results`.

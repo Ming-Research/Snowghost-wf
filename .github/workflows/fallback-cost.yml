@@ -5,6 +5,10 @@ on:
     branches: [research/m2-fallback-cost]
   workflow_dispatch:
     inputs:
+      witness_only:
+        description: Collect only the independent multiple-result call witness
+        type: boolean
+        default: false
       driver_run:
         description: Reuse these exact-source driver artifacts for harness-only work
         default: ''
@@ -31,7 +35,7 @@ permissions:
   actions: read
 jobs:
   build:
-    if: inputs.driver_run == '' && inputs.evidence_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]'))
+    if: inputs.witness_only != true && inputs.driver_run == '' && inputs.evidence_run == '' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]'))
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -271,3 +275,32 @@ jobs:
           path: |
             build/fallback-cost/*.csv
             build/fallback-cost/*.json
+
+  parallel-witness:
+    if: inputs.witness_only == true || contains(github.event.head_commit.message, '[bulk-witness]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Pinned compiler and toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler
+      - name: Small independent multiple-result witness
+        run: |
+          set -euo pipefail
+          mkdir -p build/bulk-witness
+          git rev-parse HEAD > build/bulk-witness/revision.txt
+          cat whitefoot.pin >> build/bulk-witness/revision.txt
+          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          /usr/bin/time -p "$wfc" --par --par-ledger research/investigations/m2-edit-cost/bulk-parallel-results.wf -o build/bulk-witness/witness > build/bulk-witness/ledger.log 2>&1
+          build/bulk-witness/witness
+          cat build/bulk-witness/ledger.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bulk-parallel-witness
+          path: build/bulk-witness/
