@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current continuation: reduce counted block fallbacks to at most main's edit cost under wf-41f46e60030c (specification v0.117), preserving every admission, the records needed by the next edit and the [Q141 acceptance criteria](#q141-fallback-cost-question-and-prior-rejection-criterion). [Draft PR 58](https://github.com/Ming-Research/Snowghost-wf/pull/58) owns this continuation's delivery, validation and proposed deferrals; the earlier Apollo11 font-size repair is recorded in [PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55). Owner-motion storage remains separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. No adoption merge is authorized.
+Current continuation: the [final fallback trim](#final-fallback-trim-measured-result-and-unmet-target) reduces overhead but still fails the 1x requirement; reduce counted block fallbacks to at most main's edit cost under wf-41f46e60030c (specification v0.117), preserving every admission, the records needed by the next edit and the [Q141 acceptance criteria](#q141-fallback-cost-question-and-prior-rejection-criterion). [Draft PR 58](https://github.com/Ming-Research/Snowghost-wf/pull/58) owns this continuation's delivery, validation and proposed deferrals; the earlier Apollo11 font-size repair is recorded in [PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55). Owner-motion storage remains separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. No adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -3623,6 +3623,9 @@ of dead data.
 | `retain_routes`: old route traversal | It copies only routes whose context survives `retire_at`; those routes serve later edits outside the replacement | Retired routes are already omitted. Surviving routes cannot simply be dropped with the rebuilt context. |
 | `record_units` and retained text-unit copy | `text_changed`, splice-source lookup and a later reconstruction's `reuse_prepared` | Required for fresh and surviving text; skipped whitespace remains a distinct refusal state. |
 | Context directory, `context_of` and checkpoint lookup | Subsequent path validation, splice-owner resolution and exact-checkpoint reconstruction | Required; context identities remain stable outside the replacement and retired slots must not alias new ones. |
+| `finish_sequence` and `bulk_nodes` | Stable-rank readers, subsequent local splice insertion/removal, and `materialize_flow` | Required owner-local payloads, topology and weights; `finish_tree_sequences` seals the context sequence and each block's distinct sequence, not the same sequence twice. |
+| `fill_flow` | The current full layout and boundary passes borrow the event array returned by `materialize_flow` | Required conversion from retained owner-local order to the pass's immutable event view; its scratch lifetime ends after the pass. |
+| `own_geometry`, origin reads, `block_output` and motion/height summaries | Current parent layout plus subsequent old/current geometry, range-motion and boundary readers | Required coordinate representation and summaries. Extra padding/border/height reads in summary construction have those consumers; deleting them would change the retained contract. Their present construction cost is not a proven lower bound. |
 | Full boundary/height/fragment publication | Subsequent splice admission, dirty-frontier updates and old/current geometry readers | Required retained state that main does not store in the same form; profiles must separate publication from duplicate preparation before any cost is called inherent. |
 
 The focused lifetime sequence forces a mixed-inline-seam reconstruction,
@@ -4175,3 +4178,248 @@ beside each binary. Two forward/inverse pilot samples precede three
 interleaved rounds of all 60 Apollo11 block edits in both modes, selecting
 the same 22 fallback IDs for the phase table. This closes the missing native
 decomposition without a renderer mechanism or admission change.
+
+### Native phase decomposition: measured result
+
+[Hosted phase comparison 38050234235](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38050234235)
+uses an Intel Xeon Platinum 8573C with four exposed logical CPUs, Ubuntu
+24.04.5 and Linux 6.17.0-1022-azure. All six independent builds use
+`wf-41f46e60030c`, compiler SHA-256
+`ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`, and
+Clang 22.1.8. Main and its twin are `bb98d4371d0e148775e232e4d2938ddb9aec3be6`,
+before and its twin `4b8a75b241107c02504b3fa9d1eaccf9e758a349`, and candidate
+and its twin `1745ff5e12a5b8f80bc08fe60facecdcb1130870`. The workflow runs
+at `88b9f201c91f69f07a6adc75ebbb94c12e8a2858`; each archived driver manifest
+records its source revision and its exact oracle-only instrumentation patch.
+Both sequential and four-worker builds succeed. Their parallel ledgers
+preserve the start/rebuild/end and start/layout/end dependencies.
+
+Two forward/inverse pilot samples per selected cohort and mode take
+0.466–0.566 seconds, with maximum within-pair spread 1.0034x, before the
+three forward/reverse/forward interleaved rounds. The instrumentation,
+accounting, ordinary-timer reconciliation and original-admission controls
+pass. The 36 full raw runs contain 6,480 phase records; the selected 22
+fallback IDs yield 792 distinct per-edit rows in
+[q141-final-native-phases.csv](q141-final-native-phases.csv). Every selected
+row matches its raw phase records and conserves total nanoseconds exactly.
+
+The table gives ranges of the six individual 22-fallback medians (three
+rounds, two twins) in microseconds. Each phase is summarized independently:
+sums of column medians need not equal the total median. These instrumented
+observations establish the decomposition in both modes; only the separate
+uninstrumented comparison determines 1x/2x acceptance.
+
+| Mode / cohort | Reconstruction | Layout | Bookkeeping | Complete edit |
+| --- | ---: | ---: | ---: | ---: |
+| Sequential / main | 7,350.1–7,726.4 | 21,634.9–21,990.9 | 331.9–353.1 | 29,385.3–30,141.8 |
+| Sequential / before | 16,697.6–17,343.3 | 26,115.0–27,190.0 | 406.4–430.1 | 43,279.0–44,982.9 |
+| Sequential / candidate | 13,748.9–13,957.3 | 26,702.3–26,925.2 | 407.8–443.9 | 41,008.5–41,405.5 |
+| Four workers / main | 9,737.7–9,981.1 | 20,863.0–21,154.3 | 416.1–434.4 | 31,154.4–31,539.5 |
+| Four workers / before | 19,550.5–20,002.9 | 25,974.3–27,145.6 | 550.8–576.2 | 46,196.9–47,716.4 |
+| Four workers / candidate | 16,269.5–16,742.1 | 26,137.9–26,845.3 | 553.4–582.7 | 43,161.0–44,147.6 |
+
+Reconstruction decreases from the before source in both modes while remaining
+above main; layout also remains above main. Bookkeeping is measured rather
+than left unattributed. This does not assign parallel instructions to
+functions or isolate each omission's native saving. Instrumentation overhead
+and differences between hosted machines preclude combining these times with
+another run's uninstrumented timings.
+
+
+### Final fallback trim: measured result and unmet target
+
+[Hosted comparison 38047104753](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047104753)
+measures `1745ff5e12a5b8f80bc08fe60facecdcb1130870`, renderer tree
+`14354fa87e88048b6daa32c3c06412453848065b`, on one AMD EPYC 7763 runner
+exposing four logical CPUs, Ubuntu 24.04.5 and Linux 6.17.0-1022-azure.
+Main is `bb98d4371d0e148775e232e4d2938ddb9aec3be6`. The before driver and
+its independently built twin were compiled at
+`b2ea372d9cdcdfae5dff03fea7043ca72fd5717f`, whose renderer tree
+`3cd1ca91be4621f41f62889dce568faa8973bf5c` is identical to the requested
+`4b8a75b241107c02504b3fa9d1eaccf9e758a349`; the workflow checks that equality
+before reusing those frozen artifacts. Both candidate builds are exact 1745ff5.
+All six drivers have empty source patches and the common
+`wf-41f46e60030c` checksum recorded in the phase comparison above, with
+Clang 22.1.8. This task moves no pin or submodule. Parallel mode uses
+`WF_WORKERS=4`.
+
+Three rounds interleave main/main twin/before/before twin/candidate/candidate
+twin, reversing the order in round 2. The complete X5 scripts, captures and
+fonts are shared within this runner. The two-edit Apollo11 pilots take
+0.616/0.566 seconds for sequential main, 0.616/0.615 for candidate twin,
+0.516/0.516 for four-worker main and 0.565/0.568 for candidate twin. The
+largest within-pair spread there is 1.0885x; these startup-inclusive samples
+select the finite batch and are not edit-cost observations. All three
+zero-edit profiles contain zero instructions and every full profile has
+120 before/after dump parts. Accounting negative controls pass.
+
+The final trim **fails all 12 paired 1x fallback comparisons**, at
+1.2624–1.3623x main. Its medians are 5.6–11.2% below the corresponding
+before-source medians on this runner, but that improvement does not satisfy
+M2. All 216 paired X5 controls pass 2x; the closest is HTML5 font-size with
+four workers, 1.8539x. Neither twins nor rounds are pooled to waive a failure.
+These results supersede the earlier trim tables for the final renderer;
+the earlier tables remain historical comparisons at their named revisions.
+
+Complete-edit medians in microseconds for the same 22 Apollo11 fallback IDs;
+slash-separated values are the ordinary/twin builds:
+
+| Mode / round | Main / twin | Before / twin | Final trim / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 25,292.5 / 25,087.0 | 36,141.0 / 35,927.0 | 32,792.0 / 32,202.0 |
+| seq 2 | 26,149.0 / 26,092.0 | 37,073.5 / 37,027.5 | 34,023.5 / 34,666.5 |
+| seq 3 | 26,761.5 / 27,072.0 | 37,238.5 / 37,744.0 | 33,881.0 / 34,176.5 |
+| par 1 | 26,292.5 / 27,103.5 | 39,675.0 / 38,833.0 | 35,435.0 / 35,541.5 |
+| par 2 | 26,719.5 / 26,853.5 | 38,294.5 / 39,800.5 | 36,149.5 / 35,527.0 |
+| par 3 | 27,372.0 / 27,668.0 | 40,217.0 / 41,623.0 | 37,290.0 / 36,959.0 |
+
+[All 684 native cohort medians](q141-final-native.csv) retain each round,
+mode and scope. Below, each range summarizes six individual medians (three
+rounds and two independent builds), followed by the worst paired ratio.
+ECMA262 has 20 operations per kind, HTML5 and Apollo11 60. Apollo11's
+all-block control includes the 38 successful splices and cannot stand in
+for the 22-fallback comparison.
+
+| Page / kind | Sequential main → final (µs); worst ratio | Four-worker main → final (µs); worst ratio |
+| --- | ---: | ---: |
+| ecma262 / word | 90.0–101.0 → 97.5–106.5; 1.1514x | 148.0–158.0 → 161.0–180.0; 1.1765x |
+| ecma262 / sentence | 214.0–226.5 → 126.0–134.5; 0.6285x | 274.0–287.0 → 196.0–213.0; 0.7774x |
+| ecma262 / colour | 14.5–15.5 → 14.0–15.0; 1.0345x | 18.0–19.0 → 19.5–26.0; 1.4054x |
+| ecma262 / fontsize | 1,601.5–1,788.0 → 926.0–949.0; 0.5886x | 1,727.0–2,141.5 → 1,347.5–1,415.0; 0.7872x |
+| ecma262 / rootfont | 32,379.5–34,429.5 → 3,678.0–3,952.5; 0.1205x | 53,385.5–54,723.5 → 4,475.0–4,762.5; 0.0885x |
+| ecma262 / block | 495,186.5–502,042.5 → 138.5–151.5; 0.0003x | 452,711.0–457,465.5 → 205.0–219.0; 0.0005x |
+| html5 / word | 65.5–69.0 → 75.5–76.5; 1.1603x | 110.0–113.5 → 119.0–128.5; 1.1422x |
+| html5 / sentence | 199.5–224.0 → 256.0–277.5; 1.3756x | 300.5–320.0 → 301.0–322.5; 1.0332x |
+| html5 / colour | 14.5–15.0 → 14.0–15.0; 1.0345x | 23.0–25.0 → 24.0–30.0; 1.2000x |
+| html5 / fontsize | 720.5–809.5 → 979.5–1,047.0; 1.4330x | 804.0–865.5 → 1,391.5–1,535.5; 1.8539x |
+| html5 / rootfont | 907,425.5–920,404.5 → 1,082,574.5–1,108,047.0; 1.2101x | 542,028.0–548,687.5 → 693,290.0–703,705.5; 1.2846x |
+| html5 / block | 491,720.5–511,551.0 → 439.5–455.5; 0.0009x | 447,231.0–468,008.0 → 429.5–445.0; 0.0010x |
+| apollo11 / word | 198.0–204.0 → 222.5–227.0; 1.1465x | 334.0–345.5 → 385.5–395.0; 1.1826x |
+| apollo11 / sentence | 233.5–239.5 → 310.5–316.5; 1.3555x | 405.5–417.5 → 571.0–582.0; 1.4230x |
+| apollo11 / colour | 26.0–28.0 → 26.5–29.0; 1.1154x | 36.5–40.0 → 42.5–49.0; 1.3425x |
+| apollo11 / fontsize | 281.0–306.5 → 328.0–357.5; 1.2145x | 559.0–567.0 → 587.5–638.5; 1.1371x |
+| apollo11 / rootfont | 79,632.0–80,389.0 → 88,714.5–92,370.5; 1.1497x | 70,981.5–72,242.0 → 66,691.0–68,539.5; 0.9656x |
+| apollo11 / block | 25,132.0–26,925.0 → 5,560.0–5,730.0; 0.2229x | 26,388.0–27,576.5 → 6,495.0–6,703.5; 0.2472x |
+
+The isolated sequential profile selects those same 22 fallback intervals,
+excluding startup, input DOM mutation before structural entry and the full
+comparator. Native phase observations in both modes are recorded separately
+above; their instrumented runner's times are not pooled with this one.
+
+| Phase | Main instructions | Before instructions | Final instructions | Final minus main |
+| --- | ---: | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,778,192,568 | 1,328,300,179 | 476,381,515 |
+| Layout | 4,054,991,903 | 4,381,370,375 | 4,352,551,688 | 297,559,785 |
+| Bookkeeping | 26,720,425 | 33,681,410 | 33,580,460 | 6,860,035 |
+| Complete fallback | 4,933,630,992 | 6,193,244,353 | 5,714,432,327 | 780,801,335 |
+
+[All 66 per-edit instruction decompositions](q141-final-phases.csv) preserve
+each fallback. The [689-function attribution](q141-final-attribution.csv)
+accounts for the complete signed difference using exclusive instructions:
+780,801,335 above main and 478,812,026 below before (7.7312%). No remainder
+is left unattributed. Selected function counts and self costs follow;
+`<all>` combines generic instantiations and normalized outlined bodies.
+Zero named calls in main do not imply absent use/text-recording semantics:
+main inlines those operations in its compact representation.
+
+| Function | Calls main / before / final | Exclusive instructions main / before / final |
+| --- | ---: | ---: |
+| slot_read<all> | 0 / 12,840,178 / 3,258,724 | 0 / 360,033,796 / 70,457,987 |
+| slot_write<all> | 0 / 1,065,712 / 884,623 | 0 / 84,254,195 / 35,162,701 |
+| route_read<all> | 0 / 1,221,163 / 1,221,163 | 0 / 19,217,974 / 19,217,974 |
+| route_write<all> | 0 / 1,065,712 / 884,623 | 0 / 43,629,126 / 36,047,324 |
+| note_use | 0 / 678,427 / 367,426 | 0 / 45,957,681 / 28,135,354 |
+| record_uses | 24,486 / 14,802 / 14,802 | 26,504,148 / 21,922,515 / 20,962,654 |
+| retain_routes | 0 / 22 / 22 | 0 / 27,199,207 / 28,380,180 |
+| record_units | 0 / 14,802 / 14,802 | 0 / 12,860,882 / 12,860,882 |
+| finish_sequence | 0 / 32,995 / 32,995 | 0 / 18,611,649 / 18,611,649 |
+| reduce_sequence | 0 / 151,925 / 151,925 | 0 / 25,672,145 / 25,672,145 |
+| join_output | 0 / 170,465 / 170,465 | 0 / 15,612,604 / 15,612,604 |
+| publish_boundaries | 0 / 12,425 / 12,425 | 0 / 10,307,007 / 10,307,007 |
+| entry_motion_at | 0 / 79,245 / 60,975 | 0 / 6,864,765 / 5,859,915 |
+| prepare_boundary_entry_at | 0 / 79,123 / 79,123 | 0 / 7,699,456 / 7,022,848 |
+| reconstruction_route_bound | 0 / 0 / 14,802 | 0 / 0 / 1,400,370 |
+| route_table<all> | 0 / 88 / 110 | 0 / 4,419,032 / 11,140,206 |
+| clear_fragment_anchors | 0 / 15,047 / 15,047 | 0 / 1,790,593 / 352,896 |
+| finish_reference_geometry | 0 / 32,993 / 32,993 | 0 / 3,995,453 / 1,062,469 |
+| malloc | 2,242,880 / 3,078,101 / 2,694,787 | 116,515,513 / 165,667,342 / 143,149,119 |
+| _int_malloc | 870,979 / 1,414,448 / 1,199,550 | 173,976,156 / 273,713,635 / 243,845,844 |
+| _int_free | 2,464,325 / 3,359,084 / 2,986,025 | 164,178,816 / 227,140,727 / 200,584,622 |
+| __memcpy_avx_unaligned_erms | 538,340 / 1,326,718 / 1,309,736 | 42,136,225 / 80,274,844 / 80,605,099 |
+
+The final route/path omissions remove 13,759,003 instructions relative to the
+empty-storage profile. The predicted operations disappear, while the literal
+prediction of unchanged standalone `note_use` call counts is **not met**:
+10,180 invocations are inlined into `record_uses`. Its profile gains exactly
+10,180 direct slot reads and 20,360 direct route writes. Combining these
+with `note_use` leaves the same 484,716 route writes as before that guard,
+but reduces their combined slot reads from 558,867 to 550,767 (8,100).
+This is a change of compiled call boundary, not omission of 10,180 relations.
+
+`relative_steps` slot reads fall from 129,242 to 82,242, removing 47,000
+repeated immutable-path reads. Direct reconstruction ContextPath stores fall
+from 185,819 to 24,486, omitting 161,333 historical tombstones already in the
+fresh page. Its 40,430 TextUnit and 9,150 establishing-element lookup stores
+remain unchanged. Across all callers, every non-ContextPath route-write
+instantiation retains its previous count; total route writes fall by exactly
+161,333. The aggregate final `slot_read` count falls by 55,100 versus the
+empty-storage profile, matching the 8,100 plus 47,000 read omissions.
+These compiled call edges distinguish each mechanism; they do not isolate
+each omission's wall-time effect across different runs.
+
+The earlier savings remain: 300,821 consecutive duplicate supplier calls,
+19,756 intermediate supplier-head writes and 18,270 Close motion preparations
+are omitted. Empty-storage cleanup retains only 235 and 117 direct
+allocation/free pairs instead of 60,188 and 98,979, removing 158,815 pairs.
+Fresh/surviving style and text relations, stable owner-local sequences,
+reductions and boundary publication remain, with the consumers identified
+in the audit. Allocation/copy/free functions account for their own exclusive
+costs; this profile does not identify every allocated object's lifetime or
+prove all remaining work irreducible.
+
+### Final renderer validation and remaining direction
+
+The measured final renderer passes
+[check 38047105049](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105049),
+[layout-check 38047105031](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105031),
+[Q139 38047108569](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047108569),
+[Q140 38047108494](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047108494),
+all 20 jobs of [oracles-m2 38047105036](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105036)
+and all 164 jobs of [falsify-m2 38047105070](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38047105070).
+Both modes preserve all 60 original Apollo11 results and every original
+admission: 38 splices, 18 reason-9, two reason-7 and two reason-3 fallbacks.
+All 104 expanded edits match fresh full reconstruction, including a splice
+and undo after each fallback, and both focused 20-edit sequences pass.
+The Q139/Q140 pull-request merge tree equals the measured revision's tree;
+the final delivery revision and its repeated gates are recorded in
+[Draft PR 58, fallback cost](https://github.com/Ming-Research/Snowghost-wf/pull/58)
+without changing this measured renderer.
+
+The new style omission changes the next splice to reason 1; the text
+omission produces stale geometry at the retained-text edits after both
+fallback insertion and removal. Both mutations compile and are detected in
+both modes. The original admission and earlier unrelated edits remain
+checked, so a build failure or unrelated refusal cannot count as detection.
+The route-bound paragraph and child reductions remain independently
+permitted and emitted in the final parallel build.
+
+The authorized local omissions are implemented and measured, but the cost
+target remains unmet. The current retained-state construction adds
+476,381,515 reconstruction instructions and 297,559,785 layout instructions
+versus main. Their required outputs have identified consumers; removing the
+outputs would violate the next-edit contract. This does not establish a
+lower bound on their implementation cost or prove every possible local
+optimization exhausted. Comparing a different construction/publication path
+for those same relations and summaries is a broader design investigation,
+awaiting the owner's direction in
+[Draft PR 58, fallback cost](https://github.com/Ming-Research/Snowghost-wf/pull/58). No dirty-chain fallback,
+weaker admission or relaxed cost criterion is introduced.
+
+The bulk-page allocation Decision remains proposed, without a design-log
+entry. Its capacity may overreserve for retired routes and duplicate
+suppliers; peak memory is unmeasured. Parallel instruction attribution,
+other workloads/machines and per-object allocation provenance remain
+unverified. No Whitefoot gap is established by this work, and no pin or
+submodule moved. All compilation, tests, checks and measurement ran on
+GitHub-hosted CI; local operations only edited/read source and Git state
+and analyzed downloaded evidence.
