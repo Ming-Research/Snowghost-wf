@@ -223,7 +223,10 @@ def memory(names, rounds):
                     seconds = run(['/usr/bin/time', '-v', '-o', str(measured),
                                    driver(name, mode), 'edittime', str(script.relative_to(ROOT)),
                                    *args_for('apollo11')], dest)
-                    inctime.read(dest, inctime.script_operations(script))
+                    if size == 'zero':
+                        inctime.read(str(dest), [], checking=True)
+                    else:
+                        inctime.read(dest, inctime.script_operations(script))
                     rss = memory_record(measured.read_text())
                     rows.append(dict(cohort=name, mode=mode, size=size, round=repeat,
                                      maximum_rss_kib=rss, wall_seconds=seconds))
