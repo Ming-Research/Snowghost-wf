@@ -4899,3 +4899,214 @@ and the complete required semantic gates. The existing 10%, 5%, 1x and 2x
 criteria remain unchanged. Remove the temporary wide-bound variant from the
 new batch because its allocation policy is now the candidate itself; the
 older run and its source patch remain the evidence for this selection.
+
+
+### Wide-reservation candidate: source and semantic validation
+
+The wide-reservation renderer is `eafe415df1e7aea13a7778375a34bc5ac6367795`,
+restored at `6f799df9771588da076b0c218f878823268aa664` and unchanged by the
+ASCII-only design punctuation repair `7ad221a`. It matches 9c4827c exactly,
+including the compiler pin. The independent timing drivers from
+[build run 38066972540](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38066972540)
+all exit successfully in both modes, have the common compiler checksum,
+and carry empty patches for the six canonical cohorts. Each of the four
+private constructor variants changes only `renderer/layout/structure.wf`;
+their generator is unchanged from that build. Archived-source equality is
+also enforced by the new hosted measurement job.
+
+The delivered driver's
+parallel ledger permits independent maps for retained-unit and context
+filters and all three `copy_route_pages` instances, with budget-carrying
+clone families for each page-copy instance. The existing producer-count
+loops retain their saturating-reduction permission. These observations
+establish emitted permissions at those sites, not a measured runtime gain.
+
+All required semantic gates pass. Check and layout-check execute 7ad221a;
+Q139 and Q140 execute PR merge `e1683a2b79d992076660759256ccd4d3376930ac`,
+whose complete tree `6384e09fe7267b7198ab81f3c3aff0a9f0f2a96e` matches
+7ad221a, including pins and submodules. The two full suites execute 6f799df,
+with identical renderer and checks. The initial check on 6f799df accepted
+all modules and passed the DOM self-test and 21 checker tests, then rejected
+a non-ASCII apostrophe in the proposed design node; 7ad221a fixes that
+punctuation and the complete check passes.
+
+| Gate | Run | Result |
+| --- | --- | --- |
+| check | [38077572411](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077572411) | Pass |
+| layout-check | [38077572414](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077572414) | Pass |
+| Q139 | [38077576357](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077576357) | Pass |
+| Q140 | [38077576365](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077576365) | Pass |
+| Complete oracles-m2 | [38077147210](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077147210) | All 20 jobs pass |
+| Complete falsify-m2 | [38077147192](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077147192) | All 168 jobs pass |
+
+The complete mutation matrix retains 99 M2, 37 Q139, 22 Q140 and six fallback
+omissions, plus four shared jobs. Every new omission compiles and fails at
+its intended later consumer in both modes. Removing retained units changes
+the next text result; removing context lookup or paths refuses the next
+structural edit; removing supplier heads changes the admitted splice to a
+fallback while geometry still agrees. The first fallback agrees in all four
+cases. Existing fresh-style and fresh-text omission controls also remain
+detected, so no initial-only result substitutes for preserved future state.
+
+In each mode, the Apollo11 raw artifacts contain 60 matching original edits,
+104 matching expanded edits and 20 matching focused lifetime edits. The
+mapping preserves all original per-edit paths. Every one of the 22 fallbacks
+has its following splice and undo admitted: all 44 following paths are
+`(1, 0)`. The remaining page-identity jobs also pass. These observations
+validate the delivered construction's consumers; cost and memory acceptance
+are assessed separately below.
+
+### Wide-reservation result and failed memory condition
+
+[Comparison 38077150304](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38077150304)
+completes successfully on the restored renderer above. The hosted machine
+is an AMD EPYC 9V74 with four logical CPUs (two cores with SMT), Ubuntu
+24.04.5 and Linux 6.17.0-1022-azure. All drivers use `wf-41f46e60030c`,
+compiler checksum `ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`
+and Clang 22.1.8. Main is bb98d43, before is the exact 941e51d renderer,
+and the candidate is the exact renderer restored at 6f799df. The six
+canonical cohorts have independent twins and three forward/reverse/forward
+rounds, sequential and with `WF_WORKERS=4`, on this one runner. Native timing
+completes in 56 minutes; the subsequent RSS and seven-cohort profiling
+stages also complete successfully. Different runner hardware prevents a
+causal timing comparison with the previous run's tighter candidate.
+
+The [native medians](q141-bulk-wide-native.csv) and
+[paired verdicts](q141-bulk-wide-acceptance.csv) contain 684 medians and 456
+comparisons. All 12 candidate fallback comparisons fail 1x, at
+1.2754-1.3305x main. All 216 candidate X5 controls pass 2x, narrowly at the
+worst case: 1.9982x for four-worker HTML5 font-size. Before fails all 12
+fallback comparisons and one of 216 controls: HTML5 font-size, ordinary
+parallel round 2, 1176.5 versus 561.0 microseconds (2.0971x). Retain that
+observation without attributing an unrelated control improvement to this
+fallback change.
+
+Fallback medians, microseconds; each cell is ordinary / independent twin:
+
+| Mode / round | Main / twin | 941e51d / twin | Wide candidate / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 20,379.5 / 20,360.0 | 26,092.5 / 26,202.5 | 26,198.0 / 26,023.0 |
+| seq 2 | 20,386.0 / 20,283.0 | 26,093.0 / 26,067.5 | 26,100.0 / 26,133.0 |
+| seq 3 | 20,397.0 / 20,292.5 | 26,112.0 / 26,220.5 | 26,015.0 / 26,175.0 |
+| par 1 | 20,341.5 / 20,364.0 | 26,823.5 / 26,815.5 | 26,937.5 / 26,795.5 |
+| par 2 | 20,363.0 / 20,405.0 | 27,220.0 / 27,266.5 | 27,081.0 / 26,942.0 |
+| par 3 | 20,258.5 / 20,298.0 | 27,023.0 / 26,774.5 | 26,823.0 / 27,005.5 |
+
+Every X5 control follows. Each mode cell gives the range of six medians
+(three rounds times ordinary/twin), in order main -> 941e51d -> candidate,
+then the largest paired candidate/main ratio. The linked CSV preserves
+individual medians and exact pairings.
+
+| Page / edit | Sequential microseconds; worst ratio | Four-worker microseconds; worst ratio |
+| --- | --- | --- |
+| ecma262 / word | 73.0–74.5 → 78.5–83.5 → 78.0–80.0; 1.0959x | 113.0–115.5 → 122.5–133.5 → 122.5–136.0; 1.1826x |
+| ecma262 / sentence | 169.0–181.5 → 103.0–105.0 → 103.5–106.0; 0.6243x | 206.0–223.0 → 152.5–158.0 → 153.0–162.0; 0.7864x |
+| ecma262 / colour | 14.0–15.0 → 13.5–14.0 → 14.0–14.0; 1.0000x | 15.0–16.0 → 17.5–20.0 → 16.0–23.5; 1.5161x |
+| ecma262 / fontsize | 1,492.5–1,635.0 → 861.0–898.0 → 857.0–881.0; 0.5826x | 1,683.0–1,740.5 → 1,152.5–1,187.0 → 1,134.5–1,201.5; 0.6998x |
+| ecma262 / rootfont | 29,380.5–29,694.5 → 3,478.0–3,859.0 → 3,487.0–3,760.5; 0.1266x | 43,631.0–43,780.5 → 4,035.0–4,104.5 → 3,981.0–4,115.0; 0.0943x |
+| ecma262 / block | 443,379.0–447,350.0 → 118.5–125.0 → 121.0–124.0; 0.0003x | 393,863.0–396,593.5 → 162.0–171.0 → 164.5–176.0; 0.0004x |
+| html5 / word | 53.0–54.5 → 60.0–61.0 → 60.5–63.5; 1.1887x | 85.0–89.5 → 92.5–96.0 → 93.0–95.5; 1.1111x |
+| html5 / sentence | 157.0–162.5 → 210.5–222.0 → 212.0–217.0; 1.3822x | 218.5–231.5 → 242.0–258.5 → 240.5–253.5; 1.1553x |
+| html5 / colour | 12.0–12.0 → 12.0–12.0 → 12.0–12.0; 1.0000x | 16.0–19.0 → 20.0–21.0 → 18.5–22.0; 1.2222x |
+| html5 / fontsize | 558.5–631.0 → 841.0–863.5 → 841.5–869.0; 1.5421x | 561.0–631.0 → 1,104.0–1,176.5 → 1,111.0–1,178.5; 1.9982x |
+| html5 / rootfont | 780,882.0–784,731.0 → 968,270.5–973,184.5 → 970,923.5–976,808.5; 1.2501x | 440,344.0–446,774.5 → 583,642.0–590,465.0 → 589,333.5–596,094.5; 1.3452x |
+| html5 / block | 442,349.5–446,761.5 → 372.0–381.5 → 370.0–376.0; 0.0008x | 384,764.0–389,359.0 → 358.5–378.0 → 363.0–376.5; 0.0010x |
+| apollo11 / word | 156.5–159.5 → 171.5–175.5 → 170.0–176.0; 1.1246x | 249.0–253.0 → 284.0–291.0 → 285.0–294.0; 1.1687x |
+| apollo11 / sentence | 183.0–190.0 → 237.0–246.0 → 236.0–241.5; 1.3019x | 300.0–305.5 → 417.0–431.5 → 422.5–429.0; 1.4229x |
+| apollo11 / colour | 18.0–19.0 → 18.5–19.0 → 18.5–19.5; 1.0278x | 27.0–27.5 → 27.5–34.0 → 28.0–37.0; 1.3455x |
+| apollo11 / fontsize | 223.0–230.5 → 261.0–269.0 → 260.5–276.5; 1.1996x | 408.0–420.0 → 440.0–455.5 → 439.0–451.5; 1.0797x |
+| apollo11 / rootfont | 65,430.0–66,062.5 → 73,724.5–74,065.0 → 73,871.5–74,368.0; 1.1366x | 54,362.5–55,030.0 → 52,241.0–53,193.0 → 52,589.5–53,167.0; 0.9674x |
+| apollo11 / block | 20,189.0–20,334.0 → 4,576.5–4,611.5 → 4,595.5–4,616.0; 0.2276x | 20,228.0–20,354.0 → 5,012.5–5,042.5 → 5,010.5–5,069.5; 0.2493x |
+
+
+The [constructor profiles](q141-bulk-wide-constructions.csv) observe every
+required candidate outer boundary on all 22 fallbacks. Allocation and
+sizing are included once; matched variants restore one old loop at a time.
+
+| Construction | Matched old loop | Bulk | Saving | Prior 10% verdict |
+| --- | ---: | ---: | ---: | --- |
+| Historical context paths | 13,262,422 | 3,308,984 | 9,953,438 (75.05%) | Pass |
+| Retained text units | 36,153,637 | 21,527,859 | 14,625,778 (40.45%) | Pass |
+| Establishing-context lookup | 16,368,703 | 8,943,463 | 7,425,240 (45.36%) | Pass |
+
+Supplier-chain construction is the restored loop, costing 70,682,596
+inclusive instructions; the rejected balanced construction is absent. Fresh
+record publication and the already bulk sequence/flow/reduction paths
+remain unchanged. The wide candidate's sizing function has an observable
+outer boundary, unlike the previous private wrapper: it costs 1,400,370
+instructions. Common publication therefore totals 207,029,349 versus
+455,779,864 without reservation, a saving of 248,750,515 (54.58%), passing
+10%. The matched no-reservation patch eliminates the sizing call in source;
+its missing boundary is not a generic zero-cost inference.
+
+The [exclusive phase totals](q141-bulk-wide-phases.csv) and
+[function attribution](q141-bulk-wide-attribution.csv) reconcile as follows:
+
+| Phase | Main | 941e51d | Wide candidate |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,328,300,179 | 1,286,925,785 |
+| Layout | 4,054,991,903 | 4,352,551,688 | 4,352,551,688 |
+| Bookkeeping | 26,720,245 | 33,580,190 | 33,580,190 |
+| Complete fallback | 4,933,630,812 | 5,714,432,057 | 5,673,057,663 |
+
+The wide composition removes 41,374,394 instructions (0.7240%) from 941e51d,
+all in reconstruction, but still exceeds main by 739,426,851. The isolated
+constructor savings are separate observations; their sum is not substituted
+for this complete-program delta.
+
+[Maximum process RSS](q141-bulk-wide-memory.csv), KiB, across full-script
+rounds includes startup and initial layout:
+
+| Mode | Main | 941e51d | Wide candidate | No reservation |
+| --- | ---: | ---: | ---: | ---: |
+| Sequential | 80,732 | 101,128 | 101,048 | 97,976 |
+| Four workers | 85,360 | 106,540 | 108,516 | 103,180 |
+
+Every paired full-script reservation increase is reported:
+
+| Mode | Round 1 | Round 2 | Round 3 |
+| --- | ---: | ---: | ---: |
+| Sequential | 3.05% | 3.05% | 3.60% |
+| Four workers | 6.36% | 4.68% | 2.43% |
+
+**Memory verdict: fail the prior 5% condition.** Parallel round 1 is
+108,516 versus 102,024 KiB; even the ratio of separate parallel maxima is
+5.17%. The earlier private wide-bound comparison passing on an EPYC 7763
+does not override this crossing on the final-source EPYC 9V74 run. This
+result does not isolate allocator capacity from process scheduling, and no
+claim of a machine-independent RSS bound follows from either run. The
+reservation's 54.58% instruction saving does not waive its separate memory
+condition. The overall M2 1x requirement also remains failed.
+
+
+### Reservation disposition and memory replication before measurement
+
+Reject the restored wide reservation under the unchanged 5% criterion.
+Restore the exact tighter renderer of 2a524d9, whose complete comparison
+38068824377 and semantic suites are recorded above: local directory,
+publication and RSS conditions pass, while all 12 fallback medians still
+fail 1x. This supersedes the earlier selection of the wide bound, whose
+current-source memory result invalidates that selection's premise. It does
+not change the thresholds or infer a runtime advantage across machines.
+The parallelism rule compares admissible candidates; the wide candidate's
+shorter sizing chain cannot waive its separate memory condition.
+
+The restored renderer keeps the three bulk directories and the original
+supplier loop. Its extra live-route and adjacent-supplier reductions are
+capacity work, not an alternate implementation of the rejected
+multiple-result supplier witness. Its exact-source six-cohort timing and
+phase attribution remain the tighter-candidate tables and CSVs above.
+Fresh records, owner-local sequences, flow and boundary reductions remain
+unchanged; the 1x goal is unfulfilled.
+
+Before any further memory observation, repeat the existing RSS protocol on
+this exact tighter renderer, main and 941e51d, with matched no-reservation
+and wide-bound controls, using the eleven archived drivers from
+38068824377 only after renderer/pin equality. The new workflow input selects
+only the existing memory command, zero/two-edit pilots and three full-script
+interleaved rounds; it does not narrow the default complete comparison.
+Require every paired full-script tighter/no-reservation increase to remain
+at most 5%. Report every round alongside the earlier observation. A crossing
+rejects acceptance from the earlier passing run and requires an explicit
+allocation disposition; do not rerun until a favorable sample appears.
+No timing or instruction conclusion will be drawn from this RSS-only batch.

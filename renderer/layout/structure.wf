@@ -807,20 +807,52 @@ fn retain_routes(layout: &Layout, paths: &RouteTable<ContextPath>, uses: &RouteT
   return Ok<unit, LayoutError>(value: unit);
 }
 
-fn reconstruction_route_bound(context: &Context) -> count: u64 reads(context) {
-  doc "Bounds record_tree's route emissions by its producers: one context owner, one per block, two per row/column, and each paragraph's strut and pieces. Duplicates may emit fewer routes. Independent subtree counts precede allocation; no route or admission depends on this reserve.";
+fn reconstruction_route_bound(context: &Context, layout: &Layout, paths: &RouteTable<ContextPath>, root: u32) -> count: u64 reads(context), reads(layout), reads(paths) {
+  doc "Bounds retained and fresh route emissions before allocation. Every live old route bounds one surviving chain record; unreachable live entries only overestimate valid published state. Independent liveness and fresh-producer reductions change capacity, never validation, records or admission.";
+  let old_count = layout^.routes.len;
+  let retained = 0_u64;
+  for (at in 0_u64..old_count) {
+    let route = route_read::<StyleRoute>(table: &layout^.routes, at: at);
+    let live = live_context(paths: paths, serial: route.serial);
+    if live {
+      set retained = retained +sat 1_u64;
+    }
+  }
+  let fresh = fresh_route_bound(context: context, root: root);
+  return retained +sat fresh;
+}
+
+fn fresh_route_bound(context: &Context, root: u32) -> count: u64 reads(context) {
+  doc "Bounds record_tree's calls by one context owner, one per block, two per row/column, and each paragraph's strut and adjacent supplier changes. Duplicate suppression may emit fewer routes. Adjacent immutable reads and subtree reductions remain independent.";
   let rows = context^.rows.inner.len *sat 2_u64;
   let columns = context^.columns.inner.len *sat 2_u64;
   let blocks = context^.blocks.inner.len;
   let paragraphs = context^.paragraphs.inner.len;
   let pieces = 0_u64;
   for (p in 0_u64..paragraphs) {
-    set pieces = pieces +sat context^.paragraphs.inner[p].pieces.inner.len;
+    let count = context^.paragraphs.inner[p].pieces.inner.len;
+    let transitions = 0_u64;
+    for (k in 0_u64..count) {
+      let before_style = if k == 0_u64 {
+        give context^.paragraphs.inner[p].style;
+      } else {
+        let previous = k - 1_u64;
+        let style = piece_style(piece: context^.paragraphs.inner[p].pieces.inner[previous]);
+        give style;
+      }
+      let after_style = piece_style(piece: context^.paragraphs.inner[p].pieces.inner[k]);
+      let before = use_element(style: before_style, root: root);
+      let after = use_element(style: after_style, root: root);
+      if before != after {
+        set transitions = transitions +sat 1_u64;
+      }
+    }
+    set pieces = pieces +sat transitions;
   }
   let children = context^.children.inner.len;
   let descendants = 0_u64;
   for (c in 0_u64..children) {
-    let below = reconstruction_route_bound(context: &context^.children.inner[c]);
+    let below = fresh_route_bound(context: &context^.children.inner[c], root: root);
     set descendants = descendants +sat below;
   }
   let owner_blocks = 1_u64 +sat blocks;
@@ -1004,8 +1036,7 @@ fn structure_changed(layout: &Layout, document: &Document, old: &Styles, new: &S
   let unused = unused_style();
   let uses = route_table::<StyleUse>(count: nodes, missing: unused);
   let missing_routes = absent_style_route();
-  let fresh_routes = reconstruction_route_bound(context: &built);
-  let route_bound = layout^.routes.len +sat fresh_routes;
+  let route_bound = reconstruction_route_bound(context: &built, layout: layout, paths: &paths, root: root);
   let reserve = if route_bound <= item_ceiling {
     give route_bound;
   } else {

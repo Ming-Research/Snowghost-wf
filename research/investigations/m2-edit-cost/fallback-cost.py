@@ -147,8 +147,19 @@ def construction_variant(tree, name):
             raise ValueError(('construction site changed', name, needle))
         source = source.replace(needle, replacement)
     if name == 'noreserve':
-        replace('let fresh_routes = reconstruction_route_bound(context: &built);', 'let fresh_routes = 0_u64;')
-        replace('let route_bound = layout^.routes.len +sat fresh_routes;', 'let route_bound = fresh_routes;')
+        replace('let route_bound = reconstruction_route_bound(context: &built, layout: layout, paths: &paths, root: root);', 'let route_bound = 0_u64;')
+    elif name == 'widebound':
+        start = source.index('fn reconstruction_route_bound(')
+        end = source.index('\nfn copy_retained_paths(', start)
+        old_start = before.index('fn reconstruction_route_bound(')
+        old_end = before.index('\nfn structure_changed(', old_start)
+        fresh = before[old_start:old_end].replace('reconstruction_route_bound', 'fresh_route_bound')
+        wrapper = source[start:source.index('  let old_count =', start)]
+        wrapper = wrapper.replace('reads(context), reads(layout), reads(paths)',
+                                  'reads(context), reads(layout.routes.len)')
+        wrapper += ('  let fresh = fresh_route_bound(context: context);\n'
+                    '  return layout^.routes.len +sat fresh;\n}\n\n')
+        source = source[:start] + wrapper + fresh + source[end:]
     elif name == 'oldpaths':
         old_start = before.index('  set paths.len = 0_u64;', before.index('fn structure_changed('))
         old_end = before.index('  let retired =', old_start)
