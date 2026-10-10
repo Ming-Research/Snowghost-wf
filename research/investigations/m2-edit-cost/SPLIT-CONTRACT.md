@@ -3999,3 +3999,37 @@ suppliers may overallocate, and peak memory was not measured. The completion
 review's shared-accumulator finding was repaired and its compiler permission
 verified; no remaining correctness finding is claimed. The separate final
 review and delivery status are recorded in the Draft pull request.
+
+### Empty-storage follow-up: comparison before measurement
+
+A further allocation-caller audit found a local omission still available
+without changing required-state construction or lifetime.
+`clear_fragment_anchors` unconditionally replaces one Slots box and three
+Array boxes with empty storage; `finish_reference_geometry` replaces three
+Slots boxes after its payload-flag loops. `new_context` initializes all seven
+containers to exactly that empty state. For an Array whose length is zero,
+or Slots whose capacity is zero (and therefore length is zero), replacement
+publishes no new logical state. Leave that existing empty container in place.
+
+The condition for Slots is capacity, not length: an empty container with
+allocated capacity must still be released, preserving the current memory
+lifetime and the next append's growth behavior. All populated-container
+replacements, payload-flag loops, fragment counters and flags, and the
+reference-phase reset remain unconditional with respect to those no-op
+omissions. Each predicate reads only the field whose independent replacement
+it controls. This adds no representation, interface, admission condition or
+cache; it omits a write of the same empty state. Runtime-capacity storage
+continues to use the pinned language's specified Box representation. No
+missing bulk-clear operation or language gap is inferred from this audit.
+
+Before measuring, require fewer direct allocations in these two routines
+without changing the counts of required routes, reductions or publication.
+The source audit does not establish the frequency of empty calls or a native
+saving. Compare the new candidate and its twin against frozen main/before
+and both twins on one hosted runner, with the same three interleaved rounds,
+all X5 controls, isolated fallback profiles, 1x fallback threshold and 2x
+control threshold. Reject correctness on any identity, next-edit admission
+or mutation failure. The previous measured source and its tables remain
+historical evidence; they cannot establish this follow-up's result. A broader
+construction decision remains premature while this local omission is being
+validated.
