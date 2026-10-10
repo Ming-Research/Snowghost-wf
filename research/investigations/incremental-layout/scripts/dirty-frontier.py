@@ -169,7 +169,7 @@ def column_fixtures():
         yield name, source(extra=extra), target_pairs
     def line_presence_pairs(tree):
         node = text(tree, '\t\t')['node']
-        return [f'T {node} 0 \\n', f'D {node} 0 1'] * 2
+        return [f'P {i}' for i in range(5)] + [f'T {node} 0 \\n', f'D {node} 0 1'] * 2
     # Keep a nonempty, whitespace-only text source: becoming empty or changing
     # the whitespace classification would require box-tree reconstruction and
     # is deliberately refused by text_changed before reaching column replay.

@@ -3501,3 +3501,28 @@ whitespace-only while its paragraph gains/loses a line; the single-paragraph
 case crosses an empty column-unit stream. The required incremental/full
 identity is unchanged. Extending text-edit construction admission is not part
 of the font-size dependency repair, and its explicit existing refusal remains.
+
+
+The block extension's separate diagnostic run
+[38023159820](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38023159820)
+keeps all 60 Apollo11 font-size updates identical to full layout. The large
+column context no longer enters full preparation or full summary publication
+on any of its 26 edits, including all fourteen block restyles. The complete
+script still records 435 boundary-path refusals: reason 5 twice (atomic or
+nonstatic-position semantic barrier), 6 on 209 calls (nonlocal geometry or a
+non-single dirty frontier), 7 on 94 (own restyle, intrinsic demand or changed
+Space), 8 on 34 (columns or unsupported fragment forms), and 9 on 96 (retained
+transfer/ancestor or recomputation certificates). A boundary refusal can then
+use scoped reference replay; it does not imply a full context or page rebuild.
+No stationary-frontier refusal is recorded in this script. Diagnostic buffers
+are absent from the production renderer and timing binaries.
+
+Temporary input-trace injection and font-only profiling workflows are retired
+after their artifacts are archived; their exact scripts remain in the linked
+runs' source revisions. The permanent cases, mutation rows, Apollo11 identity
+matrix and dependency contract remain. The complete common-compiler acceptance,
+final revision's gates and review disposition are recorded in
+[PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55); the earlier
+paragraph-only rejection is historical evidence, not the block extension's
+acceptance result. No compiler pin, submodule, owner-motion storage or inverse
+proof changes are made by this repair.
