@@ -56,8 +56,7 @@ for version in ('26.04', '24.04'):
     else:
         assert result.returncode == 0
 
-# Diagnostic only: preserve Refused/Unreadable and the face number at the
-# driver's existing failure report; no acceptance path changes.
+# Prepare a failure-report diagnostic, compiled after the independent probes.
 driver = Path('renderer/oracle/layout/layout.wf')
 source = driver.read_text()
 old = '''    Err(..) => {
@@ -70,13 +69,13 @@ new = '''    Err(error: problem) => {
       let diagnostic = box_slots_new::<u8>(capacity: 128_u64);
       put_text(buffer: &diagnostic, text: &fonts_word[0_u64..fonts_word.len]);
       match problem {
-        Refused(face: face) => {
+        Refused(face: refused_index) => {
           put_text(buffer: &diagnostic, text: &diagnostic_refused[0_u64..diagnostic_refused.len]);
-          put_decimal(buffer: &diagnostic, value: face);
+          put_decimal(buffer: &diagnostic, value: refused_index);
         }
-        Unreadable(face: face) => {
+        Unreadable(face: unreadable_index) => {
           put_text(buffer: &diagnostic, text: &diagnostic_unreadable[0_u64..diagnostic_unreadable.len]);
-          put_decimal(buffer: &diagnostic, value: face);
+          put_decimal(buffer: &diagnostic, value: unreadable_index);
         }
       }
       let size = diagnostic.inner.len;
@@ -86,12 +85,6 @@ new = '''    Err(error: problem) => {
   }
   let viewport'''
 assert source.count(old) == 1
-driver.write_text(source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
-(results / 'diagnostic.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(driver)], text=True))
-wfc = next(Path('build/whitefoot').glob('*/whitefootc')).resolve()
-subprocess.run([str(wfc), '--cache', str(Path('build/wf-cache').resolve()), '--fragments', 'function', '--graph', 'modules.wfg', '--entry', 'layout_oracle', '-o', '../build/layout_oracle_seq'], cwd='renderer', check=True)
-fonts('26.04')
-run('diagnostic-26.04', ['sh', 'research/investigations/incremental-layout/run.sh', 'prepare', 'html5'])
 
 # One small page is enough to load every face without repeating full layout.
 probe = Path('build/font-probe.html')
@@ -144,3 +137,21 @@ for face in changed:
                 print(f'TABLE {version} {source.name} {tag} {detail}', flush=True)
         font.saveXML(results / f'{version}-{source.name}.ttx', tables=['head', 'maxp', 'hhea', 'OS/2', 'cmap'])
 (results / 'changed.json').write_text(json.dumps(changed, indent=2))
+
+# Diagnostic only: preserve the existing error variant and exit status.
+driver.write_text(source.replace(old, new) + '\nconst diagnostic_refused: Array<u8, 14> = " Refused face=";\n\nconst diagnostic_unreadable: Array<u8, 17> = " Unreadable face=";\n')
+(results / 'diagnostic.patch').write_text(subprocess.check_output(['git', 'diff', '--', str(driver)], text=True))
+wfc = next(Path('build/whitefoot').glob('*/whitefootc')).resolve()
+subprocess.run([str(wfc), '--cache', str(Path('build/wf-cache').resolve()), '--fragments', 'function', '--graph', 'modules.wfg', '--entry', 'layout_oracle', '-o', '../build/layout_oracle_seq'], cwd='renderer', check=True)
+fonts('26.04')
+result = run('diagnostic-26.04', ['sh', 'research/investigations/incremental-layout/run.sh', 'prepare', 'html5'])
+assert result.returncode == 2 and 'Refused face=' in result.stderr
+fonts('24.04')
+assert run('diagnostic-control', command).returncode == 0
+for face in offenders:
+    name = face['path']
+    target = Path('build/fonts') / Path(name).name
+    shutil.copyfile(Path('build/fontsets/26.04/root') / name.lstrip('/'), target)
+    result = run(f'diagnostic-swap-{face["index"]}', command)
+    assert result.returncode == 2 and f'Refused face={face["index"]}' in result.stderr
+    shutil.copyfile(Path('build/fontsets/24.04/root') / name.lstrip('/'), target)
