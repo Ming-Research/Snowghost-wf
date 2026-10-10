@@ -6,7 +6,8 @@
 // that performance.now resolves 5 us, serving it and each
 // stylesheet whose URL ends in SUFFIX from local files, in a 1280 by 720
 // viewport with page scripts disabled, through the DevTools protocol of the
-// Chromium build CHROME names (Playwright's 1194 build by default). NODES is
+// Chromium build CHROME names (Playwright's 1194 build by default), with the
+// extra flags CHROME_ARGS lists, such as --no-sandbox in a container. NODES is
 // the layout oracle's `nodes` listing of the same page: an edit's node is
 // found by its position among elements and text nodes in tree order, and
 // every listed text node's data is checked against the page before any edit.
@@ -42,7 +43,8 @@ const script = readFileSync(scriptPath, 'utf8').split('\n').filter((l) => l.leng
 
 const port = 9300 + Math.floor(Math.random() * 600);
 const profile = mkdtempSync(join(tmpdir(), 'e1-chrome-'));
-const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', 'about:blank'], { stdio: 'ignore' });
+const extra = (process.env.CHROME_ARGS || '').split(' ').filter((a) => a.length);
+const proc = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', ...extra, 'about:blank'], { stdio: 'ignore' });
 const fail = (why) => { console.error('chromium.mjs: ' + why); proc.kill(); process.exit(2); };
 let targets;
 for (let i = 0; i < 200; i++) { try { targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); if (targets.some((t) => t.type === 'page')) break; } catch {} await new Promise((r) => setTimeout(r, 50)); }

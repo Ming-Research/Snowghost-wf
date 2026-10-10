@@ -30,7 +30,8 @@ DRIVER_SECONDS = 600
 EXCLUDED = {
     # The standard's newer processing instruction nodes; the tokenizer's
     # oracle (html5lib-tests, frozen) still reads `<?` as a bogus comment.
-    # Deferred with tokenizer and document support: sg-fraga-processing-instructions.
+    # Deferred with the tokenizer and document support (status-board item
+    # sg-bl-02-45).
     "processing-instructions.dat": "processing instructions are deferred",
     # These observe script running during the parse; the tree builder runs
     # no script (pkg::html::tree_builder).
@@ -49,7 +50,8 @@ EXCLUDED_CASES = {
     "tests1.dat #46": "processing instructions are deferred",
     # These observe an option's contents cloned into selectedcontent, which
     # the standard does in the option element's insertion steps rather than
-    # in tree construction; follow-up: sg-fraga-selectedcontent.
+    # in tree construction; deferred with element behaviour (status-board
+    # item sg-bl-02-46).
     "webkit02.dat #44": "selectedcontent cloning is deferred",
     "webkit02.dat #45": "selectedcontent cloning is deferred",
     "webkit02.dat #46": "selectedcontent cloning is deferred",

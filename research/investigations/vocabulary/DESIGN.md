@@ -42,8 +42,8 @@ Both compile with the pinned compiler (`whitefootc --par --par-ledger`):
 
 The probe also found a checker gap: two range references written directly as
 call arguments do not get their REF-4 lengths related (`&a[0..n]` and
-`&b[0..n]` are not proved equal), while named ranges are. It is being fixed
-in Whitefoot alongside the range-length diagnostic work.
+`&b[0..n]` are not proved equal), while named ranges are. Whitefoot PR #167
+fixed it (merge 6f949641, contained in the pinned release).
 
 ## Proposal
 

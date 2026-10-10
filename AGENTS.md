@@ -4,10 +4,9 @@ Snowghost-wf, Snowghost for short, is a cross-platform renderer for user
 interfaces built with web technology: a chosen subset of the web platform
 rendered in Whitefoot by a pipeline that is parallel and incremental end to
 end, hosted on each operating system by a shell written in Rust (the
-`processes` decision in `design/`). The owner-wide agent instructions
-(mbbill/agents_config) apply with this file.
+`processes` decision in `design/`).
 
-## Goal and priorities
+## Goal and first priorities
 
 Snowghost serves Whitefoot: it is the large real program that shows what
 Whitefoot gives a renderer and exposes what Whitefoot still lacks. Reach, as
@@ -16,15 +15,9 @@ end-to-end parallel and incremental pipeline written in Whitefoot beats the
 engines in use today, then grow to the subset of the web that mainstream
 sites and generated applications need.
 
-When priorities conflict:
-
-1. reach the next end-to-end rendering milestone or performance comparison;
-2. render correctly for the subset Snowghost claims, with every safety check
-   Whitefoot requires;
-3. keep the implementation understandable and easy to change;
-4. add only the evidence needed to trust the current result;
-5. defer robustness, infrastructure and polish that no current milestone
-   needs.
+1. Reach the next end-to-end rendering milestone or performance comparison.
+2. Render correctly for the subset Snowghost claims, with every safety check
+   Whitefoot requires.
 
 **Parallelism is maximal, not chosen** (the `pipeline` decision): every stage
 keeps only its algorithm's true data dependencies and writes all other work
@@ -41,107 +34,47 @@ cache or table shared across elements, a sequential pass or a global
 counter, names the dependency that forces it or is not recommended. Measured
 speed decides only between candidates of equal dependencies.
 
-## References and evidence
+## References
 
-- `design/` holds the decisions Snowghost is built on. A design decision is a
-  choice between viable alternatives that changes rendered behavior, a safety
-  or trust condition, a shared interface or representation, a significant
-  performance commitment or a standing project rule. Read the nodes a change
-  touches and their ancestors before changing code.
-- Work is not planned in a document up front: a selected direction gets
-  `research/investigations/<name>/`, which writes, before measuring, the
-  question, the comparison that could answer it either way and the result
-  that would reject the proposal; its surviving decision goes to the tree.
-  Research is not an implied implementation requirement.
-  An agent writer trial records the model, prompt, context, turns and time of
-  each run, and keeps apart expressibility, the agent's success with the
-  supplied help, composition and cost.
-- The pinned Whitefoot commit defines the language; read it as
+- Research record: `research/investigations/<name>/`. Open defects and
+  Whitefoot requirements are items on the shared status board the owner-wide
+  instructions name; the repository keeps no TODO file, and code, documents
+  and checks that point to unfinished work name the board item's key.
+- The language: the Whitefoot commit `whitefoot.pin` names, read as
   [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md#reading-the-language)
-  describes. Whitefoot's `docs/patterns.md` lags the language; Snowghost is
-  where current source patterns are tried. Cite the language from the pinned
-  revision, never from Snowghost's code.
-- A claim cites a design-tree decision, an investigation, a measurement with
-  its workload, environment and comparison, or an oracle independent of
-  Snowghost: a test suite, a format's conformance files, a specification's
-  example or a reference renderer's output, never Snowghost's earlier output.
-  Research and PRs may cite a decision as rationale, not as proof of an
-  empirical claim.
-- A performance comparison names its workload, machine, engine versions and
-  settings, and measures every engine under the same conditions; a
-  performance change is attributed with a same-source before-and-after
-  comparison and a falsifier.
-- No site, page, test or benchmark selects a special path in the renderer.
-- Process wording in older artifacts, such as early investigations, is
-  superseded by this file and the owner-wide instructions.
-
-## Design tree
-
-Live trees: the root node files under `design/` other than `log.md`, each
-with its subdirectory, found by the Makefile. Change log: `design/log.md`.
-Research record: `research/investigations/`. Maintained TODO: the [shared status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip),
-including Whitefoot requirements; cite each open item by its board key. Form and readiness checks:
-`make design-lint` and `make design-ready`, running `lint.py` from the
-`design/skill/` submodule of Design-skill, which Snowghost never edits.
-
-## Agent roles
-
-- The owner and the primary agent own the architecture: the design tree, the
-  module graph, the Whitefoot module interfaces (`.wfm`) with their contracts
-  and effect rows, and the format the renderer and the shell exchange.
-- Implementer agents write module bodies (`.wf`) against those interfaces,
-  and the shell's Rust components against that format, in parallel. An
-  implementer that finds an interface or the format insufficient reports the
-  gap to the primary agent with a minimal example instead of editing it.
-
-## Merge rules
-
-1. Work-branch changes need no approval beyond what the owner-wide
-   instructions require. A PR becomes ready only after the owner has approved
-   every decision it needs, recorded in `design/log.md`.
-2. Every merge into `main` requires owner approval of the exact revision.
-3. The exact revision merged into `main` passes `make check` first.
-4. A change that moves `whitefoot.pin` or the `whitefoot-kit/` or
-   `design/skill/` submodule names the revisions it adopts and why; a
-   revision merged into `main` pins commits on those repositories' `main`,
-   for Whitefoot a release `wf-<12 hex>`, never an experiment release.
-
-The exact revision is the complete tree that will enter `main`, the pin and
-submodules included; if it changes after approval or after its check, rules 2
-and 3 apply again. No other step is a merge precondition. Dependent PRs are
-stacked, each on the branch of the one before it.
+  describes and cited from that revision, never from Snowghost's code.
+  Snowghost is where current Whitefoot source patterns are tried.
+- Oracles: Chromium is the reference renderer (the `pipeline` decision),
+  through `tests/css/style_oracle.mjs` and `tests/layout/layout_oracle.mjs`;
+  html5lib's and WPT's parsing, selector and URL cases, the CSS parsing
+  tests, the Unicode data files and PngSuite, all through the
+  `make oracle-*` targets.
+- Performance: E1 (`research/investigations/engine-comparison/`) compares
+  Snowghost with Chromium on the ecma262, html5 and apollo11 pages of
+  `research/investigations/concurrency/run.sh` with X5's edit scripts
+  (`research/investigations/incremental-layout/run.sh`).
 
 ## Checks
 
 - `make check`, the gate, in CI on every push: downloads the compiler release
   `whitefoot.pin` names (Whitefoot-kit's `whitefoot.mk`), builds the renderer,
-  runs the document arena's self-test and lints the design tree. It needs
-  git, Python 3, curl, `/usr/bin/clang`, LLD on Linux and the `design/skill`
-  and `whitefoot-kit` submodules; `make check WHITEFOOTC=<path>` uses another
-  compiler.
-- `make design-ready` and `make pin-ready`, before marking ready and in CI on
-  ready PRs and `main`: every tree change is approved in the log, and the pin
-  names no experiment release.
-- The oracles are the `make oracle-*` targets, outside `make check`.
-
-## Review
-
-A change that edits `design/` or the renderer-shell format, adds or changes a
-module interface, or changes more code than a small fix gets the owner-wide
-completion review, with the prompt and groups in
-[docs/review-checklist.md](docs/review-checklist.md#how-to-review); other
-changes need only the checks. The review's scope and fixed findings go in the
-PR's review section.
+  checks that the static atoms record matches its name list, runs the
+  document arena's self-test and `make design-lint`. It needs git,
+  Python 3, curl, `/usr/bin/clang` and on Linux LLD of the LLVM major the
+  release names (`make toolchain` installs it, `make toolchain-check`
+  checks it), and the `design/skill` and `whitefoot-kit` submodules;
+  `make check WHITEFOOTC=<path>` uses another compiler.
+- The readiness check adds `make pin-ready`: `whitefoot.pin` names no
+  experiment release.
+- Review checklist: [docs/review-checklist.md](docs/review-checklist.md).
 
 ## Whitefoot
 
-Snowghost follows [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md):
-the pin, experiment pins for an unmerged Whitefoot change, Whitefoot gaps
-recorded by key on the shared status board, and upgrades.
-When an upgrade changes the compiler's code generation, its PR compares the
-renderer's full-build and per-edit costs before and after on the same source
-and machine. A change to the shared rules is made in Whitefoot-kit and adopted
-by moving the submodule.
+Snowghost follows [whitefoot-kit/downstream.md](whitefoot-kit/downstream.md)
+for the pin, experiment pins, Whitefoot gaps and upgrades. Its benchmarks
+for an upgrade's comparison are the renderer's full-build and per-edit
+costs: `.github/workflows/time-14900k.yml` with `BUILDS` naming the base
+and the upgrade branch, `FULL=1` and every E1 edit kind.
 
 ## Reports
 
@@ -151,6 +84,6 @@ Whitefoot gap filed.
 ## Documents
 
 `README.md` introduces and navigates; this file holds the goal and project
-rules; `design/` the decisions and their log; `docs/review-checklist.md` the
-review items; the shared status board holds open defects and Whitefoot
-requirements; `research/investigations/` questions, experiments and results.
+rules; `docs/review-checklist.md` the review items; the status board's items
+the open defects and Whitefoot requirements; `research/investigations/`
+questions, experiments and results.

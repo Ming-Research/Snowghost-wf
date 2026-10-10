@@ -64,8 +64,8 @@ does not yet paint.
   - the Rust shell, with rasterization, compositing, windows and input;
   - the JavaScript interpreter.
 
-[The shared status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip) lists the known defects and the Whitefoot
-features Snowghost is waiting for.
+The known defects and the Whitefoot features Snowghost is waiting for are
+tracked as items on the project's status board, not in this repository.
 
 ## How it is built
 
@@ -106,7 +106,7 @@ Correctness is judged by oracles independent of Snowghost:
 | `design/` | The decisions the project is built on, each with its reason and refused alternatives, and the log of the owner's approvals |
 | `design/skill/` | [Design-skill](https://github.com/Ming-Research/Design-skill), as a submodule: the design tree's lint and CI base script |
 | `research/investigations/` | One directory per question: its design, experiments, measurements and rejected alternatives |
-| `docs/` | The review checklist, and the TODO of known defects and Whitefoot requirements |
+| `docs/` | The review checklist |
 | `whitefoot.pin` | The Whitefoot compiler release the renderer builds with, `release = wf-<12 hex digits of its commit>` |
 | `whitefoot-kit/` | [Whitefoot-kit](https://github.com/Ming-Research/Whitefoot-kit), as a submodule: the build rules and downstream rules shared by projects written in Whitefoot |
 
@@ -119,10 +119,12 @@ make check
 ```
 
 `make check` downloads the Whitefoot compiler release that `whitefoot.pin`
-names, builds the renderer, runs the
-document arena's self-test and lints the design tree. It runs on Linux
-x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
-`/usr/bin/clang` and, on Linux, LLD. CI runs it on every push.
+names, builds the renderer, checks that the static atoms record matches its
+name list, runs the document arena's self-test and lints the design tree. It
+runs on Linux x86-64 and macOS arm64, and needs Git, Python 3, curl, clang at
+`/usr/bin/clang` and, on Linux, LLD; on Linux both are the LLVM major the
+pinned release was built with, which `make toolchain` installs. CI runs it
+on every push.
 
 The oracles are separate `make oracle-*` targets. They need network access
 for their test suites and, for the Chromium oracles, Node.js and Playwright.
@@ -131,8 +133,8 @@ for their test suites and, for the Chromium oracles, Node.js and Playwright.
 
 Most of the code is written by coding agents and reviewed by the project's
 owner.
-- [`AGENTS.md`](AGENTS.md) holds the goal, the priorities and the project's
-  rules, including the approval and merge rules.
+- [`AGENTS.md`](AGENTS.md) holds the goal, the priorities and the
+  project's own rules.
 - Every design decision lands in the design tree and is approved by the
   owner before it reaches `main`.
 - An investigation under `research/investigations/` writes its question and

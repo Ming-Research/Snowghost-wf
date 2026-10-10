@@ -48,16 +48,12 @@ jobs:
         include:
           - name: main
             source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
-            archive: main
           - name: maintwin
             source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
-            archive: maintwin
           - name: before
             source: 941e51d478f13ae38e5d714e45c01903356a04ba
-            archive: candidate
           - name: beforetwin
             source: 941e51d478f13ae38e5d714e45c01903356a04ba
-            archive: candidatetwin
           - name: candidate
             source: ''
           - name: candidatetwin
@@ -77,34 +73,12 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        if: matrix.archive != '' && inputs.phases_only != true
-        with:
-          github-token: ${{ github.token }}
-          run-id: 38047104753
-          name: driver-${{ matrix.archive }}
-          path: build/driver
-      - name: Verify frozen source and common compiler
-        if: matrix.archive != '' && inputs.phases_only != true
-        env:
-          SOURCE: ${{ matrix.source }}
-        run: |
-          set -euo pipefail
-          source=$(head -n 1 build/driver/revision.txt)
-          git diff --exit-code "$source" "$SOURCE" -- renderer
-          grep -Fx 'release = wf-41f46e60030c' build/driver/revision.txt
-          grep '^ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921 ' build/driver/revision.txt
-          test "$(cat build/driver/seq-build.status)" = 0
-          test "$(cat build/driver/par-build.status)" = 0
-          test ! -s build/driver/source.diff
       - name: Common compiler and LLVM
-        if: matrix.archive == '' || inputs.phases_only == true
         run: |
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y --no-install-recommends clang lld
           make -s compiler toolchain
       - name: Independent exact-source builds
-        if: matrix.archive == '' || inputs.phases_only == true
         env:
           SOURCE: ${{ matrix.source || inputs.candidate || github.sha }}
           PHASES: ${{ inputs.phases_only }}
@@ -113,6 +87,10 @@ jobs:
           set -euo pipefail
           mkdir -p build/driver
           git worktree add --detach build/tree "$SOURCE"
+          # Adapt only retired equality syntax in historical comparison sources.
+          git -C build/tree ls-files -z '*.wf' '*.wfm' | xargs -0 -I{} sed -i -E 's/\beeq\(([^,()]+), ([^,()]+)\)/\1 == \2/g; s/\bene\(([^,()]+), ([^,()]+)\)/\1 != \2/g' 'build/tree/{}'
+          git -C build/tree diff HEAD > build/driver/compiler-compat.diff
+          git -C build/tree add -u renderer
           if [ "$PHASES" = true ]; then
             python3 research/investigations/m2-edit-cost/fallback-phase.py self-test
             python3 research/investigations/m2-edit-cost/fallback-phase.py patch --tree build/tree
@@ -123,13 +101,13 @@ jobs:
               altered=true ;;
             *) altered=false ;;
           esac
-          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          wfc=$(realpath build/whitefoot/wf-78223721f77d/whitefootc)
           git -C build/tree rev-parse HEAD > build/driver/revision.txt
           git -C build/tree rev-parse HEAD:renderer >> build/driver/revision.txt
           cat whitefoot.pin >> build/driver/revision.txt
           sha256sum "$wfc" >> build/driver/revision.txt
           clang --version >> build/driver/revision.txt
-          cp build/whitefoot/wf-41f46e60030c/whitefoot-release.json build/driver/
+          cp build/whitefoot/wf-78223721f77d/whitefoot-release.json build/driver/
           for mode in seq par; do
             flag=''
             if [ "$mode" = par ]; then flag='--par --par-ledger'; fi
@@ -140,16 +118,17 @@ jobs:
             if [ "$status" -ne 0 ]; then exit "$status"; fi
           done
           git -C build/tree diff HEAD > build/driver/source.diff
+          git -C build/tree diff > build/driver/variant.diff
           if [ "$PHASES" = true ] && [ "$altered" = true ]; then
-            test "$(git -C build/tree diff --name-only HEAD | wc -l)" = 2
-            git -C build/tree diff --name-only HEAD | grep -Fx renderer/layout/structure.wf
-            git -C build/tree diff --name-only HEAD | grep -Fx renderer/oracle/layout/edit.wf
+            test "$(git -C build/tree diff --name-only | wc -l)" = 2
+            git -C build/tree diff --name-only | grep -Fx renderer/layout/structure.wf
+            git -C build/tree diff --name-only | grep -Fx renderer/oracle/layout/edit.wf
           elif [ "$PHASES" = true ]; then
-            test "$(git -C build/tree diff --name-only HEAD)" = renderer/oracle/layout/edit.wf
+            test "$(git -C build/tree diff --name-only)" = renderer/oracle/layout/edit.wf
           elif [ "$altered" = true ]; then
-            test "$(git -C build/tree diff --name-only HEAD)" = renderer/layout/structure.wf
+            test "$(git -C build/tree diff --name-only)" = renderer/layout/structure.wf
           else
-            test ! -s build/driver/source.diff
+            test ! -s build/driver/variant.diff
           fi
       - uses: actions/upload-artifact@v4
         if: always()
@@ -301,7 +280,7 @@ jobs:
           mkdir -p build/bulk-witness
           git rev-parse HEAD > build/bulk-witness/revision.txt
           cat whitefoot.pin >> build/bulk-witness/revision.txt
-          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          wfc=$(realpath build/whitefoot/wf-78223721f77d/whitefootc)
           /usr/bin/time -p "$wfc" --par --par-ledger research/investigations/m2-edit-cost/bulk-parallel-results.wf -o build/bulk-witness/witness > build/bulk-witness/ledger.log 2>&1
           build/bulk-witness/witness
           cat build/bulk-witness/ledger.log
