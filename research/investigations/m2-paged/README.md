@@ -145,7 +145,7 @@ integration await the branch disposition below. The potential growth proof
 limitation is a specification-based hypothesis until the pinned release
 has compiled the witness; it is not yet a reported compiler refusal.
 
-### Replace the older experiment branch?
+### Earlier branch collision (resolved by owner)
 
 **Background.** `research/m2-paged` already contains an October 7 experiment
 pinned to an older experimental compiler. Git rejects the new branch's
@@ -181,7 +181,7 @@ G1/DC3/C4 were not applicable. DC4 and validation remain unverified.
 The implementing pass separately corrected two source names in the writer
 inventory and the description of which probe contains the loop.
 
-Stopping reason: the owner must authorize a disposition of the existing
+Earlier stopping reason: the owner had to authorize a disposition of the existing
 remote branch before the task can reach hosted CI. Nothing has moved to
 Paged in the renderer. The target inverse, its writer inventory, criteria
 and hosted probe workflow are prepared, but neither probe has compiled.
@@ -190,3 +190,14 @@ emission evidence, no semantic mutation detection, no gate run ID, no
 timing table and no performance verdict. No pin, submodule, design tree or
 fallback-design file changed; no Draft PR was opened from the old remote
 branch. The remaining adoption and validation work retains its full scope.
+
+### Authorized continuation on the new branch
+
+2026-10-10: The owner selected a new branch, `research/m2-paged-adopt`,
+with plain SSH pushes and a Draft pull request into `research/m2-layout`.
+The older `research/m2-paged` reference remains untouched. This settles the
+earlier branch card in favor of option B. The proof workflow now names the
+new branch. The existing read-only Whitefoot clone in `.git` supplies the
+normative specification at `78223721f77db615c950b6df1bcc690629f9fe4b`; no
+Whitefoot source enters the tracked tree. Step 2 starts with the prepared
+growth-preservation witness before any broad storage rewrite.
