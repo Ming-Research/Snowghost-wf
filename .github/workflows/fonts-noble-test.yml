@@ -1,0 +1,47 @@
+# Temporary, research branch only: checks that the timing workflow's noble
+# font download works without root on an Ubuntu 26.04 host and yields every
+# SYSTEM_FONTS file, before it runs on the 14900K.
+name: fonts-noble-test
+on:
+  push:
+    branches: [research/fonts-ubuntu26]
+    paths: [.github/workflows/fonts-noble-test.yml]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Noble fonts as a non-root user on Ubuntu 26.04
+        run: |
+          set -euo pipefail
+          cat > /tmp/inner.sh <<'INNER'
+          set -euo pipefail
+          deps=$HOME/snowghost-deps
+          fonts="fonts-dejavu-core fonts-dejavu-mono fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol"
+            # Fonts come from Ubuntu 24.04 (noble) whatever the host runs, so every
+            # measurement lays text out with the same faces as earlier 14900K runs
+            # and the hosted runners; Ubuntu 26.04's fonts-unifont 16.0.04 ships an
+            # unifont_upper_sample.otf with a malformed cmap that the font loader
+            # rightly refuses (research/investigations/fonts-ubuntu26). A private
+            # apt state reads the noble indexes without root, checked against the
+            # system's Ubuntu archive key.
+            noble=$deps/apt-noble
+            mkdir -p "$noble/lists/partial" "$noble/cache/archives/partial" "$noble/sources.list.d" "$deps/fonts-noble"
+            printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble main universe\ndeb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble-updates main universe\n' > "$noble/sources.list"
+            apt_noble="-o Dir::Etc::SourceList=$noble/sources.list -o Dir::Etc::SourceParts=$noble/sources.list.d -o Dir::State::Lists=$noble/lists -o Dir::Cache=$noble/cache -o APT::Architecture=amd64"
+            apt-get $apt_noble update > /dev/null
+            ( cd "$deps/fonts-noble"
+              rm -f ./*.deb
+              for p in $fonts; do apt-get $apt_noble download "$p" > /dev/null; done
+              for d in ./*.deb; do dpkg-deb -f "$d" Package Version | paste -sd' '; dpkg -x "$d" "$deps/fonts-noble/root"; done )
+            echo "FONT_ROOT=$deps/fonts-noble/root"
+          missing=0
+          for f in $(sed -n '/^SYSTEM_FONTS :=/,/^$/p' /src/Makefile | grep -o '/usr/share/fonts/[^ \\]*'); do
+            test -f "$deps/fonts-noble/root$f" || { echo "missing $f"; missing=1; }
+          done
+          sha256sum "$deps/fonts-noble/root/usr/share/fonts/opentype/unifont/unifont_upper_sample.otf"
+          exit $missing
+          INNER
+          docker run --rm -v "$PWD:/src:ro" -v /tmp/inner.sh:/inner.sh:ro ubuntu:26.04 bash -c 'apt-get update >/dev/null && apt-get install -y --no-install-recommends ca-certificates >/dev/null; useradd -m tester; su tester -c "bash /inner.sh"'
