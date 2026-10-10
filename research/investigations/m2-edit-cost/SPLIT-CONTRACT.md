@@ -4033,3 +4033,27 @@ or mutation failure. The previous measured source and its tables remain
 historical evidence; they cannot establish this follow-up's result. A broader
 construction decision remains premature while this local omission is being
 validated.
+
+### Non-paragraph duplicate read: comparison before measurement
+
+The remaining directory-read audit found that `note_use` reads the previous
+`StyleRoute` even for owner, block, row and column uses, whose `paragraph`
+is `no_index`. Its duplicate predicate is
+`same_context && same_paragraph && paragraph != no_index`; for those uses,
+the first two terms cannot change the result. Evaluate the paragraph test
+before loading the previous route. `route_read` and `slot_read` only read
+storage and return the explicit missing value on an absent slot; neither
+publishes state nor returns an error whose handling could be lost. The
+supplier-head read remains necessary to link the new record. All paragraph
+duplicate comparisons, storage bounds, route publication and admission
+conditions remain unchanged.
+
+Before measuring, predict fewer `note_use`-to-`route_read` calls, with the
+same `note_use`, route-write and required-state publication counts. Reject
+that mechanism if the isolated instruction profile does not show it. Native
+benefit is unverified: compare the final source and its independent twin
+against the same frozen main/before cohorts in three interleaved hosted
+rounds, retaining every X5 control, the 1x fallback and 2x control criteria,
+and all identity, next-edit and mutation gates. This is an algebraically
+irrelevant read removal within the existing representation, not an omission
+of a safety or admission check or a new construction design.
