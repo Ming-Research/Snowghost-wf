@@ -1,0 +1,2012 @@
+Style instruction-count comparison for Whitefoot #320
+Date: 2026-10-10 UTC
+
+Question and prior expectation
+------------------------------
+With one fixed Snowghost source and pinned ecma262 inputs, how does #320's
+header-only Slots construction change compute_styles Ir? The expectation
+supplied before collecting was that memset under match_complex nearly vanishes;
+unchanged substantial attributed memset would reject that expectation.
+
+Source and adaptation
+---------------------
+Base: bb98d4371d0e148775e232e4d2938ddb9aec3be6 (upgrade #56's head).
+Build revision: 5b7f78ac07f26a72a1c84776cd7ee0323c5c0459.
+Collection revision: 2205096b53cb09210b1d78becde1f67cad5940c2.
+Both revisions add or update only the temporary measurement workflow; renderer/
+and the investigation's driver, UA sheet and input pins equal the base.
+Adaptation list: none. Both releases compiled the unchanged source successfully.
+Neither whitefoot.pin nor either submodule pin moved.
+
+Compilers
+---------
+before: wf-f3d081b90a8d, f3d081b90a8d36e4cc2175dbf2d3734a074336ff
+ after: wf-ef4a73b56044, ef4a73b5604430765011e7c7bb4b84330afb93e3
+Both release manifests name specification v0.119 and Linux LLVM major 22.
+The release comparison changes only Whitefoot #320.
+
+Method
+------
+The sequential build is run.sh's build_layout command with separate output
+names. runs/11-callgrind-style-58fa8ee.txt identifies proto_layout_seq and
+collection limited to compute_styles, but neither it nor run.sh records the
+old callgrind CLI. Both v0.119 drivers inline compute_styles into
+wf_proto.layout.drive.resume. The wrapper's only body call, style_shape_c,
+remains as a direct call; there is no call to the retained compute_styles
+symbol. Collection by that symbol (and by *compute_styles*) therefore yielded
+zero, and those profiles are excluded. Disassembly and the diagnostic full
+profile establish the surviving call. The final collector names style_shape_c.
+The numbers below are this body inclusive; any inlined wrapper/result handling
+in drive.resume is outside the measured region.
+L1 0 parses and prepares the same input, computes styles once (shape C with
+the current rule index and sibling positions), builds the layout tree and
+runs no layout repetitions. Collection starts on entry to style_shape_c and
+stops on return from that body. Wrapper/result handling and the layout setup
+after return are outside the measured region.
+Runs interleave before-1, after-1, before-2, after-2 on one GitHub-hosted runner.
+No wall-clock timing was collected; these are instruction counts, not speedups.
+
+Commands (repository root, hosted Ubuntu runner only)
+----------------------------------------------------
+make toolchain RELEASE=wf-f3d081b90a8d
+make compiler RELEASE=wf-ef4a73b56044
+sudo apt-get update
+sudo apt-get install -y valgrind
+root=$PWD
+data=build/research/concurrency
+ua=research/investigations/concurrency/ua.css
+mkdir -p "$data" build/style-320 build/style-320-counts
+sed -n '/^ecma262.* https:/p' research/investigations/concurrency/run.sh > build/style-320/input-pins.txt
+while read -r name url sum; do
+  curl -fsSL --retry 3 -o "$data/$name" "$url"
+  echo "$sum  $data/$name" | sha256sum -c -
+done < build/style-320/input-pins.txt
+for pair in before:wf-f3d081b90a8d after:wf-ef4a73b56044; do
+  side=${pair%%:*}
+  release=${pair#*:}
+  compiler="$root/build/whitefoot/$release/whitefootc"
+  (cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --fragments function --graph modules.wfg --entry proto_layout -o "../build/style-320/proto_layout_seq-$side")
+done
+for side in before after; do
+  objdump -d --disassemble=wf_proto.style.compute_styles "build/style-320/proto_layout_seq-$side"
+  objdump -d --disassemble=wf_proto.layout.drive.resume "build/style-320/proto_layout_seq-$side"
+done
+for repeat in 1 2; do
+  for side in before after; do
+    WF_WORKERS=1 valgrind --tool=callgrind --collect-atstart=no --toggle-collect=wf_proto.style.style_shape_c --callgrind-out-file="build/style-320-counts/callgrind-$side-$repeat.out" "build/style-320/proto_layout_seq-$side" L1 0 "$data/ecma262.html" "$ua" "$data/ecma262-ecmarkup.css" "$data/ecma262-print.css"
+    callgrind_annotate --auto=no --threshold=100 --inclusive=no "build/style-320-counts/callgrind-$side-$repeat.out"
+    callgrind_annotate --auto=no --threshold=100 --inclusive=yes "build/style-320-counts/callgrind-$side-$repeat.out"
+    callgrind_annotate --auto=no --threshold=100 --inclusive=yes --tree=caller "build/style-320-counts/callgrind-$side-$repeat.out"
+  done
+done
+
+CI evidence
+-----------
+Build run: https://github.com/Ming-Research/Snowghost-wf/actions/runs/38014053730
+Collector diagnosis: https://github.com/Ming-Research/Snowghost-wf/actions/runs/38014813238
+Four measured profiles: https://github.com/Ming-Research/Snowghost-wf/actions/runs/38015166829
+Measurement artifact: style-320-counts (four raw .out files, complete annotations,
+both driver disassemblies, input/source/compiler/binary digests and diagnostics;
+30-day retention). The build artifact is style-320-raw.
+The measurement step succeeded. Its text-order comparison failed because two
+equal-cost callers of memcpy traded places, with their costs and calls unchanged.
+The follow-up verification preserves the callee and compares sorted incoming
+rows, so it ignores presentation order without discarding an edge or count.
+Repeat-verification run: https://github.com/Ming-Research/Snowghost-wf/actions/runs/38015814538
+passed at 11aee8b268ac76c8bea420465e23625b6569d89f. Artifact:
+style-320-verified, retaining the profiles, annotations and canonical caller
+records for 30 days. Raw CI confirmation:
+Every self and inclusive function Ir and every caller/callee Ir and call count agree exactly across repeats.
+Only tied caller presentation order differed; grouping by callee is preserved in the comparison.
+Driver outputs agree across all four runs.
+Repository gate: https://github.com/Ming-Research/Snowghost-wf/actions/runs/38015166828
+passed at 2205096b53cb09210b1d78becde1f67cad5940c2, with the unchanged pin.
+
+Results
+-------
+Shares below use the inclusive style-body Ir as denominator.
+                                  before             after
+compute_styles optimized body     5,115,696,452      4,924,004,863
+memset overall                      196,448,205         25,426,893
+  share of style Ir                       3.84%              0.52%
+memset under match_complex          171,021,312                  0
+  share of style Ir                       3.34%              0.00%
+  share of all memset                    87.06%              0.00%
+match_complex inclusive           4,575,892,415      4,384,200,826
+match_complex self                1,871,188,010      1,851,060,515
+match_complex'2 inclusive             80,970,794         80,428,012
+match_complex'2 self                  38,001,510         37,458,728
+
+Delta (after - before): -191,691,589 Ir, -3.7471259446% (3.75% fewer).
+The expected memset reduction occurs: it vanishes under match_complex.
+The before caller edge charges 171,021,312 inclusive callee instructions to
+2,672,208 match_complex calls; after there is no such edge. Neither profile
+has a memset edge from match_complex'2. These are callee-attributed costs,
+not match_complex's self cost. Its ordinary inclusive row includes nested
+matching; do not add the recursive-context row to it.
+The remaining 25,426,893 memset Ir is unchanged work outside match_complex:
+16,785,290 from sibling_positions, 8,614,661 from style_shape_c and 26,942
+from build_rule_index. The memset implementation has no measured callees,
+so its self and inclusive costs agree.
+Both repeats' PROGRAM TOTALS equal the style_shape_c inclusive cost and the
+raw profile summary; counts are shown below for both repeats.
+The driver output agrees across all four executions; its zero-repetition
+checksum is the driver's empty layout fold, not an independent style oracle.
+This measures one ecma262 instruction-count change, not wall-clock speed,
+parallel scaling, or general workloads. No source adaptation, pin/submodule
+move, or Whitefoot gap was needed. No build, test or check ran on the MacBook.
+
+Top ten functions by self Ir
+---------------------------
+The first ten function rows in each self annotation are the top ten;
+expanded here without changing the annotation's numeric values.
+
+before:
+1,871,188,010 (36.58%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,291,285,945 (25.24%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+  193,856,331 ( 3.79%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  155,681,575 ( 3.04%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   41,675,689 ( 0.81%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   38,001,510 ( 0.74%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+after:
+1,851,060,515 (37.59%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,291,285,945 (26.22%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  193,856,331 ( 3.94%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  155,681,575 ( 3.16%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   41,675,689 ( 0.85%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   37,458,728 ( 0.76%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   37,185,581 ( 0.76%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+Environment and identity records (raw CI output)
+------------------------------------------------
+
+compilers.sha256
+99b60f00392e414f10ee3d77fdcdbb86b8f23408696f15ccbe17207b2a444bfe  build/whitefoot/wf-ef4a73b56044/whitefootc
+4cecc9901d28d56d86f43de21f6c1753acafe680aba829839f251e0e07e4d5b4  build/whitefoot/wf-f3d081b90a8d/whitefootc
+
+binaries.sha256
+6f6e3afd94161369ce87f7ed6a31a8bd56ad82195fdcf66fd1012e671c9e01a1  build/style-320/proto_layout_seq-before
+2cd3e184db3fd2cfb5c82a991b91c4613b05ba4256ead3034ff848cd229f3b51  build/style-320/proto_layout_seq-after
+
+inputs.sha256
+8bef2688107197ac28abe81b62a61100904cec548e223d03a10ac7ea7b6b2fc7  build/research/concurrency/ecma262-ecmarkup.css
+e80f1880ab96cb3418cddbcd7a529aa6e474113f4a87c2555d079f84fc09c53f  build/research/concurrency/ecma262-print.css
+e2b29c85f37b8ded51873ce385b6573a35cbc26b467c21c14f8184f3bab5aa26  build/research/concurrency/ecma262.html
+a150e64a73447dd00d098635884b962debe8efe31f727e30d5ac28c8a871e3dd  research/investigations/concurrency/ua.css
+
+before-release.json
+{
+  "tag": "wf-f3d081b90a8d",
+  "commit": "f3d081b90a8d36e4cc2175dbf2d3734a074336ff",
+  "spec": "v0.119",
+  "gate_run": "38011184992",
+  "linux_llvm_major": "22",
+  "assets": {
+    "linux-x86_64": "whitefootc-linux-x86_64.tar.gz",
+    "macos-arm64": "whitefootc-macos-arm64.tar.gz"
+  }
+}
+
+after-release.json
+{
+  "tag": "wf-ef4a73b56044",
+  "commit": "ef4a73b5604430765011e7c7bb4b84330afb93e3",
+  "spec": "v0.119",
+  "gate_run": "38012237181",
+  "linux_llvm_major": "22",
+  "assets": {
+    "linux-x86_64": "whitefootc-linux-x86_64.tar.gz",
+    "macos-arm64": "whitefootc-macos-arm64.tar.gz"
+  }
+}
+
+environment.txt
+2205096b53cb09210b1d78becde1f67cad5940c2
+Linux 6.17.0-1022-azure x86_64
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           48 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  4
+On-line CPU(s) list:                     0-3
+Vendor ID:                               AuthenticAMD
+Model name:                              AMD EPYC 7763 64-Core Processor
+CPU family:                              25
+Model:                                   1
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+Socket(s):                               1
+Stepping:                                1
+BogoMIPS:                                4890.85
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl tsc_reliable nonstop_tsc cpuid extd_apicid aperfmperf tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves user_shstk clzero xsaveerptr rdpru arat npt nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold v_vmsave_vmload umip vaes vpclmulqdq rdpid fsrm
+Virtualization:                          AMD-V
+Hypervisor vendor:                       Microsoft
+Virtualization type:                     full
+L1d cache:                               64 KiB (2 instances)
+L1i cache:                               64 KiB (2 instances)
+L2 cache:                                1 MiB (2 instances)
+L3 cache:                                32 MiB (1 instance)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-3
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Ghostwrite:                Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Old microcode:             Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Vulnerable: Safe RET, no microcode
+Vulnerability Spec store bypass:         Vulnerable
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Retpolines; STIBP disabled; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Vulnerable: No microcode
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Not affected
+valgrind-3.22.0
+ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39
+Copyright (C) 2024 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+Written by Roland McGrath and Ulrich Drepper.
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+NAME="Ubuntu"
+VERSION_ID="24.04"
+VERSION="24.04.5 LTS (Noble Numbat)"
+VERSION_CODENAME=noble
+ID=ubuntu
+ID_LIKE=debian
+HOME_URL="https://www.ubuntu.com/"
+SUPPORT_URL="https://help.ubuntu.com/"
+BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+UBUNTU_CODENAME=noble
+LOGO=ubuntu-logo
+
+Build toolchain (raw CI output)
+-------------------------------
+Ubuntu clang version 22.1.8 (++20260714014902+ca7933e47d3a-1~exp1~20260714135019.80)
+Target: x86_64-pc-linux-gnu
+Thread model: posix
+InstalledDir: /usr/lib/llvm-22/bin
+Ubuntu LLD 22.1.8 (compatible with GNU linkers)
+valgrind-3.22.0
+ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39
+Copyright (C) 2024 Free Software Foundation, Inc.
+
+Driver outputs
+--------------
+driver-before-1.stdout
+L1 elements 179471 contexts 9931 paragraphs 37485 scalars 2025062 reps 0 height 0 checksum cbf29ce484222325
+driver-before-2.stdout
+L1 elements 179471 contexts 9931 paragraphs 37485 scalars 2025062 reps 0 height 0 checksum cbf29ce484222325
+driver-after-1.stdout
+L1 elements 179471 contexts 9931 paragraphs 37485 scalars 2025062 reps 0 height 0 checksum cbf29ce484222325
+driver-after-2.stdout
+L1 elements 179471 contexts 9931 paragraphs 37485 scalars 2025062 reps 0 height 0 checksum cbf29ce484222325
+
+Raw callgrind_annotate summaries (all four profiles, unedited)
+------------------------------------------------------------
+
+self-before-1.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-before-1.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1361724120
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-before L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2844, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+1,871,188,010 (36.58%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,291,285,945 (25.24%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+  193,856,331 ( 3.79%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  155,681,575 ( 3.04%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   41,675,689 ( 0.81%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   38,001,510 ( 0.74%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   37,185,581 ( 0.73%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   30,669,789 ( 0.60%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   26,059,276 ( 0.51%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   25,473,170 ( 0.50%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   12,563,007 ( 0.25%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,489,423 ( 0.19%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    5,676,522 ( 0.11%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    4,487,017 ( 0.09%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    2,985,616 ( 0.06%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      109,068 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+       79,303 ( 0.00%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        3,556 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          966 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          949 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          795 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          747 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          529 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          312 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          261 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          185 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           60 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           50 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           14 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+           14 ( 0.00%)  ???:0x000000000495c6b0 [???]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf__floor_entry.llvm.14572330384804193231 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+
+inclusive-before-1.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-before-1.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1361724120
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-before L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2844, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf__floor_entry.llvm.14572330384804193231 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,937,905,360 (96.52%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,575,892,415 (89.45%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,277,313,425 (83.61%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,429,514,679 (27.94%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   80,970,794 ( 1.58%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   79,445,812 ( 1.55%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   74,317,020 ( 1.45%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   66,118,414 ( 1.29%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,628,991 ( 1.11%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   51,187,652 ( 1.00%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   42,969,284 ( 0.84%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   30,669,789 ( 0.60%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   25,473,360 ( 0.50%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    5,676,522 ( 0.11%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      358,487 ( 0.01%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      220,978 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        5,188 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,377 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,602 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          580 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+          566 ( 0.00%)  ???:0x000000000495c6b0 [???]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          190 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           72 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+caller-before-1.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-before-1.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1361724120
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-before L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2844, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+
+5,115,696,452 (100.0%)  *  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+5,115,696,452 (100.0%)  < ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  *  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+5,115,696,452 (100.0%)  < ???:wf__main_body (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf__context_root_run (27x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ./nptl/./nptl/pthread_create.c:start_thread (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  *  ???:wf__floor_entry.llvm.14572330384804193231 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf__floor_entry.llvm.14572330384804193231 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf__coro_resume (8x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf_oracle.support.read_argument_file.resume (4x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf_proto.layout.drive.resume (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+4,937,905,360 (96.52%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,937,905,360 (96.52%)  *  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+4,083,457,094 (79.82%)  < ???:wf_proto.style.test_bucket (4,377,209x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  438,791,946 ( 8.58%)  < ???:wf_proto.style.match_indexed (2,333,117x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   53,643,375 ( 1.05%)  < ???:wf_css.selectors.list_matches (56,129x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,575,892,415 (89.45%)  *  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+4,277,313,425 (83.61%)  < ???:wf_proto.style.match_indexed (211,871x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,277,313,425 (83.61%)  *  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+1,429,514,679 (27.94%)  < ???:wf_css.selectors.match_complex (28,478,484x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,429,514,679 (27.94%)  *  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+1,047,734,736 (20.48%)  < ???:wf_css.selectors.match_complex (19,264,204x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  *  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+  171,021,312 ( 3.34%)  < ???:wf_css.selectors.match_complex (2,672,208x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   16,785,290 ( 0.33%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    8,614,661 ( 0.17%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+       26,942 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  *  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+   80,970,794 ( 1.58%)  < ???:wf_css.selectors.instr_matches (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   80,970,794 ( 1.58%)  *  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   79,445,812 ( 1.55%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   79,445,812 ( 1.55%)  *  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   74,317,020 ( 1.45%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   74,317,020 ( 1.45%)  *  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   66,118,414 ( 1.29%)  < ???:wf_proto.style.match_indexed (23,128x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   66,118,414 ( 1.29%)  *  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   41,070,023 ( 0.80%)  < ???:wf_css.selectors.instr_matches (1,315,888x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   16,909,980 ( 0.33%)  < ???:wf_css.selectors.instr_matches'2 (542,303x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  *  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   56,628,991 ( 1.11%)  < ???:wf_proto.style.test_classes (52,134x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,628,991 ( 1.11%)  *  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   56,071,815 ( 1.10%)  < ???:wf_css.selectors.match_complex (3,738,121x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  *  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   51,187,652 ( 1.00%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   51,187,652 ( 1.00%)  *  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   42,969,284 ( 0.84%)  < ???:wf_css.selectors.match_complex'2 (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   42,969,284 ( 0.84%)  *  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,511,963 ( 0.19%)  < ???:wf_proto.style.cascade_element (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+       24,552 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          552 ( 0.00%)  < ???:0x000000000495c6b0 (49,129x) [???]
+   30,669,789 ( 0.60%)  *  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+   25,473,360 ( 0.50%)  < ???:wf_css.selectors.sibling_positions (419,310x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   25,473,360 ( 0.50%)  *  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+    9,991,245 ( 0.20%)  < ???:wf_css.selectors.instr_matches (302,765x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,991,245 ( 0.20%)  *  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+    5,676,522 ( 0.11%)  < ???:wf_css.selectors.instr_matches (1,006,182x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    5,676,522 ( 0.11%)  *  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      361,863 ( 0.01%)  < ???:wf_css.selectors.match_complex (9,447x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      361,863 ( 0.01%)  *  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      358,487 ( 0.01%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      358,487 ( 0.01%)  *  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      311,436 ( 0.01%)  < ???:wf_css.selectors.instr_matches (7,596x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      311,436 ( 0.01%)  *  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      220,978 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1,171x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      220,978 ( 0.00%)  *  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      208,714 ( 0.00%)  < ???:wf_css.selectors.instr_matches (911x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+           28 ( 0.00%)  < ???:wf_css.selectors.instr_matches'2 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      208,742 ( 0.00%)  *  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      111,910 ( 0.00%)  < ???:wf_css.selectors.compound_key (1,258x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      111,910 ( 0.00%)  *  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+        5,048 ( 0.00%)  < ???:wf_proto.style.build_rule_index (10x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          140 ( 0.00%)  < ???:wf_grow$instance$e194368921a477a7 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        5,188 ( 0.00%)  *  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        2,793 ( 0.00%)  < ./malloc/./malloc/malloc.c:malloc (249,088x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,465 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (51,972x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        3,988 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (162,426x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,210 ( 0.00%)  < ???:wf_proto.style.build_rule_index (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        1,127 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (3x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        1,040 ( 0.00%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        3,377 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,192 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (691,824x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,124 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (53,385x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          694 ( 0.00%)  < ???:wf_proto.style.style_shape_c (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          454 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          454 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        1,602 ( 0.00%)  *  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,350 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free (162,992x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          580 ( 0.00%)  *  ./malloc/../string/bits/string_fortified.h:_int_realloc
+
+          566 ( 0.00%)  < ./malloc/../string/bits/string_fortified.h:_int_realloc (49,075x)
+          566 ( 0.00%)  *  ???:0x000000000495c6b0 [???]
+
+          231 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (15,977x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          213 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (4,581x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (2,692x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  *  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          342 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (133,864x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          326 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  *  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          230 ( 0.00%)  *  ./malloc/./malloc/arena.c:realloc
+
+          190 ( 0.00%)  < ???:wf_css.selectors.index_classes (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          190 ( 0.00%)  *  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+          133 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (348x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           78 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           77 ( 0.00%)  *  ./malloc/./malloc/arena.c:free
+
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  *  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           63 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           55 ( 0.00%)  *  ./malloc/./malloc/arena.c:malloc
+
+           30 ( 0.00%)  *  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+
+           21 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (27x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           21 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (226,739x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:munmap_chunk (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+self-before-2.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-before-2.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1361724120
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-before L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2872, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+1,871,188,010 (36.58%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,291,285,945 (25.24%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+  193,856,331 ( 3.79%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  155,681,575 ( 3.04%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   41,675,689 ( 0.81%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   38,001,510 ( 0.74%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   37,185,581 ( 0.73%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   30,669,789 ( 0.60%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   26,059,276 ( 0.51%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   25,473,170 ( 0.50%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   12,563,007 ( 0.25%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,489,423 ( 0.19%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    5,676,522 ( 0.11%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    4,487,017 ( 0.09%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    2,985,616 ( 0.06%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      109,068 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+       79,303 ( 0.00%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        3,556 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          966 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          949 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          795 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          747 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          529 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          312 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          261 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          185 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           60 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           50 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           14 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+           14 ( 0.00%)  ???:0x000000000495c6b0 [???]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf__floor_entry.llvm.14572330384804193231 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+            .           ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+
+inclusive-before-2.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-before-2.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1361724120
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-before L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2872, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf__floor_entry.llvm.14572330384804193231 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,937,905,360 (96.52%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,575,892,415 (89.45%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,277,313,425 (83.61%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,429,514,679 (27.94%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   80,970,794 ( 1.58%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   79,445,812 ( 1.55%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   74,317,020 ( 1.45%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   66,118,414 ( 1.29%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,628,991 ( 1.11%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   51,187,652 ( 1.00%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   42,969,284 ( 0.84%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   30,669,789 ( 0.60%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   25,473,360 ( 0.50%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    5,676,522 ( 0.11%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      358,487 ( 0.01%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      220,978 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        5,188 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,377 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,602 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          580 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+          566 ( 0.00%)  ???:0x000000000495c6b0 [???]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          190 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           72 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+caller-before-2.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-before-2.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1361724120
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-before L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2872, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+5,115,696,452 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+
+5,115,696,452 (100.0%)  *  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+5,115,696,452 (100.0%)  < ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  *  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+5,115,696,452 (100.0%)  < ???:wf__main_body (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf__context_root_run (27x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ./nptl/./nptl/pthread_create.c:start_thread (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+5,115,696,452 (100.0%)  *  ???:wf__floor_entry.llvm.14572330384804193231 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf__floor_entry.llvm.14572330384804193231 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf__coro_resume (8x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf_oracle.support.read_argument_file.resume (4x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+5,115,696,452 (100.0%)  < ???:wf_proto.layout.drive.resume (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+5,115,696,452 (100.0%)  *  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+4,937,905,360 (96.52%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,937,905,360 (96.52%)  *  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+4,083,457,094 (79.82%)  < ???:wf_proto.style.test_bucket (4,377,209x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  438,791,946 ( 8.58%)  < ???:wf_proto.style.match_indexed (2,333,117x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   53,643,375 ( 1.05%)  < ???:wf_css.selectors.list_matches (56,129x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,575,892,415 (89.45%)  *  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+4,277,313,425 (83.61%)  < ???:wf_proto.style.match_indexed (211,871x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+4,277,313,425 (83.61%)  *  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+1,429,514,679 (27.94%)  < ???:wf_css.selectors.match_complex (28,478,484x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,429,514,679 (27.94%)  *  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+1,047,734,736 (20.48%)  < ???:wf_css.selectors.match_complex (19,264,204x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+1,047,734,736 (20.48%)  *  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+  171,021,312 ( 3.34%)  < ???:wf_css.selectors.match_complex (2,672,208x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   16,785,290 ( 0.33%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    8,614,661 ( 0.17%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+       26,942 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+  196,448,205 ( 3.84%)  *  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+   80,970,794 ( 1.58%)  < ???:wf_css.selectors.instr_matches (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   80,970,794 ( 1.58%)  *  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   79,445,812 ( 1.55%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   79,445,812 ( 1.55%)  *  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   74,317,020 ( 1.45%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   74,317,020 ( 1.45%)  *  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   66,118,414 ( 1.29%)  < ???:wf_proto.style.match_indexed (23,128x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   66,118,414 ( 1.29%)  *  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   41,070,023 ( 0.80%)  < ???:wf_css.selectors.instr_matches (1,315,888x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   16,909,980 ( 0.33%)  < ???:wf_css.selectors.instr_matches'2 (542,303x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   57,980,003 ( 1.13%)  *  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   56,628,991 ( 1.11%)  < ???:wf_proto.style.test_classes (52,134x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,628,991 ( 1.11%)  *  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   56,071,815 ( 1.10%)  < ???:wf_css.selectors.match_complex (3,738,121x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   56,071,815 ( 1.10%)  *  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   51,187,652 ( 1.00%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   51,187,652 ( 1.00%)  *  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   42,969,284 ( 0.84%)  < ???:wf_css.selectors.match_complex'2 (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   42,969,284 ( 0.84%)  *  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,511,963 ( 0.19%)  < ???:wf_proto.style.cascade_element (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+       24,552 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          552 ( 0.00%)  < ???:0x000000000495c6b0 (49,129x) [???]
+   30,669,789 ( 0.60%)  *  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+   25,473,360 ( 0.50%)  < ???:wf_css.selectors.sibling_positions (419,310x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+   25,473,360 ( 0.50%)  *  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+    9,991,245 ( 0.20%)  < ???:wf_css.selectors.instr_matches (302,765x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    9,991,245 ( 0.20%)  *  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+    5,676,522 ( 0.11%)  < ???:wf_css.selectors.instr_matches (1,006,182x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+    5,676,522 ( 0.11%)  *  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      361,863 ( 0.01%)  < ???:wf_css.selectors.match_complex (9,447x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      361,863 ( 0.01%)  *  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      358,487 ( 0.01%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      358,487 ( 0.01%)  *  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      311,436 ( 0.01%)  < ???:wf_css.selectors.instr_matches (7,596x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      311,436 ( 0.01%)  *  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      220,978 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1,171x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      220,978 ( 0.00%)  *  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      208,714 ( 0.00%)  < ???:wf_css.selectors.instr_matches (911x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+           28 ( 0.00%)  < ???:wf_css.selectors.instr_matches'2 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      208,742 ( 0.00%)  *  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+      111,910 ( 0.00%)  < ???:wf_css.selectors.compound_key (1,258x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+      111,910 ( 0.00%)  *  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+        5,048 ( 0.00%)  < ???:wf_proto.style.build_rule_index (10x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          140 ( 0.00%)  < ???:wf_grow$instance$e194368921a477a7 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        5,188 ( 0.00%)  *  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        2,793 ( 0.00%)  < ./malloc/./malloc/malloc.c:malloc (249,088x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,465 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (51,972x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        3,988 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (162,426x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,210 ( 0.00%)  < ???:wf_proto.style.build_rule_index (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        1,127 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (3x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        1,040 ( 0.00%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        3,377 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,192 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (691,824x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,124 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (53,385x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          694 ( 0.00%)  < ???:wf_proto.style.style_shape_c (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          454 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          454 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+        1,602 ( 0.00%)  *  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,350 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free (162,992x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          580 ( 0.00%)  *  ./malloc/../string/bits/string_fortified.h:_int_realloc
+
+          566 ( 0.00%)  < ./malloc/../string/bits/string_fortified.h:_int_realloc (49,075x)
+          566 ( 0.00%)  *  ???:0x000000000495c6b0 [???]
+
+          231 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (15,977x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          213 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (4,581x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (2,692x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  *  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          342 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (133,864x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          326 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  *  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          230 ( 0.00%)  *  ./malloc/./malloc/arena.c:realloc
+
+          190 ( 0.00%)  < ???:wf_css.selectors.index_classes (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+          190 ( 0.00%)  *  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-before]
+
+          133 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (348x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           78 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           77 ( 0.00%)  *  ./malloc/./malloc/arena.c:free
+
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  *  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           63 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           55 ( 0.00%)  *  ./malloc/./malloc/arena.c:malloc
+
+           30 ( 0.00%)  *  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+
+           21 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (27x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           21 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (226,739x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:munmap_chunk (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+self-after-1.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-after-1.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1224398107
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-after L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2855, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+1,851,060,515 (37.59%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,291,285,945 (26.22%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  193,856,331 ( 3.94%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  155,681,575 ( 3.16%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   41,675,689 ( 0.85%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   37,458,728 ( 0.76%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   37,185,581 ( 0.76%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   30,669,789 ( 0.62%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   26,059,276 ( 0.53%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,473,170 ( 0.52%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,426,893 ( 0.52%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   12,563,007 ( 0.26%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,489,423 ( 0.19%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    5,676,522 ( 0.12%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    4,487,017 ( 0.09%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    2,985,616 ( 0.06%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      109,068 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+       79,303 ( 0.00%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        3,556 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          966 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          949 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          795 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          747 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          529 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          312 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          261 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          185 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           60 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           50 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           14 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+           14 ( 0.00%)  ???:0x000000000495c6b0 [???]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf__floor_entry.llvm.13479498313450983840 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+
+inclusive-after-1.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-after-1.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1224398107
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-after L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2855, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf__floor_entry.llvm.13479498313450983840 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,746,213,771 (96.39%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,384,200,826 (89.04%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,103,133,429 (83.33%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,428,971,897 (29.02%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   80,428,012 ( 1.63%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   79,445,812 ( 1.61%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   74,317,020 ( 1.51%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   63,862,082 ( 1.30%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   54,372,659 ( 1.10%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   51,187,652 ( 1.04%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   42,969,284 ( 0.87%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   30,669,789 ( 0.62%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   25,473,360 ( 0.52%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,426,893 ( 0.52%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    5,676,522 ( 0.12%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      358,487 ( 0.01%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      220,978 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        5,188 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,377 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,602 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          580 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+          566 ( 0.00%)  ???:0x000000000495c6b0 [???]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          190 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           72 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+caller-after-1.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-after-1.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1224398107
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-after L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2855, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+
+4,924,004,863 (100.0%)  *  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+4,924,004,863 (100.0%)  < ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  *  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+4,924,004,863 (100.0%)  < ???:wf__main_body (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf__context_root_run (27x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ./nptl/./nptl/pthread_create.c:start_thread (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  *  ???:wf__floor_entry.llvm.13479498313450983840 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf__floor_entry.llvm.13479498313450983840 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf__coro_resume (8x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf_oracle.support.read_argument_file.resume (4x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf_proto.layout.drive.resume (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,746,213,771 (96.39%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,746,213,771 (96.39%)  *  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+3,909,277,098 (79.39%)  < ???:wf_proto.style.test_bucket (4,377,209x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  423,536,685 ( 8.60%)  < ???:wf_proto.style.match_indexed (2,333,117x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   51,387,043 ( 1.04%)  < ???:wf_css.selectors.list_matches (56,129x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,384,200,826 (89.04%)  *  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,103,133,429 (83.33%)  < ???:wf_proto.style.match_indexed (211,871x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,103,133,429 (83.33%)  *  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+1,428,971,897 (29.02%)  < ???:wf_css.selectors.match_complex (28,478,484x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,428,971,897 (29.02%)  *  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+1,047,734,736 (21.28%)  < ???:wf_css.selectors.match_complex (19,264,204x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  *  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   80,428,012 ( 1.63%)  < ???:wf_css.selectors.instr_matches (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   80,428,012 ( 1.63%)  *  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   79,445,812 ( 1.61%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   79,445,812 ( 1.61%)  *  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   74,317,020 ( 1.51%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   74,317,020 ( 1.51%)  *  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   63,862,082 ( 1.30%)  < ???:wf_proto.style.match_indexed (23,128x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   63,862,082 ( 1.30%)  *  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   41,070,023 ( 0.83%)  < ???:wf_css.selectors.instr_matches (1,315,888x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   16,909,980 ( 0.34%)  < ???:wf_css.selectors.instr_matches'2 (542,303x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  *  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   56,071,815 ( 1.14%)  < ???:wf_css.selectors.match_complex (3,738,121x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  *  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   54,372,659 ( 1.10%)  < ???:wf_proto.style.test_classes (52,134x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   54,372,659 ( 1.10%)  *  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   51,187,652 ( 1.04%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   51,187,652 ( 1.04%)  *  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   42,969,284 ( 0.87%)  < ???:wf_css.selectors.match_complex'2 (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   42,969,284 ( 0.87%)  *  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,511,963 ( 0.19%)  < ???:wf_proto.style.cascade_element (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+       24,552 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          552 ( 0.00%)  < ???:0x000000000495c6b0 (49,129x) [???]
+   30,669,789 ( 0.62%)  *  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+   25,473,360 ( 0.52%)  < ???:wf_css.selectors.sibling_positions (419,310x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,473,360 ( 0.52%)  *  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   16,785,290 ( 0.34%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    8,614,661 ( 0.17%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+       26,942 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,426,893 ( 0.52%)  *  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+    9,991,245 ( 0.20%)  < ???:wf_css.selectors.instr_matches (302,765x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,991,245 ( 0.20%)  *  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+    5,676,522 ( 0.12%)  < ???:wf_css.selectors.instr_matches (1,006,182x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    5,676,522 ( 0.12%)  *  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      361,863 ( 0.01%)  < ???:wf_css.selectors.match_complex (9,447x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      361,863 ( 0.01%)  *  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      358,487 ( 0.01%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      358,487 ( 0.01%)  *  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      311,436 ( 0.01%)  < ???:wf_css.selectors.instr_matches (7,596x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      311,436 ( 0.01%)  *  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      220,978 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1,171x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      220,978 ( 0.00%)  *  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      208,714 ( 0.00%)  < ???:wf_css.selectors.instr_matches (911x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+           28 ( 0.00%)  < ???:wf_css.selectors.instr_matches'2 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      208,742 ( 0.00%)  *  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      111,910 ( 0.00%)  < ???:wf_css.selectors.compound_key (1,258x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      111,910 ( 0.00%)  *  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+        5,048 ( 0.00%)  < ???:wf_proto.style.build_rule_index (10x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          140 ( 0.00%)  < ???:wf_grow$instance$e194368921a477a7 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        5,188 ( 0.00%)  *  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        2,793 ( 0.00%)  < ./malloc/./malloc/malloc.c:malloc (249,088x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,465 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (51,972x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        3,988 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (162,426x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,210 ( 0.00%)  < ???:wf_proto.style.build_rule_index (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        1,127 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (3x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        1,040 ( 0.00%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        3,377 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,192 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (691,824x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,124 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (53,385x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          694 ( 0.00%)  < ???:wf_proto.style.style_shape_c (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          454 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          454 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        1,602 ( 0.00%)  *  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,350 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free (162,992x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          580 ( 0.00%)  *  ./malloc/../string/bits/string_fortified.h:_int_realloc
+
+          566 ( 0.00%)  < ./malloc/../string/bits/string_fortified.h:_int_realloc (49,075x)
+          566 ( 0.00%)  *  ???:0x000000000495c6b0 [???]
+
+          231 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (15,977x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          213 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (4,581x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (2,692x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  *  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          342 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (133,864x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          326 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  *  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          230 ( 0.00%)  *  ./malloc/./malloc/arena.c:realloc
+
+          190 ( 0.00%)  < ???:wf_css.selectors.index_classes (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          190 ( 0.00%)  *  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+          133 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (348x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           78 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           77 ( 0.00%)  *  ./malloc/./malloc/arena.c:free
+
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  *  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           63 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           55 ( 0.00%)  *  ./malloc/./malloc/arena.c:malloc
+
+           30 ( 0.00%)  *  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+
+           21 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (27x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           21 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (226,739x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:munmap_chunk (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+self-after-2.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-after-2.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1224398107
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-after L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2910, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+1,851,060,515 (37.59%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,291,285,945 (26.22%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  193,856,331 ( 3.94%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  155,681,575 ( 3.16%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   41,675,689 ( 0.85%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   37,458,728 ( 0.76%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   37,185,581 ( 0.76%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   30,669,789 ( 0.62%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   26,059,276 ( 0.53%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,473,170 ( 0.52%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,426,893 ( 0.52%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   12,563,007 ( 0.26%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,489,423 ( 0.19%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    5,676,522 ( 0.12%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    4,487,017 ( 0.09%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    2,985,616 ( 0.06%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      109,068 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+       79,303 ( 0.00%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        3,556 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          966 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          949 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          795 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          747 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          529 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          312 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          261 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          185 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           60 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           50 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           14 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+           14 ( 0.00%)  ???:0x000000000495c6b0 [???]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+            .           ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf__floor_entry.llvm.13479498313450983840 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+            .           ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+
+inclusive-after-2.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-after-2.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1224398107
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-after L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2910, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf__floor_entry.llvm.13479498313450983840 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,746,213,771 (96.39%)  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,384,200,826 (89.04%)  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,103,133,429 (83.33%)  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,428,971,897 (29.02%)  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   80,428,012 ( 1.63%)  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   79,445,812 ( 1.61%)  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   74,317,020 ( 1.51%)  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   63,862,082 ( 1.30%)  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   54,372,659 ( 1.10%)  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   51,187,652 ( 1.04%)  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   42,969,284 ( 0.87%)  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   30,669,789 ( 0.62%)  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+   25,473,360 ( 0.52%)  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,426,893 ( 0.52%)  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+    9,991,245 ( 0.20%)  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    5,676,522 ( 0.12%)  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      361,863 ( 0.01%)  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      358,487 ( 0.01%)  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      311,436 ( 0.01%)  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      220,978 ( 0.00%)  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      208,742 ( 0.00%)  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      111,910 ( 0.00%)  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        5,188 ( 0.00%)  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,377 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,602 ( 0.00%)  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          580 ( 0.00%)  ./malloc/../string/bits/string_fortified.h:_int_realloc
+          566 ( 0.00%)  ???:0x000000000495c6b0 [???]
+          516 ( 0.00%)  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          230 ( 0.00%)  ./malloc/./malloc/arena.c:realloc
+          190 ( 0.00%)  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          133 ( 0.00%)  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           77 ( 0.00%)  ./malloc/./malloc/arena.c:free
+           72 ( 0.00%)  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           55 ( 0.00%)  ./malloc/./malloc/arena.c:malloc
+           30 ( 0.00%)  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+           21 ( 0.00%)  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+caller-after-2.txt
+--------------------------------------------------------------------------------
+Profile data file 'build/style-320-counts/callgrind-after-2.out' (creator: callgrind-3.22.0)
+--------------------------------------------------------------------------------
+I1 cache: 
+D1 cache: 
+LL cache: 
+Timerange: Basic block 0 - 1224398107
+Trigger: Program termination
+Profiled target:  build/style-320/proto_layout_seq-after L1 0 build/research/concurrency/ecma262.html research/investigations/concurrency/ua.css build/research/concurrency/ecma262-ecmarkup.css build/research/concurrency/ecma262-print.css (PID 2910, part 1)
+Events recorded:  Ir
+Events shown:     Ir
+Event sort order: Ir
+Thresholds:       100
+Include dirs:     
+User annotated:   
+Auto-annotation:  off
+
+--------------------------------------------------------------------------------
+Ir                     
+--------------------------------------------------------------------------------
+4,924,004,863 (100.0%)  PROGRAM TOTALS
+
+--------------------------------------------------------------------------------
+Ir                      file:function
+--------------------------------------------------------------------------------
+
+4,924,004,863 (100.0%)  *  ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+4,924,004,863 (100.0%)  < ./misc/../sysdeps/unix/sysv/linux/x86_64/clone.S:clone (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  *  ./nptl/./nptl/pthread_create.c:start_thread [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+4,924,004,863 (100.0%)  < ???:wf__main_body (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf__context_root_run [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf__context_root_run (27x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf__coro_resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ./nptl/./nptl/pthread_create.c:start_thread (1x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+4,924,004,863 (100.0%)  *  ???:wf__floor_entry.llvm.13479498313450983840 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf__floor_entry.llvm.13479498313450983840 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf__main_body [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf__coro_resume (8x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf_oracle.support.read_argument_file.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf_oracle.support.read_argument_file.resume (4x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf_proto.layout.drive.resume [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,924,004,863 (100.0%)  < ???:wf_proto.layout.drive.resume (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,924,004,863 (100.0%)  *  ???:wf_proto.style.style_shape_c [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,746,213,771 (96.39%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,746,213,771 (96.39%)  *  ???:wf_proto.style.match_indexed [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+3,909,277,098 (79.39%)  < ???:wf_proto.style.test_bucket (4,377,209x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+  423,536,685 ( 8.60%)  < ???:wf_proto.style.match_indexed (2,333,117x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   51,387,043 ( 1.04%)  < ???:wf_css.selectors.list_matches (56,129x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,384,200,826 (89.04%)  *  ???:wf_css.selectors.match_complex [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+4,103,133,429 (83.33%)  < ???:wf_proto.style.match_indexed (211,871x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+4,103,133,429 (83.33%)  *  ???:wf_proto.style.test_bucket [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+1,428,971,897 (29.02%)  < ???:wf_css.selectors.match_complex (28,478,484x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,428,971,897 (29.02%)  *  ???:wf_css.selectors.instr_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+1,047,734,736 (21.28%)  < ???:wf_css.selectors.match_complex (19,264,204x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+1,047,734,736 (21.28%)  *  ???:wf_css.selectors.backtrack [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   80,428,012 ( 1.63%)  < ???:wf_css.selectors.instr_matches (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   80,428,012 ( 1.63%)  *  ???:wf_css.selectors.match_complex'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   79,445,812 ( 1.61%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   79,445,812 ( 1.61%)  *  ???:wf_css.selectors.sibling_positions [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   74,317,020 ( 1.51%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   74,317,020 ( 1.51%)  *  ???:wf_proto.style.cascade_elements [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   63,862,082 ( 1.30%)  < ???:wf_proto.style.match_indexed (23,128x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   63,862,082 ( 1.30%)  *  ???:wf_proto.style.test_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   41,070,023 ( 0.83%)  < ???:wf_css.selectors.instr_matches (1,315,888x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   16,909,980 ( 0.34%)  < ???:wf_css.selectors.instr_matches'2 (542,303x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   57,980,003 ( 1.18%)  *  ???:wf_css.selectors.find_attribute [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   56,071,815 ( 1.14%)  < ???:wf_css.selectors.match_complex (3,738,121x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   56,071,815 ( 1.14%)  *  ???:wf_css.selectors.parent_of [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   54,372,659 ( 1.10%)  < ???:wf_proto.style.test_classes (52,134x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   54,372,659 ( 1.10%)  *  ???:wf_css.selectors.list_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   51,187,652 ( 1.04%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   51,187,652 ( 1.04%)  *  ???:wf_proto.style.cascade_element [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   42,969,284 ( 0.87%)  < ???:wf_css.selectors.match_complex'2 (542,782x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   42,969,284 ( 0.87%)  *  ???:wf_css.selectors.instr_matches'2 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.cascade_elements (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   10,566,361 ( 0.21%)  < ???:wf_proto.style.style_shape_c (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,511,963 ( 0.19%)  < ???:wf_proto.style.cascade_element (179,471x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+       24,552 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          552 ( 0.00%)  < ???:0x000000000495c6b0 (49,129x) [???]
+   30,669,789 ( 0.62%)  *  ./string/../sysdeps/x86_64/multiarch/memmove-vec-unaligned-erms.S:__memcpy_avx_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+   25,473,360 ( 0.52%)  < ???:wf_css.selectors.sibling_positions (419,310x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,473,360 ( 0.52%)  *  ???:wf_css.selectors.index_classes [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+   16,785,290 ( 0.34%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    8,614,661 ( 0.17%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+       26,942 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+   25,426,893 ( 0.52%)  *  ./string/../sysdeps/x86_64/multiarch/memset-vec-unaligned-erms.S:__memset_avx2_unaligned_erms [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+    9,991,245 ( 0.20%)  < ???:wf_css.selectors.instr_matches (302,765x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    9,991,245 ( 0.20%)  *  ???:wf_css.selectors.class_records [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+    5,676,522 ( 0.12%)  < ???:wf_css.selectors.instr_matches (1,006,182x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+    5,676,522 ( 0.12%)  *  ???:wf_css.selectors.bytes_eq [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      361,863 ( 0.01%)  < ???:wf_css.selectors.match_complex (9,447x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      361,863 ( 0.01%)  *  ???:wf_css.selectors.previous_element_sibling [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      358,487 ( 0.01%)  < ???:wf_proto.style.style_shape_c (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      358,487 ( 0.01%)  *  ???:wf_proto.style.build_rule_index [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      311,436 ( 0.01%)  < ???:wf_css.selectors.instr_matches (7,596x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      311,436 ( 0.01%)  *  ???:wf_css.selectors.nth_of_type_matches [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      220,978 ( 0.00%)  < ???:wf_proto.style.build_rule_index (1,171x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      220,978 ( 0.00%)  *  ???:wf_css.selectors.compound_key [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      208,714 ( 0.00%)  < ???:wf_css.selectors.instr_matches (911x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+           28 ( 0.00%)  < ???:wf_css.selectors.instr_matches'2 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      208,742 ( 0.00%)  *  ???:wf_css.selectors.apply_attr_op [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+      111,910 ( 0.00%)  < ???:wf_css.selectors.compound_key (1,258x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+      111,910 ( 0.00%)  *  ???:wf_css.selectors.atom_hash [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+        5,048 ( 0.00%)  < ???:wf_proto.style.build_rule_index (10x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          140 ( 0.00%)  < ???:wf_grow$instance$e194368921a477a7 (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        5,188 ( 0.00%)  *  ./malloc/./malloc/malloc.c:realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        2,793 ( 0.00%)  < ./malloc/./malloc/malloc.c:malloc (249,088x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,465 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (51,972x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        4,258 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        3,988 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (162,426x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        3,988 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_realloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,210 ( 0.00%)  < ???:wf_proto.style.build_rule_index (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        1,127 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (3x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        1,040 ( 0.00%)  < ???:wf_proto.style.style_shape_c (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        3,377 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,192 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (691,824x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,124 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (53,385x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        2,316 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          694 ( 0.00%)  < ???:wf_proto.style.style_shape_c (5x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          454 ( 0.00%)  < ???:wf_proto.style.build_rule_index (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          454 ( 0.00%)  < ???:wf_css.selectors.sibling_positions (2x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+        1,602 ( 0.00%)  *  ./malloc/./malloc/malloc.c:free [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+        1,350 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free (162,992x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+        1,350 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_merge_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          580 ( 0.00%)  *  ./malloc/../string/bits/string_fortified.h:_int_realloc
+
+          566 ( 0.00%)  < ./malloc/../string/bits/string_fortified.h:_int_realloc (49,075x)
+          566 ( 0.00%)  *  ???:0x000000000495c6b0 [???]
+
+          231 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (15,977x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          213 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (4,581x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_realloc (2,692x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          516 ( 0.00%)  *  ./malloc/./malloc/malloc.c:unlink_chunk.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          342 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_free_merge_chunk (133,864x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          342 ( 0.00%)  *  ./malloc/./malloc/malloc.c:_int_free_maybe_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          326 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          326 ( 0.00%)  *  ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+          230 ( 0.00%)  *  ./malloc/./malloc/arena.c:realloc
+
+          190 ( 0.00%)  < ???:wf_css.selectors.index_classes (1x) [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+          190 ( 0.00%)  *  ???:wf_grow$instance$e194368921a477a7 [/home/runner/work/Snowghost-wf/Snowghost-wf/build/style-320/proto_layout_seq-after]
+
+          133 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (348x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+          133 ( 0.00%)  *  ./malloc/./malloc/malloc.c:malloc_consolidate [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           78 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           78 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mmap64.c:mmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           77 ( 0.00%)  *  ./malloc/./malloc/arena.c:free
+
+           72 ( 0.00%)  < ./malloc/./malloc/malloc.c:free (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           72 ( 0.00%)  *  ./malloc/./malloc/malloc.c:munmap_chunk [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           63 ( 0.00%)  < ./malloc/./malloc/malloc.c:sysmalloc_mmap.isra.0 (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           63 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/setvmaname.c:__set_vma_name [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           55 ( 0.00%)  *  ./malloc/./malloc/arena.c:malloc
+
+           30 ( 0.00%)  *  ./malloc/./malloc/arena.c:_int_free_maybe_consolidate
+
+           21 ( 0.00%)  < ./malloc/./malloc/malloc.c:realloc (27x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           21 ( 0.00%)  *  ./misc/../sysdeps/unix/sysv/linux/mremap.c:mremap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:_int_malloc (226,739x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./malloc/./malloc/malloc.c:alloc_perturb [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+           12 ( 0.00%)  < ./malloc/./malloc/malloc.c:munmap_chunk (10x) [/usr/lib/x86_64-linux-gnu/libc.so.6]
+           12 ( 0.00%)  *  ./misc/../sysdeps/unix/syscall-template.S:munmap [/usr/lib/x86_64-linux-gnu/libc.so.6]
+
+
+Collection-boundary disassembly (raw CI excerpts)
+------------------------------------------------
+
+compute_styles-before.asm
+
+build/style-320/proto_layout_seq-before:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000093840 <wf_proto.style.compute_styles>:
+   93840:	50                   	push   %rax
+   93841:	e8 ba 67 00 00       	call   9a000 <wf_proto.style.style_shape_c>
+   93846:	31 ff                	xor    %edi,%edi
+   93848:	31 f6                	xor    %esi,%esi
+   9384a:	85 c0                	test   %eax,%eax
+   9384c:	48 0f 45 d7          	cmovne %rdi,%rdx
+   93850:	0f 44 c8             	cmove  %eax,%ecx
+   93853:	40 0f 95 c6          	setne  %sil
+   93857:	89 f0                	mov    %esi,%eax
+   93859:	5e                   	pop    %rsi
+   9385a:	c3                   	ret
+
+Disassembly of section .init:
+
+Disassembly of section .fini:
+
+Disassembly of section .plt:
+
+drive-before.asm (the direct body call)
+   8941d:	4c 89 f7             	mov    %r14,%rdi
+   89420:	4c 89 ee             	mov    %r13,%rsi
+   89423:	48 89 ea             	mov    %rbp,%rdx
+   89426:	4c 89 f9             	mov    %r15,%rcx
+   89429:	e8 d2 0b 01 00       	call   9a000 <wf_proto.style.style_shape_c>
+   8942e:	85 c0                	test   %eax,%eax
+   89430:	74 46                	je     89478 <wf_proto.layout.drive.resume+0x1938>
+
+compute_styles-after.asm
+
+build/style-320/proto_layout_seq-after:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000000937c0 <wf_proto.style.compute_styles>:
+   937c0:	50                   	push   %rax
+   937c1:	e8 ba 67 00 00       	call   99f80 <wf_proto.style.style_shape_c>
+   937c6:	31 ff                	xor    %edi,%edi
+   937c8:	31 f6                	xor    %esi,%esi
+   937ca:	85 c0                	test   %eax,%eax
+   937cc:	48 0f 45 d7          	cmovne %rdi,%rdx
+   937d0:	0f 44 c8             	cmove  %eax,%ecx
+   937d3:	40 0f 95 c6          	setne  %sil
+   937d7:	89 f0                	mov    %esi,%eax
+   937d9:	5e                   	pop    %rsi
+   937da:	c3                   	ret
+
+Disassembly of section .init:
+
+Disassembly of section .fini:
+
+Disassembly of section .plt:
+
+drive-after.asm (the direct body call)
+   8939d:	4c 89 f7             	mov    %r14,%rdi
+   893a0:	4c 89 ee             	mov    %r13,%rsi
+   893a3:	48 89 ea             	mov    %rbp,%rdx
+   893a6:	4c 89 f9             	mov    %r15,%rcx
+   893a9:	e8 d2 0b 01 00       	call   99f80 <wf_proto.style.style_shape_c>
+   893ae:	85 c0                	test   %eax,%eax
+   893b0:	74 46                	je     893f8 <wf_proto.layout.drive.resume+0x1938>
+
+Repeat verification workflow (executed on CI, not retained as a workflow)
+------------------------------------------------------------------------
+# Temporary verification of the retained instruction counts; removed after reporting.
+name: style-320
+
+on:
+  push:
+    branches: [research/style-320]
+    paths: [.github/workflows/style-320.yml]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve the four profiles and annotations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p build/style-320-verified
+          gh run download 38015166829 --repo Ming-Research/Snowghost-wf --name style-320-counts --dir build/style-320-verified
+      - name: Compare all counts without relying on tied caller row order
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = Path('build/style-320-verified')
+          def table(path):
+              text = path.read_text()
+              return text[text.index('PROGRAM TOTALS'):]
+          def callers(path):
+              records = []
+              for block in table(path).split('\n\n'):
+                  rows = block.splitlines()
+                  functions = [line.strip() for line in rows if ' * ' in line]
+                  if not functions:
+                      continue
+                  assert len(functions) == 1, (path, block)
+                  incoming = sorted(line.strip() for line in rows if ' < ' in line)
+                  records.append((functions[0], incoming))
+              assert records, path
+              return sorted(records)
+          for side in ('before', 'after'):
+              for kind in ('self', 'inclusive'):
+                  assert table(data / f'{kind}-{side}-1.txt') == table(data / f'{kind}-{side}-2.txt'), (side, kind)
+              first = callers(data / f'caller-{side}-1.txt')
+              second = callers(data / f'caller-{side}-2.txt')
+              assert first == second, (side, 'caller')
+              (data / f'canonical-callers-{side}.json').write_text(json.dumps(first, indent=2) + '\n')
+              assert (data / f'driver-{side}-1.stdout').read_bytes() == (data / f'driver-{side}-2.stdout').read_bytes(), side
+          assert (data / 'driver-before-1.stdout').read_bytes() == (data / 'driver-after-1.stdout').read_bytes()
+          result = ('Every self and inclusive function Ir and every caller/callee Ir and call count agree exactly across repeats.\n'
+                    'Only tied caller presentation order differed; grouping by callee is preserved in the comparison.\n'
+                    'Driver outputs agree across all four runs.\n')
+          (data / 'repeat-confirmation.txt').write_text(result)
+          print(result)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: style-320-verified
+          path: build/style-320-verified/
+          retention-days: 30
+
+Independent read-only review
+----------------------------
+Scope: bb98d4371d0e148775e232e4d2938ddb9aec3be6 through the final worktree's
+DESIGN.md addition and this run record, including all four raw profiles,
+temporary workflow history, relevant source/interface context and the
+scope, pipeline and pipeline/style design nodes. The review read the
+actual hosted validation results and repeat-verification code and receipt.
+Checks: read-only inspection; no suite was rerun. Raw profile totals,
+function self costs, incoming inclusive costs, memset attribution, top-ten
+order, shares and delta were independently reconciled for all four profiles.
+M1 fixed: the earlier entry-boundary wording named compute_styles after it
+was inlined. The corrected Method names style_shape_c and excludes inlined
+wrapper/result handling; both driver disassemblies support the correction.
+No outstanding findings within scope. G2, DC2, T4 and evidence/scope passed;
+G1, G3, DC1, DC3, DC4, R3 and C4 were not applicable to the unchanged
+implementation/interfaces and measurement-only diff. Independent style-output
+correctness remains unverified and outside this instruction-count task.

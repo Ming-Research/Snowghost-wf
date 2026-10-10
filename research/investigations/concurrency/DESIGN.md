@@ -913,6 +913,20 @@ per element.
 
 The raw summary is in `runs/11-callgrind-style-58fa8ee.txt`.
 
+On 2026-10-10 (UTC), Whitefoot #320 was measured with the same Snowghost
+source, bb98d4371d0e148775e232e4d2938ddb9aec3be6, including its rule index:
+`wf-f3d081b90a8d` before and `wf-ef4a73b56044` after, both v0.119, with no
+source adaptation. Both compilers inline `compute_styles`, so collection
+covers its sole surviving body call, `style_shape_c`, in `proto_layout_seq`.
+On ecma262, inclusive style Ir fell from 5,115,696,452 to 4,924,004,863,
+191,691,589 fewer instructions (3.75%). Overall `memset` Ir fell from
+196,448,205 (3.84% of style Ir) to 25,426,893 (0.52%); under `match_complex`
+it fell from 171,021,312 (3.34%) to zero, confirming the expected removal.
+`match_complex` inclusive Ir fell from 4,575,892,415 to 4,384,200,826 and
+self Ir from 1,871,188,010 to 1,851,060,515. Both repeats reproduced every
+count; [run 30](runs/30-callgrind-style-320.txt) keeps all four annotations,
+commands, collection-boundary evidence and repeat verification.
+
 **A rule index** (the owner's choice). Each alternative of a rule's selector
 list keys the rule by its subject compound, the rightmost one: by its id if
 it has one, else its first class, else its type, each as a hash of the
