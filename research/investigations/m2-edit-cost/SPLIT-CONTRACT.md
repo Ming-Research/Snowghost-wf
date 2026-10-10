@@ -3174,7 +3174,7 @@ saturating shift, and conjunction of motion-known flags. Preserve the existing
 join association, saturation, admission, invalidation and publication extent.
 These local computations do not change a design choice or add a retained cache.
 
-### Scoped column reflow contract (2026-10-10, proposed)
+### Scoped column reflow contract
 
 The first font-size pair's hosted consumed-input trace
 [38018484884](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38018484884)
@@ -3230,3 +3230,16 @@ Mutations must detect omitted rebalancing, wrong content height, omitted scoped
 publication and an unguarded admission; existing finite full-identity and numeric
 mutations remain conjunctive. This is a proposed task-local dependency change,
 not an owner-approved adoption or a claim that the current full pass is free.
+
+The incoming-space fixture changes only an ancestor's fixed height and one
+inline font, leaving the column's own style and width unchanged. The existing
+`steady` predicate ignores this height-basis change for definite-free content;
+the completed preparation key still rejects it because `prepare_spaces` writes
+the containing-height inputs into retained block outputs and child provenance.
+After full refresh, four local font edits must regain bounded replay. A mutation
+that substitutes `equivalent_space` for exact `same_space` must violate this
+path assertion. This checks the stated key contract, not a claim that this
+particular height-basis change alone changes current pixels. The earlier
+marked-child omission mutation is retired: `restack_entry` independently rejects
+the same mixed mark, so removing just the new guard cannot change admission.
+The child fixture remains as a full-identity case.

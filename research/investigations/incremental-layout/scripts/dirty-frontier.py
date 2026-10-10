@@ -187,6 +187,15 @@ def column_fixtures():
                        ('column-percentage', 'height:80%')]:
         yield name, source(extra='article{height:900px}.descendants{' + rule + '}'
               '.descendants p:nth-child(32) .glyph{font-size:32px}'), descendants
+    def ancestor_pairs(tree):
+        article = first(tree, 'article')
+        return [f'C {article} ancestor-change', f'K {article} ancestor-change'] + target_pairs(tree)
+    # The section's own computed style and width stay unchanged. Only its
+    # incoming height basis and one descendant's font change; the older steady
+    # guard permits that basis change because these contents are definite-free.
+    yield 'column-incoming-space', source(extra='article{height:900px}'
+          'article.ancestor-change{height:700px}'
+          '.ancestor-change p:nth-child(32) .glyph{font-size:32px}'), ancestor_pairs
     def source_pairs(tree):
         target = text(tree, 'Column target.')
         paragraph = tree.by_node[target['parent']]['parent']
@@ -206,6 +215,19 @@ def column_counts(raw):
         if int(prepared) != 1 or int(held) >= 32:
             raise ValueError(('column normal flow replay was not scoped', edit, prepared, held, entries))
     print('column normal flow: four edits, one preparation and fewer than 32 replayed entries; balancing remains complete', flush=True)
+
+
+def column_input_counts(raw):
+    """Changed completed inputs replay fully, then the refreshed key scopes."""
+    records = re.findall(r'^style edit (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)(?: .*)?$', raw, re.M)
+    if len(records) != 6:
+        raise ValueError(('missing incoming column count records', len(records)))
+    for edit, prepared, contexts, paragraphs, held, entries in records[:2]:
+        if int(held) < 192:
+            raise ValueError(('changed incoming column inputs were admitted', edit, held))
+    following = '\n'.join('style edit %s prepared %s contexts %s paragraphs %s held_entries %s entries %s' % record for record in records[2:])
+    column_counts(following)
+    print('incoming column inputs: two full replays, then four scoped edits with the refreshed key', flush=True)
 
 
 def sparse_counts(raw, expected_paragraphs=3, expected_records=4):
@@ -265,6 +287,8 @@ def check_fixture(args, directory, name, source, edits):
     inctime.read(str(protocol), operations, checking=True, require_paths=True)
     if name in ('column-one', 'column-two', 'column-three'):
         column_counts(raw)
+    if name == 'column-incoming-space':
+        column_input_counts(raw)
     if name == 'sparse-root':
         sparse_counts(raw)
     if name == 'lineless-whitespace':
