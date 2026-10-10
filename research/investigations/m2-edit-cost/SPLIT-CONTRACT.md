@@ -4507,6 +4507,18 @@ Inclusive constructor costs count only calls from `structure_changed`, not
 recursive or outlined internal calls twice. Missing emitted boundaries are
 reported as unverified attribution, never treated as zero-cost construction.
 
+Before reading the collected results, the reservation comparison's common
+inclusive denominator is the sum of the outer `retain_routes`, `record_tree`
+and `reconstruction_route_bound` calls from `structure_changed`. This is
+retained/fresh publication construction, not route-only work: `record_tree`
+also publishes paths, text units and establishing-context lookup. It includes
+allocation, fresh-route growth and sizing once and does not select only the
+functions that improve. The archived `noreserve` patch eliminates the bound
+call in source, so that specific term is source-eliminated work; a missing
+emitted boundary for a call still present remains unverified. This clarifies
+the accounting scope before observing the result and changes neither the
+10% instruction threshold nor the 5% resident-memory limit.
+
 #### Independent multiple-result calls: parallel-permission witness
 
 The candidate's emitted parallel ledger from hosted build
