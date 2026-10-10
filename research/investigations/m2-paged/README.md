@@ -242,3 +242,74 @@ rerun passes, it supplies no ledger, emission or runtime evidence.
 Hosted [check 38094056543](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38094056543)
 passed at `2083610c8cc1e5477bed68fc90ad01a9999ddd30`. This is prerequisite
 validation only; no renderer storage has moved.
+
+### Corrected control and blocked disposition
+
+2026-10-10 23:21 UTC: Hosted
+[proof collection 38094433125](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38094433125)
+and [check 38094433121](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38094433121)
+completed at `662ee4b311084148a5206e2494873a00b81a34e8`. The growth witness
+again exits 1 with the exact RANGE-3 diagnostic above. The corrected natural
+control checks, emits LLVM, builds and runs with `WF_WORKERS=4`, each with
+exit 0; its runtime observes the expected origins 11 and 21 after the
+permuted two-target update. The ledger reports:
+
+```text
+PAR loop        research/investigations/m2-paged/natural-paged.wf:20  loop  permitted   eligible; no accumulator
+PAR split       translate_owner_suffix  loop at 3.0.5.0  split independent map over 3 captured bindings
+```
+
+In the artifact's `natural-paged.ll`, the reachable `wf_forward` calls
+`wf_translate_owner_suffix`, which calls the split helper. That helper
+contains `wf__par_acquire_lane(i64 64)` at line 833, publishes
+`wf__par_thunk__par_split_translate_owner_suffix.0.0` at line 851, and joins
+at line 861. This establishes a compiled task offer for the natural control;
+it does not claim that the runtime schedules two tiny iterations on separate
+workers, or that any renderer owner-motion writer has been parallelized.
+
+The corrected run used hosted Ubuntu 24.04, AMD EPYC 9V45, four exposed
+vCPUs. The first run used hosted Intel Xeon Platinum 8573C, four vCPUs. Both
+artifacts identify compiler `wf-78223721f77d`, specification commit
+`78223721f77db615c950b6df1bcc690629f9fe4b`, and compiler SHA-256
+`5d3522d32388f5cc9596eedeea51fed8786df6b916b30103a550b0a1d5f9c99a`.
+These are proof runs, not paired performance measurements.
+
+| Acceptance comparison | Required workloads | Modes | Rounds completed | Verdict |
+| --- | --- | --- | ---: | --- |
+| Full style and full layout | ecma262, html5, apollo11 | Sequential and four workers | 0 | Unmeasured: adoption blocked |
+| Every X5 edit | word, sentence, colour, fontsize, rootfont, block on all three pages | Sequential and four workers | 0 | Unmeasured: adoption blocked |
+
+The pre-written baseline remains `030e4dd4081c9c15699363bdfa0e57c53a7f761d`
+with the same pinned compiler for base, candidate and independent twins.
+There is no adopted candidate revision or timing machine to compare. The
+criterion is unchanged; performance is unverified and completion fails its
+required proof condition. No renderer store moved to Paged, no invariant was
+added to the renderer, and no semantic maintenance mutation was run. The
+required layout-check, q139, q140, complete oracles-m2 (including Apollo11
+fallback follow-ups) and complete falsify-m2 matrix remain unrun for an
+adopted final head; passing the ordinary check on these prerequisite changes
+does not replace them. Final report and Draft PR record the documentation
+head's own CI results after publication.
+
+A separate read-only completion review covers the full four-file diff from
+030e4dd through 662ee4b and this result record, relevant layout/pipeline
+decisions, affected growth and owner-motion consumers, C3, released inverse
+probes, the pinned specification and raw hosted artifacts. Finding R1 was
+the invalid constructor argument syntax, corrected without changing values
+or proof obligations and now accepted by hosted execution. G2/G3, DC1/DC2,
+R3 and unchanged-pin T4 pass within this prerequisite scope; G1/DC3/C4 are
+not applicable. DC4, renderer-wide parallelism, remaining gates and acceptance
+timing remain unverified. No local suite was run or green suite repeated by
+the reviewer.
+
+Stopping reason: step 2 needs the owning language session to resolve
+`sg-paged-grow-inverse`; dependent implementation, semantic mutations and
+acceptance cannot proceed under the pinned release. No new direction was
+chosen, so the existing owner-approved inverse decision remains unchanged
+and there is no new decision card or design log entry. A future sparse-route
+port retains a separate proposed deferral, `sg-paged-sparse-routes` (P2):
+its implicit absent high-water prefix must not be materialized without an
+owner decision and construction-cost evidence. No files from the concurrent
+fallback-design work, status board, pin or submodules changed. All execution
+was hosted; the branch remains Draft in
+[PR 61](https://github.com/Ming-Research/Snowghost-wf/pull/61).
