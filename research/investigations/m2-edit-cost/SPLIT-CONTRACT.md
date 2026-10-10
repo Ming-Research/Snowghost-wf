@@ -4754,3 +4754,148 @@ or if it fails those cost conditions. The unchanged 1x fallback and 2x
 control requirements still apply to the delivered composition. This is not
 a reformulation of the rejected multiple-result construction: it computes
 only capacity, leaves the compiler gap explicit and keeps the rejection in effect.
+
+### Tighter-bound candidate: source and validation
+
+The tighter-bound candidate is `2a524d903fd62372bb2a4d4415517d7f266381ba`,
+renderer tree `067fa011d425aae6c0a294744020ac98ccc42d88`. It restores
+supplier-chain construction and keeps disjoint retained-directory copying
+and the tighter capacity bound. No admission, record lifetime, pin or
+submodule changes accompany this composition.
+
+Its [measurement-build ledger](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068824377)
+records parallel splits for the live-old-route reduction, the adjacent
+supplier-transition, paragraph and child-subtree reductions, retained-unit
+and establishing-context filters, and all three directory-copy instances.
+This verifies compiler permission at those sites, not a runtime speedup or
+permission for every surrounding independent statement. All eleven driver
+builds succeed. The six timing drivers have empty source patches; each
+private constructor variant changes only `renderer/layout/structure.wf`.
+
+Hosted gates on this renderer: Q139 and Q140 execute GitHub’s PR merge
+`b8fad325025c6243a00994b27f30edc2f9d9be95`; its complete Git tree is identical
+to 2a524d9, including the renderer, compiler pin and submodule entries. The
+other runs below check out 2a524d9 directly.
+
+| Gate | Run | Result |
+| --- | --- | --- |
+| check, including DOM self-test and design lint | [38068708881](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708881) | Pass |
+| layout-check | [38068708896](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708896) | Pass |
+| Q139 | [38068712146](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068712146) | Pass |
+| Q140 | [38068712318](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068712318) | Pass |
+| Complete oracles-m2 | [38068708868](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708868) | All 20 jobs pass |
+| Complete falsify-m2 | [38068708864](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708864) | All 168 jobs pass |
+
+The mutation run includes every row: 99 M2, 37 Q139, 22 Q140 and six
+fallback omissions, plus the four shared baseline/machinery jobs. All new
+omissions compile and fail at their intended later consumer in both modes.
+The retained-unit omission produces different geometry on the next text
+edit; context-lookup and path omissions refuse the next structural edit;
+the supplier-head omission changes its admitted splice to fallback even
+though geometry agrees. The initial fallback itself still agrees, so these
+observations distinguish complete retained publication from immediate-only
+correctness. Existing fresh-style and fresh-text omission controls also
+remain detected.
+
+The Apollo11 artifact from [oracles-m2 38068708868](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068708868)
+contains, in each mode, 60 matching original edits, 104 matching expanded
+edits and 20 matching focused lifetime edits. Every one of the 22 fallbacks
+is followed by an admitted splice and undo: all 44 following paths are
+`(1, 0)`, with every original per-edit path unchanged. All 20 jobs in the
+complete page-identity suite pass. These gates cover this candidate; the
+subsequent reservation selection below needs its own delivered-source evidence.
+
+### Tighter-bound result and simpler reservation selection
+
+[Comparison 38068824377](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38068824377)
+completes successfully on the candidate above. It contains all 30,240 native
+edit rows, 684 medians, 456 paired verdicts, 70 RSS observations, and eight
+sets of 120 profile parts. The machine is an AMD EPYC 7763 hosted runner with
+four logical CPUs, Ubuntu 24.04.5 and Linux 6.17.0-1022-azure. All eleven
+drivers use `wf-41f46e60030c`, the previously recorded compiler checksum and
+Clang 22.1.8. Main is bb98d43, before is the exact 941e51d renderer and the
+candidate is 2a524d9; each timing source has an independent twin, with three
+forward/reverse/forward rounds in sequential and four-worker modes.
+
+The [native medians](q141-bulk-tight-native.csv) and
+[paired verdicts](q141-bulk-tight-acceptance.csv) reject all 12 candidate
+fallback comparisons: 1.2631–1.3963x main. All 216 candidate X5 controls pass
+2x, worst 1.7696x for four-worker HTML5 font-size. Before also fails all 12
+fallback comparisons; 215 of its 216 controls pass, with ECMA262 colour in
+the parallel twin's second round at 37.0 versus 17.5 microseconds (2.1143x).
+These observations do not establish a control-speed improvement from the
+fallback code change.
+
+The [constructor observations](q141-bulk-tight-constructions.csv) resolve all
+22 outer boundaries for each candidate constructor. Inclusive instructions,
+including their allocation, are:
+
+| Retained directory | Matched old loop | Bulk copy/filter | Saving | Prior verdict |
+| --- | ---: | ---: | ---: | --- |
+| Historical context paths | 13,262,546 | 3,309,108 | 9,953,438 (75.05%) | Pass 10% |
+| Text units | 36,153,671 | 21,527,893 | 14,625,778 (40.45%) | Pass 10% |
+| Establishing-context lookup | 16,368,823 | 8,943,583 | 7,425,240 (45.36%) | Pass 10% |
+
+The common retained/fresh publication scope costs 247,755,496 instructions
+with tighter reservation versus 455,779,864 without it: 208,024,368 saved
+(45.64%), passing the prior 10% condition. The candidate includes 45,403,377
+instructions in the new sizing boundary; the no-reservation source patch
+eliminates that call. The private wide-bound wrapper is inlined and has no
+separate outer boundary, so its precise inclusive sizing cost remains
+unverified rather than reported as zero. Whole-fallback totals below remain
+observable independently of that missing function boundary.
+
+[Maximum process RSS](q141-bulk-tight-memory.csv), KiB, across full-script
+rounds includes startup and initial layout:
+
+| Mode | Main | 941e51d | Tight bound | No reservation | Wide bound |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sequential | 80,720 | 101,076 | 100,788 | 97,852 | 101,112 |
+| Four workers | 83,244 | 108,376 | 104,564 | 103,772 | 106,484 |
+
+Tight-bound paired RSS increases are 3.08%, 0.97%, 0.96% sequentially and
+1.59%, 1.00%, -0.08% with four workers; it passes the prior 5% condition.
+Crucially, after removal of supplier-count scratch, the matched wide-bound
+variant also passes every paired RSS comparison: 3.40%, 3.43%, 3.33%
+sequentially and 3.15%, 3.58%, 2.43% with four workers. The earlier rejected
+supplier composition's memory crossing is not evidence that this simpler
+composition requires tighter sizing.
+
+The [exclusive phase totals](q141-bulk-tight-phases.csv) and
+[function attribution](q141-bulk-tight-attribution.csv) show why this is not
+an effective final trim:
+
+| Phase | Main | 941e51d | Tight-bound candidate |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,328,300,179 | 1,327,914,688 |
+| Layout | 4,054,991,903 | 4,352,551,688 | 4,352,569,205 |
+| Bookkeeping | 26,720,515 | 33,580,460 | 33,569,163 |
+| Complete fallback | 4,933,631,082 | 5,714,432,327 | 5,714,053,056 |
+
+The net reduction from 941e51d is only 379,271 instructions (0.0066%). The
+matched wide-bound variant totals 5,673,057,911 instructions on the same 22
+fallbacks: tighter sizing adds 40,995,145. This is a whole-fallback variant
+comparison, not an invented missing-boundary estimate. Isolated directory
+savings and whole-program deltas are different observations, not quantities
+to add without their other interactions.
+
+**Selection before the next measurement.** Both reservations satisfy the
+observed memory limit, so restore the original producer bound instead of
+keeping the live-route and per-piece scans. The wide bound has fewer sizing
+dependencies and less measured work; the tighter bound's lower capacity is
+not needed to satisfy the stated RSS condition. This applies the project's
+parallelism-first rule and the already selected allocation direction; it
+neither relaxes 1x nor removes any retained record. The tighter candidate
+passes its local cost/memory thresholds but loses this comparison with the
+simpler admissible alternative.
+
+Restore the exact renderer of 9c4827c, retaining the three successful bulk
+directories and original supplier loop. Reuse its already built independent
+drivers only after exact renderer and compiler equality is checked; this
+reuse does not substitute the private wide-bound timings for final timings.
+Run the complete canonical six-cohort, three-round comparison again, with
+all X5 controls, no-reservation and matched old-directory profiles, RSS,
+and the complete required semantic gates. The existing 10%, 5%, 1x and 2x
+criteria remain unchanged. Remove the temporary wide-bound variant from the
+new batch because its allocation policy is now the candidate itself; the
+older run and its source patch remain the evidence for this selection.
