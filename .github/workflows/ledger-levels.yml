@@ -1,0 +1,40 @@
+# Temporary, research branch only: --par-ledger verdicts and emitted lanes for
+# inherit_level and inherit_pseudos (renderer/style/levels.wf) after their
+# shared scalar reads moved into the loops under Whitefoot v0.121 (#330).
+name: ledger-levels
+on:
+  push:
+    branches: [research/ledger-levels]
+    paths: [.github/workflows/ledger-levels.yml]
+permissions:
+  contents: read
+jobs:
+  ledger:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Ledger and emission
+        run: |
+          set -euo pipefail
+          make -s compiler
+          make -s toolchain
+          pin=$(sed -n 's/^release = //p' whitefoot.pin)
+          wfc=$PWD/build/whitefoot/$pin/whitefootc
+          mkdir -p results
+          if ! (cd renderer && "$wfc" --par --par-ledger --emit-llvm --graph modules.wfg --entry layout_oracle -o "$PWD/../results/layout_oracle" > ../results/ledger.txt 2> ../results/stderr.txt); then tail -40 results/stderr.txt; exit 1; fi
+          echo "release $pin"
+          grep -n 'style/levels\.wf' results/ledger.txt | grep -E 'loop|split|certif|apart' || true
+          grep -n 'inherit_level\|inherit_pseudos' results/ledger.txt || true
+          ll=$(find results -name '*.ll' -o -name '*.ll.*' | head -3); echo "llvm: $ll"; ls results
+          for f in $(find results -name '*.ll'); do
+            awk '/^define /{match($0,/@[^(]*/); name=substr($0,RSTART,RLENGTH)} /@wf__par_(acquire_lane|publish|join)/{ if (name ~ /inherit_level|inherit_pseudos/) c[name" "$0~/acquire/?"acquire":($0~/publish/?"publish":"join")]++ } END{for(k in c) print k, c[k]}' "$f"
+            grep -o '@wf__par_[a-z_]*inherit_[a-z_.0-9]*' "$f" | sort | uniq -c || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ledger-levels
+          path: results/ledger.txt
