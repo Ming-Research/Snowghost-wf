@@ -3517,6 +3517,20 @@ use scoped reference replay; it does not imply a full context or page rebuild.
 No stationary-frontier refusal is recorded in this script. Diagnostic buffers
 are absent from the production renderer and timing binaries.
 
+The legacy `styles_changed` marker has a different block-scope contract from
+the exact indexed marker used by native edits. `mark_style_context` records an
+interior block change as `restyled_blocks = 2` and `restyled_block = no_index`,
+so it supplies no closed subtree to `restack_block`. The initial broad oracle
+incorrectly required scoped replay from this input too: its block-font and
+block-width cases matched full layout but replayed all 192 entries in
+[38024115180](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38024115180).
+Those legacy cases now positively require full replay, while ordinary
+sequential/parallel cases still require fewer than 32 entries. Both routes
+retain every identity check, and detector controls reject the opposite path,
+wrong preparation counts and missing records. No production marking or
+admission condition changes; reconstructing a block scope for the legacy API
+is unnecessary for this repair.
+
 Temporary input-trace injection and font-only profiling workflows are retired
 after their artifacts are archived; their exact scripts remain in the linked
 runs' source revisions. The permanent cases, mutation rows, Apollo11 identity

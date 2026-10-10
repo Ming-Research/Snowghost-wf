@@ -239,15 +239,19 @@ def column_fixtures():
     yield 'column-source', source(), source_pairs
 
 
-def column_counts(raw):
-    """The 192-event normal flow must use a bounded scope; balancing stays full."""
+def column_counts(raw, scoped=True):
+    """Exact marks prove a bounded scope; legacy block marks prove none."""
     records = re.findall(r'^style edit (\d+) prepared (\d+) contexts (\d+) paragraphs (\d+) held_entries (\d+) entries (\d+)(?: .*)?$', raw, re.M)
     if len(records) != 4:
         raise ValueError(('missing column style-count records', len(records)))
     for edit, prepared, contexts, paragraphs, held, entries in records:
-        if int(prepared) != 1 or int(held) >= 32:
+        if scoped and (int(prepared) != 1 or int(held) >= 32):
             raise ValueError(('column normal flow replay was not scoped', edit, prepared, held, entries))
-    print('column normal flow: four edits, one preparation and fewer than 32 replayed entries; balancing remains complete', flush=True)
+        if not scoped and (int(prepared) != 1 or int(held) < 192):
+            raise ValueError(('legacy column block did not replay fully', edit, prepared, held, entries))
+    print('column normal flow: four edits, one preparation; ' +
+          ('fewer than 32 replayed entries' if scoped else 'at least 192 entries without a proved block scope') +
+          '; balancing remains complete', flush=True)
 
 
 def column_input_counts(raw):
@@ -319,7 +323,10 @@ def check_fixture(args, directory, name, source, edits):
     operations = inctime.script_operations(str(script))
     inctime.read(str(protocol), operations, checking=True, require_paths=True)
     if name in ('column-one', 'column-two', 'column-three', 'column-block-font', 'column-block-width'):
-        column_counts(raw)
+        # The legacy boolean marker deliberately stores no common block index.
+        # It must preserve identity through full replay for a changed block.
+        scoped = not (args.legacy_marks and name in ('column-block-font', 'column-block-width'))
+        column_counts(raw, scoped=scoped)
     if name == 'column-incoming-space':
         column_input_counts(raw)
     if name == 'sparse-root':
@@ -341,4 +348,6 @@ if __name__ == '__main__':
     parser.add_argument('driver')
     parser.add_argument('output')
     parser.add_argument('--case', action='append')
+    parser.add_argument('--legacy-marks', action='store_true',
+                        help='require full block replay when styles_changed supplies no closed block scope')
     run(parser.parse_args())
