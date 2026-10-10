@@ -27,21 +27,27 @@ jobs:
       matrix:
         include:
           - name: main
+            reuse_run: 38012168129
             source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
             optional: false
           - name: maintwin
+            reuse_run: 38012168129
             source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
             optional: false
           - name: a
+            reuse_run: 38016495734
             source: 4df6176736b5a4d31d70a20996417c724ba617d4
             optional: false
           - name: atwin
+            reuse_run: 38016495734
             source: 4df6176736b5a4d31d70a20996417c724ba617d4
             optional: false
           - name: layout
+            reuse_run: 38016495734
             source: b0d1b717561b75325f22916a56bf0ccec5e5ed4d
-            optional: false
+            optional: true
           - name: premerge
+            reuse_run: 38016495734
             source: 8f973e691e18f7322c39e2adbb2a8d4647865079
             optional: false
           - name: merge
@@ -52,7 +58,35 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
+      - uses: actions/download-artifact@v4
+        if: matrix.reuse_run != ''
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ matrix.reuse_run }}
+          name: driver-${{ matrix.name }}
+          path: build/driver/
+      - name: Verify the archived source and compiler
+        if: matrix.reuse_run != ''
+        env:
+          SOURCE: ${{ matrix.source }}
+          BUILD_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          test "$(head -n 1 build/driver/revision.txt)" = "$SOURCE"
+          grep -Fx 'release = wf-41f46e60030c' build/driver/revision.txt
+          grep '^ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921 ' build/driver/revision.txt
+          if [ "$BUILD_NAME" = layout ]; then
+            # The exact permitted patch is refused; retain it while awaiting
+            # the owner's answer about the further cancellation API change.
+            cat build/driver/source.diff
+            cat build/driver/seq-build.log
+            exit "$(cat build/driver/seq-build.status)"
+          fi
+          test ! -s build/driver/source.diff
+          test "$(cat build/driver/seq-build.status)" = 0
+          test "$(cat build/driver/par-build.status)" = 0
       - name: LLVM 22 and fonts
+        if: matrix.reuse_run == ''
         run: |
           set -euo pipefail
           sudo sh -c 'printf "%s\n" https://archive.ubuntu.com/ubuntu > /etc/apt/apt-mirrors.txt'
@@ -64,6 +98,7 @@ jobs:
           sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld
           clang --version | head -1
       - name: Build the exact source with the common release
+        if: matrix.reuse_run == ''
         env:
           SOURCE: ${{ matrix.source }}
           BUILD_NAME: ${{ matrix.name }}
@@ -155,7 +190,17 @@ jobs:
         if: inputs.profile_only != true
         run: |
           set -euo pipefail
-          names='main maintwin layout premerge merge a atwin'
+          names='main maintwin premerge merge a atwin'
+          for name in $names; do
+            test "$(cat build/drivers/driver-$name/seq-build.status)" = 0
+            test "$(cat build/drivers/driver-$name/par-build.status)" = 0
+          done
+          if [ -s build/drivers/driver-layout/layout_oracle_par ]; then
+            names='main maintwin layout premerge merge a atwin'
+          else
+            echo 'Layout control unavailable under the exact permitted patch; refusal retained.'
+          fi
+          forward_names="$names"
           args=(build/research/concurrency/apollo11.html renderer/style/ua.css 'wikibase.client.init&only=styles&skin=vector-2022=build/research/concurrency/apollo11-modules.css' 'modules=site.styles&only=styles&skin=vector-2022=build/research/concurrency/apollo11-site.css')
           head -n 2 build/x5/scripts/apollo11-fontsize.edits > build/evidence/sample.edits
           for sample in 1 2; do
@@ -168,7 +213,7 @@ jobs:
           print('one-edit wall seconds:', values, '; two rounds of the 60-edit script admitted')
           PYEOF
           for round in 1 2; do
-            if [ "$round" = 2 ]; then names='atwin a merge premerge layout maintwin main'; fi
+            if [ "$round" = 2 ]; then names=$(python3 -c 'import sys; print(" ".join(reversed(sys.argv[1:])))' $forward_names); fi
             for mode in seq par; do
               for name in $names; do
                 cp build/drivers/driver-$name/layout_oracle_* build/
@@ -186,11 +231,12 @@ jobs:
           # Collection toggles at the public update entry, after style/marking
           # and before preparation/layout. The initial layout never calls it.
           # First time one edit, then use the complete unchanged 60-edit script.
+          sed -n '/^S /p' build/x5/scripts/apollo11-fontsize.edits > build/evidence/zero.edits
           for name in main a; do
             nm build/drivers/driver-$name/layout_oracle_seq > build/evidence/$name-symbols.txt
             grep -F ' wf_layout.update' build/evidence/$name-symbols.txt
-            for size in sample full; do
-              script=build/evidence/sample.edits
+            for size in zero sample full; do
+              script=build/evidence/$size.edits
               if [ "$size" = full ]; then script=build/x5/scripts/apollo11-fontsize.edits; fi
               prefix=build/evidence/profile-$name-$size
               WF_WORKERS=4 /usr/bin/time -p -o "$prefix.time" valgrind --tool=callgrind --collect-atstart=no --toggle-collect=wf_layout.update --callgrind-out-file="$prefix.callgrind" build/drivers/driver-$name/layout_oracle_seq edittime "$script" "${args[@]}" > "$prefix.raw" 2> "$prefix.stderr"
@@ -201,7 +247,8 @@ jobs:
           import re, sys
           seconds = float(Path(sys.argv[1]).read_text().splitlines()[0].split()[1])
           total = int(re.search(r'^summary: (\d+)', Path(sys.argv[2]).read_text(), re.M)[1])
-          assert seconds < 120 and total > 0, (seconds, total)
+          expected_zero = '-zero.' in sys.argv[2]
+          assert seconds < 120 and (total == 0 if expected_zero else total > 0), (seconds, total)
           print(sys.argv[1], seconds, 'seconds,', total, 'instructions')
           PYEOF
             done
@@ -213,6 +260,7 @@ jobs:
           # pointer in rdi and its u32 reason in esi. Preserve its disassembly
           # so that register decoding can be checked against the actual binary.
           test "$(uname -m)" = x86_64
+          objdump -d build/drivers/driver-a/layout_oracle_seq > build/evidence/driver-a-disassembly.txt
           objdump -d --disassemble=wf_layout.boundary_refusal build/drivers/driver-a/layout_oracle_seq > build/evidence/refusal-disassembly.txt
           cat > build/evidence/refusals.gdb <<'GDBEOF'
           set pagination off
