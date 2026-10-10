@@ -1,0 +1,128 @@
+# Temporary Q141 measurement; remove after evidence is archived, before ready.
+name: fallback-cost
+on:
+  push:
+    branches: [research/m2-fallback-cost]
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Candidate revision (empty selects this workflow revision)
+        default: ''
+      controls:
+        description: Include all X5 kinds on all three pages
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[fallback]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: main
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+          - name: maintwin
+            source: bb98d4371d0e148775e232e4d2938ddb9aec3be6
+          - name: candidate
+            source: ''
+          - name: candidatetwin
+            source: ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Common compiler and LLVM
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends clang lld
+          make -s compiler toolchain
+      - name: Independent exact-source builds
+        env:
+          SOURCE: ${{ matrix.source || inputs.candidate || github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/driver
+          git worktree add --detach build/tree "$SOURCE"
+          wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
+          git -C build/tree rev-parse HEAD > build/driver/revision.txt
+          git -C build/tree rev-parse HEAD:renderer >> build/driver/revision.txt
+          cat whitefoot.pin >> build/driver/revision.txt
+          sha256sum "$wfc" >> build/driver/revision.txt
+          clang --version >> build/driver/revision.txt
+          cp build/whitefoot/wf-41f46e60030c/whitefoot-release.json build/driver/
+          for mode in seq par; do
+            flag=''
+            if [ "$mode" = par ]; then flag=--par; fi
+            status=0
+            (cd build/tree/renderer && /usr/bin/time -p "$wfc" --cache "$RUNNER_TEMP/cache" --fragments function $flag --graph modules.wfg --entry layout_oracle -o "$GITHUB_WORKSPACE/build/driver/layout_oracle_$mode") > "build/driver/$mode-build.log" 2>&1 || status=$?
+            cat "build/driver/$mode-build.log"
+            echo "$status" > "build/driver/$mode-build.status"
+            if [ "$status" -ne 0 ]; then exit "$status"; fi
+          done
+          git -C build/tree diff HEAD > build/driver/source.diff
+          test ! -s build/driver/source.diff
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: driver-${{ matrix.name }}
+          path: build/driver/
+  measure:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: driver-*
+          path: build/drivers
+      - name: Fonts, profiler and machine record
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends valgrind fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-freefont-ttf fonts-wqy-zenhei fonts-ipafont-gothic fonts-tlwg-loma-otf fonts-unifont fonts-noto-color-emoji fonts-opensymbol
+          chmod +x build/drivers/driver-*/layout_oracle_*
+          mkdir -p build/fallback-cost
+          uname -a > build/fallback-cost/machine.txt
+          lscpu >> build/fallback-cost/machine.txt
+          cat /etc/os-release >> build/fallback-cost/machine.txt
+          make -s oracle-fonts
+      - name: Shared captures and scripts
+        env:
+          CONTROLS: ${{ inputs.controls }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/research/concurrency
+          if [ "$CONTROLS" = true ]; then sh research/investigations/concurrency/run.sh fetch || true; fi
+          tar -xzf tests/layout/fixtures/apollo11/inputs.tar.gz -C build/research/concurrency
+          sha256sum -c tests/layout/fixtures/apollo11/inputs.sha256
+          cp build/drivers/driver-main/layout_oracle_seq build/layout_oracle_seq
+          pages=apollo11
+          if [ "$CONTROLS" = true ]; then pages='ecma262 html5 apollo11'; fi
+          sh research/investigations/incremental-layout/run.sh prepare $pages
+          sha256sum build/x5/scripts/* build/research/concurrency/* renderer/style/ua.css > build/fallback-cost/inputs.sha256
+      - name: Native pilot and interleaved rounds
+        env:
+          CONTROLS: ${{ inputs.controls }}
+        run: |
+          set -euo pipefail
+          flag=''
+          if [ "$CONTROLS" = true ]; then flag=--controls; fi
+          python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin candidate candidatetwin $flag
+      - name: Isolated instruction profiles with zero-edit control
+        run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fallback-evidence
+          path: |
+            build/fallback-cost/
+            build/x5/scripts/
+            build/research/concurrency/

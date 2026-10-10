@@ -3551,3 +3551,47 @@ final revision's gates and review disposition are recorded in
 paragraph-only rejection is historical evidence, not the block extension's
 acceptance result. No compiler pin, submodule, owner-motion storage or inverse
 proof changes are made by this repair.
+
+### Q141 fallback cost: question and prior rejection criterion
+
+Can the counted block-reconstruction path cost no more than main while
+preserving every existing splice admission and all state needed by the next
+edit? The owner selected removal of unread use-record work and redundant
+page-table round trips first. A dirty-ancestor fallback is a separate
+investigation, not an alternative implemented here.
+
+The before source is `4b8a75b241107c02504b3fa9d1eaccf9e758a349`, including
+PR 55's column repair. Main is upgrade PR 56's
+`bb98d4371d0e148775e232e4d2938ddb9aec3be6`, containing compiler adaptations
+only. Every cohort uses `wf-41f46e60030c`, including independently built
+main and candidate twins. Three forward/reverse interleaved rounds share
+one GitHub-hosted runner, captures, fonts and complete X5 scripts, in
+sequential and four-worker modes. Two forward/inverse pilot samples precede
+the batch; their elapsed times and spread remain in the artifact. No local
+or self-hosted execution is part of this experiment.
+
+Before measuring, reject the cost target if any paired fallback median is
+above main's corresponding median; the twin measures noise and cannot waive
+a failed threshold. Select exactly the unchanged Apollo11 script's fallback
+edit IDs, preserving every preceding edit, and compare those same IDs on
+main. Preserve the 38 splices and refusal distribution (18 reason 9, two
+reason 7, two reason 3) per mode. Every X5 page/kind/mode control must remain
+within 2x main. Before/after attribution requires the frozen before and its
+twin alongside the final source on the same runner.
+
+The native oracle already separates structural delta, picks, style and
+layout update. Delta includes splice refusal, dense flags and reconstruction;
+it must not be mislabeled as reconstruction alone. Per-edit instruction dumps
+split `structure_changed` (reconstruction), `update` (layout), and the remaining
+structural-edit instructions (style, attempted splice and other bookkeeping).
+They report call counts and exclusive contributions, not overlapping inclusive
+sums. A zero-edit collection control must report zero instructions. The
+native scripts contain no full-layout comparator between edits.
+
+Reject correctness if any required identity, next-edit splice path or mutation
+observation fails. Before deleting a producer, trace every consumer and the
+replacement's publication lifetime. Removing a still-needed route must be
+detected by a subsequent edit. Needed costs that cannot meet the target under
+this contract require an owner decision, not a skipped check or changed
+admission. The temporary workflow and helper are wired only to this finite
+experiment and are removed after archiving its evidence, before readiness.
