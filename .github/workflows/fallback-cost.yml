@@ -22,6 +22,10 @@ on:
         description: Include all X5 kinds on all three pages
         type: boolean
         default: false
+      phases_only:
+        description: Instrument private oracle worktrees for exact native phase breakdown
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -56,14 +60,14 @@ jobs:
           submodules: true
           fetch-depth: 0
       - uses: actions/download-artifact@v4
-        if: matrix.archive != ''
+        if: matrix.archive != '' && inputs.phases_only != true
         with:
           github-token: ${{ github.token }}
           run-id: 38032513579
           name: driver-${{ matrix.archive }}
           path: build/driver
       - name: Verify frozen source and common compiler
-        if: matrix.archive != ''
+        if: matrix.archive != '' && inputs.phases_only != true
         env:
           SOURCE: ${{ matrix.source }}
         run: |
@@ -76,19 +80,24 @@ jobs:
           test "$(cat build/driver/par-build.status)" = 0
           test ! -s build/driver/source.diff
       - name: Common compiler and LLVM
-        if: matrix.archive == ''
+        if: matrix.archive == '' || inputs.phases_only == true
         run: |
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get install -y --no-install-recommends clang lld
           make -s compiler toolchain
       - name: Independent exact-source builds
-        if: matrix.archive == ''
+        if: matrix.archive == '' || inputs.phases_only == true
         env:
           SOURCE: ${{ matrix.source || inputs.candidate || github.sha }}
+          PHASES: ${{ inputs.phases_only }}
         run: |
           set -euo pipefail
           mkdir -p build/driver
           git worktree add --detach build/tree "$SOURCE"
+          if [ "$PHASES" = true ]; then
+            python3 research/investigations/m2-edit-cost/fallback-phase.py self-test
+            python3 research/investigations/m2-edit-cost/fallback-phase.py patch --tree build/tree
+          fi
           wfc=$(realpath build/whitefoot/wf-41f46e60030c/whitefootc)
           git -C build/tree rev-parse HEAD > build/driver/revision.txt
           git -C build/tree rev-parse HEAD:renderer >> build/driver/revision.txt
@@ -106,7 +115,11 @@ jobs:
             if [ "$status" -ne 0 ]; then exit "$status"; fi
           done
           git -C build/tree diff HEAD > build/driver/source.diff
-          test ! -s build/driver/source.diff
+          if [ "$PHASES" = true ]; then
+            test "$(git -C build/tree diff --name-only HEAD)" = renderer/oracle/layout/edit.wf
+          else
+            test ! -s build/driver/source.diff
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -163,7 +176,7 @@ jobs:
       - name: Instruction parser negative controls
         run: python3 research/investigations/m2-edit-cost/fallback-cost.py self-test
       - name: Native pilot and interleaved rounds
-        if: inputs.fixtures_only != true
+        if: inputs.fixtures_only != true && inputs.phases_only != true
         env:
           CONTROLS: ${{ inputs.controls }}
         run: |
@@ -172,11 +185,16 @@ jobs:
           if [ "$CONTROLS" = true ]; then flag=--controls; fi
           python3 research/investigations/m2-edit-cost/fallback-cost.py native --names main maintwin before beforetwin candidate candidatetwin $flag
       - name: Isolated instruction profiles with zero-edit control
-        if: inputs.fixtures_only != true
+        if: inputs.fixtures_only != true && inputs.phases_only != true
         run: python3 research/investigations/m2-edit-cost/fallback-cost.py profile --names main before candidate
       - name: Per-fallback attribution and paired timing summaries
-        if: inputs.fixtures_only != true
+        if: inputs.fixtures_only != true && inputs.phases_only != true
         run: python3 research/investigations/m2-edit-cost/fallback-cost.py summarize
+      - name: Native phase pilot and interleaved rounds
+        if: inputs.phases_only == true
+        run: |
+          python3 research/investigations/m2-edit-cost/fallback-phase.py self-test
+          python3 research/investigations/m2-edit-cost/fallback-phase.py native --names main maintwin before beforetwin candidate candidatetwin
       - name: Fallback lifetime pilot and both modes
         if: inputs.fixtures_only == true
         run: |
@@ -205,6 +223,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Check design form against the task review base
+        run: make design-lint DESIGN_REVIEW_BASE=4b8a75b241107c02504b3fa9d1eaccf9e758a349
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}

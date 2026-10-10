@@ -4083,3 +4083,95 @@ criteria apply unchanged. The profile of each caller distinguishes the
 removed operations; a combined native comparison does not establish each
 individual omission's wall-time effect. No new bulk-copy representation,
 identity reclamation or construction mechanism is introduced.
+
+### Empty-storage follow-up: measured result
+
+[Hosted comparison 38042785237](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042785237)
+measures `8fcb8b42ef262a4ec6dd081324876c2c6e0041cf`, renderer tree
+`032cd66a65adc68df47e6674b832b30c8bdb5fb3`, before the subsequent route/path
+read omissions. Its six cohorts use the frozen main and before revisions,
+the common compiler and Clang 22.1.8, on one Ubuntu 24.04.5 hosted AMD EPYC
+7763 runner exposing four logical CPUs. Three interleaved rounds and both
+independently built twins retain the original acceptance criteria. Every
+one of the 12 paired fallback medians still fails 1x (1.2453–1.3461x main);
+all 216 paired X5 controls pass 2x. This is an intermediate result, not
+evidence for the later source.
+
+The isolated 22-fallback profile confirms the predicted local omission:
+
+| Direct caller | Before and preceding route/Close trim: allocation/free pairs | Empty-storage trim: allocation/free pairs |
+| --- | ---: | ---: |
+| `clear_fragment_anchors` | 60,188 | 235 |
+| `finish_reference_geometry` | 98,979 | 117 |
+
+These two callers remove exactly 158,815 direct allocation/free pairs.
+Their call counts stay 15,047 and 32,993, respectively; only already-empty
+container replacement disappears. `note_use` remains at 377,606 calls,
+`record_uses` and `record_units` at 14,802 each, `reduce_sequence` at 151,925
+and `publish_boundaries` at 12,425, matching the preceding trim. Required
+record and summary publication is therefore unchanged in this profile.
+
+The complete fallback interval contains 5,728,191,330 instructions:
+1,342,059,227 reconstruction, 4,352,551,688 layout and 33,580,415 other
+bookkeeping. The same-run main contains 4,933,630,992 instructions and
+the before source 6,193,244,353. The native comparison with the preceding
+trim used a different hosted machine, so it does not isolate a guard-only
+wall-time saving. Direct caller counts identify the removed mechanism
+without making that cross-machine claim.
+
+This source passes [check 38042782108](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782108),
+[layout-check 38042782007](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782007),
+[Q139 38042785842](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042785842),
+[Q140 38042785854](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042785854),
+all 20 jobs of [oracles-m2 38042782039](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782039)
+and all 164 jobs of [falsify-m2 38042782067](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38042782067).
+In both modes the 60 original Apollo11 edits preserve every admission;
+all 104 expanded edits match full reconstruction, including the splice and
+undo after every fallback. Both new route-omission mutations produce their
+specified next-edit failures after valid builds and complete sequences.
+
+The later prior-route and repeated-path source reads inline into
+`slot_read` in the measured callers. Their pending prediction is therefore
+observed through those call edges, rather than expecting a standalone
+`route_read` symbol. The empty-storage source has 558,867
+`note_use`-to-`slot_read` calls, 129,242 `relative_steps`-to-`slot_read`
+calls and 235,399 direct reconstruction directory writes: 185,819 context
+paths, 40,430 text units and 9,150 establishing-element lookups. These are the
+mechanism baselines for the next result; they do not change its prior
+prediction, thresholds or required publication counts.
+
+### Native phase decomposition: comparison before measurement
+
+The instruction profiles separate reconstruction, layout and bookkeeping for
+every sequential fallback. The four-worker native `delta_us` also includes
+splice refusal and flag construction, so it cannot establish the same
+three-way breakdown. Collect that missing observation with temporary oracle
+instrumentation in private hosted worktrees, keeping the production layout
+source and canonical acceptance drivers unchanged.
+
+The temporary helper brackets the direct `structure_changed` call with the
+existing oracle clock/dependency pattern, reading the initial timestamp only
+after the flag box exists, passing it into a private wrapper and reading the
+final timestamp through the mutated layout. A second private wrapper anchors
+the layout call after the finisher's after-picks timestamp. The finisher
+reports that after-picks-to-finished layout interval and
+its complete layout-plus-style interval in nanoseconds. Bookkeeping is their
+per-edit remainder after subtracting reconstruction and layout. Phase reports
+are appended after the measured interval. Clock and wrapper overhead remains
+part of this instrumented observation; it cannot replace the uninstrumented
+1x/2x acceptance comparison or establish a change's isolated native saving.
+
+Before collecting, require all three phase records for every original edit,
+a positive reconstruction interval for each selected fallback, positive layout
+time, nonnegative bookkeeping and exact per-edit conservation. Reject missing,
+duplicate or malformed records and a changed original admission. Negative
+controls must detect each failure. Reconcile total and layout nanoseconds
+with the ordinary timing rows, allowing only the exact one/two-microsecond
+bounds caused by their separate integer truncation; reconstruction must fit
+its containing delta interval. Source patching must reject a missing
+or ambiguous anchor. Build frozen main, before and candidate independently
+with all twins and the common compiler; retain the exact oracle-only patch
+beside each binary. Two forward/inverse pilot samples precede three
+interleaved rounds of all 60 Apollo11 block edits in both modes, selecting
+the same 22 fallback IDs for the phase table. This closes the missing native
+decomposition without a renderer mechanism or admission change.
