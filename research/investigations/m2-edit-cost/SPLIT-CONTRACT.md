@@ -4423,3 +4423,74 @@ unverified. No Whitefoot gap is established by this work, and no pin or
 submodule moved. All compilation, tests, checks and measurement ran on
 GitHub-hosted CI; local operations only edited/read source and Git state
 and analyzed downloaded evidence.
+
+### Bulk retained construction: comparison before measurement
+
+The continuation starts from `941e51d478f13ae38e5d714e45c01903356a04ba`.
+The selected direction is bulk construction of the same retained state, with
+unchanged admission and the existing 1x fallback requirement. This section
+precedes implementation and measurements of that construction. The prior
+profile attributes 476,381,515 excess instructions to reconstruction and
+297,559,785 to layout; it does not establish that either cost is necessary.
+
+| Retained structure | Construction dependencies | Subsequent readers | Bulk candidate and limits |
+| --- | --- | --- | --- |
+| Surviving style routes and supplier heads | Retirement results and each old supplier's linked chain; output IDs follow supplier order and old-chain traversal, while the published chain reverses that traversal | `mark_use`, `splice_owner`, scoped paragraph/block restyle outside the replacement | Count each supplier independently, reduce counts in a balanced tree, assign disjoint output slices from subtree totals, fill each supplier's slice and publish its head once. Preserve exact route IDs, order, termination checks and storage ceiling. Only traversal within a supplier follows a true pointer dependency. |
+| Fresh style routes and supplier heads | Completed context tree, preorder context identities, block/row/column order and paragraph supplier deduplication; duplicate suppression consults the last route for that supplier | The same style and splice readers inside the replacement | A bulk emission stream plus supplier grouping could compute predecessor links and duplicate flags before stable compaction. It must preserve first-emission order across suppliers, including nonconsecutive repeated suppliers in one paragraph; direct concurrent writes to supplier heads are not independent. Investigate after surviving-route construction; a grouping/sorting representation requires its own dependency and cost evidence. |
+| Context paths | Historical slot identities, retirement subtree, preorder IDs of fresh contexts and their parent/child links | Path validation, later reconstruction, preparation reuse and splice routing | Copy old paths into disjoint final page cells, preserving tombstones and high-water mark; fresh IDs can be assigned by subtree counts. Retirement and publication still precede preparation transfer. Never compact historical slots. |
+| Establishing-element lookup | Surviving context liveness; first qualifying context in preorder for each element | Nearest reconstructible context and exact checkpoint selection | Fill retained lookup independently per DOM slot; fresh first-writer selection needs the same preorder arbitration as the current builder. |
+| Text-unit directory and skipped text | Surviving liveness or skipped sentinel; fresh paragraph/piece order, consecutive-piece extent, and last writer when a node recurs | `text_changed`, splice-source lookup, `reuse_prepared` | Fill retained units independently per DOM slot; fresh units can reduce each consecutive source run before publication, but multiple producers of one source must retain the current final-writer rule. Skipped publication only replaces absent records. |
+| Owner-local sequence nodes and payloads | Finished pending sequence; median children determine heights and event totals | Stable rank, splice insertion/removal, flow materialization, range motion | Already bulk: `finish_sequence` sizes two pages, `bulk_nodes` fills disjoint halves and a counted loop fills payloads. Do not replace this with incremental insertion. Allocation/initialization and repeated immutable lookup remain candidates, not proof of redundant state. |
+| Flow event view | Finished owner-local topology and each subtree's event span | Current full layout and boundary preparation | Already disjoint-slice recursion in `fill_flow`; nested Open/Close offsets depend on subtree event counts. A direct page view may reduce lookups without changing event order or the scratch lifetime. |
+| Boundary transfers, height and motion summaries | Settled geometry, own outputs and left/own/right association, with nested block output preceding its parent | Subsequent splice certificates, convergence, range displacement and parent layout | Already a balanced postorder `reduce_sequence` followed by disjoint page publication. Preserve exact saturating association; a mathematically associative reformulation is not sufficient. Investigate page access only after reconstruction costs. |
+| Fragment roles, joins and owner-relative geometry | Settled lines, split topology and source-domain lifetimes | Later text edits, split repair, range translation and output materialization | Existing source-domain identity and role activity are required. A bulk rebuild must retain every negative adjacency and lineless transition record; no omission is justified by the immediate fallback's output alone. |
+
+The first implementation candidate removes the shared append dependency of
+surviving-route construction. Its balanced sizing tree fixes the same output
+positions that the serial append would produce. Independent suppliers fill
+disjoint slices; each supplier retains its actual linked-list dependency.
+The additional count traversal is an explicit work/critical-path tradeoff,
+preferred over a global prefix counter. Direct destination-page population
+of retained paths, units and establishing-element lookup is a separate
+candidate: its records have no cross-slot dependency. Existing fresh-state
+publication and sequence reductions remain until a supported replacement is
+shown; naming an already bulk function is not a new optimization.
+
+**Prior rejection criteria.** For each implemented construction, require at
+least a 10% reduction in its isolated inclusive construction instructions
+against 941e51d on the same 22 Apollo11 fallback intervals, with allocation,
+copying and sizing included once. Reject any identity, record, ordering,
+lifetime, ceiling or admission difference even if geometry happens to match.
+Keep exclusive phase/function attribution separate from those inclusive
+construction costs. A shorter independent dependency chain is required;
+a measured saving does not justify a new unnecessary sequential chain.
+Failure of the 10% threshold rejects that candidate, not the unchanged 1x
+M2 requirement. No weaker admission, skipped state or early fallback is an
+alternative in this comparison.
+
+Use the protocol of run 38047104753 with main
+`bb98d4371d0e148775e232e4d2938ddb9aec3be6`, before 941e51d, and the delivered
+candidate, each with an independent twin, compiler `wf-41f46e60030c`, all X5
+controls, sequential/four-worker modes and three forward/reverse/forward
+rounds on one GitHub-hosted runner. Preserve every original per-ID admission.
+Report phase instruction totals for all three sources and the same paired
+1x fallback and 2x control verdicts. No build, test or timing runs locally.
+
+Peak resident memory is measured with `/usr/bin/time -v` around the native
+Apollo11 block script, with zero-edit and two-edit pilots and the complete
+script for all three sources and both modes. This is a process high-water
+mark, including initial layout; it is not mislabelled as an allocator-only
+fallback delta. Compare a candidate with only the bulk-page reservation
+removed on the same runner to isolate that reservation: keep it only if its
+maximum RSS increase is at most 5% and its construction instruction saving
+is at least 10% relative to that matched variant. A higher cost or smaller
+saving reopens the allocation proposal; neither comparison can establish
+peak memory inside an individual fallback interval from process RSS alone.
+
+Before delivery, run check, layout-check, Q139, Q140, all oracles-m2 jobs
+(including 104 expanded Apollo11 edits and the focused lifetime sequences),
+and the complete falsify-m2 matrix. Add intended-consumer mutations for each
+new bulk publication, including missing supplier heads/routes and retained
+text/path publication where changed. A compilation failure is never a
+mutation detection. Preserve the prior allocation proposal without a log
+entry; any new surviving material choice is proposed in the layout tree.
