@@ -4721,3 +4721,36 @@ its constructor changes allocation, so keeping the reservation in the final
 renderer remains conditional on the repeated comparison, with the paired
 spread reported explicitly. No final cost, RSS or semantic claim is made
 before that collection completes.
+
+### Tighter reservation comparison before measurement
+
+The first RSS comparison crosses the prior 5% bound in paired sequential
+rounds. Before changing or measuring another allocation bound, the question
+is whether the same bulk-page reservation can retain its instruction saving
+with less unused capacity. This refines allocation only: supplier-chain
+construction remains the restored loop, the rejected parallel-count witness
+remains explicit, and no records or readers are removed.
+
+Compare a tighter scalar bound with the existing wide bound and no
+reservation. Count every old route whose context is live after retirement;
+for valid published state this includes each surviving chain record, and
+any unreachable live entry only overestimates. Fresh paragraph capacity
+counts its strut plus supplier transitions: compare each piece's supplier
+with its adjacent predecessor, or the strut for the first piece. These
+independent immutable reads bound `record_uses` calls; `note_use` can suppress
+a call's emission but never emits two records. Keep the existing context,
+block, row and column terms, saturation, chain validation and storage-ceiling
+growth fallback. Do not introduce a mutable previous-supplier chain.
+
+Include the live-old-route scan and fresh-producer reduction inside the
+common outer `reconstruction_route_bound` boundary, so the existing
+publication denominator includes all new sizing work exactly once. A private
+`widebound` build restores the previous scalar bound for attribution and RSS;
+it is not substituted for any exact-source timing cohort. Retain the prior
+10% instruction saving against `noreserve` and the 5% RSS limit, reporting
+every paired full-script round as well as cohort maxima. Reject the tighter
+bound on any identity, lifetime, ordering, admission or ceiling difference,
+or if it fails those cost conditions. The unchanged 1x fallback and 2x
+control requirements still apply to the delivered composition. This is not
+a reformulation of the rejected multiple-result construction: it computes
+only capacity and leaves its compiler gap and rejection unresolved.
