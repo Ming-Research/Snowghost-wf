@@ -1,6 +1,6 @@
 # Split fragment dependency contract (Q134 A; Q135 A)
 
-Current continuation: attribute and repair the Apollo11 font-size acceptance failure under wf-41f46e60030c (specification v0.117), preserving every correctness and performance criterion. Owner-motion storage is separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. [Draft PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55) owns this continuation's delivery, validation and deferrals; no adoption merge is authorized.
+Current continuation: reduce counted block fallbacks to at most main's edit cost under wf-41f46e60030c (specification v0.117), preserving every admission, the records needed by the next edit and the [Q141 acceptance criteria](#q141-fallback-cost-question-and-prior-rejection-criterion). [Draft PR 58](https://github.com/Ming-Research/Snowghost-wf/pull/58) owns this continuation's delivery, validation and proposed deferrals; the earlier Apollo11 font-size repair is recorded in [PR 55](https://github.com/Ming-Research/Snowghost-wf/pull/55). Owner-motion storage remains separately owned by status-board item `sg-pooled-store`: the owner ruled on 2026-10-09 that block order moves to built-in Paged and the inverse becomes a type invariant over its elements. The Whitefoot proof session owns `proof-q-aggregate-fill`; Snowghost does not depend on it. The [released inverse-proof continuation](#released-inverse-proof-and-recursive-order-storage) below retains historical diagnostics. No adoption merge is authorized.
 
 ## Question and prior rejection criterion
 
@@ -3588,6 +3588,14 @@ They report call counts and exclusive contributions, not overlapping inclusive
 sums. A zero-edit collection control must report zero instructions. The
 native scripts contain no full-layout comparator between edits.
 
+The timing summary keeps all edits for each X5 page/kind/mode separately
+from the selected fallback subset. Pair candidate with main and candidate
+twin with main twin within each round; apply 2x to the former scope and 1x
+to the latter. Neither pooling twins nor pooling rounds may conceal a
+failed paired threshold. Per-edit native phase counters and instruction
+phase counts remain in the artifacts, so a median of complete edits is not
+presented as the sum of independently selected phase medians.
+
 Reject correctness if any required identity, next-edit splice path or mutation
 observation fails. Before deleting a producer, trace every consumer and the
 replacement's publication lifetime. Removing a still-needed route must be
@@ -3622,6 +3630,13 @@ edits retained and newly inserted text/styles, checks an outside context,
 removes the fallback insertion, and splices again. Separate omissions erase
 fallback-published style heads or text units, requiring the immediately
 following splice or first retained-text edit to detect the missing record.
+An absent text route means no paragraph consumes that node, so erasing a
+real route leaves stale geometry on the next text edit; the full comparator
+must report a difference, not a topology refusal. The first hosted omission
+run exposed an incorrect refusal expectation in the new detector while
+correctly reporting geometry differences after both fallback insertion and
+removal. The detector now requires those exact differences, with the earlier
+fallback and following splices still correct.
 The original Apollo11 script additionally receives a splice/inverse pair
 after each counted fallback, preserving original sites and edit order and
 renumbering only newly allocated DOM nodes. Hosted execution is required
@@ -3655,6 +3670,32 @@ because the compiler outlined the candidate's reconstruction under a
 complete. Symbol normalization must preserve those bodies and recursive
 call contexts when deriving final tables.
 
+The corrected accounting and its negative controls pass in
+[38034336251](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38034336251),
+which reprocesses those archived dumps without rebuilding or measuring
+again. The instruction sums below include only the same 22 sequential
+fallback intervals; native results additionally measure four workers.
+
+| Phase | Main instructions | Before instructions | Added instructions |
+| --- | ---: | ---: | ---: |
+| Structural reconstruction | 851,918,664 | 1,778,192,568 | 926,273,904 |
+| Layout update | 4,054,991,903 | 4,381,370,375 | 326,378,472 |
+| Bookkeeping, including style and splice refusal | 26,720,200 | 33,681,230 | 6,961,030 |
+| Complete fallback interval | 4,933,630,767 | 6,193,244,173 | 1,259,613,406 |
+
+The largest exclusive source-function additions are `slot_read` (12,840,178
+calls, 360,033,796 instructions), `slot_write` (1,065,712 calls, 84,254,195
+instructions), `note_use` (678,427 calls, 45,957,681 instructions) and
+`route_write` (1,065,712 calls, 43,629,126 instructions). `retain_routes`
+adds 27,199,207 exclusive instructions in 22 calls. Allocator and copying
+differences are accounted separately in `attribution.csv`; they cannot be
+added to inclusive caller costs a second time. Main uses direct arrays and
+inlines its `note_use` and `record_units`, so absent instrumented symbols
+do not mean that main records no uses or text units. Its `record_uses`
+executes 24,486 times versus 14,802 before-source calls: reconstruction
+already records only the fresh subtree, retaining outside routes rather
+than recording every outside payload again.
+
 Three local changes preserve the existing records and dependencies:
 
 1. Consecutive paragraph pieces with the same supplying element already
@@ -3675,6 +3716,16 @@ Three local changes preserve the existing records and dependencies:
    otherwise valid edit. The final logical length still counts actual
    records. No reserve heuristic, record elision or new lifetime is used.
 
+The allocation proposal exchanges directory nodes for a potentially larger
+single page. Its capacity is the next power of two above the old logical
+route count plus the producer bound; duplicate paragraph suppliers and
+retired old routes can make that capacity larger than the actual route
+count. No smaller-memory claim is made. The bound does not change route
+identity, order, reachability or the storage ceiling. The retained M2
+directories, owner-local sequences and boundary summaries remain required
+by later edits; matching main's native cost is still an empirical target,
+not a consequence of the record-lifetime argument.
+
 Before measuring these changes, compare them with the frozen before and its
 twin, main and its twin, and the new candidate and its twin on one hosted
 runner. Reject attribution if eliminated calls/traversals do not explain
@@ -3682,3 +3733,64 @@ an instruction reduction, and retain the original native thresholds without
 a noise exception. Fresh routes, text routes, boundary summaries, height
 records and fragment state remain required. The full identity and mutation
 matrix, including the new record omissions, must pass on the resulting head.
+
+### First trim result and final comparison criterion
+
+[Hosted run 38034328080](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38034328080)
+compares the frozen main/before cohorts and their twins with
+`19462a976a48f843fa4cdc3d968bfae285673b44` and its independently built twin.
+All six use the same compiler binary (SHA-256
+`ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`),
+Clang 22.1.8 and one Ubuntu 24.04.5 hosted AMD EPYC 7763 runner with four
+logical CPUs. Three forward/reverse rounds retain all 60 block edits and
+select the same 22 fallback IDs for this comparison.
+
+The first trim fails the native target: fallback medians remain 35.1–36.9 ms
+sequential and 37.7–39.2 ms with four workers, against main/twin ranges of
+26.7–27.7 ms and 28.1–29.7 ms respectively. Every candidate/main paired
+fallback median remains above 1x. Same-run before medians are 39.3–39.8 ms
+sequential and 41.2–44.2 ms with four workers. The complete round/twin rows
+are in the run's `native-summary.csv`; these ranges do not pool or waive
+any failed round.
+
+The isolated instruction profile explains a real but insufficient reduction:
+
+| Phase over the same 22 fallbacks | Main | Before | First trim |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,778,192,568 | 1,342,228,270 |
+| Layout | 4,054,991,903 | 4,381,370,375 | 4,381,236,812 |
+| Bookkeeping | 26,720,515 | 33,681,365 | 33,531,763 |
+| Total | 4,933,631,082 | 6,193,244,308 | 5,756,996,845 |
+
+`slot_read` falls from 12,840,178 to 3,313,824 calls and saves 288,206,409
+exclusive instructions. `note_use` falls from 678,427 to 377,606 calls,
+saving 19,252,544 instructions. `slot_write` falls from 1,065,712 to
+1,045,956 calls, saving 42,476,841 instructions including shorter directory
+paths. Allocator calls also fall; the new bulk reserve adds 6,721,174
+instructions to `route_table`. The profile sums every exclusive function
+cost, including copying and allocation, so no remainder is called an
+unattributed reconstruction cost. Layout reductions, topology sealing and
+boundary publication remain almost unchanged and are consumed by subsequent
+incremental edits.
+
+One further unread result is visible in the boundary audit:
+`prepare_boundary_entry_at` computes and stores a transfer at synthesized
+`Close` event ranks, although `reduce_sequence` visits stable entry slots
+and excludes the closing rank from nested slices, and `store_reduction`
+reads only live payload ranks. A close event has no stable payload slot.
+The other caller, `reference_item_output`, already returns before preparing
+any close. Leave that scratch at its initial value instead of computing and
+writing an unused transfer. Keep all open-block natural/motion observations,
+leaf transfers, reductions and publication: their consumers remain live.
+This changes neither admission nor any published record.
+
+Before measuring the final source, compare the complete trim with the frozen
+before/main cohorts and all twins under the same prior thresholds. Include
+every X5 kind on ECMA262, HTML5 and Apollo11. The close-event change predicts
+fewer motion/preparation instructions without changing reduction or retained
+record counts; reject its dead-result argument if any identity, path or
+mutation gate fails. It does not predict that this small deletion closes the
+remaining native gap. If the required record construction/publication still
+exceeds main, the result remains a failed M2 cost criterion; deleting those
+records or changing their lifetime requires an owner decision, not a relaxed
+threshold.

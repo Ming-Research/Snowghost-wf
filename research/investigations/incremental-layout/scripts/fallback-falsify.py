@@ -35,9 +35,13 @@ def verify(name, baseline, mutant, out):
         if actual.get(2) != (0, 1) or statuses[2] != 'same':
             raise ValueError('missing fallback owner route was not detected by the next splice')
     else:
-        if any(statuses[i] != 'same' for i in (1, 2, 3)) or statuses[4] != 'refused':
-            raise ValueError('missing fallback text route was not detected by the first retained text edit')
-        if any(actual.get(i) != expected[i] for i in (1, 2, 3)):
+        # text_changed treats an absent route as a node with no paragraph
+        # consumer. Erasing a real route therefore leaves stale geometry;
+        # it does not return a topology refusal. Require the full comparator
+        # to catch that fault after both fallback insertion and removal.
+        if any(statuses[i] != 'same' for i in (1, 2, 3, 14, 15, 16)) or any(statuses[i] != 'DIFF' for i in (4, 17)):
+            raise ValueError('missing fallback text route did not leave stale geometry on the retained text edits')
+        if any(actual.get(i) != expected[i] for i in (1, 2, 3, 14, 15, 16)):
             raise ValueError('text-route omission failed an earlier unrelated path')
     print(name, 'detected by its intended post-fallback consumer')
 

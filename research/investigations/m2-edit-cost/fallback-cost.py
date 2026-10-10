@@ -202,13 +202,30 @@ def summarize():
     (OUT / 'fallback-ids.json').write_text(json.dumps(sorted(ids)) + '\n')
     grouped = {}
     for row in rows:
-        if row['page'] == 'apollo11' and row['kind'] == 'block' and int(row['edit']) not in ids:
-            continue
-        key = (row['cohort'], row['page'], row['kind'], row['mode'], row['round'])
-        grouped.setdefault(key, []).append(int(row['total_us']))
-    summary_rows = [dict(cohort=k[0], page=k[1], kind=k[2], mode=k[3], round=k[4], edits=len(v), median_us=statistics.median(v)) for k, v in grouped.items()]
+        scopes = ['all-edits']
+        if row['page'] == 'apollo11' and row['kind'] == 'block' and int(row['edit']) in ids:
+            scopes.append('fallbacks')
+        for scope in scopes:
+            key = (row['cohort'], row['page'], row['kind'], row['mode'], row['round'], scope)
+            grouped.setdefault(key, []).append(int(row['total_us']))
+    summary_rows = [dict(cohort=k[0], page=k[1], kind=k[2], mode=k[3], round=k[4], scope=k[5], edits=len(v), median_us=statistics.median(v)) for k, v in grouped.items()]
     with (OUT / 'native-summary.csv').open('w') as f:
         writer = csv.DictWriter(f, fieldnames=summary_rows[0]); writer.writeheader(); writer.writerows(summary_rows)
+    medians = {k: statistics.median(v) for k, v in grouped.items()}
+    comparisons = []
+    for key, value in medians.items():
+        name, page, kind, mode, round_number, scope = key
+        if name not in ('candidate', 'candidatetwin', 'before', 'beforetwin'):
+            continue
+        control = 'maintwin' if name.endswith('twin') else 'main'
+        reference = medians[(control, *key[1:])]
+        limit = 1 if scope == 'fallbacks' else 2
+        comparisons.append(dict(cohort=name, control=control, page=page,
+            kind=kind, mode=mode, round=round_number, scope=scope,
+            median_us=value, main_us=reference, ratio=value / reference,
+            limit=limit, accepted=value <= limit * reference))
+    with (OUT / 'acceptance.csv').open('w') as f:
+        writer = csv.DictWriter(f, fieldnames=comparisons[0]); writer.writeheader(); writer.writerows(comparisons)
     totals, counts, functions, breakdown = {}, {}, {}, []
     cohorts = ['main', 'candidate']
     if (OUT / 'profile-before-full.callgrind.2').exists():
