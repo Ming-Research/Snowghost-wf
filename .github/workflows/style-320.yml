@@ -1,97 +1,54 @@
-# Temporary instruction-count measurement; removed after the raw evidence is saved.
+# Temporary collector diagnosis; removed after the raw evidence is saved.
 name: style-320
 
 on:
   push:
     branches: [research/style-320]
-    paths: [.github/workflows/style-320.yml, renderer/**]
+    paths: [.github/workflows/style-320.yml]
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  measure:
+  diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Install and identify the measurement environment
+      - name: Retrieve the unchanged binaries and identify their calls
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p build/style-320
-          make toolchain RELEASE=wf-f3d081b90a8d
-          make compiler RELEASE=wf-ef4a73b56044
+          mkdir -p build/style-320 build/style-320-diagnostic
+          gh run download 38014053730 --repo Ming-Research/Snowghost-wf --name style-320-raw --dir build/style-320
           sudo apt-get update
           sudo apt-get install -y valgrind
-          {
-            git rev-parse HEAD
-            git ls-files -s renderer
-            uname -srm
-            lscpu
-            /usr/bin/clang --version
-            ld.lld --version
-            valgrind --version
-            ldd --version
-            cat /etc/os-release
-          } > build/style-320/environment.txt
-          git ls-files renderer | xargs sha256sum > build/style-320/source.sha256
-          cp build/whitefoot/wf-f3d081b90a8d/whitefoot-release.json build/style-320/before-release.json
-          cp build/whitefoot/wf-ef4a73b56044/whitefoot-release.json build/style-320/after-release.json
-          sha256sum build/whitefoot/*/whitefootc > build/style-320/compilers.sha256
+          objdump -d --disassemble=wf_proto.style.compute_styles build/style-320/proto_layout_seq-before > build/style-320-diagnostic/compute_styles.asm
+          objdump -d build/style-320/proto_layout_seq-before > build/style-320-diagnostic/driver.asm
+          { uname -srm; lscpu; valgrind --version; ldd --version; } > build/style-320-diagnostic/environment.txt
       - name: Fetch the pinned ecma262 inputs
         run: |
           set -euo pipefail
           data=build/research/concurrency
           mkdir -p "$data"
-          # Reuse only ecma262's entries from run.sh's pinned input table.
-          sed -n '/^ecma262.* https:/p' research/investigations/concurrency/run.sh > build/style-320/input-pins.txt
           while read -r name url sum; do
             curl -fsSL --retry 3 -o "$data/$name" "$url"
             echo "$sum  $data/$name" | sha256sum -c -
           done < build/style-320/input-pins.txt
-          sha256sum "$data"/ecma262* research/investigations/concurrency/ua.css > build/style-320/inputs.sha256
-      - name: Build the same sequential layout driver with both releases
-        run: |
-          set -euo pipefail
-          root=$PWD
-          failed=0
-          for pair in before:wf-f3d081b90a8d after:wf-ef4a73b56044; do
-            side=${pair%%:*}
-            release=${pair#*:}
-            compiler="$root/build/whitefoot/$release/whitefootc"
-            # run.sh build_layout's sequential build, with output split by release.
-            if (cd renderer && "$compiler" --cache "$root/build/whitefoot-cache" --fragments function --graph modules.wfg --entry proto_layout -o "../build/style-320/proto_layout_seq-$side") > "build/style-320/build-$side.stdout" 2> "build/style-320/build-$side.stderr"; then
-              echo 0 > "build/style-320/build-$side.exit"
-              nm "build/style-320/proto_layout_seq-$side" > "build/style-320/symbols-$side.txt"
-              grep -F 'wf_proto.style.compute_styles' "build/style-320/symbols-$side.txt"
-            else
-              code=$?
-              echo "$code" > "build/style-320/build-$side.exit"
-              cat "build/style-320/build-$side.stderr"
-              failed=1
-            fi
-          done
-          exit "$failed"
-      - name: Collect one compute_styles invocation twice per release
+      - name: Diagnose the collector's symbol match
         run: |
           set -euo pipefail
           data=build/research/concurrency
           ua=research/investigations/concurrency/ua.css
-          # Interleave before/after and their repeats on the same hosted runner.
-          for repeat in 1 2; do
-            for side in before after; do
-              WF_WORKERS=1 valgrind --tool=callgrind --collect-atstart=no --toggle-collect=wf_proto.style.compute_styles --callgrind-out-file="build/style-320/callgrind-$side-$repeat.out" "build/style-320/proto_layout_seq-$side" L1 0 "$data/ecma262.html" "$ua" "$data/ecma262-ecmarkup.css" "$data/ecma262-print.css" > "build/style-320/driver-$side-$repeat.stdout" 2> "build/style-320/driver-$side-$repeat.stderr"
-              callgrind_annotate --auto=no --threshold=100 --inclusive=no "build/style-320/callgrind-$side-$repeat.out" > "build/style-320/self-$side-$repeat.txt"
-              callgrind_annotate --auto=no --threshold=100 --inclusive=yes "build/style-320/callgrind-$side-$repeat.out" > "build/style-320/inclusive-$side-$repeat.txt"
-              callgrind_annotate --auto=no --threshold=100 --inclusive=yes --tree=caller "build/style-320/callgrind-$side-$repeat.out" > "build/style-320/caller-$side-$repeat.txt"
-            done
-          done
-      - name: Retain raw profiles, annotations and build diagnostics
+          WF_WORKERS=1 valgrind --tool=callgrind --collect-atstart=no '--toggle-collect=*compute_styles*' --callgrind-out-file=build/style-320-diagnostic/wildcard.out build/style-320/proto_layout_seq-before L1 0 "$data/ecma262.html" "$ua" "$data/ecma262-ecmarkup.css" "$data/ecma262-print.css" > build/style-320-diagnostic/wildcard.stdout 2> build/style-320-diagnostic/wildcard.stderr
+          WF_WORKERS=1 valgrind --tool=callgrind --callgrind-out-file=build/style-320-diagnostic/full.out build/style-320/proto_layout_seq-before L1 0 "$data/ecma262.html" "$ua" "$data/ecma262-ecmarkup.css" "$data/ecma262-print.css" > build/style-320-diagnostic/full.stdout 2> build/style-320-diagnostic/full.stderr
+          callgrind_annotate --auto=no --threshold=100 --inclusive=yes --tree=both build/style-320-diagnostic/full.out > build/style-320-diagnostic/full-annotate.txt
+          callgrind_annotate --auto=no --threshold=100 --inclusive=yes --tree=caller build/style-320-diagnostic/wildcard.out > build/style-320-diagnostic/wildcard-annotate.txt
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: style-320-raw
-          path: build/style-320/
+          name: style-320-diagnostic
+          path: build/style-320-diagnostic/
           retention-days: 30
