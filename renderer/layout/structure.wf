@@ -754,180 +754,56 @@ fn retire_at(context: &Context, steps: &[ContextStep], depth: u64, paths: &Route
   return Ok<unit, LayoutError>(value: unit);
 }
 
-struct RetainedRouteCount {
-  doc "One supplier's live count and the total of its median subtree; sizing scratch is discarded after publication.";
-  own: u64;
-  total: u64;
-}
-
-fn count_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, counts: &[RetainedRouteCount], base: u64) -> (total: u64, valid: Bool) reads(layout), reads(paths), writes(counts) {
-  doc "Counts independent supplier chains in disjoint median halves. Only a chain's next pointer orders its traversal; subtree totals replace a shared append counter.";
-  let size = counts^.len;
-  if size == 0_u64 {
-    return 0_u64, True();
-  }
-  let middle = size / 2_u64;
-  if middle >= size {
-    return 0_u64, False();
-  }
-  let following = middle + 1_u64;
-  let supplier = base +sat middle;
-  let right_base = supplier +sat 1_u64;
-  let (left_total, left_valid) = count_retained_routes(layout: layout, paths: paths, counts: &counts^[0_u64..middle], base: base);
-  let (right_total, right_valid) = count_retained_routes(layout: layout, paths: paths, counts: &counts^[following..size], base: right_base);
-  let head = route_read::<StyleUse>(table: &layout^.uses, at: supplier);
-  let cursor = head.head;
-  let own = 0_u64;
-  let own_valid = True();
-  let limit = layout^.routes.len;
-  for (step in 0_u64..limit) {
-    if cursor == no_index {
-      break;
-    }
-    let at = cvt::<u32, u64>(cursor);
-    if at >= limit {
-      set own_valid = False();
-      break;
-    }
-    let held = route_read::<StyleRoute>(table: &layout^.routes, at: at);
-    let live = live_context(paths: paths, serial: held.serial);
-    if live {
-      set own = own +sat 1_u64;
-    }
-    set cursor = held.next;
-  }
-  if cursor != no_index {
-    set own_valid = False();
-  }
-  let prefix = left_total +sat own;
-  let total = prefix +sat right_total;
-  set counts^[middle] = RetainedRouteCount(own: own, total: total);
-  let sides_valid = band(left_valid, right_valid);
-  let valid = band(sides_valid, own_valid);
-  return total, valid;
-}
-
-fn retained_route_total(counts: &[RetainedRouteCount]) -> total: u64 reads(counts) {
-  doc "Reads the sizing tree's root total; an empty supplier interval owns no routes.";
-  let size = counts^.len;
-  let middle = size / 2_u64;
-  if middle < size {
-    return counts^[middle].total;
-  }
-  return 0_u64;
-}
-
-fn fill_retained_supplier(layout: &Layout, paths: &RouteTable<ContextPath>, supplier: u64, route_base: u64, destination: &[StyleRoute]) -> head: u32 reads(layout), reads(paths), writes(destination) {
-  doc "Fills one supplier's pre-sized interval in old-chain order; only its next pointer and preceding output link impose order.";
-  let original = route_read::<StyleUse>(table: &layout^.uses, at: supplier);
-  let cursor = original.head;
-  let head = no_index;
-  let written = 0_u64;
-  let count = destination^.len;
-  let limit = layout^.routes.len;
-  for (step in 0_u64..limit) {
-    if cursor == no_index {
-      break;
-    }
-    let at = cvt::<u32, u64>(cursor);
-    let held = route_read::<StyleRoute>(table: &layout^.routes, at: at);
-    let live = live_context(paths: paths, serial: held.serial);
-    if live {
-      if written < count {
-        let route = StyleRoute(serial: held.serial, structural: held.structural, block: held.block, paragraph: held.paragraph, owner: held.owner, next: head);
-        set destination^[written] = route;
-        let next = route_base +sat written;
-        if next < item_ceiling {
-          set head = cvt::<u64, u32>(next);
-        }
-        set written = written +sat 1_u64;
-      }
-    }
-    set cursor = held.next;
-  }
-  return head;
-}
-
-fn fill_retained_routes(layout: &Layout, paths: &RouteTable<ContextPath>, counts: &[RetainedRouteCount], uses: &[StyleUse], routes: &[StyleRoute], supplier_base: u64, route_base: u64) -> result: unit reads(layout), reads(paths), reads(counts), writes(uses), writes(routes) {
-  doc "Fills the exact serial append order into disjoint final slices. Each supplier's traversal reverses its published links, matching retained-route reconstruction, and publishes one final head.";
-  let size = counts^.len;
-  if size != uses^.len {
-    return unit;
-  }
-  if size == 0_u64 {
-    return unit;
-  }
-  let middle = size / 2_u64;
-  if middle >= size {
-    return unit;
-  }
-  let following = middle + 1_u64;
-  let before = retained_route_total(counts: &counts^[0_u64..middle]);
-  let own = counts^[middle].own;
-  let after = before +sat own;
-  let route_count = routes^.len;
-  if before > after {
-    return unit;
-  }
-  if after > route_count {
-    return unit;
-  }
-  let supplier = supplier_base +sat middle;
-  let next_supplier = supplier +sat 1_u64;
-  let own_base = route_base +sat before;
-  let next_base = route_base +sat after;
-  fill_retained_routes(layout: layout, paths: paths, counts: &counts^[0_u64..middle], uses: &uses^[0_u64..middle], routes: &routes^[0_u64..before], supplier_base: supplier_base, route_base: route_base);
-  fill_retained_routes(layout: layout, paths: paths, counts: &counts^[following..size], uses: &uses^[following..size], routes: &routes^[after..route_count], supplier_base: next_supplier, route_base: next_base);
-  let head = fill_retained_supplier(layout: layout, paths: paths, supplier: supplier, route_base: own_base, destination: &routes^[before..after]);
-  set uses^[middle] = StyleUse(head: head);
-  return unit;
-}
-
 fn retain_routes(layout: &Layout, paths: &RouteTable<ContextPath>, uses: &RouteTable<StyleUse>, routes: &RouteTable<StyleRoute>, reserve: u64) -> result: Result<unit, LayoutError> reads(layout), reads(paths), writes(uses), writes(routes) {
-  doc "Sizes, fills and publishes surviving routes in the original order. Balanced supplier partitions remove the global append chain; invalid links and the storage ceiling refuse before publication.";
-  let nodes = uses^.len;
-  let empty = RetainedRouteCount(own: 0_u64, total: 0_u64);
-  let counts = box_array_filled::<RetainedRouteCount>(count: nodes, value: empty);
-  let (total, valid) = count_retained_routes(layout: layout, paths: paths, counts: &counts.inner[0_u64..nodes], base: 0_u64);
-  if valid {
-  } else {
-    return inconsistent::<unit>();
-  }
-  if total > item_ceiling {
-    return too_large::<unit>();
-  }
-  let capacity = imax(total, reserve);
-  if capacity > item_ceiling {
+  doc "Copies surviving explicit uses into the caller's empty use table without reading retained context payloads. One local head accumulates each supplier's surviving chain; no consumer reads intermediate heads. Dense directory copying is migration support, not a local splice.";
+  if reserve > item_ceiling {
     return too_large::<unit>();
   }
   let missing = absent_style_route();
-  let fresh = route_table::<StyleRoute>(count: capacity, missing: missing);
-  if total > 0_u64 {
-    match uses^.pages {
-      Page(values: use_page) => {
-        let fresh_table = &fresh;
-        match fresh_table^.pages {
-          Page(values: route_page) => {
-            if nodes <= use_page^.inner.len {
-              if total <= route_page^.inner.len {
-                fill_retained_routes(layout: layout, paths: paths, counts: &counts.inner[0_u64..nodes], uses: &use_page^.inner[0_u64..nodes], routes: &route_page^.inner[0_u64..total], supplier_base: 0_u64, route_base: 0_u64);
-              }
-            }
-          }
-          Vacant() => {
-          }
-          Fork(..) => {
-          }
+  let allocated = route_table::<StyleRoute>(count: reserve, missing: missing);
+  set routes^ = move allocated;
+  set routes^.len = 0_u64;
+  let nodes = uses^.len;
+  let total = layout^.routes.len;
+  for (n in 0_u64..nodes) {
+    if n < layout^.uses.len {
+      let route_value_5 = route_read::<StyleUse>(table: &layout^.uses, at: n);
+      let cursor = route_value_5.head;
+      let head = no_index;
+      for (step in 0_u64..total) {
+        if cursor == no_index {
+          break;
         }
+        let at = cvt::<u32, u64>(cursor);
+        if at < layout^.routes.len {
+        } else {
+          return inconsistent::<unit>();
+        }
+        let route_value_6 = route_read::<StyleRoute>(table: &layout^.routes, at: at);
+        let held = route_value_6;
+        let live = live_context(paths: paths, serial: held.serial);
+        if live {
+          let next = routes^.len;
+          if next < 4294967295_u64 {
+          } else {
+            return too_large::<unit>();
+          }
+          let route = StyleRoute(serial: held.serial, structural: held.structural, block: held.block, paragraph: held.paragraph, owner: held.owner, next: head);
+          let pushed = propagate route_push::<StyleRoute>(table: routes, value: route);
+          let route_head = cvt::<u64, u32>(next);
+          set head = route_head;
+        }
+        set cursor = held.next;
       }
-      Vacant() => {
+      if cursor != no_index {
+        return inconsistent::<unit>();
       }
-      Fork(..) => {
+      if head != no_index {
+        let updated_use = StyleUse(head: head);
+        route_write::<StyleUse>(table: uses, at: n, value: updated_use);
       }
     }
   }
-  set fresh.len = total;
-  set routes^ = move fresh;
   return Ok<unit, LayoutError>(value: unit);
 }
 

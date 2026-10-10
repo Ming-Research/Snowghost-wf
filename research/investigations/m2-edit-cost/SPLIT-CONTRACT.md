@@ -4618,3 +4618,103 @@ and required admission. The original style-route and text-route omissions
 also remain detected by their established post-fallback consumers. No
 compilation failure, earlier unrelated error or changed expected result is
 counted as detection.
+
+### Bulk candidate result and supplier rejection
+
+[Hosted comparison 38059104043](https://github.com/Ming-Research/Snowghost-wf/actions/runs/38059104043)
+measured renderer `f2a76593123fce60aee9e634571bdfcdc6196026`, tree
+`89f7c5d33a0b75e1090e2a462824831744b96905`, against main and 941e51d with the
+compiler, twins and three-round protocol written above. Its AMD EPYC 7763
+runner exposed four logical CPUs under Ubuntu 24.04.5 and Linux
+6.17.0-1022-azure; all drivers used Clang 22.1.8 and compiler checksum
+`ee3abc1d9bbb562b18a44893f973272b1768acb69273bfa93742e0880ef06921`.
+The six timing drivers have empty source patches. The 941e51d drivers are
+the archived 1745ff5 builds with identical renderer tree and compiler;
+each private constructor variant has its patch in the run artifact.
+
+The job reached its original 90-minute limit during cleanup and is marked
+cancelled. Every measurement, summary and upload step nevertheless completed
+successfully before cleanup ended. The downloaded artifact contains all 684
+native medians, 456 paired comparisons, 56 RSS observations, all eight sets
+of 120 per-edit profile parts, and the complete constructor summaries.
+The parser's negative controls and zero-edit collection controls passed.
+This is complete archived measurement evidence, not a green workflow claim.
+Future batches use the already committed 120-minute limit, grounded in this
+observed duration.
+
+The candidate **fails all 12 paired 1x fallback comparisons**, ranging from
+1.2838x to 1.6141x main. All 216 candidate X5 controls pass 2x, worst 1.7952x.
+941e51d also fails all 12 fallback comparisons; one of its 216 controls,
+four-worker ECMA262 colour, reaches 2.0294x on this runner. That observation
+is retained, not hidden by the historical run's green control result.
+The [native medians](q141-bulk-rejected-native.csv) and
+[paired verdicts](q141-bulk-rejected-acceptance.csv) preserve every cohort,
+round and control. Ordinary/twin fallback medians in microseconds are:
+
+| Mode / round | Main / twin | 941e51d / twin | Rejected bulk candidate / twin |
+| --- | ---: | ---: | ---: |
+| seq 1 | 24,683.0 / 24,914.5 | 31,619.5 / 31,426.5 | 33,117.0 / 33,330.0 |
+| seq 2 | 25,512.5 / 25,570.0 | 33,208.5 / 32,244.5 | 32,753.5 / 33,032.0 |
+| seq 3 | 25,935.5 / 25,709.5 | 32,407.5 / 33,119.0 | 33,905.5 / 34,302.0 |
+| par 1 | 26,417.0 / 26,601.0 | 34,966.0 / 35,637.0 | 42,640.0 / 41,208.0 |
+| par 2 | 26,461.5 / 26,526.0 | 34,899.5 / 37,525.5 | 41,454.5 / 41,697.5 |
+| par 3 | 27,229.0 / 27,125.0 | 36,521.5 / 36,882.5 | 42,486.0 / 42,380.5 |
+
+The [per-construction observations](q141-bulk-rejected-constructions.csv)
+resolve every required outer boundary, including allocation and sizing.
+Matched old-loop variants change one constructor each; totals cover the
+same 22 fallback intervals:
+
+| Construction | Old-loop instructions | Bulk instructions | Saving | Prior 10% verdict |
+| --- | ---: | ---: | ---: | --- |
+| Retained supplier routes and heads | 70,682,596 | 214,308,575 | -143,625,979 (-203.20%) | Reject |
+| Historical context paths | 13,262,530 | 3,309,092 | 9,953,438 (75.05%) | Pass |
+| Retained text units | 36,153,780 | 21,528,002 | 14,625,778 (40.45%) | Pass |
+| Establishing-context lookup | 16,368,812 | 8,943,572 | 7,425,240 (45.36%) | Pass |
+
+The supplier construction is removed from the delivered path under the
+pre-written rejection rule. Its previous serial constructor is restored;
+no replacement spelling conceals the independently reproduced compiler
+permission gap. Its supplier-head omission remains wired to the restored
+publication under the clearer name `omit-retained-heads`, with the same
+consumer and expected failure. The three successful directory constructions
+remain. This changes the measured composition, so the final renderer requires
+new measurements and semantic validation; these rejected-candidate numbers
+are not substituted for them. The reduced compiler witness stays as an
+upstream regression proposal, with reapplication to the removed renderer
+experiment only if that approach is reopened on new evidence.
+
+The [exclusive attribution](q141-bulk-rejected-attribution.csv) and
+[per-edit phase totals](q141-bulk-rejected-phases.csv) reconcile the result:
+
+| Phase | Main instructions | 941e51d instructions | Rejected candidate instructions |
+| --- | ---: | ---: | ---: |
+| Reconstruction | 851,918,664 | 1,328,300,179 | 1,430,400,963 |
+| Layout | 4,054,991,903 | 4,352,551,688 | 4,352,620,859 |
+| Bookkeeping | 26,720,425 | 33,580,460 | 33,539,366 |
+| Complete fallback | 4,933,630,992 | 5,714,432,327 | 5,816,561,188 |
+
+The candidate adds 102,128,861 instructions overall despite the three
+directory savings. The comparison does not establish irreducible overhead
+or justify relaxing 1x. Fresh route/text publication and already-bulk
+sequence/reduction access remain distinct, unimplemented candidates in the
+dependency audit.
+
+For this rejected composition, the reservation's common publication scope
+uses 350,655,328 instructions versus 641,541,540 without reservation, a
+290,886,212 (45.34%) saving. The absent `noreserve` bound call is confirmed
+by its source patch. Across the three full-script RSS rounds, the maximum
+process high-water marks are below; [all pilots and rounds](q141-bulk-rejected-memory.csv)
+are retained. Maxima compare each cohort's highest observed process RSS;
+individual round differences are not allocation-only deltas.
+
+| Mode | Main KiB | 941e51d KiB | Rejected candidate KiB | No-reservation KiB | Candidate peak increase |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Sequential | 80,668 | 103,084 | 103,800 | 99,728 | 4.08% |
+| Four workers | 83,092 | 108,820 | 106,796 | 104,692 | 2.01% |
+
+These maxima and construction savings pass the reservation criterion for
+this composition only. Removing supplier-count scratch and restoring its
+constructor changes allocation, so keeping the reservation in the final
+renderer remains conditional on the repeated comparison. No final cost,
+RSS or semantic claim is made before that collection completes.

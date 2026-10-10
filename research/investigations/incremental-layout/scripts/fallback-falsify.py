@@ -10,7 +10,7 @@ followup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(followup)
 
 MUTATIONS = ('omit-fallback-style-routes', 'omit-fallback-text-routes',
-             'omit-bulk-retained-heads', 'omit-bulk-retained-units',
+             'omit-retained-heads', 'omit-bulk-retained-units',
              'omit-bulk-retained-contexts', 'omit-bulk-path-copy')
 
 
@@ -18,8 +18,8 @@ def apply(name):
     path = Path('renderer/layout/structure.wf')
     source = path.read_text()
     replacements = {
-        'omit-bulk-retained-heads': ('  set uses^[middle] = StyleUse(head: head);',
-                                     '  set uses^[middle] = StyleUse(head: no_index);'),
+        'omit-retained-heads': ('        let updated_use = StyleUse(head: head);',
+                                '        let updated_use = StyleUse(head: no_index);'),
         'omit-bulk-retained-units': ('  let listing = copy_retained_units(source: &layout^.text_units, paths: &paths, count: nodes);', '  let listing = route_table::<TextUnit>(count: nodes, missing: unreached);'),
         'omit-bulk-retained-contexts': ('  let context_of = copy_retained_contexts(source: &layout^.context_of, paths: &paths, count: nodes);', '  let context_of = route_table::<u32>(count: nodes, missing: no_index);'),
         'omit-bulk-path-copy': ('  copy_route_table::<ContextPath>(source: source, destination: destination);\n', ''),
@@ -84,11 +84,11 @@ def bulk_sequence(driver, out, mutation, permit_difference=False):
 
 
 def verify(name, baseline, mutant, out):
-    if name.startswith('omit-bulk-'):
+    if name.startswith('omit-bulk-') or name == 'omit-retained-heads':
         bulk_sequence(baseline, out / 'baseline', name)
         raw, statuses = bulk_sequence(mutant, out / 'mutant', name, permit_difference=True)
         observed = followup.paths(raw)
-        if name == 'omit-bulk-retained-heads':
+        if name == 'omit-retained-heads':
             detected = statuses[2] == 'same' and observed.get(2) == (0, 1)
         elif name == 'omit-bulk-retained-units':
             detected = statuses[2] == 'DIFF'

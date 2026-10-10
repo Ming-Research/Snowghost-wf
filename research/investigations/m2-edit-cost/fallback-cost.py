@@ -149,19 +149,6 @@ def construction_variant(tree, name):
     if name == 'noreserve':
         replace('let fresh_routes = reconstruction_route_bound(context: &built);', 'let fresh_routes = 0_u64;')
         replace('let route_bound = layout^.routes.len +sat fresh_routes;', 'let route_bound = fresh_routes;')
-    elif name == 'serialroutes':
-        start = source.index('fn retain_routes(')
-        end = source.index('\nfn reconstruction_route_bound(', start)
-        old_start = before.index('fn retain_routes(')
-        old_end = before.index('\nfn reconstruction_route_bound(', old_start)
-        restored = before[old_start:old_end].replace('routes: &RouteTable<StyleRoute>)', 'routes: &RouteTable<StyleRoute>, reserve: u64)')
-        marker = '  let nodes = uses^.len;'
-        allocation = ('  if reserve > item_ceiling {\n    return too_large::<unit>();\n  }\n'
-                      '  let missing = absent_style_route();\n'
-                      '  let allocated = route_table::<StyleRoute>(count: reserve, missing: missing);\n'
-                      '  set routes^ = move allocated;\n  set routes^.len = 0_u64;\n')
-        restored = restored.replace(marker, allocation + marker)
-        source = source[:start] + restored + source[end:]
     elif name == 'oldpaths':
         old_start = before.index('  set paths.len = 0_u64;', before.index('fn structure_changed('))
         old_end = before.index('  let retired =', old_start)
